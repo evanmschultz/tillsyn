@@ -20,19 +20,20 @@ import (
 
 // fakeService represents fake service data used by this package.
 type fakeService struct {
-	projects         []domain.Project
-	columns          map[string][]domain.Column
-	tasks            map[string][]domain.Task
-	lastCreateTask   app.CreateTaskInput
-	createTaskCalls  int
-	comments         map[string][]domain.Comment
-	err              error
-	rollups          map[string]domain.DependencyRollup
-	changeEvents     map[string][]domain.ChangeEvent
-	changeEventsErr  error
-	commentCreateErr error
-	commentListErr   error
-	commentSeq       int
+	projects          []domain.Project
+	columns           map[string][]domain.Column
+	tasks             map[string][]domain.Task
+	lastCreateTask    app.CreateTaskInput
+	createTaskCalls   int
+	comments          map[string][]domain.Comment
+	lastCreateComment app.CreateCommentInput
+	err               error
+	rollups           map[string]domain.DependencyRollup
+	changeEvents      map[string][]domain.ChangeEvent
+	changeEventsErr   error
+	commentCreateErr  error
+	commentListErr    error
+	commentSeq        int
 }
 
 // newFakeService constructs fake service.
@@ -102,6 +103,7 @@ func (f *fakeService) CreateComment(_ context.Context, in app.CreateCommentInput
 	if f.commentCreateErr != nil {
 		return domain.Comment{}, f.commentCreateErr
 	}
+	f.lastCreateComment = in
 	f.commentSeq++
 	comment, err := domain.NewComment(domain.CommentInput{
 		ID:           fmt.Sprintf("cm-%d", f.commentSeq),
@@ -109,8 +111,9 @@ func (f *fakeService) CreateComment(_ context.Context, in app.CreateCommentInput
 		TargetType:   in.TargetType,
 		TargetID:     in.TargetID,
 		BodyMarkdown: in.BodyMarkdown,
+		ActorID:      in.ActorID,
+		ActorName:    in.ActorName,
 		ActorType:    in.ActorType,
-		AuthorName:   in.AuthorName,
 	}, time.Now().UTC())
 	if err != nil {
 		return domain.Comment{}, err
@@ -911,8 +914,9 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 		TargetType:   domain.CommentTargetTypeProject,
 		TargetID:     p.ID,
 		BodyMarkdown: "Initial **project** thread comment",
+		ActorID:      "system-bot",
+		ActorName:    "System Bot",
 		ActorType:    domain.ActorTypeSystem,
-		AuthorName:   "system-bot",
 	}, now)
 	if err != nil {
 		t.Fatalf("NewComment(existing) error = %v", err)
@@ -923,10 +927,12 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 	m := loadReadyModel(t, NewModel(
 		svc,
 		WithIdentityConfig(IdentityConfig{
+			ActorID:          "lane-user-17",
 			DisplayName:      "Lane User",
 			DefaultActorType: "agent",
 		}),
 	))
+	m.identityActorID = "lane-user-17"
 
 	updated, cmd := m.executeCommandPalette("thread-project")
 	m = applyResult(t, updated, cmd)
@@ -945,11 +951,23 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 		t.Fatalf("expected 2 project comments after post, got %#v", comments)
 	}
 	last := comments[len(comments)-1]
-	if last.AuthorName != "Lane User" {
-		t.Fatalf("expected configured author name Lane User, got %q", last.AuthorName)
+	if last.ActorID != "lane-user-17" {
+		t.Fatalf("expected configured actor id lane-user-17, got %q", last.ActorID)
+	}
+	if last.ActorName != "Lane User" {
+		t.Fatalf("expected configured actor name Lane User, got %q", last.ActorName)
 	}
 	if last.ActorType != domain.ActorTypeAgent {
 		t.Fatalf("expected configured actor type agent, got %q", last.ActorType)
+	}
+	if got := strings.TrimSpace(svc.lastCreateComment.ActorID); got != "lane-user-17" {
+		t.Fatalf("expected create-comment actor_id lane-user-17, got %q", got)
+	}
+	if got := strings.TrimSpace(svc.lastCreateComment.ActorName); got != "Lane User" {
+		t.Fatalf("expected create-comment actor_name Lane User, got %q", got)
+	}
+	if got := svc.lastCreateComment.ActorType; got != domain.ActorTypeAgent {
+		t.Fatalf("expected create-comment actor_type agent, got %q", got)
 	}
 	if len(m.threadComments) != 2 {
 		t.Fatalf("expected in-memory thread comments to append, got %#v", m.threadComments)
@@ -958,7 +976,7 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 	if !strings.Contains(rendered, "Project Overview") {
 		t.Fatalf("expected markdown-rendered project description, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "[agent] Lane User") {
+	if !strings.Contains(rendered, "[agent] Lane User (lane-user-17)") {
 		t.Fatalf("expected ownership metadata in thread view, got\n%s", rendered)
 	}
 }
@@ -1033,8 +1051,11 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("expected one posted comment, got %#v", comments)
 	}
-	if comments[0].AuthorName != "tillsyn-user" {
-		t.Fatalf("expected fallback author name tillsyn-user, got %q", comments[0].AuthorName)
+	if comments[0].ActorID != "tillsyn-user" {
+		t.Fatalf("expected fallback actor id tillsyn-user, got %q", comments[0].ActorID)
+	}
+	if comments[0].ActorName != "tillsyn-user" {
+		t.Fatalf("expected fallback actor name tillsyn-user, got %q", comments[0].ActorName)
 	}
 	if comments[0].ActorType != domain.ActorTypeUser {
 		t.Fatalf("expected fallback actor type user, got %q", comments[0].ActorType)
@@ -2089,6 +2110,11 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 					Undo:           "u",
 					Redo:           "U",
 				},
+				Identity: IdentityConfig{
+					ActorID:          "runtime-actor-id",
+					DisplayName:      "Runtime User",
+					DefaultActorType: "agent",
+				},
 			}, nil
 		}),
 	))
@@ -2129,6 +2155,15 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	if got := m.projectRoots["inbox"]; got != rootDir {
 		t.Fatalf("unexpected project roots after reload %#v", m.projectRoots)
 	}
+	if got := m.identityActorID; got != "runtime-actor-id" {
+		t.Fatalf("expected actor_id runtime-actor-id after reload, got %q", got)
+	}
+	if got := m.identityDisplayName; got != "Runtime User" {
+		t.Fatalf("expected display_name Runtime User after reload, got %q", got)
+	}
+	if got := m.identityDefaultActorType; got != "agent" {
+		t.Fatalf("expected default_actor_type agent after reload, got %q", got)
+	}
 	if m.status != "config reloaded" {
 		t.Fatalf("expected config reloaded status, got %q", m.status)
 	}
@@ -2136,6 +2171,30 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	m = applyMsg(t, m, keyRune(';'))
 	if m.mode != modeCommandPalette {
 		t.Fatalf("expected command palette open with reloaded keybinding, got %v", m.mode)
+	}
+}
+
+// TestModelWithRuntimeConfigAppliesIdentityAtStartup verifies runtime identity config applies during model construction.
+func TestModelWithRuntimeConfigAppliesIdentityAtStartup(t *testing.T) {
+	m := NewModel(
+		newFakeService(nil, nil, nil),
+		WithRuntimeConfig(RuntimeConfig{
+			Identity: IdentityConfig{
+				ActorID:          "runtime-startup-actor",
+				DisplayName:      "Runtime Startup",
+				DefaultActorType: "agent",
+			},
+		}),
+	)
+
+	if got := m.identityActorID; got != "runtime-startup-actor" {
+		t.Fatalf("expected startup actor_id runtime-startup-actor, got %q", got)
+	}
+	if got := m.identityDisplayName; got != "Runtime Startup" {
+		t.Fatalf("expected startup display_name Runtime Startup, got %q", got)
+	}
+	if got := m.identityDefaultActorType; got != "agent" {
+		t.Fatalf("expected startup default_actor_type agent, got %q", got)
 	}
 }
 
@@ -2883,7 +2942,7 @@ func TestModelStartupBootstrapPrecedesLaunchPicker(t *testing.T) {
 	if saveCalls != 1 {
 		t.Fatalf("expected one bootstrap save call, got %d", saveCalls)
 	}
-	if saved.DisplayName != "Lane User" || saved.DefaultActorType != "user" {
+	if saved.ActorID != "tillsyn-user" || saved.DisplayName != "Lane User" || saved.DefaultActorType != "user" {
 		t.Fatalf("unexpected saved bootstrap config %#v", saved)
 	}
 	if ready.mode != modeProjectPicker {
@@ -2986,7 +3045,7 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 	if len(m.searchRoots) != 1 || m.searchRoots[0] != filepath.Clean(rootB) {
 		t.Fatalf("expected in-memory search roots update %q, got %#v", filepath.Clean(rootB), m.searchRoots)
 	}
-	if saved.DisplayName != "Lane Agent" || saved.DefaultActorType != "system" {
+	if saved.ActorID != "tillsyn-user" || saved.DisplayName != "Lane Agent" || saved.DefaultActorType != "system" {
 		t.Fatalf("unexpected callback bootstrap payload %#v", saved)
 	}
 }
@@ -4198,6 +4257,7 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 			WorkItemID: task.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-live-sync",
+			ActorName:  "Live Sync Bot",
 			ActorType:  domain.ActorTypeAgent,
 			Metadata: map[string]string{
 				"title":      task.Title,
@@ -4208,7 +4268,7 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 	}
 	m := loadReadyModel(t, NewModel(svc))
 	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, false))
-	if !strings.Contains(panel, "agent|agent-live-sync update phase") {
+	if !strings.Contains(panel, "agent|Live Sync Bot update phase") {
 		t.Fatalf("expected owner-prefixed activity row, got %q", panel)
 	}
 }
@@ -4273,6 +4333,219 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 	}
 	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != second.ID {
 		t.Fatalf("expected jump to second task node, got %#v ok=%t", task, ok)
+	}
+}
+
+// TestModelNoticesSectionNavigationAndTaskInfoAction verifies notices section-level traversal and task-info enter actions.
+func TestModelNoticesSectionNavigationAndTaskInfoAction(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 15, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "waiting for review",
+		},
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.noticesFocused {
+		t.Fatal("expected notices focus after tab")
+	}
+	if m.noticesSection != noticesSectionRecentActivity {
+		t.Fatalf("expected default notices section to be recent activity, got %v", m.noticesSection)
+	}
+
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionSelection {
+		t.Fatalf("expected up-navigation to move focus to selection section, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected second up-navigation to move focus to attention section, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionWarnings {
+		t.Fatalf("expected third up-navigation to move focus to warnings section, got %v", m.noticesSection)
+	}
+
+	for i := 0; i < 6 && m.noticesSection != noticesSectionSelection; i++ {
+		m = applyMsg(t, m, keyRune('j'))
+	}
+	if m.noticesSection != noticesSectionSelection {
+		t.Fatalf("expected down-navigation to return focus to selection section, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected enter on selection row to open task info, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != task.ID {
+		t.Fatalf("expected task-info target %q, got %q", task.ID, m.taskInfoTaskID)
+	}
+}
+
+// TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated verifies warning/attention row enter actions when scoped to one task.
+func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 25, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "blocked on review",
+		},
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected notices focus on attention section, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected enter on attention row to open task info, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != task.ID {
+		t.Fatalf("expected attention row task-info target %q, got %q", task.ID, m.taskInfoTaskID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected esc to close task info back to board, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionWarnings {
+		t.Fatalf("expected notices focus on warnings section, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected enter on warning row to open associated task info, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != task.ID {
+		t.Fatalf("expected warning row task-info target %q, got %q", task.ID, m.taskInfoTaskID)
+	}
+}
+
+// TestModelNoticesRecentActivityScrollAndFallbackDetail verifies notices activity scrolling and detail fallback for non-node events.
+func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:        6,
+			ProjectID: p.ID,
+			Operation: domain.ChangeOperationUpdate,
+			ActorID:   "user-owner",
+			ActorType: domain.ActorTypeUser,
+			Metadata: map[string]string{
+				"title":      "Queue Event",
+				"item_scope": "queued-action",
+			},
+			OccurredAt: now.Add(6 * time.Minute),
+		},
+		{
+			ID:         5,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationArchive,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(5 * time.Minute),
+		},
+		{
+			ID:         4,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationMove,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(4 * time.Minute),
+		},
+		{
+			ID:         3,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(3 * time.Minute),
+		},
+		{
+			ID:         2,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationCreate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(2 * time.Minute),
+		},
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.noticesSection != noticesSectionRecentActivity {
+		t.Fatalf("expected recent-activity section after notices focus, got %v", m.noticesSection)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeActivityEventInfo {
+		t.Fatalf("expected enter fallback to open activity event detail for non-node event, got %v", m.mode)
+	}
+	m.mode = modeNone
+	m.noticesFocused = true
+
+	for i := 0; i < 4; i++ {
+		m = applyMsg(t, m, keyRune('j'))
+	}
+	if m.noticesActivity != 4 {
+		t.Fatalf("expected notices activity cursor to reach older row index 4, got %d", m.noticesActivity)
+	}
+	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, true))
+	if !strings.Contains(panel, "› user|unknown create task") {
+		t.Fatalf("expected scrolled activity window to mark the selected older entry, got %q", panel)
 	}
 }
 
@@ -4452,26 +4725,38 @@ func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
 func TestModelDisplayActivityOwnerNormalizesActorLabels(t *testing.T) {
 	m := Model{identityDisplayName: "EVAN"}
 
-	actorType, actorID := m.displayActivityOwner(activityEntry{
+	actorType, owner := m.displayActivityOwner(activityEntry{
 		ActorType: domain.ActorTypeUser,
 		ActorID:   "tillsyn-user",
 	})
 	if actorType != domain.ActorTypeUser {
 		t.Fatalf("expected user actor type, got %q", actorType)
 	}
-	if actorID != "EVAN" {
-		t.Fatalf("expected local identity display name, got %q", actorID)
+	if owner != "EVAN" {
+		t.Fatalf("expected local identity display name, got %q", owner)
 	}
 
-	actorType, actorID = m.displayActivityOwner(activityEntry{
+	actorType, owner = m.displayActivityOwner(activityEntry{
+		ActorType: domain.ActorType("AGENT"),
+		ActorID:   "agent-lane-2",
+		ActorName: "Lane Agent",
+	})
+	if actorType != domain.ActorTypeAgent {
+		t.Fatalf("expected normalized agent actor type, got %q", actorType)
+	}
+	if owner != "Lane Agent" {
+		t.Fatalf("expected actor_name precedence, got %q", owner)
+	}
+
+	actorType, owner = m.displayActivityOwner(activityEntry{
 		ActorType: domain.ActorType("AGENT"),
 		ActorID:   "",
 	})
 	if actorType != domain.ActorTypeAgent {
 		t.Fatalf("expected normalized agent actor type, got %q", actorType)
 	}
-	if actorID != "unknown" {
-		t.Fatalf("expected unknown owner fallback, got %q", actorID)
+	if owner != "unknown" {
+		t.Fatalf("expected unknown owner fallback, got %q", owner)
 	}
 }
 

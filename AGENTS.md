@@ -90,6 +90,10 @@ You are a senior Go dev. YOU ALWAYS:
   - close remaining collaborative remediation gaps tracked in active collab docs,
   - prioritize dogfooding readiness for real user+agent workflows,
   - keep planning/roadmap state centralized in `PLAN.md`.
+- Schema and compatibility policy for this temporary phase:
+  - avoid backward-compatibility shims and dual read/write paths unless the user explicitly requests one,
+  - when schema changes are required, implement one clean migration path and remove superseded legacy code in the same wave,
+  - avoid leaving orphaned transitional code; track any unavoidable deferred cleanup as an explicit backlog item in `PLAN.md`.
 - Orchestrator requirements:
   - plan for coexistent parallel subagents with explicit, non-overlapping file-lock scopes,
   - prevent workers from touching the same file concurrently,

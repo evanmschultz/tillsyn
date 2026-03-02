@@ -42,6 +42,8 @@ include_archived = false
 states = ["todo", "progress", "done"]
 
 [identity]
+# Immutable runtime identity token; auto-generated on first TUI startup if empty.
+actor_id = ""
 # Display name used for default actor identity in prompts and logs.
 display_name = ""
 # user | agent | system

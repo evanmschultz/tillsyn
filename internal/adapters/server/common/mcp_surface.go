@@ -27,6 +27,8 @@ type BootstrapGuide struct {
 
 // ActorLeaseTuple captures optional actor/lease fields used by guarded mutations.
 type ActorLeaseTuple struct {
+	ActorID         string
+	ActorName       string
 	ActorType       string
 	AgentName       string
 	AgentInstanceID string

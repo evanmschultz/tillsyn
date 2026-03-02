@@ -18,6 +18,7 @@ type MutationGuard struct {
 // MutationActor carries normalized caller identity metadata for mutation attribution.
 type MutationActor struct {
 	ActorID   string
+	ActorName string
 	ActorType domain.ActorType
 }
 
@@ -94,6 +95,7 @@ func normalizeMutationGuard(guard MutationGuard) MutationGuard {
 // normalizeMutationActor trims and canonicalizes mutation actor metadata.
 func normalizeMutationActor(actor MutationActor) MutationActor {
 	actor.ActorID = strings.TrimSpace(actor.ActorID)
+	actor.ActorName = strings.TrimSpace(actor.ActorName)
 	actor.ActorType = domain.ActorType(strings.TrimSpace(strings.ToLower(string(actor.ActorType))))
 	switch actor.ActorType {
 	case domain.ActorTypeUser, domain.ActorTypeAgent, domain.ActorTypeSystem:

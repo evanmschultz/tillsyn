@@ -332,8 +332,9 @@ type CreateCommentInput struct {
 	TargetType   domain.CommentTargetType
 	TargetID     string
 	BodyMarkdown string
+	ActorID      string
+	ActorName    string
 	ActorType    domain.ActorType
-	AuthorName   string
 }
 
 // ListCommentsByTargetInput holds input values for list comment operations.
@@ -738,8 +739,9 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		TargetType:   target.TargetType,
 		TargetID:     target.TargetID,
 		BodyMarkdown: body,
+		ActorID:      strings.TrimSpace(in.ActorID),
+		ActorName:    strings.TrimSpace(in.ActorName),
 		ActorType:    actorType,
-		AuthorName:   strings.TrimSpace(in.AuthorName),
 	}, s.clock())
 	if err != nil {
 		return domain.Comment{}, err

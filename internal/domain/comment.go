@@ -12,9 +12,11 @@ type CommentTargetType string
 // Comment target type values.
 const (
 	CommentTargetTypeProject  CommentTargetType = "project"
+	CommentTargetTypeBranch   CommentTargetType = CommentTargetType(KindAppliesToBranch)
 	CommentTargetTypeTask     CommentTargetType = CommentTargetType(WorkKindTask)
 	CommentTargetTypeSubtask  CommentTargetType = CommentTargetType(WorkKindSubtask)
 	CommentTargetTypePhase    CommentTargetType = CommentTargetType(WorkKindPhase)
+	CommentTargetTypeSubphase CommentTargetType = CommentTargetType(KindAppliesToSubphase)
 	CommentTargetTypeDecision CommentTargetType = CommentTargetType(WorkKindDecision)
 	CommentTargetTypeNote     CommentTargetType = CommentTargetType(WorkKindNote)
 )
@@ -22,9 +24,11 @@ const (
 // validCommentTargetTypes stores supported target-type values.
 var validCommentTargetTypes = []CommentTargetType{
 	CommentTargetTypeProject,
+	CommentTargetTypeBranch,
 	CommentTargetTypeTask,
 	CommentTargetTypeSubtask,
 	CommentTargetTypePhase,
+	CommentTargetTypeSubphase,
 	CommentTargetTypeDecision,
 	CommentTargetTypeNote,
 }
@@ -43,8 +47,9 @@ type Comment struct {
 	TargetType   CommentTargetType
 	TargetID     string
 	BodyMarkdown string
+	ActorID      string
+	ActorName    string
 	ActorType    ActorType
-	AuthorName   string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -56,8 +61,9 @@ type CommentInput struct {
 	TargetType   CommentTargetType
 	TargetID     string
 	BodyMarkdown string
+	ActorID      string
+	ActorName    string
 	ActorType    ActorType
-	AuthorName   string
 }
 
 // NewComment constructs a normalized comment.
@@ -89,9 +95,14 @@ func NewComment(in CommentInput, now time.Time) (Comment, error) {
 		return Comment{}, ErrInvalidActorType
 	}
 
-	authorName := strings.TrimSpace(in.AuthorName)
-	if authorName == "" {
-		authorName = "tillsyn-user"
+	actorID := strings.TrimSpace(in.ActorID)
+	if actorID == "" {
+		actorID = "tillsyn-user"
+	}
+
+	actorName := strings.TrimSpace(in.ActorName)
+	if actorName == "" {
+		actorName = actorID
 	}
 
 	timestamp := now.UTC()
@@ -101,8 +112,9 @@ func NewComment(in CommentInput, now time.Time) (Comment, error) {
 		TargetType:   target.TargetType,
 		TargetID:     target.TargetID,
 		BodyMarkdown: body,
+		ActorID:      actorID,
+		ActorName:    actorName,
 		ActorType:    actorType,
-		AuthorName:   authorName,
 		CreatedAt:    timestamp,
 		UpdatedAt:    timestamp,
 	}, nil

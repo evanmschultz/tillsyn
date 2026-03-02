@@ -125,6 +125,7 @@ func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest
 	if err != nil {
 		return domain.Task{}, err
 	}
+	actorID, _ := deriveMutationActorIdentity(in.Actor)
 	task, err := a.service.CreateTask(ctx, app.CreateTaskInput{
 		ProjectID:      strings.TrimSpace(in.ProjectID),
 		ParentID:       strings.TrimSpace(in.ParentID),
@@ -137,8 +138,8 @@ func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest
 		DueAt:          dueAt,
 		Labels:         append([]string(nil), in.Labels...),
 		Metadata:       in.Metadata,
-		CreatedByActor: strings.TrimSpace(in.Actor.AgentName),
-		UpdatedByActor: strings.TrimSpace(in.Actor.AgentName),
+		CreatedByActor: actorID,
+		UpdatedByActor: actorID,
 		UpdatedByType:  actorType,
 	})
 	if err != nil {
@@ -160,6 +161,7 @@ func (a *AppServiceAdapter) UpdateTask(ctx context.Context, in UpdateTaskRequest
 	if err != nil {
 		return domain.Task{}, err
 	}
+	actorID, _ := deriveMutationActorIdentity(in.Actor)
 	task, err := a.service.UpdateTask(ctx, app.UpdateTaskInput{
 		TaskID:      strings.TrimSpace(in.TaskID),
 		Title:       strings.TrimSpace(in.Title),
@@ -168,7 +170,7 @@ func (a *AppServiceAdapter) UpdateTask(ctx context.Context, in UpdateTaskRequest
 		DueAt:       dueAt,
 		Labels:      append([]string(nil), in.Labels...),
 		Metadata:    in.Metadata,
-		UpdatedBy:   strings.TrimSpace(in.Actor.AgentName),
+		UpdatedBy:   actorID,
 		UpdatedType: actorType,
 	})
 	if err != nil {
@@ -458,13 +460,15 @@ func (a *AppServiceAdapter) CreateComment(ctx context.Context, in CreateCommentR
 	if err != nil {
 		return domain.Comment{}, err
 	}
+	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	comment, err := a.service.CreateComment(ctx, app.CreateCommentInput{
 		ProjectID:    strings.TrimSpace(in.ProjectID),
 		TargetType:   domain.CommentTargetType(strings.TrimSpace(in.TargetType)),
 		TargetID:     strings.TrimSpace(in.TargetID),
 		BodyMarkdown: strings.TrimSpace(in.BodyMarkdown),
+		ActorID:      actorID,
+		ActorName:    actorName,
 		ActorType:    actorType,
-		AuthorName:   strings.TrimSpace(in.Actor.AgentName),
 	})
 	if err != nil {
 		return domain.Comment{}, mapAppError("create comment", err)
@@ -538,13 +542,41 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 			OverrideToken:   overrideToken,
 		})
 	}
-	if agentName != "" {
+	hasIdentityInput := strings.TrimSpace(actor.ActorID) != "" ||
+		strings.TrimSpace(actor.ActorName) != "" ||
+		agentName != "" ||
+		agentInstanceID != ""
+	if hasIdentityInput {
+		actorID, actorName := deriveMutationActorIdentity(actor)
 		ctx = app.WithMutationActor(ctx, app.MutationActor{
-			ActorID:   agentName,
+			ActorID:   actorID,
+			ActorName: actorName,
 			ActorType: actorType,
 		})
 	}
 	return ctx, actorType, nil
+}
+
+// deriveMutationActorIdentity resolves deterministic actor tuple values for mutating requests.
+func deriveMutationActorIdentity(actor ActorLeaseTuple) (string, string) {
+	actorID := strings.TrimSpace(actor.ActorID)
+	if actorID == "" {
+		actorID = strings.TrimSpace(actor.AgentInstanceID)
+	}
+	if actorID == "" {
+		actorID = strings.TrimSpace(actor.AgentName)
+	}
+	if actorID == "" {
+		actorID = "tillsyn-user"
+	}
+	actorName := strings.TrimSpace(actor.ActorName)
+	if actorName == "" {
+		actorName = strings.TrimSpace(actor.AgentName)
+	}
+	if actorName == "" {
+		actorName = actorID
+	}
+	return actorID, actorName
 }
 
 // normalizeActorType canonicalizes actor type values and defaults to user.

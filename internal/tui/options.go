@@ -55,6 +55,7 @@ type KeyConfig struct {
 
 // IdentityConfig holds identity defaults used for ownership-attributed actions.
 type IdentityConfig struct {
+	ActorID          string
 	DisplayName      string
 	DefaultActorType string
 }
@@ -83,6 +84,7 @@ type RuntimeConfig struct {
 
 // BootstrapConfig holds first-run bootstrap identity and global root settings.
 type BootstrapConfig struct {
+	ActorID          string
 	DisplayName      string
 	DefaultActorType string
 	SearchRoots      []string
@@ -258,6 +260,9 @@ func WithKeyConfig(cfg KeyConfig) Option {
 // WithIdentityConfig returns an option that configures default identity attribution.
 func WithIdentityConfig(cfg IdentityConfig) Option {
 	return func(m *Model) {
+		if actorID := strings.TrimSpace(cfg.ActorID); actorID != "" {
+			m.identityActorID = actorID
+		}
 		m.identityDisplayName = strings.TrimSpace(cfg.DisplayName)
 		m.identityDefaultActorType = strings.TrimSpace(strings.ToLower(cfg.DefaultActorType))
 	}

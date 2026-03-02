@@ -1581,3 +1581,147 @@ Commands/tests run and outcomes:
 Current status:
 - `E-08` is remediated and reclassified PASS in `COLLAB_TEST_2026-03-02.md`.
 - No remaining agent-only FAIL items in the dated collab test worksheet.
+
+## Checkpoint 2026-03-02: Parallel Comment + Notices Remediation Setup
+
+Objective:
+- Confirm comment schema/ownership coverage, then run non-overlapping parallel lanes for:
+  1. comment target-type completion (`branch` + `subphase`) across domain/app/MCP/TUI mapping,
+  2. notices panel focusable/scrollable/selectable UX redesign.
+
+Backlog/open-findings review:
+1. Reviewed active collaborative docs and unresolved behavior:
+   - missing global notifications workflow and section-level navigable lists in notices panel,
+   - comment coverage mismatch for hierarchy node types.
+2. Reviewed `PARALLEL_AGENT_RUNBOOK.md` for lock-discipline and lane contract constraints.
+
+Artifacts created:
+1. `COMMENT_SCHEMA_COVERAGE_AND_BUILD_PLAN.md`
+   - current schema/ownership audit + planned build.
+2. `COLLAB_PARALLEL_FIX_TRACKER_2026-03-02.md`
+   - lock table + lane status tracker.
+
+Planned lane lock scopes (non-overlapping):
+1. `LANE-COMMENT-TARGETS`
+   - scope: `internal/domain/comment.go`, `internal/domain/comment_test.go`, `internal/app/service_test.go`, `internal/app/snapshot.go`, `internal/adapters/server/mcpapi/extended_tools.go`, `internal/adapters/server/mcpapi/extended_tools_test.go`, `internal/tui/thread_mode.go`, `internal/tui/thread_mode_test.go`.
+   - out-of-scope: `internal/tui/model.go`, `internal/tui/model_test.go`.
+2. `LANE-NOTICES-PANEL`
+   - scope: `internal/tui/model.go`, `internal/tui/model_test.go`, `internal/tui/keymap.go`.
+   - out-of-scope: all domain/app/server and `internal/tui/thread_mode.go`.
+3. `LANE-OWNERSHIP-PROPOSAL` (analysis-only)
+   - docs/proposal lane; no code edits.
+
+Current status:
+- Ready to dispatch worker lanes with Context7-before-edit and package-scoped `just test-pkg` requirements.
+
+## Checkpoint 2026-03-02: Parallel Comment + Notices Remediation Integration
+
+Objective:
+- Integrate and verify the three-lane wave:
+  1. comment target-type completion across domain/app/MCP/TUI thread mapping,
+  2. notices panel section-list navigation/selection UX,
+  3. ownership tracking audit and migration recommendation.
+
+Lane outcomes:
+1. `LANE-COMMENT-TARGETS` completed:
+   - added `branch` and `subphase` comment target support,
+   - updated snapshot target mapping,
+   - updated MCP comment tool target enum,
+   - updated TUI task->comment target mapping + new tests.
+2. `LANE-NOTICES-PANEL` completed:
+   - converted notices panel sections into focusable/selectable list areas,
+   - added per-section cursors, scroll windowing, and Enter actions,
+   - updated notices/board help messaging.
+3. `LANE-OWNERSHIP-PROPOSAL` completed:
+   - confirmed current ownership model is `actor_type + author_name`,
+   - no stable actor ID stored today; documented optional follow-up migration path.
+
+Commands/tests run and outcomes:
+1. `just test-pkg ./internal/domain` -> PASS
+2. `just test-pkg ./internal/app` -> PASS
+3. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+4. `just test-pkg ./internal/tui` -> PASS
+5. `just ci` -> PASS
+
+Files/docs updated for this checkpoint:
+1. `COMMENT_SCHEMA_COVERAGE_AND_BUILD_PLAN.md`
+   - updated with post-fix implemented matrix + ownership status.
+2. `COLLAB_PARALLEL_FIX_TRACKER_2026-03-02.md`
+   - lane statuses moved to complete with handoff and verification evidence.
+3. code files from lanes integrated in current worktree:
+   - `internal/domain/comment.go`
+   - `internal/domain/comment_test.go`
+   - `internal/app/snapshot.go`
+   - `internal/app/service_test.go`
+   - `internal/adapters/server/mcpapi/extended_tools.go`
+   - `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - `internal/tui/thread_mode.go`
+   - `internal/tui/thread_mode_test.go`
+   - `internal/tui/model.go`
+   - `internal/tui/model_test.go`
+   - `internal/tui/keymap.go`
+
+Current status:
+- Comment coverage now spans all current node types used by hierarchy and thread entry points.
+- Notices panel list navigation/selection behavior is implemented and test-covered.
+- Stable actor-ID ownership tracking remains a follow-up decision, intentionally deferred for this wave.
+
+## Checkpoint 2026-03-02: Ownership Tuple + Identity ActorID Wave (Parallel + Reviewed)
+
+Objective:
+- Implement immutable ownership tuple (`actor_id`, `actor_name`, `actor_type`) for comments/events,
+- wire immutable config-backed user `identity.actor_id` into startup/runtime/TUI,
+- run independent subagent review and remediation until green gates.
+
+Execution summary:
+1. Launched parallel implementation lanes:
+   - `LANE-OWNERSHIP-CORE`
+   - `LANE-TUI-FLOWS`
+   - `LANE-CONFIG-IDENTITY`
+2. Ran independent review lanes:
+   - initial reviews flagged compile/wiring/contract issues,
+   - dispatched targeted remediation lane (`LANE-REVIEW-REMEDIATION`),
+   - ran second independent review pass (`REVIEW-REMEDIATION-PASS2`) -> PASS.
+
+Key outcomes landed:
+1. Comments now use canonical ownership tuple fields end-to-end:
+   - `actor_id`, `actor_name`, `actor_type`.
+2. Change events now persist/read `actor_name` alongside `actor_id` + `actor_type`.
+3. MCP actor tuple supports `actor_id` + `actor_name` and preserves them through mutation context.
+4. TUI comment/activity owner rendering now prefers `actor_name` with compact `actor_id` context.
+5. Config and startup now support immutable `identity.actor_id`:
+   - generate once when missing,
+   - persist to config,
+   - apply at startup and runtime reload.
+6. Snapshot versioning for ownership-shape change is explicit:
+   - `SnapshotVersion` bumped to `tillsyn.snapshot.v2` with strict import version check.
+
+Commands/tests run and outcomes:
+1. `just test-pkg ./internal/domain` -> PASS
+2. `just test-pkg ./internal/app` -> PASS
+3. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+5. `just test-pkg ./internal/tui` -> PASS
+6. `just test-pkg ./cmd/till` -> PASS
+7. `just check` -> PASS
+8. `just ci` -> PASS
+
+Docs/worklog sync:
+1. `COMMENT_SCHEMA_COVERAGE_AND_BUILD_PLAN.md` updated to post-wave canonical schema/tuple state.
+2. `COLLAB_PARALLEL_FIX_TRACKER_2026-03-02.md` updated with Wave 2 completion, review findings, remediation, and final gate evidence.
+
+Current status:
+- Ownership + identity foundations are implemented and verified.
+- Branch is ready to continue collaborative worksheet execution from the next pending collab section.
+
+## Checkpoint 2026-03-02: Parallel Wave Sign-Off Revalidation
+
+Objective:
+- confirm final sign-off state after tracker/worklog synchronization.
+
+Commands/tests run and outcomes:
+1. `just check` -> PASS
+2. `just ci` -> PASS
+
+Current status:
+- all parallel implementation lanes and independent review lanes remain closed with green integrator gates.

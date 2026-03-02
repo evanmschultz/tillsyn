@@ -49,8 +49,9 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 		TargetType:   domain.CommentTargetTypeProject,
 		TargetID:     p1.ID,
 		BodyMarkdown: "Project comment",
+		ActorID:      "tester",
+		ActorName:    "tester",
 		ActorType:    domain.ActorTypeUser,
-		AuthorName:   "tester",
 	}, now)
 	if err != nil {
 		t.Fatalf("NewComment() error = %v", err)
@@ -171,8 +172,9 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 				TargetType:   domain.CommentTargetTypeProject,
 				TargetID:     "p1",
 				BodyMarkdown: "Imported project comment",
+				ActorID:      "importer",
+				ActorName:    "importer",
 				ActorType:    domain.ActorTypeUser,
-				AuthorName:   "importer",
 				CreatedAt:    now,
 				UpdatedAt:    now.Add(time.Minute),
 			},
@@ -242,6 +244,10 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 	badVersion := Snapshot{Version: "tillsyn.snapshot.v999"}
 	if err := svc.ImportSnapshot(context.Background(), badVersion); err == nil {
 		t.Fatal("expected version validation error")
+	}
+	missingVersion := Snapshot{}
+	if err := svc.ImportSnapshot(context.Background(), missingVersion); err == nil {
+		t.Fatal("expected missing version validation error")
 	}
 
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)

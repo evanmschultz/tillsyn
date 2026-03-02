@@ -12,8 +12,8 @@ import (
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
-// SnapshotVersion defines a package constant value.
-const SnapshotVersion = "tillsyn.snapshot.v1"
+// SnapshotVersion defines the canonical snapshot schema version.
+const SnapshotVersion = "tillsyn.snapshot.v2"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
@@ -107,8 +107,9 @@ type SnapshotComment struct {
 	TargetType   domain.CommentTargetType `json:"target_type"`
 	TargetID     string                   `json:"target_id"`
 	BodyMarkdown string                   `json:"body_markdown"`
+	ActorID      string                   `json:"actor_id"`
+	ActorName    string                   `json:"actor_name"`
 	ActorType    domain.ActorType         `json:"actor_type"`
-	AuthorName   string                   `json:"author_name"`
 	CreatedAt    time.Time                `json:"created_at"`
 	UpdatedAt    time.Time                `json:"updated_at"`
 }
@@ -281,7 +282,7 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 
 // Validate validates the requested operation.
 func (s *Snapshot) Validate() error {
-	if s.Version != "" && s.Version != SnapshotVersion {
+	if strings.TrimSpace(s.Version) != SnapshotVersion {
 		return fmt.Errorf("unsupported snapshot version: %q", s.Version)
 	}
 
@@ -484,9 +485,13 @@ func (s *Snapshot) Validate() error {
 		if !isSupportedActorType(actorType) {
 			return fmt.Errorf("comments[%d].actor_type invalid: %q", i, actorType)
 		}
-		authorName := strings.TrimSpace(c.AuthorName)
-		if authorName == "" {
-			authorName = "tillsyn-user"
+		actorID := strings.TrimSpace(c.ActorID)
+		if actorID == "" {
+			actorID = "tillsyn-user"
+		}
+		actorName := strings.TrimSpace(c.ActorName)
+		if actorName == "" {
+			actorName = actorID
 		}
 		if c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
 			return fmt.Errorf("comments[%d] timestamps are required", i)
@@ -501,8 +506,9 @@ func (s *Snapshot) Validate() error {
 		s.Comments[i].TargetType = target.TargetType
 		s.Comments[i].TargetID = target.TargetID
 		s.Comments[i].BodyMarkdown = body
+		s.Comments[i].ActorID = actorID
+		s.Comments[i].ActorName = actorName
 		s.Comments[i].ActorType = actorType
-		s.Comments[i].AuthorName = authorName
 	}
 
 	leaseIDs := map[string]struct{}{}
@@ -703,8 +709,15 @@ func (s *Service) importSnapshotCapabilityLeases(ctx context.Context, leases []S
 // snapshotCommentTargetTypeForTask maps one work-item row to a comment target type.
 func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType {
 	switch task.Kind {
+	case domain.WorkKind(domain.KindAppliesToBranch):
+		return domain.CommentTargetTypeBranch
 	case domain.WorkKindPhase:
+		if task.Scope == domain.KindAppliesToSubphase {
+			return domain.CommentTargetTypeSubphase
+		}
 		return domain.CommentTargetTypePhase
+	case domain.WorkKind(domain.KindAppliesToSubphase):
+		return domain.CommentTargetTypeSubphase
 	case domain.WorkKindSubtask:
 		return domain.CommentTargetTypeSubtask
 	case domain.WorkKindDecision:
@@ -712,11 +725,14 @@ func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType
 	case domain.WorkKindNote:
 		return domain.CommentTargetTypeNote
 	default:
+		if task.Scope == domain.KindAppliesToBranch {
+			return domain.CommentTargetTypeBranch
+		}
 		if task.Scope == domain.KindAppliesToSubtask {
 			return domain.CommentTargetTypeSubtask
 		}
 		if task.Scope == domain.KindAppliesToSubphase {
-			return domain.CommentTargetTypePhase
+			return domain.CommentTargetTypeSubphase
 		}
 		if task.Scope == domain.KindAppliesToPhase {
 			return domain.CommentTargetTypePhase
@@ -910,8 +926,9 @@ func snapshotCommentFromDomain(comment domain.Comment) SnapshotComment {
 		TargetType:   comment.TargetType,
 		TargetID:     comment.TargetID,
 		BodyMarkdown: comment.BodyMarkdown,
+		ActorID:      comment.ActorID,
+		ActorName:    comment.ActorName,
 		ActorType:    comment.ActorType,
-		AuthorName:   comment.AuthorName,
 		CreatedAt:    comment.CreatedAt.UTC(),
 		UpdatedAt:    comment.UpdatedAt.UTC(),
 	}
@@ -1054,9 +1071,13 @@ func (c SnapshotComment) toDomain() domain.Comment {
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
 	}
-	authorName := strings.TrimSpace(c.AuthorName)
-	if authorName == "" {
-		authorName = "tillsyn-user"
+	actorID := strings.TrimSpace(c.ActorID)
+	if actorID == "" {
+		actorID = "tillsyn-user"
+	}
+	actorName := strings.TrimSpace(c.ActorName)
+	if actorName == "" {
+		actorName = actorID
 	}
 	return domain.Comment{
 		ID:           strings.TrimSpace(c.ID),
@@ -1064,8 +1085,9 @@ func (c SnapshotComment) toDomain() domain.Comment {
 		TargetType:   domain.NormalizeCommentTargetType(c.TargetType),
 		TargetID:     strings.TrimSpace(c.TargetID),
 		BodyMarkdown: strings.TrimSpace(c.BodyMarkdown),
+		ActorID:      actorID,
+		ActorName:    actorName,
 		ActorType:    actorType,
-		AuthorName:   authorName,
 		CreatedAt:    c.CreatedAt.UTC(),
 		UpdatedAt:    c.UpdatedAt.UTC(),
 	}

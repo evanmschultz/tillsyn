@@ -226,6 +226,8 @@ func registerTaskTools(
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
 				mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
+				mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
+				mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
 				mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
 				mcp.WithString("agent_name", mcp.Description("Agent name for guarded calls")),
 				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for guarded calls")),
@@ -245,6 +247,8 @@ func registerTaskTools(
 					DueAt           string              `json:"due_at"`
 					Labels          []string            `json:"labels"`
 					Metadata        domain.TaskMetadata `json:"metadata"`
+					ActorID         string              `json:"actor_id"`
+					ActorName       string              `json:"actor_name"`
 					ActorType       string              `json:"actor_type"`
 					AgentName       string              `json:"agent_name"`
 					AgentInstanceID string              `json:"agent_instance_id"`
@@ -276,6 +280,8 @@ func registerTaskTools(
 					Labels:      append([]string(nil), args.Labels...),
 					Metadata:    args.Metadata,
 					Actor: common.ActorLeaseTuple{
+						ActorID:         args.ActorID,
+						ActorName:       args.ActorName,
 						ActorType:       args.ActorType,
 						AgentName:       args.AgentName,
 						AgentInstanceID: args.AgentInstanceID,
@@ -305,6 +311,8 @@ func registerTaskTools(
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
 				mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
+				mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
+				mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
 				mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
 				mcp.WithString("agent_name", mcp.Description("Agent name for guarded calls")),
 				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for guarded calls")),
@@ -320,6 +328,8 @@ func registerTaskTools(
 					DueAt           string               `json:"due_at"`
 					Labels          []string             `json:"labels"`
 					Metadata        *domain.TaskMetadata `json:"metadata"`
+					ActorID         string               `json:"actor_id"`
+					ActorName       string               `json:"actor_name"`
 					ActorType       string               `json:"actor_type"`
 					AgentName       string               `json:"agent_name"`
 					AgentInstanceID string               `json:"agent_instance_id"`
@@ -344,6 +354,8 @@ func registerTaskTools(
 					Labels:      append([]string(nil), args.Labels...),
 					Metadata:    args.Metadata,
 					Actor: common.ActorLeaseTuple{
+						ActorID:         args.ActorID,
+						ActorName:       args.ActorName,
 						ActorType:       args.ActorType,
 						AgentName:       args.AgentName,
 						AgentInstanceID: args.AgentInstanceID,
@@ -975,11 +987,13 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.create_comment",
-			mcp.WithDescription("Create one markdown comment for a project/task/subtask/phase/decision/note target."),
+			mcp.WithDescription("Create one markdown comment for a project/branch/phase/subphase/task/subtask/decision/note target."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|task|subtask|phase|decision|note"), mcp.Enum("project", "task", "subtask", "phase", "decision", "note")),
+			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|branch|phase|subphase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "subphase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),
 			mcp.WithString("body_markdown", mcp.Required(), mcp.Description("Markdown body")),
+			mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
+			mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
 			mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
 			mcp.WithString("agent_name", mcp.Description("Agent name for guarded calls")),
 			mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for guarded calls")),
@@ -1009,6 +1023,8 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				TargetID:     targetID,
 				BodyMarkdown: bodyMarkdown,
 				Actor: common.ActorLeaseTuple{
+					ActorID:         req.GetString("actor_id", ""),
+					ActorName:       req.GetString("actor_name", ""),
 					ActorType:       req.GetString("actor_type", ""),
 					AgentName:       req.GetString("agent_name", ""),
 					AgentInstanceID: req.GetString("agent_instance_id", ""),
@@ -1032,7 +1048,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			"till.list_comments_by_target",
 			mcp.WithDescription("List comments for one target."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|task|subtask|phase|decision|note"), mcp.Enum("project", "task", "subtask", "phase", "decision", "note")),
+			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|branch|phase|subphase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "subphase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

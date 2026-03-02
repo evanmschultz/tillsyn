@@ -1471,7 +1471,8 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 		TargetID:     task.ID,
 		BodyMarkdown: "first",
 		ActorType:    domain.ActorType("USER"),
-		AuthorName:   "user-1",
+		ActorID:      "user-1",
+		ActorName:    "user-1",
 	}); err != nil {
 		t.Fatalf("CreateComment(first) error = %v", err)
 	}
@@ -1487,8 +1488,11 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	if second.ActorType != domain.ActorTypeUser {
 		t.Fatalf("expected default actor type user, got %q", second.ActorType)
 	}
-	if second.AuthorName != "tillsyn-user" {
-		t.Fatalf("expected default author name tillsyn-user, got %q", second.AuthorName)
+	if second.ActorID != "tillsyn-user" {
+		t.Fatalf("expected default actor id tillsyn-user, got %q", second.ActorID)
+	}
+	if second.ActorName != "tillsyn-user" {
+		t.Fatalf("expected default actor name tillsyn-user, got %q", second.ActorName)
 	}
 
 	comments, err := svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
@@ -1560,6 +1564,53 @@ func TestCreateCommentValidation(t *testing.T) {
 	})
 	if err != domain.ErrInvalidTargetType {
 		t.Fatalf("expected ErrInvalidTargetType, got %v", err)
+	}
+}
+
+// TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes verifies branch/subphase comment target mapping.
+func TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes(t *testing.T) {
+	tests := []struct {
+		name string
+		task domain.Task
+		want domain.CommentTargetType
+	}{
+		{
+			name: "branch kind",
+			task: domain.Task{Kind: domain.WorkKind(domain.KindAppliesToBranch)},
+			want: domain.CommentTargetTypeBranch,
+		},
+		{
+			name: "branch scope fallback",
+			task: domain.Task{Kind: domain.WorkKindTask, Scope: domain.KindAppliesToBranch},
+			want: domain.CommentTargetTypeBranch,
+		},
+		{
+			name: "subphase scope on phase kind",
+			task: domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToSubphase},
+			want: domain.CommentTargetTypeSubphase,
+		},
+		{
+			name: "subphase kind",
+			task: domain.Task{Kind: domain.WorkKind(domain.KindAppliesToSubphase)},
+			want: domain.CommentTargetTypeSubphase,
+		},
+		{
+			name: "phase backward compatible",
+			task: domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
+			want: domain.CommentTargetTypePhase,
+		},
+		{
+			name: "task backward compatible",
+			task: domain.Task{Kind: domain.WorkKindTask, Scope: domain.KindAppliesToTask},
+			want: domain.CommentTargetTypeTask,
+		},
+	}
+
+	for _, tc := range tests {
+		got := snapshotCommentTargetTypeForTask(tc.task)
+		if got != tc.want {
+			t.Fatalf("%s: snapshotCommentTargetTypeForTask() = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -1849,7 +1900,8 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		TargetID:     task.ID,
 		BodyMarkdown: "task scoped comment",
 		ActorType:    domain.ActorTypeAgent,
-		AuthorName:   "task-agent",
+		ActorID:      "task-agent",
+		ActorName:    "task-agent",
 	}); err != nil {
 		t.Fatalf("CreateComment(task scoped) error = %v", err)
 	}

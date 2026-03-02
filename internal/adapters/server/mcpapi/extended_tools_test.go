@@ -15,8 +15,11 @@ import (
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
 type stubExpandedService struct {
 	stubCaptureStateReader
-	lastUpdateTaskReq  common.UpdateTaskRequest
-	lastRestoreTaskReq common.RestoreTaskRequest
+	lastCreateTaskReq    common.CreateTaskRequest
+	lastUpdateTaskReq    common.UpdateTaskRequest
+	lastRestoreTaskReq   common.RestoreTaskRequest
+	lastCreateCommentReq common.CreateCommentRequest
+	lastListCommentReq   common.ListCommentsByTargetRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -74,7 +77,8 @@ func (s *stubExpandedService) ListTasks(_ context.Context, _ string, _ bool) ([]
 }
 
 // CreateTask returns one deterministic created task row.
-func (s *stubExpandedService) CreateTask(_ context.Context, _ common.CreateTaskRequest) (domain.Task, error) {
+func (s *stubExpandedService) CreateTask(_ context.Context, in common.CreateTaskRequest) (domain.Task, error) {
+	s.lastCreateTaskReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Task{
 		ID:             "t1",
@@ -225,6 +229,7 @@ func (s *stubExpandedService) ListProjectChangeEvents(_ context.Context, _ strin
 			WorkItemID: "t1",
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "tester",
+			ActorName:  "tester",
 			ActorType:  domain.ActorTypeUser,
 			Metadata:   map[string]string{"field": "title"},
 			OccurredAt: time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC),
@@ -324,24 +329,35 @@ func (s *stubExpandedService) RevokeAllCapabilityLeases(_ context.Context, _ com
 }
 
 // CreateComment returns one deterministic comment row.
-func (s *stubExpandedService) CreateComment(_ context.Context, _ common.CreateCommentRequest) (domain.Comment, error) {
+func (s *stubExpandedService) CreateComment(_ context.Context, in common.CreateCommentRequest) (domain.Comment, error) {
+	s.lastCreateCommentReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	targetType := domain.NormalizeCommentTargetType(domain.CommentTargetType(in.TargetType))
+	if targetType == "" {
+		targetType = domain.CommentTargetTypeTask
+	}
 	return domain.Comment{
 		ID:           "c1",
-		ProjectID:    "p1",
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     "t1",
+		ProjectID:    in.ProjectID,
+		TargetType:   targetType,
+		TargetID:     in.TargetID,
 		BodyMarkdown: "hello",
+		ActorID:      "tester",
+		ActorName:    "tester",
 		ActorType:    domain.ActorTypeUser,
-		AuthorName:   "tester",
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil
 }
 
 // ListCommentsByTarget returns one deterministic comment row.
-func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, _ common.ListCommentsByTargetRequest) ([]domain.Comment, error) {
-	comment, _ := s.CreateComment(context.Background(), common.CreateCommentRequest{})
+func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, in common.ListCommentsByTargetRequest) ([]domain.Comment, error) {
+	s.lastListCommentReq = in
+	comment, _ := s.CreateComment(context.Background(), common.CreateCommentRequest{
+		ProjectID:  in.ProjectID,
+		TargetType: in.TargetType,
+		TargetID:   in.TargetID,
+	})
 	return []domain.Comment{comment}, nil
 }
 
@@ -461,7 +477,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedToolForwardsActorTupleFields verifies actor tuple fields flow through update/restore tool requests.
+// TestHandlerExpandedToolForwardsActorTupleFields verifies actor tuple fields flow through task/comment tool requests.
 func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
@@ -477,10 +493,32 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.create_task", map[string]any{
+		"project_id":  "p1",
+		"column_id":   "c1",
+		"title":       "Task One",
+		"actor_type":  "user",
+		"actor_id":    "actor-1",
+		"actor_name":  "Actor One",
+		"agent_name":  "agent-name",
+		"lease_token": "",
+	}))
+	if isError, _ := createResp.Result["isError"].(bool); isError {
+		t.Fatalf("create_task returned isError=true: %#v", createResp.Result)
+	}
+	if got := service.lastCreateTaskReq.Actor.ActorID; got != "actor-1" {
+		t.Fatalf("create_task actor_id = %q, want actor-1", got)
+	}
+	if got := service.lastCreateTaskReq.Actor.ActorName; got != "Actor One" {
+		t.Fatalf("create_task actor_name = %q, want Actor One", got)
+	}
+
 	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.update_task", map[string]any{
 		"task_id":    "t1",
 		"title":      "Task One Updated",
 		"actor_type": "user",
+		"actor_id":   "upd-1",
+		"actor_name": "Updater One",
 		"agent_name": "EVAN",
 	}))
 	if isError, _ := updateResp.Result["isError"].(bool); isError {
@@ -491,6 +529,30 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "EVAN" {
 		t.Fatalf("update_task agent_name = %q, want EVAN", got)
+	}
+	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "upd-1" {
+		t.Fatalf("update_task actor_id = %q, want upd-1", got)
+	}
+	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Updater One" {
+		t.Fatalf("update_task actor_name = %q, want Updater One", got)
+	}
+
+	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", map[string]any{
+		"project_id":    "p1",
+		"target_type":   "task",
+		"target_id":     "t1",
+		"body_markdown": "hello",
+		"actor_id":      "commenter-1",
+		"actor_name":    "Commenter One",
+	}))
+	if isError, _ := commentResp.Result["isError"].(bool); isError {
+		t.Fatalf("create_comment returned isError=true: %#v", commentResp.Result)
+	}
+	if got := service.lastCreateCommentReq.Actor.ActorID; got != "commenter-1" {
+		t.Fatalf("create_comment actor_id = %q, want commenter-1", got)
+	}
+	if got := service.lastCreateCommentReq.Actor.ActorName; got != "Commenter One" {
+		t.Fatalf("create_comment actor_name = %q, want Commenter One", got)
 	}
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", map[string]any{
@@ -518,6 +580,54 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 	if got := service.lastRestoreTaskReq.Actor.OverrideToken; got != "override-1" {
 		t.Fatalf("restore_task override_token = %q, want override-1", got)
+	}
+}
+
+// TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes verifies hierarchy node target types pass through comment tools.
+func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(401, "till.create_comment", map[string]any{
+		"project_id":    "p1",
+		"target_type":   "branch",
+		"target_id":     "branch-1",
+		"body_markdown": "hello",
+	}))
+	if isError, _ := createResp.Result["isError"].(bool); isError {
+		t.Fatalf("create_comment returned isError=true: %#v", createResp.Result)
+	}
+	if got := service.lastCreateCommentReq.TargetType; got != "branch" {
+		t.Fatalf("create_comment target_type = %q, want branch", got)
+	}
+	if got := service.lastCreateCommentReq.TargetID; got != "branch-1" {
+		t.Fatalf("create_comment target_id = %q, want branch-1", got)
+	}
+
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(402, "till.list_comments_by_target", map[string]any{
+		"project_id":  "p1",
+		"target_type": "subphase",
+		"target_id":   "subphase-1",
+	}))
+	if isError, _ := listResp.Result["isError"].(bool); isError {
+		t.Fatalf("list_comments_by_target returned isError=true: %#v", listResp.Result)
+	}
+	if got := service.lastListCommentReq.TargetType; got != "subphase" {
+		t.Fatalf("list_comments_by_target target_type = %q, want subphase", got)
+	}
+	if got := service.lastListCommentReq.TargetID; got != "subphase-1" {
+		t.Fatalf("list_comments_by_target target_id = %q, want subphase-1", got)
 	}
 }
 

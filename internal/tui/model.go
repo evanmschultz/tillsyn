@@ -125,6 +125,8 @@ const (
 	minimumNoticesPanelWidth = 24
 	// maximumNoticesPanelWidth caps notices panel growth to preserve board readability.
 	maximumNoticesPanelWidth = 38
+	// noticesSectionViewWindow caps visible rows per notices section before list scrolling is required.
+	noticesSectionViewWindow = 4
 )
 
 // defaultLabelSuggestionsSeed provides baseline label suggestions before user/project customization exists.
@@ -261,8 +263,44 @@ type activityEntry struct {
 	WorkItemID string
 	Operation  domain.ChangeOperation
 	ActorID    string
+	ActorName  string
 	ActorType  domain.ActorType
 	Metadata   map[string]string
+}
+
+// noticesSectionID identifies one focusable list section in the notices panel.
+type noticesSectionID int
+
+// Notices panel section identifiers.
+const (
+	noticesSectionWarnings noticesSectionID = iota
+	noticesSectionAttention
+	noticesSectionSelection
+	noticesSectionRecentActivity
+)
+
+// noticesPanelItem describes one selectable row in a notices-panel section.
+type noticesPanelItem struct {
+	Label       string
+	TaskID      string
+	Activity    activityEntry
+	HasActivity bool
+}
+
+// noticesPanelSection describes one notices-panel list section.
+type noticesPanelSection struct {
+	ID      noticesSectionID
+	Title   string
+	Summary []string
+	Items   []noticesPanelItem
+}
+
+// noticesPanelSectionOrder stores the stable section traversal order for notices navigation.
+var noticesPanelSectionOrder = []noticesSectionID{
+	noticesSectionWarnings,
+	noticesSectionAttention,
+	noticesSectionSelection,
+	noticesSectionRecentActivity,
 }
 
 // historyStepKind identifies one reversible operation in a mutation set.
@@ -424,6 +462,10 @@ type Model struct {
 	selectedTaskIDs  map[string]struct{}
 	activityLog      []activityEntry
 	noticesFocused   bool
+	noticesSection   noticesSectionID
+	noticesWarnings  int
+	noticesAttention int
+	noticesSelection int
 	noticesActivity  int
 	activityInfoItem activityEntry
 	undoStack        []historyActionSet
@@ -464,6 +506,7 @@ type Model struct {
 	saveLabels      SaveLabelsConfigFunc
 
 	identityDisplayName      string
+	identityActorID          string
 	identityDefaultActorType string
 
 	threadBackMode            inputMode
@@ -669,6 +712,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		highlightColor:           defaultHighlightColor,
 		selectedTaskIDs:          map[string]struct{}{},
 		activityLog:              []activityEntry{},
+		noticesSection:           noticesSectionRecentActivity,
 		confirmDelete:            true,
 		confirmArchive:           true,
 		confirmHardDelete:        true,
@@ -679,6 +723,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		searchRoots:              []string{},
 		projectRoots:             map[string]string{},
 		identityDisplayName:      "tillsyn-user",
+		identityActorID:          "tillsyn-user",
 		identityDefaultActorType: string(domain.ActorTypeUser),
 		bootstrapActorIndex:      0,
 		bootstrapRoots:           []string{},
@@ -1695,6 +1740,7 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 	if actorID == "" {
 		actorID = "unknown"
 	}
+	actorName := strings.TrimSpace(event.ActorName)
 	actorType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(event.ActorType))))
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
@@ -1707,6 +1753,7 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 		WorkItemID: strings.TrimSpace(event.WorkItemID),
 		Operation:  event.Operation,
 		ActorID:    actorID,
+		ActorName:  actorName,
 		ActorType:  actorType,
 		Metadata:   copyActivityMetadata(event.Metadata),
 	}
@@ -1883,7 +1930,12 @@ func (m Model) submitBootstrapSettings() (tea.Model, tea.Cmd) {
 	if m.bootstrapMandatory {
 		actorType = string(domain.ActorTypeUser)
 	}
+	actorID := strings.TrimSpace(m.identityActorID)
+	if actorID == "" {
+		actorID = "tillsyn-user"
+	}
 	cfg := BootstrapConfig{
+		ActorID:          actorID,
 		DisplayName:      displayName,
 		DefaultActorType: actorType,
 		SearchRoots:      roots,
@@ -1904,10 +1956,16 @@ func (m Model) saveBootstrapSettingsCmd(cfg BootstrapConfig) tea.Cmd {
 
 // applyBootstrapConfig applies saved bootstrap settings to in-memory runtime state.
 func (m *Model) applyBootstrapConfig(cfg BootstrapConfig) {
+	if actorID := strings.TrimSpace(cfg.ActorID); actorID != "" {
+		m.identityActorID = actorID
+	}
 	m.identityDisplayName = strings.TrimSpace(cfg.DisplayName)
 	m.identityDefaultActorType = strings.TrimSpace(strings.ToLower(cfg.DefaultActorType))
 	if m.identityDefaultActorType == "" {
 		m.identityDefaultActorType = string(domain.ActorTypeUser)
+	}
+	if strings.TrimSpace(m.identityActorID) == "" {
+		m.identityActorID = "tillsyn-user"
 	}
 	m.searchRoots = normalizeSearchRoots(cfg.SearchRoots)
 	m.bootstrapRoots = append([]string(nil), m.searchRoots...)
@@ -2673,7 +2731,7 @@ func (m *Model) setPanelFocusIndex(idx int, resetTask bool) bool {
 	if m.isNoticesPanelVisible() && idx == len(m.columns) {
 		changed := !m.noticesFocused || current != idx
 		m.noticesFocused = true
-		m.clampNoticesActivitySelection()
+		m.clampNoticesSelection()
 		return changed
 	}
 	if len(m.columns) == 0 {
@@ -2722,7 +2780,7 @@ func (m *Model) normalizePanelFocus() {
 		m.noticesFocused = false
 	}
 	if m.noticesFocused {
-		m.clampNoticesActivitySelection()
+		m.clampNoticesSelection()
 	}
 }
 
@@ -2803,6 +2861,12 @@ func (m *Model) resetSearchFilters() tea.Cmd {
 // applyRuntimeConfig applies runtime-updateable settings from a reload callback.
 func (m *Model) applyRuntimeConfig(cfg RuntimeConfig) {
 	WithRuntimeConfig(cfg)(m)
+	if actorID := strings.TrimSpace(cfg.Identity.ActorID); actorID != "" {
+		m.identityActorID = actorID
+	}
+	if strings.TrimSpace(m.identityActorID) == "" {
+		m.identityActorID = "tillsyn-user"
+	}
 	m.refreshTaskFormLabelSuggestions()
 }
 
@@ -4947,35 +5011,17 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.moveDown):
-		entries := m.recentActivityPanelEntries()
-		if len(entries) == 0 {
-			m.status = "no recent activity"
-			return m, nil
-		}
-		if m.noticesActivity < len(entries)-1 {
-			m.noticesActivity++
+		if m.moveNoticesSelection(1) {
+			m.status = "notices: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.moveUp):
-		entries := m.recentActivityPanelEntries()
-		if len(entries) == 0 {
-			m.status = "no recent activity"
-			return m, nil
-		}
-		if m.noticesActivity > 0 {
-			m.noticesActivity--
+		if m.moveNoticesSelection(-1) {
+			m.status = "notices: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
 		}
 		return m, nil
 	case msg.Code == tea.KeyEnter || msg.String() == "enter":
-		entry, ok := m.selectedNoticesActivity()
-		if !ok {
-			m.status = "no recent activity"
-			return m, nil
-		}
-		m.activityInfoItem = entry
-		m.mode = modeActivityEventInfo
-		m.status = "activity event"
-		return m, nil
+		return m.activateNoticesSelection()
 	case key.Matches(msg, m.keys.activityLog):
 		return m, m.openActivityLog()
 	default:
@@ -8056,10 +8102,16 @@ func (m *Model) appendActivity(entry activityEntry) {
 		entry.ActorType = domain.ActorTypeUser
 	}
 	if strings.TrimSpace(entry.ActorID) == "" {
-		entry.ActorID = strings.TrimSpace(m.identityDisplayName)
-		if entry.ActorID == "" {
-			entry.ActorID = "tillsyn-user"
-		}
+		entry.ActorID = strings.TrimSpace(m.identityActorID)
+	}
+	if strings.TrimSpace(entry.ActorID) == "" {
+		entry.ActorID = "tillsyn-user"
+	}
+	if strings.TrimSpace(entry.ActorName) == "" {
+		entry.ActorName = strings.TrimSpace(m.identityDisplayName)
+	}
+	if strings.TrimSpace(entry.ActorName) == "" {
+		entry.ActorName = strings.TrimSpace(entry.ActorID)
 	}
 	entry.Metadata = copyActivityMetadata(entry.Metadata)
 	m.activityLog = append(m.activityLog, entry)
@@ -9062,32 +9114,350 @@ func (m Model) canFocusNoticesPanel() bool {
 	return m.isNoticesPanelVisible()
 }
 
-// recentActivityPanelEntries returns up to four newest activity entries for notices rendering/navigation.
+// recentActivityPanelEntries returns newest-first activity entries for notices rendering/navigation.
 func (m Model) recentActivityPanelEntries() []activityEntry {
 	if len(m.activityLog) == 0 {
 		return nil
 	}
-	out := make([]activityEntry, 0, min(4, len(m.activityLog)))
-	for idx := len(m.activityLog) - 1; idx >= 0 && len(out) < 4; idx-- {
+	out := make([]activityEntry, 0, len(m.activityLog))
+	for idx := len(m.activityLog) - 1; idx >= 0; idx-- {
 		out = append(out, m.activityLog[idx])
 	}
 	return out
 }
 
-// clampNoticesActivitySelection keeps notices activity selection in bounds for current entries.
+// noticesSectionTitle returns a stable header label for one notices section identifier.
+func noticesSectionTitle(section noticesSectionID) string {
+	switch section {
+	case noticesSectionWarnings:
+		return "Warnings"
+	case noticesSectionAttention:
+		return "Agent/User Action"
+	case noticesSectionSelection:
+		return "Selection"
+	case noticesSectionRecentActivity:
+		return "Recent Activity"
+	default:
+		return "Notices"
+	}
+}
+
+// noticesSelectionIndex returns the current selected row index for one notices section.
+func (m Model) noticesSelectionIndex(section noticesSectionID) int {
+	switch section {
+	case noticesSectionWarnings:
+		return m.noticesWarnings
+	case noticesSectionAttention:
+		return m.noticesAttention
+	case noticesSectionSelection:
+		return m.noticesSelection
+	case noticesSectionRecentActivity:
+		return m.noticesActivity
+	default:
+		return 0
+	}
+}
+
+// setNoticesSelectionIndex stores one selected row index for the target notices section.
+func (m *Model) setNoticesSelectionIndex(section noticesSectionID, idx int) {
+	switch section {
+	case noticesSectionWarnings:
+		m.noticesWarnings = idx
+	case noticesSectionAttention:
+		m.noticesAttention = idx
+	case noticesSectionSelection:
+		m.noticesSelection = idx
+	case noticesSectionRecentActivity:
+		m.noticesActivity = idx
+	}
+}
+
+// noticesSectionPosition resolves one section id to its traversal position.
+func noticesSectionPosition(section noticesSectionID) int {
+	for idx, candidate := range noticesPanelSectionOrder {
+		if candidate == section {
+			return idx
+		}
+	}
+	return -1
+}
+
+// noticesAttentionPanelItems builds selectable attention rows, preserving board display order.
+func (m Model) noticesAttentionPanelItems(byID map[string]domain.Task, fallback []string) []noticesPanelItem {
+	out := make([]noticesPanelItem, 0)
+	for _, column := range m.columns {
+		for _, task := range m.boardTasksForColumn(column.ID) {
+			count := m.taskAttentionCount(task, byID)
+			if count <= 0 {
+				continue
+			}
+			out = append(out, noticesPanelItem{
+				Label:  fmt.Sprintf("%s !%d", task.Title, count),
+				TaskID: task.ID,
+			})
+		}
+	}
+	if len(out) == 0 {
+		for _, item := range fallback {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			out = append(out, noticesPanelItem{Label: item})
+		}
+	}
+	return out
+}
+
+// noticesActivityItemLabel returns the untruncated display label for one activity row.
+func (m Model) noticesActivityItemLabel(entry activityEntry) string {
+	actorType, owner := m.displayActivityOwner(entry)
+	return fmt.Sprintf("%s|%s %s", actorType, owner, entry.Summary)
+}
+
+// noticesPanelSections builds the focusable notices-panel sections and selectable item rows.
+func (m Model) noticesPanelSections(
+	attentionItems, attentionTotal, attentionBlocked int,
+	attentionTop []string,
+) []noticesPanelSection {
+	sections := make([]noticesPanelSection, 0, len(noticesPanelSectionOrder))
+
+	attentionRows := m.noticesAttentionPanelItems(m.tasksByID(), attentionTop)
+	if len(attentionRows) == 0 {
+		attentionRows = append(attentionRows, noticesPanelItem{Label: "no unresolved notices"})
+	}
+
+	warningTaskID := ""
+	if attentionItems == 1 {
+		for _, row := range attentionRows {
+			if taskID := strings.TrimSpace(row.TaskID); taskID != "" {
+				warningTaskID = taskID
+				break
+			}
+		}
+	}
+
+	warningItems := make([]noticesPanelItem, 0, max(1, len(m.warnings)))
+	if len(m.warnings) == 0 {
+		warningItems = append(warningItems, noticesPanelItem{Label: "none"})
+	} else {
+		for _, warning := range m.warnings {
+			warningItems = append(warningItems, noticesPanelItem{
+				Label:  warning,
+				TaskID: warningTaskID,
+			})
+		}
+	}
+	sections = append(sections, noticesPanelSection{
+		ID:    noticesSectionWarnings,
+		Title: noticesSectionTitle(noticesSectionWarnings),
+		Items: warningItems,
+	})
+
+	attentionSummary := []string{}
+	if attentionTotal > 0 {
+		attentionSummary = append(
+			attentionSummary,
+			fmt.Sprintf("scope items: %d", attentionItems),
+			fmt.Sprintf("unresolved: %d", attentionTotal),
+			fmt.Sprintf("blocked: %d", attentionBlocked),
+		)
+	}
+	sections = append(sections, noticesPanelSection{
+		ID:      noticesSectionAttention,
+		Title:   noticesSectionTitle(noticesSectionAttention),
+		Summary: attentionSummary,
+		Items:   attentionRows,
+	})
+
+	task, ok := m.selectedTaskInCurrentColumn()
+	selectionItems := []noticesPanelItem{}
+	selectionSummary := []string{}
+	if ok {
+		selectionItems = append(selectionItems, noticesPanelItem{
+			Label:  task.Title,
+			TaskID: task.ID,
+		})
+		if meta := m.cardMeta(task); meta != "" {
+			selectionSummary = append(selectionSummary, meta)
+		}
+		if m.taskFields.ShowDescription {
+			desc := strings.TrimSpace(task.Description)
+			if desc == "" {
+				desc = "-"
+			}
+			selectionSummary = append(selectionSummary, "description: "+desc)
+		}
+	} else {
+		selectionItems = append(selectionItems, noticesPanelItem{Label: "no task selected"})
+		selectionSummary = append(selectionSummary, "tip: use f to drill into scope")
+	}
+	sections = append(sections, noticesPanelSection{
+		ID:      noticesSectionSelection,
+		Title:   noticesSectionTitle(noticesSectionSelection),
+		Summary: selectionSummary,
+		Items:   selectionItems,
+	})
+
+	activityRows := m.recentActivityPanelEntries()
+	activityItems := make([]noticesPanelItem, 0, max(1, len(activityRows)))
+	if len(activityRows) == 0 {
+		activityItems = append(activityItems, noticesPanelItem{Label: "(no activity yet)"})
+	} else {
+		for _, entry := range activityRows {
+			activityItems = append(activityItems, noticesPanelItem{
+				Label:       m.noticesActivityItemLabel(entry),
+				Activity:    entry,
+				HasActivity: true,
+			})
+		}
+	}
+	sections = append(sections, noticesPanelSection{
+		ID:    noticesSectionRecentActivity,
+		Title: noticesSectionTitle(noticesSectionRecentActivity),
+		Items: activityItems,
+	})
+
+	return sections
+}
+
+// noticesSectionsForInteraction computes section state from current board data for keyboard interaction.
+func (m Model) noticesSectionsForInteraction() []noticesPanelSection {
+	taskByID := m.tasksByID()
+	attentionItems, attentionTotal, attentionBlocked, attentionTop := m.scopeAttentionSummary(taskByID)
+	return m.noticesPanelSections(attentionItems, attentionTotal, attentionBlocked, attentionTop)
+}
+
+// clampNoticesSelection keeps notices section focus and per-section cursors in bounds.
+func (m *Model) clampNoticesSelection() {
+	m.clampNoticesSelectionForSections(m.noticesSectionsForInteraction())
+}
+
+// clampNoticesSelectionForSections keeps notices selection indices valid for precomputed sections.
+func (m *Model) clampNoticesSelectionForSections(sections []noticesPanelSection) {
+	for _, section := range sections {
+		idx := clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)
+		m.setNoticesSelectionIndex(section.ID, idx)
+	}
+	if noticesSectionPosition(m.noticesSection) < 0 {
+		m.noticesSection = noticesSectionRecentActivity
+	}
+}
+
+// clampNoticesActivitySelection keeps compatibility for existing activity-only call sites.
 func (m *Model) clampNoticesActivitySelection() {
-	entries := m.recentActivityPanelEntries()
-	m.noticesActivity = clamp(m.noticesActivity, 0, len(entries)-1)
+	m.clampNoticesSelection()
 }
 
 // selectedNoticesActivity returns the currently selected notices-panel activity entry.
 func (m Model) selectedNoticesActivity() (activityEntry, bool) {
-	entries := m.recentActivityPanelEntries()
-	if len(entries) == 0 {
-		return activityEntry{}, false
+	sections := m.noticesSectionsForInteraction()
+	for _, section := range sections {
+		if section.ID != noticesSectionRecentActivity {
+			continue
+		}
+		if len(section.Items) == 0 {
+			return activityEntry{}, false
+		}
+		idx := clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)
+		item := section.Items[idx]
+		if !item.HasActivity {
+			return activityEntry{}, false
+		}
+		return item.Activity, true
 	}
-	idx := clamp(m.noticesActivity, 0, len(entries)-1)
-	return entries[idx], true
+	return activityEntry{}, false
+}
+
+// moveNoticesSelection moves section/item focus inside the notices panel.
+func (m *Model) moveNoticesSelection(delta int) bool {
+	if delta == 0 {
+		return false
+	}
+	sections := m.noticesSectionsForInteraction()
+	if len(sections) == 0 {
+		return false
+	}
+	m.clampNoticesSelectionForSections(sections)
+	sectionPos := noticesSectionPosition(m.noticesSection)
+	if sectionPos < 0 {
+		sectionPos = noticesSectionPosition(noticesSectionRecentActivity)
+		if sectionPos < 0 {
+			sectionPos = 0
+		}
+		m.noticesSection = sections[sectionPos].ID
+	}
+	active := sections[sectionPos]
+	itemIdx := clamp(m.noticesSelectionIndex(active.ID), 0, len(active.Items)-1)
+
+	if delta > 0 {
+		if itemIdx < len(active.Items)-1 {
+			m.setNoticesSelectionIndex(active.ID, itemIdx+1)
+			return true
+		}
+		if sectionPos < len(sections)-1 {
+			next := sections[sectionPos+1]
+			m.noticesSection = next.ID
+			idx := clamp(m.noticesSelectionIndex(next.ID), 0, len(next.Items)-1)
+			m.setNoticesSelectionIndex(next.ID, idx)
+			return true
+		}
+		return false
+	}
+
+	if itemIdx > 0 {
+		m.setNoticesSelectionIndex(active.ID, itemIdx-1)
+		return true
+	}
+	if sectionPos > 0 {
+		prev := sections[sectionPos-1]
+		m.noticesSection = prev.ID
+		idx := clamp(m.noticesSelectionIndex(prev.ID), 0, len(prev.Items)-1)
+		m.setNoticesSelectionIndex(prev.ID, idx)
+		return true
+	}
+	return false
+}
+
+// activateNoticesSelection runs enter behavior for the active notices row.
+func (m Model) activateNoticesSelection() (tea.Model, tea.Cmd) {
+	sections := m.noticesSectionsForInteraction()
+	if len(sections) == 0 {
+		m.status = "no notices available"
+		return m, nil
+	}
+	m.clampNoticesSelectionForSections(sections)
+	sectionPos := noticesSectionPosition(m.noticesSection)
+	if sectionPos < 0 {
+		sectionPos = noticesSectionPosition(noticesSectionRecentActivity)
+		if sectionPos < 0 {
+			sectionPos = 0
+		}
+		m.noticesSection = sections[sectionPos].ID
+	}
+	section := sections[sectionPos]
+	if len(section.Items) == 0 {
+		m.status = "no notices available"
+		return m, nil
+	}
+	item := section.Items[clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)]
+	if item.HasActivity {
+		m.activityInfoItem = item.Activity
+		m.mode = modeActivityEventInfo
+		m.status = "activity event"
+		return m, nil
+	}
+	taskID := strings.TrimSpace(item.TaskID)
+	if taskID == "" {
+		m.status = "selected notice has no action"
+		return m, nil
+	}
+	if !m.openTaskInfo(taskID, "task info") {
+		m.status = "task not found"
+		return m, nil
+	}
+	m.noticesFocused = false
+	return m, nil
 }
 
 // normalizeActivityActorType canonicalizes actor types and defaults to user for display.
@@ -9104,25 +9474,39 @@ func normalizeActivityActorType(actorType domain.ActorType) domain.ActorType {
 // displayActivityOwner returns display-safe owner fields for activity rendering.
 func (m Model) displayActivityOwner(entry activityEntry) (domain.ActorType, string) {
 	actorType := normalizeActivityActorType(entry.ActorType)
+	actorName := strings.TrimSpace(entry.ActorName)
 	actorID := strings.TrimSpace(entry.ActorID)
 	if actorType == domain.ActorTypeUser {
-		switch strings.ToLower(actorID) {
-		case "tillsyn-user":
-			if name := strings.TrimSpace(m.identityDisplayName); name != "" {
-				actorID = name
+		switch {
+		case strings.EqualFold(actorName, "tillsyn-user"), strings.EqualFold(actorID, "tillsyn-user"):
+			if name := strings.TrimSpace(m.identityDisplayName); name != "" && (actorName == "" || strings.EqualFold(actorName, "tillsyn-user")) {
+				actorName = name
 			}
 		}
 	}
-	if actorID == "" {
-		actorID = "unknown"
+	if actorName != "" {
+		return actorType, actorName
 	}
-	return actorType, actorID
+	if actorID != "" {
+		return actorType, actorID
+	}
+	return actorType, "unknown"
+}
+
+// displayActivityOwnerWithContext returns owner text with compact actor-id context when informative.
+func (m Model) displayActivityOwnerWithContext(entry activityEntry) (domain.ActorType, string) {
+	actorType, owner := m.displayActivityOwner(entry)
+	actorID := strings.TrimSpace(entry.ActorID)
+	if actorID == "" || strings.EqualFold(owner, actorID) || strings.EqualFold(actorID, "unknown") {
+		return actorType, owner
+	}
+	return actorType, owner + " (" + actorID + ")"
 }
 
 // activityOwnerLabel returns a compact owner label used in notices rows.
 func (m Model) activityOwnerLabel(entry activityEntry, width int) string {
-	actorType, actorID := m.displayActivityOwner(entry)
-	label := string(actorType) + "|" + actorID
+	actorType, owner := m.displayActivityOwner(entry)
+	label := string(actorType) + "|" + owner
 	return truncate(label, max(8, width))
 }
 
@@ -9137,77 +9521,35 @@ func (m Model) renderOverviewPanel(
 ) string {
 	panelWidth := max(24, width)
 	contentWidth := max(12, panelWidth-6)
+	normalStyle := lipgloss.NewStyle().Foreground(muted)
+	selectedStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Notices"),
-		lipgloss.NewStyle().Foreground(muted).Render("project: " + truncate(projectDisplayName(project), contentWidth)),
+		normalStyle.Render("project: " + truncate(projectDisplayName(project), contentWidth)),
 	}
 	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("path: "+truncate(path, contentWidth)))
+		lines = append(lines, normalStyle.Render("path: "+truncate(path, contentWidth)))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Warnings"))
-	if len(m.warnings) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("none"))
-	} else {
-		for _, warning := range m.warnings {
-			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(truncate(warning, contentWidth)))
-		}
+	sections := m.noticesPanelSections(attentionItems, attentionTotal, attentionBlocked, attentionTop)
+	viewModel := m
+	viewModel.clampNoticesSelectionForSections(sections)
+	for _, section := range sections {
+		lines = append(lines, "")
+		lines = append(
+			lines,
+			viewModel.renderNoticesSection(
+				section,
+				focused,
+				accent,
+				contentWidth,
+				selectedStyle,
+				normalStyle,
+			)...,
+		)
 	}
 	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Agent/User Action"))
-	if attentionTotal <= 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("no unresolved notices"))
-	} else {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("scope items: %d", attentionItems)))
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("unresolved: %d", attentionTotal)))
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("blocked: %d", attentionBlocked)))
-		for _, item := range attentionTop {
-			lines = append(lines, "• "+truncate(item, contentWidth-2))
-		}
-	}
-
-	task, ok := m.selectedTaskInCurrentColumn()
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Selection"))
-	if ok {
-		lines = append(lines, truncate(task.Title, contentWidth))
-		if meta := m.cardMeta(task); meta != "" {
-			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(meta))
-		}
-		if m.taskFields.ShowDescription {
-			desc := strings.TrimSpace(task.Description)
-			if desc == "" {
-				desc = "-"
-			}
-			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("description: "+truncate(desc, contentWidth-13)))
-		}
-	} else {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("no task selected"))
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("tip: use f to drill into scope"))
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Recent Activity"))
-	activityRows := m.recentActivityPanelEntries()
-	if len(activityRows) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("(no activity yet)"))
-	} else {
-		selectedIdx := clamp(m.noticesActivity, 0, len(activityRows)-1)
-		selectedStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-		normalStyle := lipgloss.NewStyle().Foreground(muted)
-		for idx, entry := range activityRows {
-			owner := m.activityOwnerLabel(entry, max(10, contentWidth/2))
-			row := truncate(owner+" "+entry.Summary, contentWidth)
-			style := normalStyle
-			if focused && idx == selectedIdx {
-				style = selectedStyle
-			}
-			lines = append(lines, style.Render(row))
-		}
-	}
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("tab/shift+tab panels • enter details • g full activity log"))
+	lines = append(lines, normalStyle.Render("tab/shift+tab panels • enter details • g full activity log"))
 
 	borderColor := dim
 	if focused {
@@ -9220,6 +9562,67 @@ func (m Model) renderOverviewPanel(
 		Padding(1, 1).
 		Width(panelWidth)
 	return style.Render(strings.Join(lines, "\n"))
+}
+
+// renderNoticesSection renders one notices-panel section with local list-window scrolling.
+func (m Model) renderNoticesSection(
+	section noticesPanelSection,
+	focused bool,
+	accent color.Color,
+	contentWidth int,
+	selectedStyle, normalStyle lipgloss.Style,
+) []string {
+	lines := make([]string, 0, len(section.Summary)+noticesSectionViewWindow+3)
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	if focused && section.ID == m.noticesSection {
+		lines = append(lines, headerStyle.Render("▸ "+section.Title))
+	} else {
+		lines = append(lines, headerStyle.Render(section.Title))
+	}
+
+	renderItems := func() {
+		if len(section.Items) == 0 {
+			lines = append(lines, normalStyle.Render("(empty)"))
+			return
+		}
+		selectedIdx := clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)
+		start, end := windowBounds(len(section.Items), selectedIdx, noticesSectionViewWindow)
+		if focused && start > 0 {
+			lines = append(lines, normalStyle.Render(truncate("↑ more", contentWidth)))
+		}
+		for idx := start; idx < end; idx++ {
+			item := section.Items[idx]
+			prefix := ""
+			style := normalStyle
+			if focused {
+				prefix = "  "
+			}
+			if focused && section.ID == m.noticesSection && idx == selectedIdx {
+				prefix = "› "
+				style = selectedStyle
+			}
+			lineWidth := max(1, contentWidth-utf8.RuneCountInString(prefix))
+			lines = append(lines, style.Render(prefix+truncate(item.Label, lineWidth)))
+		}
+		if focused && end < len(section.Items) {
+			lines = append(lines, normalStyle.Render(truncate("↓ more", contentWidth)))
+		}
+	}
+
+	// Keep selection details in task-title-first order while still rendering the title as the selectable row.
+	if section.ID == noticesSectionSelection {
+		renderItems()
+		for _, summary := range section.Summary {
+			lines = append(lines, normalStyle.Render(truncate(summary, contentWidth)))
+		}
+		return lines
+	}
+
+	for _, summary := range section.Summary {
+		lines = append(lines, normalStyle.Render(truncate(summary, contentWidth)))
+	}
+	renderItems()
+	return lines
 }
 
 // renderInfoLine renders output for the current model state.
@@ -9291,13 +9694,17 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	switch m.mode {
 	case modeNone:
+		panelLine := "tab/shift+tab cycle focused panel; left/right move adjacent panel; enter opens notices detail"
+		if m.noticesFocused {
+			panelLine = "tab/shift+tab cycle focused panel; j/k or arrows move notices; enter opens selected notice item"
+		}
 		return "board", []string{
 			"h/l or left/right move columns; j/k or up/down move task selection",
 			"n new task; s new subtask; i/enter task info; e edit task",
 			"space multi-select; [ / ] move task; d delete; D hard delete; u restore",
 			"f focus subtree; F full board; t toggle archived",
 			"/ search; p project picker; : command palette; . quick actions",
-			"tab/shift+tab cycle focused panel; left/right move adjacent panel; enter opens notices detail",
+			panelLine,
 			"ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs",
 			"z undo; Z redo; g activity log; q quit",
 		}
@@ -10003,7 +10410,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
 		entry := m.activityInfoItem
-		actorType, actorID := m.displayActivityOwner(entry)
+		actorType, owner := m.displayActivityOwnerWithContext(entry)
 		operation := strings.TrimSpace(string(entry.Operation))
 		if operation == "" {
 			operation = "update"
@@ -10011,7 +10418,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		nodeLabel, pathLabel := m.activityEventTargetDetails(entry)
 		lines := []string{
 			titleStyle.Render("Activity Event"),
-			hintStyle.Render("owner: " + string(actorType) + " • " + actorID),
+			hintStyle.Render("owner: " + string(actorType) + " • " + owner),
 			hintStyle.Render("when: " + formatActivityTimestampLong(entry.At)),
 			hintStyle.Render("operation: " + operation),
 			hintStyle.Render("summary: " + entry.Summary),

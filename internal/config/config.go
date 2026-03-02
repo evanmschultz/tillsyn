@@ -83,6 +83,7 @@ type SearchConfig struct {
 
 // IdentityConfig holds configuration for operator identity defaults.
 type IdentityConfig struct {
+	ActorID          string `toml:"actor_id"`
 	DisplayName      string `toml:"display_name"`
 	DefaultActorType string `toml:"default_actor_type"`
 }
@@ -158,6 +159,7 @@ func Default(dbPath string) Config {
 			States:          []string{"todo", "progress", "done"},
 		},
 		Identity: IdentityConfig{
+			ActorID:          "",
 			DisplayName:      "",
 			DefaultActorType: defaultActorType,
 		},
@@ -381,6 +383,7 @@ func (c *Config) normalize() {
 		states = []string{"todo", "progress", "done"}
 	}
 	c.Search.States = states
+	c.Identity.ActorID = strings.TrimSpace(c.Identity.ActorID)
 	c.Identity.DisplayName = strings.TrimSpace(c.Identity.DisplayName)
 	c.Identity.DefaultActorType = normalizeActorType(c.Identity.DefaultActorType)
 	c.Paths.SearchRoots = normalizeSearchRoots(c.Paths.SearchRoots)
@@ -498,11 +501,12 @@ func EnsureConfigDir(path string) error {
 }
 
 // UpsertIdentity writes identity defaults to the config file.
-func UpsertIdentity(path, displayName, rawActorType string) error {
+func UpsertIdentity(path, actorID, displayName, rawActorType string) error {
 	configPath := strings.TrimSpace(path)
 	if configPath == "" {
 		return errors.New("config path is required")
 	}
+	actorID = strings.TrimSpace(actorID)
 	displayName = strings.TrimSpace(displayName)
 	actorType := normalizeActorType(rawActorType)
 	switch actorType {
@@ -524,7 +528,7 @@ func UpsertIdentity(path, displayName, rawActorType string) error {
 			return fmt.Errorf("decode toml: %w", err)
 		}
 	}
-	if missing && displayName == "" && actorType == defaultActorType {
+	if missing && actorID == "" && displayName == "" && actorType == defaultActorType {
 		return nil
 	}
 
@@ -537,6 +541,9 @@ func UpsertIdentity(path, displayName, rawActorType string) error {
 		for key, value := range table {
 			identity[key] = value
 		}
+	}
+	if actorID != "" {
+		identity["actor_id"] = actorID
 	}
 
 	if displayName == "" {

@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	charmLog "github.com/charmbracelet/log"
+	"github.com/google/uuid"
 	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/config"
@@ -78,6 +79,7 @@ func writeBootstrapReadyConfig(t *testing.T, path, searchRoot string) {
 	t.Helper()
 	content := fmt.Sprintf(`
 [identity]
+actor_id = "lane-actor-id"
 display_name = "Test User"
 default_actor_type = "user"
 
@@ -127,6 +129,41 @@ func TestRunStartsProgram(t *testing.T) {
 	}
 }
 
+// TestRunStartupPreservesExistingActorID verifies startup keeps a preconfigured identity.actor_id unchanged.
+func TestRunStartupPreservesExistingActorID(t *testing.T) {
+	origFactory := programFactory
+	t.Cleanup(func() { programFactory = origFactory })
+	programFactory = func(_ tea.Model) program {
+		return fakeProgram{}
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "tillsyn.db")
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	content := fmt.Sprintf(`
+[identity]
+actor_id = "existing-actor-id"
+display_name = "Lane User"
+default_actor_type = "user"
+
+[paths]
+search_roots = [%q]
+`, t.TempDir())
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	cfg, err := config.Load(cfgPath, config.Default(dbPath))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Identity.ActorID; got != "existing-actor-id" {
+		t.Fatalf("expected startup to preserve actor_id existing-actor-id, got %q", got)
+	}
+}
+
 // TestRunSeedsMissingConfigFromExampleOnStartup verifies first-launch startup seeds a missing config from config.example.toml.
 func TestRunSeedsMissingConfigFromExampleOnStartup(t *testing.T) {
 	origFactory := programFactory
@@ -147,12 +184,17 @@ func TestRunSeedsMissingConfigFromExampleOnStartup(t *testing.T) {
 		t.Fatalf("run() error = %v", err)
 	}
 
-	content, err := os.ReadFile(cfgPath)
+	cfg, err := config.Load(cfgPath, config.Default(dbPath))
 	if err != nil {
-		t.Fatalf("ReadFile(config) error = %v", err)
+		t.Fatalf("Load(config) error = %v", err)
 	}
-	if got := string(content); got != example {
-		t.Fatalf("expected seeded config to match config.example.toml, got\n%s", got)
+	if got := cfg.Identity.DefaultActorType; got != "user" {
+		t.Fatalf("expected seeded actor type user, got %q", got)
+	}
+	if got := strings.TrimSpace(cfg.Identity.ActorID); got == "" {
+		t.Fatal("expected startup seed flow to generate identity.actor_id")
+	} else if _, parseErr := uuid.Parse(got); parseErr != nil {
+		t.Fatalf("expected generated identity.actor_id to be a UUID, got %q (%v)", got, parseErr)
 	}
 }
 
@@ -256,6 +298,11 @@ func TestRunBootstrapModalPersistsMissingFields(t *testing.T) {
 	}
 	if got := cfg.Identity.DefaultActorType; got != "user" {
 		t.Fatalf("expected persisted actor type user, got %q", got)
+	}
+	if got := strings.TrimSpace(cfg.Identity.ActorID); got == "" {
+		t.Fatal("expected persisted actor_id after bootstrap flow")
+	} else if _, parseErr := uuid.Parse(got); parseErr != nil {
+		t.Fatalf("expected persisted actor_id to be a UUID, got %q (%v)", got, parseErr)
 	}
 	if len(cfg.Paths.SearchRoots) != 1 || cfg.Paths.SearchRoots[0] != filepath.Clean(workspace) {
 		t.Fatalf("expected persisted search root %q, got %#v", filepath.Clean(workspace), cfg.Paths.SearchRoots)
@@ -1128,6 +1175,7 @@ include_archived = true
 states = ["todo", "archived"]
 
 [identity]
+actor_id = "runtime-actor-id"
 display_name = "Lane User"
 default_actor_type = "agent"
 
@@ -1202,6 +1250,9 @@ redo = "U"
 	if got := runtimeCfg.Identity.DisplayName; got != "Lane User" {
 		t.Fatalf("expected identity display name Lane User, got %q", got)
 	}
+	if got := runtimeCfg.Identity.ActorID; got != "runtime-actor-id" {
+		t.Fatalf("expected identity actor_id runtime-actor-id, got %q", got)
+	}
 	if got := runtimeCfg.Identity.DefaultActorType; got != "agent" {
 		t.Fatalf("expected identity actor type agent, got %q", got)
 	}
@@ -1238,7 +1289,7 @@ func TestPersistProjectRootRoundTrip(t *testing.T) {
 func TestPersistIdentityRoundTrip(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "tillsyn.toml")
 
-	if err := persistIdentity(cfgPath, "Lane User", "agent"); err != nil {
+	if err := persistIdentity(cfgPath, "lane-actor-id", "Lane User", "agent"); err != nil {
 		t.Fatalf("persistIdentity() error = %v", err)
 	}
 	cfg, err := config.Load(cfgPath, config.Default("/tmp/default.db"))
@@ -1250,6 +1301,9 @@ func TestPersistIdentityRoundTrip(t *testing.T) {
 	}
 	if got := cfg.Identity.DefaultActorType; got != "agent" {
 		t.Fatalf("expected persisted identity actor type agent, got %q", got)
+	}
+	if got := cfg.Identity.ActorID; got != "lane-actor-id" {
+		t.Fatalf("expected persisted identity actor_id lane-actor-id, got %q", got)
 	}
 }
 

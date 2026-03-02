@@ -47,6 +47,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Identity.DisplayName != "" {
 		t.Fatalf("expected empty default identity display name, got %q", cfg.Identity.DisplayName)
 	}
+	if cfg.Identity.ActorID != "" {
+		t.Fatalf("expected empty default identity actor_id, got %q", cfg.Identity.ActorID)
+	}
 	if cfg.Identity.DefaultActorType != "user" {
 		t.Fatalf("expected default identity actor type user, got %q", cfg.Identity.DefaultActorType)
 	}
@@ -131,6 +134,7 @@ func TestLoadIdentityAndPathsOverrides(t *testing.T) {
 path = "/custom/tillsyn.db"
 
 [identity]
+actor_id = "  actor-123  "
 display_name = "  Evan Schultz  "
 default_actor_type = "AGENT"
 
@@ -147,6 +151,9 @@ search_roots = [" /tmp/a ", "/tmp/a", "/tmp/b/../b"]
 	}
 	if cfg.Identity.DisplayName != "Evan Schultz" {
 		t.Fatalf("unexpected identity display name %q", cfg.Identity.DisplayName)
+	}
+	if cfg.Identity.ActorID != "actor-123" {
+		t.Fatalf("unexpected identity actor_id %q", cfg.Identity.ActorID)
 	}
 	if cfg.Identity.DefaultActorType != "agent" {
 		t.Fatalf("unexpected identity actor type %q", cfg.Identity.DefaultActorType)
@@ -464,12 +471,15 @@ func TestUpsertIdentityWritesAndClears(t *testing.T) {
 	content := `
 [database]
 path = "/tmp/custom.db"
+
+[identity]
+actor_id = "lane-actor"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := UpsertIdentity(path, "Evan", "agent"); err != nil {
+	if err := UpsertIdentity(path, "", "Evan", "agent"); err != nil {
 		t.Fatalf("UpsertIdentity() error = %v", err)
 	}
 	cfg, err := Load(path, Default("/tmp/default.db"))
@@ -482,11 +492,14 @@ path = "/tmp/custom.db"
 	if got := cfg.Identity.DefaultActorType; got != "agent" {
 		t.Fatalf("expected persisted actor type agent, got %q", got)
 	}
+	if got := cfg.Identity.ActorID; got != "lane-actor" {
+		t.Fatalf("expected actor_id preserved as lane-actor, got %q", got)
+	}
 	if got := cfg.Database.Path; got != "/tmp/custom.db" {
 		t.Fatalf("expected database path preserved, got %q", got)
 	}
 
-	if err := UpsertIdentity(path, "", "system"); err != nil {
+	if err := UpsertIdentity(path, "actor-v2", "", "system"); err != nil {
 		t.Fatalf("UpsertIdentity(clear display) error = %v", err)
 	}
 	cfg, err = Load(path, Default("/tmp/default.db"))
@@ -499,12 +512,15 @@ path = "/tmp/custom.db"
 	if got := cfg.Identity.DefaultActorType; got != "system" {
 		t.Fatalf("expected actor type system after clear, got %q", got)
 	}
+	if got := cfg.Identity.ActorID; got != "actor-v2" {
+		t.Fatalf("expected actor_id actor-v2 after update, got %q", got)
+	}
 }
 
 // TestUpsertIdentityMissingFileClearNoop verifies behavior for the covered scenario.
 func TestUpsertIdentityMissingFileClearNoop(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.toml")
-	if err := UpsertIdentity(path, "", ""); err != nil {
+	if err := UpsertIdentity(path, "", "", ""); err != nil {
 		t.Fatalf("UpsertIdentity() error = %v", err)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -515,10 +531,10 @@ func TestUpsertIdentityMissingFileClearNoop(t *testing.T) {
 // TestUpsertIdentityRejectsInvalidInput verifies behavior for the covered scenario.
 func TestUpsertIdentityRejectsInvalidInput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := UpsertIdentity("", "Evan", "user"); err == nil {
+	if err := UpsertIdentity("", "", "Evan", "user"); err == nil {
 		t.Fatal("expected error for empty config path")
 	}
-	if err := UpsertIdentity(path, "Evan", "robot"); err == nil {
+	if err := UpsertIdentity(path, "", "Evan", "robot"); err == nil {
 		t.Fatal("expected error for invalid actor type")
 	}
 }

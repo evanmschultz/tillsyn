@@ -524,6 +524,11 @@ func executeCommandFlow(
 	if dbOverridden {
 		cfg.Database.Path = dbPath
 	}
+	if command == "" {
+		if err := ensureStartupIdentityActorID(configPath, &cfg); err != nil {
+			return fmt.Errorf("bootstrap identity.actor_id: %w", err)
+		}
+	}
 	bootstrapRequired := startupBootstrapRequired(cfg)
 
 	logger, err := newRuntimeLogger(stderr, rootOpts.appName, rootOpts.devMode, cfg.Logging, time.Now)
@@ -634,12 +639,16 @@ func executeCommandFlow(
 			logger.Info("labels config update complete", "project_slug", projectSlug, "global_count", len(globalLabels), "project_count", len(projectLabels), "config_path", configPath)
 			return nil
 		}),
-		tui.WithSaveBootstrapConfigCallback(func(cfg tui.BootstrapConfig) error {
-			displayName := strings.TrimSpace(cfg.DisplayName)
-			actorType := sanitizeBootstrapActorType(cfg.DefaultActorType)
-			searchRoots := cloneSearchRoots(cfg.SearchRoots)
+		tui.WithSaveBootstrapConfigCallback(func(bootstrap tui.BootstrapConfig) error {
+			actorID := strings.TrimSpace(bootstrap.ActorID)
+			if actorID == "" {
+				actorID = strings.TrimSpace(cfg.Identity.ActorID)
+			}
+			displayName := strings.TrimSpace(bootstrap.DisplayName)
+			actorType := sanitizeBootstrapActorType(bootstrap.DefaultActorType)
+			searchRoots := cloneSearchRoots(bootstrap.SearchRoots)
 			logger.Info("bootstrap settings update requested", "config_path", configPath, "display_name", displayName, "default_actor_type", actorType, "search_roots_count", len(searchRoots))
-			if err := persistIdentity(configPath, displayName, actorType); err != nil {
+			if err := persistIdentity(configPath, actorID, displayName, actorType); err != nil {
 				logger.Error("bootstrap identity update failed", "config_path", configPath, "display_name", displayName, "default_actor_type", actorType, "err", err)
 				return err
 			}
@@ -731,6 +740,23 @@ func startupBootstrapRequired(cfg config.Config) bool {
 	return len(cfg.Paths.SearchRoots) == 0
 }
 
+// ensureStartupIdentityActorID generates and persists identity.actor_id once for TUI startup flows.
+func ensureStartupIdentityActorID(configPath string, cfg *config.Config) error {
+	if cfg == nil {
+		return errors.New("config is required")
+	}
+	if strings.TrimSpace(cfg.Identity.ActorID) != "" {
+		return nil
+	}
+
+	actorID := uuid.NewString()
+	if err := persistIdentity(configPath, actorID, cfg.Identity.DisplayName, cfg.Identity.DefaultActorType); err != nil {
+		return fmt.Errorf("persist generated identity.actor_id: %w", err)
+	}
+	cfg.Identity.ActorID = actorID
+	return nil
+}
+
 // sanitizeBootstrapActorType normalizes bootstrap actor type values to supported options.
 func sanitizeBootstrapActorType(raw string) string {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
@@ -811,6 +837,7 @@ func toTUIRuntimeConfig(cfg config.Config) tui.RuntimeConfig {
 			Redo:           cfg.Keys.Redo,
 		},
 		Identity: tui.IdentityConfig{
+			ActorID:          cfg.Identity.ActorID,
 			DisplayName:      cfg.Identity.DisplayName,
 			DefaultActorType: cfg.Identity.DefaultActorType,
 		},
@@ -826,8 +853,8 @@ func persistProjectRoot(configPath, projectSlug, rootPath string) error {
 }
 
 // persistIdentity updates identity defaults in the TOML config file.
-func persistIdentity(configPath, displayName, defaultActorType string) error {
-	if err := config.UpsertIdentity(configPath, displayName, defaultActorType); err != nil {
+func persistIdentity(configPath, actorID, displayName, defaultActorType string) error {
+	if err := config.UpsertIdentity(configPath, actorID, displayName, defaultActorType); err != nil {
 		return fmt.Errorf("persist identity config: %w", err)
 	}
 	return nil

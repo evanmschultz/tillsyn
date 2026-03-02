@@ -22,6 +22,7 @@ type ChangeEvent struct {
 	WorkItemID string
 	Operation  ChangeOperation
 	ActorID    string
+	ActorName  string
 	ActorType  ActorType
 	Metadata   map[string]string
 	OccurredAt time.Time

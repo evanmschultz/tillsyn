@@ -108,12 +108,9 @@ func (m Model) threadBodyLines(width int, sectionStyle, hintStyle lipgloss.Style
 	}
 
 	for idx, comment := range m.threadComments {
-		author := strings.TrimSpace(comment.AuthorName)
-		if author == "" {
-			author = "tillsyn-user"
-		}
+		owner := threadCommentOwnerLabel(comment)
 		actor := string(normalizeCommentActorType(string(comment.ActorType)))
-		lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, author, formatThreadTimestamp(comment.CreatedAt))))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
 
 		body := m.threadMarkdown.render(comment.BodyMarkdown, width)
 		if strings.TrimSpace(body) == "" {
@@ -168,7 +165,7 @@ func (m Model) startSelectedWorkItemThread(backMode inputMode) (tea.Model, tea.C
 
 // startTaskThread opens thread mode for a specific work item.
 func (m Model) startTaskThread(task domain.Task, backMode inputMode) (tea.Model, tea.Cmd) {
-	targetType, ok := commentTargetTypeForWorkKind(task.Kind)
+	targetType, ok := commentTargetTypeForTask(task)
 	if !ok {
 		m.status = "unsupported work-item kind for comments"
 		return m, nil
@@ -232,7 +229,8 @@ func (m Model) loadThreadCommentsCmd(target domain.CommentTarget) tea.Cmd {
 // createThreadCommentCmd persists one new thread comment with identity defaults.
 func (m Model) createThreadCommentCmd(body string) tea.Cmd {
 	target := m.threadTarget
-	authorName := m.threadAuthorName()
+	actorID := m.threadActorID()
+	actorName := m.threadActorName()
 	actorType := m.threadActorType()
 	return func() tea.Msg {
 		comment, err := m.svc.CreateComment(context.Background(), app.CreateCommentInput{
@@ -240,8 +238,9 @@ func (m Model) createThreadCommentCmd(body string) tea.Cmd {
 			TargetType:   target.TargetType,
 			TargetID:     target.TargetID,
 			BodyMarkdown: strings.TrimSpace(body),
+			ActorID:      actorID,
+			ActorName:    actorName,
 			ActorType:    actorType,
-			AuthorName:   authorName,
 		})
 		return threadCommentCreatedMsg{
 			target: target,
@@ -252,13 +251,22 @@ func (m Model) createThreadCommentCmd(body string) tea.Cmd {
 	}
 }
 
-// threadAuthorName resolves the default comment author name for new thread comments.
-func (m Model) threadAuthorName() string {
-	authorName := strings.TrimSpace(m.identityDisplayName)
-	if authorName == "" {
+// threadActorID resolves the immutable actor id used for new thread comments.
+func (m Model) threadActorID() string {
+	actorID := strings.TrimSpace(m.identityActorID)
+	if actorID == "" {
 		return "tillsyn-user"
 	}
-	return authorName
+	return actorID
+}
+
+// threadActorName resolves the default actor name for new thread comments.
+func (m Model) threadActorName() string {
+	actorName := strings.TrimSpace(m.identityDisplayName)
+	if actorName == "" {
+		return m.threadActorID()
+	}
+	return actorName
 }
 
 // threadActorType resolves the default actor type for new thread comments.
@@ -280,15 +288,47 @@ func normalizeCommentActorType(raw string) domain.ActorType {
 	}
 }
 
+// threadCommentOwnerLabel renders comment ownership using actor_name with compact actor_id context.
+func threadCommentOwnerLabel(comment domain.Comment) string {
+	actorName := strings.TrimSpace(comment.ActorName)
+	actorID := strings.TrimSpace(comment.ActorID)
+	if actorName == "" {
+		actorName = actorID
+	}
+	if actorName == "" {
+		return "unknown"
+	}
+	if actorID == "" || strings.EqualFold(actorName, actorID) {
+		return actorName
+	}
+	return fmt.Sprintf("%s (%s)", actorName, actorID)
+}
+
+// commentTargetTypeForTask maps one work item into comment target types with scope-aware overrides.
+func commentTargetTypeForTask(task domain.Task) (domain.CommentTargetType, bool) {
+	// Subphase items are modeled as phase kind + subphase scope, so scope takes precedence.
+	if task.Scope == domain.KindAppliesToSubphase {
+		return domain.CommentTargetTypeSubphase, true
+	}
+	if task.Scope == domain.KindAppliesToBranch {
+		return domain.CommentTargetTypeBranch, true
+	}
+	return commentTargetTypeForWorkKind(task.Kind)
+}
+
 // commentTargetTypeForWorkKind maps work-item kinds into comment target types.
 func commentTargetTypeForWorkKind(kind domain.WorkKind) (domain.CommentTargetType, bool) {
 	switch kind {
+	case domain.WorkKind(domain.KindAppliesToBranch):
+		return domain.CommentTargetTypeBranch, true
 	case domain.WorkKindTask:
 		return domain.CommentTargetTypeTask, true
 	case domain.WorkKindSubtask:
 		return domain.CommentTargetTypeSubtask, true
 	case domain.WorkKindPhase:
 		return domain.CommentTargetTypePhase, true
+	case domain.WorkKind(domain.KindAppliesToSubphase):
+		return domain.CommentTargetTypeSubphase, true
 	case domain.WorkKindDecision:
 		return domain.CommentTargetTypeDecision, true
 	case domain.WorkKindNote:

@@ -134,8 +134,9 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 		TargetType:   domain.CommentTargetTypeTask,
 		TargetID:     "t1",
 		BodyMarkdown: "second",
+		ActorID:      "agent-1",
+		ActorName:    "Agent One",
 		ActorType:    domain.ActorType("AGENT"),
-		AuthorName:   "agent-1",
 	}, now)
 	if err != nil {
 		t.Fatalf("NewComment(c2) error = %v", err)
@@ -146,8 +147,9 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 		TargetType:   domain.CommentTargetTypeTask,
 		TargetID:     "t1",
 		BodyMarkdown: "first",
+		ActorID:      "user-1",
+		ActorName:    "User One",
 		ActorType:    domain.ActorTypeUser,
-		AuthorName:   "user-1",
 	}, now)
 	if err != nil {
 		t.Fatalf("NewComment(c1) error = %v", err)
@@ -158,8 +160,9 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 		TargetType:   domain.CommentTargetTypeProject,
 		TargetID:     project.ID,
 		BodyMarkdown: "project note",
+		ActorID:      "tillsyn",
+		ActorName:    "Tillsyn",
 		ActorType:    domain.ActorTypeSystem,
-		AuthorName:   "tillsyn",
 	}, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("NewComment(c3) error = %v", err)
@@ -191,6 +194,9 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	}
 	if taskComments[1].ActorType != domain.ActorTypeAgent {
 		t.Fatalf("expected normalized actor type agent, got %q", taskComments[1].ActorType)
+	}
+	if taskComments[1].ActorID != "agent-1" || taskComments[1].ActorName != "Agent One" {
+		t.Fatalf("expected actor tuple to persist, got %#v", taskComments[1])
 	}
 
 	comments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
@@ -561,6 +567,64 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	if tableCount != 1 {
 		t.Fatalf("expected comments table to exist after migration, got %d", tableCount)
 	}
+	commentColumns := map[string]struct{}{}
+	commentRows, err := repo.db.QueryContext(ctx, `PRAGMA table_info(comments)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(comments) error = %v", err)
+	}
+	for commentRows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := commentRows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
+			_ = commentRows.Close()
+			t.Fatalf("scan comments table_info error = %v", err)
+		}
+		commentColumns[name] = struct{}{}
+	}
+	if err := commentRows.Close(); err != nil {
+		t.Fatalf("close comments table_info rows error = %v", err)
+	}
+	if _, ok := commentColumns["actor_id"]; !ok {
+		t.Fatalf("expected comments.actor_id in migrated schema, got %#v", commentColumns)
+	}
+	if _, ok := commentColumns["actor_name"]; !ok {
+		t.Fatalf("expected comments.actor_name in migrated schema, got %#v", commentColumns)
+	}
+	if _, ok := commentColumns["author_name"]; ok {
+		t.Fatalf("expected comments.author_name to be removed from canonical schema, got %#v", commentColumns)
+	}
+	changeEventColumns := map[string]struct{}{}
+	changeRows, err := repo.db.QueryContext(ctx, `PRAGMA table_info(change_events)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(change_events) error = %v", err)
+	}
+	for changeRows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := changeRows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
+			_ = changeRows.Close()
+			t.Fatalf("scan change_events table_info error = %v", err)
+		}
+		changeEventColumns[name] = struct{}{}
+	}
+	if err := changeRows.Close(); err != nil {
+		t.Fatalf("close change_events table_info rows error = %v", err)
+	}
+	if _, ok := changeEventColumns["actor_name"]; !ok {
+		t.Fatalf("expected change_events.actor_name in migrated schema, got %#v", changeEventColumns)
+	}
 	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attention_items'`).Scan(&tableCount); err != nil {
 		t.Fatalf("count attention_items table error = %v", err)
 	}
@@ -580,6 +644,98 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	}
 	if indexCount != 1 {
 		t.Fatalf("expected attention scope index to exist after migration, got %d", indexCount)
+	}
+}
+
+// TestRepository_MigratesLegacyCommentAndEventOwnership verifies ownership tuple backfill from legacy schemas.
+func TestRepository_MigratesLegacyCommentAndEventOwnership(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "legacy-ownership.db")
+	db, err := sql.Open(driverName, dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	legacySchema := []string{
+		`CREATE TABLE projects (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		)`,
+		`CREATE TABLE comments (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			body_markdown TEXT NOT NULL,
+			actor_type TEXT NOT NULL DEFAULT 'user',
+			author_name TEXT NOT NULL DEFAULT 'tillsyn-user',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE change_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id TEXT NOT NULL,
+			work_item_id TEXT NOT NULL,
+			operation TEXT NOT NULL,
+			actor_id TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL
+		)`,
+	}
+	for _, stmt := range legacySchema {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("create legacy schema error = %v", err)
+		}
+	}
+	for _, stmt := range []string{
+		`INSERT INTO projects(id, slug, name, description, created_at, updated_at, archived_at) VALUES ('p1', 'legacy', 'Legacy', '', '` + now + `', '` + now + `', NULL)`,
+		`INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at) VALUES ('c1', 'p1', 'project', 'p1', 'legacy comment', 'user', 'legacy-author', '` + now + `', '` + now + `')`,
+		`INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at) VALUES ('c2', 'p1', 'project', 'p1', 'fallback comment', 'user', '', '` + now + `', '` + now + `')`,
+		`INSERT INTO change_events(project_id, work_item_id, operation, actor_id, actor_type, metadata_json, created_at) VALUES ('p1', 't1', 'update', 'legacy-actor', 'user', '{}', '` + now + `')`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed legacy rows error = %v", err)
+		}
+	}
+
+	repo, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() on legacy ownership db error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	var actorID, actorName string
+	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name FROM comments WHERE id = 'c1'`).Scan(&actorID, &actorName); err != nil {
+		t.Fatalf("query migrated c1 actor tuple error = %v", err)
+	}
+	if actorID != "legacy-author" || actorName != "legacy-author" {
+		t.Fatalf("expected migrated actor tuple legacy-author/legacy-author, got %q/%q", actorID, actorName)
+	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name FROM comments WHERE id = 'c2'`).Scan(&actorID, &actorName); err != nil {
+		t.Fatalf("query migrated c2 actor tuple error = %v", err)
+	}
+	if actorID != "tillsyn-user" || actorName != "tillsyn-user" {
+		t.Fatalf("expected fallback actor tuple tillsyn-user/tillsyn-user, got %q/%q", actorID, actorName)
+	}
+
+	var eventActorName string
+	if err := repo.db.QueryRowContext(ctx, `SELECT actor_name FROM change_events WHERE work_item_id = 't1'`).Scan(&eventActorName); err != nil {
+		t.Fatalf("query migrated change_event actor_name error = %v", err)
+	}
+	if eventActorName != "legacy-actor" {
+		t.Fatalf("expected migrated change_event actor_name legacy-actor, got %q", eventActorName)
 	}
 }
 
@@ -727,6 +883,76 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 	}
 	if events[5].ActorID != "user-1" {
 		t.Fatalf("expected create actor user-1, got %q", events[5].ActorID)
+	}
+	if events[5].ActorName != "user-1" {
+		t.Fatalf("expected create actor_name user-1, got %q", events[5].ActorName)
+	}
+}
+
+// TestRepository_TaskLifecyclePreservesMutationActorName verifies task change events keep request actor_name attribution.
+func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
+	baseCtx := context.Background()
+	ctx := app.WithMutationActor(baseCtx, app.MutationActor{
+		ActorID:   "actor-1",
+		ActorName: "Actor One",
+		ActorType: domain.ActorTypeAgent,
+	})
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	if err := repo.CreateProject(baseCtx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(baseCtx, todo); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Ownership",
+		Priority:  domain.PriorityLow,
+	}, now)
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	if err := task.UpdateDetails("Ownership v2", task.Description, task.Priority, task.DueAt, task.Labels, now.Add(time.Minute)); err != nil {
+		t.Fatalf("UpdateDetails() error = %v", err)
+	}
+	if err := repo.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask() error = %v", err)
+	}
+	if err := repo.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatalf("DeleteTask() error = %v", err)
+	}
+
+	events, err := repo.ListProjectChangeEvents(baseCtx, project.ID, 3)
+	if err != nil {
+		t.Fatalf("ListProjectChangeEvents() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d (%#v)", len(events), events)
+	}
+	for _, event := range events {
+		if event.ActorID != "actor-1" {
+			t.Fatalf("expected actor_id actor-1, got %q", event.ActorID)
+		}
+		if event.ActorName != "Actor One" {
+			t.Fatalf("expected actor_name Actor One, got %q", event.ActorName)
+		}
+		if event.ActorType != domain.ActorTypeAgent {
+			t.Fatalf("expected actor_type agent, got %q", event.ActorType)
+		}
 	}
 }
 

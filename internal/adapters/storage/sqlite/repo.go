@@ -145,29 +145,31 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS change_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_id TEXT NOT NULL,
-			work_item_id TEXT NOT NULL,
-			operation TEXT NOT NULL,
-			actor_id TEXT NOT NULL,
-			actor_type TEXT NOT NULL,
-			metadata_json TEXT NOT NULL DEFAULT '{}',
-			created_at TEXT NOT NULL,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-		);`,
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				project_id TEXT NOT NULL,
+				work_item_id TEXT NOT NULL,
+				operation TEXT NOT NULL,
+				actor_id TEXT NOT NULL,
+				actor_name TEXT NOT NULL DEFAULT 'tillsyn-user',
+				actor_type TEXT NOT NULL,
+				metadata_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL,
+				FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+			);`,
 		// comments.target_id is polymorphic, so only project_id is enforced as a foreign key.
 		`CREATE TABLE IF NOT EXISTS comments (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
-			target_type TEXT NOT NULL,
-			target_id TEXT NOT NULL,
-			body_markdown TEXT NOT NULL,
-			actor_type TEXT NOT NULL DEFAULT 'user',
-			author_name TEXT NOT NULL DEFAULT 'tillsyn-user',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-		);`,
+				target_type TEXT NOT NULL,
+				target_id TEXT NOT NULL,
+				body_markdown TEXT NOT NULL,
+				actor_id TEXT NOT NULL DEFAULT 'tillsyn-user',
+				actor_name TEXT NOT NULL DEFAULT 'tillsyn-user',
+				actor_type TEXT NOT NULL DEFAULT 'user',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+			);`,
 		`CREATE TABLE IF NOT EXISTS kind_catalog (
 			id TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL,
@@ -288,6 +290,15 @@ func (r *Repository) migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate sqlite work_items: %w", err)
 		}
 	}
+	if err := r.migrateCommentsOwnershipTuple(ctx); err != nil {
+		return err
+	}
+	if err := r.migrateChangeEventsActorName(ctx); err != nil {
+		return err
+	}
+	if err := r.ensureCommentIndexes(ctx); err != nil {
+		return err
+	}
 	if _, err := r.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(project_id, parent_id)`); err != nil {
 		return fmt.Errorf("migrate sqlite task parent index: %w", err)
 	}
@@ -298,6 +309,166 @@ func (r *Repository) migrate(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// migrateCommentsOwnershipTuple rewrites comments to the canonical ownership tuple columns.
+func (r *Repository) migrateCommentsOwnershipTuple(ctx context.Context) error {
+	hasActorID, err := r.tableHasColumn(ctx, "comments", "actor_id")
+	if err != nil {
+		return fmt.Errorf("migrate sqlite comments actor_id check: %w", err)
+	}
+	hasActorName, err := r.tableHasColumn(ctx, "comments", "actor_name")
+	if err != nil {
+		return fmt.Errorf("migrate sqlite comments actor_name check: %w", err)
+	}
+	hasAuthorName, err := r.tableHasColumn(ctx, "comments", "author_name")
+	if err != nil {
+		return fmt.Errorf("migrate sqlite comments author_name check: %w", err)
+	}
+	if hasActorID && hasActorName && !hasAuthorName {
+		return nil
+	}
+	hasActorType, err := r.tableHasColumn(ctx, "comments", "actor_type")
+	if err != nil {
+		return fmt.Errorf("migrate sqlite comments actor_type check: %w", err)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("migrate sqlite comments begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `ALTER TABLE comments RENAME TO comments_legacy`); err != nil {
+		return fmt.Errorf("migrate sqlite comments rename legacy table: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `
+		CREATE TABLE comments (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			body_markdown TEXT NOT NULL,
+			actor_id TEXT NOT NULL DEFAULT 'tillsyn-user',
+			actor_name TEXT NOT NULL DEFAULT 'tillsyn-user',
+			actor_type TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		)
+	`); err != nil {
+		return fmt.Errorf("migrate sqlite comments create canonical table: %w", err)
+	}
+
+	actorIDExpr := `'tillsyn-user'`
+	switch {
+	case hasActorID:
+		actorIDExpr = `NULLIF(TRIM(actor_id), '')`
+	case hasAuthorName:
+		actorIDExpr = `NULLIF(TRIM(author_name), '')`
+	}
+	actorNameExpr := `NULL`
+	switch {
+	case hasActorName:
+		actorNameExpr = `NULLIF(TRIM(actor_name), '')`
+	case hasAuthorName:
+		actorNameExpr = `NULLIF(TRIM(author_name), '')`
+	}
+	actorTypeExpr := `'user'`
+	if hasActorType {
+		actorTypeExpr = `COALESCE(NULLIF(TRIM(actor_type), ''), 'user')`
+	}
+	actorIDSelect := fmt.Sprintf("COALESCE(%s, 'tillsyn-user')", actorIDExpr)
+	actorNameSelect := fmt.Sprintf("COALESCE(%s, %s, 'tillsyn-user')", actorNameExpr, actorIDSelect)
+	copyStmt := fmt.Sprintf(`
+		INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at)
+		SELECT id, project_id, target_type, target_id, body_markdown, %s, %s, %s, created_at, updated_at
+		FROM comments_legacy
+	`, actorIDSelect, actorNameSelect, actorTypeExpr)
+	if _, err = tx.ExecContext(ctx, copyStmt); err != nil {
+		return fmt.Errorf("migrate sqlite comments copy rows: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `DROP TABLE comments_legacy`); err != nil {
+		return fmt.Errorf("migrate sqlite comments drop legacy table: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("migrate sqlite comments commit: %w", err)
+	}
+	return nil
+}
+
+// migrateChangeEventsActorName adds and backfills the actor_name ownership column.
+func (r *Repository) migrateChangeEventsActorName(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE change_events ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migrate sqlite add change_events.actor_name: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE change_events
+		SET actor_name = COALESCE(NULLIF(TRIM(actor_id), ''), 'tillsyn-user')
+		WHERE NULLIF(TRIM(actor_name), '') IS NULL
+			OR (
+				TRIM(actor_name) = 'tillsyn-user'
+				AND NULLIF(TRIM(actor_id), '') IS NOT NULL
+				AND TRIM(actor_id) <> 'tillsyn-user'
+			)
+	`); err != nil {
+		return fmt.Errorf("migrate sqlite backfill change_events.actor_name: %w", err)
+	}
+	return nil
+}
+
+// ensureCommentIndexes restores comment indexes that may be dropped during table rewrite.
+func (r *Repository) ensureCommentIndexes(ctx context.Context) error {
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_comments_project_target_created_at ON comments(project_id, target_type, target_id, created_at ASC, id ASC);`,
+		`CREATE INDEX IF NOT EXISTS idx_comments_project_created_at ON comments(project_id, created_at DESC, id DESC);`,
+	}
+	for _, stmt := range statements {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migrate sqlite comments indexes: %w", err)
+		}
+	}
+	return nil
+}
+
+// tableHasColumn reports whether one table currently contains a named column.
+func (r *Repository) tableHasColumn(ctx context.Context, tableName, columnName string) (bool, error) {
+	switch strings.TrimSpace(tableName) {
+	case "comments", "change_events":
+	default:
+		return false, fmt.Errorf("unsupported sqlite table for schema introspection %q", tableName)
+	}
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	columnName = strings.TrimSpace(strings.ToLower(columnName))
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(strings.ToLower(name)) == columnName {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // bridgeLegacyTasksToWorkItems copies legacy task rows into canonical work_items rows.
@@ -874,12 +1045,21 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 		return err
 	}
 
+	actorID := chooseActorID(t.CreatedByActor, t.UpdatedByActor)
+	actorName := ""
+	actorType := normalizeActorType(t.UpdatedByType)
+	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
+		actorID = chooseActorID(mutationActor.ActorID, actorID)
+		actorName = chooseActorName(actorID, mutationActor.ActorName)
+		actorType = normalizeActorType(mutationActor.ActorType)
+	}
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
 		Operation:  domain.ChangeOperationCreate,
-		ActorID:    chooseActorID(t.CreatedByActor, t.UpdatedByActor),
-		ActorType:  normalizeActorType(t.UpdatedByType),
+		ActorID:    actorID,
+		ActorName:  actorName,
+		ActorType:  actorType,
 		Metadata: map[string]string{
 			"column_id":  t.ColumnID,
 			"position":   strconv.Itoa(t.Position),
@@ -970,12 +1150,21 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	metadata["title"] = t.Title
 	metadata["item_kind"] = string(t.Kind)
 	metadata["item_scope"] = string(scope)
+	actorID := chooseActorID(t.UpdatedByActor, prev.UpdatedByActor)
+	actorName := ""
+	actorType := normalizeActorType(t.UpdatedByType)
+	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
+		actorID = chooseActorID(mutationActor.ActorID, actorID)
+		actorName = chooseActorName(actorID, mutationActor.ActorName)
+		actorType = normalizeActorType(mutationActor.ActorType)
+	}
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
 		Operation:  op,
-		ActorID:    chooseActorID(t.UpdatedByActor, prev.UpdatedByActor),
-		ActorType:  normalizeActorType(t.UpdatedByType),
+		ActorID:    actorID,
+		ActorName:  actorName,
+		ActorType:  actorType,
 		Metadata:   metadata,
 		OccurredAt: t.UpdatedAt,
 	})
@@ -1048,9 +1237,11 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 		return err
 	}
 	actorID := chooseActorID(task.UpdatedByActor, task.CreatedByActor)
+	actorName := ""
 	actorType := normalizeActorType(task.UpdatedByType)
 	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
 		actorID = chooseActorID(mutationActor.ActorID, actorID)
+		actorName = chooseActorName(actorID, mutationActor.ActorName)
 		actorType = normalizeActorType(mutationActor.ActorType)
 	}
 
@@ -1059,6 +1250,7 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 		WorkItemID: task.ID,
 		Operation:  domain.ChangeOperationDelete,
 		ActorID:    actorID,
+		ActorName:  actorName,
 		ActorType:  actorType,
 		Metadata: map[string]string{
 			"column_id":  task.ColumnID,
@@ -1098,9 +1290,10 @@ func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) 
 		return domain.ErrInvalidBodyMarkdown
 	}
 
-	authorName := strings.TrimSpace(comment.AuthorName)
-	if authorName == "" {
-		authorName = "tillsyn-user"
+	actorID := chooseActorID(comment.ActorID, "tillsyn-user")
+	actorName := chooseActorName(actorID, comment.ActorName)
+	if actorName == "" {
+		actorName = actorID
 	}
 	createdAt := comment.CreatedAt
 	if createdAt.IsZero() {
@@ -1112,16 +1305,17 @@ func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) 
 	}
 
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		commentID,
 		target.ProjectID,
 		string(target.TargetType),
 		target.TargetID,
 		bodyMarkdown,
+		actorID,
+		actorName,
 		string(normalizeActorType(comment.ActorType)),
-		authorName,
 		ts(createdAt),
 		ts(updatedAt),
 	)
@@ -1139,7 +1333,7 @@ func (r *Repository) ListCommentsByTarget(ctx context.Context, target domain.Com
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at
+		SELECT id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at
 		FROM comments
 		WHERE project_id = ? AND target_type = ? AND target_id = ?
 		ORDER BY created_at ASC, id ASC
@@ -1166,7 +1360,7 @@ func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID stri
 		limit = 50
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, project_id, work_item_id, operation, actor_id, actor_type, metadata_json, created_at
+		SELECT id, project_id, work_item_id, operation, actor_id, actor_name, actor_type, metadata_json, created_at
 		FROM change_events
 		WHERE project_id = ?
 		ORDER BY created_at DESC, id DESC
@@ -1186,10 +1380,12 @@ func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID stri
 			metadataRaw string
 			createdRaw  string
 		)
-		if err := rows.Scan(&event.ID, &event.ProjectID, &event.WorkItemID, &opRaw, &event.ActorID, &actorType, &metadataRaw, &createdRaw); err != nil {
+		if err := rows.Scan(&event.ID, &event.ProjectID, &event.WorkItemID, &opRaw, &event.ActorID, &event.ActorName, &actorType, &metadataRaw, &createdRaw); err != nil {
 			return nil, err
 		}
 		event.Operation = normalizeChangeOperation(opRaw)
+		event.ActorID = chooseActorID(event.ActorID, "tillsyn-user")
+		event.ActorName = chooseActorName(event.ActorID, event.ActorName)
 		event.ActorType = normalizeActorType(domain.ActorType(actorType))
 		event.OccurredAt = parseTS(createdRaw)
 		if strings.TrimSpace(metadataRaw) == "" {
@@ -1559,14 +1755,17 @@ func insertTaskChangeEvent(ctx context.Context, execer execerContext, event doma
 	if err != nil {
 		return fmt.Errorf("encode change event metadata: %w", err)
 	}
+	actorID := chooseActorID(event.ActorID, "tillsyn-user")
+	actorName := chooseActorName(actorID, event.ActorName)
 	_, err = execer.ExecContext(ctx, `
-		INSERT INTO change_events(project_id, work_item_id, operation, actor_id, actor_type, metadata_json, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO change_events(project_id, work_item_id, operation, actor_id, actor_name, actor_type, metadata_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		event.ProjectID,
 		event.WorkItemID,
 		string(event.Operation),
-		chooseActorID(event.ActorID, "tillsyn-user"),
+		actorID,
+		actorName,
 		string(normalizeActorType(event.ActorType)),
 		string(metadataJSON),
 		ts(normalizeEventTS(event.OccurredAt)),
@@ -1698,6 +1897,21 @@ func chooseActorID(candidates ...string) string {
 		}
 	}
 	return "tillsyn-user"
+}
+
+// chooseActorName returns the first non-empty actor name, else the canonical actor id.
+func chooseActorName(actorID string, candidates ...string) string {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return "tillsyn-user"
+	}
+	return actorID
 }
 
 // normalizeActorType applies a default when actor type is unset or unsupported.
@@ -1890,8 +2104,9 @@ func scanComment(s scanner) (domain.Comment, error) {
 		&targetTypeRaw,
 		&comment.TargetID,
 		&comment.BodyMarkdown,
+		&comment.ActorID,
+		&comment.ActorName,
 		&actorTypeRaw,
-		&comment.AuthorName,
 		&createdRaw,
 		&updatedRaw,
 	); err != nil {
@@ -1905,11 +2120,9 @@ func scanComment(s scanner) (domain.Comment, error) {
 		return domain.Comment{}, fmt.Errorf("decode comment target_type %q: %w", targetTypeRaw, domain.ErrInvalidTargetType)
 	}
 	comment.ActorType = normalizeActorType(domain.ActorType(actorTypeRaw))
+	comment.ActorID = chooseActorID(comment.ActorID, "tillsyn-user")
+	comment.ActorName = chooseActorName(comment.ActorID, comment.ActorName)
 	comment.BodyMarkdown = strings.TrimSpace(comment.BodyMarkdown)
-	comment.AuthorName = strings.TrimSpace(comment.AuthorName)
-	if comment.AuthorName == "" {
-		comment.AuthorName = "tillsyn-user"
-	}
 	comment.CreatedAt = parseTS(createdRaw)
 	comment.UpdatedAt = parseTS(updatedRaw)
 	return comment, nil

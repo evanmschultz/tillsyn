@@ -33,11 +33,36 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	if comment.ActorType != ActorTypeUser {
 		t.Fatalf("expected default actor type user, got %q", comment.ActorType)
 	}
-	if comment.AuthorName != "tillsyn-user" {
-		t.Fatalf("expected default author name tillsyn-user, got %q", comment.AuthorName)
+	if comment.ActorID != "tillsyn-user" {
+		t.Fatalf("expected default actor id tillsyn-user, got %q", comment.ActorID)
+	}
+	if comment.ActorName != "tillsyn-user" {
+		t.Fatalf("expected default actor name tillsyn-user, got %q", comment.ActorName)
 	}
 	if !comment.CreatedAt.Equal(now.UTC()) || !comment.UpdatedAt.Equal(now.UTC()) {
 		t.Fatalf("expected UTC timestamps at input time, got created=%s updated=%s", comment.CreatedAt, comment.UpdatedAt)
+	}
+}
+
+// TestNewCommentDefaultsActorNameFromActorID verifies actor-name fallback behavior.
+func TestNewCommentDefaultsActorNameFromActorID(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	comment, err := NewComment(CommentInput{
+		ID:           "comment-1",
+		ProjectID:    "project-1",
+		TargetType:   CommentTargetTypeTask,
+		TargetID:     "item-1",
+		BodyMarkdown: "done",
+		ActorID:      "agent-7",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment() error = %v", err)
+	}
+	if comment.ActorID != "agent-7" {
+		t.Fatalf("expected actor id agent-7, got %q", comment.ActorID)
+	}
+	if comment.ActorName != "agent-7" {
+		t.Fatalf("expected actor name fallback to actor id, got %q", comment.ActorName)
 	}
 }
 
@@ -136,5 +161,31 @@ func TestNormalizeCommentTarget(t *testing.T) {
 	}
 	if target.ProjectID != "p1" || target.TargetType != CommentTargetTypeSubtask || target.TargetID != "t2" {
 		t.Fatalf("unexpected normalized target %#v", target)
+	}
+}
+
+// TestNormalizeCommentTargetSupportsHierarchyNodes verifies branch/subphase target normalization.
+func TestNormalizeCommentTargetSupportsHierarchyNodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		targetType CommentTargetType
+		wantType   CommentTargetType
+	}{
+		{name: "branch", targetType: CommentTargetType(" BRANCH "), wantType: CommentTargetTypeBranch},
+		{name: "subphase", targetType: CommentTargetType(" SUBPHASE "), wantType: CommentTargetTypeSubphase},
+	}
+
+	for _, tc := range tests {
+		target, err := NormalizeCommentTarget(CommentTarget{
+			ProjectID:  " p1 ",
+			TargetType: tc.targetType,
+			TargetID:   " item-1 ",
+		})
+		if err != nil {
+			t.Fatalf("%s: NormalizeCommentTarget() error = %v", tc.name, err)
+		}
+		if target.TargetType != tc.wantType {
+			t.Fatalf("%s: normalized target type = %q, want %q", tc.name, target.TargetType, tc.wantType)
+		}
 	}
 }

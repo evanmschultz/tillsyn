@@ -55,3 +55,20 @@
 - 2026-03-02: `E-01` to `E-07` PASS via isolated live runtime transport checks (health, MCP init/list, guardrails M2.1/M2.2/M2.3, restore rerun).
 - 2026-03-02: `E-08` rerun PASS after runtime default logger sink-bridge fix. Live probe shows both mapped MCP + HTTP error lines in `.tillsyn/log` and stderr.
 - 2026-03-02: Initial `S-01`/`S-02` probe attempt blocked by sandbox bind restrictions; rerun with escalated local bind permissions completed and both checks passed.
+
+## User Notes Overflow
+Use this section for findings that do not map directly to `C-01` through `C-07` during collaborative/manual validation.
+
+| Timestamp | Surface | Observation | Expected | Severity | Mapped Section |
+|---|---|---|---|---|---|
+| 2026-03-02T04:56Z | MCP tools | On clean DB, `till.create_task` requires `column_id` but MCP surface used in this run does not expose a `list_columns`-style tool to discover initial column IDs. | MCP-only bootstrap path should allow task creation from zero state without manual TUI assist. | medium | `UNMAPPED` |
+
+## Live MCP + TUI Joint Run (2026-03-02)
+
+| Step | Action | Status | Evidence | Watch In TUI |
+|---|---|---|---|---|
+| L-01 | MCP baseline check (`till_get_bootstrap_guide`, `till_list_projects`) | PASS | bootstrap output + project list (tool transcript) | Project list state at startup/empty flow. |
+| L-02 | Create collaborative run project via MCP (`collab-live-2026-03-02`) | PASS | Project ID `bb6ecc18-d978-4d91-a51f-c65dbea189ef` | New project appears in picker/list. |
+| L-03 | Attempt zero-state hierarchy seeding via MCP-only `till_create_task` | BLOCKED | MCP error: `invalid_request: required argument "column_id" not found` | No task created; awaiting seed-column workaround. |
+| L-04 | Raise unresolved attention item via MCP (`approval_required`) | PASS | Attention ID `82dd0391-7ed5-4c02-9816-d7d78c69cc81`; capture_state `open_count=1`, `requires_user_action=1` | Warning/attention indicators should appear for project scope. |
+| L-05 | Resolve same attention item via MCP and verify state | PASS | `till_resolve_attention_item` + capture_state `open_count=0` | Warning/attention indicators should clear. |
