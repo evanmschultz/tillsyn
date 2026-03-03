@@ -295,3 +295,58 @@ Reference policy: `PARALLEL_AGENT_RUNBOOK.md`.
 - Remaining closeout gate:
   - independent QA sign-off on code + docs for Wave 4,
   - collaborative user run of worksheet sections (`C1`-`C3`) and agent completion of section `C4` before final dogfood-ready mark.
+
+### Checkpoint W4-04 - Live TUI Regression Remediation (Thread Editors + Notices Fit)
+
+- Triggered by live collaborative run feedback:
+  1. thread description shown as `(no description)` in notification-opened thread contexts,
+  2. comments/details needed independent multiline editors,
+  3. user-visible `…` truncation confusion and board/notices bottom-fit mismatch concerns.
+- Integrated fixes in TUI scope:
+  - `internal/tui/model.go`
+  - `internal/tui/thread_mode.go`
+  - `internal/tui/model_test.go`
+  - `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+  - `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+- Validation evidence:
+  - `just fmt` PASS
+  - `just test-golden-update` PASS
+  - `just test-pkg ./internal/tui` PASS
+  - `just check` PASS
+  - `just ci` PASS
+- Worksheet synchronization:
+  - updated `COLLAB_TEST_2026-03-02_DOGFOOD.md`:
+    - `C1-04` control expectation updated (`ctrl+s` submit),
+    - new `C1-05` details-editor validation row,
+    - new `C3-04` alignment/truncation validation row,
+    - overflow row logged for this regression.
+- Status:
+  - awaiting user collaborative rerun confirmation for C1/C3 rows before final wave closeout.
+
+### Checkpoint W4-05 - Thread Workspace UX Redesign (Description/Comments/History)
+
+- User UX directive implemented:
+  1. top bordered description/details pane taking majority of thread viewport,
+  2. bottom bordered comments pane at ~25% viewport with 2-line composer,
+  3. right bordered owner + brief history pane,
+  4. full-screen description markdown editor with live Glamour preview.
+- Files changed:
+  - `internal/tui/thread_mode.go`
+  - `internal/tui/model.go`
+  - `internal/tui/markdown_renderer.go`
+- Validation:
+  - `just fmt && just test-pkg ./internal/tui` FAIL (initial visibility assertion mismatch),
+  - Context7 re-consult after failure (required),
+  - remediation patch to actor-tagged/history summary visibility,
+  - `just fmt && just test-pkg ./internal/tui` PASS,
+  - `just check` PASS,
+  - `just ci` PASS.
+  - post-renderer-style update:
+    - `just fmt && just test-pkg ./internal/tui` PASS
+    - `just check && just ci` PASS
+- Worksheet sync:
+  - `COLLAB_TEST_2026-03-02_DOGFOOD.md` updated with:
+    - `C1-02` pane-layout validation,
+    - `C1-05` live-preview editor validation,
+    - `C1-06` save/cancel semantics,
+    - `C3-05` right-pane owner/history validation.

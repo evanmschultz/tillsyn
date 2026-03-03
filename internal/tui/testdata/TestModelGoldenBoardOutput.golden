@@ -10,17 +10,18 @@
  │  │  Golden board task                               │ │                                    │
  │     [medium|#alpha,#beta]                           │ │ Warnings                           │
  │                                                     │ │ none                               │
- │                                                     │ │ …                                  │
+ │                                                     │ │                                    │
+ │                                                     │ │ Agent/User Action                  │
+ │                                                     │ │ no notifications requiring user…   │
+ │                                                     │ │                                    │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
  │                                                     │ │ Global Notifications               │
- │                                                     │ │ requires user action across        │
- │                                                     │ │ projects                           │
+ │                                                     │ │ requires user action across pro…   │
  │                                                     │ │                                    │
- │                                                     │ │ …                                  │
- ╰─────────────────────────────────────────────────────╯ │                                    │[24;58H╰────────────────────────────────────╯
+ ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
  tasks: 1 • selected: Golden board task • level: task
  deps: total 1 • blocked 0 • unresolved 0 • edges 0
  0 overdue * 0 due soon

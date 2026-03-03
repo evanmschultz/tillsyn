@@ -25,7 +25,11 @@ func (m Model) renderThreadModeView() tea.View {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	hintStyle := lipgloss.NewStyle().Foreground(muted)
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	sectionTitleStyle := threadSectionStyle(accent)
+
+	if m.threadDetailsEditorActive {
+		return m.renderThreadDescriptionEditorView(accent, muted, dim, titleStyle, hintStyle, statusStyle, sectionTitleStyle)
+	}
 
 	threadTitle := strings.TrimSpace(m.threadTitle)
 	if threadTitle == "" {
@@ -34,61 +38,62 @@ func (m Model) renderThreadModeView() tea.View {
 	header := titleStyle.Render("tillsyn thread") + "  " + threadTitle + statusStyle.Render("  ["+m.modeLabel()+"]")
 	targetLine := hintStyle.Render(fmt.Sprintf("target: %s/%s  comments: %d", m.threadTarget.TargetType, m.threadTarget.TargetID, len(m.threadComments)))
 
-	wrapWidth := max(24, m.width-8)
-	bodyLines := m.threadBodyLines(wrapWidth, sectionStyle, hintStyle)
-
-	afterParts := []string{""}
+	footerHint := "read mode • e details focus • i compose comment • pgup/pgdown and mouse wheel scroll comments • ctrl+r reload • ? help • esc back"
 	if m.threadComposerActive {
-		in := m.threadInput
-		in.SetWidth(max(20, m.width-18))
-		afterParts = append(afterParts, "comment: "+in.View())
-		afterParts = append(afterParts, hintStyle.Render("enter post • tab read mode • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • ? help • esc read mode"))
-	} else if m.threadDetailsActive {
-		afterParts = append(afterParts, hintStyle.Render("details mode • enter edit target • esc read mode • ? help"))
-	} else {
-		afterParts = append(afterParts, hintStyle.Render("read mode • e details • i compose comment • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • ? help • esc back"))
-	}
-
-	statusLine := ""
-	statusText := strings.TrimSpace(m.status)
-	if statusText != "" && statusText != "ready" {
-		statusLine = statusStyle.Render(statusText)
-	}
-
-	beforeBody := strings.Join([]string{header, targetLine, ""}, "\n")
-	if statusLine != "" {
-		afterParts = append(afterParts, statusLine)
-	}
-	afterBody := strings.Join(afterParts, "\n")
-
-	bodyHeight := 12
-	if m.height > 0 {
-		bodyHeight = m.height - lipgloss.Height(beforeBody) - lipgloss.Height(afterBody)
-		if bodyHeight < 6 {
-			bodyHeight = 6
-		}
-	}
-	maxScroll := max(0, len(bodyLines)-bodyHeight)
-	scrollTop := clamp(m.threadScroll, 0, maxScroll)
-	visibleEnd := min(len(bodyLines), scrollTop+bodyHeight)
-	visible := append([]string(nil), bodyLines[scrollTop:visibleEnd]...)
-	if len(visible) < bodyHeight {
-		visible = append(visible, make([]string, bodyHeight-len(visible))...)
-	}
-
-	content := strings.Join([]string{beforeBody, strings.Join(visible, "\n"), afterBody}, "\n")
-	if m.height > 0 {
-		content = fitLines(content, m.height)
+		footerHint = "composer active • ctrl+s post • enter newline • tab/esc read mode • ? help"
 	}
 	if m.threadDetailsActive {
-		overlay := m.renderThreadDetailsOverlay(accent, muted, max(0, m.width-10))
-		if overlay != "" {
-			overlayHeight := lipgloss.Height(content)
-			if m.height > 0 {
-				overlayHeight = m.height
-			}
-			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
-		}
+		footerHint = "details focused • enter edit target • i open description editor • esc read mode • ? help"
+	}
+
+	layoutWidth := max(72, m.width-2)
+	if m.width <= 0 {
+		layoutWidth = 120
+	}
+	sidebarWidth := clamp(max(28, layoutWidth/3), 28, 44)
+	if layoutWidth-sidebarWidth < 52 {
+		sidebarWidth = max(24, layoutWidth-52)
+	}
+	leftWidth := max(48, layoutWidth-sidebarWidth-1)
+
+	statusLine := ""
+	if statusText := strings.TrimSpace(m.status); statusText != "" && statusText != "ready" {
+		statusLine = statusStyle.Render(statusText)
+	}
+	headerBlock := strings.Join([]string{header, targetLine, ""}, "\n")
+	footerBlock := strings.Join([]string{"", hintStyle.Render(footerHint)}, "\n")
+	if statusLine != "" {
+		footerBlock += "\n" + statusLine
+	}
+	workspaceHeight := 18
+	if m.height > 0 {
+		workspaceHeight = m.height - lipgloss.Height(headerBlock) - lipgloss.Height(footerBlock)
+	}
+	if workspaceHeight < 12 {
+		workspaceHeight = 12
+	}
+
+	commentsHeight := max(8, workspaceHeight/4)
+	descriptionHeight := max(8, workspaceHeight-commentsHeight-1)
+	workspaceHeight = descriptionHeight + commentsHeight + 1
+
+	descriptionPanel := m.renderThreadDescriptionPanel(accent, muted, dim, sectionTitleStyle, hintStyle, leftWidth, descriptionHeight)
+	commentsPanel := m.renderThreadCommentsPanel(accent, muted, dim, sectionTitleStyle, hintStyle, leftWidth, commentsHeight)
+	leftColumn := lipgloss.JoinVertical(
+		lipgloss.Top,
+		descriptionPanel,
+		lipgloss.NewStyle().MarginTop(1).Render(commentsPanel),
+	)
+	rightPanel := m.renderThreadContextPanel(accent, muted, dim, sectionTitleStyle, hintStyle, sidebarWidth, workspaceHeight)
+	workspace := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		leftColumn,
+		lipgloss.NewStyle().MarginLeft(1).Render(rightPanel),
+	)
+
+	content := strings.Join([]string{headerBlock, workspace, footerBlock}, "\n")
+	if m.height > 0 {
+		content = fitLines(content, m.height)
 	}
 	if m.help.ShowAll {
 		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
@@ -107,59 +112,205 @@ func (m Model) renderThreadModeView() tea.View {
 	return v
 }
 
-// renderThreadDetailsOverlay renders a read-first markdown details modal for the active thread target.
-func (m Model) renderThreadDetailsOverlay(accent, muted color.Color, maxWidth int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-	hintStyle := lipgloss.NewStyle().Foreground(muted)
-	boxWidth := 88
-	if maxWidth > 0 {
-		boxWidth = clamp(maxWidth, 42, 108)
-	}
-	contentWidth := max(24, boxWidth-8)
-	title := "Task Details"
+// renderThreadDescriptionPanel renders the top description/details pane for thread mode.
+func (m Model) renderThreadDescriptionPanel(accent, muted, dim color.Color, sectionTitleStyle, hintStyle lipgloss.Style, width, height int) string {
+	title := "Task Description"
 	if m.threadTarget.TargetType == domain.CommentTargetTypeProject {
-		title = "Project Details"
+		title = "Project Description"
 	}
-	lines := []string{
-		titleStyle.Render(title),
-		hintStyle.Render("markdown read mode"),
-		"",
+	if m.threadDetailsActive {
+		title = strings.Replace(title, "Description", "Details", 1)
 	}
-	details := strings.TrimSpace(m.threadDescriptionMarkdown)
-	if details == "" {
-		lines = append(lines, hintStyle.Render("(no description)"))
-	} else {
-		rendered := m.threadMarkdown.render(details, contentWidth)
-		lines = append(lines, splitThreadMarkdownLines(rendered)...)
-	}
-	lines = append(lines, "", hintStyle.Render("enter edit • esc back"))
-	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(accent).
-		Padding(0, 1)
-	if maxWidth > 0 {
-		style = style.Width(boxWidth)
-	}
-	return style.Render(strings.Join(lines, "\n"))
-}
-
-// threadBodyLines renders thread description and comments into scrollable body lines.
-func (m Model) threadBodyLines(width int, sectionStyle, hintStyle lipgloss.Style) []string {
-	lines := []string{sectionStyle.Render("Description")}
+	contentWidth := max(20, width-4)
+	contentHeight := max(4, height-2)
+	lines := []string{sectionTitleStyle.Render(truncate(title, contentWidth))}
 	description := strings.TrimSpace(m.threadDescriptionMarkdown)
 	if description == "" {
 		lines = append(lines, hintStyle.Render("(no description)"))
 	} else {
-		rendered := m.threadMarkdown.render(description, width)
-		lines = append(lines, splitThreadMarkdownLines(rendered)...)
+		lines = append(lines, splitThreadMarkdownLines(m.threadMarkdown.render(description, contentWidth))...)
+	}
+	lines = append(lines, "", hintStyle.Render("e focus details • enter edit target • i markdown editor"))
+
+	borderColor := dim
+	if m.threadDetailsActive {
+		borderColor = accent
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Width(width).
+		Render(fitLines(strings.Join(lines, "\n"), contentHeight))
+}
+
+// renderThreadCommentsPanel renders the lower comments list pane with a compact 2-line composer.
+func (m Model) renderThreadCommentsPanel(accent, muted, dim color.Color, sectionTitleStyle, hintStyle lipgloss.Style, width, height int) string {
+	contentWidth := max(20, width-4)
+	contentHeight := max(4, height-2)
+	lines := []string{sectionTitleStyle.Render(truncate(fmt.Sprintf("Comments (%d)", len(m.threadComments)), contentWidth))}
+	commentLines := m.threadCommentListLines(contentWidth, hintStyle)
+
+	composer := m.threadInput
+	composer.ShowLineNumbers = false
+	composer.SetHeight(2)
+	composer.SetWidth(max(20, contentWidth))
+	if m.threadComposerActive {
+		_ = composer.Focus()
+	} else {
+		composer.Blur()
+	}
+	composerBlock := []string{
+		"",
+		sectionTitleStyle.Render("New Comment"),
+		composer.View(),
+		hintStyle.Render("i focus composer • ctrl+s post • enter newline"),
 	}
 
-	lines = append(lines, "", sectionStyle.Render(fmt.Sprintf("Comments (%d)", len(m.threadComments))))
+	commentListHeight := max(1, contentHeight-len(composerBlock)-1)
+	scrollTop := clamp(m.threadScroll, 0, max(0, len(commentLines)-commentListHeight))
+	visibleEnd := min(len(commentLines), scrollTop+commentListHeight)
+	visible := append([]string(nil), commentLines[scrollTop:visibleEnd]...)
+	if len(visible) < commentListHeight {
+		visible = append(visible, make([]string, commentListHeight-len(visible))...)
+	}
+
+	lines = append(lines, visible...)
+	lines = append(lines, composerBlock...)
+
+	borderColor := dim
+	if m.threadComposerActive {
+		borderColor = accent
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Width(width).
+		Render(fitLines(strings.Join(lines, "\n"), contentHeight))
+}
+
+// renderThreadContextPanel renders owner/target/history context to the right of description/comments.
+func (m Model) renderThreadContextPanel(accent, muted, dim color.Color, sectionTitleStyle, hintStyle lipgloss.Style, width, height int) string {
+	contentWidth := max(18, width-4)
+	contentHeight := max(4, height-2)
+	lines := []string{
+		sectionTitleStyle.Render("Owner"),
+		hintStyle.Render(truncate(m.threadActorName()+" ("+m.threadActorID()+")", contentWidth)),
+		hintStyle.Render("type: " + string(m.threadActorType())),
+		"",
+		sectionTitleStyle.Render("Target"),
+		hintStyle.Render(truncate(fmt.Sprintf("project: %s", m.threadTarget.ProjectID), contentWidth)),
+		hintStyle.Render(truncate(fmt.Sprintf("type: %s", m.threadTarget.TargetType), contentWidth)),
+		hintStyle.Render(truncate(fmt.Sprintf("id: %s", m.threadTarget.TargetID), contentWidth)),
+		hintStyle.Render(fmt.Sprintf("comments: %d", len(m.threadComments))),
+		"",
+		sectionTitleStyle.Render("Brief History"),
+	}
 	if len(m.threadComments) == 0 {
 		lines = append(lines, hintStyle.Render("(no comments yet)"))
-		return lines
+	} else {
+		start := max(0, len(m.threadComments)-5)
+		for idx := start; idx < len(m.threadComments); idx++ {
+			comment := m.threadComments[idx]
+			actor := string(normalizeCommentActorType(string(comment.ActorType)))
+			label := fmt.Sprintf("[%s] %s • %s", actor, threadCommentOwnerLabel(comment), formatThreadTimestamp(comment.CreatedAt))
+			lines = append(lines, hintStyle.Render(truncate(label, contentWidth)))
+			if summary := strings.TrimSpace(commentSummaryText(comment)); summary != "" {
+				lines = append(lines, hintStyle.Render("  "+truncate("summary: "+summary, max(8, contentWidth-2))))
+			}
+		}
+	}
+	lines = append(lines, "", hintStyle.Render("enter: open edit when details focused"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(dim).
+		Padding(0, 1).
+		Width(width).
+		Render(fitLines(strings.Join(lines, "\n"), contentHeight))
+}
+
+// renderThreadDescriptionEditorView renders a full-screen markdown description editor with live Glamour preview.
+func (m Model) renderThreadDescriptionEditorView(accent, muted, dim color.Color, titleStyle, hintStyle, statusStyle, sectionTitleStyle lipgloss.Style) tea.View {
+	header := titleStyle.Render("thread description editor") + statusStyle.Render("  [markdown]")
+	targetLine := hintStyle.Render(fmt.Sprintf("target: %s/%s", m.threadTarget.TargetType, m.threadTarget.TargetID))
+
+	layoutWidth := max(72, m.width-2)
+	if m.width <= 0 {
+		layoutWidth = 120
+	}
+	availableHeight := 20
+	if m.height > 0 {
+		availableHeight = m.height - lipgloss.Height(header) - lipgloss.Height(targetLine) - 4
+	}
+	if availableHeight < 10 {
+		availableHeight = 10
 	}
 
+	editorWidth := max(30, (layoutWidth-1)/2)
+	previewWidth := max(30, layoutWidth-editorWidth-1)
+	editor := m.threadDetailsInput
+	editor.ShowLineNumbers = true
+	editor.SetWidth(max(24, editorWidth-4))
+	editor.SetHeight(max(8, availableHeight-2))
+	_ = editor.Focus()
+	editorPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).
+		Padding(0, 1).
+		Width(editorWidth).
+		Render(sectionTitleStyle.Render("Editor") + "\n" + editor.View())
+
+	previewMarkdown := strings.TrimSpace(editor.Value())
+	if previewMarkdown == "" {
+		previewMarkdown = "(empty description)"
+	}
+	previewContent := m.threadMarkdown.render(previewMarkdown, max(20, previewWidth-4))
+	previewPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(dim).
+		Padding(0, 1).
+		Width(previewWidth).
+		Render(sectionTitleStyle.Render("Preview (Glamour)") + "\n" + fitLines(strings.TrimSpace(previewContent), max(6, availableHeight-2)))
+
+	workspace := lipgloss.JoinHorizontal(lipgloss.Top, editorPanel, lipgloss.NewStyle().MarginLeft(1).Render(previewPanel))
+	footer := hintStyle.Render("ctrl+s save description • esc cancel • enter newline • ? help")
+	statusLine := ""
+	if statusText := strings.TrimSpace(m.status); statusText != "" && statusText != "ready" {
+		statusLine = statusStyle.Render(statusText)
+	}
+	parts := []string{header, targetLine, "", workspace, "", footer}
+	if statusLine != "" {
+		parts = append(parts, statusLine)
+	}
+	content := strings.Join(parts, "\n")
+	if m.height > 0 {
+		content = fitLines(content, m.height)
+	}
+	if m.help.ShowAll {
+		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
+		if overlay != "" {
+			overlayHeight := lipgloss.Height(content)
+			if m.height > 0 {
+				overlayHeight = m.height
+			}
+			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
+		}
+	}
+
+	v := tea.NewView(content)
+	v.MouseMode = m.activeMouseMode()
+	v.AltScreen = true
+	return v
+}
+
+// threadCommentListLines renders comment metadata and markdown body lines for the comments panel.
+func (m Model) threadCommentListLines(width int, hintStyle lipgloss.Style) []string {
+	if len(m.threadComments) == 0 {
+		return []string{hintStyle.Render("(no comments yet)")}
+	}
+	lines := make([]string, 0, len(m.threadComments)*4)
 	for idx, comment := range m.threadComments {
 		owner := threadCommentOwnerLabel(comment)
 		actor := string(normalizeCommentActorType(string(comment.ActorType)))
@@ -167,7 +318,6 @@ func (m Model) threadBodyLines(width int, sectionStyle, hintStyle lipgloss.Style
 		if summary := commentSummaryText(comment); summary != "" {
 			lines = append(lines, hintStyle.Render("summary: "+truncate(summary, max(24, width))))
 		}
-
 		body := m.threadMarkdown.render(comment.BodyMarkdown, width)
 		if strings.TrimSpace(body) == "" {
 			body = "(empty comment)"
@@ -180,6 +330,11 @@ func (m Model) threadBodyLines(width int, sectionStyle, hintStyle lipgloss.Style
 		}
 	}
 	return lines
+}
+
+// threadSectionStyle returns one shared section-heading style used by thread views.
+func threadSectionStyle(accent color.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(accent)
 }
 
 // splitThreadMarkdownLines splits rendered markdown while preserving empty rows.
@@ -252,17 +407,49 @@ func (m Model) startThread(backMode inputMode, target domain.CommentTarget, titl
 	m.threadBackMode = backMode
 	m.threadTarget = target
 	m.threadTitle = strings.TrimSpace(title)
-	m.threadDescriptionMarkdown = strings.TrimSpace(description)
+	m.threadDescriptionMarkdown = m.threadDescriptionForTarget(target, description)
 	m.threadComments = nil
 	m.threadScroll = 0
 	m.threadPendingCommentBody = ""
 	m.threadComposerActive = false
 	m.threadDetailsActive = false
+	m.threadDetailsEditorActive = false
 	m.threadInput.SetValue("")
 	m.threadInput.CursorEnd()
 	m.threadInput.Blur()
+	m.threadDetailsInput.SetValue(m.threadDescriptionMarkdown)
+	m.threadDetailsInput.CursorEnd()
+	m.threadDetailsInput.Blur()
 	m.status = "loading thread..."
 	return m, m.loadThreadCommentsCmd(target)
+}
+
+// threadDescriptionForTarget resolves the thread description body, falling back to the backing project/task details when needed.
+func (m Model) threadDescriptionForTarget(target domain.CommentTarget, description string) string {
+	if details := strings.TrimSpace(description); details != "" {
+		return details
+	}
+	if target.TargetType == domain.CommentTargetTypeProject {
+		projectID := strings.TrimSpace(target.TargetID)
+		if projectID == "" {
+			projectID = strings.TrimSpace(target.ProjectID)
+		}
+		for _, project := range m.projects {
+			if strings.TrimSpace(project.ID) == projectID {
+				return strings.TrimSpace(project.Description)
+			}
+		}
+		return ""
+	}
+	taskID := strings.TrimSpace(target.TargetID)
+	if taskID == "" {
+		return ""
+	}
+	task, ok := m.taskByID(taskID)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(task.Description)
 }
 
 // startThreadEditFlow transitions thread read mode into the matching project/task edit flow.
@@ -339,6 +526,76 @@ func (m Model) createThreadCommentCmd(body string) tea.Cmd {
 			body:   body,
 			value:  comment,
 			err:    err,
+		}
+	}
+}
+
+// updateThreadDescriptionCmd updates one thread target's backing markdown details from the thread details editor.
+func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
+	target := m.threadTarget
+	description = strings.TrimSpace(description)
+	actorID := m.threadActorID()
+	actorType := m.threadActorType()
+	return func() tea.Msg {
+		switch target.TargetType {
+		case domain.CommentTargetTypeProject:
+			projectID := strings.TrimSpace(target.TargetID)
+			if projectID == "" {
+				projectID = strings.TrimSpace(target.ProjectID)
+			}
+			if projectID == "" {
+				return actionMsg{err: fmt.Errorf("thread details update: project target unavailable")}
+			}
+			var project domain.Project
+			found := false
+			for _, candidate := range m.projects {
+				if strings.TrimSpace(candidate.ID) == projectID {
+					project = candidate
+					found = true
+					break
+				}
+			}
+			if !found {
+				return actionMsg{err: fmt.Errorf("thread details update: project %q not found", projectID)}
+			}
+			_, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
+				ProjectID:   project.ID,
+				Name:        project.Name,
+				Description: description,
+				Kind:        project.Kind,
+				Metadata:    project.Metadata,
+				UpdatedBy:   actorID,
+				UpdatedType: actorType,
+			})
+			if err != nil {
+				return actionMsg{err: err}
+			}
+			return actionMsg{status: "thread details updated", reload: true}
+		default:
+			taskID := strings.TrimSpace(target.TargetID)
+			if taskID == "" {
+				return actionMsg{err: fmt.Errorf("thread details update: task target unavailable")}
+			}
+			task, ok := m.taskByID(taskID)
+			if !ok {
+				return actionMsg{err: fmt.Errorf("thread details update: task %q not found", taskID)}
+			}
+			metadata := task.Metadata
+			_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
+				TaskID:      task.ID,
+				Title:       task.Title,
+				Description: description,
+				Priority:    task.Priority,
+				DueAt:       task.DueAt,
+				Labels:      append([]string(nil), task.Labels...),
+				Metadata:    &metadata,
+				UpdatedBy:   actorID,
+				UpdatedType: actorType,
+			})
+			if err != nil {
+				return actionMsg{err: err}
+			}
+			return actionMsg{status: "thread details updated", reload: true}
 		}
 	}
 }

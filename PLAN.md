@@ -1862,3 +1862,248 @@ Current status:
   1. independent QA subagent sign-off on code + markdown trackers/worksheet,
   2. user+agent collaborative run through worksheet sections C1-C4,
   3. final closeout commit for TUI/docs wave.
+
+## Checkpoint 2026-03-03: TUI Layout/Thread Editor Remediation (User-Reported Regression)
+
+Objective:
+- address live-user findings:
+  1. unexplained `…` truncation marker and panel-bottom visual mismatch in board/notices layout,
+  2. thread description unexpectedly showing `(no description)` for some notification-opened threads,
+  3. need multiline independent editors for comment composition and thread description editing.
+
+Commands/tests run and outcomes:
+1. context and hotspot discovery:
+   - `rg -n "Global Notifications|Project Notifications|fitLines|thread"` across `internal/tui/*` -> PASS.
+   - targeted `sed -n` reads for `renderOverviewPanel`, `renderGlobalNoticesPanel`, `modeThread`, `thread_mode.go` -> PASS.
+2. Context7 consult before edits:
+   - `/charmbracelet/bubbles` (`textarea` APIs, ctrl+s flow) -> PASS.
+   - `/charmbracelet/lipgloss` (inline/max width/wrap guardrails) -> PASS.
+3. implementation edits:
+   - `internal/tui/model.go`:
+     - switched thread composer to `textarea.Model`,
+     - added independent thread details editor textarea (`i` from details mode, `ctrl+s` save),
+     - added textarea clipboard helper,
+     - tightened notices/global line truncation to prevent wrapped overflow,
+     - replaced `fitLines` ellipsis insertion with hard clipping,
+     - made board footer reserve dynamic (`boardFooterLines`) to reduce artificial panel gap.
+   - `internal/tui/thread_mode.go`:
+     - multiline editor rendering for comments/details,
+     - details-editor hints and controls,
+     - fallback description resolution from backing project/task when thread body is empty,
+     - direct save path from details editor to `UpdateProject` / `UpdateTask`.
+   - `internal/tui/model_test.go`:
+     - updated thread post key expectations (`ctrl+s`),
+     - added regression tests for details-editor save and description fallback,
+     - updated partial-results assertion for truncated panel label behavior.
+   - `internal/tui/testdata/*.golden` refreshed via recipe.
+4. tests:
+   - `just fmt` -> PASS.
+   - `just test-golden-update` -> PASS.
+   - `just test-pkg ./internal/tui` -> PASS.
+   - `just check` -> PASS.
+   - `just ci` -> PASS.
+
+Current status:
+- remediation implemented and gate-green.
+- active worksheet updated to reflect new controls and explicit alignment/truncation validation row:
+  - `COLLAB_TEST_2026-03-02_DOGFOOD.md` (`C1-04`, new `C1-05`, new `C3-04`, overflow log row).
+- waiting for user collaborative rerun of C1/C3 steps in live TUI for final confirmation.
+
+## Checkpoint 2026-03-03: Thread Workspace Layout Redesign (User UX Directive)
+
+Objective:
+- implement requested thread workspace composition:
+  1. bordered top description/details pane occupying most of thread viewport,
+  2. bordered bottom comments pane (~25% height) with 2-line composer,
+  3. bordered right context pane with owner + brief history,
+  4. full-screen description editor with live Glamour preview while typing.
+
+Commands/tests run and outcomes:
+1. Context7 before edits:
+   - `/charmbracelet/glamour` (renderer usage / environment-style patterns) -> PASS.
+   - `/charmbracelet/lipgloss` (width/height/clipping behavior) -> PASS.
+2. implementation edits:
+   - `internal/tui/thread_mode.go`
+     - rebuilt `renderThreadModeView` into split-pane workspace,
+     - added helpers:
+       - `renderThreadDescriptionPanel`,
+       - `renderThreadCommentsPanel`,
+       - `renderThreadContextPanel`,
+       - `renderThreadDescriptionEditorView`,
+       - `threadCommentListLines`,
+       - `threadSectionStyle`,
+     - removed dependency on old details overlay for normal thread flow,
+     - added actor-tagged brief-history rows with summary labels.
+   - `internal/tui/model.go`
+     - tuned thread composer default to 2-line textarea (`ShowLineNumbers=false`).
+   - `internal/tui/markdown_renderer.go`
+     - switched renderer construction to `glamour.WithEnvironmentConfig()` + `WithWordWrap(...)` for env-driven style behavior aligned with Glamour guidance.
+3. test cycle:
+   - `just fmt && just test-pkg ./internal/tui` -> initial FAIL (`TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity` visibility expectation mismatch).
+   - Context7 rerun after failure (lipgloss clipping/fit guidance) -> PASS.
+   - targeted fix in `renderThreadContextPanel` (history rows now include `[actor] owner` and `summary:` prefix) -> applied.
+   - `just fmt && just test-pkg ./internal/tui` -> PASS.
+   - `just check && just ci` -> PASS.
+   - post-renderer update revalidation:
+     - `just fmt && just test-pkg ./internal/tui` -> PASS.
+     - `just check && just ci` -> PASS.
+
+Current status:
+- thread workspace redesign is integrated and gate-green.
+- worksheet updated for this UX contract:
+  - `C1-02`/`C1-05`/`C1-06` and `C3-05` in `COLLAB_TEST_2026-03-02_DOGFOOD.md`.
+- awaiting user collaborative validation of new thread-pane behavior.
+
+## Checkpoint 2026-03-03: Global Notification Enter Trace Instrumentation
+
+Objective:
+- diagnose slow global-notification Enter open path and intermittent input/key leakage by adding high-signal TUI debug traces with transition correlation.
+
+Commands/tests run and outcomes:
+1. context gathering and analysis:
+   - local code inspection for `activateGlobalNoticesSelection` / `loadData` / `applyLoadedMsg` / input routing -> completed.
+   - explorer subagents run for latency path + input leakage path with file:line evidence -> completed.
+2. Context7 before edits:
+   - `/charmbracelet/bubbletea` (Update/key flow semantics) -> PASS.
+   - `/charmbracelet/log` (structured debug field logging) -> PASS.
+3. implementation edits:
+   - added `internal/tui/trace.go` with:
+     - global-notification transition id lifecycle,
+     - branch/pending/key-dispatch trace helpers,
+     - `loadData` stage timing helpers,
+     - control-character guard helpers for persistence-adjacent traces.
+   - updated `internal/tui/model.go` to emit traces at:
+     - global panel Enter activation,
+     - global notification branch decisions/pending-field mutations,
+     - `loadData` stage timings and counts,
+     - `applyLoadedMsg` completion for transition correlation,
+     - key dispatch while transition active,
+     - pre-persistence control-character guard checks.
+   - QA edge-case follow-up fix:
+     - zero-project `applyLoadedMsg` branch now closes active global transition trace (`no_projects`) to avoid stale transition ids.
+4. verification:
+   - worker lane: `just test-pkg ./internal/tui` -> initial FAIL (compile mismatch), fixed in-lane, rerun -> PASS.
+   - independent QA lane: `just test-pkg ./internal/tui` -> PASS.
+   - integrator post-fix rerun:
+     - `just test-pkg ./internal/tui` -> PASS.
+     - `just ci` -> PASS.
+
+Current status:
+- trace instrumentation is integrated and gate-green.
+- logs remain in existing runtime dev log sink (`.tillsyn/log/tillsyn-YYYYMMDD.log`) with `tui.*` debug event names for grep/filter.
+- ready for user repro run focused on global notifications Enter latency and key leakage.
+
+## Checkpoint 2026-03-03: Global Notice Enter Stall + Exit Reliability Fix
+
+Objective:
+- remove project-scoped global notice Enter reload stall and restore deterministic emergency exit while in non-normal input modes.
+
+Investigation/evidence:
+- logs showed project-scoped global notice Enter going through `no_task_switch_project_reload` branch (`activateGlobalNoticesSelection`) instead of direct thread open.
+- user-reported shell command failures were command-format/alias issues (zsh parsing + iconized ls alias), not application errors.
+
+Context7:
+- attempted Bubble Tea key handling consult; transport unavailable.
+- fallback source used per repo policy: local Bubble Tea usage in repo and existing test evidence.
+
+Implementation edits:
+- `internal/tui/model.go`
+  - added global hard interrupt handling in `Update` for `tea.KeyPressMsg` when `msg.String() == "ctrl+c"` to ensure emergency quit in all modes.
+  - changed project-scoped/no-task global-notice Enter path to open thread directly (no switch-project reload).
+- `internal/tui/model_test.go`
+  - updated `TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread` expectation: selected project context remains unchanged on direct thread open.
+
+Verification:
+- `just test-pkg ./internal/tui` -> PASS.
+- `just ci` -> PASS.
+
+Current status:
+- direct-open path removes the unnecessary reload for project-scoped global notices.
+- ctrl+c quit now works regardless of mode-specific input routing.
+
+## Checkpoint 2026-03-03: Remaining Global-Notice Slowness + Input Artifact Hardening
+
+Objective:
+- address user-reported lingering stall and input corruption after global-notice Enter.
+
+Findings:
+- user shell log extraction failures were command formatting issues in zsh (newline split + alias contamination), not repository/runtime permission faults.
+- global notice path still performed unnecessary reload for project-scoped rows (`task_id == "" && switchProject` branch).
+- with debug-level instrumentation enabled, `loadData` stage logs were emitted on every auto-refresh, creating heavy log churn.
+- markdown renderer used `glamour.WithEnvironmentConfig()`; this can trigger terminal environment probing and may leak OSC replies into focused inputs in some terminals.
+
+Context7:
+- consulted `/charmbracelet/bubbletea` for ctrl+c handling semantics.
+- attempted second Bubble Tea consult during follow-up; Context7 transport unavailable. fallback used: local code/test behavior.
+- consulted `/charmbracelet/glamour` for deterministic renderer style options (`WithStandardStyle`).
+
+Implementation edits:
+- `internal/tui/model.go`
+  - `Update`: immediate `ctrl+c` emergency quit path in `tea.KeyPressMsg` handling.
+  - `activateGlobalNoticesSelection`: project-scoped/no-task global notices now open thread directly (no switch-project reload).
+  - `taskFormValues`/`projectFormValues`: apply `sanitizeFormFieldValue` to strip OSC probe artifacts + control runes before persistence.
+  - added form-value sanitization helpers and terminal probe regex patterns.
+- `internal/tui/trace.go`
+  - reduced background tracing noise: `tui.load_data.stage` now logs non-transition loads only on errors or unexpectedly slow totals (>=50ms), while keeping full detail for active global-notice transitions.
+- `internal/tui/markdown_renderer.go`
+  - switched renderer construction from `WithEnvironmentConfig()` to stable `WithStandardStyle(styles.DarkStyle)` + wrap, avoiding environment-probing behavior.
+- `internal/tui/model_test.go`
+  - updated direct-open behavior expectation for project-scoped global notices.
+  - added regression tests for form-value sanitization of OSC probe artifacts.
+
+Verification:
+- `just test-pkg ./internal/tui` -> PASS.
+- `just ci` -> PASS.
+
+Current status:
+- global-notice Enter no longer forces project-switch reload for project-scoped rows.
+- emergency exit is reliable via ctrl+c in all modes.
+- form submits now scrub terminal-probe artifacts from project/task fields.
+- load-data trace output is scoped to actionable scenarios, reducing log I/O overhead.
+
+## Checkpoint 2026-03-03: Input-Time Probe Scrub + Notifications Panel Height Alignment
+
+Objective:
+- fix remaining live-input OSC artifact insertion (not just submit-time cleanup), and align right stacked notifications panel height with board columns to eliminate bottom mismatch/clipping.
+
+Context gathering + design:
+- reviewed latest user logs + `tui.global_notification.*` traces.
+- explorer lanes confirmed two primary gaps:
+  - submit-time-only sanitization allowed probe artifacts to appear while editing.
+  - overview panel split used hard minimums that could exceed requested height.
+- Context7 consulted before edits:
+  - `/charmbracelet/bubbletea` key handling guidance.
+
+Implementation edits:
+- `internal/tui/model.go`
+  - added `terminalProbeEscapeSequencePattern` for full OSC escape sequence stripping.
+  - added `sanitizeInteractiveInputValue`, `stripTerminalProbeArtifacts`, `scrubTextInputTerminalArtifacts`, `scrubTextAreaTerminalArtifacts`.
+  - wired scrubbers into interactive update paths:
+    - task/project forms,
+    - thread comment/details editors,
+    - dependency/search/command/label/path/bootstrap/due/resource/highlight/labels-config inputs.
+  - wired scrubbers into clipboard paste helpers for both textinput and textarea.
+  - updated `sanitizeFormFieldValue` to reuse interactive sanitizer then trim.
+  - fixed `renderOverviewPanel` stacked height math with explicit min chrome-aware panel size and bounded split so project+global panel heights stay consistent.
+  - lowered `columnHeight()` minimum from 14 to 10 to reduce forced overflow on smaller terminals.
+- `internal/tui/model_test.go`
+  - added regression tests:
+    - `TestScrubTextInputTerminalArtifactsStripsProbeDuringEdit`
+    - `TestScrubTextAreaTerminalArtifactsStripsProbeDuringEdit`
+    - `TestRenderOverviewPanelHeightMatchesRequestedHeight`
+
+Test/fix loop evidence:
+1. `just test-pkg ./internal/tui` -> FAIL (golden drift + panel height off-by-one from border chrome minimum).
+2. adjusted stacked split invariant (`minStackPanelHeight = 5`) to account for border/padding overhead.
+3. `just test-pkg ./internal/tui` -> FAIL (golden drift only).
+4. `just test-golden-update` -> PASS (updated:
+   - `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+   - `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`).
+5. `just test-pkg ./internal/tui` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+
+Current status:
+- live inputs now scrub probe artifacts during typing/paste (not only on save).
+- project/global notifications panel stack now respects board-height budget and aligns better with column bottoms.
+- all required gates are green after golden refresh.

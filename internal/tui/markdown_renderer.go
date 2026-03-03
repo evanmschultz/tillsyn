@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 )
 
 // markdownRenderer renders markdown for terminal views and recreates the renderer when wrap width changes.
@@ -26,7 +27,9 @@ func (r *markdownRenderer) render(markdown string, width int) string {
 
 	if r.renderer == nil || r.width != wrapWidth {
 		renderer, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle("dark"),
+			// Use a stable built-in style to avoid terminal environment probing
+			// sequences leaking into interactive TUI input streams.
+			glamour.WithStandardStyle(styles.DarkStyle),
 			glamour.WithWordWrap(wrapWidth),
 		)
 		if err != nil {

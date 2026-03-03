@@ -10,17 +10,18 @@
  │  │  Help Golden Task                                │ │                                    │
  │     [low]                                           │ │ Warnings                           │
  │                                                     │ │ none                               │
- │                                                     │ │ …                                  │
+ │                                                     │ │                                    │
+ │                                                     │ │ Agent/User Action                  │
+ │                                                     │ │ no notifications requiring user…   │
+ │                                                     │ │                                    │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
  │                                                     │ │ Global Notifications               │
- │                                                     │ │ requires user action across        │
- │                                                     │ │ projects                           │
+ │                                                     │ │ requires user action across pro…   │
  │                                                     │ │                                    │
- │                                                     │ │ …                                  │
- ╰─────────────────────────────────────────────────────╯ │                                    │[24;58H╰────────────────────────────────────╯
+ ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
  tasks: 1 • selected: Help Golden Task • level: task
  deps: total 1 • blocked 0 • unresolved 0 • edges 0
  0 overdue * 0 due soon
@@ -37,12 +38,12 @@
     │ - h/l or left/right move columns; j/k or up/down move task selection [3P
     │ - n new task; s new subtask; i/enter task info; e edit task [3P
     │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore [3P
-    │ - f focus subtree; F full board; t toggle archived [3P
+    │ - f focus subtree; F full board; t toggle archived                  [3P
     │ - / search; p project picker; : command palette; . quick actions                     │[K
-    │ - tab/shift+tab cycle board/project/global panels; left/right move adjacent panel    │[K
+    │ - tab/shift+tab cycle board/project/global panels; left/right move adjacent panel [3P
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
-    │ - z undo; Z redo; g activity log; q quit                               [3P
-    │                                                                               [3P
-    │ selection mode: off (ctrl+y toggles)                       [3P
-    │ press ? or esc to close help                      [3P
+    │ - z undo; Z redo; g activity log; q quit                                             │[K
+    │                                                                                      │[K
+    │ selection mode: off (ctrl+y toggles)              [3P
+    │ press ? or esc to close help                                           [3P
 [4C╰──────────────────────────────────────────────────────────────────────────────────────╯[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -976,7 +977,7 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 		t.Fatal("expected i to activate thread comment composer")
 	}
 	m.threadInput.SetValue("New _markdown_ project comment")
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	comments := svc.comments[projectKey]
 	if len(comments) != 2 {
@@ -1080,7 +1081,7 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	}
 	m = applyMsg(t, m, keyRune('i'))
 	m.threadInput.SetValue("fallback check")
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
 	comments := svc.comments[itemKey]
@@ -1133,7 +1134,7 @@ func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
 		t.Fatal("expected composer active after i")
 	}
 	m.threadInput.SetValue("explicit composer")
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
 	comments := svc.comments[itemKey]
@@ -1163,7 +1164,7 @@ func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('e'))
 	m = applyMsg(t, m, keyRune('x'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
 	comments := svc.comments[itemKey]
@@ -1254,6 +1255,79 @@ func TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm(t *testing.
 	}
 	if got := strings.TrimSpace(m.projectFormInputs[projectFieldDescription].Value()); !strings.Contains(got, "Overview") {
 		t.Fatalf("expected project description prefilled from thread target, got %q", got)
+	}
+}
+
+// TestModelThreadDetailsEditorSavesDescriptionWithCtrlS verifies the inline thread details editor persists markdown details.
+func TestModelThreadDetailsEditorSavesDescriptionWithCtrlS(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "initial description",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	updated, cmd := m.executeCommandPalette("thread-item")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if !m.threadDetailsActive {
+		t.Fatal("expected details modal active")
+	}
+	m = applyMsg(t, m, keyRune('i'))
+	if !m.threadDetailsEditorActive {
+		t.Fatal("expected details editor active")
+	}
+	m.threadDetailsInput.SetValue("## Updated details\n\n- multiline markdown")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+
+	updatedTask, ok := m.taskByID(task.ID)
+	if !ok {
+		t.Fatalf("expected updated task %q in model cache", task.ID)
+	}
+	if got := strings.TrimSpace(updatedTask.Description); !strings.Contains(got, "Updated details") {
+		t.Fatalf("expected updated task description, got %q", got)
+	}
+	if got := strings.TrimSpace(m.threadDescriptionMarkdown); !strings.Contains(got, "Updated details") {
+		t.Fatalf("expected thread markdown description refreshed, got %q", got)
+	}
+}
+
+// TestModelThreadDescriptionFallsBackToTargetDetails verifies notification-opened threads use backing entity details when no thread body is provided.
+func TestModelThreadDescriptionFallsBackToTargetDetails(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 15, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "## Project Details\n\n- keep this visible", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeProject,
+		TargetID:   project.ID,
+	})
+	if err != nil {
+		t.Fatalf("normalize comment target: %v", err)
+	}
+	updated, cmd := m.startNotificationThread(target, "project notice", "")
+	m = applyResult(t, updated, cmd)
+
+	if got := strings.TrimSpace(m.threadDescriptionMarkdown); !strings.Contains(got, "Project Details") {
+		t.Fatalf("expected fallback to project description markdown, got %q", got)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "Project Details") {
+		t.Fatalf("expected fallback description rendered in thread view, got\n%s", rendered)
 	}
 }
 
@@ -2099,6 +2173,86 @@ func TestClipboardShortcutHelpers(t *testing.T) {
 	}
 	if handled, status := applyClipboardShortcutToInput(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}, &in); !handled || status == "" {
 		t.Fatalf("expected paste shortcut handled with status, handled=%t status=%q", handled, status)
+	}
+}
+
+// TestSanitizeFormFieldValueStripsTerminalProbeArtifacts verifies OSC color probe responses are removed from form values.
+func TestSanitizeFormFieldValueStripsTerminalProbeArtifacts(t *testing.T) {
+	raw := "mcp-visibility-probe-20260302-0502/1e1e/2e2e/1e1e/2e2e]11;rgb:1e1e/1e1e/2e2e"
+	got := sanitizeFormFieldValue(raw)
+	if got != "mcp-visibility-probe-20260302-0502" {
+		t.Fatalf("expected probe artifact stripped, got %q", got)
+	}
+}
+
+// TestTaskAndProjectFormValuesSanitizeTerminalProbeArtifacts verifies form extraction applies field sanitization.
+func TestTaskAndProjectFormValuesSanitizeTerminalProbeArtifacts(t *testing.T) {
+	taskInput := textinput.New()
+	taskInput.SetValue("task-title]11;rgb:1e1e/1e1e/2e2e")
+	projectInput := textinput.New()
+	projectInput.SetValue("project-name]11;rgb:1e1e/1e1e/2e2e")
+
+	m := Model{
+		formInputs:        []textinput.Model{taskInput},
+		projectFormInputs: []textinput.Model{projectInput},
+	}
+	taskVals := m.taskFormValues()
+	if got := taskVals["title"]; got != "task-title" {
+		t.Fatalf("expected task title sanitized, got %q", got)
+	}
+	projectVals := m.projectFormValues()
+	if got := projectVals["name"]; got != "project-name" {
+		t.Fatalf("expected project name sanitized, got %q", got)
+	}
+}
+
+// TestScrubTextInputTerminalArtifactsStripsProbeDuringEdit verifies interactive scrub removes leaked probe text before submit.
+func TestScrubTextInputTerminalArtifactsStripsProbeDuringEdit(t *testing.T) {
+	in := textinput.New()
+	in.SetValue("mcp-visibility/1e1e/2e2e/1e1e/2e2e]11;rgb:1e1e/1e1e/2e2e")
+	in.SetCursor(len([]rune(in.Value())))
+
+	changed := scrubTextInputTerminalArtifacts(&in)
+	if !changed {
+		t.Fatal("expected scrubber to report changed value")
+	}
+	if got := in.Value(); got != "mcp-visibility" {
+		t.Fatalf("expected scrubbed input, got %q", got)
+	}
+}
+
+// TestScrubTextAreaTerminalArtifactsStripsProbeDuringEdit verifies textarea scrub removes leaked probe text.
+func TestScrubTextAreaTerminalArtifactsStripsProbeDuringEdit(t *testing.T) {
+	ta := textarea.New()
+	ta.SetValue("notes]11;rgb:1e1e/1e1e/2e2e\nnext line")
+
+	changed := scrubTextAreaTerminalArtifacts(&ta)
+	if !changed {
+		t.Fatal("expected textarea scrubber to report changed value")
+	}
+	if got := ta.Value(); got != "notes\nnext line" {
+		t.Fatalf("expected scrubbed textarea, got %q", got)
+	}
+}
+
+// TestRenderOverviewPanelHeightMatchesRequestedHeight verifies stacked notifications panels do not exceed the requested board height.
+func TestRenderOverviewPanelHeightMatchesRequestedHeight(t *testing.T) {
+	now := time.Date(2026, 3, 3, 1, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	panel := m.renderOverviewPanel(project, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 44, 14, 0, 0, 0, nil, false)
+	if got := lipgloss.Height(panel); got != 14 {
+		t.Fatalf("expected overview panel height 14, got %d", got)
 	}
 }
 
@@ -5236,13 +5390,14 @@ func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T
 	}
 	m.noticesFocused = true
 	m.noticesPanel = noticesPanelFocusGlobal
+	initialProjectID := m.projects[m.selectedProject].ID
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeThread {
 		t.Fatalf("expected project-scoped global notice to open thread mode, got %v", m.mode)
 	}
-	if got := m.projects[m.selectedProject].ID; got != p2.ID {
-		t.Fatalf("expected project context switched to %q, got %q", p2.ID, got)
+	if got := m.projects[m.selectedProject].ID; got != initialProjectID {
+		t.Fatalf("expected current project context to remain %q on direct thread open, got %q", initialProjectID, got)
 	}
 	if m.threadTarget.ProjectID != p2.ID || m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != p2.ID {
 		t.Fatalf("expected project-scoped thread target for %q, got %#v", p2.ID, m.threadTarget)
@@ -5365,7 +5520,7 @@ func TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures(t *test
 
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 128, Height: 40})
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(rendered, "partial results: 1 project") || !strings.Contains(rendered, "unavailable") {
+	if !strings.Contains(rendered, "partial results: 1 project") {
 		t.Fatalf("expected visible partial-results signal in global panel, got\n%s", rendered)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -81,6 +83,15 @@ const (
 
 // taskFormFields stores task-form field keys in display/update order.
 var taskFormFields = []string{"title", "description", "priority", "due", "labels", "depends_on", "blocked_by", "blocked_reason"}
+
+// terminalProbeArtifactWithPrefixPattern matches leaked OSC 10/11 rgb probe artifacts with dangling rgb-triplet prefixes.
+var terminalProbeArtifactWithPrefixPattern = regexp.MustCompile(`(?i)(?:/[0-9a-f]{2,4}){2,4}\]?1[01];rgb:[0-9a-f/]{6,64}`)
+
+// terminalProbeArtifactPattern matches leaked OSC 10/11 rgb probe artifacts that can be echoed into focused inputs.
+var terminalProbeArtifactPattern = regexp.MustCompile(`(?i)\]?1[01];rgb:[0-9a-f/]{6,64}`)
+
+// terminalProbeEscapeSequencePattern matches complete OSC escape sequences (ESC ] ... BEL / ST).
+var terminalProbeEscapeSequencePattern = regexp.MustCompile(`\x1b\][^\x1b\x07]*(?:\x07|\x1b\\)`)
 
 // task-form field indexes used throughout keyboard/update logic.
 const (
@@ -405,7 +416,8 @@ type Model struct {
 	pathsRootInput              textinput.Model
 	highlightColorInput         textinput.Model
 	dependencyInput             textinput.Model
-	threadInput                 textinput.Model
+	threadInput                 textarea.Model
+	threadDetailsInput          textarea.Model
 	searchFocus                 int
 	searchStateCursor           int
 	searchLevelCursor           int
@@ -509,6 +521,7 @@ type Model struct {
 	globalNoticesIdx int
 	// globalNoticesPartialCount reports how many projects were skipped while aggregating global notices.
 	globalNoticesPartialCount int
+	globalNoticeTransition    globalNoticeTransitionTrace
 	activityInfoItem          activityEntry
 	undoStack                 []historyActionSet
 	redoStack                 []historyActionSet
@@ -560,6 +573,7 @@ type Model struct {
 	threadPendingCommentBody  string
 	threadComposerActive      bool
 	threadDetailsActive       bool
+	threadDetailsEditorActive bool
 	threadMarkdown            markdownRenderer
 
 	autoRefreshInterval time.Duration
@@ -703,11 +717,18 @@ func NewModel(svc Service, opts ...Option) Model {
 	dependencyInput.Placeholder = "search title, description, labels"
 	dependencyInput.CharLimit = 120
 	configureTextInputClipboardBindings(&dependencyInput)
-	threadInput := textinput.New()
-	threadInput.Prompt = "comment: "
-	threadInput.Placeholder = "write markdown and press enter"
-	threadInput.CharLimit = 4000
-	configureTextInputClipboardBindings(&threadInput)
+	threadInput := textarea.New()
+	threadInput.Prompt = ""
+	threadInput.Placeholder = "Write markdown comment (Ctrl+S posts)"
+	threadInput.CharLimit = 12000
+	threadInput.ShowLineNumbers = false
+	threadInput.SetHeight(2)
+	threadDetailsInput := textarea.New()
+	threadDetailsInput.Prompt = ""
+	threadDetailsInput.Placeholder = "Edit markdown description. Ctrl+S saves."
+	threadDetailsInput.CharLimit = 20000
+	threadDetailsInput.ShowLineNumbers = true
+	threadDetailsInput.SetHeight(12)
 	resourcePickerFilter := textinput.New()
 	resourcePickerFilter.Prompt = "filter: "
 	resourcePickerFilter.Placeholder = "type to fuzzy-filter files/dirs"
@@ -742,6 +763,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		highlightColorInput:      highlightColorInput,
 		dependencyInput:          dependencyInput,
 		threadInput:              threadInput,
+		threadDetailsInput:       threadDetailsInput,
 		resourcePickerFilter:     resourcePickerFilter,
 		duePickerDateInput:       duePickerDateInput,
 		duePickerTimeInput:       duePickerTimeInput,
@@ -825,6 +847,9 @@ func (m Model) shouldAutoRefresh() bool {
 
 // applyLoadedMsg applies a loaded message and returns any follow-up command.
 func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
+	applyStartedAt := time.Now()
+	defer m.markGlobalNoticeApplyLoadedCompletion(applyStartedAt, msg.err)
+
 	if msg.err != nil {
 		m.err = msg.err
 		return nil
@@ -865,6 +890,7 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.globalNoticesPartialCount = 0
 		m.pendingOpenActivityLog = false
 		m.clearPendingNotificationThread()
+		m.completeGlobalNoticeTransition("no_projects")
 		if m.startupBootstrapRequired {
 			if m.mode != modeBootstrapSettings && m.mode != modeAddProject && m.mode != modeEditProject {
 				return m.startBootstrapSettingsMode(true)
@@ -879,12 +905,14 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		return nil
 	}
 	if m.pendingProjectID != "" {
+		pendingProjectID := m.pendingProjectID
 		for idx, project := range m.projects {
 			if project.ID == m.pendingProjectID {
 				m.selectedProject = idx
 				break
 			}
 		}
+		m.traceGlobalNoticePending("clear", "pending_project_id", pendingProjectID, "reason", "apply_loaded")
 		m.pendingProjectID = ""
 	}
 	if m.projectionRootTaskID != "" {
@@ -897,7 +925,9 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	m.retainSelectionForLoadedTasks()
 	m.normalizePanelFocus()
 	if m.pendingFocusTaskID != "" {
-		m.focusTaskByID(m.pendingFocusTaskID)
+		pendingFocusTaskID := m.pendingFocusTaskID
+		m.focusTaskByID(pendingFocusTaskID)
+		m.traceGlobalNoticePending("clear", "pending_focus_task_id", pendingFocusTaskID, "reason", "apply_loaded")
 		m.pendingFocusTaskID = ""
 	}
 	if pendingTaskID := strings.TrimSpace(m.pendingOpenTaskInfoID); pendingTaskID != "" {
@@ -909,13 +939,16 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 			} else {
 				m.status = "notification task not found"
 			}
+			m.traceGlobalNoticePending("clear", "pending_open_task_info_id", pendingTaskID, "reason", "task_found")
 			m.pendingOpenTaskInfoID = ""
 		} else if !m.showArchived {
 			m.showArchived = true
 			m.pendingFocusTaskID = pendingTaskID
+			m.traceGlobalNoticePending("set", "pending_focus_task_id", pendingTaskID, "reason", "retry_include_archived")
 			m.status = "loading notification task..."
 			return m.loadData
 		} else {
+			m.traceGlobalNoticePending("clear", "pending_open_task_info_id", pendingTaskID, "reason", "task_missing_after_reload")
 			m.pendingOpenTaskInfoID = ""
 			if cmd := m.applyPendingNotificationThread(); cmd != nil {
 				return cmd
@@ -970,10 +1003,21 @@ func (m *Model) setPendingNotificationThread(target domain.CommentTarget, title,
 	m.pendingOpenThreadTarget = target
 	m.pendingOpenThreadTitle = strings.TrimSpace(title)
 	m.pendingOpenThreadBody = strings.TrimSpace(body)
+	targetKey := fmt.Sprintf("%s/%s/%s", strings.TrimSpace(target.ProjectID), strings.TrimSpace(string(target.TargetType)), strings.TrimSpace(target.TargetID))
+	m.traceGlobalNoticePending("set", "pending_notification_thread", targetKey, "reason", "set_pending_thread")
 }
 
 // clearPendingNotificationThread clears one deferred thread-open action.
 func (m *Model) clearPendingNotificationThread() {
+	targetKey := fmt.Sprintf(
+		"%s/%s/%s",
+		strings.TrimSpace(m.pendingOpenThreadTarget.ProjectID),
+		strings.TrimSpace(string(m.pendingOpenThreadTarget.TargetType)),
+		strings.TrimSpace(m.pendingOpenThreadTarget.TargetID),
+	)
+	if targetKey != "//" || strings.TrimSpace(m.pendingOpenThreadTitle) != "" || strings.TrimSpace(m.pendingOpenThreadBody) != "" {
+		m.traceGlobalNoticePending("clear", "pending_notification_thread", targetKey, "reason", "clear_pending_thread")
+	}
 	m.pendingOpenThreadTarget = domain.CommentTarget{}
 	m.pendingOpenThreadTitle = ""
 	m.pendingOpenThreadBody = ""
@@ -1249,6 +1293,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// Always honor terminal interrupt for deterministic emergency exit across all modes.
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.traceGlobalNoticeKeyDispatch(msg)
 		if m.mode != modeNone {
 			return m.handleInputModeKey(msg)
 		}
@@ -1665,11 +1714,17 @@ func (m Model) activeMouseMode() tea.MouseMode {
 
 // loadData loads required data for the current operation.
 func (m Model) loadData() tea.Msg {
+	totalStartedAt := time.Now()
+
+	projectsStartedAt := time.Now()
 	projects, err := m.svc.ListProjects(context.Background(), m.showArchivedProjects)
+	m.traceLoadDataStage("projects", projectsStartedAt, err, "count", len(projects), "show_archived_projects", m.showArchivedProjects)
 	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", 0, "column_count", 0, "task_count", 0)
 		return loadedMsg{err: err}
 	}
 	if len(projects) == 0 {
+		m.traceLoadDataStage("total", totalStartedAt, nil, "project_count", 0, "column_count", 0, "task_count", 0)
 		return loadedMsg{projects: projects}
 	}
 
@@ -1683,13 +1738,19 @@ func (m Model) loadData() tea.Msg {
 		}
 	}
 	projectID := projects[projectIdx].ID
+	columnsStartedAt := time.Now()
 	columns, err := m.svc.ListColumns(context.Background(), projectID, false)
+	m.traceLoadDataStage("columns", columnsStartedAt, err, "project_id", projectID, "count", len(columns))
 	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
 		return loadedMsg{err: err}
 	}
 
+	tasksStartedAt := time.Now()
 	var tasks []domain.Task
 	searchFilterActive := m.searchApplied
+	searchMatchCount := 0
+	taskSource := "list_tasks"
 	if searchFilterActive {
 		matches, searchErr := m.svc.SearchTaskMatches(context.Background(), app.SearchTasksFilter{
 			ProjectID:       projectID,
@@ -1699,9 +1760,13 @@ func (m Model) loadData() tea.Msg {
 			States:          append([]string(nil), m.searchStates...),
 		})
 		if searchErr != nil {
+			m.traceLoadDataStage("tasks_search", tasksStartedAt, searchErr, "project_id", projectID, "source", "search_matches", "search_active", true, "tasks_count", 0, "search_match_count", 0)
+			m.traceLoadDataStage("total", totalStartedAt, searchErr, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 			return loadedMsg{err: searchErr}
 		}
 		matches = m.filterTaskMatchesBySearchLevels(matches)
+		searchMatchCount = len(matches)
+		taskSource = "search_matches"
 		tasks = make([]domain.Task, 0, len(matches))
 		for _, match := range matches {
 			if match.Project.ID == projectID {
@@ -1711,19 +1776,46 @@ func (m Model) loadData() tea.Msg {
 	} else {
 		tasks, err = m.svc.ListTasks(context.Background(), projectID, m.showArchived)
 	}
+	m.traceLoadDataStage("tasks_search", tasksStartedAt, err, "project_id", projectID, "source", taskSource, "search_active", searchFilterActive, "tasks_count", len(tasks), "search_match_count", searchMatchCount)
 	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 		return loadedMsg{err: err}
 	}
+	rollupStartedAt := time.Now()
 	rollup, err := m.svc.GetProjectDependencyRollup(context.Background(), projectID)
+	m.traceLoadDataStage(
+		"rollup",
+		rollupStartedAt,
+		err,
+		"project_id",
+		projectID,
+		"total_items",
+		rollup.TotalItems,
+		"items_with_dependencies",
+		rollup.ItemsWithDependencies,
+		"dependency_edges",
+		rollup.DependencyEdges,
+		"blocked_items",
+		rollup.BlockedItems,
+		"blocked_by_edges",
+		rollup.BlockedByEdges,
+		"unresolved_dependency_edges",
+		rollup.UnresolvedDependencyEdges,
+	)
 	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
 		return loadedMsg{err: err}
 	}
+	eventsStartedAt := time.Now()
 	activityEntries := []activityEntry{}
+	events := []domain.ChangeEvent{}
 	events, activityErr := m.svc.ListProjectChangeEvents(context.Background(), projectID, activityLogMaxItems)
 	if activityErr == nil {
 		activityEntries = mapChangeEventsToActivityEntries(events)
 	}
+	m.traceLoadDataStage("events", eventsStartedAt, activityErr, "project_id", projectID, "events_count", len(events), "activity_entries_count", len(activityEntries))
 
+	attentionStartedAt := time.Now()
 	attentionItems := []domain.AttentionItem{}
 	globalNotices := make([]globalNoticesPanelItem, 0)
 	globalNoticesPartialCount := 0
@@ -1739,6 +1831,16 @@ func (m Model) loadData() tea.Msg {
 		})
 		if attentionErr != nil {
 			if project.ID == projectID {
+				m.traceLoadDataStage(
+					"attention_loop",
+					attentionStartedAt,
+					attentionErr,
+					"project_count", len(projects),
+					"attention_count", len(attentionItems),
+					"global_notice_count", len(globalNotices),
+					"partial_project_count", globalNoticesPartialCount,
+				)
+				m.traceLoadDataStage("total", totalStartedAt, attentionErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
 				return loadedMsg{err: attentionErr}
 			}
 			globalNoticesPartialCount++
@@ -1754,12 +1856,33 @@ func (m Model) loadData() tea.Msg {
 			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttention(project, item))
 		}
 	}
+	m.traceLoadDataStage(
+		"attention_loop",
+		attentionStartedAt,
+		nil,
+		"project_count", len(projects),
+		"attention_count", len(attentionItems),
+		"global_notice_count", len(globalNotices),
+		"partial_project_count", globalNoticesPartialCount,
+	)
 	requiresUserAction := 0
 	for _, item := range attentionItems {
 		if item.RequiresUserAction {
 			requiresUserAction++
 		}
 	}
+	m.traceLoadDataStage(
+		"total",
+		totalStartedAt,
+		nil,
+		"project_count", len(projects),
+		"column_count", len(columns),
+		"task_count", len(tasks),
+		"activity_entries_count", len(activityEntries),
+		"attention_count", len(attentionItems),
+		"global_notice_count", len(globalNotices),
+		"partial_project_count", globalNoticesPartialCount,
+	)
 
 	return loadedMsg{
 		projects:                  projects,
@@ -2529,7 +2652,7 @@ func (m Model) taskFormValues() map[string]string {
 		if i >= len(m.formInputs) {
 			break
 		}
-		out[key] = strings.TrimSpace(m.formInputs[i].Value())
+		out[key] = sanitizeFormFieldValue(m.formInputs[i].Value())
 	}
 	return out
 }
@@ -2569,9 +2692,86 @@ func (m Model) projectFormValues() map[string]string {
 		if idx >= len(m.projectFormInputs) {
 			break
 		}
-		out[key] = strings.TrimSpace(m.projectFormInputs[idx].Value())
+		out[key] = sanitizeFormFieldValue(m.projectFormInputs[idx].Value())
 	}
 	return out
+}
+
+// sanitizeFormFieldValue normalizes interactive form values and strips terminal probe artifacts.
+func sanitizeFormFieldValue(value string) string {
+	value = sanitizeInteractiveInputValue(value)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+// sanitizeInteractiveInputValue strips terminal-probe artifacts and control runes while preserving user-entered spacing.
+func sanitizeInteractiveInputValue(value string) string {
+	value = stripTerminalProbeArtifacts(value)
+	return stripDisallowedControlRunes(value)
+}
+
+// stripTerminalProbeArtifacts removes terminal OSC color-probe artifacts from freeform text.
+func stripTerminalProbeArtifacts(value string) string {
+	if value == "" {
+		return ""
+	}
+	value = terminalProbeEscapeSequencePattern.ReplaceAllString(value, "")
+	value = terminalProbeArtifactWithPrefixPattern.ReplaceAllString(value, "")
+	value = terminalProbeArtifactPattern.ReplaceAllString(value, "")
+	return value
+}
+
+// stripDisallowedControlRunes removes control runes that should never persist in task/project form fields.
+func stripDisallowedControlRunes(value string) string {
+	if value == "" {
+		return ""
+	}
+	var out strings.Builder
+	out.Grow(len(value))
+	for _, r := range value {
+		if r == '\n' || r == '\t' {
+			out.WriteRune(r)
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
+}
+
+// scrubTextInputTerminalArtifacts removes terminal-probe artifacts from one textinput model after key updates.
+func scrubTextInputTerminalArtifacts(in *textinput.Model) bool {
+	if in == nil {
+		return false
+	}
+	before := in.Value()
+	after := sanitizeInteractiveInputValue(before)
+	if after == before {
+		return false
+	}
+	cursor := clamp(in.Position(), 0, utf8.RuneCountInString(after))
+	in.SetValue(after)
+	in.SetCursor(cursor)
+	return true
+}
+
+// scrubTextAreaTerminalArtifacts removes terminal-probe artifacts from one textarea model after key updates.
+func scrubTextAreaTerminalArtifacts(in *textarea.Model) bool {
+	if in == nil {
+		return false
+	}
+	before := in.Value()
+	after := sanitizeInteractiveInputValue(before)
+	if after == before {
+		return false
+	}
+	in.SetValue(after)
+	return true
 }
 
 // parseDueInput parses input into a normalized form.
@@ -5217,6 +5417,7 @@ func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.
 			}
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			m.beginGlobalNoticeTransition(msg)
 			return m.activateGlobalNoticesSelection()
 		case key.Matches(msg, m.keys.activityLog):
 			return m, m.openActivityLog()
@@ -5447,20 +5648,59 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.mode == modeThread {
 		if m.threadComposerActive {
-			if handled, status := applyClipboardShortcutToInput(msg, &m.threadInput); handled {
+			if handled, status := applyClipboardShortcutToTextArea(msg, &m.threadInput); handled {
 				m.status = status
 				return m, nil
 			}
 		}
-		updateThreadInput := func() (tea.Model, tea.Cmd) {
+		if m.threadDetailsEditorActive {
+			if handled, status := applyClipboardShortcutToTextArea(msg, &m.threadDetailsInput); handled {
+				m.status = status
+				return m, nil
+			}
+		}
+		updateThreadComposerInput := func() (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.threadInput, cmd = m.threadInput.Update(msg)
+			_ = scrubTextAreaTerminalArtifacts(&m.threadInput)
 			return m, cmd
 		}
+		updateThreadDetailsInput := func() (tea.Model, tea.Cmd) {
+			var cmd tea.Cmd
+			m.threadDetailsInput, cmd = m.threadDetailsInput.Update(msg)
+			_ = scrubTextAreaTerminalArtifacts(&m.threadDetailsInput)
+			return m, cmd
+		}
+		startThreadDetailsEditor := func() (tea.Model, tea.Cmd) {
+			m.threadDetailsEditorActive = true
+			m.threadComposerActive = false
+			m.threadInput.Blur()
+			m.threadDetailsInput.SetValue(strings.TrimSpace(m.threadDescriptionMarkdown))
+			m.threadDetailsInput.CursorEnd()
+			m.status = "editing thread details"
+			return m, m.threadDetailsInput.Focus()
+		}
 		switch {
+		case m.threadDetailsEditorActive && (msg.Code == tea.KeyEscape || msg.String() == "esc"):
+			m.threadDetailsEditorActive = false
+			m.threadDetailsInput.Blur()
+			m.status = "thread details"
+			return m, nil
+		case m.threadDetailsEditorActive && msg.String() == "ctrl+s":
+			description := strings.TrimSpace(m.threadDetailsInput.Value())
+			m.threadDescriptionMarkdown = description
+			m.threadDetailsEditorActive = false
+			m.threadDetailsInput.Blur()
+			m.status = "saving thread details..."
+			return m, m.updateThreadDescriptionCmd(description)
+		case m.threadDetailsEditorActive:
+			return updateThreadDetailsInput()
 		case msg.String() == "i":
 			if m.threadComposerActive {
-				return updateThreadInput()
+				return updateThreadComposerInput()
+			}
+			if m.threadDetailsActive {
+				return startThreadDetailsEditor()
 			}
 			m.threadDetailsActive = false
 			m.threadComposerActive = true
@@ -5468,7 +5708,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.threadInput.Focus()
 		case msg.String() == "e":
 			if m.threadComposerActive {
-				return updateThreadInput()
+				return updateThreadComposerInput()
 			}
 			if m.threadDetailsActive {
 				return m.startThreadEditFlow()
@@ -5482,6 +5722,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.threadInput.Blur()
 				m.status = "thread read mode"
 				return m, nil
+			}
+			if m.threadDetailsActive {
+				return startThreadDetailsEditor()
 			}
 			m.threadDetailsActive = false
 			m.threadComposerActive = true
@@ -5500,8 +5743,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.threadInput.Blur()
+			m.threadDetailsInput.Blur()
 			m.threadPendingCommentBody = ""
 			m.threadDetailsActive = false
+			m.threadDetailsEditorActive = false
 			if m.threadBackMode == modeTaskInfo {
 				m.mode = modeTaskInfo
 				m.loadTaskInfoComments(m.taskInfoTaskID)
@@ -5512,26 +5757,38 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "ready"
 			return m, nil
 		case msg.String() == "ctrl+r":
+			if m.threadComposerActive {
+				return updateThreadComposerInput()
+			}
 			m.status = "reloading thread..."
 			return m, m.loadThreadCommentsCmd(m.threadTarget)
 		case msg.Code == tea.KeyPgUp || msg.String() == "pgup":
+			if m.threadComposerActive {
+				return updateThreadComposerInput()
+			}
 			m.threadScroll = max(0, m.threadScroll-max(1, m.threadViewportStep()))
 			return m, nil
 		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown":
+			if m.threadComposerActive {
+				return updateThreadComposerInput()
+			}
 			m.threadScroll += max(1, m.threadViewportStep())
 			return m, nil
 		case msg.String() == "home":
+			if m.threadComposerActive {
+				return updateThreadComposerInput()
+			}
 			m.threadScroll = 0
 			return m, nil
 		case msg.String() == "end":
+			if m.threadComposerActive {
+				return updateThreadComposerInput()
+			}
 			m.threadScroll += 1000
 			return m, nil
-		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+		case msg.String() == "ctrl+s":
 			if !m.threadComposerActive {
-				if m.threadDetailsActive {
-					return m.startThreadEditFlow()
-				}
-				m.status = "press e for details or i to compose a comment"
+				m.status = "press i to compose a comment"
 				return m, nil
 			}
 			body := strings.TrimSpace(m.threadInput.Value())
@@ -5544,11 +5801,20 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.threadInput.CursorEnd()
 			m.status = "posting comment..."
 			return m, m.createThreadCommentCmd(body)
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			if m.threadComposerActive {
+				return updateThreadComposerInput()
+			}
+			if m.threadDetailsActive {
+				return m.startThreadEditFlow()
+			}
+			m.status = "press e for details or i to compose a comment"
+			return m, nil
 		default:
 			if !m.threadComposerActive {
 				return m, nil
 			}
-			return updateThreadInput()
+			return updateThreadComposerInput()
 		}
 	}
 
@@ -5840,6 +6106,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			before := m.dependencyInput.Value()
 			m.dependencyInput, cmd = m.dependencyInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.dependencyInput)
 			if m.dependencyInput.Value() != before {
 				m.dependencyIndex = 0
 				return m, m.loadDependencyMatches
@@ -5929,6 +6196,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.bootstrapDisplayInput, cmd = m.bootstrapDisplayInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.bootstrapDisplayInput)
 			return m, cmd
 		}
 	}
@@ -6110,6 +6378,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.searchFocus == 0 {
 				var cmd tea.Cmd
 				m.searchInput, cmd = m.searchInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.searchInput)
 				m.searchQuery = strings.TrimSpace(m.searchInput.Value())
 				return m, cmd
 			} else {
@@ -6196,6 +6465,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.commandInput, cmd = m.commandInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.commandInput)
 			m.commandMatches = m.filteredCommandItems(m.commandInput.Value())
 			m.commandIndex = clamp(m.commandIndex, 0, len(m.commandMatches)-1)
 			return m, cmd
@@ -6376,6 +6646,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				before := m.duePickerDateInput.Value()
 				m.duePickerDateInput, cmd = m.duePickerDateInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.duePickerDateInput)
 				if m.duePickerDateInput.Value() != before {
 					m.duePicker = 0
 				}
@@ -6387,6 +6658,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				before := m.duePickerTimeInput.Value()
 				m.duePickerTimeInput, cmd = m.duePickerTimeInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.duePickerTimeInput)
 				if m.duePickerTimeInput.Value() != before {
 					m.duePicker = 0
 				}
@@ -6407,6 +6679,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			before := m.resourcePickerFilter.Value()
 			m.resourcePickerFilter, cmd = m.resourcePickerFilter.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.resourcePickerFilter)
 			if m.resourcePickerFilter.Value() != before {
 				m.resourcePickerIndex = 0
 			}
@@ -6435,6 +6708,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "backspace":
 			var cmd tea.Cmd
 			m.resourcePickerFilter, cmd = m.resourcePickerFilter.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.resourcePickerFilter)
 			m.resourcePickerIndex = 0
 			return m, cmd
 		case "ctrl+u":
@@ -6470,6 +6744,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			before := m.resourcePickerFilter.Value()
 			m.resourcePickerFilter, cmd = m.resourcePickerFilter.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.resourcePickerFilter)
 			if m.resourcePickerFilter.Value() != before {
 				m.resourcePickerIndex = 0
 			}
@@ -6488,6 +6763,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			before := m.labelPickerInput.Value()
 			m.labelPickerInput, cmd = m.labelPickerInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.labelPickerInput)
 			if m.labelPickerInput.Value() != before {
 				m.labelPickerIndex = 0
 				m.refreshLabelPickerMatches()
@@ -6535,6 +6811,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			before := m.labelPickerInput.Value()
 			m.labelPickerInput, cmd = m.labelPickerInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.labelPickerInput)
 			if m.labelPickerInput.Value() != before {
 				m.labelPickerIndex = 0
 				m.refreshLabelPickerMatches()
@@ -6561,6 +6838,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.pathsRootInput, cmd = m.pathsRootInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.pathsRootInput)
 			return m, cmd
 		}
 	}
@@ -6654,6 +6932,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.formInputs[m.formFocus], cmd = m.formInputs[m.formFocus].Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.formInputs[m.formFocus])
 			return m, cmd
 		}
 	}
@@ -6687,6 +6966,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.projectFormInputs[m.projectFormFocus], cmd = m.projectFormInputs[m.projectFormFocus].Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.projectFormInputs[m.projectFormFocus])
 			return m, cmd
 		}
 	}
@@ -6720,6 +7000,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.labelsConfigInputs[m.labelsConfigFocus], cmd = m.labelsConfigInputs[m.labelsConfigFocus].Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.labelsConfigInputs[m.labelsConfigFocus])
 			return m, cmd
 		}
 	}
@@ -6740,6 +7021,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.highlightColorInput, cmd = m.highlightColorInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.highlightColorInput)
 			return m, cmd
 		}
 	}
@@ -6853,8 +7135,36 @@ func applyClipboardShortcutToInput(msg tea.KeyPressMsg, in *textinput.Model) (bo
 		value := in.Value()
 		pos := clamp(in.Position(), 0, utf8.RuneCountInString(value))
 		merged, nextPos := spliceRunes(value, pos, text)
+		merged = sanitizeInteractiveInputValue(merged)
 		in.SetValue(merged)
-		in.SetCursor(nextPos)
+		in.SetCursor(clamp(nextPos, 0, utf8.RuneCountInString(merged)))
+		return true, "pasted from clipboard"
+	default:
+		return false, ""
+	}
+}
+
+// applyClipboardShortcutToTextArea handles copy/paste shortcuts for one textarea.
+func applyClipboardShortcutToTextArea(msg tea.KeyPressMsg, in *textarea.Model) (bool, string) {
+	if in == nil {
+		return false, ""
+	}
+	switch {
+	case isClipboardCopyKey(msg):
+		if err := copyTextToClipboard(in.Value()); err != nil {
+			return true, "copy failed: " + err.Error()
+		}
+		return true, "copied field value"
+	case isClipboardPasteKey(msg):
+		text, err := pasteTextFromClipboard()
+		if err != nil {
+			return true, "paste failed: " + err.Error()
+		}
+		if text == "" {
+			return true, "clipboard is empty"
+		}
+		in.InsertString(text)
+		_ = scrubTextAreaTerminalArtifacts(in)
 		return true, "pasted from clipboard"
 	default:
 		return false, ""
@@ -6920,6 +7230,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.taskFormKind = domain.WorkKindTask
 		m.taskFormScope = domain.KindAppliesToTask
 		m.taskFormResourceRefs = nil
+		m.traceFormControlCharacterGuard("task", "create", "title", title)
+		m.traceFormControlCharacterGuard("task", "create", "description", vals["description"])
 		return m.createTask(app.CreateTaskInput{
 			ParentID:    parentID,
 			Kind:        kind,
@@ -6983,6 +7295,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.editingTaskID = ""
 			m.taskFormResourceRefs = nil
 			in.TaskID = taskID
+			m.traceFormControlCharacterGuard("task", "update", "title", in.Title)
+			m.traceFormControlCharacterGuard("task", "update", "description", in.Description)
 			return m, func() tea.Msg {
 				_, updateErr := m.svc.UpdateTask(context.Background(), in)
 				if updateErr != nil {
@@ -7031,6 +7345,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.taskFormKind = domain.WorkKindTask
 		m.taskFormScope = domain.KindAppliesToTask
 		m.taskFormResourceRefs = nil
+		m.traceFormControlCharacterGuard("task", "update", "title", title)
+		m.traceFormControlCharacterGuard("task", "update", "description", description)
 		in := app.UpdateTaskInput{
 			TaskID:      taskID,
 			Title:       title,
@@ -7148,6 +7464,12 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		description := vals["description"]
 		projectID := m.editingProjectID
+		projectOp := "update"
+		if isAdd || projectID == "" {
+			projectOp = "create"
+		}
+		m.traceFormControlCharacterGuard("project", projectOp, "name", name)
+		m.traceFormControlCharacterGuard("project", projectOp, "description", description)
 		m.mode = modeNone
 		m.projectFormInputs = nil
 		m.projectFormFocus = 0
@@ -9945,13 +10267,25 @@ func (m *Model) moveGlobalNoticesSelection(delta int) bool {
 func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	items := m.globalNoticesPanelItemsForInteraction()
 	if len(items) == 0 {
+		m.traceGlobalNoticeBranch("no_items")
 		m.status = "no global notifications available"
+		m.completeGlobalNoticeTransition("no_items")
 		return m, nil
 	}
 	m.clampGlobalNoticesSelection()
 	item := items[clamp(m.globalNoticesIdx, 0, len(items)-1)]
+	m.traceGlobalNoticeBranch(
+		"selection",
+		"stable_key", strings.TrimSpace(item.StableKey),
+		"project_id", strings.TrimSpace(item.ProjectID),
+		"scope_type", strings.TrimSpace(string(item.ScopeType)),
+		"scope_id", strings.TrimSpace(item.ScopeID),
+		"task_id", strings.TrimSpace(item.TaskID),
+	)
 	if strings.TrimSpace(item.StableKey) == globalNoticesEmptyRowKey {
+		m.traceGlobalNoticeBranch("empty_row")
 		m.status = "no global notifications available"
+		m.completeGlobalNoticeTransition("empty_row")
 		return m, nil
 	}
 	projectID := strings.TrimSpace(item.ProjectID)
@@ -9960,7 +10294,9 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 		projectID = currentProjectID
 	}
 	if projectID == "" {
+		m.traceGlobalNoticeBranch("missing_project_context")
 		m.status = "selected global notification has no project context"
+		m.completeGlobalNoticeTransition("missing_project_context")
 		return m, nil
 	}
 	threadTarget, hasThreadTarget := commentTargetForScope(projectID, item.ScopeType, item.ScopeID)
@@ -9970,24 +10306,28 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	taskID := strings.TrimSpace(item.TaskID)
 	if taskID == "" {
 		if !hasThreadTarget {
+			m.traceGlobalNoticeBranch("no_task_no_thread_target", "switch_project", switchProject)
 			m.status = "selected global notification has no comment thread target"
+			m.completeGlobalNoticeTransition("no_task_no_thread_target")
 			return m, nil
 		}
-		if switchProject {
-			m.pendingProjectID = projectID
-			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
-			m.status = "loading global notification..."
-			return m, m.loadData
-		}
+		// For project-scoped/global notices we can open the thread directly without
+		// a project-switch reload, which avoids UI stalls and preserves deterministic Enter behavior.
+		m.traceGlobalNoticeBranch("no_task_open_thread_direct", "switch_project", switchProject)
+		m.completeGlobalNoticeTransition("open_thread_no_task")
 		return m.startNotificationThread(threadTarget, threadTitle, threadBody)
 	}
 
 	if switchProject {
+		m.traceGlobalNoticeBranch("task_switch_project_reload")
 		m.searchApplied = false
 		m.searchQuery = ""
 		m.pendingProjectID = projectID
+		m.traceGlobalNoticePending("set", "pending_project_id", projectID, "reason", "switch_project_task")
 		m.pendingFocusTaskID = taskID
+		m.traceGlobalNoticePending("set", "pending_focus_task_id", taskID, "reason", "switch_project_task")
 		m.pendingOpenTaskInfoID = taskID
+		m.traceGlobalNoticePending("set", "pending_open_task_info_id", taskID, "reason", "switch_project_task")
 		if hasThreadTarget {
 			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
 		} else {
@@ -9998,15 +10338,20 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	}
 
 	if m.openTaskInfo(taskID, "task info") {
+		m.traceGlobalNoticeBranch("task_open_task_info")
 		m.noticesFocused = false
 		m.clearPendingNotificationThread()
+		m.completeGlobalNoticeTransition("open_task_info")
 		return m, nil
 	}
 	if m.searchApplied || m.searchQuery != "" {
+		m.traceGlobalNoticeBranch("task_reload_after_search_reset")
 		m.searchApplied = false
 		m.searchQuery = ""
 		m.pendingFocusTaskID = taskID
+		m.traceGlobalNoticePending("set", "pending_focus_task_id", taskID, "reason", "search_reset")
 		m.pendingOpenTaskInfoID = taskID
+		m.traceGlobalNoticePending("set", "pending_open_task_info_id", taskID, "reason", "search_reset")
 		if hasThreadTarget {
 			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
 		} else {
@@ -10016,9 +10361,12 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 		return m, m.loadData
 	}
 	if !m.showArchived {
+		m.traceGlobalNoticeBranch("task_reload_include_archived")
 		m.showArchived = true
 		m.pendingFocusTaskID = taskID
+		m.traceGlobalNoticePending("set", "pending_focus_task_id", taskID, "reason", "include_archived")
 		m.pendingOpenTaskInfoID = taskID
+		m.traceGlobalNoticePending("set", "pending_open_task_info_id", taskID, "reason", "include_archived")
 		if hasThreadTarget {
 			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
 		} else {
@@ -10028,9 +10376,13 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 		return m, m.loadData
 	}
 	if hasThreadTarget {
+		m.traceGlobalNoticeBranch("task_open_thread_fallback")
+		m.completeGlobalNoticeTransition("open_thread_fallback")
 		return m.startNotificationThread(threadTarget, threadTitle, threadBody)
 	}
+	m.traceGlobalNoticeBranch("task_not_found")
 	m.status = "task not found"
+	m.completeGlobalNoticeTransition("task_not_found")
 	return m, nil
 }
 
@@ -10160,7 +10512,7 @@ func (m Model) renderOverviewPanel(
 	focused bool,
 ) string {
 	panelWidth := max(24, width)
-	panelHeight := max(14, height)
+	panelHeight := max(10, height)
 	contentWidth := max(12, panelWidth-6)
 	normalStyle := lipgloss.NewStyle().Foreground(muted)
 	selectedStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
@@ -10170,15 +10522,25 @@ func (m Model) renderOverviewPanel(
 	viewModel := m
 	viewModel.clampNoticesSelectionForSections(sections)
 
-	globalPanelHeight := max(8, panelHeight/3)
-	if globalPanelHeight > panelHeight-8 {
-		globalPanelHeight = panelHeight - 8
+	// Keep stacked project/global notifications aligned with the board column height.
+	const minStackPanelHeight = 5 // 1 content row + 4 rows of border/padding chrome
+	globalPanelHeight := panelHeight / 3
+	if globalPanelHeight < minStackPanelHeight {
+		globalPanelHeight = minStackPanelHeight
 	}
-	projectPanelHeight := max(8, panelHeight-globalPanelHeight)
+	maxGlobalHeight := panelHeight - minStackPanelHeight
+	if globalPanelHeight > maxGlobalHeight {
+		globalPanelHeight = maxGlobalHeight
+	}
+	projectPanelHeight := panelHeight - globalPanelHeight
+	if projectPanelHeight < minStackPanelHeight {
+		projectPanelHeight = minStackPanelHeight
+		globalPanelHeight = panelHeight - projectPanelHeight
+	}
 	projectContentHeight := max(1, projectPanelHeight-4)
 	globalContentHeight := max(1, globalPanelHeight-4)
 	projectLines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Project Notifications"),
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Project Notifications", contentWidth)),
 	}
 	for _, section := range sections {
 		projectLines = append(projectLines, "")
@@ -10195,7 +10557,7 @@ func (m Model) renderOverviewPanel(
 		)
 	}
 	projectLines = append(projectLines, "")
-	projectLines = append(projectLines, normalStyle.Render("j/k move • enter open • g full activity log"))
+	projectLines = append(projectLines, normalStyle.Render(truncate("j/k move • enter open • g full activity log", contentWidth)))
 	projectBorderColor := dim
 	if focused && m.noticesPanel == noticesPanelFocusProject {
 		projectBorderColor = accent
@@ -10250,8 +10612,8 @@ func (m Model) renderGlobalNoticesPanel(
 	start, end := windowBounds(len(items), selectedIdx, noticesSectionViewWindow)
 
 	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Global Notifications"),
-		normalStyle.Render("requires user action across projects"),
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Global Notifications", contentWidth)),
+		normalStyle.Render(truncate("requires user action across projects", contentWidth)),
 	}
 	if viewModel.globalNoticesPartialCount > 0 {
 		projectLabel := "projects"
@@ -10261,7 +10623,7 @@ func (m Model) renderGlobalNoticesPanel(
 		lines = append(
 			lines,
 			normalStyle.Render(
-				fmt.Sprintf("partial results: %d %s unavailable", viewModel.globalNoticesPartialCount, projectLabel),
+				truncate(fmt.Sprintf("partial results: %d %s unavailable", viewModel.globalNoticesPartialCount, projectLabel), contentWidth),
 			),
 		)
 	}
@@ -10286,7 +10648,7 @@ func (m Model) renderGlobalNoticesPanel(
 	if focused && end < len(items) {
 		lines = append(lines, normalStyle.Render(truncate("↓ more", contentWidth)))
 	}
-	lines = append(lines, "", normalStyle.Render("j/k move • enter open"))
+	lines = append(lines, "", normalStyle.Render(truncate("j/k move • enter open", contentWidth)))
 
 	borderColor := dim
 	if focused {
@@ -10616,9 +10978,9 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	case modeThread:
 		return "thread", []string{
 			"read mode opens first for markdown description/comments",
-			"e opens markdown details; enter opens edit while details are visible",
-			"i opens comment composer; tab/esc exits composer",
-			"enter posts when composer is active",
+			"e opens markdown details; enter opens target edit while details are visible",
+			"i opens comment composer in read mode; i opens description editor in details mode",
+			"ctrl+s posts/saves inside active editor; tab/esc exits composer",
 			"pgup/pgdown or mouse wheel scrolls",
 			"ctrl+r reloads comments",
 			"esc returns to previous screen",
@@ -12421,7 +12783,7 @@ func (m Model) modePrompt() string {
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeThread:
-		return "thread: read mode by default; e details, enter edit-from-details, i compose, tab/esc leave composer, enter post, pgup/pgdown scroll, ctrl+r reload"
+		return "thread: read mode by default; e details; i compose (or details editor); enter edit-target from details; ctrl+s post/save in editor; tab/esc leave composer; pgup/pgdown scroll; ctrl+r reload"
 	default:
 		return ""
 	}
@@ -12671,12 +13033,33 @@ func (m Model) boardWidthFor(totalWidth int) int {
 func (m Model) columnHeight() int {
 	// Header rows reserve boxed mark + divider + path (+ 1-based board origin offset).
 	headerLines := m.boardTop()
-	footerLines := 4
+	footerLines := m.boardFooterLines()
 	h := m.height - headerLines - footerLines
-	if h < 14 {
-		return 14
+	if h < 10 {
+		return 10
 	}
 	return h
+}
+
+// boardFooterLines estimates non-board rows that should remain visible below the board panels.
+func (m Model) boardFooterLines() int {
+	lines := 2 // info line + dependency rollup
+	if len(m.attentionItems) > 0 {
+		lines += 2
+	}
+	if strings.TrimSpace(m.projectionRootTaskID) != "" {
+		lines++
+	}
+	if len(m.selectedTaskIDs) > 0 {
+		lines++
+	}
+	if m.showDueSummary {
+		lines++
+	}
+	if status := strings.TrimSpace(m.status); status != "" && status != "ready" {
+		lines++
+	}
+	return lines
 }
 
 // headerMarkStyle returns the boxed brand style used at the top of board view.
@@ -12737,11 +13120,8 @@ func fitLines(content string, maxLines int) string {
 	lines := strings.Split(content, "\n")
 	switch {
 	case len(lines) > maxLines:
-		if maxLines == 1 {
-			lines = []string{"…"}
-		} else {
-			lines = append(lines[:maxLines-1], "…")
-		}
+		// Hard clip overflow rows. Ellipsis markers caused user confusion in tightly-fitted panel layouts.
+		lines = lines[:maxLines]
 	case len(lines) < maxLines:
 		padding := make([]string, maxLines-len(lines))
 		lines = append(lines, padding...)
