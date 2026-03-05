@@ -3002,3 +3002,117 @@ Documentation/worklog sync:
 Status:
 - FR-001 implementation + tests + dual QA complete on agent side.
 - Awaiting user collaborative rerun confirmation to mark section complete.
+
+## Checkpoint 2026-03-05: FR-002 Modal Parity Full-Screen Follow-Up
+
+Objective:
+- address user-reported modal parity gap after FR-001:
+  - info and edit node modals must be full-screen and use the same modal/component,
+  - edit mode differs only by interaction behavior, not visual/modal structure.
+
+Precondition:
+1. User requested this fix scope explicitly after prior checkpoint commit.
+2. Committed prior FR-001 scope before starting FR-002:
+   - `git commit` -> `b03093c` (`fr-001: task-info scrollable modal, node headers, dual qa evidence`).
+
+Context7 compliance (before edits):
+1. `mcp__context7-mcp__resolve-library-id("charmbracelet/bubbles", ...)` -> PASS.
+2. `mcp__context7-mcp__query-docs("/charmbracelet/bubbles", viewport full-screen/modal sizing query)` -> PASS.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - expanded node modal sizing policy to full-screen style (`taskInfoOverlayBoxWidth`, `taskInfoBodyHeight` adjustments).
+   - replaced old node-modal style helper signature with width-driven shared frame helper.
+   - added shared full-screen modal renderer helpers:
+     - `buildAutoScrollViewport`
+     - `renderNodeModalViewport`
+   - routed `modeTaskInfo` rendering through shared renderer.
+   - routed add/edit node modes (`modeAddTask`, `modeEditTask`, `modeAddProject`, `modeEditProject`) through same shared renderer and viewport body path.
+   - retained existing mode-specific interaction logic (focus/edit behaviors unchanged).
+2. Updated collaborative docs/worklogs:
+   - `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` with FR-002 finding + FX-002 validation row.
+   - added QA reports:
+     - `worklogs/FR002_QA_PASS1_DARWIN.md`
+     - `worklogs/FR002_QA_PASS2_AMPERE.md`
+
+Commands run and outcomes:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> PASS.
+3. `just check` -> PASS.
+4. `just ci` -> PASS.
+
+Dual QA (required) after tests:
+1. Darwin (`019cbc1c-aaaa-75f1-8be4-d333d98e6e3d`) -> PASS.
+2. Ampere (`019cb5c7-4141-76f2-a48e-70bb889ed054`) -> PASS.
+
+Status:
+- FR-002 code/test/QA complete on agent side.
+- Awaiting user collaborative rerun confirmation before advancing to next collab worksheet section.
+
+## Checkpoint 2026-03-05: FR-003 Exact Info/Edit Section Parity Refactor
+
+Objective:
+- implement user follow-up request after FR-002:
+  - edit modal must use the exact same full-screen design language as info modal,
+  - reuse shared modal component/sections and convert sections to editable variants instead of maintaining a separate edit design.
+
+Context7 compliance:
+1. Before edits:
+   - `mcp__context7-mcp__resolve-library-id("charmbracelet bubbles", ...)` -> PASS.
+   - `mcp__context7-mcp__query-docs("/charmbracelet/bubbles", viewport/textinput usage)` -> PASS.
+2. After failed test runs:
+   - `mcp__context7-mcp__query-docs("/charmbracelet/bubbles", view-testing/viewport assertions)` -> PASS before next edit.
+   - `mcp__context7-mcp__query-docs("/charmbracelet/bubbletea", clipped viewport test strategy)` -> PASS before next edit.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - completed section-based task edit/add renderer via `taskFormBodyLines(...)` (same section family/order as task-info):
+     - title/meta
+     - description (markdown preview)
+     - subtasks (read-only when editing)
+     - effective labels
+     - dependencies
+     - comments (with owner/actor/timestamp/id/summary/body metadata in edit mode)
+     - resources
+     - metadata markdown sections (`objective`, `acceptance_criteria`, `validation_plan`, `risk_notes`)
+   - added section-based project add/edit renderer via `projectFormBodyLines(...)`.
+   - replaced legacy flat field-list branch in `renderModeOverlay(...)` node modal path with helper-driven section bodies for:
+     - `modeAddTask`, `modeEditTask`
+     - `modeAddProject`, `modeEditProject`
+   - loaded comments when opening task edit form and reset comment cache for new-task form.
+2. Updated `internal/tui/model_test.go`:
+   - expanded modal coverage to assert shared scroll indicator on info/edit overlays.
+   - added section-order parity assertions against helper body content (`taskFormBodyLines` + `taskInfoBodyLines`) to avoid viewport-clipping false negatives.
+3. Updated collaborative tracker:
+   - added FR-003/FX-003 records and validation evidence in `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`.
+   - recorded dual QA pass artifacts:
+     - `worklogs/FR003_QA_PASS1_DARWIN.md`
+     - `worklogs/FR003_QA_PASS2_AMPERE.md`
+
+Commands run and outcomes:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> FAIL (string expectation drift after UI text updates).
+3. Context7 re-consult -> PASS.
+4. `just fmt` -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+8. Added parity test assertions in `internal/tui/model_test.go`.
+9. `just fmt` -> PASS.
+10. `just test-pkg ./internal/tui` -> FAIL (viewport clipping made section token absent in rendered overlay window).
+11. Context7 re-consult -> PASS.
+12. Updated test to assert helper body content ordering.
+13. `just fmt` -> PASS.
+14. `just test-pkg ./internal/tui` -> PASS.
+15. `just check` -> PASS.
+16. `just ci` -> PASS.
+
+Dual QA (required) after passing tests:
+1. Darwin (`019cbc1c-aaaa-75f1-8be4-d333d98e6e3d`) -> PASS.
+   - report: `worklogs/FR003_QA_PASS1_DARWIN.md`
+2. Ampere (`019cb5c7-4141-76f2-a48e-70bb889ed054`) -> PASS.
+   - report: `worklogs/FR003_QA_PASS2_AMPERE.md`
+
+Status:
+- FR-003 code/test/QA complete on agent side.
+- Awaiting user collaborative rerun confirmation for exact info/edit parity before advancing to next worksheet section.

@@ -163,8 +163,8 @@ const (
 	taskInfoDetailsViewportMaxHeight = 16
 	// taskInfoBodyViewportMinHeight keeps full task-info content scrollable on short terminals.
 	taskInfoBodyViewportMinHeight = 8
-	// taskInfoBodyViewportMaxHeight caps task-info body viewport to preserve centered modal framing.
-	taskInfoBodyViewportMaxHeight = 40
+	// taskInfoBodyViewportMaxHeight caps full-screen node modal body viewport height.
+	taskInfoBodyViewportMaxHeight = 120
 	// textEditHistoryLimit caps per-textarea undo/redo stack growth.
 	textEditHistoryLimit  = 256
 	defaultHighlightColor = "212"
@@ -2529,6 +2529,7 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 		m.taskFormResourceRefs = append([]domain.ResourceRef(nil), task.Metadata.ResourceRefs...)
 		m.mode = modeEditTask
 		m.editingTaskID = task.ID
+		m.loadTaskInfoComments(task.ID)
 		m.status = "edit task"
 	} else {
 		m.formInputs[taskFieldPriority].Placeholder = "medium"
@@ -2538,6 +2539,8 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 		m.editingTaskID = ""
 		m.status = "new task"
 		m.taskFormParentID, m.taskFormKind, m.taskFormScope = m.newTaskDefaultsForActiveBoardScope()
+		m.taskInfoComments = nil
+		m.taskInfoCommentsError = ""
 	}
 	m.syncTaskFormDescriptionDisplay()
 	m.refreshTaskFormLabelSuggestions()
@@ -11862,11 +11865,10 @@ func (m *Model) closeTaskInfo(status string) {
 
 // taskInfoOverlayBoxWidth resolves task-info modal width bounds from the available terminal width.
 func taskInfoOverlayBoxWidth(maxWidth int) int {
-	boxWidth := 96
 	if maxWidth > 0 {
-		boxWidth = clamp(maxWidth, 40, 112)
+		return max(40, maxWidth)
 	}
-	return boxWidth
+	return 96
 }
 
 // taskInfoDetailsHeight resolves the scrollable markdown-details viewport height in task-info mode.
@@ -11911,9 +11913,9 @@ func (m *Model) syncTaskInfoDetailsViewport(task domain.Task) {
 // taskInfoBodyHeight resolves the scrollable task-info body viewport height.
 func (m Model) taskInfoBodyHeight() int {
 	if m.height <= 0 {
-		return 48
+		return 24
 	}
-	return clamp(m.height-12, taskInfoBodyViewportMinHeight, taskInfoBodyViewportMaxHeight)
+	return clamp(m.height-10, taskInfoBodyViewportMinHeight, taskInfoBodyViewportMaxHeight)
 }
 
 // taskNodeLabel resolves a display-safe node type label from scope/kind context.
@@ -11957,6 +11959,318 @@ func taskInfoNodeLabel(task domain.Task) string {
 // taskFormNodeLabel resolves node label text for task-form add/edit headers.
 func (m Model) taskFormNodeLabel() string {
 	return taskNodeLabel(m.taskFormScope, m.taskFormKind)
+}
+
+// taskFormContextTask resolves the existing task being edited, when available.
+func (m Model) taskFormContextTask() (domain.Task, bool) {
+	taskID := strings.TrimSpace(m.editingTaskID)
+	if taskID == "" {
+		return domain.Task{}, false
+	}
+	return m.taskByID(taskID)
+}
+
+// taskFormBodyLines renders task add/edit content using the same section structure as task-info.
+func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, accent color.Color) ([]string, int) {
+	lines := []string{}
+	focusLine := -1
+	focusStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	modeLabel := "new"
+	if m.mode == modeEditTask {
+		modeLabel = "edit"
+	}
+	contextTask, hasContextTask := m.taskFormContextTask()
+	taskState := "-"
+	isComplete := false
+	if hasContextTask {
+		state := m.lifecycleStateForTask(contextTask)
+		taskState = lifecycleStateLabel(state)
+		isComplete = state == domain.StateDone
+	}
+	titleInput := m.formInputs[taskFieldTitle]
+	titleInput.SetWidth(max(18, contentWidth-8))
+	titleLabel := hintStyle.Render("title:")
+	if m.formFocus == taskFieldTitle {
+		titleLabel = focusStyle.Render("title:")
+	}
+	lines = append(lines, titleLabel+" "+titleInput.View())
+	if m.formFocus == taskFieldTitle {
+		focusLine = len(lines) - 1
+	}
+	lines = append(
+		lines,
+		hintStyle.Render("kind: "+string(m.taskFormKind)+" • state: "+taskState+" • complete: "+completionLabel(isComplete)+" • mode: "+modeLabel),
+	)
+	if warning := dueWarning(m.formInputs[taskFieldDue].Value(), time.Now().UTC()); warning != "" {
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")).Render(warning))
+	}
+	priorityLabel := hintStyle.Render("priority:")
+	if m.formFocus == taskFieldPriority {
+		priorityLabel = focusStyle.Render("priority:")
+		focusLine = len(lines)
+	}
+	lines = append(lines, priorityLabel+" "+m.renderPriorityPicker(accent, lipgloss.Color("241")))
+	if m.formFocus == taskFieldPriority {
+		lines = append(lines, hintStyle.Render("h/l or left/right changes priority"))
+	}
+	dueInput := m.formInputs[taskFieldDue]
+	dueInput.SetWidth(max(18, contentWidth-12))
+	dueLabel := hintStyle.Render("due:")
+	if m.formFocus == taskFieldDue {
+		dueLabel = focusStyle.Render("due:")
+	}
+	lines = append(lines, dueLabel+" "+dueInput.View())
+	if m.formFocus == taskFieldDue {
+		focusLine = len(lines) - 1
+		lines = append(lines, hintStyle.Render("d opens due-date picker (includes local-time presets)"))
+		lines = append(lines, hintStyle.Render("type: YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -"))
+		lines = append(lines, hintStyle.Render("time without timezone is interpreted in local time"))
+	}
+	labelsInput := m.formInputs[taskFieldLabels]
+	labelsInput.SetWidth(max(18, contentWidth-12))
+	labelsLabel := hintStyle.Render("labels:")
+	if m.formFocus == taskFieldLabels {
+		labelsLabel = focusStyle.Render("labels:")
+	}
+	lines = append(lines, labelsLabel+" "+labelsInput.View())
+	if m.formFocus == taskFieldLabels {
+		focusLine = len(lines) - 1
+		lines = append(lines, hintStyle.Render("enter or ctrl+l opens label picker • ctrl+g accepts autocomplete"))
+		if suggestions := m.labelSuggestions(5); len(suggestions) > 0 {
+			lines = append(lines, hintStyle.Render("suggested labels: "+strings.Join(suggestions, ", ")))
+		}
+	}
+	lines = append(lines, "")
+	descriptionLabel := hintStyle.Render("description")
+	if m.formFocus == taskFieldDescription {
+		descriptionLabel = focusStyle.Render("description")
+		if focusLine < 0 {
+			focusLine = len(lines)
+		}
+	}
+	lines = append(lines, descriptionLabel)
+	description := strings.TrimSpace(m.taskFormDescription)
+	if description == "" {
+		lines = append(lines, hintStyle.Render("(no description)"))
+	} else {
+		lines = append(lines, splitThreadMarkdownLines(m.threadMarkdown.render(description, contentWidth))...)
+	}
+	lines = append(lines, hintStyle.Render("enter or i opens full markdown description editor"))
+
+	if hasContextTask {
+		subtasks := m.subtasksForParent(contextTask.ID)
+		if len(subtasks) > 0 {
+			lines = append(lines, "")
+			done, total := m.subtaskProgress(contextTask.ID)
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("subtasks (%d/%d done)", done, total)))
+			for idx, subtask := range subtasks {
+				state := lifecycleStateLabel(m.lifecycleStateForTask(subtask))
+				check := "[ ]"
+				if m.lifecycleStateForTask(subtask) == domain.StateDone {
+					check = "[x]"
+				}
+				prefix := "  "
+				if idx == clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1) {
+					prefix = "> "
+				}
+				lines = append(lines, fmt.Sprintf("%s%s %s %s", prefix, check, truncate(subtask.Title, 48), hintStyle.Render("state:"+state)))
+			}
+		}
+	}
+
+	inherited := m.taskFormLabelSources()
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("inherited labels"))
+	lines = append(lines, hintStyle.Render("effective labels (global/project/branch/phase fallback)"))
+	lines = append(lines, hintStyle.Render(formatLabelSource("global", inherited.Global)))
+	lines = append(lines, hintStyle.Render(formatLabelSource("project", inherited.Project)))
+	lines = append(lines, hintStyle.Render(formatLabelSource("branch", inherited.Branch)))
+	lines = append(lines, hintStyle.Render(formatLabelSource("phase", inherited.Phase)))
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("dependencies"))
+	dependsOnInput := m.formInputs[taskFieldDependsOn]
+	dependsOnInput.SetWidth(max(18, contentWidth-16))
+	dependsLabel := hintStyle.Render("depends_on:")
+	if m.formFocus == taskFieldDependsOn {
+		dependsLabel = focusStyle.Render("depends_on:")
+	}
+	lines = append(lines, dependsLabel+" "+dependsOnInput.View())
+	if m.formFocus == taskFieldDependsOn {
+		focusLine = len(lines) - 1
+		lines = append(lines, hintStyle.Render("enter or o opens dependency picker"))
+	}
+	blockedByInput := m.formInputs[taskFieldBlockedBy]
+	blockedByInput.SetWidth(max(18, contentWidth-16))
+	blockedByLabel := hintStyle.Render("blocked_by:")
+	if m.formFocus == taskFieldBlockedBy {
+		blockedByLabel = focusStyle.Render("blocked_by:")
+	}
+	lines = append(lines, blockedByLabel+" "+blockedByInput.View())
+	if m.formFocus == taskFieldBlockedBy {
+		focusLine = len(lines) - 1
+		lines = append(lines, hintStyle.Render("enter or o opens dependency picker"))
+	}
+	blockedReasonInput := m.formInputs[taskFieldBlockedReason]
+	blockedReasonInput.SetWidth(max(18, contentWidth-19))
+	blockedReasonLabel := hintStyle.Render("blocked_reason:")
+	if m.formFocus == taskFieldBlockedReason {
+		blockedReasonLabel = focusStyle.Render("blocked_reason:")
+	}
+	lines = append(lines, blockedReasonLabel+" "+blockedReasonInput.View())
+	if m.formFocus == taskFieldBlockedReason {
+		focusLine = len(lines) - 1
+	}
+	lines = append(lines, hintStyle.Render("enter or o on depends_on/blocked_by opens dependency picker"))
+
+	lines = append(lines, "")
+	if m.mode == modeEditTask {
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d)", len(m.taskInfoComments))))
+		if strings.TrimSpace(m.taskInfoCommentsError) != "" {
+			lines = append(lines, hintStyle.Render("comments unavailable: "+truncate(m.taskInfoCommentsError, max(28, contentWidth))))
+		} else if len(m.taskInfoComments) == 0 {
+			lines = append(lines, hintStyle.Render("(no comments yet)"))
+		} else {
+			for idx := len(m.taskInfoComments) - 1; idx >= 0; idx-- {
+				comment := m.taskInfoComments[idx]
+				owner := threadCommentOwnerLabel(comment)
+				actor := string(normalizeCommentActorType(string(comment.ActorType)))
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
+				if id := strings.TrimSpace(comment.ID); id != "" {
+					lines = append(lines, hintStyle.Render("id: "+truncate(id, max(24, contentWidth))))
+				}
+				if summary := commentSummaryText(comment); summary != "" {
+					lines = append(lines, hintStyle.Render("summary: "+truncate(summary, max(24, contentWidth))))
+				}
+				body := m.threadMarkdown.render(comment.BodyMarkdown, contentWidth)
+				if strings.TrimSpace(body) == "" {
+					body = "(empty comment)"
+				}
+				for _, line := range splitThreadMarkdownLines(body) {
+					lines = append(lines, "  "+line)
+				}
+				if idx > 0 {
+					lines = append(lines, "")
+				}
+			}
+		}
+	} else {
+		lines = append(lines, hintStyle.Render("comments"))
+		lines = append(lines, hintStyle.Render("save task first to start thread/comments"))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("resources"))
+	if len(m.taskFormResourceRefs) == 0 {
+		lines = append(lines, hintStyle.Render("(none)"))
+	} else {
+		for idx, ref := range m.taskFormResourceRefs {
+			if idx >= 4 {
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more", len(m.taskFormResourceRefs)-idx)))
+				break
+			}
+			location := strings.TrimSpace(ref.Location)
+			if ref.PathMode == domain.PathModeRelative && strings.TrimSpace(ref.BaseAlias) != "" {
+				location = strings.TrimSpace(ref.BaseAlias) + ":" + location
+			}
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("%s %s", ref.ResourceType, truncate(location, 48))))
+		}
+	}
+	lines = append(lines, hintStyle.Render("ctrl+r attach resource"))
+
+	renderMetadataInput := func(label string, field int) {
+		lines = append(lines, "")
+		header := hintStyle.Render(label)
+		if m.formFocus == field {
+			header = focusStyle.Render(label)
+		}
+		lines = append(lines, header)
+		in := m.formInputs[field]
+		in.SetWidth(max(18, contentWidth-8))
+		lines = append(lines, in.View())
+		if m.formFocus == field {
+			focusLine = len(lines) - 1
+		}
+		value := strings.TrimSpace(in.Value())
+		if value != "" && value != "-" {
+			lines = append(lines, splitThreadMarkdownLines(m.threadMarkdown.render(value, contentWidth))...)
+		}
+	}
+	renderMetadataInput("objective", taskFieldObjective)
+	renderMetadataInput("acceptance_criteria", taskFieldAcceptanceCriteria)
+	renderMetadataInput("validation_plan", taskFieldValidationPlan)
+	renderMetadataInput("risk_notes", taskFieldRiskNotes)
+	if m.mode == modeEditTask {
+		lines = append(lines, "", hintStyle.Render("blank values keep current task value"))
+	}
+	return lines, focusLine
+}
+
+// projectFormBodyLines renders project add/edit content using the same full-section modal layout.
+func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, accent color.Color) ([]string, int) {
+	lines := []string{}
+	focusLine := -1
+	focusStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	modeLabel := "new"
+	if m.mode == modeEditProject {
+		modeLabel = "edit"
+	}
+	nameInput := m.projectFormInputs[projectFieldName]
+	nameInput.SetWidth(max(18, contentWidth-8))
+	nameLabel := hintStyle.Render("name:")
+	if m.projectFormFocus == projectFieldName {
+		nameLabel = focusStyle.Render("name:")
+	}
+	lines = append(lines, nameLabel+" "+nameInput.View())
+	if m.projectFormFocus == projectFieldName {
+		focusLine = len(lines) - 1
+	}
+	lines = append(lines, hintStyle.Render("mode: "+modeLabel))
+
+	lines = append(lines, "")
+	descriptionLabel := hintStyle.Render("description")
+	if m.projectFormFocus == projectFieldDescription {
+		descriptionLabel = focusStyle.Render("description")
+		if focusLine < 0 {
+			focusLine = len(lines)
+		}
+	}
+	lines = append(lines, descriptionLabel)
+	description := strings.TrimSpace(m.projectFormDescription)
+	if description == "" {
+		lines = append(lines, hintStyle.Render("(no description)"))
+	} else {
+		lines = append(lines, splitThreadMarkdownLines(m.threadMarkdown.render(description, contentWidth))...)
+	}
+	lines = append(lines, hintStyle.Render("enter or i opens full markdown description editor"))
+
+	renderProjectInput := func(label string, field int) {
+		in := m.projectFormInputs[field]
+		in.SetWidth(max(18, contentWidth-14))
+		lineLabel := hintStyle.Render(label + ":")
+		if m.projectFormFocus == field {
+			lineLabel = focusStyle.Render(label + ":")
+		}
+		lines = append(lines, lineLabel+" "+in.View())
+		if m.projectFormFocus == field {
+			focusLine = len(lines) - 1
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("metadata"))
+	renderProjectInput("owner", projectFieldOwner)
+	renderProjectInput("icon", projectFieldIcon)
+	renderProjectInput("color", projectFieldColor)
+	renderProjectInput("homepage", projectFieldHomepage)
+	renderProjectInput("tags", projectFieldTags)
+	renderProjectInput("root_path", projectFieldRootPath)
+	lines = append(lines, hintStyle.Render("r on root_path opens directory picker"))
+	if m.projectFormFocus == projectFieldIcon {
+		lines = append(lines, hintStyle.Render("icon appears in project header/tabs/picker"))
+	}
+
+	return lines, focusLine
 }
 
 // taskInfoBodyLines renders reusable task-info sections for the main task-info viewport.
@@ -12557,16 +12871,48 @@ func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
-// nodeModalBoxStyle returns the shared centered node modal frame style for info/edit flows.
-func nodeModalBoxStyle(accent color.Color, maxWidth, minWidth, maxModalWidth int) lipgloss.Style {
+// nodeModalBoxStyle returns the shared full-screen node modal frame style for info/edit flows.
+func nodeModalBoxStyle(accent color.Color, boxWidth int) lipgloss.Style {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(accent).
 		Padding(0, 1)
-	if maxWidth > 0 {
-		style = style.Width(clamp(maxWidth, minWidth, maxModalWidth))
+	if boxWidth > 0 {
+		style = style.Width(max(40, boxWidth))
 	}
 	return style
+}
+
+// buildAutoScrollViewport builds one viewport for full-screen node modals and aligns focused content into view.
+func buildAutoScrollViewport(content string, width, height, focusLine int) viewport.Model {
+	vp := viewport.New()
+	vp.SoftWrap = true
+	vp.MouseWheelEnabled = false
+	vp.FillHeight = true
+	vp.SetWidth(max(1, width))
+	vp.SetHeight(max(1, height))
+	vp.SetContent(content)
+	if focusLine >= 0 {
+		totalLines := len(strings.Split(content, "\n"))
+		maxOffset := max(0, totalLines-vp.Height())
+		target := clamp(focusLine-max(1, vp.Height()/3), 0, maxOffset)
+		vp.SetYOffset(target)
+	}
+	return vp
+}
+
+// renderNodeModalViewport renders one shared full-screen modal component for node info/edit flows.
+func renderNodeModalViewport(accent, muted color.Color, boxWidth int, title, footer string, body viewport.Model) string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	scrollPercent := int(body.ScrollPercent() * 100)
+	lines := []string{
+		titleStyle.Render(strings.TrimSpace(title)),
+		hintStyle.Render(fmt.Sprintf("scroll: %d%%", scrollPercent)),
+		body.View(),
+		hintStyle.Render(strings.TrimSpace(footer)),
+	}
+	return nodeModalBoxStyle(accent, boxWidth).Render(strings.Join(lines, "\n"))
 }
 
 // renderModeOverlay renders output for the current model state.
@@ -12650,22 +12996,20 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			return ""
 		}
 		boxWidth := taskInfoOverlayBoxWidth(maxWidth)
-		boxStyle := nodeModalBoxStyle(accent, maxWidth, 40, 112)
 		contentWidth := max(24, boxWidth-8)
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
 		bodyViewport := m.taskInfoBody
 		bodyViewport.SetWidth(contentWidth)
 		bodyViewport.SetHeight(max(1, m.taskInfoBodyHeight()))
 		bodyViewport.SetContent(strings.Join(m.taskInfoBodyLines(task, boxWidth, contentWidth, hintStyle), "\n"))
-		scrollPercent := int(bodyViewport.ScrollPercent() * 100)
-		lines := []string{
-			titleStyle.Render(taskInfoNodeLabel(task) + " Info"),
-			hintStyle.Render(fmt.Sprintf("scroll: %d%%", scrollPercent)),
-			bodyViewport.View(),
-			hintStyle.Render("d details preview • e edit • c thread • [ / ] move • b deps inspector • r attach • s subtask • f focus subtree • esc back"),
-		}
-		return boxStyle.Render(strings.Join(lines, "\n"))
+		return renderNodeModalViewport(
+			accent,
+			muted,
+			boxWidth,
+			taskInfoNodeLabel(task)+" Info",
+			"d details preview • e edit • c thread • [ / ] move • b deps inspector • r attach • s subtask • f focus subtree • esc back",
+			bodyViewport,
+		)
 
 	case modeBootstrapSettings:
 		style := lipgloss.NewStyle().
@@ -13266,8 +13610,6 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		return ""
 
 	case modeAddTask, modeSearch, modeRenameTask, modeEditTask, modeAddProject, modeEditProject, modeLabelsConfig, modeHighlightColor:
-		boxStyle := nodeModalBoxStyle(accent, maxWidth, 24, 96)
-
 		title := "Input"
 		hint := "enter save • esc cancel • tab next field"
 		switch m.mode {
@@ -13293,14 +13635,41 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			hint = "enter save • esc cancel • empty resets to default"
 		}
 
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		isNodeModal := m.mode == modeAddTask || m.mode == modeEditTask || m.mode == modeAddProject || m.mode == modeEditProject
+		if isNodeModal {
+			boxWidth := taskInfoOverlayBoxWidth(maxWidth)
+			contentWidth := max(24, boxWidth-8)
+			var bodyLines []string
+			focusLine := -1
+			switch m.mode {
+			case modeAddTask, modeEditTask:
+				bodyLines, focusLine = m.taskFormBodyLines(contentWidth, hintStyle, accent)
+			case modeAddProject, modeEditProject:
+				bodyLines, focusLine = m.projectFormBodyLines(contentWidth, hintStyle, accent)
+			}
+			bodyViewport := buildAutoScrollViewport(
+				strings.Join(bodyLines, "\n"),
+				contentWidth,
+				max(1, m.taskInfoBodyHeight()),
+				focusLine,
+			)
+			return renderNodeModalViewport(accent, muted, boxWidth, title, hint, bodyViewport)
+		}
+
+		boxWidth := 96
+		if maxWidth > 0 {
+			boxWidth = clamp(maxWidth, 24, 96)
+		}
+		contentWidth := max(24, boxWidth-8)
+		boxStyle := nodeModalBoxStyle(accent, boxWidth)
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		lines := []string{titleStyle.Render(title)}
 
 		switch m.mode {
 		case modeSearch:
 			queryInput := m.searchInput
-			queryInput.SetWidth(max(18, maxWidth-20))
+			queryInput.SetWidth(max(18, contentWidth-12))
 			scope := "current project"
 			if m.searchCrossProject {
 				scope = "all projects"
@@ -13375,81 +13744,8 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				applyLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			}
 			lines = append(lines, applyLabel.Render("[ apply search ]"))
-		case modeAddTask, modeEditTask:
-			fieldWidth := max(18, maxWidth-28)
-			for i, in := range m.formInputs {
-				label := fmt.Sprintf("%d.", i+1)
-				if i < len(taskFormFields) {
-					label = taskFormFields[i]
-				}
-				labelStyle := lipgloss.NewStyle().Foreground(muted)
-				if i == m.formFocus {
-					labelStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
-				}
-				if i == taskFieldPriority {
-					lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+m.renderPriorityPicker(accent, muted))
-					continue
-				}
-				in.SetWidth(fieldWidth)
-				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
-			}
-			if m.formFocus == taskFieldDescription {
-				lines = append(lines, hintStyle.Render("enter or i opens full markdown description editor"))
-			}
-			if m.formFocus == taskFieldDue {
-				lines = append(lines, hintStyle.Render("d opens due-date picker (includes local-time presets)"))
-				lines = append(lines, hintStyle.Render("type: YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -"))
-				lines = append(lines, hintStyle.Render("time without timezone is interpreted in local time"))
-			}
-			if m.formFocus == taskFieldLabels {
-				lines = append(lines, hintStyle.Render("enter or ctrl+l opens label picker • ctrl+g accept autocomplete"))
-			}
-			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
-				lines = append(lines, hintStyle.Render("enter or o opens dependency picker • csv task IDs still supported"))
-			}
-			if len(m.taskFormResourceRefs) > 0 {
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("staged resources: %d", len(m.taskFormResourceRefs))))
-			}
-			if suggestions := m.labelSuggestions(5); len(suggestions) > 0 {
-				lines = append(lines, hintStyle.Render("suggested labels: "+strings.Join(suggestions, ", ")))
-			}
-			inherited := m.taskFormLabelSources()
-			lines = append(lines, hintStyle.Render("inherited labels"))
-			lines = append(lines, hintStyle.Render(formatLabelSource("global", inherited.Global)))
-			lines = append(lines, hintStyle.Render(formatLabelSource("project", inherited.Project)))
-			lines = append(lines, hintStyle.Render(formatLabelSource("branch", inherited.Branch)))
-			lines = append(lines, hintStyle.Render(formatLabelSource("phase", inherited.Phase)))
-			if warning := dueWarning(m.formInputs[taskFieldDue].Value(), time.Now().UTC()); warning != "" {
-				lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(warning))
-			}
-			if m.mode == modeEditTask {
-				lines = append(lines, hintStyle.Render("blank values keep current task value"))
-			}
-		case modeAddProject, modeEditProject:
-			fieldWidth := max(18, maxWidth-28)
-			for i, in := range m.projectFormInputs {
-				label := fmt.Sprintf("%d.", i+1)
-				if i < len(projectFormFields) {
-					label = projectFormFields[i]
-				}
-				labelStyle := lipgloss.NewStyle().Foreground(muted)
-				if i == m.projectFormFocus {
-					labelStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
-				}
-				in.SetWidth(fieldWidth)
-				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
-			}
-			if m.projectFormFocus == projectFieldDescription {
-				lines = append(lines, hintStyle.Render("enter or i opens full markdown description editor"))
-			}
-			if m.projectFormFocus == projectFieldIcon {
-				lines = append(lines, hintStyle.Render("icon shows in project header/tabs/picker and supports emoji"))
-			}
-			if m.projectFormFocus == projectFieldRootPath {
-				lines = append(lines, hintStyle.Render("r browse and select a directory"))
-			}
 		case modeLabelsConfig:
-			fieldWidth := max(18, maxWidth-28)
+			fieldWidth := max(18, contentWidth-20)
 			labelFields := []string{"global", "project", "branch", "phase"}
 			for i, in := range m.labelsConfigInputs {
 				label := fmt.Sprintf("%d.", i+1)
@@ -13466,7 +13762,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			lines = append(lines, hintStyle.Render("global/project saved to config • branch/phase saved to current hierarchy nodes"))
 		case modeHighlightColor:
 			in := m.highlightColorInput
-			in.SetWidth(max(18, maxWidth-24))
+			in.SetWidth(max(18, contentWidth-10))
 			lines = append(lines, hintStyle.Render("focused-row color (ansi index or #RRGGBB)"))
 			lines = append(lines, "value: "+in.View())
 			lines = append(lines, hintStyle.Render("example: 212 (fuchsia)"))

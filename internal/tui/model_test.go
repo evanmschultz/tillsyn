@@ -4707,6 +4707,20 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
 	helpStyle := lipgloss.NewStyle().Foreground(muted)
+	assertSectionOrder := func(overlay string, sections []string) {
+		t.Helper()
+		last := -1
+		for _, section := range sections {
+			idx := strings.Index(overlay, section)
+			if idx < 0 {
+				t.Fatalf("expected overlay section %q, got %q", section, overlay)
+			}
+			if idx <= last {
+				t.Fatalf("expected section %q after prior sections, got %q", section, overlay)
+			}
+			last = idx
+		}
+	}
 
 	projectPicker := m
 	projectPicker.mode = modeProjectPicker
@@ -4732,7 +4746,15 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	_ = editMode.startTaskForm(&task)
 	if out := editMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Edit Task") {
 		t.Fatalf("expected edit overlay, got %q", out)
+	} else {
+		if !strings.Contains(out, "scroll:") {
+			t.Fatalf("expected shared node modal scroll indicator in edit overlay, got %q", out)
+		}
 	}
+	boxWidth := taskInfoOverlayBoxWidth(80)
+	contentWidth := max(24, boxWidth-8)
+	editBody, _ := editMode.taskFormBodyLines(contentWidth, lipgloss.NewStyle().Foreground(muted), accent)
+	assertSectionOrder(strings.Join(editBody, "\n"), []string{"description", "effective labels", "dependencies", "comments", "resources"})
 	addBranchMode := m
 	_ = addBranchMode.startBranchForm(nil)
 	if out := addBranchMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "New Branch") {
@@ -4765,7 +4787,13 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	infoMode.mode = modeTaskInfo
 	if out := infoMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Task Info") {
 		t.Fatalf("expected task info overlay, got %q", out)
+	} else {
+		if !strings.Contains(out, "scroll:") {
+			t.Fatalf("expected shared node modal scroll indicator in task info overlay, got %q", out)
+		}
 	}
+	infoBody := infoMode.taskInfoBodyLines(task, boxWidth, contentWidth, lipgloss.NewStyle().Foreground(muted))
+	assertSectionOrder(strings.Join(infoBody, "\n"), []string{"description", "effective labels", "dependencies", "comments", "resources"})
 	branchInfoMode := m
 	if !branchInfoMode.openTaskInfo(branch.ID, "task info") {
 		t.Fatal("expected branch task info mode")
