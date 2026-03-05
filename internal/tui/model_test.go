@@ -1410,18 +1410,75 @@ func TestModelTaskInfoShowsCommentPreview(t *testing.T) {
 		t.Fatalf("expected task info mode, got %v", m.mode)
 	}
 
-	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
-	if !strings.Contains(overlay, "comments (1)") {
-		t.Fatalf("expected comment preview section in task info, got %q", overlay)
+	body := stripANSI(m.taskInfoBody.GetContent())
+	if !strings.Contains(body, "comments (1)") {
+		t.Fatalf("expected comment preview section in task info body, got %q", body)
 	}
-	if !strings.Contains(overlay, "latest") {
-		t.Fatalf("expected markdown comment content preview in task info, got %q", overlay)
+	if !strings.Contains(body, "latest") {
+		t.Fatalf("expected markdown comment content preview in task info body, got %q", body)
 	}
-	if !strings.Contains(overlay, "summary: comment summary preview") {
-		t.Fatalf("expected explicit comment summary in task info preview, got %q", overlay)
+	if !strings.Contains(body, "summary: comment summary preview") {
+		t.Fatalf("expected explicit comment summary in task info body, got %q", body)
 	}
-	if !strings.Contains(overlay, "Details") {
-		t.Fatalf("expected markdown details content in task info, got %q", overlay)
+	if !strings.Contains(body, "Details") {
+		t.Fatalf("expected markdown details content in task info body, got %q", body)
+	}
+}
+
+// TestModelTaskInfoShowsFullCommentsList verifies task-info renders the full comments list with ownership metadata.
+func TestModelTaskInfoShowsFullCommentsList(t *testing.T) {
+	now := time.Date(2026, 3, 4, 8, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "desc",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	for i := 1; i <= 6; i++ {
+		comment, err := domain.NewComment(domain.CommentInput{
+			ID:           fmt.Sprintf("cm-%d", i),
+			ProjectID:    p.ID,
+			TargetType:   domain.CommentTargetTypeTask,
+			TargetID:     task.ID,
+			Summary:      fmt.Sprintf("summary-%d", i),
+			BodyMarkdown: fmt.Sprintf("body-%d", i),
+			ActorID:      fmt.Sprintf("actor-%d", i),
+			ActorName:    fmt.Sprintf("Actor %d", i),
+			ActorType:    domain.ActorTypeUser,
+		}, now.Add(time.Duration(i)*time.Minute))
+		if err != nil {
+			t.Fatalf("NewComment(%d) error = %v", i, err)
+		}
+		svc.comments[itemKey] = append(svc.comments[itemKey], comment)
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	body := stripANSI(m.taskInfoBody.GetContent())
+	if !strings.Contains(body, "comments (6)") {
+		t.Fatalf("expected comments count in task info body, got %q", body)
+	}
+	if !strings.Contains(body, "summary: summary-1") {
+		t.Fatalf("expected oldest comment summary in task info body list, got %q", body)
+	}
+	if !strings.Contains(body, "id: cm-1") || !strings.Contains(body, "id: cm-6") {
+		t.Fatalf("expected comment ids in task info body list, got %q", body)
+	}
+	if !strings.Contains(body, "[user] Actor 1 (actor-1)") || !strings.Contains(body, "[user] Actor 6 (actor-6)") {
+		t.Fatalf("expected owner metadata rows in task info body list, got %q", body)
+	}
+	if strings.Contains(body, "older comments") {
+		t.Fatalf("expected full comments list without preview truncation, got %q", body)
 	}
 }
 
@@ -1485,7 +1542,7 @@ func TestModelTaskInfoShowsStructuredMetadataSections(t *testing.T) {
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected task info mode, got %v", m.mode)
 	}
-	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
+	body := stripANSI(m.taskInfoBody.GetContent())
 	for _, token := range []string{
 		"objective",
 		"objective token",
@@ -1496,8 +1553,8 @@ func TestModelTaskInfoShowsStructuredMetadataSections(t *testing.T) {
 		"risk_notes",
 		"risk token",
 	} {
-		if !strings.Contains(overlay, token) {
-			t.Fatalf("expected task info metadata token %q, got %q", token, overlay)
+		if !strings.Contains(body, token) {
+			t.Fatalf("expected task info metadata token %q, got %q", token, body)
 		}
 	}
 }
@@ -1594,10 +1651,15 @@ func TestModelTaskInfoDetailsViewportScrolls(t *testing.T) {
 	}
 
 	before := m.taskInfoDetails.YOffset()
+	beforeBody := m.taskInfoBody.YOffset()
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	after := m.taskInfoDetails.YOffset()
+	afterBody := m.taskInfoBody.YOffset()
 	if after <= before {
 		t.Fatalf("expected details viewport to scroll on pgdown, before=%d after=%d", before, after)
+	}
+	if afterBody <= beforeBody {
+		t.Fatalf("expected task-info body viewport to scroll on pgdown, before=%d after=%d", beforeBody, afterBody)
 	}
 
 	beforeJ := m.taskInfoDetails.YOffset()
@@ -1629,15 +1691,23 @@ func TestModelTaskInfoDetailsViewportScrolls(t *testing.T) {
 	}
 
 	beforeMouse := m.taskInfoDetails.YOffset()
+	beforeMouseBody := m.taskInfoBody.YOffset()
 	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	afterMouse := m.taskInfoDetails.YOffset()
+	afterMouseBody := m.taskInfoBody.YOffset()
 	if afterMouse <= beforeMouse {
 		t.Fatalf("expected details viewport to scroll on mouse wheel, before=%d after=%d", beforeMouse, afterMouse)
+	}
+	if afterMouseBody <= beforeMouseBody {
+		t.Fatalf("expected task-info body viewport to scroll on mouse wheel, before=%d after=%d", beforeMouseBody, afterMouseBody)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
 	if got := m.taskInfoDetails.YOffset(); got != 0 {
 		t.Fatalf("expected home to reset details viewport to top, got y offset=%d", got)
+	}
+	if got := m.taskInfoBody.YOffset(); got != 0 {
+		t.Fatalf("expected home to reset task-info body viewport to top, got y offset=%d", got)
 	}
 }
 
@@ -3914,7 +3984,7 @@ func TestModelViewStatesAndPrompts(t *testing.T) {
 	m = loadReadyModel(t, NewModel(svc))
 	m.mode = modeAddTask
 	m.input = "abc"
-	if !strings.Contains(m.modePrompt(), "new task title") {
+	if !strings.Contains(m.modePrompt(), "new task:") {
 		t.Fatal("expected add mode prompt")
 	}
 
@@ -4278,7 +4348,7 @@ func TestHelpersCoverage(t *testing.T) {
 		t.Fatalf("mode label mismatch: %q", m.modeLabel())
 	}
 	m.mode = modeAddTask
-	if !strings.Contains(m.modePrompt(), "new task title") {
+	if !strings.Contains(m.modePrompt(), "new task:") {
 		t.Fatal("expected add mode prompt")
 	}
 	m.mode = modeSearch
@@ -4290,7 +4360,7 @@ func TestHelpersCoverage(t *testing.T) {
 		t.Fatal("expected rename mode prompt")
 	}
 	m.mode = modeEditTask
-	if !strings.Contains(m.modePrompt(), "title | description") {
+	if !strings.Contains(m.modePrompt(), "edit task:") {
 		t.Fatal("expected edit mode prompt")
 	}
 	m.mode = modeProjectPicker
@@ -4620,7 +4690,17 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		Title:     "Second",
 		Priority:  domain.PriorityHigh,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  2,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Platform",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2, branch})
 	m := loadReadyModel(t, NewModel(svc))
 
 	accent := lipgloss.Color("62")
@@ -4653,6 +4733,16 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	if out := editMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Edit Task") {
 		t.Fatalf("expected edit overlay, got %q", out)
 	}
+	addBranchMode := m
+	_ = addBranchMode.startBranchForm(nil)
+	if out := addBranchMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "New Branch") {
+		t.Fatalf("expected branch add overlay title, got %q", out)
+	}
+	editBranchMode := m
+	_ = editBranchMode.startTaskForm(&branch)
+	if out := editBranchMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Edit Branch") {
+		t.Fatalf("expected branch edit overlay title, got %q", out)
+	}
 
 	searchMode := m
 	_ = searchMode.startSearchMode()
@@ -4675,6 +4765,13 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	infoMode.mode = modeTaskInfo
 	if out := infoMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Task Info") {
 		t.Fatalf("expected task info overlay, got %q", out)
+	}
+	branchInfoMode := m
+	if !branchInfoMode.openTaskInfo(branch.ID, "task info") {
+		t.Fatal("expected branch task info mode")
+	}
+	if out := branchInfoMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Branch Info") {
+		t.Fatalf("expected branch info overlay title, got %q", out)
 	}
 
 	projectMode := m
@@ -4702,7 +4799,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	if idx := m.taskIndexAtRow(tasks, 3); idx != 1 {
 		t.Fatalf("expected row 3 => task 1, got %d", idx)
 	}
-	if idx := m.taskIndexAtRow(tasks, 99); idx != 1 {
+	if idx := m.taskIndexAtRow(tasks, 99); idx != 2 {
 		t.Fatalf("expected large row => last task, got %d", idx)
 	}
 
@@ -8444,15 +8541,15 @@ func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
 
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, keyRune('i'))
-	info := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
-	if !strings.Contains(info, "depends_on: t-done(Finished)") {
-		t.Fatalf("expected depends_on hints in task info, got %q", info)
+	infoBody := stripANSI(m.taskInfoBody.GetContent())
+	if !strings.Contains(infoBody, "depends_on: t-done(Finished)") {
+		t.Fatalf("expected depends_on hints in task info body, got %q", infoBody)
 	}
-	if !strings.Contains(info, "blocked_by: t-done(Finished)") {
-		t.Fatalf("expected blocked_by hints in task info, got %q", info)
+	if !strings.Contains(infoBody, "blocked_by: t-done(Finished)") {
+		t.Fatalf("expected blocked_by hints in task info body, got %q", infoBody)
 	}
-	if !strings.Contains(info, "blocked_reason: waiting on integration") {
-		t.Fatalf("expected blocked_reason hint in task info, got %q", info)
+	if !strings.Contains(infoBody, "blocked_reason: waiting on integration") {
+		t.Fatalf("expected blocked_reason hint in task info body, got %q", infoBody)
 	}
 }
 

@@ -2862,3 +2862,143 @@ File edits:
 Test status:
 - `just build`: PASS.
 - `just check`: PASS.
+
+## Checkpoint 2026-03-04: Collaborative Session Start Evidence Capture
+
+Objective:
+- begin live collaborative vector/MCP E2E run and record first user-confirmed runtime state in active worksheet.
+
+Actions completed:
+1. Captured runtime/db path resolution for current dev instance via `./till --dev paths`.
+2. Verified repository migration behavior and runtime logging code paths for sqlite open/migration ensure.
+3. Validated live DB contains `task_embeddings` table and expected columns.
+4. Updated `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` with user-confirmed `U-01` pass status and exact wording.
+
+Commands run and outcomes:
+1. `./till --dev paths` -> PASS (resolved config/data/db path).
+2. `sqlite3 <db> ".tables"` -> PASS (`task_embeddings` present).
+3. `sqlite3 <db> "PRAGMA table_info(task_embeddings);"` -> PASS (expected columns found).
+4. `rg -n ... internal/adapters/storage/sqlite/repo.go cmd/till/main.go` -> PASS (verified ncruces driver, migrate/open logging, vec probe paths).
+5. `rg -n "opening sqlite repository|sqlite repository ready|migrations" .tillsyn/log/tillsyn-20260305.log` -> PASS (startup migration ensure lines present).
+
+File edits:
+1. Updated `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` (`U-01` status/evidence note).
+2. Updated `PLAN.md` with this checkpoint.
+
+Test status:
+- `test_not_applicable` (discussion/evidence capture only; no runtime code changes).
+
+## Checkpoint 2026-03-04: Collaborative Vector Test Start (Fresh DB)
+
+Objective:
+- start live collaborative validation on a fresh DB and lock fixture-seeding steps before executing TUI + MCP test sections.
+
+Actions completed:
+1. Recorded user kickoff statement confirming server + TUI running on fresh DB.
+2. Updated active worksheet with:
+   - refreshed `U-01` evidence wording,
+   - required fresh-DB fixture seed section (`F-01`..`F-04`),
+   - discussion-log entry for collaborative test start.
+3. Prepared first execution steps for user-driven fixture seeding prior to T1/T2/T3 checks.
+
+Commands run and outcomes:
+1. `rg -n ... README.md internal/tui/model.go` -> PASS (verified current key controls and search/task flows).
+2. `nl -ba README.md | sed -n '186,230p'` -> PASS (captured key bindings used for fixture instructions).
+3. `apply_patch` on `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` -> PASS.
+
+File edits:
+1. Updated `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`.
+2. Updated `PLAN.md`.
+
+Test status:
+- `test_not_applicable` (process/logging update only; no code behavior changes).
+
+## Checkpoint 2026-03-04: Collaborative Failure Intake FR-001 (Modal/Info/Comments UX)
+
+Objective:
+- pause forward collaborative testing and start focused remediation loop for user-reported TUI architecture/UX gaps.
+
+Failure intake summary:
+1. User reported that node display/input surfaces should be unified across all node types (single reusable modal/component style with mode-specific interaction differences only).
+2. User reported long rich-text fields should support wrapping, scrolling, and expandable viewing (description-like behavior).
+3. User reported markdown rendering expectations for rich-text fields using Glamour.
+4. User reported comments list is missing in info modal and must include ownership/relevant metadata.
+
+Actions completed:
+1. Recorded FR-001 in `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` findings ledger.
+2. Updated worksheet wording contract from "exact wording" to "detailed findings" per user instruction.
+3. Paused section progression pending remediation.
+
+Commands run and outcomes:
+1. `apply_patch` on `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` -> PASS (FR-001 + table heading updates).
+
+Next step:
+- run subagent architecture audits + Context7 references, then implement agreed remediation with package tests and dual QA.
+
+Test status:
+- `test_not_applicable` (intake/logging step only).
+
+## Checkpoint 2026-03-05: FR-001 Remediation Implemented (Task-Info Scroll + Node Modal Unification)
+
+Objective:
+- implement user-requested FR-001 TUI remediation:
+  - unified node modal framing for info/edit flows,
+  - scrollable task-info body so comments/metadata are reachable,
+  - full comments list with ownership metadata in task info,
+  - node-type-aware info/edit headers,
+  - preserve Glamour markdown rendering and key/mouse behavior.
+
+Context7 compliance:
+1. `mcp__context7-mcp__resolve-library-id("charmbracelet/bubbles", ...)` -> PASS.
+2. `mcp__context7-mcp__query-docs("/charmbracelet/bubbles", viewport usage ...)` -> PASS.
+3. After failed test runs, re-consulted Context7 viewport docs before subsequent edits -> PASS.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - Added `taskInfoBody` viewport state to model/init.
+   - Added `taskInfoBodyHeight`, `taskInfoBodyLines`, and `syncTaskInfoBodyViewport` helpers.
+   - Wired task-info keyboard and mouse scroll handling to both details viewport and full body viewport.
+   - Reset/sync task-info body viewport on open/close/path navigation transitions.
+   - Reworked `modeTaskInfo` overlay rendering to use full-body viewport + node-type header (`<Node> Info`).
+   - Added shared `nodeModalBoxStyle` and reused it across task info + add/edit node modal overlays.
+   - Added node-label helpers (`taskNodeLabel`, `taskFormNodeLabel`) and updated add/edit task titles to `New/Edit <NodeType>`.
+   - Preserved markdown rendering via existing `threadMarkdown.render` pathways.
+   - Rendered full comments list in task info (no preview truncation) with metadata rows (actor/owner/timestamp + id/summary/body).
+2. Updated `internal/tui/model_test.go`:
+   - Added `TestModelTaskInfoShowsFullCommentsList`.
+   - Extended task-info scroll test assertions to include body viewport scroll/reset behavior.
+   - Added branch header checks (`New Branch`, `Edit Branch`, `Branch Info`) in overlay helper coverage.
+   - Updated prompt assertions for node-type-aware prompt wording.
+   - Updated task-info metadata/comment dependency hint tests to assert against `taskInfoBody.GetContent()` for viewport-aware behavior.
+   - Added explicit owner metadata assertions for full comments list.
+
+Dual QA (read-only subagents):
+1. QA Pass 1: Darwin (`019cbc1c-aaaa-75f1-8be4-d333d98e6e3d`) -> PASS (approve retest).
+2. QA Pass 2: Ampere (`019cb5c7-4141-76f2-a48e-70bb889ed054`) -> PASS (approve retest).
+3. QA reports captured in:
+   - `worklogs/FR001_QA_PASS1_DARWIN.md`
+   - `worklogs/FR001_QA_PASS2_AMPERE.md`
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/tui` -> FAIL (initial assertion mismatches after viewport behavior changes).
+2. Context7 re-consult after failure -> PASS.
+3. `just test-pkg ./internal/tui` -> FAIL (remaining assertion mismatches).
+4. Context7 re-consult after failure -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+8. After QA-noted low test gap fix, reran:
+   - `just test-pkg ./internal/tui` -> PASS.
+   - `just check` -> PASS.
+   - `just ci` -> PASS.
+
+Documentation/worklog sync:
+1. Updated `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`:
+   - FR-001 status -> `READY_FOR_USER_RETEST`.
+   - filled fix-planning and validation tables with test/QA evidence.
+   - appended discussion-log entries for implementation and dual QA closeout.
+2. Added QA pass worklogs under `worklogs/`.
+
+Status:
+- FR-001 implementation + tests + dual QA complete on agent side.
+- Awaiting user collaborative rerun confirmation to mark section complete.

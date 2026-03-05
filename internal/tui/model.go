@@ -157,12 +157,14 @@ const (
 const (
 	activityLogMaxItems   = 200
 	activityLogViewWindow = 14
-	// taskInfoCommentPreviewLimit caps recent comment previews in task-info read mode.
-	taskInfoCommentPreviewLimit = 5
 	// taskInfoDetailsViewportMinHeight keeps task-info markdown details usable on short terminals.
 	taskInfoDetailsViewportMinHeight = 6
 	// taskInfoDetailsViewportMaxHeight prevents details preview from crowding other task-info sections.
 	taskInfoDetailsViewportMaxHeight = 16
+	// taskInfoBodyViewportMinHeight keeps full task-info content scrollable on short terminals.
+	taskInfoBodyViewportMinHeight = 8
+	// taskInfoBodyViewportMaxHeight caps task-info body viewport to preserve centered modal framing.
+	taskInfoBodyViewportMaxHeight = 40
 	// textEditHistoryLimit caps per-textarea undo/redo stack growth.
 	textEditHistoryLimit  = 256
 	defaultHighlightColor = "212"
@@ -635,6 +637,7 @@ type Model struct {
 	threadComposerUndo        []string
 	threadComposerRedo        []string
 	threadMarkdown            markdownRenderer
+	taskInfoBody              viewport.Model
 	taskInfoDetails           viewport.Model
 	descriptionPreview        viewport.Model
 
@@ -801,6 +804,10 @@ func NewModel(svc Service, opts ...Option) Model {
 	descriptionPreview.SoftWrap = true
 	descriptionPreview.MouseWheelEnabled = false
 	descriptionPreview.FillHeight = true
+	taskInfoBody := viewport.New()
+	taskInfoBody.SoftWrap = true
+	taskInfoBody.MouseWheelEnabled = false
+	taskInfoBody.FillHeight = true
 	taskInfoDetails := viewport.New()
 	taskInfoDetails.SoftWrap = true
 	taskInfoDetails.MouseWheelEnabled = false
@@ -841,6 +848,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		threadInput:              threadInput,
 		threadDetailsInput:       threadDetailsInput,
 		descriptionEditorInput:   descriptionEditorInput,
+		taskInfoBody:             taskInfoBody,
 		taskInfoDetails:          taskInfoDetails,
 		descriptionPreview:       descriptionPreview,
 		resourcePickerFilter:     resourcePickerFilter,
@@ -2907,6 +2915,7 @@ func (m *Model) closeDescriptionEditor(saved bool) tea.Cmd {
 			m.status = "task info"
 			if task, ok := m.taskInfoTask(); ok {
 				m.syncTaskInfoDetailsViewport(task)
+				m.syncTaskInfoBodyViewport(task)
 			}
 			return nil
 		}
@@ -4842,8 +4851,10 @@ func (m Model) jumpToDependencyCandidateTask() (tea.Model, tea.Cmd) {
 	m.taskInfoTaskID = taskID
 	m.trackTaskInfoPath(taskID)
 	m.taskInfoDetails.SetYOffset(0)
+	m.taskInfoBody.SetYOffset(0)
 	if task, ok := m.taskByID(taskID); ok {
 		m.syncTaskInfoDetailsViewport(task)
+		m.syncTaskInfoBodyViewport(task)
 	}
 	m.dependencyInput.Blur()
 	m.status = "jumping to dependency"
@@ -6384,6 +6395,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.syncTaskInfoDetailsViewport(task)
+		m.syncTaskInfoBodyViewport(task)
 		subtasks := m.subtasksForParent(task.ID)
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
@@ -6398,27 +6410,33 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown" || msg.String() == "ctrl+d":
 			step := max(1, m.taskInfoDetails.Height()/2)
 			m.taskInfoDetails.ScrollDown(step)
+			m.taskInfoBody.ScrollDown(step)
 			return m, nil
 		case msg.Code == tea.KeyPgUp || msg.String() == "pgup" || msg.String() == "ctrl+u":
 			step := max(1, m.taskInfoDetails.Height()/2)
 			m.taskInfoDetails.ScrollUp(step)
+			m.taskInfoBody.ScrollUp(step)
 			return m, nil
 		case msg.String() == "home":
 			m.taskInfoDetails.GotoTop()
+			m.taskInfoBody.GotoTop()
 			return m, nil
 		case msg.String() == "end":
 			m.taskInfoDetails.GotoBottom()
+			m.taskInfoBody.GotoBottom()
 			return m, nil
 		case msg.String() == "d":
 			return m, m.startTaskInfoDescriptionEditor(task)
 		case msg.String() == "j" || msg.String() == "down":
 			m.taskInfoDetails.ScrollDown(1)
+			m.taskInfoBody.ScrollDown(1)
 			if len(subtasks) > 0 && m.taskInfoSubtaskIdx < len(subtasks)-1 {
 				m.taskInfoSubtaskIdx++
 			}
 			return m, nil
 		case msg.String() == "k" || msg.String() == "up":
 			m.taskInfoDetails.ScrollUp(1)
+			m.taskInfoBody.ScrollUp(1)
 			if m.taskInfoSubtaskIdx > 0 {
 				m.taskInfoSubtaskIdx--
 			}
@@ -6432,8 +6450,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.trackTaskInfoPath(subtask.ID)
 			m.taskInfoSubtaskIdx = 0
 			m.taskInfoDetails.SetYOffset(0)
+			m.taskInfoBody.SetYOffset(0)
 			m.loadTaskInfoComments(subtask.ID)
 			m.syncTaskInfoDetailsViewport(subtask)
+			m.syncTaskInfoBodyViewport(subtask)
 			m.status = "subtask info"
 			return m, nil
 		case msg.Code == tea.KeyBackspace || msg.String() == "backspace" || msg.String() == "h" || msg.String() == "left":
@@ -6449,8 +6469,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.trackTaskInfoPath(parentID)
 			m.taskInfoSubtaskIdx = 0
 			m.taskInfoDetails.SetYOffset(0)
+			m.taskInfoBody.SetYOffset(0)
 			m.loadTaskInfoComments(parentID)
 			m.syncTaskInfoDetailsViewport(parent)
+			m.syncTaskInfoBodyViewport(parent)
 			m.status = "parent task info"
 			return m, nil
 		case msg.String() == "e":
@@ -9062,11 +9084,14 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.syncTaskInfoDetailsViewport(task)
+		m.syncTaskInfoBodyViewport(task)
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			m.taskInfoDetails.ScrollUp(3)
+			m.taskInfoBody.ScrollUp(3)
 		case tea.MouseWheelDown:
 			m.taskInfoDetails.ScrollDown(3)
+			m.taskInfoBody.ScrollDown(3)
 		}
 		return m, nil
 	}
@@ -11500,9 +11525,9 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeTaskInfo:
 		return "task info", []string{
-			"j/k and up/down scroll details and move subtask cursor",
+			"j/k and up/down scroll full info content and move subtask cursor",
 			"enter opens selected subtask; backspace moves to parent",
-			"pgup/pgdown, home/end, ctrl+u/ctrl+d, or mouse wheel scrolls details",
+			"pgup/pgdown, home/end, ctrl+u/ctrl+d, or mouse wheel scrolls full info body",
 			"d opens full-screen details preview; tab toggles edit mode there",
 			"e edit; s create subtask; c thread view",
 			"b dependency inspector; r attach resource",
@@ -11808,8 +11833,10 @@ func (m *Model) openTaskInfo(taskID string, status string) bool {
 	m.taskInfoPath = []string{taskID}
 	m.taskInfoSubtaskIdx = 0
 	m.taskInfoDetails.SetYOffset(0)
+	m.taskInfoBody.SetYOffset(0)
 	m.loadTaskInfoComments(taskID)
 	m.syncTaskInfoDetailsViewport(task)
+	m.syncTaskInfoBodyViewport(task)
 	if strings.TrimSpace(status) == "" {
 		status = "task info"
 	}
@@ -11825,6 +11852,7 @@ func (m *Model) closeTaskInfo(status string) {
 	m.taskInfoPath = nil
 	m.taskInfoSubtaskIdx = 0
 	m.taskInfoDetails.SetYOffset(0)
+	m.taskInfoBody.SetYOffset(0)
 	m.clearTaskInfoComments()
 	if strings.TrimSpace(status) == "" {
 		status = "ready"
@@ -11880,6 +11908,230 @@ func (m *Model) syncTaskInfoDetailsViewport(task domain.Task) {
 	m.taskInfoDetails.SetContent(m.taskInfoDescriptionMarkdown(task, contentWidth))
 }
 
+// taskInfoBodyHeight resolves the scrollable task-info body viewport height.
+func (m Model) taskInfoBodyHeight() int {
+	if m.height <= 0 {
+		return 48
+	}
+	return clamp(m.height-12, taskInfoBodyViewportMinHeight, taskInfoBodyViewportMaxHeight)
+}
+
+// taskNodeLabel resolves a display-safe node type label from scope/kind context.
+func taskNodeLabel(scope domain.KindAppliesTo, kind domain.WorkKind) string {
+	switch domain.NormalizeKindAppliesTo(scope) {
+	case domain.KindAppliesToBranch:
+		return "Branch"
+	case domain.KindAppliesToPhase:
+		return "Phase"
+	case domain.KindAppliesToSubphase:
+		return "Subphase"
+	case domain.KindAppliesToSubtask:
+		return "Subtask"
+	case domain.KindAppliesToTask:
+		switch strings.TrimSpace(strings.ToLower(string(kind))) {
+		case "decision":
+			return "Decision"
+		case "note":
+			return "Note"
+		case "branch":
+			return "Branch"
+		case "phase":
+			return "Phase"
+		case "subphase":
+			return "Subphase"
+		case "subtask":
+			return "Subtask"
+		default:
+			return "Task"
+		}
+	default:
+		return "Task"
+	}
+}
+
+// taskInfoNodeLabel resolves the canonical node label displayed in task-info headers.
+func taskInfoNodeLabel(task domain.Task) string {
+	return taskNodeLabel(task.Scope, task.Kind)
+}
+
+// taskFormNodeLabel resolves node label text for task-form add/edit headers.
+func (m Model) taskFormNodeLabel() string {
+	return taskNodeLabel(m.taskFormScope, m.taskFormKind)
+}
+
+// taskInfoBodyLines renders reusable task-info sections for the main task-info viewport.
+func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, hintStyle lipgloss.Style) []string {
+	due := "-"
+	if task.DueAt != nil {
+		due = formatDueValue(task.DueAt)
+	}
+	taskState := m.lifecycleStateForTask(task)
+	isComplete := taskState == domain.StateDone
+	labels := "-"
+	if len(task.Labels) > 0 {
+		labels = strings.Join(task.Labels, ", ")
+	}
+	lines := []string{
+		task.Title,
+		hintStyle.Render("kind: " + string(task.Kind) + " • state: " + lifecycleStateLabel(taskState) + " • complete: " + completionLabel(isComplete)),
+		hintStyle.Render("priority: " + string(task.Priority) + " • due: " + due),
+		hintStyle.Render("labels: " + labels),
+	}
+	if warning := m.taskDueWarning(task, time.Now().UTC()); warning != "" {
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")).Render(warning))
+	}
+
+	lines = append(lines, "")
+	detailsViewport := m.taskInfoDescriptionViewport(task, boxWidth)
+	detailsScroll := int(detailsViewport.ScrollPercent() * 100)
+	lines = append(lines, hintStyle.Render(fmt.Sprintf("description (%d%%)", detailsScroll)))
+	lines = append(lines, detailsViewport.View())
+	lines = append(lines, hintStyle.Render("pgup/pgdown or mouse wheel scroll description • d full-screen details"))
+
+	subtasks := m.subtasksForParent(task.ID)
+	if len(subtasks) > 0 {
+		lines = append(lines, "")
+		done, total := m.subtaskProgress(task.ID)
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("subtasks (%d/%d done)", done, total)))
+		subtaskIdx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
+		for idx, subtask := range subtasks {
+			subtaskState := m.lifecycleStateForTask(subtask)
+			subtaskDone := subtaskState == domain.StateDone
+			prefix := "  "
+			if idx == subtaskIdx {
+				prefix = "> "
+			}
+			check := "[ ]"
+			if subtaskDone {
+				check = "[x]"
+			}
+			title := truncate(subtask.Title, 48)
+			metaParts := []string{
+				"state:" + lifecycleStateLabel(subtaskState),
+				"complete:" + completionLabel(subtaskDone),
+			}
+			if subtask.DueAt != nil {
+				metaParts = append(metaParts, "due:"+formatDueValue(subtask.DueAt))
+			}
+			line := fmt.Sprintf("%s%s %s %s", prefix, check, title, hintStyle.Render(strings.Join(metaParts, " • ")))
+			lines = append(lines, line)
+		}
+		lines = append(lines, hintStyle.Render("j/k or up/down scroll + move subtask cursor • space toggle complete • enter open subtask • backspace parent"))
+	}
+
+	inherited := m.labelSourcesForTask(task)
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("effective labels (global/project/branch/phase fallback)"))
+	lines = append(lines, hintStyle.Render(formatLabelSource("global", inherited.Global)))
+	lines = append(lines, hintStyle.Render(formatLabelSource("project", inherited.Project)))
+	lines = append(lines, hintStyle.Render(formatLabelSource("phase", inherited.Phase)))
+
+	dependsOn := uniqueTrimmed(task.Metadata.DependsOn)
+	blockedBy := uniqueTrimmed(task.Metadata.BlockedBy)
+	blockedReason := strings.TrimSpace(task.Metadata.BlockedReason)
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("dependencies"))
+	lines = append(lines, hintStyle.Render("depends_on: "+m.summarizeTaskRefs(dependsOn, 4)))
+	lines = append(lines, hintStyle.Render("blocked_by: "+m.summarizeTaskRefs(blockedBy, 4)))
+	if blockedReason == "" {
+		blockedReason = "-"
+	}
+	lines = append(lines, hintStyle.Render("blocked_reason: "+blockedReason))
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d)", len(m.taskInfoComments))))
+	if strings.TrimSpace(m.taskInfoCommentsError) != "" {
+		lines = append(lines, hintStyle.Render("comments unavailable: "+truncate(m.taskInfoCommentsError, max(28, contentWidth))))
+	} else if len(m.taskInfoComments) == 0 {
+		lines = append(lines, hintStyle.Render("(no comments yet)"))
+	} else {
+		for idx := len(m.taskInfoComments) - 1; idx >= 0; idx-- {
+			comment := m.taskInfoComments[idx]
+			owner := threadCommentOwnerLabel(comment)
+			actor := string(normalizeCommentActorType(string(comment.ActorType)))
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
+			if id := strings.TrimSpace(comment.ID); id != "" {
+				lines = append(lines, hintStyle.Render("id: "+truncate(id, max(24, contentWidth))))
+			}
+			if summary := commentSummaryText(comment); summary != "" {
+				lines = append(lines, hintStyle.Render("summary: "+truncate(summary, max(24, contentWidth))))
+			}
+			body := m.threadMarkdown.render(comment.BodyMarkdown, contentWidth)
+			if strings.TrimSpace(body) == "" {
+				body = "(empty comment)"
+			}
+			for _, line := range splitThreadMarkdownLines(body) {
+				lines = append(lines, "  "+line)
+			}
+			if idx > 0 {
+				lines = append(lines, "")
+			}
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("resources"))
+	if len(task.Metadata.ResourceRefs) == 0 {
+		lines = append(lines, hintStyle.Render("(none)"))
+	} else {
+		for idx, ref := range task.Metadata.ResourceRefs {
+			if idx >= 4 {
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more", len(task.Metadata.ResourceRefs)-idx)))
+				break
+			}
+			location := strings.TrimSpace(ref.Location)
+			if ref.PathMode == domain.PathModeRelative && strings.TrimSpace(ref.BaseAlias) != "" {
+				location = strings.TrimSpace(ref.BaseAlias) + ":" + location
+			}
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("%s %s", ref.ResourceType, truncate(location, 48))))
+		}
+	}
+	if strings.TrimSpace(task.ParentID) != "" {
+		lines = append(lines, hintStyle.Render("parent: "+task.ParentID))
+	}
+
+	renderMetadataMarkdown := func(label, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		lines = append(lines, "", hintStyle.Render(label))
+		rendered := m.threadMarkdown.render(value, contentWidth)
+		lines = append(lines, splitThreadMarkdownLines(rendered)...)
+	}
+	renderMetadataMarkdown("objective", task.Metadata.Objective)
+	renderMetadataMarkdown("acceptance_criteria", task.Metadata.AcceptanceCriteria)
+	renderMetadataMarkdown("validation_plan", task.Metadata.ValidationPlan)
+	renderMetadataMarkdown("risk_notes", task.Metadata.RiskNotes)
+	if len(task.Metadata.CompletionContract.CompletionCriteria) > 0 {
+		unmet := 0
+		for _, item := range task.Metadata.CompletionContract.CompletionCriteria {
+			if strings.TrimSpace(item.Text) == "" {
+				continue
+			}
+			if !item.Done {
+				unmet++
+			}
+		}
+		if unmet > 0 {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("completion: %d unmet checks", unmet)))
+		}
+	}
+	return lines
+}
+
+// syncTaskInfoBodyViewport refreshes full task-info body viewport dimensions/content after task/size changes.
+func (m *Model) syncTaskInfoBodyViewport(task domain.Task) {
+	if m == nil {
+		return
+	}
+	boxWidth := taskInfoOverlayBoxWidth(max(0, m.width-8))
+	contentWidth := max(24, boxWidth-8)
+	m.taskInfoBody.SetWidth(contentWidth)
+	m.taskInfoBody.SetHeight(max(1, m.taskInfoBodyHeight()))
+	m.taskInfoBody.SetContent(strings.Join(m.taskInfoBodyLines(task, boxWidth, contentWidth, lipgloss.NewStyle()), "\n"))
+}
+
 // trackTaskInfoPath appends one task id to the modal traversal path, trimming loops when revisiting ancestors.
 func (m *Model) trackTaskInfoPath(taskID string) {
 	taskID = strings.TrimSpace(taskID)
@@ -11920,10 +12172,12 @@ func (m *Model) stepBackTaskInfoPath() bool {
 		m.taskInfoTaskID = prevID
 		m.taskInfoSubtaskIdx = 0
 		m.taskInfoDetails.SetYOffset(0)
+		m.taskInfoBody.SetYOffset(0)
 		m.loadTaskInfoComments(prevID)
 		m.status = "task info"
 		if task, ok := m.taskByID(prevID); ok {
 			m.syncTaskInfoDetailsViewport(task)
+			m.syncTaskInfoBodyViewport(task)
 		}
 		return true
 	}
@@ -11941,6 +12195,8 @@ func (m *Model) stepBackTaskInfo(task domain.Task) bool {
 	}
 	m.taskInfoTaskID = parentID
 	m.taskInfoSubtaskIdx = 0
+	m.taskInfoDetails.SetYOffset(0)
+	m.taskInfoBody.SetYOffset(0)
 	m.loadTaskInfoComments(parentID)
 	// Keep the cursor aligned to the child we navigated from when it remains visible.
 	for idx, child := range m.subtasksForParent(parentID) {
@@ -11948,6 +12204,10 @@ func (m *Model) stepBackTaskInfo(task domain.Task) bool {
 			m.taskInfoSubtaskIdx = idx
 			break
 		}
+	}
+	if parent, ok := m.taskByID(parentID); ok {
+		m.syncTaskInfoDetailsViewport(parent)
+		m.syncTaskInfoBodyViewport(parent)
 	}
 	m.status = "parent task info"
 	return true
@@ -12297,6 +12557,18 @@ func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// nodeModalBoxStyle returns the shared centered node modal frame style for info/edit flows.
+func nodeModalBoxStyle(accent color.Color, maxWidth, minWidth, maxModalWidth int) lipgloss.Style {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).
+		Padding(0, 1)
+	if maxWidth > 0 {
+		style = style.Width(clamp(maxWidth, minWidth, maxModalWidth))
+	}
+	return style
+}
+
 // renderModeOverlay renders output for the current model state.
 func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgloss.Style, maxWidth int) string {
 	switch m.mode {
@@ -12378,180 +12650,21 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			return ""
 		}
 		boxWidth := taskInfoOverlayBoxWidth(maxWidth)
-		boxStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1)
-		if maxWidth > 0 {
-			boxStyle = boxStyle.Width(boxWidth)
-		}
+		boxStyle := nodeModalBoxStyle(accent, maxWidth, 40, 112)
 		contentWidth := max(24, boxWidth-8)
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		due := "-"
-		if task.DueAt != nil {
-			due = formatDueValue(task.DueAt)
-		}
-		taskState := m.lifecycleStateForTask(task)
-		isComplete := taskState == domain.StateDone
-		labels := "-"
-		if len(task.Labels) > 0 {
-			labels = strings.Join(task.Labels, ", ")
-		}
+		bodyViewport := m.taskInfoBody
+		bodyViewport.SetWidth(contentWidth)
+		bodyViewport.SetHeight(max(1, m.taskInfoBodyHeight()))
+		bodyViewport.SetContent(strings.Join(m.taskInfoBodyLines(task, boxWidth, contentWidth, hintStyle), "\n"))
+		scrollPercent := int(bodyViewport.ScrollPercent() * 100)
 		lines := []string{
-			titleStyle.Render("Task Info"),
-			task.Title,
-			hintStyle.Render("kind: " + string(task.Kind) + " • state: " + lifecycleStateLabel(taskState) + " • complete: " + completionLabel(isComplete)),
-			hintStyle.Render("priority: " + string(task.Priority) + " • due: " + due),
-			hintStyle.Render("labels: " + labels),
+			titleStyle.Render(taskInfoNodeLabel(task) + " Info"),
+			hintStyle.Render(fmt.Sprintf("scroll: %d%%", scrollPercent)),
+			bodyViewport.View(),
+			hintStyle.Render("d details preview • e edit • c thread • [ / ] move • b deps inspector • r attach • s subtask • f focus subtree • esc back"),
 		}
-		if warning := m.taskDueWarning(task, time.Now().UTC()); warning != "" {
-			lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")).Render(warning))
-		}
-
-		lines = append(lines, "")
-		detailsViewport := m.taskInfoDescriptionViewport(task, boxWidth)
-		detailsScroll := int(detailsViewport.ScrollPercent() * 100)
-		lines = append(lines, hintStyle.Render(fmt.Sprintf("details (%d%%)", detailsScroll)))
-		lines = append(lines, detailsViewport.View())
-		lines = append(lines, hintStyle.Render("pgup/pgdown or mouse wheel scroll details • d full-screen details"))
-
-		subtasks := m.subtasksForParent(task.ID)
-		if len(subtasks) > 0 {
-			lines = append(lines, "")
-			done, total := m.subtaskProgress(task.ID)
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("subtasks (%d/%d done)", done, total)))
-			subtaskIdx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
-			checkedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-			uncheckedStyle := lipgloss.NewStyle().Foreground(muted)
-			focusStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-			for idx, subtask := range subtasks {
-				subtaskState := m.lifecycleStateForTask(subtask)
-				subtaskDone := subtaskState == domain.StateDone
-				prefix := "  "
-				if idx == subtaskIdx {
-					prefix = "│ "
-				}
-				check := uncheckedStyle.Render("[ ]")
-				if subtaskDone {
-					check = checkedStyle.Render("[x]")
-				}
-				title := truncate(subtask.Title, 48)
-				if idx == subtaskIdx {
-					title = focusStyle.Render(title)
-				}
-				metaParts := []string{
-					"state:" + lifecycleStateLabel(subtaskState),
-					"complete:" + completionLabel(subtaskDone),
-				}
-				if subtask.DueAt != nil {
-					metaParts = append(metaParts, "due:"+formatDueValue(subtask.DueAt))
-				}
-				line := fmt.Sprintf("%s%s %s %s", prefix, check, title, hintStyle.Render(strings.Join(metaParts, " • ")))
-				lines = append(lines, line)
-			}
-			lines = append(lines, hintStyle.Render("j/k or up/down scroll details + move subtask cursor • space toggle complete • enter open subtask • backspace parent"))
-		}
-		inherited := m.labelSourcesForTask(task)
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("effective labels (global/project/branch/phase fallback)"))
-		lines = append(lines, hintStyle.Render(formatLabelSource("global", inherited.Global)))
-		lines = append(lines, hintStyle.Render(formatLabelSource("project", inherited.Project)))
-		lines = append(lines, hintStyle.Render(formatLabelSource("phase", inherited.Phase)))
-
-		dependsOn := uniqueTrimmed(task.Metadata.DependsOn)
-		blockedBy := uniqueTrimmed(task.Metadata.BlockedBy)
-		blockedReason := strings.TrimSpace(task.Metadata.BlockedReason)
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("dependencies"))
-		lines = append(lines, hintStyle.Render("depends_on: "+m.summarizeTaskRefs(dependsOn, 4)))
-		lines = append(lines, hintStyle.Render("blocked_by: "+m.summarizeTaskRefs(blockedBy, 4)))
-		if blockedReason == "" {
-			blockedReason = "-"
-		}
-		lines = append(lines, hintStyle.Render("blocked_reason: "+blockedReason))
-
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d)", len(m.taskInfoComments))))
-		if strings.TrimSpace(m.taskInfoCommentsError) != "" {
-			lines = append(lines, hintStyle.Render("comments unavailable: "+truncate(m.taskInfoCommentsError, max(28, contentWidth))))
-		} else if len(m.taskInfoComments) == 0 {
-			lines = append(lines, hintStyle.Render("(no comments yet)"))
-		} else {
-			start := max(0, len(m.taskInfoComments)-taskInfoCommentPreviewLimit)
-			for idx := len(m.taskInfoComments) - 1; idx >= start; idx-- {
-				comment := m.taskInfoComments[idx]
-				owner := threadCommentOwnerLabel(comment)
-				actor := string(normalizeCommentActorType(string(comment.ActorType)))
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
-				if summary := commentSummaryText(comment); summary != "" {
-					lines = append(lines, hintStyle.Render("summary: "+truncate(summary, max(24, contentWidth))))
-				}
-				body := m.threadMarkdown.render(comment.BodyMarkdown, contentWidth)
-				if strings.TrimSpace(body) == "" {
-					body = "(empty comment)"
-				}
-				for _, line := range splitThreadMarkdownLines(body) {
-					lines = append(lines, "  "+line)
-				}
-				if idx > start {
-					lines = append(lines, "")
-				}
-			}
-			if hidden := len(m.taskInfoComments) - taskInfoCommentPreviewLimit; hidden > 0 {
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d older comments", hidden)))
-			}
-		}
-
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("resources"))
-		if len(task.Metadata.ResourceRefs) == 0 {
-			lines = append(lines, hintStyle.Render("(none)"))
-		} else {
-			for idx, ref := range task.Metadata.ResourceRefs {
-				if idx >= 4 {
-					lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more", len(task.Metadata.ResourceRefs)-idx)))
-					break
-				}
-				location := strings.TrimSpace(ref.Location)
-				if ref.PathMode == domain.PathModeRelative && strings.TrimSpace(ref.BaseAlias) != "" {
-					location = strings.TrimSpace(ref.BaseAlias) + ":" + location
-				}
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("%s %s", ref.ResourceType, truncate(location, 48))))
-			}
-		}
-		if strings.TrimSpace(task.ParentID) != "" {
-			lines = append(lines, hintStyle.Render("parent: "+task.ParentID))
-		}
-		renderMetadataMarkdown := func(label, value string) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				return
-			}
-			lines = append(lines, "", hintStyle.Render(label))
-			rendered := m.threadMarkdown.render(value, contentWidth)
-			lines = append(lines, splitThreadMarkdownLines(rendered)...)
-		}
-		renderMetadataMarkdown("objective", task.Metadata.Objective)
-		renderMetadataMarkdown("acceptance_criteria", task.Metadata.AcceptanceCriteria)
-		renderMetadataMarkdown("validation_plan", task.Metadata.ValidationPlan)
-		renderMetadataMarkdown("risk_notes", task.Metadata.RiskNotes)
-		if len(task.Metadata.CompletionContract.CompletionCriteria) > 0 {
-			unmet := 0
-			for _, item := range task.Metadata.CompletionContract.CompletionCriteria {
-				if strings.TrimSpace(item.Text) == "" {
-					continue
-				}
-				if !item.Done {
-					unmet++
-				}
-			}
-			if unmet > 0 {
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("completion: %d unmet checks", unmet)))
-			}
-		}
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("d details preview • e edit task • c thread read mode • [ / ] move • b deps inspector • r attach resource • s subtask • f focus subtree • esc back/close"))
 		return boxStyle.Render(strings.Join(lines, "\n"))
 
 	case modeBootstrapSettings:
@@ -13153,19 +13266,13 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		return ""
 
 	case modeAddTask, modeSearch, modeRenameTask, modeEditTask, modeAddProject, modeEditProject, modeLabelsConfig, modeHighlightColor:
-		boxStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1)
-		if maxWidth > 0 {
-			boxStyle = boxStyle.Width(clamp(maxWidth, 24, 96))
-		}
+		boxStyle := nodeModalBoxStyle(accent, maxWidth, 24, 96)
 
 		title := "Input"
 		hint := "enter save • esc cancel • tab next field"
 		switch m.mode {
 		case modeAddTask:
-			title = "New Task"
+			title = "New " + m.taskFormNodeLabel()
 			hint = "enter save • esc cancel • tab next field • description uses markdown editor • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+g label suggestion"
 		case modeSearch:
 			title = "Search"
@@ -13173,7 +13280,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		case modeRenameTask:
 			title = "Rename Task"
 		case modeEditTask:
-			title = "Edit Task"
+			title = "Edit " + m.taskFormNodeLabel()
 			hint = "enter save • esc cancel • tab next field • description uses markdown editor • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+g label suggestion"
 		case modeAddProject:
 			title = "New Project"
@@ -13535,19 +13642,19 @@ func (m Model) modeLabel() string {
 func (m Model) modePrompt() string {
 	switch m.mode {
 	case modeAddTask:
-		return "new task title: " + m.input + " (enter save, esc cancel)"
+		return "new " + strings.ToLower(m.taskFormNodeLabel()) + ": enter save, esc cancel"
 	case modeSearch:
 		return "search query: " + m.input + " (enter apply, esc cancel)"
 	case modeRenameTask:
 		return "rename task: " + m.input + " (enter save, esc cancel)"
 	case modeEditTask:
-		return "edit task: " + m.input + " (title | description | priority(low|medium|high) | due(YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -) | labels(csv))"
+		return "edit " + strings.ToLower(m.taskFormNodeLabel()) + ": enter save, esc cancel"
 	case modeDuePicker:
 		return "due picker: tab focus controls, type date/time to filter, j/k navigate list, enter apply, esc cancel"
 	case modeProjectPicker:
 		return "project picker: j/k select, enter choose, N new project, A archived toggle, esc cancel"
 	case modeTaskInfo:
-		return "task info: d details preview, j/k and arrows details scroll, pgup/pgdown/home/end/ctrl+u/ctrl+d scroll, e edit, s subtask, c thread, [ / ] move, space toggle subtask complete, b deps inspector, r attach, esc back/close"
+		return "task info: d details preview, j/k and arrows scroll full info body, pgup/pgdown/home/end/ctrl+u/ctrl+d scroll, e edit, s subtask, c thread, [ / ] move, space toggle subtask complete, b deps inspector, r attach, esc back/close"
 	case modeAddProject:
 		return "new project: enter save, esc cancel"
 	case modeEditProject:
