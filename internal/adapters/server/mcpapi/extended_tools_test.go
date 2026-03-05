@@ -21,6 +21,7 @@ type stubExpandedService struct {
 	lastRestoreTaskReq   common.RestoreTaskRequest
 	lastCreateCommentReq common.CreateCommentRequest
 	lastListCommentReq   common.ListCommentsByTargetRequest
+	lastSearchTasksReq   common.SearchTasksRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -198,7 +199,8 @@ func (s *stubExpandedService) ListChildTasks(_ context.Context, _, _ string, _ b
 }
 
 // SearchTasks returns one deterministic match row.
-func (s *stubExpandedService) SearchTasks(_ context.Context, _ common.SearchTasksRequest) ([]common.SearchTaskMatch, error) {
+func (s *stubExpandedService) SearchTasks(_ context.Context, in common.SearchTasksRequest) ([]common.SearchTaskMatch, error) {
+	s.lastSearchTasksReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []common.SearchTaskMatch{
 		{
@@ -400,6 +402,59 @@ func schemaStringPropertyDescription(t *testing.T, schema map[string]any, proper
 	}
 	description, _ := propRaw["description"].(string)
 	return description
+}
+
+// schemaPropertyEnumStrings returns schema enum values for a property as strings.
+func schemaPropertyEnumStrings(t *testing.T, schema map[string]any, property string) []string {
+	t.Helper()
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties missing: %#v", schema)
+	}
+	propRaw, ok := properties[property].(map[string]any)
+	if !ok {
+		t.Fatalf("property %q missing from schema: %#v", property, properties)
+	}
+	enumRaw, _ := propRaw["enum"].([]any)
+	enum := make([]string, 0, len(enumRaw))
+	for _, item := range enumRaw {
+		value, ok := item.(string)
+		if !ok {
+			continue
+		}
+		enum = append(enum, value)
+	}
+	return enum
+}
+
+// schemaPropertyNumberField returns one numeric schema field value for assertions.
+func schemaPropertyNumberField(t *testing.T, schema map[string]any, property, field string) float64 {
+	t.Helper()
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties missing: %#v", schema)
+	}
+	propRaw, ok := properties[property].(map[string]any)
+	if !ok {
+		t.Fatalf("property %q missing from schema: %#v", property, properties)
+	}
+	raw, ok := propRaw[field]
+	if !ok {
+		t.Fatalf("property %q missing numeric field %q: %#v", property, field, propRaw)
+	}
+	switch value := raw.(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case int32:
+		return float64(value)
+	case int64:
+		return float64(value)
+	default:
+		t.Fatalf("property %q field %q has non-numeric type %T (%#v)", property, field, raw, raw)
+	}
+	return 0
 }
 
 // TestHandlerExpandedToolSurfaceSuccessPaths exercises success paths for the expanded MCP tool set.
@@ -686,6 +741,205 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 	bodyDesc := schemaStringPropertyDescription(t, createSchema, "body_markdown")
 	if !strings.Contains(strings.ToLower(bodyDesc), "markdown-rich") {
 		t.Fatalf("body_markdown description = %q, want markdown-rich guidance", bodyDesc)
+	}
+}
+
+// TestHandlerExpandedSearchToolSchemaOptions verifies search mode/sort/pagination tool schema guidance.
+func TestHandlerExpandedSearchToolSchemaOptions(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+
+	searchSchema := findToolSchemaByName(t, toolsRaw, "till.search_task_matches")
+	modeDesc := schemaStringPropertyDescription(t, searchSchema, "mode")
+	if !strings.Contains(modeDesc, "default hybrid") {
+		t.Fatalf("mode description = %q, want default hybrid guidance", modeDesc)
+	}
+	if !strings.Contains(modeDesc, "fall back to keyword") {
+		t.Fatalf("mode description = %q, want keyword fallback guidance", modeDesc)
+	}
+	modeEnum := schemaPropertyEnumStrings(t, searchSchema, "mode")
+	for _, want := range []string{"keyword", "semantic", "hybrid"} {
+		if !slices.Contains(modeEnum, want) {
+			t.Fatalf("mode enum missing %q: %#v", want, modeEnum)
+		}
+	}
+	levelsDesc := schemaStringPropertyDescription(t, searchSchema, "levels")
+	if !strings.Contains(strings.ToLower(levelsDesc), "level") {
+		t.Fatalf("levels description = %q, want level filter guidance", levelsDesc)
+	}
+	kindsDesc := schemaStringPropertyDescription(t, searchSchema, "kinds")
+	if !strings.Contains(strings.ToLower(kindsDesc), "kind") {
+		t.Fatalf("kinds description = %q, want kind filter guidance", kindsDesc)
+	}
+	labelsAnyDesc := schemaStringPropertyDescription(t, searchSchema, "labels_any")
+	if !strings.Contains(strings.ToLower(labelsAnyDesc), "any") {
+		t.Fatalf("labels_any description = %q, want labels-any guidance", labelsAnyDesc)
+	}
+	labelsAllDesc := schemaStringPropertyDescription(t, searchSchema, "labels_all")
+	if !strings.Contains(strings.ToLower(labelsAllDesc), "all") {
+		t.Fatalf("labels_all description = %q, want labels-all guidance", labelsAllDesc)
+	}
+
+	sortDesc := schemaStringPropertyDescription(t, searchSchema, "sort")
+	if !strings.Contains(sortDesc, "rank_desc") || !strings.Contains(sortDesc, "default rank_desc") {
+		t.Fatalf("sort description = %q, want rank_desc default guidance", sortDesc)
+	}
+	sortEnum := schemaPropertyEnumStrings(t, searchSchema, "sort")
+	for _, want := range []string{"rank_desc", "title_asc", "created_at_desc", "updated_at_desc"} {
+		if !slices.Contains(sortEnum, want) {
+			t.Fatalf("sort enum missing %q: %#v", want, sortEnum)
+		}
+	}
+
+	limitDesc := schemaStringPropertyDescription(t, searchSchema, "limit")
+	if !strings.Contains(limitDesc, "default 50") || !strings.Contains(limitDesc, "max 200") {
+		t.Fatalf("limit description = %q, want default/max guidance", limitDesc)
+	}
+	if got := schemaPropertyNumberField(t, searchSchema, "limit", "minimum"); got != 0 {
+		t.Fatalf("limit minimum = %v, want 0", got)
+	}
+	if got := schemaPropertyNumberField(t, searchSchema, "limit", "maximum"); got != 200 {
+		t.Fatalf("limit maximum = %v, want 200", got)
+	}
+	if got := schemaPropertyNumberField(t, searchSchema, "limit", "default"); got != 50 {
+		t.Fatalf("limit default = %v, want 50", got)
+	}
+	offsetDesc := schemaStringPropertyDescription(t, searchSchema, "offset")
+	if !strings.Contains(offsetDesc, "default 0") {
+		t.Fatalf("offset description = %q, want default guidance", offsetDesc)
+	}
+	if got := schemaPropertyNumberField(t, searchSchema, "offset", "minimum"); got != 0 {
+		t.Fatalf("offset minimum = %v, want 0", got)
+	}
+	if got := schemaPropertyNumberField(t, searchSchema, "offset", "default"); got != 0 {
+		t.Fatalf("offset default = %v, want 0", got)
+	}
+}
+
+// TestHandlerExpandedSearchToolForwardsExtendedFilters verifies mode/sort/pagination fields are forwarded.
+func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(610, "till.search_task_matches", map[string]any{
+		"project_id":       "p1",
+		"query":            "task",
+		"cross_project":    true,
+		"include_archived": true,
+		"states":           []any{"todo"},
+		"levels":           []any{"phase"},
+		"kinds":            []any{"phase"},
+		"labels_any":       []any{"backend", "ops"},
+		"labels_all":       []any{"urgent"},
+		"mode":             "hybrid",
+		"sort":             "title_asc",
+		"limit":            75,
+		"offset":           10,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("search_task_matches returned isError=true: %#v", callResp.Result)
+	}
+
+	if got := service.lastSearchTasksReq.ProjectID; got != "p1" {
+		t.Fatalf("project_id = %q, want p1", got)
+	}
+	if got := service.lastSearchTasksReq.Query; got != "task" {
+		t.Fatalf("query = %q, want task", got)
+	}
+	if !service.lastSearchTasksReq.CrossProject {
+		t.Fatalf("cross_project = false, want true")
+	}
+	if !service.lastSearchTasksReq.IncludeArchived {
+		t.Fatalf("include_archived = false, want true")
+	}
+	if got := service.lastSearchTasksReq.Mode; got != "hybrid" {
+		t.Fatalf("mode = %q, want hybrid", got)
+	}
+	if got := service.lastSearchTasksReq.Sort; got != "title_asc" {
+		t.Fatalf("sort = %q, want title_asc", got)
+	}
+	if got := service.lastSearchTasksReq.Limit; got != 75 {
+		t.Fatalf("limit = %d, want 75", got)
+	}
+	if got := service.lastSearchTasksReq.Offset; got != 10 {
+		t.Fatalf("offset = %d, want 10", got)
+	}
+	if len(service.lastSearchTasksReq.States) != 1 || service.lastSearchTasksReq.States[0] != "todo" {
+		t.Fatalf("states = %#v, want [todo]", service.lastSearchTasksReq.States)
+	}
+	if got := service.lastSearchTasksReq.Levels; !slices.Equal(got, []string{"phase"}) {
+		t.Fatalf("levels = %#v, want [phase]", got)
+	}
+	if got := service.lastSearchTasksReq.Kinds; !slices.Equal(got, []string{"phase"}) {
+		t.Fatalf("kinds = %#v, want [phase]", got)
+	}
+	if got := service.lastSearchTasksReq.LabelsAny; !slices.Equal(got, []string{"backend", "ops"}) {
+		t.Fatalf("labels_any = %#v, want [backend ops]", got)
+	}
+	if got := service.lastSearchTasksReq.LabelsAll; !slices.Equal(got, []string{"urgent"}) {
+		t.Fatalf("labels_all = %#v, want [urgent]", got)
+	}
+
+	_, defaultResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(611, "till.search_task_matches", map[string]any{
+		"project_id": "p1",
+	}))
+	if isError, _ := defaultResp.Result["isError"].(bool); isError {
+		t.Fatalf("default search_task_matches returned isError=true: %#v", defaultResp.Result)
+	}
+	if got := service.lastSearchTasksReq.Mode; got != "" {
+		t.Fatalf("default mode = %q, want empty for app-defaulting", got)
+	}
+	if got := service.lastSearchTasksReq.Sort; got != "" {
+		t.Fatalf("default sort = %q, want empty for app-defaulting", got)
+	}
+	if got := service.lastSearchTasksReq.Limit; got != 0 {
+		t.Fatalf("default limit = %d, want 0 for app-defaulting", got)
+	}
+	if got := service.lastSearchTasksReq.Offset; got != 0 {
+		t.Fatalf("default offset = %d, want 0", got)
+	}
+	if len(service.lastSearchTasksReq.Levels) != 0 {
+		t.Fatalf("default levels = %#v, want empty", service.lastSearchTasksReq.Levels)
+	}
+	if len(service.lastSearchTasksReq.Kinds) != 0 {
+		t.Fatalf("default kinds = %#v, want empty", service.lastSearchTasksReq.Kinds)
+	}
+	if len(service.lastSearchTasksReq.LabelsAny) != 0 {
+		t.Fatalf("default labels_any = %#v, want empty", service.lastSearchTasksReq.LabelsAny)
+	}
+	if len(service.lastSearchTasksReq.LabelsAll) != 0 {
+		t.Fatalf("default labels_all = %#v, want empty", service.lastSearchTasksReq.LabelsAll)
 	}
 }
 

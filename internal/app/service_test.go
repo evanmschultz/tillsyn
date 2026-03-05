@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -38,6 +39,63 @@ func newFakeRepo() *fakeRepo {
 		projectAllowedKinds: map[string][]domain.KindID{},
 		capabilityLeases:    map[string]domain.CapabilityLease{},
 	}
+}
+
+// fakeEmbeddingGenerator captures embedding requests for service tests.
+type fakeEmbeddingGenerator struct {
+	vectors [][]float32
+	err     error
+	inputs  [][]string
+}
+
+// Embed returns one configured set of vectors and records inputs.
+func (f *fakeEmbeddingGenerator) Embed(_ context.Context, inputs []string) ([][]float32, error) {
+	copyInputs := append([]string(nil), inputs...)
+	f.inputs = append(f.inputs, copyInputs)
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([][]float32, 0, len(f.vectors))
+	for _, row := range f.vectors {
+		out = append(out, append([]float32(nil), row...))
+	}
+	return out, nil
+}
+
+// fakeTaskSearchIndex captures vector index writes/search requests in tests.
+type fakeTaskSearchIndex struct {
+	upserts    []TaskEmbeddingDocument
+	deletedIDs []string
+	searchIn   TaskEmbeddingSearchInput
+	searchRows []TaskEmbeddingMatch
+	searchErr  error
+}
+
+// UpsertTaskEmbedding stores one in-memory upsert call.
+func (f *fakeTaskSearchIndex) UpsertTaskEmbedding(_ context.Context, in TaskEmbeddingDocument) error {
+	doc := in
+	doc.Vector = append([]float32(nil), in.Vector...)
+	f.upserts = append(f.upserts, doc)
+	return nil
+}
+
+// DeleteTaskEmbedding stores one in-memory delete call.
+func (f *fakeTaskSearchIndex) DeleteTaskEmbedding(_ context.Context, taskID string) error {
+	f.deletedIDs = append(f.deletedIDs, taskID)
+	return nil
+}
+
+// SearchTaskEmbeddings returns configured semantic match rows.
+func (f *fakeTaskSearchIndex) SearchTaskEmbeddings(_ context.Context, in TaskEmbeddingSearchInput) ([]TaskEmbeddingMatch, error) {
+	f.searchIn = in
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	out := make([]TaskEmbeddingMatch, 0, len(f.searchRows))
+	for _, row := range f.searchRows {
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 // CreateProject creates project.
@@ -984,6 +1042,707 @@ func TestSearchTaskMatchesFuzzyQuery(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSearchTaskMatchesExtendedFilters verifies optional level/kind/label filters and pagination.
+func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 11, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+	repo.columns[todo.ID] = todo
+	repo.columns[progress.ID] = progress
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Phase planning",
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"backend", "urgent"},
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Phase QA",
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"backend"},
+	}, now)
+	t3, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t3",
+		ProjectID: project.ID,
+		ColumnID:  progress.ID,
+		Position:  0,
+		Title:     "Task implementation",
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"backend", "urgent"},
+	}, now)
+	t4, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t4",
+		ProjectID: project.ID,
+		ColumnID:  progress.ID,
+		Position:  1,
+		Title:     "Archived phase note",
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Priority:  domain.PriorityLow,
+		Labels:    []string{"backend", "urgent"},
+	}, now)
+	t4.Archive(now.Add(1 * time.Minute))
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+	repo.tasks[t3.ID] = t3
+	repo.tasks[t4.ID] = t4
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+
+	strictMatches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Levels:    []string{"phase"},
+		Kinds:     []string{"phase"},
+		LabelsAny: []string{"backend"},
+		LabelsAll: []string{"urgent"},
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(strict filters) error = %v", err)
+	}
+	if len(strictMatches) != 1 || strictMatches[0].Task.ID != "t1" {
+		t.Fatalf("strict filter rows = %#v, want only t1", strictMatches)
+	}
+
+	pagedMatches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Levels:    []string{"phase"},
+		Kinds:     []string{"phase"},
+		LabelsAny: []string{"backend"},
+		Limit:     1,
+		Offset:    1,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(paged filters) error = %v", err)
+	}
+	if len(pagedMatches) != 1 || pagedMatches[0].Task.ID != "t2" {
+		t.Fatalf("paged filter rows = %#v, want only t2", pagedMatches)
+	}
+
+	archivedMatches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID:       project.ID,
+		IncludeArchived: true,
+		States:          []string{"archived"},
+		Levels:          []string{"phase"},
+		Kinds:           []string{"phase"},
+		LabelsAny:       []string{"backend"},
+		LabelsAll:       []string{"urgent"},
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(archived filters) error = %v", err)
+	}
+	if len(archivedMatches) != 1 || archivedMatches[0].Task.ID != "t4" || archivedMatches[0].StateID != "archived" {
+		t.Fatalf("archived filter rows = %#v, want only archived t4", archivedMatches)
+	}
+}
+
+// TestSearchTaskMatchesLexicalMetadataFields verifies lexical scoring covers embedding metadata fields.
+func TestSearchTaskMatchesLexicalMetadataFields(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 11, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Title:       "General follow-up",
+		Description: "No metadata keywords in primary fields",
+		Priority:    domain.PriorityLow,
+		Labels:      []string{"ops"},
+		Metadata: domain.TaskMetadata{
+			Objective:          "objective-alpha-signal",
+			AcceptanceCriteria: "acceptance-beta-signal",
+			ValidationPlan:     "validation-gamma-signal",
+			BlockedReason:      "blocked-delta-signal",
+			RiskNotes:          "risk-epsilon-signal",
+		},
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "objective", query: "objective-alpha-signal"},
+		{name: "acceptance_criteria", query: "acceptance-beta-signal"},
+		{name: "validation_plan", query: "validation-gamma-signal"},
+		{name: "blocked_reason", query: "blocked-delta-signal"},
+		{name: "risk_notes", query: "risk-epsilon-signal"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+				ProjectID: project.ID,
+				Query:     tt.query,
+			})
+			if err != nil {
+				t.Fatalf("SearchTaskMatches(%s) error = %v", tt.name, err)
+			}
+			if len(matches) != 1 || matches[0].Task.ID != task.ID {
+				t.Fatalf("query %q rows = %#v, want only %q", tt.query, matches, task.ID)
+			}
+		})
+	}
+}
+
+// TestSearchTaskMatchesSortAndPagination verifies optioned sorting and pagination behavior.
+func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  2,
+		Title:     "Charlie",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Alpha",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t3, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t3",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Bravo",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t4, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t4",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  3,
+		Title:     "Alpha",
+		Priority:  domain.PriorityLow,
+	}, now)
+
+	t1.CreatedAt = now.Add(1 * time.Minute)
+	t2.CreatedAt = now.Add(3 * time.Minute)
+	t3.CreatedAt = now.Add(2 * time.Minute)
+	t4.CreatedAt = now.Add(4 * time.Minute)
+	t1.UpdatedAt = now.Add(10 * time.Minute)
+	t2.UpdatedAt = now.Add(3 * time.Minute)
+	t3.UpdatedAt = now.Add(20 * time.Minute)
+	t4.UpdatedAt = now.Add(15 * time.Minute)
+
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+	repo.tasks[t3.ID] = t3
+	repo.tasks[t4.ID] = t4
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+
+	tests := []struct {
+		name    string
+		filter  SearchTasksFilter
+		wantIDs []string
+	}{
+		{
+			name: "default rank_desc order",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+			},
+			wantIDs: []string{"t2", "t3", "t1", "t4"},
+		},
+		{
+			name: "title_asc sort with deterministic tie-breaker",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+				Sort:      SearchSortTitleAsc,
+			},
+			wantIDs: []string{"t2", "t4", "t3", "t1"},
+		},
+		{
+			name: "created_at_desc sort",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+				Sort:      SearchSortCreatedAtDesc,
+			},
+			wantIDs: []string{"t4", "t2", "t3", "t1"},
+		},
+		{
+			name: "updated_at_desc sort",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+				Sort:      SearchSortUpdatedAtDesc,
+			},
+			wantIDs: []string{"t3", "t4", "t1", "t2"},
+		},
+		{
+			name: "pagination limit and offset",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+				Limit:     2,
+				Offset:    1,
+			},
+			wantIDs: []string{"t3", "t1"},
+		},
+		{
+			name: "hybrid mode default remains backward-compatible in this lane",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+				Query:     "alpha",
+			},
+			wantIDs: []string{"t2", "t4"},
+		},
+		{
+			name: "semantic mode remains backward-compatible in this lane",
+			filter: SearchTasksFilter{
+				ProjectID: project.ID,
+				Query:     "alpha",
+				Mode:      SearchModeSemantic,
+			},
+			wantIDs: []string{"t2", "t4"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches, err := svc.SearchTaskMatches(context.Background(), tt.filter)
+			if err != nil {
+				t.Fatalf("SearchTaskMatches() error = %v", err)
+			}
+			if len(matches) != len(tt.wantIDs) {
+				t.Fatalf("expected %d rows, got %d", len(tt.wantIDs), len(matches))
+			}
+			for idx := range tt.wantIDs {
+				if matches[idx].Task.ID != tt.wantIDs[idx] {
+					t.Fatalf("unexpected id at %d: got %q want %q", idx, matches[idx].Task.ID, tt.wantIDs[idx])
+				}
+			}
+		})
+	}
+}
+
+// TestSearchTaskMatchesLimitDefaultsAndCaps verifies default and capped limits.
+func TestSearchTaskMatchesLimitDefaultsAndCaps(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	for i := 0; i < 205; i++ {
+		task, _ := domain.NewTask(domain.TaskInput{
+			ID:        fmt.Sprintf("t%03d", i),
+			ProjectID: project.ID,
+			ColumnID:  column.ID,
+			Position:  i,
+			Title:     fmt.Sprintf("Task %03d", i),
+			Priority:  domain.PriorityLow,
+		}, now)
+		repo.tasks[task.ID] = task
+	}
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+
+	defaultRows, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{ProjectID: project.ID})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(default limit) error = %v", err)
+	}
+	if len(defaultRows) != 50 {
+		t.Fatalf("default limit rows = %d, want 50", len(defaultRows))
+	}
+	if defaultRows[0].Task.ID != "t000" || defaultRows[len(defaultRows)-1].Task.ID != "t049" {
+		t.Fatalf("unexpected default row ids: first=%q last=%q", defaultRows[0].Task.ID, defaultRows[len(defaultRows)-1].Task.ID)
+	}
+
+	clampedRows, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Limit:     500,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(clamped limit) error = %v", err)
+	}
+	if len(clampedRows) != 200 {
+		t.Fatalf("clamped limit rows = %d, want 200", len(clampedRows))
+	}
+
+	tailRows, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Limit:     20,
+		Offset:    198,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(tail page) error = %v", err)
+	}
+	if len(tailRows) != 7 {
+		t.Fatalf("tail page rows = %d, want 7", len(tailRows))
+	}
+	if tailRows[0].Task.ID != "t198" || tailRows[len(tailRows)-1].Task.ID != "t204" {
+		t.Fatalf("unexpected tail row ids: first=%q last=%q", tailRows[0].Task.ID, tailRows[len(tailRows)-1].Task.ID)
+	}
+}
+
+// TestSearchTaskMatchesRejectsInvalidOptions verifies mode/sort/pagination validation.
+func TestSearchTaskMatchesRejectsInvalidOptions(t *testing.T) {
+	svc := NewService(newFakeRepo(), nil, time.Now, ServiceConfig{})
+	tests := []struct {
+		name   string
+		filter SearchTasksFilter
+	}{
+		{
+			name: "invalid mode",
+			filter: SearchTasksFilter{
+				Mode: "unsupported",
+			},
+		},
+		{
+			name: "invalid sort",
+			filter: SearchTasksFilter{
+				Sort: "unsupported",
+			},
+		},
+		{
+			name: "negative limit",
+			filter: SearchTasksFilter{
+				Limit: -1,
+			},
+		},
+		{
+			name: "negative offset",
+			filter: SearchTasksFilter{
+				Offset: -1,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.SearchTaskMatches(context.Background(), tt.filter)
+			if !errors.Is(err, domain.ErrInvalidID) {
+				t.Fatalf("expected ErrInvalidID, got %v", err)
+			}
+		})
+	}
+}
+
+// TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex verifies task writes refresh semantic index rows.
+func TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.1, 0.2, 0.3}}}
+	searchIndex := &fakeTaskSearchIndex{}
+	svc := NewService(repo, func() string { return "t1" }, func() time.Time { return now }, ServiceConfig{
+		EmbeddingGenerator: embedder,
+		SearchIndex:        searchIndex,
+	})
+
+	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID:     project.ID,
+		ColumnID:      column.ID,
+		Title:         "Ship search",
+		Description:   "Finalize ranking",
+		Priority:      domain.PriorityMedium,
+		Labels:        []string{"search", "vector"},
+		UpdatedByType: domain.ActorTypeUser,
+		Metadata: domain.TaskMetadata{
+			Objective:          "Stabilize search quality",
+			AcceptanceCriteria: "Rank semantic matches first",
+			ValidationPlan:     "Run focused package tests",
+			BlockedReason:      "waiting for API key",
+			RiskNotes:          "weight tuning may regress lexical ranking",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if len(searchIndex.upserts) != 1 {
+		t.Fatalf("expected 1 upsert after create, got %d", len(searchIndex.upserts))
+	}
+	content := searchIndex.upserts[0].Content
+	for _, want := range []string{
+		created.Title,
+		"Finalize ranking",
+		"Stabilize search quality",
+		"Rank semantic matches first",
+		"Run focused package tests",
+		"waiting for API key",
+		"weight tuning may regress lexical ranking",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("upsert content missing %q: %q", want, content)
+		}
+	}
+
+	_, err = svc.UpdateTask(context.Background(), UpdateTaskInput{
+		TaskID:      created.ID,
+		Title:       "Ship hybrid search",
+		Description: created.Description,
+		Priority:    created.Priority,
+		Labels:      created.Labels,
+		DueAt:       created.DueAt,
+		Metadata:    &created.Metadata,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask() error = %v", err)
+	}
+	if len(searchIndex.upserts) != 2 {
+		t.Fatalf("expected second upsert after update, got %d", len(searchIndex.upserts))
+	}
+	if searchIndex.upserts[0].ContentHash == searchIndex.upserts[1].ContentHash {
+		t.Fatalf("expected content hash change after title update, both were %q", searchIndex.upserts[0].ContentHash)
+	}
+}
+
+// TestSearchTaskMatchesSemanticModeUsesIndex verifies semantic mode ranking can return non-lexical rows.
+func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Update docs",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Improve observability",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+
+	searchIndex := &fakeTaskSearchIndex{
+		searchRows: []TaskEmbeddingMatch{
+			{TaskID: "t2", Similarity: 0.93},
+			{TaskID: "t1", Similarity: 0.22},
+		},
+	}
+	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.7, 0.1, 0.3}}}
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
+		EmbeddingGenerator: embedder,
+		SearchIndex:        searchIndex,
+	})
+
+	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Query:     "semantic query",
+		Mode:      SearchModeSemantic,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches() error = %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("semantic mode rows = %d, want 2", len(matches))
+	}
+	if matches[0].Task.ID != "t2" || matches[1].Task.ID != "t1" {
+		t.Fatalf("unexpected semantic ordering: %#v", []string{matches[0].Task.ID, matches[1].Task.ID})
+	}
+	if len(searchIndex.searchIn.ProjectIDs) != 1 || searchIndex.searchIn.ProjectIDs[0] != project.ID {
+		t.Fatalf("semantic project filter = %#v, want [%s]", searchIndex.searchIn.ProjectIDs, project.ID)
+	}
+}
+
+// TestSearchTaskMatchesSemanticFallsBackToKeyword verifies semantic mode falls back when embeddings are unavailable.
+func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 12, 15, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	keywordTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Server rollout checklist",
+		Priority:  domain.PriorityLow,
+	}, now)
+	otherTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Roadmap grooming",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[keywordTask.ID] = keywordTask
+	repo.tasks[otherTask.ID] = otherTask
+
+	embedder := &fakeEmbeddingGenerator{err: errors.New("embedding unavailable")}
+	searchIndex := &fakeTaskSearchIndex{
+		searchRows: []TaskEmbeddingMatch{{TaskID: "t2", Similarity: 0.99}},
+	}
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
+		EmbeddingGenerator: embedder,
+		SearchIndex:        searchIndex,
+	})
+
+	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Query:     "server",
+		Mode:      SearchModeSemantic,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].Task.ID != keywordTask.ID {
+		t.Fatalf("semantic fallback rows = %#v, want only %q", matches, keywordTask.ID)
+	}
+}
+
+// TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity verifies duplicate semantic rows keep the highest similarity per task.
+func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 12, 20, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Alpha",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Bravo",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+
+	searchIndex := &fakeTaskSearchIndex{
+		searchRows: []TaskEmbeddingMatch{
+			{TaskID: "t1", Similarity: 0.93},
+			{TaskID: "t2", Similarity: 0.85},
+			{TaskID: "t1", Similarity: 0.10},
+		},
+	}
+	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.4, 0.2, 0.9}}}
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
+		EmbeddingGenerator: embedder,
+		SearchIndex:        searchIndex,
+	})
+
+	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Query:     "semantic query",
+		Mode:      SearchModeSemantic,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches() error = %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("semantic mode rows = %d, want 2", len(matches))
+	}
+	if matches[0].Task.ID != "t1" || matches[1].Task.ID != "t2" {
+		t.Fatalf("unexpected semantic ordering with duplicate rows: %#v", []string{matches[0].Task.ID, matches[1].Task.ID})
+	}
+}
+
+// TestSearchTaskMatchesHybridFallsBackToKeyword verifies hybrid mode falls back when semantic lookup fails.
+func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 3, 12, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	keywordTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Server rollout checklist",
+		Priority:  domain.PriorityLow,
+	}, now)
+	otherTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Roadmap grooming",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[keywordTask.ID] = keywordTask
+	repo.tasks[otherTask.ID] = otherTask
+
+	embedder := &fakeEmbeddingGenerator{err: errors.New("embedding unavailable")}
+	searchIndex := &fakeTaskSearchIndex{
+		searchRows: []TaskEmbeddingMatch{{TaskID: "t2", Similarity: 0.99}},
+	}
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
+		EmbeddingGenerator: embedder,
+		SearchIndex:        searchIndex,
+	})
+
+	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Query:     "server",
+		Mode:      SearchModeHybrid,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].Task.ID != keywordTask.ID {
+		t.Fatalf("hybrid fallback rows = %#v, want only %q", matches, keywordTask.ID)
 	}
 }
 

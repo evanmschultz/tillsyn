@@ -10,7 +10,6 @@ import (
 
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
-	_ "modernc.org/sqlite"
 )
 
 // TestRepository_ProjectColumnTaskLifecycle verifies behavior for the covered scenario.
@@ -105,6 +104,128 @@ func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	}
 	if _, err := repo.GetTask(ctx, task.ID); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound, got %v", err)
+	}
+}
+
+// TestRepository_TaskEmbeddingsRoundTrip verifies embedding upsert/search/delete behavior.
+func TestRepository_TaskEmbeddingsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if !repo.vecAvailable {
+		t.Skip("sqlite-vec capability unavailable in runtime")
+	}
+
+	now := time.Date(2026, 3, 3, 14, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("p1", "Example", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task with embedding",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	if err := repo.UpsertTaskEmbedding(ctx, app.TaskEmbeddingDocument{
+		TaskID:      task.ID,
+		ProjectID:   project.ID,
+		Content:     "task embedding content",
+		ContentHash: "hash123",
+		Vector:      []float32{0.1, 0.2, 0.3},
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("UpsertTaskEmbedding() error = %v", err)
+	}
+
+	rows, err := repo.SearchTaskEmbeddings(ctx, app.TaskEmbeddingSearchInput{
+		ProjectIDs: []string{project.ID},
+		Vector:     []float32{0.1, 0.2, 0.3},
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskEmbeddings() error = %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 embedding match, got %d", len(rows))
+	}
+	if rows[0].TaskID != task.ID {
+		t.Fatalf("expected task id %q, got %q", task.ID, rows[0].TaskID)
+	}
+
+	if err := repo.DeleteTaskEmbedding(ctx, task.ID); err != nil {
+		t.Fatalf("DeleteTaskEmbedding() error = %v", err)
+	}
+	rows, err = repo.SearchTaskEmbeddings(ctx, app.TaskEmbeddingSearchInput{
+		ProjectIDs: []string{project.ID},
+		Vector:     []float32{0.1, 0.2, 0.3},
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskEmbeddings(after delete) error = %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected 0 embedding matches after delete, got %d", len(rows))
+	}
+}
+
+// TestRepository_TaskEmbeddingMethodsReturnVecUnavailable verifies vector methods return a stable error when sqlite-vec is unavailable.
+func TestRepository_TaskEmbeddingMethodsReturnVecUnavailable(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	// Force the guard path so the test remains deterministic regardless of host runtime capabilities.
+	repo.vecAvailable = false
+
+	err = repo.UpsertTaskEmbedding(ctx, app.TaskEmbeddingDocument{
+		TaskID:      "t1",
+		ProjectID:   "p1",
+		Content:     "task embedding content",
+		ContentHash: "hash123",
+		Vector:      []float32{0.1, 0.2, 0.3},
+		UpdatedAt:   time.Date(2026, 3, 3, 14, 0, 0, 0, time.UTC),
+	})
+	if !errors.Is(err, errSQLiteVecUnavailable) {
+		t.Fatalf("expected errSQLiteVecUnavailable, got %v", err)
+	}
+
+	_, err = repo.SearchTaskEmbeddings(ctx, app.TaskEmbeddingSearchInput{
+		ProjectIDs: []string{"p1"},
+		Vector:     []float32{0.1, 0.2, 0.3},
+		Limit:      10,
+	})
+	if !errors.Is(err, errSQLiteVecUnavailable) {
+		t.Fatalf("expected errSQLiteVecUnavailable, got %v", err)
 	}
 }
 

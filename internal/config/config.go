@@ -33,6 +33,7 @@ type Config struct {
 	TaskFields   TaskFieldsConfig  `toml:"task_fields"`
 	Board        BoardConfig       `toml:"board"`
 	Search       SearchConfig      `toml:"search"`
+	Embeddings   EmbeddingsConfig  `toml:"embeddings"`
 	Identity     IdentityConfig    `toml:"identity"`
 	Paths        PathsConfig       `toml:"paths"`
 	UI           UIConfig          `toml:"ui"`
@@ -79,6 +80,19 @@ type SearchConfig struct {
 	CrossProject    bool     `toml:"cross_project"`
 	IncludeArchived bool     `toml:"include_archived"`
 	States          []string `toml:"states"`
+}
+
+// EmbeddingsConfig holds runtime semantic-search settings.
+type EmbeddingsConfig struct {
+	Enabled        bool    `toml:"enabled"`
+	Provider       string  `toml:"provider"`
+	Model          string  `toml:"model"`
+	APIKeyEnv      string  `toml:"api_key_env"`
+	BaseURL        string  `toml:"base_url"`
+	Dimensions     int64   `toml:"dimensions"`
+	QueryTopK      int     `toml:"query_top_k"`
+	LexicalWeight  float64 `toml:"lexical_weight"`
+	SemanticWeight float64 `toml:"semantic_weight"`
 }
 
 // IdentityConfig holds configuration for operator identity defaults.
@@ -157,6 +171,17 @@ func Default(dbPath string) Config {
 			CrossProject:    false,
 			IncludeArchived: false,
 			States:          []string{"todo", "progress", "done"},
+		},
+		Embeddings: EmbeddingsConfig{
+			Enabled:        false,
+			Provider:       "openai",
+			Model:          "text-embedding-3-small",
+			APIKeyEnv:      "OPENAI_API_KEY",
+			BaseURL:        "",
+			Dimensions:     0,
+			QueryTopK:      200,
+			LexicalWeight:  0.55,
+			SemanticWeight: 0.45,
 		},
 		Identity: IdentityConfig{
 			ActorID:          "",
@@ -247,6 +272,31 @@ func (c *Config) Validate() error {
 	case "", "none", "priority", "state":
 	default:
 		return fmt.Errorf("invalid board.group_by: %q", c.Board.GroupBy)
+	}
+	if c.Embeddings.Dimensions < 0 {
+		return fmt.Errorf("embeddings.dimensions must be >= 0")
+	}
+	if c.Embeddings.QueryTopK < 0 {
+		return fmt.Errorf("embeddings.query_top_k must be >= 0")
+	}
+	if c.Embeddings.LexicalWeight < 0 {
+		return fmt.Errorf("embeddings.lexical_weight must be >= 0")
+	}
+	if c.Embeddings.SemanticWeight < 0 {
+		return fmt.Errorf("embeddings.semantic_weight must be >= 0")
+	}
+	if c.Embeddings.Enabled {
+		switch c.Embeddings.Provider {
+		case "openai":
+		default:
+			return fmt.Errorf("embeddings.provider %q is not supported", c.Embeddings.Provider)
+		}
+		if strings.TrimSpace(c.Embeddings.Model) == "" {
+			return errors.New("embeddings.model is required when embeddings are enabled")
+		}
+		if strings.TrimSpace(c.Embeddings.APIKeyEnv) == "" {
+			return errors.New("embeddings.api_key_env is required when embeddings are enabled")
+		}
 	}
 
 	for i, state := range c.Search.States {
@@ -383,6 +433,26 @@ func (c *Config) normalize() {
 		states = []string{"todo", "progress", "done"}
 	}
 	c.Search.States = states
+	c.Embeddings.Provider = strings.TrimSpace(strings.ToLower(c.Embeddings.Provider))
+	if c.Embeddings.Provider == "" {
+		c.Embeddings.Provider = "openai"
+	}
+	c.Embeddings.Model = strings.TrimSpace(c.Embeddings.Model)
+	if c.Embeddings.Model == "" {
+		c.Embeddings.Model = "text-embedding-3-small"
+	}
+	c.Embeddings.APIKeyEnv = strings.TrimSpace(c.Embeddings.APIKeyEnv)
+	if c.Embeddings.APIKeyEnv == "" {
+		c.Embeddings.APIKeyEnv = "OPENAI_API_KEY"
+	}
+	c.Embeddings.BaseURL = strings.TrimSpace(c.Embeddings.BaseURL)
+	if c.Embeddings.QueryTopK == 0 {
+		c.Embeddings.QueryTopK = 200
+	}
+	if c.Embeddings.LexicalWeight == 0 && c.Embeddings.SemanticWeight == 0 {
+		c.Embeddings.LexicalWeight = 0.55
+		c.Embeddings.SemanticWeight = 0.45
+	}
 	c.Identity.ActorID = strings.TrimSpace(c.Identity.ActorID)
 	c.Identity.DisplayName = strings.TrimSpace(c.Identity.DisplayName)
 	c.Identity.DefaultActorType = normalizeActorType(c.Identity.DefaultActorType)

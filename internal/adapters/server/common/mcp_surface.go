@@ -118,6 +118,14 @@ type SearchTasksRequest struct {
 	CrossProject    bool
 	IncludeArchived bool
 	States          []string
+	Levels          []string
+	Kinds           []string
+	LabelsAny       []string
+	LabelsAll       []string
+	Mode            string
+	Sort            string
+	Limit           int
+	Offset          int
 }
 
 // SearchTaskMatch stores one transport-facing search match row.

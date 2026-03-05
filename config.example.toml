@@ -41,6 +41,24 @@ include_archived = false
 # Canonical lifecycle states only: todo | progress | done | archived.
 states = ["todo", "progress", "done"]
 
+[embeddings]
+# Enable semantic/hybrid search indexing and retrieval.
+enabled = false
+# Current provider support: openai
+provider = "openai"
+model = "text-embedding-3-small"
+# API key environment variable read at startup when embeddings are enabled.
+api_key_env = "OPENAI_API_KEY"
+# Optional OpenAI-compatible base URL override.
+base_url = ""
+# Optional embedding dimensions override (0 uses model default).
+dimensions = 0
+# Candidate window size for semantic retrieval before app-level filtering/ranking.
+query_top_k = 200
+# Hybrid rank weights (normalized at runtime).
+lexical_weight = 0.55
+semantic_weight = 0.45
+
 [identity]
 # Immutable runtime identity token; auto-generated on first TUI startup if empty.
 actor_id = ""

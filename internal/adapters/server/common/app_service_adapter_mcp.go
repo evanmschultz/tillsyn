@@ -265,6 +265,14 @@ func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksReque
 		CrossProject:    in.CrossProject,
 		IncludeArchived: in.IncludeArchived,
 		States:          append([]string(nil), in.States...),
+		Levels:          append([]string(nil), in.Levels...),
+		Kinds:           append([]string(nil), in.Kinds...),
+		LabelsAny:       append([]string(nil), in.LabelsAny...),
+		LabelsAll:       append([]string(nil), in.LabelsAll...),
+		Mode:            app.SearchMode(strings.TrimSpace(in.Mode)),
+		Sort:            app.SearchSort(strings.TrimSpace(in.Sort)),
+		Limit:           in.Limit,
+		Offset:          in.Offset,
 	})
 	if err != nil {
 		return nil, mapAppError("search task matches", err)

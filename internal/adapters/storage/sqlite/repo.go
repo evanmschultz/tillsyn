@@ -6,23 +6,49 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
-	_ "modernc.org/sqlite"
+	"github.com/ncruces/go-sqlite3"
+	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
 // driverName defines a package constant value.
-const driverName = "sqlite"
+const driverName = "sqlite3"
+const defaultEmbeddingSearchLimit = 200
+
+// errSQLiteVecUnavailable reports that sqlite-vec functions are unavailable in the active runtime.
+var errSQLiteVecUnavailable = errors.New("sqlite vec capability unavailable")
+
+func init() {
+	cfg := wazero.NewRuntimeConfig()
+	if bits.UintSize < 64 {
+		cfg = cfg.WithMemoryLimitPages(512) // 32MB, aligns with ncruces 32-bit default.
+	} else {
+		cfg = cfg.WithMemoryLimitPages(4096) // 256MB, aligns with ncruces 64-bit default.
+	}
+	// sqlite-vec's ncruces wasm build uses atomic instructions; enable thread features
+	// in wazero so ncruces can compile the embedded module at runtime while preserving
+	// ncruces' bounded default memory limits.
+	sqlite3.RuntimeConfig = cfg.WithCoreFeatures(
+		api.CoreFeaturesV2 | experimental.CoreFeaturesThreads,
+	)
+}
 
 // Repository represents repository data used by this package.
 type Repository struct {
-	db *sql.DB
+	db           *sql.DB
+	vecAvailable bool
 }
 
 // Open opens the requested operation.
@@ -144,6 +170,18 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS task_embeddings (
+			task_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			content_hash TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			embedding BLOB NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(task_id) REFERENCES work_items(id) ON DELETE CASCADE,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_task_embeddings_project ON task_embeddings(project_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_task_embeddings_updated_at ON task_embeddings(updated_at);`,
 		`CREATE TABLE IF NOT EXISTS change_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				project_id TEXT NOT NULL,
@@ -311,6 +349,12 @@ func (r *Repository) migrate(ctx context.Context) error {
 	}
 	if err := r.seedDefaultKindCatalog(ctx); err != nil {
 		return err
+	}
+	if err := r.probeVecCapability(ctx); err != nil {
+		if errors.Is(err, errSQLiteVecUnavailable) {
+			return nil
+		}
+		return fmt.Errorf("migrate sqlite vec capability probe: %w", err)
 	}
 	return nil
 }
@@ -1320,6 +1364,127 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 
 	err = tx.Commit()
 	return err
+}
+
+// UpsertTaskEmbedding writes one task embedding row for semantic retrieval.
+func (r *Repository) UpsertTaskEmbedding(ctx context.Context, in app.TaskEmbeddingDocument) error {
+	taskID := strings.TrimSpace(in.TaskID)
+	projectID := strings.TrimSpace(in.ProjectID)
+	contentHash := strings.TrimSpace(in.ContentHash)
+	if taskID == "" || projectID == "" || contentHash == "" {
+		return domain.ErrInvalidID
+	}
+	if len(in.Vector) == 0 {
+		return domain.ErrInvalidID
+	}
+	if err := r.requireVecCapability(); err != nil {
+		return err
+	}
+	vectorJSON, err := json.Marshal(in.Vector)
+	if err != nil {
+		return fmt.Errorf("marshal embedding vector: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO task_embeddings (task_id, project_id, content_hash, content, embedding, updated_at)
+		VALUES (?, ?, ?, ?, vec_f32(?), ?)
+		ON CONFLICT(task_id) DO UPDATE SET
+			project_id = excluded.project_id,
+			content_hash = excluded.content_hash,
+			content = excluded.content,
+			embedding = excluded.embedding,
+			updated_at = excluded.updated_at
+	`, taskID, projectID, contentHash, strings.TrimSpace(in.Content), string(vectorJSON), ts(in.UpdatedAt))
+	if err != nil {
+		return fmt.Errorf("upsert task embedding: %w", err)
+	}
+	return nil
+}
+
+// DeleteTaskEmbedding deletes one task embedding row by task id.
+func (r *Repository) DeleteTaskEmbedding(ctx context.Context, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM task_embeddings WHERE task_id = ?`, taskID)
+	if err != nil {
+		return fmt.Errorf("delete task embedding: %w", err)
+	}
+	return nil
+}
+
+// SearchTaskEmbeddings executes one vector similarity search query for task ids.
+func (r *Repository) SearchTaskEmbeddings(ctx context.Context, in app.TaskEmbeddingSearchInput) ([]app.TaskEmbeddingMatch, error) {
+	projectIDs := make([]string, 0, len(in.ProjectIDs))
+	seenProjects := map[string]struct{}{}
+	for _, raw := range in.ProjectIDs {
+		projectID := strings.TrimSpace(raw)
+		if projectID == "" {
+			continue
+		}
+		if _, ok := seenProjects[projectID]; ok {
+			continue
+		}
+		seenProjects[projectID] = struct{}{}
+		projectIDs = append(projectIDs, projectID)
+	}
+	if len(projectIDs) == 0 || len(in.Vector) == 0 {
+		return []app.TaskEmbeddingMatch{}, nil
+	}
+	if err := r.requireVecCapability(); err != nil {
+		return nil, err
+	}
+	limit := in.Limit
+	if limit <= 0 {
+		limit = defaultEmbeddingSearchLimit
+	}
+	vectorJSON, err := json.Marshal(in.Vector)
+	if err != nil {
+		return nil, fmt.Errorf("marshal search vector: %w", err)
+	}
+	query := `
+		SELECT task_id, (1.0 - distance) AS similarity, updated_at
+		FROM (
+			SELECT
+				task_id,
+				vec_distance_cosine(embedding, vec_f32(?)) AS distance,
+				updated_at
+			FROM task_embeddings
+			WHERE project_id IN (` + queryPlaceholders(len(projectIDs)) + `)
+		)
+		ORDER BY distance ASC, task_id ASC
+		LIMIT ?
+	`
+	args := make([]any, 0, len(projectIDs)+2)
+	args = append(args, string(vectorJSON))
+	for _, projectID := range projectIDs {
+		args = append(args, projectID)
+	}
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search task embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]app.TaskEmbeddingMatch, 0, limit)
+	for rows.Next() {
+		var taskID string
+		var similarity float64
+		var updatedAt string
+		if err := rows.Scan(&taskID, &similarity, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan task embedding match: %w", err)
+		}
+		out = append(out, app.TaskEmbeddingMatch{
+			TaskID:     strings.TrimSpace(taskID),
+			Similarity: similarity,
+			SearchedAt: parseTS(updatedAt),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task embedding matches: %w", err)
+	}
+	return out, nil
 }
 
 // CreateComment persists one normalized comment row.
@@ -2426,6 +2591,40 @@ func parseNullTS(v sql.NullString) *time.Time {
 	}
 	ts := parseTS(v.String)
 	return &ts
+}
+
+// probeVecCapability records whether sqlite-vec scalar functions are available on this connection.
+func (r *Repository) probeVecCapability(ctx context.Context) error {
+	var version string
+	if err := r.db.QueryRowContext(ctx, `SELECT vec_version()`).Scan(&version); err != nil {
+		if isMissingFunctionErr(err, "vec_version") {
+			r.vecAvailable = false
+			return errSQLiteVecUnavailable
+		}
+		return fmt.Errorf("probe vec_version(): %w", err)
+	}
+	r.vecAvailable = strings.TrimSpace(version) != ""
+	if !r.vecAvailable {
+		return errSQLiteVecUnavailable
+	}
+	return nil
+}
+
+// requireVecCapability returns one stable sentinel when sqlite-vec support is unavailable.
+func (r *Repository) requireVecCapability() error {
+	if r.vecAvailable {
+		return nil
+	}
+	return errSQLiteVecUnavailable
+}
+
+// isMissingFunctionErr reports whether sqlite returned one missing-function failure for the named function.
+func isMissingFunctionErr(err error, fn string) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such function") && strings.Contains(msg, strings.ToLower(fn))
 }
 
 // isDuplicateColumnErr reports whether the expected condition is satisfied.

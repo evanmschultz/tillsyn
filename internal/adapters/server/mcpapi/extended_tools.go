@@ -661,12 +661,31 @@ func registerTaskTools(
 		srv.AddTool(
 			mcp.NewTool(
 				"till.search_task_matches",
-				mcp.WithDescription("Search task/work-item matches by query, states, and scope."),
+				mcp.WithDescription("Search task/work-item matches by query, mode, sort, filters, and scope."),
 				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project queries")),
 				mcp.WithString("query", mcp.Description("Search query")),
 				mcp.WithBoolean("cross_project", mcp.Description("Search across all projects")),
 				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects/items")),
 				mcp.WithArray("states", mcp.Description("Optional state filter"), mcp.WithStringItems()),
+				mcp.WithArray("levels", mcp.Description("Optional level/scope filter"), mcp.WithStringItems()),
+				mcp.WithArray("kinds", mcp.Description("Optional kind filter"), mcp.WithStringItems()),
+				mcp.WithArray("labels_any", mcp.Description("Optional labels-any filter (matches when any listed label is present)"), mcp.WithStringItems()),
+				mcp.WithArray("labels_all", mcp.Description("Optional labels-all filter (matches only when all listed labels are present)"), mcp.WithStringItems()),
+				mcp.WithString("mode", mcp.Description("keyword|semantic|hybrid (default hybrid; semantic/hybrid fall back to keyword when embeddings/vector search is unavailable)"), mcp.Enum("keyword", "semantic", "hybrid")),
+				mcp.WithString("sort", mcp.Description("rank_desc|title_asc|created_at_desc|updated_at_desc (default rank_desc)"), mcp.Enum("rank_desc", "title_asc", "created_at_desc", "updated_at_desc")),
+				mcp.WithNumber(
+					"limit",
+					mcp.Description("Optional maximum rows (default 50, max 200)"),
+					mcp.DefaultNumber(50),
+					mcp.Min(0),
+					mcp.Max(200),
+				),
+				mcp.WithNumber(
+					"offset",
+					mcp.Description("Optional row offset (default 0, must be >= 0)"),
+					mcp.DefaultNumber(0),
+					mcp.Min(0),
+				),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				rows, err := search.SearchTasks(ctx, common.SearchTasksRequest{
@@ -675,6 +694,14 @@ func registerTaskTools(
 					CrossProject:    req.GetBool("cross_project", false),
 					IncludeArchived: req.GetBool("include_archived", false),
 					States:          req.GetStringSlice("states", nil),
+					Levels:          req.GetStringSlice("levels", nil),
+					Kinds:           req.GetStringSlice("kinds", nil),
+					LabelsAny:       req.GetStringSlice("labels_any", nil),
+					LabelsAll:       req.GetStringSlice("labels_all", nil),
+					Mode:            req.GetString("mode", ""),
+					Sort:            req.GetString("sort", ""),
+					Limit:           req.GetInt("limit", 0),
+					Offset:          req.GetInt("offset", 0),
 				})
 				if err != nil {
 					return toolResultFromError(err), nil

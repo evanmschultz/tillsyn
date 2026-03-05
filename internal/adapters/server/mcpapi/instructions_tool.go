@@ -23,11 +23,11 @@ type instructionsToolDoc struct {
 
 // instructionsToolResponse stores one till.get_instructions tool payload.
 type instructionsToolResponse struct {
-	Summary                  string              `json:"summary"`
-	Topic                    string              `json:"topic,omitempty"`
-	RecommendedAgentSettings []string            `json:"recommended_agent_settings,omitempty"`
-	MDFileGuidance           map[string][]string `json:"md_file_guidance,omitempty"`
-	AvailableDocs            []string            `json:"available_docs"`
+	Summary                  string                `json:"summary"`
+	Topic                    string                `json:"topic,omitempty"`
+	RecommendedAgentSettings []string              `json:"recommended_agent_settings,omitempty"`
+	MDFileGuidance           map[string][]string   `json:"md_file_guidance,omitempty"`
+	AvailableDocs            []string              `json:"available_docs"`
 	Docs                     []instructionsToolDoc `json:"docs"`
 }
 

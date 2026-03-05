@@ -24,6 +24,7 @@ type fakeService struct {
 	projects              []domain.Project
 	columns               map[string][]domain.Column
 	tasks                 map[string][]domain.Task
+	lastSearchFilter      app.SearchTasksFilter
 	lastCreateTask        app.CreateTaskInput
 	createTaskCalls       int
 	comments              map[string][]domain.Comment
@@ -230,6 +231,12 @@ func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID st
 
 // SearchTaskMatches handles search task matches.
 func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksFilter) ([]app.TaskMatch, error) {
+	f.lastSearchFilter = in
+	f.lastSearchFilter.States = append([]string(nil), in.States...)
+	f.lastSearchFilter.Levels = append([]string(nil), in.Levels...)
+	f.lastSearchFilter.Kinds = append([]string(nil), in.Kinds...)
+	f.lastSearchFilter.LabelsAny = append([]string(nil), in.LabelsAny...)
+	f.lastSearchFilter.LabelsAll = append([]string(nil), in.LabelsAll...)
 	query := strings.ToLower(strings.TrimSpace(in.Query))
 	stateSet := map[string]struct{}{}
 	for _, state := range in.States {
@@ -780,6 +787,36 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	}
 	if len(m.searchMatches) == 0 || m.searchMatches[0].Task.ID != "t2" {
 		t.Fatalf("expected cross-project match for t2, got %#v", m.searchMatches)
+	}
+	levels := canonicalSearchLevels(m.searchLevels)
+	if len(svc.lastSearchFilter.Levels) != len(levels) {
+		t.Fatalf("expected forwarded levels %#v, got %#v", levels, svc.lastSearchFilter.Levels)
+	}
+	for idx, level := range levels {
+		if svc.lastSearchFilter.Levels[idx] != level {
+			t.Fatalf("expected forwarded levels %#v, got %#v", levels, svc.lastSearchFilter.Levels)
+		}
+	}
+	if svc.lastSearchFilter.Mode != app.SearchModeHybrid {
+		t.Fatalf("expected search mode %q, got %q", app.SearchModeHybrid, svc.lastSearchFilter.Mode)
+	}
+	if svc.lastSearchFilter.Sort != app.SearchSortRankDesc {
+		t.Fatalf("expected search sort %q, got %q", app.SearchSortRankDesc, svc.lastSearchFilter.Sort)
+	}
+	if svc.lastSearchFilter.Offset != 0 {
+		t.Fatalf("expected search offset 0, got %d", svc.lastSearchFilter.Offset)
+	}
+	if svc.lastSearchFilter.Limit != defaultSearchResultsLimit {
+		t.Fatalf("expected search limit %d, got %d", defaultSearchResultsLimit, svc.lastSearchFilter.Limit)
+	}
+	if len(svc.lastSearchFilter.Kinds) != 0 {
+		t.Fatalf("expected no search kinds forwarded by default, got %#v", svc.lastSearchFilter.Kinds)
+	}
+	if len(svc.lastSearchFilter.LabelsAny) != 0 {
+		t.Fatalf("expected no search labels_any forwarded by default, got %#v", svc.lastSearchFilter.LabelsAny)
+	}
+	if len(svc.lastSearchFilter.LabelsAll) != 0 {
+		t.Fatalf("expected no search labels_all forwarded by default, got %#v", svc.lastSearchFilter.LabelsAll)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1419,6 +1456,113 @@ func TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.
 	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
 	if !strings.Contains(overlay, "Hidden Card Description") {
 		t.Fatalf("expected markdown details visible in task info despite card-description toggle, got %q", overlay)
+	}
+}
+
+// TestModelTaskInfoShowsStructuredMetadataSections verifies task-info renders objective/acceptance/validation/risk markdown sections.
+func TestModelTaskInfoShowsStructuredMetadataSections(t *testing.T) {
+	now := time.Date(2026, 3, 3, 10, 15, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "details",
+		Priority:    domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			Objective:          "objective token",
+			AcceptanceCriteria: "acceptance token",
+			ValidationPlan:     "validation token",
+			RiskNotes:          "risk token",
+		},
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
+	for _, token := range []string{
+		"objective",
+		"objective token",
+		"acceptance_criteria",
+		"acceptance token",
+		"validation_plan",
+		"validation token",
+		"risk_notes",
+		"risk token",
+	} {
+		if !strings.Contains(overlay, token) {
+			t.Fatalf("expected task info metadata token %q, got %q", token, overlay)
+		}
+	}
+}
+
+// TestModelEditTaskMetadataFieldsPrefillAndSubmit verifies edit-task prefill and save behavior for objective/acceptance/validation/risk metadata fields.
+func TestModelEditTaskMetadataFieldsPrefillAndSubmit(t *testing.T) {
+	now := time.Date(2026, 3, 3, 10, 25, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "details",
+		Priority:    domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			Objective:          "draft objective",
+			AcceptanceCriteria: "draft acceptance",
+			ValidationPlan:     "draft validation",
+			RiskNotes:          "draft risk",
+		},
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldObjective].Value(); got != "draft objective" {
+		t.Fatalf("expected objective prefill %q, got %q", "draft objective", got)
+	}
+	if got := m.formInputs[taskFieldAcceptanceCriteria].Value(); got != "draft acceptance" {
+		t.Fatalf("expected acceptance prefill %q, got %q", "draft acceptance", got)
+	}
+	if got := m.formInputs[taskFieldValidationPlan].Value(); got != "draft validation" {
+		t.Fatalf("expected validation prefill %q, got %q", "draft validation", got)
+	}
+	if got := m.formInputs[taskFieldRiskNotes].Value(); got != "draft risk" {
+		t.Fatalf("expected risk prefill %q, got %q", "draft risk", got)
+	}
+
+	m.formInputs[taskFieldObjective].SetValue("updated objective")
+	m.formInputs[taskFieldAcceptanceCriteria].SetValue("-")
+	m.formInputs[taskFieldValidationPlan].SetValue("updated validation")
+	m.formInputs[taskFieldRiskNotes].SetValue("updated risk")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	updated, ok := svc.taskByID(task.ID)
+	if !ok {
+		t.Fatalf("expected updated task %q in fake service", task.ID)
+	}
+	if got := updated.Metadata.Objective; got != "updated objective" {
+		t.Fatalf("expected objective %q, got %q", "updated objective", got)
+	}
+	if got := updated.Metadata.AcceptanceCriteria; got != "" {
+		t.Fatalf("expected acceptance criteria cleared, got %q", got)
+	}
+	if got := updated.Metadata.ValidationPlan; got != "updated validation" {
+		t.Fatalf("expected validation plan %q, got %q", "updated validation", got)
+	}
+	if got := updated.Metadata.RiskNotes; got != "updated risk" {
+		t.Fatalf("expected risk notes %q, got %q", "updated risk", got)
 	}
 }
 
@@ -8379,10 +8523,32 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		[]domain.Task{owner, depDone, depArchived, blocker, candidate},
 	)
 	m := loadReadyModel(t, NewModel(svc))
+	m.searchLevels = []string{"task"}
 
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('b'))
 	m = applyMsg(t, m, m.loadDependencyMatches())
+	expectedLevels := canonicalSearchLevels(m.searchDefaultLevels)
+	if len(svc.lastSearchFilter.Levels) != len(expectedLevels) {
+		t.Fatalf("expected dependency inspector levels %#v, got %#v", expectedLevels, svc.lastSearchFilter.Levels)
+	}
+	for idx, level := range expectedLevels {
+		if svc.lastSearchFilter.Levels[idx] != level {
+			t.Fatalf("expected dependency inspector levels %#v, got %#v", expectedLevels, svc.lastSearchFilter.Levels)
+		}
+	}
+	if got := svc.lastSearchFilter.Mode; got != app.SearchModeHybrid {
+		t.Fatalf("expected dependency inspector search mode %q, got %q", app.SearchModeHybrid, got)
+	}
+	if got := svc.lastSearchFilter.Sort; got != app.SearchSortRankDesc {
+		t.Fatalf("expected dependency inspector search sort %q, got %q", app.SearchSortRankDesc, got)
+	}
+	if got := svc.lastSearchFilter.Limit; got != defaultSearchResultsLimit {
+		t.Fatalf("expected dependency inspector search limit %d, got %d", defaultSearchResultsLimit, got)
+	}
+	if got := svc.lastSearchFilter.Offset; got != 0 {
+		t.Fatalf("expected dependency inspector search offset 0, got %d", got)
+	}
 	if m.mode != modeDependencyInspector {
 		t.Fatalf("expected dependency inspector mode, got %v", m.mode)
 	}

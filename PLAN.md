@@ -1,7 +1,7 @@
 # Kan Plan
 
 Created: 2026-02-21
-Updated: 2026-03-03
+Updated: 2026-03-04
 Status: In progress; Wave 4 markdown-first summary/details/comments remediation is gate-green and awaiting final independent QA sign-off (code + docs), plus worksheet completion (`C1`-`C3` user-collaborative and `C4` agent verification)
 
 ## 1) Primary Goal
@@ -2656,3 +2656,209 @@ Required execution flow (collaborative):
 Status:
 - open blocker for collaborative dogfooding readiness.
 - next action: run focused collaborative notification test pass and capture current-state evidence before coding.
+
+## Checkpoint 2026-03-03: Vector Search + Embeddings Wave Plan Initialization
+
+Objective:
+- establish the execution plan for hybrid keyword+vector search, ncruces/sqlite-vec runtime migration, and fantasy-fork embeddings integration with explicit final TUI metadata accessibility before collaborative verification.
+
+Actions completed:
+1. Created dedicated execution tracker doc: `VECTOR_SEARCH_EXECUTION_PLAN.md`.
+2. Locked search/filter/ranking contract decisions:
+   - modes: `keyword|semantic|hybrid` (default `hybrid`),
+   - filters/sorting/pagination/limit defaults and max guardrails,
+   - task metadata indexing scope and phased expansion.
+3. Locked integration decisions:
+   - SQLite runtime migration direction (`ncruces` + sqlite-vec bindings),
+   - embeddings provider direction (`charm.land/fantasy` API with fork replace/pin),
+   - forward-only idempotent schema ensures in this wave (no generic legacy backfill framework).
+4. Locked sequencing rule:
+   - TUI support for all indexed metadata fields lands in the final implementation phase immediately before collaborative test closeout.
+
+Commands run and outcomes:
+1. `tail -n 160 PLAN.md` -> PASS (inspected latest checkpoint format).
+2. `ls -1 *.md` -> PASS (confirmed root markdown inventory).
+3. `curl -sS https://raw.githubusercontent.com/evanmschultz/fantasy/feature-embeddings/go.mod | sed -n '1,80p'` -> PASS (verified module path remains `charm.land/fantasy`).
+4. `curl -sS 'https://api.github.com/repos/charmbracelet/fantasy/compare/main...evanmschultz:main' | sed -n '1,220p'` -> PASS (confirmed fork `main` is behind upstream; not the embeddings branch).
+5. `curl -sS 'https://api.github.com/repos/evanmschultz/fantasy/branches?per_page=100' | sed -n '1,240p'` -> PASS (confirmed `feature-embeddings` branch exists).
+6. `curl -sS 'https://api.github.com/repos/evanmschultz/fantasy/compare/main...feature-embeddings' | sed -n '1,260p'` -> PASS (confirmed branch is ahead with embeddings-related changes).
+7. `curl -sS https://raw.githubusercontent.com/evanmschultz/fantasy/feature-embeddings/embedding.go | sed -n '1,260p'` -> PASS (verified embeddings interface).
+8. `curl -sS https://raw.githubusercontent.com/evanmschultz/fantasy/feature-embeddings/providers/openai/embedding_model.go | sed -n '1,260p'` -> PASS (verified OpenAI embedding model implementation).
+9. `curl -sS https://raw.githubusercontent.com/evanmschultz/fantasy/feature-embeddings/README.md | rg -n "embedding|Embedding|vector|retrieve|search"` -> PASS (verified embeddings documentation section).
+10. `curl -sS https://raw.githubusercontent.com/evanmschultz/fantasy/feature-embeddings/README.md | sed -n '56,130p'` -> PASS (validated documented usage flow).
+11. `rg -n "search|query|embed|embedding|vector|keyword|rank|similar|hybrid|match" internal cmd -g'*.go'` -> PASS (surveyed local search and vector-related touchpoints).
+12. `sed -n '860,1060p' internal/app/service.go` -> PASS (inspected current search algorithm path).
+13. `sed -n '1,220p' internal/app/service.go` -> PASS (inspected app service boundaries).
+14. `rg -n "type Repository interface|ListTasks\\(|SearchTaskMatches|TaskMatch|ProjectRepository|TaskRepository" internal/app -g'*.go'` -> PASS (inspected contract boundaries).
+15. `sed -n '1,220p' internal/app/ports.go` -> PASS (confirmed current repository port surface).
+16. `sed -n '1,320p' internal/domain/task.go` -> PASS (inspected task core fields).
+17. `sed -n '1,260p' internal/domain/project.go` -> PASS (inspected project text fields).
+18. `sed -n '1,260p' internal/domain/comment.go` -> PASS (inspected comment text fields).
+19. `rg -n "type TaskMetadata|DependsOn|BlockedBy|CompletionContract|ChecklistItem|KindPayload|Resource" internal/domain -g'*.go'` -> PASS (identified indexed metadata candidates).
+20. `sed -n '120,280p' internal/domain/workitem.go` -> PASS (inspected metadata fields for final indexing scope).
+
+File edits:
+1. Added `VECTOR_SEARCH_EXECUTION_PLAN.md` with wave-based implementation, QA, and collaborative verification gates.
+2. Updated `PLAN.md` with this checkpoint entry and command evidence.
+
+Test status:
+- `test_not_applicable` (planning/docs-only checkpoint; no code-path changes in this step).
+
+## Checkpoint 2026-03-03: Vector Search + Embeddings Integration (Waves A-E) and Wave F Gate Pass
+
+Objective:
+- complete the planned sqlite runtime migration, embeddings + vector search implementation, TUI metadata accessibility updates, and post-fix QA/gate verification before collaborative user validation.
+
+Execution summary:
+1. Integrated parallel worker lanes with non-overlapping locks:
+   - `W-VEC-1`: app + MCP search-contract completion (`levels|kinds|labels_any|labels_all`, metadata lexical scoring, schema forwarding/tests).
+   - `W-VEC-2`: sqlite runtime config hardening + TUI dependency-inspector explicit limit + TUI test coverage.
+2. Ran independent QA lanes before and after remediation:
+   - identified contract gaps (missing filters, lexical metadata weighting, TUI limit omissions, runtime-config risk),
+   - implemented targeted fixes and re-ran QA until no blocking findings remained.
+3. Completed remaining TUI search shaping alignment:
+   - forwarded `levels`, explicit `mode/sort/limit/offset`, and `kinds/labels_any/labels_all` slices in TUI search requests,
+   - removed local post-limit level filtering from TUI search paths to avoid truncation drift against backend filtering.
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/tui` -> PASS (`.tmp/vec-wavef-evidence/20260303_175936/test_pkg_internal_tui.txt`).
+2. `just test-pkg ./internal/app` -> PASS (`.tmp/vec-wavef-evidence/20260303_175936/test_pkg_internal_app.txt`).
+3. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS (`.tmp/vec-wavef-evidence/20260303_175936/test_pkg_internal_adapters_server_mcpapi.txt`).
+4. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`; package is build-tag constrained in this profile).
+5. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS (`.tmp/vec-wavef-evidence/20260303_175936/test_pkg_internal_adapters_storage_sqlite.txt`).
+6. `just test-pkg ./cmd/till` -> PASS.
+7. `just test-pkg ./internal/config` -> PASS.
+8. `just check` -> PASS (`.tmp/vec-wavef-evidence/20260303_175936/just_check.txt`).
+9. `just ci` -> PASS (`.tmp/vec-wavef-evidence/20260303_175936/just_ci.txt`).
+
+File scopes completed in this checkpoint:
+1. SQLite runtime/storage:
+   - `internal/adapters/storage/sqlite/repo.go`
+   - `internal/adapters/storage/sqlite/repo_test.go`
+2. App search/embedding integration:
+   - `internal/app/service.go`
+   - `internal/app/search_embeddings.go`
+   - `internal/app/service_test.go`
+3. Embeddings adapter/wiring/config:
+   - `internal/adapters/embeddings/fantasy/generator.go`
+   - `cmd/till/main.go`
+   - `internal/config/config.go`
+   - `config.example.toml`
+   - `go.mod`
+   - `go.sum`
+4. MCP transport/tool surface:
+   - `internal/adapters/server/common/mcp_surface.go`
+   - `internal/adapters/server/common/app_service_adapter_mcp.go`
+   - `internal/adapters/server/mcpapi/extended_tools.go`
+   - `internal/adapters/server/mcpapi/extended_tools_test.go`
+5. TUI metadata/search updates:
+   - `internal/tui/model.go`
+   - `internal/tui/model_test.go`
+
+Status:
+1. `VECTOR_SEARCH_EXECUTION_PLAN.md` Wave A-E acceptance is implemented and tested.
+2. Wave F automated gates are complete with reproducible artifact paths under `.tmp/vec-wavef-evidence/20260303_175936/`.
+3. Independent QA pass 1 found remaining drift (docs alignment + TUI default-limit mismatch); remediation was completed and validated in follow-up checkpoint.
+4. Collaborative user+agent verification remains pending and must record evidence in `COLLAB_TEST_2026-03-02_DOGFOOD.md` (primary) with corroboration in `MCP_DOGFOODING_WORKSHEET.md` where applicable.
+
+## Checkpoint 2026-03-04: Vector Wave F Remediation + Dual QA Completion
+
+Objective:
+- close all open vector audit findings, enforce two independent QA passes before checklist completion, and update tracker docs with reproducible evidence links.
+
+Actions completed:
+1. Applied remediation changes for pass-1 blockers:
+   - aligned TUI explicit search default limit to `50`,
+   - aligned vector plan docs with implemented indexed-content/schema behavior,
+   - added explicit artifact references and collaborative evidence destinations in vector plan/docs.
+2. Ran scoped and full validation against remediated state.
+3. Executed QA pass 2 with five independent auditors (different agents than pass 1) and recorded per-lane reports.
+4. Marked vector audit-intake checklist items complete only after pass-2 confirmed no unresolved High/Medium findings.
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/app` -> PASS (`.tmp/vec-wavef-evidence/20260303_180827/test_pkg_internal_app.txt`).
+2. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS (`.tmp/vec-wavef-evidence/20260303_180827/test_pkg_internal_adapters_storage_sqlite.txt`).
+3. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS (`.tmp/vec-wavef-evidence/20260303_180827/test_pkg_internal_adapters_server_mcpapi.txt`).
+4. `just test-pkg ./internal/tui` -> PASS (`.tmp/vec-wavef-evidence/20260303_180827/test_pkg_internal_tui.txt`).
+5. `just check` -> PASS (`.tmp/vec-wavef-evidence/20260303_180827/just_check.txt`).
+6. `just ci` -> PASS (`.tmp/vec-wavef-evidence/20260303_180827/just_ci.txt`).
+
+QA pass 1 evidence:
+1. `worklogs/VEC_QA_PASS1_A_APP.md` -> PASS.
+2. `worklogs/VEC_QA_PASS1_B_SQLITE.md` -> PASS.
+3. `worklogs/VEC_QA_PASS1_C_MCP.md` -> PASS.
+4. `worklogs/VEC_QA_PASS1_D_TUI.md` -> FAIL (Medium drift; remediated).
+5. `worklogs/VEC_QA_PASS1_E_DOCS.md` -> FAIL (High/Medium docs drift; remediated).
+
+QA pass 2 evidence:
+1. `worklogs/VEC_QA_PASS2_A_APP.md` -> PASS.
+2. `worklogs/VEC_QA_PASS2_B_SQLITE.md` -> PASS.
+3. `worklogs/VEC_QA_PASS2_C_MCP.md` -> PASS.
+4. `worklogs/VEC_QA_PASS2_D_TUI.md` -> PASS.
+5. `worklogs/VEC_QA_PASS2_E_DOCS.md` -> PASS.
+
+File edits:
+1. `internal/tui/model.go` (default explicit search limit aligned to plan default `50`).
+2. `VECTOR_SEARCH_EXECUTION_PLAN.md` (schema/indexed-content alignment, checklist statuses, QA summaries, artifact references).
+3. `PLAN.md` (status + evidence updates).
+
+Status:
+1. Vector audit-intake remediation checklist is complete under two-pass QA rule.
+2. Wave F remaining closeout is now only collaborative user+agent verification evidence capture.
+
+## Checkpoint 2026-03-04: Collaborative Vector + MCP E2E Worksheet Setup
+
+Objective:
+- create one active collaborative worksheet to run user+agent TUI and MCP E2E validation with fail-stop remediation flow.
+
+Actions completed:
+1. Reviewed active collaborative worksheet patterns and vector execution tracker for consistency.
+2. Consulted Context7 (`/mark3labs/mcp-go`) for MCP tool schema/validation testing references.
+3. Created `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` with:
+   - ordered TUI and MCP E2E sections,
+   - explicit user wording capture columns,
+   - fail-stop remediation workflow,
+   - subagent planning/fix/QA tracking tables,
+   - sign-off criteria for collaborative closeout.
+
+Commands run and outcomes:
+1. `ls -1 *.md` -> PASS.
+2. `sed -n '1,260p' COLLAB_TEST_2026-03-02_DOGFOOD.md` -> PASS.
+3. `sed -n '1,260p' MCP_DOGFOODING_WORKSHEET.md` -> PASS.
+4. `sed -n '1,220p' VECTOR_SEARCH_EXECUTION_PLAN.md` -> PASS.
+5. `mcp__context7-mcp__resolve-library-id("mark3labs/mcp-go", ...)` -> PASS.
+6. `mcp__context7-mcp__query-docs("/mark3labs/mcp-go", ...)` -> PASS.
+7. `cat > COLLAB_VECTOR_MCP_E2E_WORKSHEET.md <<'EOF' ...` -> PASS.
+
+File edits:
+1. Added `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`.
+2. Updated `PLAN.md` with this checkpoint.
+
+Test status:
+- `test_not_applicable` (docs/process setup only; no runtime code changes in this step).
+
+## Checkpoint 2026-03-04: Collaborative Vector + MCP E2E Kickoff Preflight
+
+Objective:
+- run session-specific preflight for the new collaborative worksheet and capture reproducible evidence before user steps.
+
+Actions completed:
+1. Created evidence directory `.tmp/vec-collab-e2e-20260304_191626/`.
+2. Ran `just build` and captured output.
+3. Ran `./till serve --help` and captured output.
+4. Ran `just check` and captured output.
+5. Updated `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` setup table with pass status and evidence paths.
+
+Commands run and outcomes:
+1. `ts=$(date +%Y%m%d_%H%M%S); dir=.tmp/vec-collab-e2e-$ts; mkdir -p "$dir"; echo "$dir"` -> PASS (`.tmp/vec-collab-e2e-20260304_191626`).
+2. `just build | tee .tmp/vec-collab-e2e-20260304_191626/just_build.txt` -> FAIL in sandbox (`go-build cache operation not permitted`), then PASS outside sandbox.
+3. `./till serve --help | tee .tmp/vec-collab-e2e-20260304_191626/till_serve_help.txt` -> PASS.
+4. `just check | tee .tmp/vec-collab-e2e-20260304_191626/just_check.txt` -> PASS.
+
+File edits:
+1. Updated `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` (section 4.1 statuses/evidence).
+2. Updated `PLAN.md` with this checkpoint.
+
+Test status:
+- `just build`: PASS.
+- `just check`: PASS.

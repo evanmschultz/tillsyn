@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
 	"github.com/google/uuid"
+	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
 	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
 	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
@@ -568,9 +569,30 @@ func executeCommandFlow(
 	}()
 	logger.Info("sqlite repository ready", "db_path", cfg.Database.Path, "migrations", "ensured")
 
+	var embeddingGenerator app.EmbeddingGenerator
+	if cfg.Embeddings.Enabled {
+		generator, err := fantasyembed.New(ctx, fantasyembed.Config{
+			Provider:   cfg.Embeddings.Provider,
+			Model:      cfg.Embeddings.Model,
+			APIKeyEnv:  cfg.Embeddings.APIKeyEnv,
+			BaseURL:    cfg.Embeddings.BaseURL,
+			Dimensions: cfg.Embeddings.Dimensions,
+		})
+		if err != nil {
+			logger.Warn("embeddings disabled due setup error; keyword fallback remains active", "err", err)
+		} else {
+			embeddingGenerator = generator
+			logger.Info("embeddings runtime enabled", "provider", cfg.Embeddings.Provider, "model", cfg.Embeddings.Model, "query_top_k", cfg.Embeddings.QueryTopK)
+		}
+	}
+
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode:        app.DeleteMode(cfg.Delete.DefaultMode),
 		AutoCreateProjectColumns: true,
+		EmbeddingGenerator:       embeddingGenerator,
+		SearchLexicalWeight:      cfg.Embeddings.LexicalWeight,
+		SearchSemanticWeight:     cfg.Embeddings.SemanticWeight,
+		SearchSemanticCandidates: cfg.Embeddings.QueryTopK,
 	})
 	logger.Debug("application service initialized", "default_delete_mode", cfg.Delete.DefaultMode)
 

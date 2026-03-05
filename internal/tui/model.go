@@ -101,7 +101,20 @@ const (
 )
 
 // taskFormFields stores task-form field keys in display/update order.
-var taskFormFields = []string{"title", "description", "priority", "due", "labels", "depends_on", "blocked_by", "blocked_reason"}
+var taskFormFields = []string{
+	"title",
+	"description",
+	"priority",
+	"due",
+	"labels",
+	"depends_on",
+	"blocked_by",
+	"blocked_reason",
+	"objective",
+	"acceptance_criteria",
+	"validation_plan",
+	"risk_notes",
+}
 
 // terminalProbeArtifactWithPrefixPattern matches leaked OSC 10/11 rgb probe artifacts with dangling rgb-triplet prefixes.
 var terminalProbeArtifactWithPrefixPattern = regexp.MustCompile(`(?i)(?:/[0-9a-f]{2,4}){2,4}\]?1[01];rgb:[0-9a-f/]{6,64}`)
@@ -122,6 +135,10 @@ const (
 	taskFieldDependsOn
 	taskFieldBlockedBy
 	taskFieldBlockedReason
+	taskFieldObjective
+	taskFieldAcceptanceCriteria
+	taskFieldValidationPlan
+	taskFieldRiskNotes
 )
 
 // project-form field indexes used for focused form actions.
@@ -165,6 +182,8 @@ const (
 	maximumNoticesPanelWidth = 38
 	// noticesSectionViewWindow caps visible rows per notices section before list scrolling is required.
 	noticesSectionViewWindow = 4
+	// defaultSearchResultsLimit keeps TUI search views explicit while matching backend defaults.
+	defaultSearchResultsLimit = 50
 )
 
 // defaultLabelSuggestionsSeed provides baseline label suggestions before user/project customization exists.
@@ -454,6 +473,9 @@ type Model struct {
 	searchDefaultStates         []string
 	searchLevels                []string
 	searchDefaultLevels         []string
+	searchKinds                 []string
+	searchLabelsAny             []string
+	searchLabelsAll             []string
 	searchMatches               []app.TaskMatch
 	searchResultIndex           int
 	quickActionIndex            int
@@ -1825,13 +1847,20 @@ func (m Model) loadData() tea.Msg {
 			CrossProject:    m.searchCrossProject,
 			IncludeArchived: m.searchIncludeArchived,
 			States:          append([]string(nil), m.searchStates...),
+			Levels:          canonicalSearchLevels(m.searchLevels),
+			Kinds:           append([]string(nil), m.searchKinds...),
+			LabelsAny:       append([]string(nil), m.searchLabelsAny...),
+			LabelsAll:       append([]string(nil), m.searchLabelsAll...),
+			Mode:            app.SearchModeHybrid,
+			Sort:            app.SearchSortRankDesc,
+			Limit:           defaultSearchResultsLimit,
+			Offset:          0,
 		})
 		if searchErr != nil {
 			m.traceLoadDataStage("tasks_search", tasksStartedAt, searchErr, "project_id", projectID, "source", "search_matches", "search_active", true, "tasks_count", 0, "search_match_count", 0)
 			m.traceLoadDataStage("total", totalStartedAt, searchErr, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 			return loadedMsg{err: searchErr}
 		}
-		matches = m.filterTaskMatchesBySearchLevels(matches)
 		searchMatchCount = len(matches)
 		taskSource = "search_matches"
 		tasks = make([]domain.Task, 0, len(matches))
@@ -1975,11 +2004,18 @@ func (m Model) loadSearchMatches() tea.Msg {
 		CrossProject:    m.searchCrossProject,
 		IncludeArchived: m.searchIncludeArchived,
 		States:          append([]string(nil), m.searchStates...),
+		Levels:          canonicalSearchLevels(m.searchLevels),
+		Kinds:           append([]string(nil), m.searchKinds...),
+		LabelsAny:       append([]string(nil), m.searchLabelsAny...),
+		LabelsAll:       append([]string(nil), m.searchLabelsAll...),
+		Mode:            app.SearchModeHybrid,
+		Sort:            app.SearchSortRankDesc,
+		Limit:           defaultSearchResultsLimit,
+		Offset:          0,
 	})
 	if err != nil {
 		return searchResultsMsg{err: err}
 	}
-	matches = m.filterTaskMatchesBySearchLevels(matches)
 	return searchResultsMsg{matches: matches}
 }
 
@@ -2438,6 +2474,10 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 		newModalInput("", "csv task ids", "", 240),
 		newModalInput("", "csv task ids", "", 240),
 		newModalInput("", "why blocked? (optional)", "", 240),
+		newModalInput("", "objective (optional)", "", 400),
+		newModalInput("", "acceptance criteria (optional)", "", 400),
+		newModalInput("", "validation plan (optional)", "", 400),
+		newModalInput("", "risk notes (optional)", "", 400),
 	}
 	labelsIdx := taskFieldLabels
 	m.formInputs[labelsIdx].ShowSuggestions = true
@@ -2465,6 +2505,18 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 		}
 		if blockedReason := strings.TrimSpace(task.Metadata.BlockedReason); blockedReason != "" {
 			m.formInputs[taskFieldBlockedReason].SetValue(blockedReason)
+		}
+		if objective := strings.TrimSpace(task.Metadata.Objective); objective != "" {
+			m.formInputs[taskFieldObjective].SetValue(objective)
+		}
+		if acceptanceCriteria := strings.TrimSpace(task.Metadata.AcceptanceCriteria); acceptanceCriteria != "" {
+			m.formInputs[taskFieldAcceptanceCriteria].SetValue(acceptanceCriteria)
+		}
+		if validationPlan := strings.TrimSpace(task.Metadata.ValidationPlan); validationPlan != "" {
+			m.formInputs[taskFieldValidationPlan].SetValue(validationPlan)
+		}
+		if riskNotes := strings.TrimSpace(task.Metadata.RiskNotes); riskNotes != "" {
+			m.formInputs[taskFieldRiskNotes].SetValue(riskNotes)
 		}
 		m.taskFormResourceRefs = append([]domain.ResourceRef(nil), task.Metadata.ResourceRefs...)
 		m.mode = modeEditTask
@@ -3260,6 +3312,42 @@ func (m Model) buildTaskMetadataFromForm(vals map[string]string, current domain.
 	default:
 		meta.BlockedReason = blockedReason
 	}
+	objective := strings.TrimSpace(vals["objective"])
+	switch objective {
+	case "":
+		// Keep current metadata when field is untouched.
+	case "-":
+		meta.Objective = ""
+	default:
+		meta.Objective = objective
+	}
+	acceptanceCriteria := strings.TrimSpace(vals["acceptance_criteria"])
+	switch acceptanceCriteria {
+	case "":
+		// Keep current metadata when field is untouched.
+	case "-":
+		meta.AcceptanceCriteria = ""
+	default:
+		meta.AcceptanceCriteria = acceptanceCriteria
+	}
+	validationPlan := strings.TrimSpace(vals["validation_plan"])
+	switch validationPlan {
+	case "":
+		// Keep current metadata when field is untouched.
+	case "-":
+		meta.ValidationPlan = ""
+	default:
+		meta.ValidationPlan = validationPlan
+	}
+	riskNotes := strings.TrimSpace(vals["risk_notes"])
+	switch riskNotes {
+	case "":
+		// Keep current metadata when field is untouched.
+	case "-":
+		meta.RiskNotes = ""
+	default:
+		meta.RiskNotes = riskNotes
+	}
 	meta.ResourceRefs = append([]domain.ResourceRef(nil), m.taskFormResourceRefs...)
 	return meta
 }
@@ -3634,6 +3722,9 @@ func (m *Model) resetSearchFilters() tea.Cmd {
 	m.searchIncludeArchived = m.searchDefaultIncludeArchive
 	m.searchStates = canonicalSearchStates(m.searchDefaultStates)
 	m.searchLevels = canonicalSearchLevels(m.searchDefaultLevels)
+	m.searchKinds = nil
+	m.searchLabelsAny = nil
+	m.searchLabelsAll = nil
 	m.searchApplied = false
 	m.status = "filters reset"
 	return m.loadData
@@ -4359,6 +4450,11 @@ func (m Model) loadDependencyMatches() tea.Msg {
 		CrossProject:    m.dependencyCrossProject,
 		IncludeArchived: m.dependencyIncludeArchived,
 		States:          append([]string(nil), m.dependencyStates...),
+		Levels:          canonicalSearchLevels(m.searchDefaultLevels),
+		Mode:            app.SearchModeHybrid,
+		Sort:            app.SearchSortRankDesc,
+		Limit:           defaultSearchResultsLimit,
+		Offset:          0,
 	})
 	if err != nil {
 		return dependencyMatchesMsg{err: err}
@@ -12427,11 +12523,19 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if strings.TrimSpace(task.ParentID) != "" {
 			lines = append(lines, hintStyle.Render("parent: "+task.ParentID))
 		}
-		if objective := strings.TrimSpace(task.Metadata.Objective); objective != "" {
-			lines = append(lines, "", hintStyle.Render("objective"))
-			rendered := m.threadMarkdown.render(objective, contentWidth)
+		renderMetadataMarkdown := func(label, value string) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return
+			}
+			lines = append(lines, "", hintStyle.Render(label))
+			rendered := m.threadMarkdown.render(value, contentWidth)
 			lines = append(lines, splitThreadMarkdownLines(rendered)...)
 		}
+		renderMetadataMarkdown("objective", task.Metadata.Objective)
+		renderMetadataMarkdown("acceptance_criteria", task.Metadata.AcceptanceCriteria)
+		renderMetadataMarkdown("validation_plan", task.Metadata.ValidationPlan)
+		renderMetadataMarkdown("risk_notes", task.Metadata.RiskNotes)
 		if len(task.Metadata.CompletionContract.CompletionCriteria) > 0 {
 			unmet := 0
 			for _, item := range task.Metadata.CompletionContract.CompletionCriteria {

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
@@ -20,6 +21,43 @@ const (
 	DeleteModeHard    DeleteMode = "hard"
 )
 
+// SearchMode represents a selectable search strategy.
+type SearchMode string
+
+// Search mode constants define supported search behavior contracts.
+const (
+	SearchModeKeyword  SearchMode = "keyword"
+	SearchModeSemantic SearchMode = "semantic"
+	SearchModeHybrid   SearchMode = "hybrid"
+)
+
+// SearchSort defines supported result ordering options.
+type SearchSort string
+
+// Search sort and pagination constants define supported contracts and defaults.
+const (
+	SearchSortRankDesc      SearchSort = "rank_desc"
+	SearchSortTitleAsc      SearchSort = "title_asc"
+	SearchSortCreatedAtDesc SearchSort = "created_at_desc"
+	SearchSortUpdatedAtDesc SearchSort = "updated_at_desc"
+
+	defaultSearchLimit              = 50
+	maxSearchLimit                  = 200
+	defaultSearchLexicalWeight      = 0.55
+	defaultSearchSemanticWeight     = 0.45
+	defaultSearchSemanticCandidates = 200
+)
+
+// supportedSearchLevelFilters lists accepted level values for search filters.
+var supportedSearchLevelFilters = map[string]struct{}{
+	string(domain.KindAppliesToProject):  {},
+	string(domain.KindAppliesToBranch):   {},
+	string(domain.KindAppliesToPhase):    {},
+	string(domain.KindAppliesToSubphase): {},
+	string(domain.KindAppliesToTask):     {},
+	string(domain.KindAppliesToSubtask):  {},
+}
+
 // ServiceConfig holds configuration for service.
 type ServiceConfig struct {
 	DefaultDeleteMode        DeleteMode
@@ -27,6 +65,11 @@ type ServiceConfig struct {
 	AutoCreateProjectColumns bool
 	CapabilityLeaseTTL       time.Duration
 	RequireAgentLease        *bool
+	EmbeddingGenerator       EmbeddingGenerator
+	SearchIndex              TaskSearchIndex
+	SearchLexicalWeight      float64
+	SearchSemanticWeight     float64
+	SearchSemanticCandidates int
 }
 
 // StateTemplate represents state template data used by this package.
@@ -45,17 +88,22 @@ type Clock func() time.Time
 
 // Service represents service data used by this package.
 type Service struct {
-	repo              Repository
-	idGen             IDGenerator
-	clock             Clock
-	defaultDeleteMode DeleteMode
-	stateTemplates    []StateTemplate
-	autoProjectCols   bool
-	defaultLeaseTTL   time.Duration
-	requireAgentLease bool
-	schemaCache       map[string]schemaCacheEntry
-	schemaCacheMu     sync.RWMutex
-	kindBootstrap     kindBootstrapState
+	repo               Repository
+	idGen              IDGenerator
+	clock              Clock
+	defaultDeleteMode  DeleteMode
+	stateTemplates     []StateTemplate
+	autoProjectCols    bool
+	defaultLeaseTTL    time.Duration
+	requireAgentLease  bool
+	schemaCache        map[string]schemaCacheEntry
+	schemaCacheMu      sync.RWMutex
+	kindBootstrap      kindBootstrapState
+	embeddingGenerator EmbeddingGenerator
+	searchIndex        TaskSearchIndex
+	searchLexicalW     float64
+	searchSemanticW    float64
+	searchSemanticK    int
 }
 
 // NewService constructs a new value for this package.
@@ -80,17 +128,33 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	if len(templates) == 0 {
 		templates = defaultStateTemplates()
 	}
+	searchIndex := cfg.SearchIndex
+	if searchIndex == nil {
+		if idx, ok := repo.(TaskSearchIndex); ok {
+			searchIndex = idx
+		}
+	}
+	lexicalWeight, semanticWeight := normalizeSearchWeights(cfg.SearchLexicalWeight, cfg.SearchSemanticWeight)
+	semanticCandidates := cfg.SearchSemanticCandidates
+	if semanticCandidates <= 0 {
+		semanticCandidates = defaultSearchSemanticCandidates
+	}
 
 	return &Service{
-		repo:              repo,
-		idGen:             idGen,
-		clock:             clock,
-		defaultDeleteMode: cfg.DefaultDeleteMode,
-		stateTemplates:    templates,
-		autoProjectCols:   cfg.AutoCreateProjectColumns,
-		defaultLeaseTTL:   cfg.CapabilityLeaseTTL,
-		requireAgentLease: requireAgentLease,
-		schemaCache:       map[string]schemaCacheEntry{},
+		repo:               repo,
+		idGen:              idGen,
+		clock:              clock,
+		defaultDeleteMode:  cfg.DefaultDeleteMode,
+		stateTemplates:     templates,
+		autoProjectCols:    cfg.AutoCreateProjectColumns,
+		defaultLeaseTTL:    cfg.CapabilityLeaseTTL,
+		requireAgentLease:  requireAgentLease,
+		schemaCache:        map[string]schemaCacheEntry{},
+		embeddingGenerator: cfg.EmbeddingGenerator,
+		searchIndex:        searchIndex,
+		searchLexicalW:     lexicalWeight,
+		searchSemanticW:    semanticWeight,
+		searchSemanticK:    semanticCandidates,
 	}
 }
 
@@ -352,6 +416,14 @@ type SearchTasksFilter struct {
 	CrossProject    bool
 	IncludeArchived bool
 	States          []string
+	Levels          []string
+	Kinds           []string
+	LabelsAny       []string
+	LabelsAll       []string
+	Mode            SearchMode
+	Sort            SearchSort
+	Limit           int
+	Offset          int
 }
 
 // TaskMatch describes a matched result.
@@ -438,6 +510,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 	if err := s.repo.CreateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
+	s.refreshTaskEmbedding(ctx, task)
 	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef); err != nil {
 		return domain.Task{}, err
 	}
@@ -510,6 +583,7 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
+	s.refreshTaskEmbedding(ctx, task)
 	return task, nil
 }
 
@@ -547,6 +621,7 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
+	s.refreshTaskEmbedding(ctx, task)
 	return task, nil
 }
 
@@ -570,6 +645,7 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
+	s.refreshTaskEmbedding(ctx, task)
 	return task, nil
 }
 
@@ -624,6 +700,7 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
+	s.refreshTaskEmbedding(ctx, task)
 	return task, nil
 }
 
@@ -661,7 +738,11 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes); err != nil {
 			return err
 		}
-		return s.repo.DeleteTask(ctx, taskID)
+		if err := s.repo.DeleteTask(ctx, taskID); err != nil {
+			return err
+		}
+		s.dropTaskEmbedding(ctx, taskID)
+		return nil
 	default:
 		return ErrInvalidDeleteMode
 	}
@@ -899,6 +980,19 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 
 // SearchTaskMatches finds task matches using project, state, and archive filters.
 func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) ([]TaskMatch, error) {
+	mode, err := normalizeSearchMode(in.Mode)
+	if err != nil {
+		return nil, err
+	}
+	sortOrder, err := normalizeSearchSort(in.Sort)
+	if err != nil {
+		return nil, err
+	}
+	limit, offset, err := normalizeSearchPagination(in.Limit, in.Offset)
+	if err != nil {
+		return nil, err
+	}
+
 	stateFilter := map[string]struct{}{}
 	for _, raw := range in.States {
 		state := strings.TrimSpace(strings.ToLower(raw))
@@ -906,6 +1000,13 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 			continue
 		}
 		stateFilter[state] = struct{}{}
+	}
+	levelFilter := normalizeLowerFilterSet(in.Levels)
+	kindFilter := normalizeLowerFilterSet(in.Kinds)
+	labelsAnyFilter := normalizeLowerFilterSet(in.LabelsAny)
+	labelsAllFilter := normalizeLowerFilterSet(in.LabelsAll)
+	if invalid := unsupportedSearchLevels(levelFilter); len(invalid) > 0 {
+		log.Warn("search request includes unsupported levels filter values", "levels", strings.Join(invalid, ","))
 	}
 	allowAllStates := len(stateFilter) == 0
 	wantsArchivedState := allowAllStates
@@ -937,7 +1038,10 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 
 	query := strings.TrimSpace(strings.ToLower(in.Query))
 	out := make([]TaskMatch, 0)
+	lexicalScores := map[string]float64{}
+	projectIDs := make([]string, 0, len(targetProjects))
 	for _, project := range targetProjects {
+		projectIDs = append(projectIDs, project.ID)
 		columns, err := s.repo.ListColumns(ctx, project.ID, true)
 		if err != nil {
 			return nil, err
@@ -969,14 +1073,10 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 					continue
 				}
 			}
-
-			if query != "" {
-				if !fuzzyContainsQuery(task.Title, query) &&
-					!fuzzyContainsQuery(task.Description, query) &&
-					!labelsContainQuery(task.Labels, query) {
-					continue
-				}
+			if !taskMatchesExtendedSearchFilters(task, levelFilter, kindFilter, labelsAnyFilter, labelsAllFilter) {
+				continue
 			}
+			lexicalScores[task.ID] = taskLexicalMatchScore(task, query)
 
 			out = append(out, TaskMatch{
 				Project: project,
@@ -986,23 +1086,324 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 		}
 	}
 
-	slices.SortFunc(out, func(a, b TaskMatch) int {
-		if a.Project.ID == b.Project.ID {
-			if a.StateID == b.StateID {
-				if a.Task.ColumnID == b.Task.ColumnID {
-					if a.Task.Position == b.Task.Position {
-						return strings.Compare(a.Task.ID, b.Task.ID)
+	semanticScores := map[string]float64{}
+	semanticReady := false
+	effectiveMode := mode
+	if query != "" && (mode == SearchModeSemantic || mode == SearchModeHybrid) &&
+		s.embeddingGenerator != nil && s.searchIndex != nil {
+		queryVectors, embedErr := s.embeddingGenerator.Embed(ctx, []string{query})
+		if embedErr == nil && len(queryVectors) > 0 && len(queryVectors[0]) > 0 {
+			semanticLimit := max(limit*4, s.searchSemanticK)
+			rows, searchErr := s.searchIndex.SearchTaskEmbeddings(ctx, TaskEmbeddingSearchInput{
+				ProjectIDs: projectIDs,
+				Vector:     queryVectors[0],
+				Limit:      semanticLimit,
+			})
+			if searchErr == nil {
+				for _, row := range rows {
+					taskID := strings.TrimSpace(row.TaskID)
+					if taskID == "" {
+						continue
 					}
-					return a.Task.Position - b.Task.Position
+					score := clamp01(row.Similarity)
+					// Keep the strongest similarity for deterministic dedup when duplicate rows appear.
+					if previous, ok := semanticScores[taskID]; !ok || score > previous {
+						semanticScores[taskID] = score
+					}
 				}
-				return strings.Compare(a.Task.ColumnID, b.Task.ColumnID)
+				semanticReady = true
 			}
-			return strings.Compare(a.StateID, b.StateID)
 		}
-		return strings.Compare(a.Project.ID, b.Project.ID)
+	}
+	if (mode == SearchModeSemantic || mode == SearchModeHybrid) && !semanticReady {
+		effectiveMode = SearchModeKeyword
+	}
+
+	if query != "" {
+		filtered := make([]TaskMatch, 0, len(out))
+		for _, match := range out {
+			taskID := match.Task.ID
+			lexicalScore := lexicalScores[taskID]
+			_, hasSemantic := semanticScores[taskID]
+			switch effectiveMode {
+			case SearchModeKeyword:
+				if lexicalScore <= 0 {
+					continue
+				}
+			case SearchModeSemantic:
+				if !hasSemantic {
+					continue
+				}
+			case SearchModeHybrid:
+				if lexicalScore <= 0 && !hasSemantic {
+					continue
+				}
+			}
+			filtered = append(filtered, match)
+		}
+		out = filtered
+	}
+
+	rankScores := map[string]float64{}
+	if query != "" {
+		for _, match := range out {
+			taskID := match.Task.ID
+			lexicalScore := clamp01(lexicalScores[taskID])
+			semanticScore := clamp01(semanticScores[taskID])
+			switch effectiveMode {
+			case SearchModeSemantic:
+				rankScores[taskID] = semanticScore
+			case SearchModeHybrid:
+				rankScores[taskID] = (s.searchLexicalW * lexicalScore) + (s.searchSemanticW * semanticScore)
+			default:
+				rankScores[taskID] = lexicalScore
+			}
+		}
+	}
+
+	slices.SortFunc(out, func(a, b TaskMatch) int {
+		switch sortOrder {
+		case SearchSortTitleAsc:
+			left := strings.ToLower(strings.TrimSpace(a.Task.Title))
+			right := strings.ToLower(strings.TrimSpace(b.Task.Title))
+			if cmp := strings.Compare(left, right); cmp != 0 {
+				return cmp
+			}
+			if cmp := strings.Compare(a.Task.Title, b.Task.Title); cmp != 0 {
+				return cmp
+			}
+		case SearchSortCreatedAtDesc:
+			if cmp := compareTimeDesc(a.Task.CreatedAt, b.Task.CreatedAt); cmp != 0 {
+				return cmp
+			}
+		case SearchSortUpdatedAtDesc:
+			if cmp := compareTimeDesc(a.Task.UpdatedAt, b.Task.UpdatedAt); cmp != 0 {
+				return cmp
+			}
+		case SearchSortRankDesc:
+			if query != "" {
+				if cmp := compareFloat64Desc(rankScores[a.Task.ID], rankScores[b.Task.ID]); cmp != 0 {
+					return cmp
+				}
+			}
+		}
+		return compareTaskMatchRankDesc(a, b)
 	})
 
-	return out, nil
+	if offset >= len(out) {
+		return []TaskMatch{}, nil
+	}
+	end := offset + limit
+	if end > len(out) {
+		end = len(out)
+	}
+	return append([]TaskMatch(nil), out[offset:end]...), nil
+}
+
+// normalizeSearchMode returns the supported mode or a default when omitted.
+func normalizeSearchMode(raw SearchMode) (SearchMode, error) {
+	mode := SearchMode(strings.TrimSpace(strings.ToLower(string(raw))))
+	if mode == "" {
+		return SearchModeHybrid, nil
+	}
+	switch mode {
+	case SearchModeKeyword, SearchModeSemantic, SearchModeHybrid:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid search mode %q: %w", raw, domain.ErrInvalidID)
+	}
+}
+
+// normalizeSearchSort returns the supported sort order or a default when omitted.
+func normalizeSearchSort(raw SearchSort) (SearchSort, error) {
+	sortOrder := SearchSort(strings.TrimSpace(strings.ToLower(string(raw))))
+	if sortOrder == "" {
+		return SearchSortRankDesc, nil
+	}
+	switch sortOrder {
+	case SearchSortRankDesc, SearchSortTitleAsc, SearchSortCreatedAtDesc, SearchSortUpdatedAtDesc:
+		return sortOrder, nil
+	default:
+		return "", fmt.Errorf("invalid search sort %q: %w", raw, domain.ErrInvalidID)
+	}
+}
+
+// normalizeSearchPagination returns validated pagination with defaults and upper bounds.
+func normalizeSearchPagination(limit, offset int) (int, int, error) {
+	if limit < 0 {
+		return 0, 0, fmt.Errorf("search limit must be >= 0: %w", domain.ErrInvalidID)
+	}
+	if offset < 0 {
+		return 0, 0, fmt.Errorf("search offset must be >= 0: %w", domain.ErrInvalidID)
+	}
+	if limit == 0 {
+		limit = defaultSearchLimit
+	}
+	if limit > maxSearchLimit {
+		limit = maxSearchLimit
+	}
+	return limit, offset, nil
+}
+
+// normalizeLowerFilterSet canonicalizes optional filter values into a lower-cased membership set.
+func normalizeLowerFilterSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(strings.ToLower(raw))
+		if value == "" {
+			continue
+		}
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+// unsupportedSearchLevels returns sorted unsupported level values from a normalized level filter set.
+func unsupportedSearchLevels(levelFilter map[string]struct{}) []string {
+	out := make([]string, 0)
+	for level := range levelFilter {
+		if _, ok := supportedSearchLevelFilters[level]; ok {
+			continue
+		}
+		out = append(out, level)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// taskMatchesExtendedSearchFilters applies optional level/kind/label filter constraints to one task.
+func taskMatchesExtendedSearchFilters(task domain.Task, levelFilter, kindFilter, labelsAnyFilter, labelsAllFilter map[string]struct{}) bool {
+	if len(levelFilter) > 0 {
+		if _, ok := levelFilter[strings.ToLower(strings.TrimSpace(string(task.Scope)))]; !ok {
+			return false
+		}
+	}
+	if len(kindFilter) > 0 {
+		if _, ok := kindFilter[strings.ToLower(strings.TrimSpace(string(task.Kind)))]; !ok {
+			return false
+		}
+	}
+	if len(labelsAnyFilter) == 0 && len(labelsAllFilter) == 0 {
+		return true
+	}
+
+	taskLabelSet := make(map[string]struct{}, len(task.Labels))
+	for _, raw := range task.Labels {
+		label := strings.TrimSpace(strings.ToLower(raw))
+		if label == "" {
+			continue
+		}
+		taskLabelSet[label] = struct{}{}
+	}
+	if len(labelsAnyFilter) > 0 {
+		matchedAny := false
+		for label := range labelsAnyFilter {
+			if _, ok := taskLabelSet[label]; ok {
+				matchedAny = true
+				break
+			}
+		}
+		if !matchedAny {
+			return false
+		}
+	}
+	for label := range labelsAllFilter {
+		if _, ok := taskLabelSet[label]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// compareTaskMatchRankDesc keeps the legacy deterministic rank ordering for matches.
+func compareTaskMatchRankDesc(a, b TaskMatch) int {
+	if a.Project.ID == b.Project.ID {
+		if a.StateID == b.StateID {
+			if a.Task.ColumnID == b.Task.ColumnID {
+				if a.Task.Position == b.Task.Position {
+					return strings.Compare(a.Task.ID, b.Task.ID)
+				}
+				return a.Task.Position - b.Task.Position
+			}
+			return strings.Compare(a.Task.ColumnID, b.Task.ColumnID)
+		}
+		return strings.Compare(a.StateID, b.StateID)
+	}
+	return strings.Compare(a.Project.ID, b.Project.ID)
+}
+
+// compareTimeDesc compares timestamps in descending order.
+func compareTimeDesc(left, right time.Time) int {
+	if left.Equal(right) {
+		return 0
+	}
+	if left.After(right) {
+		return -1
+	}
+	return 1
+}
+
+// compareFloat64Desc compares numeric values in descending order.
+func compareFloat64Desc(left, right float64) int {
+	if left == right {
+		return 0
+	}
+	if left > right {
+		return -1
+	}
+	return 1
+}
+
+// clamp01 constrains score values to the [0,1] range.
+func clamp01(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+// taskLexicalMatchScore calculates a normalized lexical score for one task/query pair.
+func taskLexicalMatchScore(task domain.Task, query string) float64 {
+	query = strings.TrimSpace(strings.ToLower(query))
+	if query == "" {
+		return 0
+	}
+	score := 0.0
+	score = max(score, fieldLexicalScore(task.Title, query))
+	score = max(score, fieldLexicalScore(task.Description, query)*0.9)
+	for _, label := range task.Labels {
+		score = max(score, fieldLexicalScore(label, query)*0.8)
+	}
+	score = max(score, fieldLexicalScore(task.Metadata.Objective, query)*0.82)
+	score = max(score, fieldLexicalScore(task.Metadata.AcceptanceCriteria, query)*0.8)
+	score = max(score, fieldLexicalScore(task.Metadata.ValidationPlan, query)*0.78)
+	score = max(score, fieldLexicalScore(task.Metadata.BlockedReason, query)*0.76)
+	score = max(score, fieldLexicalScore(task.Metadata.RiskNotes, query)*0.76)
+	return clamp01(score)
+}
+
+// fieldLexicalScore returns one lexical score using exact/prefix/contains/fuzzy matching tiers.
+func fieldLexicalScore(candidate, query string) float64 {
+	query = strings.TrimSpace(strings.ToLower(query))
+	candidate = strings.TrimSpace(strings.ToLower(candidate))
+	if query == "" || candidate == "" {
+		return 0
+	}
+	switch {
+	case candidate == query:
+		return 1
+	case strings.HasPrefix(candidate, query):
+		return 0.95
+	case strings.Contains(candidate, query):
+		return 0.85
+	case fuzzyContainsQuery(candidate, query):
+		return 0.6
+	default:
+		return 0
+	}
 }
 
 // labelsContainQuery reports whether any label fuzzy-matches query.
