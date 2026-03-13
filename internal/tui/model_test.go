@@ -5286,6 +5286,47 @@ func TestModelEditTaskKeyboardSaveAndPickerShortcuts(t *testing.T) {
 	}
 }
 
+// TestModelEditTaskFocusScrollUsesRenderedRows verifies edit-mode focus scrolling follows rendered wrapped rows.
+func TestModelEditTaskFocusScrollUsesRenderedRows(t *testing.T) {
+	now := time.Date(2026, 3, 13, 17, 12, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	longMarkdown := strings.Repeat("wrapped markdown content for viewport scrolling\n", 20)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "task-1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: longMarkdown,
+		Priority:    domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			BlockedReason:      longMarkdown,
+			Objective:          longMarkdown,
+			AcceptanceCriteria: longMarkdown,
+			ValidationPlan:     longMarkdown,
+			RiskNotes:          "final risk note",
+		},
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 88, Height: 22})
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	}
+	if got := m.taskInfoBody.YOffset(); got != 0 {
+		t.Fatalf("expected edit form to start at top, got y offset=%d", got)
+	}
+
+	for m.formFocus != taskFieldRiskNotes {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if got := m.taskInfoBody.YOffset(); got <= 0 {
+		t.Fatalf("expected risk_notes focus to scroll viewport downward, got y offset=%d", got)
+	}
+}
+
 // TestModelEditTaskSubtaskAndResourceRowSelection verifies edit-mode row selection for subtasks/resources.
 func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
@@ -6395,6 +6436,16 @@ func TestModelPanelFocusTraversalIncludesGlobalNotifications(t *testing.T) {
 	m = applyMsg(t, m, keyRune('h'))
 	if m.noticesFocused {
 		t.Fatalf("expected board focus after moving left from project notifications, got noticesFocused=%t", m.noticesFocused)
+	}
+
+	m = applyMsg(t, m, keyRune('h'))
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
+		t.Fatalf("expected left from board to wrap to global notifications, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+
+	m = applyMsg(t, m, keyRune('l'))
+	if m.noticesFocused || m.selectedColumn != 0 {
+		t.Fatalf("expected right from global notifications to wrap back to board, got noticesFocused=%t selectedColumn=%d", m.noticesFocused, m.selectedColumn)
 	}
 }
 
@@ -8191,7 +8242,7 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 44, Height: 24})
 
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(rendered, "path: Roadmap Hub -> ... -> Focused Item") {
+	if !strings.Contains(rendered, "│ TILLSYN │  path: R -> ... -> Focused It") {
 		t.Fatalf("expected collapsed board path in narrow layout, got\n%s", rendered)
 	}
 }
@@ -8613,9 +8664,6 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 		[]domain.Task{branch, phase},
 	)))
 	view := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(view, "level: branch") {
-		t.Fatalf("expected selected hierarchy level in info line, got\n%s", view)
-	}
 	if !strings.Contains(view, "children: 1") {
 		t.Fatalf("expected direct child count in info line, got\n%s", view)
 	}
@@ -8907,8 +8955,8 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	if strings.Contains(rendered, "attention: 3") {
 		t.Fatalf("expected header to stay path-only (no attention token), got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "attention scope: 2 items • unresolved 3 • blocked 1") {
-		t.Fatalf("expected attention summary line, got\n%s", rendered)
+	if strings.Contains(rendered, "attention scope: 2 items • unresolved 3 • blocked 1") {
+		t.Fatalf("expected board summary cleanup to remove attention summary line, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Project Notifications") {
 		t.Fatalf("expected project notifications panel to render, got\n%s", rendered)

@@ -3253,7 +3253,11 @@ Commands run and outcomes:
 9. `just fmt` -> PASS.
 10. `just test-pkg ./internal/tui` -> PASS.
 11. `just check` -> PASS.
-12. `just ci` -> PASS.
+12. QA follow-up found one medium mismatch in notices-focused expanded-help copy.
+13. `just fmt` -> PASS.
+14. `just test-pkg ./internal/tui` -> PASS.
+15. `just check` -> PASS.
+16. `just ci` -> PASS.
 13. Parallel QA pass 1:
     - Feynman (`019cbd28-39ce-7411-bca7-8366d7183f73`) -> PASS with low test-hardening notes.
     - Planck (`019cbd28-3bf8-7aa1-9de0-2047c96776a6`) -> FAIL due overlay-guardrail interpretation conflict.
@@ -3573,3 +3577,71 @@ Status:
   2. PASS: local tests/tracker review over `model_test.go`, `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`, and `PLAN.md`.
 - Worksheet/plan state has been advanced from architecture-review placeholder status to validated `READY_FOR_USER_RETEST`.
 - Next step: have the user rerun the same blocked collaborative step `T1-01` before any forward testing resumes.
+
+## Checkpoint 2026-03-13: FR-009 Shared Header/Help Cleanup And Rendered Focus Tracking
+
+Objective:
+- implement the user-approved follow-up cleanup on the same blocked collaborative step `T1-01` by tightening shared app chrome, shrinking board noise, wrapping panel traversal consistently, and fixing edit-form downward auto-scroll against rendered content.
+
+User findings captured for this wave:
+1. Repeated mode/status text such as `text selection mode enabled` and `thread loaded` is low-value noise and should not sit in the persistent UI.
+2. `path:` should move beside the boxed `TILLSYN` mark so every full-screen/board surface reclaims one row.
+3. The board summary/footer is too dense; attention/dependency rollups are redundant with the notices panels and the short help line truncates.
+4. `tab`, `shift+tab`, and arrow-based panel traversal should loop at the boundaries instead of clamping.
+5. Edit-form focus movement still scrolls upward but not downward because focus visibility is keyed to logical lines, not rendered wrapped rows.
+
+Context7 + fallback:
+1. Pre-edit consults:
+   - `/charmbracelet/bubbles` for viewport `SetWidth` / `SetHeight` / `SetYOffset` behavior and explicit help-keymap usage -> PASS.
+   - `/charmbracelet/bubbletea` for wrapped keyboard navigation/focus handling -> PASS.
+2. After the first post-edit `just test-pkg ./internal/tui` failure, the turn had reached the Context7 call ceiling.
+   - fallback source recorded before the next edit: `go doc charm.land/bubbles/v2/help` -> PASS.
+
+Implementation summary:
+1. Shared app chrome:
+   - moved path rendering into the shared `appHeaderBlock` so board and full-page surfaces now render one inline-path `TILLSYN` header.
+   - updated the board/header row budgeting to match the reclaimed vertical space.
+2. Board/help cleanup:
+   - removed attention/dependency summary rows from the board footer area and cut the selection summary down to the selected task plus subtree affordances.
+   - replaced the board short help with one concise canonical line and kept the expanded help overlay separate.
+   - cleared low-value thread/text-selection status spam instead of repeating mode/state in the persistent footer area.
+3. Navigation/focus behavior:
+   - switched left/right board panel traversal to the same wrapping policy already used by tab traversal.
+   - replaced logical-line task/project form focus tracking with rendered-row markers so downward focus visibility follows wrapped content correctly after viewport refresh.
+4. Test/golden alignment:
+   - updated board-path/summary assertions to the new inline-header contract.
+   - refreshed the board/help goldens after the shared-header and concise-help changes.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS.
+2. `sed -n '1,220p' Justfile` -> PASS.
+3. `rg -n "text selection mode enabled|thread loaded|activeBottomHelpKeyMap|modePrompt|attention scope|attention panel|deps: total|tasks:|selected:|path:|panel|wrap" internal/tui/model.go internal/tui/full_page_surface.go internal/tui/thread_mode.go internal/tui/keymap.go internal/tui/model_test.go` -> PASS.
+4. Context7 consults before edits -> PASS.
+5. `just fmt` -> PASS.
+6. `just test-pkg ./internal/tui` -> FAIL:
+   - stale board expectations/goldens after the shared-header/help cleanup.
+7. Fallback source after Context7 ceiling: `go doc charm.land/bubbles/v2/help` -> PASS.
+8. `just fmt` -> PASS.
+9. `just test-golden-update` -> PASS.
+10. `just test-pkg ./internal/tui` -> PASS.
+11. `just check` -> PASS.
+12. `just ci` -> PASS.
+
+Files edited in this checkpoint:
+1. `internal/tui/full_page_surface.go`
+2. `internal/tui/model.go`
+3. `internal/tui/model_test.go`
+4. `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+5. `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+6. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+7. `PLAN.md`
+
+Status:
+- FR-009 implementation is complete and the agent-side validation stack is green (`just test-pkg ./internal/tui`, `just check`, `just ci`).
+- Worksheet state is current:
+  - `T1-01` remains the same blocked collaborative rerun target.
+  - `FR-009` is logged as `READY_FOR_USER_RETEST`.
+  - `FX-009` is logged with validations complete and both QA passes closed:
+    1. PASS: Copernicus (`019ce87f-bb0a-7b13-b2b0-55e97f78f086`) code/UI re-audit after the help-copy/test follow-up.
+    2. PASS: Faraday (`019ce87f-bdd0-7112-b89d-44cddb2080be`) tests/docs/tracker re-audit after the gating sync.
+- Next step: commit this follow-up fix scope, then have the user rerun the same blocked collaborative step `T1-01` before any forward testing resumes.

@@ -22,6 +22,43 @@ type fullPageSurfaceMetrics struct {
 	statusLine   string
 }
 
+// appHeaderBlock renders the shared TILLSYN header with inline path context and the divider rule below it.
+func (m Model) appHeaderBlock(statusStyle lipgloss.Style, innerWidth int) string {
+	headerAccent := lipgloss.Color("62")
+	header := headerMarkStyle().
+		BorderForeground(headerAccent).
+		Foreground(lipgloss.Color("252")).
+		Render(headerMarkText)
+	row := header
+	if pathText := m.appHeaderPathText(max(16, innerWidth-lipgloss.Width(header)-2)); pathText != "" {
+		pathWidth := max(16, innerWidth-lipgloss.Width(header)-2)
+		pathBlock := lipgloss.NewStyle().
+			MarginLeft(2).
+			Width(pathWidth).
+			Render(lipgloss.PlaceVertical(lipgloss.Height(header), lipgloss.Center, statusStyle.Render(pathText)))
+		row = lipgloss.JoinHorizontal(lipgloss.Top, header, pathBlock)
+	}
+	if innerWidth > 0 {
+		row = lipgloss.PlaceHorizontal(innerWidth, lipgloss.Left, row)
+	}
+	rule := lipgloss.NewStyle().
+		Foreground(headerAccent).
+		Render(strings.Repeat("─", max(8, innerWidth)))
+	return strings.Join([]string{row, rule}, "\n")
+}
+
+// appHeaderPathText renders the shared path label when a project/task path is available.
+func (m Model) appHeaderPathText(maxWidth int) string {
+	projectName := ""
+	if project, ok := m.currentProject(); ok {
+		projectName = projectDisplayName(project)
+	}
+	if path, _ := m.projectionPathWithProject(projectName); path != "" {
+		return "path: " + collapsePathForDisplay(path, max(12, maxWidth-6))
+	}
+	return ""
+}
+
 // fullPageSurfaceMetrics computes the measured chrome and remaining body height for one full-page surface.
 func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth int, title, subtitle, status string) fullPageSurfaceMetrics {
 	const (
@@ -39,21 +76,8 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 	boxWidth = clamp(boxWidth, 36, maxBoxWidth)
 	contentWidth := max(24, boxWidth-8)
 
-	headerAccent := lipgloss.Color("62")
-	header := headerMarkStyle().
-		BorderForeground(headerAccent).
-		Foreground(lipgloss.Color("252")).
-		Render(headerMarkText)
-	headerRule := lipgloss.NewStyle().
-		Foreground(headerAccent).
-		Render(strings.Repeat("─", max(8, innerWidth)))
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
-
-	headerSections := []string{header, headerRule}
-	if pathLine := m.fullPageSurfacePathLine(statusStyle, innerWidth); pathLine != "" {
-		headerSections = append(headerSections, "", pathLine)
-	}
-	headerBlock := strings.Join(headerSections, "\n")
+	headerBlock := m.appHeaderBlock(statusStyle, innerWidth)
 
 	helpBubble := m.help
 	helpBubble.ShowAll = false
@@ -97,18 +121,6 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 		helpLine:     helpLine,
 		statusLine:   statusLine,
 	}
-}
-
-// fullPageSurfacePathLine renders the shared path line for one full-page surface.
-func (m Model) fullPageSurfacePathLine(statusStyle lipgloss.Style, innerWidth int) string {
-	projectName := ""
-	if project, ok := m.currentProject(); ok {
-		projectName = projectDisplayName(project)
-	}
-	if path, _ := m.projectionPathWithProject(projectName); path != "" {
-		return statusStyle.Render("path: " + collapsePathForDisplay(path, max(24, innerWidth-6)))
-	}
-	return ""
 }
 
 // fullPageSurfaceBoxChrome renders the non-body lines that consume height inside one bordered surface.

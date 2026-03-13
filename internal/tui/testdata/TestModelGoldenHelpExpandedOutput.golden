@@ -1,8 +1,7 @@
 [?2026$p[?1049h[?25l[?2004h[?1002h[?1006h[=1;1u[?u[H[2J ┌─────────┐
- │ TILLSYN │
+ │ TILLSYN │  path: Inbox
  └─────────┘
  ──────────────────────────────────────────────────────────────────────────────────────────────
- path: Inbox
 
  ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
@@ -14,6 +13,7 @@
  │                                                     │ │ Agent/User Action                  │
  │                                                     │ │ no notifications requiring user…   │
  │                                                     │ │                                    │
+ │                                                     │ │ Selection                          │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
@@ -22,25 +22,25 @@
  │                                                     │ │ requires user action across pro…   │
  │                                                     │ │                                    │
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
- tasks: 1 • selected: Help Golden Task • level: task
- deps: total 1 • blocked 0 • unresolved 0 • edges 0
+ selected: Help Golden Task
  0 overdue * 0 due soon
- n new task • i/enter task info • e edit task • f focus subtree • ctrl+y text select mode …[6A[J[H[K
-[K
+
+ n new task • enter task info • e edit • tab panels • / search • ? help • q quit[6A[J[H[K
 [K
 [K
 [K
 
-    ╭───────────────────────────────────────────────────[3P
-    │ TILLSYN Help                                      [3P
-    │ screen: board                                                           [3P
-    │                                                   [3P
+[K
+    ╭──────────────────────────────────────────────────────────────────────────────────────╮[K
+    │ TILLSYN Help                                                            [3P
+    │ screen: board                                     [3P
+    │                                                            [3P
     │ - h/l or left/right move columns; j/k or up/down move task selection [3P
-    │ - n new task; i/enter task info; e edit task           [3P
+    │ - n new task; i/enter task info; e edit task      [3P
     │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore [3P
-    │ - f focus subtree; F full board; t toggle archived                  [3P
-    │ - / search; p project picker; : command palette; . quick actions                     │[K
-    │ - tab/shift+tab cycle board/project/global panels; left/right move adjacent panel [3P
+    │ - f focus subtree; F full board; t toggle archived                                   │[K
+    │ - / search; p project picker; : command palette; . quick actions [3P
+    │ - tab/shift+tab cycle board/project/global panels; left/right wraps panel focus [3P
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
     │ - ctrl+z undo; ctrl+shift+z redo; g activity log; q quit                             │[K
     │                                                                                      │[K

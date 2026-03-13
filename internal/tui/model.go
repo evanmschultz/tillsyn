@@ -1407,7 +1407,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.threadComments = append([]domain.Comment(nil), msg.comments...)
 		m.threadScroll = 0
-		m.status = "thread loaded"
+		m.status = "ready"
 		return m, nil
 
 	case threadCommentCreatedMsg:
@@ -1529,16 +1529,9 @@ func (m Model) View() tea.View {
 					helpHeight := lipgloss.Height(helpLine)
 					body = fitLines(body, max(0, m.height-helpHeight))
 				}
-				headerAccent := lipgloss.Color("62")
-				header := headerMarkStyle().
-					BorderForeground(headerAccent).
-					Foreground(lipgloss.Color("252")).
-					Render(headerMarkText)
-				headerRule := lipgloss.NewStyle().
-					Foreground(headerAccent).
-					Render(strings.Repeat("─", max(8, innerWidth)))
+				headerBlock := m.appHeaderBlock(statusStyle, innerWidth)
 				body = lipgloss.PlaceHorizontal(max(1, innerWidth-(2*tuiOuterHorizontalPadding)), lipgloss.Center, body)
-				fullBody := strings.Join([]string{header, headerRule, "", body, ""}, "\n")
+				fullBody := strings.Join([]string{headerBlock, "", body, ""}, "\n")
 				if innerWidth > 0 {
 					fullBody = lipgloss.NewStyle().
 						PaddingLeft(tuiOuterHorizontalPadding).
@@ -1571,14 +1564,7 @@ func (m Model) View() tea.View {
 	attentionItems, attentionTotal, attentionBlocked, attentionTop := m.scopeAttentionSummary(taskByID)
 
 	layoutWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
-	headerAccent := lipgloss.Color("62")
-	header := headerMarkStyle().
-		BorderForeground(headerAccent).
-		Foreground(lipgloss.Color("252")).
-		Render(headerMarkText)
-	headerRule := lipgloss.NewStyle().
-		Foreground(headerAccent).
-		Render(strings.Repeat("─", max(8, layoutWidth)))
+	headerBlock := m.appHeaderBlock(statusStyle, layoutWidth)
 	noticesWidth := m.noticesPanelWidth(layoutWidth)
 	boardWidth := m.boardWidthFor(layoutWidth)
 
@@ -1797,21 +1783,10 @@ func (m Model) View() tea.View {
 	}
 	infoLine := m.renderInfoLine(project, muted)
 
-	sections := []string{header, headerRule}
-	if path, _ := m.projectionPathWithProject(projectDisplayName(project)); path != "" {
-		sections = append(sections, statusStyle.Render("path: "+collapsePathForDisplay(path, max(24, m.width-6))), "")
-	}
-	sections = append(sections, mainArea)
+	sections := []string{headerBlock, "", mainArea}
 	if infoLine != "" {
 		sections = append(sections, infoLine)
 	}
-	if attentionTotal > 0 {
-		sections = append(sections, statusStyle.Render(fmt.Sprintf("attention scope: %d items • unresolved %d • blocked %d", attentionItems, attentionTotal, attentionBlocked)))
-		if len(attentionTop) > 0 {
-			sections = append(sections, statusStyle.Render("attention panel: "+strings.Join(attentionTop, " • ")))
-		}
-	}
-	sections = append(sections, statusStyle.Render(m.dependencyRollupSummary()))
 	if strings.TrimSpace(m.projectionRootTaskID) != "" {
 		sections = append(sections, statusStyle.Render(fmt.Sprintf("subtree focus active • %s full board", m.keys.clearFocus.Help().Key)))
 	}
@@ -1862,10 +1837,7 @@ func (m Model) View() tea.View {
 	if overlay != "" {
 		if !m.help.ShowAll && isFullPageNodeMode(m.mode) {
 			body := overlay
-			fullSections := []string{header, headerRule, ""}
-			if path, _ := m.projectionPathWithProject(projectDisplayName(project)); path != "" {
-				fullSections = append(fullSections, statusStyle.Render("path: "+collapsePathForDisplay(path, max(24, m.width-6))), "")
-			}
+			fullSections := []string{headerBlock, ""}
 			body = lipgloss.PlaceHorizontal(max(1, innerWidth-(2*tuiOuterHorizontalPadding)), lipgloss.Center, body)
 			fullSections = append(fullSections, body, "")
 			fullBody := strings.Join(fullSections, "\n")
@@ -3282,11 +3254,7 @@ func (m *Model) closeDescriptionEditor(saved bool) tea.Cmd {
 			}
 			return nil
 		}
-		if m.threadDetailsActive {
-			m.status = "thread details"
-		} else {
-			m.status = "thread read mode"
-		}
+		m.status = "ready"
 		return nil
 	}
 	if saved {
@@ -6174,11 +6142,7 @@ func (m *Model) toggleHelpOverlay() {
 // toggleMouseSelectionMode toggles terminal-friendly text selection mode.
 func (m *Model) toggleMouseSelectionMode() {
 	m.mouseSelectionMode = !m.mouseSelectionMode
-	if m.mouseSelectionMode {
-		m.status = "text selection mode enabled"
-		return
-	}
-	m.status = "text selection mode disabled"
+	m.status = "ready"
 }
 
 // startWarningModal opens a dismiss-only warning modal with short guidance text.
@@ -6256,12 +6220,12 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.status = m.noticesFocusStatus()
 		return m, nil
 	case key.Matches(msg, m.keys.moveLeft):
-		if m.cyclePanelFocus(-1, false, true) {
+		if m.cyclePanelFocus(-1, true, true) {
 			m.status = m.noticesFocusStatus()
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.moveRight):
-		if m.cyclePanelFocus(1, false, true) {
+		if m.cyclePanelFocus(1, true, true) {
 			m.status = m.noticesFocusStatus()
 		}
 		return m, nil
@@ -6628,13 +6592,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.threadComposerActive = true
 			m.resetThreadComposerHistory()
-			m.status = "comment composer"
+			m.status = "ready"
 			return m, m.threadInput.Focus()
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
 			if m.threadComposerActive {
 				m.threadComposerActive = false
 				m.threadInput.Blur()
-				m.status = "thread comments"
+				m.status = "ready"
 				return m, m.focusThreadPanel(threadPanelComments)
 			}
 			return m, m.moveThreadPanelFocus(1)
@@ -6642,7 +6606,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.threadComposerActive {
 				m.threadComposerActive = false
 				m.threadInput.Blur()
-				m.status = "thread comments"
+				m.status = "ready"
 				return m, m.focusThreadPanel(threadPanelComments)
 			}
 			return m, m.moveThreadPanelFocus(-1)
@@ -6691,7 +6655,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.threadComposerActive = false
 				m.threadInput.Blur()
 				m.resetThreadComposerHistory()
-				m.status = "thread comments"
+				m.status = "ready"
 				return m, m.focusThreadPanel(threadPanelComments)
 			}
 			m.threadInput.Blur()
@@ -6790,7 +6754,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case threadPanelComments:
 				m.threadComposerActive = true
 				m.resetThreadComposerHistory()
-				m.status = "comment composer"
+				m.status = "ready"
 				return m, m.threadInput.Focus()
 			default:
 				return m, nil
@@ -8646,11 +8610,7 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		return m, m.loadData
 	case "toggle-selection-mode", "select-mode", "text-select":
 		m.mouseSelectionMode = !m.mouseSelectionMode
-		if m.mouseSelectionMode {
-			m.status = "text selection mode enabled"
-		} else {
-			m.status = "text selection mode disabled"
-		}
+		m.status = "ready"
 		return m, nil
 	case "focus-subtree", "zoom-task":
 		task, ok := m.selectedTaskInCurrentColumn()
@@ -11775,24 +11735,14 @@ func (m Model) renderNoticesSection(
 
 // renderInfoLine renders output for the current model state.
 func (m Model) renderInfoLine(project domain.Project, muted color.Color) string {
-	parts := []string{fmt.Sprintf("tasks: %d", len(m.tasks))}
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
-		parts = append(parts, "selected: none")
 		if strings.TrimSpace(m.projectionRootTaskID) != "" {
-			parts = append(parts, fmt.Sprintf("%s full board", m.keys.clearFocus.Help().Key))
+			return lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("%s full board", m.keys.clearFocus.Help().Key))
 		}
-		return lipgloss.NewStyle().Foreground(muted).Render(strings.Join(parts, " • "))
+		return ""
 	}
-	parts = append(parts, fmt.Sprintf("selected: %s", truncate(task.Title, 36)))
-	levelByTaskID := m.searchLevelByTaskID([]domain.Task{task})
-	level := strings.TrimSpace(levelByTaskID[task.ID])
-	if level == "" {
-		level = baseSearchLevelForTask(task)
-	}
-	if label := strings.ToLower(strings.TrimSpace(canonicalSearchLevelLabels[level])); label != "" {
-		parts = append(parts, "level: "+label)
-	}
+	parts := []string{fmt.Sprintf("selected: %s", truncate(task.Title, 48))}
 	if children := m.directChildCount(task.ID); children > 0 {
 		parts = append(parts, fmt.Sprintf("children: %d", children))
 		if strings.TrimSpace(m.projectionRootTaskID) == "" {
@@ -11842,14 +11792,14 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	switch m.mode {
 	case modeNone:
-		panelLine := "tab/shift+tab cycle focused panel; left/right move adjacent panel; enter opens notices detail"
+		panelLine := "tab/shift+tab cycle focused panel; left/right wrap panel focus; enter opens notices detail"
 		if m.hasGlobalNoticesPanel() {
-			panelLine = "tab/shift+tab cycle board/project/global panels; left/right move adjacent panel"
+			panelLine = "tab/shift+tab cycle board/project/global panels; left/right wraps panel focus"
 			if m.noticesFocused {
 				if m.noticesPanel == noticesPanelFocusGlobal {
-					panelLine = "tab/shift+tab cycle board/project/global panels; j/k or arrows move global notifications; enter opens selected item"
+					panelLine = "tab/shift+tab cycle board/project/global panels; up/down move global notifications; left/right wrap panels; enter opens selected item"
 				} else {
-					panelLine = "tab/shift+tab cycle board/project/global panels; j/k or arrows move project notifications; enter opens selected item"
+					panelLine = "tab/shift+tab cycle board/project/global panels; up/down move project notifications; left/right wrap panels; enter opens selected item"
 				}
 			}
 		}
@@ -12043,8 +11993,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeThread:
 		return "thread", []string{
-			"tab/shift+tab cycles details, comments, and context panels",
-			"left/right moves between columns; up/down moves between details and comments",
+			"tab/shift+tab and arrows cycle details, comments, and context panels",
 			"enter opens the focused panel action",
 			"i starts comment composition when the comments panel is focused",
 			"ctrl+s posts while composing; esc exits composer or returns to the prior screen",
@@ -12329,9 +12278,6 @@ func (m Model) fullPageNodeBodyHeight(hasSubtitle bool) int {
 		return 24
 	}
 	reserved := 12
-	if m.fullPageNodeScreenHasPath() {
-		reserved += 2
-	}
 	if hasSubtitle {
 		reserved++
 	}
@@ -12461,14 +12407,18 @@ func appendTaskFormActionRow(lines *[]string, hintStyle, focusStyle lipgloss.Sty
 	lineLabel := hintStyle.Render(label + ":")
 	if focusedField == field {
 		lineLabel = focusStyle.Render(label + ":")
-		if *focusLine < 0 {
-			*focusLine = len(*lines)
-		}
 	}
 	if strings.TrimSpace(value) == "" {
 		value = "-"
 	}
-	*lines = append(*lines, lineLabel+" "+value)
+	line := lineLabel + " " + value
+	if focusedField == field {
+		line = markViewportFocus(line)
+		if *focusLine < 0 {
+			*focusLine = len(*lines)
+		}
+	}
+	*lines = append(*lines, line)
 }
 
 // taskFormActionFieldSummary returns the rendered summary for one modal-only action row.
@@ -12546,7 +12496,11 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	if m.formFocus == taskFieldTitle {
 		titleLabel = focusStyle.Render("title:")
 	}
-	lines = append(lines, titleLabel+" "+titleInput.View())
+	titleLine := titleLabel + " " + titleInput.View()
+	if m.formFocus == taskFieldTitle {
+		titleLine = markViewportFocus(titleLine)
+	}
+	lines = append(lines, titleLine)
 	if m.formFocus == taskFieldTitle {
 		setFocus()
 	}
@@ -12555,6 +12509,9 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	descriptionLabel := hintStyle.Render("description:")
 	if m.formFocus == taskFieldDescription {
 		descriptionLabel = focusStyle.Render("description:")
+	}
+	if m.formFocus == taskFieldDescription {
+		descriptionLabel = markViewportFocus(descriptionLabel)
 	}
 	lines = append(lines, descriptionLabel)
 	if m.formFocus == taskFieldDescription {
@@ -12580,7 +12537,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	selectedSubtaskRow := clamp(m.taskFormSubtaskCursor, 0, len(subtasks))
 	newRow := "  + create new subtask"
 	if m.formFocus == taskFieldSubtasks && selectedSubtaskRow == 0 {
-		newRow = activeRowStyle.Render("> + create new subtask")
+		newRow = markViewportFocus(activeRowStyle.Render("> + create new subtask"))
 		focusLine = len(lines)
 	}
 	lines = append(lines, newRow)
@@ -12602,7 +12559,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 			}
 			line := fmt.Sprintf("  %s %s %s", check, truncate(subtask.Title, 48), hintStyle.Render("state:"+lifecycleStateLabel(state)))
 			if m.formFocus == taskFieldSubtasks && selectedSubtaskRow == idx+1 {
-				line = activeRowStyle.Render("> " + strings.TrimSpace(line))
+				line = markViewportFocus(activeRowStyle.Render("> " + strings.TrimSpace(line)))
 				focusLine = len(lines)
 			}
 			lines = append(lines, line)
@@ -12617,7 +12574,11 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	if m.formFocus == taskFieldPriority {
 		priorityLabel = focusStyle.Render("priority:")
 	}
-	lines = append(lines, priorityLabel+" "+m.renderPriorityPicker(accent, lipgloss.Color("241")))
+	priorityLine := priorityLabel + " " + m.renderPriorityPicker(accent, lipgloss.Color("241"))
+	if m.formFocus == taskFieldPriority {
+		priorityLine = markViewportFocus(priorityLine)
+	}
+	lines = append(lines, priorityLine)
 	if m.formFocus == taskFieldPriority {
 		setFocus()
 	}
@@ -12631,7 +12592,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	appendTaskFormActionRow(&lines, hintStyle, focusStyle, taskFieldBlockedBy, m.formFocus, "blocked_by", m.taskFormActionFieldSummary(taskFieldBlockedBy), &focusLine)
 	lines = append(lines, hintStyle.Render("blocked_reason:"))
 	if m.formFocus == taskFieldBlockedReason {
-		lines[len(lines)-1] = focusStyle.Render("blocked_reason:")
+		lines[len(lines)-1] = markViewportFocus(focusStyle.Render("blocked_reason:"))
 		setFocus()
 	}
 	blockedReason := strings.TrimSpace(m.formInputs[taskFieldBlockedReason].Value())
@@ -12643,7 +12604,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	lines = append(lines, "")
 	commentsLabel := hintStyle.Render(fmt.Sprintf("comments (%d):", len(m.taskInfoComments)))
 	if m.formFocus == taskFieldComments {
-		commentsLabel = focusStyle.Render(fmt.Sprintf("comments (%d):", len(m.taskInfoComments)))
+		commentsLabel = markViewportFocus(focusStyle.Render(fmt.Sprintf("comments (%d):", len(m.taskInfoComments))))
 		setFocus()
 	}
 	lines = append(lines, commentsLabel)
@@ -12679,7 +12640,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 		lines = append(lines, "")
 		header := hintStyle.Render(label + ":")
 		if m.formFocus == field {
-			header = focusStyle.Render(label + ":")
+			header = markViewportFocus(focusStyle.Render(label + ":"))
 			setFocus()
 		}
 		lines = append(lines, header)
@@ -12705,7 +12666,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	selectedResourceRow := clamp(m.taskFormResourceCursor, 0, len(m.taskFormResourceRefs))
 	newResourceLine := "  + attach new resource"
 	if m.formFocus == taskFieldResources && selectedResourceRow == 0 {
-		newResourceLine = activeRowStyle.Render("> + attach new resource")
+		newResourceLine = markViewportFocus(activeRowStyle.Render("> + attach new resource"))
 		focusLine = len(lines)
 	}
 	lines = append(lines, newResourceLine)
@@ -12722,13 +12683,13 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 			}
 			line := "  " + fmt.Sprintf("%s %s", ref.ResourceType, truncate(location, 56))
 			if m.formFocus == taskFieldResources && selectedResourceRow == idx+1 {
-				line = activeRowStyle.Render("> " + strings.TrimSpace(line))
+				line = markViewportFocus(activeRowStyle.Render("> " + strings.TrimSpace(line)))
 				focusLine = len(lines)
 			}
 			lines = append(lines, line)
 		}
 	}
-	return lines, focusLine
+	return resolveViewportFocus(lines)
 }
 
 // projectFormBodyLines renders project add/edit content using the same full-section modal layout.
@@ -12746,7 +12707,11 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	if m.projectFormFocus == projectFieldName {
 		nameLabel = focusStyle.Render("name:")
 	}
-	lines = append(lines, nameLabel+" "+nameInput.View())
+	nameLine := nameLabel + " " + nameInput.View()
+	if m.projectFormFocus == projectFieldName {
+		nameLine = markViewportFocus(nameLine)
+	}
+	lines = append(lines, nameLine)
 	if m.projectFormFocus == projectFieldName {
 		focusLine = len(lines) - 1
 	}
@@ -12755,7 +12720,7 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	lines = append(lines, "")
 	descriptionLabel := hintStyle.Render("description:")
 	if m.projectFormFocus == projectFieldDescription {
-		descriptionLabel = focusStyle.Render("description:")
+		descriptionLabel = markViewportFocus(focusStyle.Render("description:"))
 		if focusLine < 0 {
 			focusLine = len(lines)
 		}
@@ -12775,7 +12740,11 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 		if m.projectFormFocus == field {
 			lineLabel = focusStyle.Render(label + ":")
 		}
-		lines = append(lines, lineLabel+" "+in.View())
+		line := lineLabel + " " + in.View()
+		if m.projectFormFocus == field {
+			line = markViewportFocus(line)
+		}
+		lines = append(lines, line)
 		if m.projectFormFocus == field {
 			focusLine = len(lines) - 1
 		}
@@ -12790,7 +12759,7 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	renderProjectInput("tags", projectFieldTags)
 	renderProjectInput("root_path", projectFieldRootPath)
 
-	return lines, focusLine
+	return resolveViewportFocus(lines)
 }
 
 // taskInfoBodyLines renders reusable task-info sections for the main task-info viewport.
@@ -13403,10 +13372,12 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("enter/e", "field action"),
 			helpBinding("ctrl+s", "save"),
 			helpBinding("↑/↓", "wrap fields"),
-			helpBinding("←/→", "pick row"),
 			helpBinding("tab", "next field"),
 			helpBinding("esc", "cancel"),
 			helpBinding("?", "help"),
+		}
+		if m.formFocus == taskFieldSubtasks || m.formFocus == taskFieldResources {
+			short = append(short[:3], append([]key.Binding{helpBinding("←/→", "list rows")}, short[3:]...)...)
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	case modeEditTask:
@@ -13414,9 +13385,11 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("enter/e", "field action"),
 			helpBinding("ctrl+s", "save"),
 			helpBinding("↑/↓", "wrap fields"),
-			helpBinding("←/→", "pick row"),
 			helpBinding("esc", "cancel"),
 			helpBinding("?", "help"),
+		}
+		if m.formFocus == taskFieldSubtasks || m.formFocus == taskFieldResources {
+			short = append(short[:3], append([]key.Binding{helpBinding("←/→", "list rows")}, short[3:]...)...)
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	case modeAddProject, modeEditProject:
@@ -13494,7 +13467,27 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	default:
 		if m.mode == modeNone {
-			return staticHelpKeyMap{short: m.keys.ShortHelp(), full: m.keys.FullHelp()}
+			short := []key.Binding{
+				helpBinding("n", "new task"),
+				helpBinding("enter", "task info"),
+				helpBinding("e", "edit"),
+				helpBinding("tab", "panels"),
+				helpBinding("/", "search"),
+				helpBinding("?", "help"),
+				helpBinding("q", "quit"),
+			}
+			full := [][]key.Binding{
+				short,
+				{
+					helpBinding("h/l", "columns"),
+					helpBinding("j/k", "tasks"),
+					helpBinding("[/]", "move"),
+					helpBinding("space", "select"),
+					helpBinding("f/F", "subtree"),
+					helpBinding(":/.", "actions"),
+				},
+			}
+			return staticHelpKeyMap{short: short, full: full}
 		}
 		short := []key.Binding{
 			helpBinding("esc", "close"),
@@ -13532,6 +13525,25 @@ func buildAutoScrollViewport(content string, width, height, focusLine int) viewp
 		vp.SetYOffset(target)
 	}
 	return vp
+}
+
+const viewportFocusMarker = "<<tui-focus>>"
+
+// markViewportFocus prefixes one rendered line with an internal marker used to recover the final row offset.
+func markViewportFocus(line string) string {
+	return viewportFocusMarker + line
+}
+
+// resolveViewportFocus strips the internal focus marker and returns the rendered row offset for the marked line.
+func resolveViewportFocus(lines []string) ([]string, int) {
+	content := strings.Join(lines, "\n")
+	idx := strings.Index(content, viewportFocusMarker)
+	if idx < 0 {
+		return lines, -1
+	}
+	focusLine := lipgloss.Height(content[:idx])
+	content = strings.ReplaceAll(content, viewportFocusMarker, "")
+	return strings.Split(content, "\n"), focusLine
 }
 
 // renderNodeModalViewport renders the shared bordered body for node full-page surfaces.
@@ -14611,13 +14623,13 @@ func (m Model) modeLabel() string {
 func (m Model) modePrompt() string {
 	switch m.mode {
 	case modeAddTask:
-		return "new " + strings.ToLower(m.taskFormNodeLabel()) + ": enter/e opens field actions, ctrl+s saves, up/down wrap fields, left/right pick rows, esc cancels"
+		return "new " + strings.ToLower(m.taskFormNodeLabel()) + ": enter/e opens field actions, ctrl+s saves, up/down wrap fields, left/right list rows, esc cancels"
 	case modeSearch:
 		return "search query: " + m.input + " (enter apply, esc cancel)"
 	case modeRenameTask:
 		return "rename task: " + m.input + " (enter save, esc cancel)"
 	case modeEditTask:
-		return "edit " + strings.ToLower(m.taskFormNodeLabel()) + ": enter/e opens field actions, ctrl+s saves, up/down wrap fields, left/right pick rows, esc cancels"
+		return "edit " + strings.ToLower(m.taskFormNodeLabel()) + ": enter/e opens field actions, ctrl+s saves, up/down wrap fields, left/right list rows, esc cancels"
 	case modeDuePicker:
 		return "due picker: tab focus controls, type date/time in picker, j/k navigate list, enter apply, esc cancel"
 	case modeProjectPicker:
@@ -14659,7 +14671,7 @@ func (m Model) modePrompt() string {
 	case modeDescriptionEditor:
 		return "description editor: tab preview/edit, ctrl+s save, esc cancel"
 	case modeThread:
-		return "thread: tab or arrows switch panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; pgup/pgdown/home/end scroll comments; esc backs out"
+		return "thread: tab or arrows wrap panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; pgup/pgdown/home/end scroll comments; esc backs out"
 	default:
 		return ""
 	}
@@ -14948,8 +14960,8 @@ func headerMarkStyle() lipgloss.Style {
 
 // boardHeaderLinesBeforeBoard returns the count of rows rendered before the board begins.
 func boardHeaderLinesBeforeBoard() int {
-	// Boxed mark + divider + spacer + path line.
-	return lipgloss.Height(headerMarkStyle().Render(headerMarkText)) + 3
+	// Boxed mark with inline path + divider + spacer.
+	return lipgloss.Height(headerMarkStyle().Render(headerMarkText)) + 2
 }
 
 // boardTop handles board top.

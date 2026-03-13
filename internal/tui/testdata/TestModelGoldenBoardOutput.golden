@@ -1,8 +1,7 @@
 [?2026$p[?1049h[?25l[?2004h[?1002h[?1006h[=1;1u[?u[H[2J ┌─────────┐
- │ TILLSYN │
+ │ TILLSYN │  path: Inbox
  └─────────┘
  ──────────────────────────────────────────────────────────────────────────────────────────────
- path: Inbox
 
  ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
@@ -14,6 +13,7 @@
  │                                                     │ │ Agent/User Action                  │
  │                                                     │ │ no notifications requiring user…   │
  │                                                     │ │                                    │
+ │                                                     │ │ Selection                          │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
@@ -22,7 +22,7 @@
  │                                                     │ │ requires user action across pro…   │
  │                                                     │ │                                    │
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
- tasks: 1 • selected: Golden board task • level: task
- deps: total 1 • blocked 0 • unresolved 0 • edges 0
+ selected: Golden board task
  0 overdue * 0 due soon
- n new task • i/enter task info • e edit task • f focus subtree • ctrl+y text select mode …[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
+
+ n new task • enter task info • e edit • tab panels • / search • ? help • q quit[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
