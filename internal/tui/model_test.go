@@ -3565,6 +3565,14 @@ func TestModelTaskInfoShowsSubtasksAcrossColumns(t *testing.T) {
 	if !strings.Contains(rendered, "Cross-column subtask") {
 		t.Fatalf("expected task info modal to include subtasks across columns, got\n%s", rendered)
 	}
+
+	editMode := m
+	_ = editMode.startTaskForm(&parent)
+	editBody, _ := editMode.taskFormBodyLines(72, lipgloss.NewStyle().Foreground(lipgloss.Color("241")), lipgloss.Color("62"))
+	editRendered := strings.ToLower(stripANSI(strings.Join(editBody, "\n")))
+	if !strings.Contains(editRendered, "subtasks") || !strings.Contains(editRendered, "cross-column subtask") {
+		t.Fatalf("expected edit-task modal to include subtasks section with children, got %q", editRendered)
+	}
 }
 
 // TestModelTaskInfoEscStepsBack verifies esc navigates to parent before closing the task-info modal.
@@ -4721,6 +4729,78 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 			last = idx
 		}
 	}
+	nextNonEmptyLine := func(lines []string, start int) string {
+		t.Helper()
+		for idx := start + 1; idx < len(lines); idx++ {
+			line := strings.TrimSpace(strings.ToLower(stripANSI(lines[idx])))
+			if line != "" {
+				return line
+			}
+		}
+		return ""
+	}
+	assertDescriptionDirectlyUnderTitle := func(lines []string, titleToken string) {
+		t.Helper()
+		titleToken = strings.TrimSpace(strings.ToLower(titleToken))
+		for idx := range lines {
+			line := strings.TrimSpace(strings.ToLower(stripANSI(lines[idx])))
+			if !strings.Contains(line, titleToken) {
+				continue
+			}
+			if next := nextNonEmptyLine(lines, idx); !strings.Contains(next, "description") {
+				t.Fatalf("expected description directly under title %q, got %q", titleToken, next)
+			}
+			return
+		}
+		t.Fatalf("expected title line containing %q", titleToken)
+	}
+	assertSubtasksSection := func(body string) {
+		t.Helper()
+		if !strings.Contains(body, "subtasks") {
+			t.Fatalf("expected subtasks section, got %q", body)
+		}
+		if !strings.Contains(body, "0/0") && !strings.Contains(body, "no subtasks") && !strings.Contains(body, "(none)") {
+			t.Fatalf("expected subtasks empty-state hint, got %q", body)
+		}
+	}
+	assertInfoMetadataSplitLines := func(lines []string) {
+		t.Helper()
+		clean := make([]string, 0, len(lines))
+		for _, raw := range lines {
+			clean = append(clean, strings.TrimSpace(strings.ToLower(stripANSI(raw))))
+		}
+		priorityLine := -1
+		dueLine := -1
+		labelsLine := -1
+		for idx, line := range clean {
+			switch {
+			case strings.HasPrefix(line, "priority:"):
+				if priorityLine < 0 {
+					priorityLine = idx
+				}
+			case strings.HasPrefix(line, "due:"):
+				if dueLine < 0 {
+					dueLine = idx
+				}
+			case strings.HasPrefix(line, "labels:"):
+				if labelsLine < 0 {
+					labelsLine = idx
+				}
+			}
+		}
+		if priorityLine < 0 || dueLine < 0 || labelsLine < 0 {
+			t.Fatalf("expected separate priority/due/labels lines, got %#v", clean)
+		}
+		if strings.Contains(clean[priorityLine], "due:") || strings.Contains(clean[priorityLine], "labels:") {
+			t.Fatalf("expected priority line to contain only priority metadata, got %q", clean[priorityLine])
+		}
+		if strings.Contains(clean[dueLine], "priority:") || strings.Contains(clean[dueLine], "labels:") {
+			t.Fatalf("expected due line to contain only due metadata, got %q", clean[dueLine])
+		}
+		if strings.Contains(clean[labelsLine], "priority:") || strings.Contains(clean[labelsLine], "due:") {
+			t.Fatalf("expected labels line to contain only labels metadata, got %q", clean[labelsLine])
+		}
+	}
 
 	projectPicker := m
 	projectPicker.mode = modeProjectPicker
@@ -4750,11 +4830,23 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		if !strings.Contains(out, "scroll:") {
 			t.Fatalf("expected shared node modal scroll indicator in edit overlay, got %q", out)
 		}
+		if !strings.Contains(out, "mode: edit") || !strings.Contains(strings.ToLower(out), "kind: task") {
+			t.Fatalf("expected edit header metadata line, got %q", out)
+		}
 	}
 	boxWidth := taskInfoOverlayBoxWidth(80)
 	contentWidth := max(24, boxWidth-8)
 	editBody, _ := editMode.taskFormBodyLines(contentWidth, lipgloss.NewStyle().Foreground(muted), accent)
-	assertSectionOrder(strings.Join(editBody, "\n"), []string{"description", "effective labels", "dependencies", "comments", "resources"})
+	editBodyText := strings.ToLower(stripANSI(strings.Join(editBody, "\n")))
+	assertSectionOrder(editBodyText, []string{"title:", "description", "subtasks", "dependencies", "comments", "resources"})
+	assertDescriptionDirectlyUnderTitle(editBody, "title:")
+	assertSubtasksSection(editBodyText)
+	if !strings.Contains(editBodyText, "blank keeps existing values") {
+		t.Fatalf("expected edit body to include clearer blank-value guidance, got %q", editBodyText)
+	}
+	if strings.Contains(editBodyText, "effective labels") || strings.Contains(editBodyText, "inherited labels") {
+		t.Fatalf("expected edit body to hide inherited/effective labels block, got %q", editBodyText)
+	}
 	addBranchMode := m
 	_ = addBranchMode.startBranchForm(nil)
 	if out := addBranchMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "New Branch") {
@@ -4791,9 +4883,19 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		if !strings.Contains(out, "scroll:") {
 			t.Fatalf("expected shared node modal scroll indicator in task info overlay, got %q", out)
 		}
+		if !strings.Contains(out, "mode: info") || !strings.Contains(strings.ToLower(out), "kind: task") {
+			t.Fatalf("expected info header metadata line, got %q", out)
+		}
 	}
 	infoBody := infoMode.taskInfoBodyLines(task, boxWidth, contentWidth, lipgloss.NewStyle().Foreground(muted))
-	assertSectionOrder(strings.Join(infoBody, "\n"), []string{"description", "effective labels", "dependencies", "comments", "resources"})
+	infoBodyText := strings.ToLower(stripANSI(strings.Join(infoBody, "\n")))
+	assertSectionOrder(infoBodyText, []string{strings.ToLower(task.Title), "description", "subtasks", "dependencies", "comments", "resources"})
+	assertDescriptionDirectlyUnderTitle(infoBody, strings.ToLower(task.Title))
+	assertSubtasksSection(infoBodyText)
+	assertInfoMetadataSplitLines(infoBody)
+	if strings.Contains(infoBodyText, "effective labels") || strings.Contains(infoBodyText, "inherited labels") {
+		t.Fatalf("expected task-info body to hide inherited/effective labels block, got %q", infoBodyText)
+	}
 	branchInfoMode := m
 	if !branchInfoMode.openTaskInfo(branch.ID, "task info") {
 		t.Fatal("expected branch task info mode")
@@ -4840,6 +4942,47 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
 	if !strings.Contains(panelWithoutSelection, "no task selected") {
 		t.Fatalf("expected overview panel no-selection hint, got %q", panelWithoutSelection)
+	}
+}
+
+// TestModelFullPageNodeViewShowsHeaderAndBorder verifies full-page info/edit keep the TILLSYN header and node border.
+func TestModelFullPageNodeViewShowsHeaderAndBorder(t *testing.T) {
+	now := time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task-info mode, got %v", m.mode)
+	}
+	infoView := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(infoView, "TILLSYN") || !strings.Contains(infoView, "Task Info") {
+		t.Fatalf("expected task-info view to include TILLSYN header + task info title, got\n%s", infoView)
+	}
+	if !(strings.Contains(infoView, "┌") && strings.Contains(infoView, "┐") && strings.Contains(infoView, "│")) {
+		t.Fatalf("expected bordered full-page node surface in task-info view, got\n%s", infoView)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	}
+	editView := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(editView, "TILLSYN") || !strings.Contains(editView, "Edit Task") {
+		t.Fatalf("expected edit-task view to include TILLSYN header + edit title, got\n%s", editView)
+	}
+	if !(strings.Contains(editView, "┌") && strings.Contains(editView, "┐") && strings.Contains(editView, "│")) {
+		t.Fatalf("expected bordered full-page node surface in edit view, got\n%s", editView)
 	}
 }
 
@@ -4939,6 +5082,293 @@ func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	m = applyMsg(t, m, keyRune('x'))
 	if m.formInputs[2].Value() != changed {
 		t.Fatalf("expected typing ignored on priority picker, got %q", m.formInputs[2].Value())
+	}
+}
+
+// TestTaskFormDependencyPlaceholdersUseCSVTask verifies dependency placeholders use `csv task`.
+func TestTaskFormDependencyPlaceholdersUseCSVTask(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	assertDependencyPlaceholders := func(mode Model, scope string) {
+		t.Helper()
+		for _, field := range []int{taskFieldDependsOn, taskFieldBlockedBy} {
+			placeholder := strings.TrimSpace(strings.ToLower(mode.formInputs[field].Placeholder))
+			if placeholder != "csv task" {
+				t.Fatalf("expected %s placeholder %d to be %q, got %q", scope, field, "csv task", placeholder)
+			}
+			if strings.Contains(placeholder, "ids") {
+				t.Fatalf("expected %s placeholder %d to avoid ids wording, got %q", scope, field, placeholder)
+			}
+		}
+	}
+
+	addMode := m
+	_ = addMode.startTaskForm(nil)
+	assertDependencyPlaceholders(addMode, "add-task")
+
+	editMode := m
+	_ = editMode.startTaskForm(&task)
+	assertDependencyPlaceholders(editMode, "edit-task")
+}
+
+// TestModelEditTaskKeyboardSaveAndPickerShortcuts verifies edit-mode save, picker/editor shortcuts, and wrap-around navigation.
+func TestModelEditTaskKeyboardSaveAndPickerShortcuts(t *testing.T) {
+	now := time.Date(2026, 2, 25, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	}
+	m.formInputs[taskFieldTitle].SetValue("Task Saved")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	if m.mode != modeNone {
+		t.Fatalf("expected ctrl+s to save and close edit form, got %v", m.mode)
+	}
+	if svc.createTaskCalls != 0 {
+		t.Fatalf("expected ctrl+s to avoid subtask-create path, got createTaskCalls=%d", svc.createTaskCalls)
+	}
+	updated, ok := svc.taskByID(task.ID)
+	if !ok {
+		t.Fatal("expected updated task in fake service")
+	}
+	if updated.Title != "Task Saved" {
+		t.Fatalf("expected ctrl+s save to persist title, got %q", updated.Title)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected re-opened edit-task mode, got %v", m.mode)
+	}
+
+	m.formFocus = taskFieldDescription
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected enter on description to open editor, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected esc to return from description editor to edit mode, got %v", m.mode)
+	}
+
+	m.formFocus = taskFieldDescription
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected e on description to open editor, got %v", m.mode)
+	}
+	if got := m.descriptionEditorInput.Value(); got != "" {
+		t.Fatalf("expected e-opened description editor to avoid seed rune injection, got %q", got)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected esc to return from description editor after e, got %v", m.mode)
+	}
+
+	m.formFocus = taskFieldLabels
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeLabelPicker {
+		t.Fatalf("expected enter on labels to open picker, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected esc from label picker to return edit mode, got %v", m.mode)
+	}
+
+	_ = m.focusTaskFormField(taskFieldLabels)
+	beforeLabelText := m.formInputs[taskFieldLabels].Value()
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected e in labels field to remain in edit mode for rune entry, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldLabels].Value(); got != beforeLabelText+"e" {
+		t.Fatalf("expected e typed into labels field, got %q", got)
+	}
+
+	m.formInputs[taskFieldObjective].SetValue("existing objective")
+	m.formFocus = taskFieldObjective
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected e on objective to open editor, got %v", m.mode)
+	}
+	if got := m.descriptionEditorInput.Value(); got != "existing objective" {
+		t.Fatalf("expected e-opened objective editor to avoid seed rune injection, got %q", got)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected esc from objective editor to return edit mode, got %v", m.mode)
+	}
+
+	_ = m.focusTaskFormField(taskFieldDue)
+	beforeDueText := m.formInputs[taskFieldDue].Value()
+	m = applyMsg(t, m, keyRune('d'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected d in edit due field to keep edit mode (no due picker shortcut), got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldDue].Value(); got != beforeDueText+"d" {
+		t.Fatalf("expected d typed into due field in edit mode, got %q", got)
+	}
+
+	m.formFocus = taskFieldResources
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected ctrl+r in edit mode to avoid resource picker shortcut, got %v", m.mode)
+	}
+
+	m.formFocus = taskFieldDependsOn
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected enter on depends_on to open dependency inspector, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected esc from dependency inspector to return edit mode, got %v", m.mode)
+	}
+
+	_ = m.focusTaskFormField(taskFieldDependsOn)
+	beforeDepends := m.formInputs[taskFieldDependsOn].Value()
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected e in depends_on field to remain in edit mode for rune entry, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldDependsOn].Value(); got != beforeDepends+"e" {
+		t.Fatalf("expected e typed into depends_on field, got %q", got)
+	}
+
+	m.formFocus = taskFieldTitle
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.formFocus != taskFieldResources {
+		t.Fatalf("expected up at top field to wrap to bottom field, got %d", m.formFocus)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.formFocus != taskFieldTitle {
+		t.Fatalf("expected down at bottom field to wrap to top field, got %d", m.formFocus)
+	}
+
+	m.formFocus = taskFieldTitle
+	beforeTitle := m.formInputs[taskFieldTitle].Value()
+	m = applyMsg(t, m, keyRune('k'))
+	if m.formFocus != taskFieldTitle {
+		t.Fatalf("expected k in title field to remain on title, got %d", m.formFocus)
+	}
+	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"k" {
+		t.Fatalf("expected k typed into title field, got %q", got)
+	}
+	beforeTitle = m.formInputs[taskFieldTitle].Value()
+	m = applyMsg(t, m, keyRune('j'))
+	if m.formFocus != taskFieldTitle {
+		t.Fatalf("expected j in title field to remain on title, got %d", m.formFocus)
+	}
+	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"j" {
+		t.Fatalf("expected j typed into title field, got %q", got)
+	}
+
+	m.formFocus = taskFieldSubtasks
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected e on subtasks section to open subtask form, got %v", m.mode)
+	}
+	if m.taskFormKind != domain.WorkKindSubtask {
+		t.Fatalf("expected subtask kind from subtasks section action, got %q", m.taskFormKind)
+	}
+}
+
+// TestModelEditTaskSubtaskAndResourceRowSelection verifies edit-mode row selection for subtasks/resources.
+func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
+	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-parent",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			ResourceRefs: []domain.ResourceRef{{
+				ResourceType: domain.ResourceTypeLocalFile,
+				PathMode:     domain.PathModeRelative,
+				Location:     "docs/plan.md",
+			}},
+		},
+	}, now)
+	subtask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-child",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		ParentID:  parent.ID,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, subtask})
+	m := loadReadyModel(t, NewModel(svc))
+	m.projectRoots = map[string]string{"inbox": "/tmp"}
+
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit mode, got %v", m.mode)
+	}
+
+	m.formFocus = taskFieldSubtasks
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	if m.taskFormSubtaskCursor != 1 {
+		t.Fatalf("expected subtask cursor on first existing row, got %d", m.taskFormSubtaskCursor)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected selected subtask to open in edit mode, got %v", m.mode)
+	}
+	if m.editingTaskID != subtask.ID {
+		t.Fatalf("expected selected subtask %q to open, got %q", subtask.ID, m.editingTaskID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected esc to close subtask edit form before reopening parent, got %v", m.mode)
+	}
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected parent edit mode, got %v", m.mode)
+	}
+	m.formFocus = taskFieldResources
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	if m.taskFormResourceCursor != 1 {
+		t.Fatalf("expected resource cursor on first existing row, got %d", m.taskFormResourceCursor)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeResourcePicker {
+		t.Fatalf("expected enter on selected resource row to open resource picker, got %v", m.mode)
+	}
+	if m.taskFormResourceEditIndex != 0 {
+		t.Fatalf("expected selected resource row to set edit index 0, got %d", m.taskFormResourceEditIndex)
 	}
 }
 
@@ -7452,9 +7882,13 @@ func TestModelResourcePickerAttachFromTaskInfoAndEdit(t *testing.T) {
 
 	m.mode = modeNone
 	m = applyMsg(t, m, keyRune('e'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit mode, got %v", m.mode)
+	}
+	m.formFocus = taskFieldResources
+	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeResourcePicker {
-		t.Fatalf("expected resource picker mode from edit-task ctrl+r, got %v", m.mode)
+		t.Fatalf("expected resource picker mode from edit-task resources section, got %v", m.mode)
 	}
 }
 
@@ -7494,17 +7928,18 @@ func TestModelResourcePickerBlockedWithoutProjectRoot(t *testing.T) {
 	if m.mode != modeEditTask {
 		t.Fatalf("expected edit mode, got %v", m.mode)
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m.formFocus = taskFieldResources
+	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeEditTask {
-		t.Fatalf("expected edit mode after blocked ctrl+r attach, got %v", m.mode)
+		t.Fatalf("expected edit mode after blocked resources attach, got %v", m.mode)
 	}
 	if !strings.Contains(m.status, "set project root first") {
 		t.Fatalf("expected blocked-attach status in edit mode, got %q", m.status)
 	}
 }
 
-// TestModelLabelInheritanceSourcesAndPicker verifies inherited label UX in task info/form flows.
-func TestModelLabelInheritanceSourcesAndPicker(t *testing.T) {
+// TestModelTaskInfoAndEditHideLabelInheritanceBlocks verifies info/edit hide inherited label blocks while keeping picker flows available.
+func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -7536,29 +7971,49 @@ func TestModelLabelInheritanceSourcesAndPicker(t *testing.T) {
 
 	m = applyMsg(t, m, keyRune('j')) // select child task
 	m = applyMsg(t, m, keyRune('i'))
-	info := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
-	if !strings.Contains(info, "effective labels") {
-		t.Fatalf("expected effective labels section, got %q", info)
-	}
-	if !strings.Contains(info, "global: global-label") || !strings.Contains(info, "project: project-label") || !strings.Contains(info, "phase: phase-label") {
-		t.Fatalf("expected inherited label sources in task info, got %q", info)
+	info := strings.ToLower(stripANSI(m.renderModeOverlay(
+		lipgloss.Color("62"),
+		lipgloss.Color("241"),
+		lipgloss.Color("239"),
+		lipgloss.NewStyle(),
+		96,
+	)))
+	if strings.Contains(info, "effective labels") || strings.Contains(info, "inherited labels") {
+		t.Fatalf("expected task-info output to hide inherited/effective labels block, got %q", info)
 	}
 
 	m = applyMsg(t, m, keyRune('e'))
-	for i := 0; i < 4; i++ {
-		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit task mode, got %v", m.mode)
 	}
-	if m.formFocus != 4 {
-		t.Fatalf("expected labels form focus, got %d", m.formFocus)
-	}
-	editOverlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
-	if !strings.Contains(editOverlay, "inherited labels") {
-		t.Fatalf("expected inherited label hint in task form, got %q", editOverlay)
+	m.formFocus = taskFieldLabels
+	editBody, _ := m.taskFormBodyLines(80, lipgloss.NewStyle().Foreground(lipgloss.Color("241")), lipgloss.Color("62"))
+	edit := strings.ToLower(stripANSI(strings.Join(editBody, "\n")))
+	if strings.Contains(edit, "effective labels") || strings.Contains(edit, "inherited labels") {
+		t.Fatalf("expected edit-task output to hide inherited/effective labels block, got %q", edit)
 	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeLabelPicker {
-		t.Fatalf("expected label picker mode, got %v", m.mode)
+		t.Fatalf("expected enter on labels to open label picker, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected esc to return to edit-task from label picker, got %v", m.mode)
+	}
+
+	_ = m.focusTaskFormField(taskFieldLabels)
+	beforeLabel := m.formInputs[taskFieldLabels].Value()
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected e on labels to stay in edit mode for rune entry, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldLabels].Value(); got != beforeLabel+"e" {
+		t.Fatalf("expected e typed into labels field, got %q", got)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeLabelPicker {
+		t.Fatalf("expected enter on labels to open label picker after rune entry, got %v", m.mode)
 	}
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, keyRune('j'))
@@ -7566,7 +8021,7 @@ func TestModelLabelInheritanceSourcesAndPicker(t *testing.T) {
 	if m.mode != modeEditTask {
 		t.Fatalf("expected return to edit-task after picker choose, got %v", m.mode)
 	}
-	if got := m.formInputs[4].Value(); !strings.Contains(got, "phase-label") {
+	if got := m.formInputs[taskFieldLabels].Value(); !strings.Contains(got, "phase-label") {
 		t.Fatalf("expected appended phase label in form value, got %q", got)
 	}
 }

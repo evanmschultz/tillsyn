@@ -3116,3 +3116,153 @@ Dual QA (required) after passing tests:
 Status:
 - FR-003 code/test/QA complete on agent side.
 - Awaiting user collaborative rerun confirmation for exact info/edit parity before advancing to next worksheet section.
+
+## Checkpoint 2026-03-05: FR-004 Edit/Info UX Policy Cleanup + QA Remediation Loop
+
+Objective:
+- address the next user-reported collaborative failure scope before resuming TUI section progression:
+  - keep info/edit on shared full-page node surfaces,
+  - align edit traversal/render ordering (description directly under title),
+  - remove inherited/effective labels rendering from info/edit,
+  - simplify edit interaction policy (`ctrl+s` save; no edit `d`/`ctrl+r`/`ctrl+s` subtask),
+  - add/edit subtasks/resources section actions and markdown-editor parity for metadata fields,
+  - split info metadata lines and auto-size description preview height to content (capped).
+
+Backlog/open-findings review checkpoint:
+1. Reviewed active collaborative backlog/open findings in:
+   - `PLAN.md` (active closeout + pending collaborative reruns),
+   - `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md`,
+   - `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`,
+   before implementing FR-004 scope; no roadmap expansion was introduced.
+
+Parallel/subagent execution:
+1. Spawned worker lane `LANE-UX-EDIT-NODE-TESTS` (lock: `internal/tui/model_test.go`) and worker lane `LANE-UX-EDIT-NODE-CODE-R2` (lock: `internal/tui/model.go`).
+2. Performed integrator review of both lane diffs before accepting integration.
+3. Ran independent dual QA passes with agents Hooke + Galileo; initial QA reported a real medium regression and hint-copy drift; follow-up remediation loop was executed and re-verified with fresh dual QA PASS.
+
+Context7 compliance:
+1. Pre-edit consult:
+   - `/charmbracelet/bubbles` and `/charmbracelet/bubbletea` key/viewport guidance -> PASS.
+2. After each failed `just test-pkg ./internal/tui` run, re-consulted Context7 before the next edit -> PASS.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - introduced shared full-page node rendering branch (`isFullPageNodeMode`) for info/edit node views (non-overlay framing),
+   - reordered task info/edit bodies so description appears directly under title,
+   - removed inherited/effective label display blocks from info/edit bodies,
+   - changed dependency placeholders to `csv task`,
+   - added typing-safe edit key routing:
+     - `ctrl+s` saves form,
+     - `enter/e` actions for due/markdown/subtasks/resources,
+     - labels/dependencies keep typing behavior with `enter`/`ctrl+l`/`o`,
+   - added wrap-around edit navigation top<->bottom on up/down and k/j boundary behavior,
+   - made task-info description viewport auto-grow to content height with existing max cap,
+   - split task-info metadata lines (`priority`, `due`, `labels`),
+   - synchronized help/hint copy to actual behavior.
+2. Updated `internal/tui/model_test.go`:
+   - added/updated coverage for FR-004 expectations (ordering, metadata line split, placeholder rename, key behavior, wrap navigation, subtasks visibility/actions, typing-safe `e`, no seed injection).
+3. Updated docs/trackers:
+   - `README.md` key-control note for due picker behavior in new/edit task contexts,
+   - `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` with FR-004/FX-004 findings, validation evidence, and discussion-log updates.
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/tui` -> FAIL (legacy edit `ctrl+r` expectations).
+2. Context7 re-consult after failure -> PASS.
+3. `just fmt` -> PASS.
+4. `just test-pkg ./internal/tui` -> PASS.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+7. QA pass 1 + pass 2 -> FAIL (medium `e` regression + hint-copy mismatch).
+8. Follow-up remediation edits applied.
+9. `just test-pkg ./internal/tui` -> FAIL (stale label-picker expectation).
+10. Context7 re-consult after failure -> PASS.
+11. `just fmt` -> PASS.
+12. `just test-pkg ./internal/tui` -> FAIL (same test flow still mixed mode sequence).
+13. Context7 re-consult after failure -> PASS.
+14. `just fmt` -> PASS.
+15. `just test-pkg ./internal/tui` -> PASS.
+16. `just check` -> PASS.
+17. `just ci` -> PASS.
+18. Help/hint copy sync edits.
+19. `just fmt` -> PASS.
+20. `just test-pkg ./internal/tui` -> PASS.
+21. `just check` -> PASS.
+22. `just ci` -> PASS.
+23. Final QA pass 1 (Hooke) -> PASS (low note only).
+24. Final QA pass 2 (Galileo) -> PASS.
+
+Files/docs updated in this checkpoint:
+1. `internal/tui/model.go`
+2. `internal/tui/model_test.go`
+3. `README.md`
+4. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+5. `PLAN.md`
+
+Status:
+- FR-004/FX-004 agent-side remediation is complete with passing package/full gates and final dual QA sign-off.
+- Collaborative progression remains paused pending user rerun/confirmation of the same failed section step (`T1-01`) before moving forward.
+
+## Checkpoint 2026-03-05: FR-005 Follow-up UX Polish Before Collaborative Rerun
+
+Objective:
+- apply the user-requested follow-up corrections before resuming collaborative TUI steps:
+  - clarify blank-value behavior in edit mode,
+  - place `kind/state/complete/mode` metadata in info/edit headers,
+  - make subtasks/resources rows focusable/selectable/editable in edit mode,
+  - stop edit-boundary `j/k` wrapping so typing `k` in title works,
+  - keep full-page node surfaces bordered with persistent `TILLSYN` header.
+
+Context7 compliance:
+1. Pre-edit consult:
+   - `/charmbracelet/bubbletea` key handling (`tea.KeyPressMsg`, arrow-vs-rune routing) -> PASS.
+2. Post-failure consult:
+   - after one `just test-pkg ./internal/tui` failure, re-consulted `/charmbracelet/bubbletea` before the next edit -> PASS.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - fixed task-form focus mapping to use stable field ids (and compatibility fallback for positional callers),
+   - moved info/edit lifecycle metadata into node header subtitle rendering,
+   - removed duplicate lifecycle line from task-info body and kept priority/due/labels as split lines,
+   - added selectable-row rendering and row actions for edit-mode `subtasks` and `resources`,
+   - clarified blank-value guidance copy,
+   - made edit-mode boundary wrap arrow-only (`up/down`) while preserving typed `j/k` input behavior,
+   - restored bordered full-page node surfaces and kept `TILLSYN` header visible while in full-page node modes,
+   - synchronized add/edit task hints/help copy to match Enter action semantics.
+2. Updated `internal/tui/model_test.go`:
+   - adjusted keyboard-wrap assertions to verify arrow-wrap + typed `j/k`,
+   - added coverage for header metadata lines in info/edit overlays,
+   - added focused edit-mode row-selection test for subtasks/resources actions,
+   - added full-view composition assertions for `TILLSYN` header + bordered node surface,
+   - added assertion for clarified blank-value guidance text.
+3. Updated collaborative tracking:
+   - recorded FR-005/FX-005 and validation/QA evidence in `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`.
+
+Commands run and outcomes:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> FAIL (new row-selection test reopened parent incorrectly while still in child edit mode).
+3. Context7 re-consult after failure -> PASS.
+4. Test flow fix + `just fmt` -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+8. QA findings hardening (help-copy alignment + extra view/guidance tests) applied.
+9. `just fmt` -> PASS.
+10. `just test-pkg ./internal/tui` -> PASS.
+11. `just check` -> PASS.
+12. `just ci` -> PASS.
+13. Parallel QA pass 1:
+    - Feynman (`019cbd28-39ce-7411-bca7-8366d7183f73`) -> PASS with low test-hardening notes.
+    - Planck (`019cbd28-3bf8-7aa1-9de0-2047c96776a6`) -> FAIL due overlay-guardrail interpretation conflict.
+14. Parallel QA pass 2 (explicit user-requirements framing, no code changes):
+    - Feynman -> PASS.
+    - Planck -> PASS.
+
+Files/docs updated in this checkpoint:
+1. `internal/tui/model.go`
+2. `internal/tui/model_test.go`
+3. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+4. `PLAN.md`
+
+Status:
+- FR-005/FX-005 agent-side remediation is complete with passing package/full gates and parallel QA sign-off against explicit user requirements.
+- Collaborative progression remains paused pending user rerun of `T1-01` before moving to the next step.

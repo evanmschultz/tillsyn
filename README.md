@@ -198,7 +198,7 @@ Full template: `config.example.toml`
 - `e`: edit task
 - `i` or `enter`: task info modal
 - `c` (in task info): open thread for the selected work item
-- `d` (in task form due field): open due-date picker
+- `d` (in new-task due field): open due-date picker (`enter`/`e` in edit-task due field)
 - `f`: focus selected subtree (including empty scopes)
 - `F`: return to full board
 - `p`: project picker
