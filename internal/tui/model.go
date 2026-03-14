@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
@@ -1491,30 +1492,12 @@ func (m Model) View() tea.View {
 			sections = append(sections, "", statusStyle.Render(m.status))
 		}
 		content := strings.Join(sections, "\n")
-		innerWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
+		innerWidth := m.appInnerWidth()
 		if innerWidth > 0 {
-			content = lipgloss.NewStyle().
-				Width(innerWidth).
-				PaddingLeft(tuiOuterHorizontalPadding).
-				PaddingRight(tuiOuterHorizontalPadding).
-				Render(content)
+			content = lipgloss.NewStyle().Width(innerWidth).Render(content)
 		}
-		helpBubble := m.help
-		helpBubble.ShowAll = false
-		helpBubble.SetWidth(innerWidth)
-		helpMap := m.activeBottomHelpKeyMap()
-		helpLine := lipgloss.NewStyle().
-			Foreground(muted).
-			BorderTop(true).
-			BorderForeground(dim).
-			Width(innerWidth).
-			Render(helpBubble.View(helpMap))
-		if tuiOuterHorizontalPadding > 0 {
-			helpLine = lipgloss.NewStyle().
-				PaddingLeft(tuiOuterHorizontalPadding).
-				PaddingRight(tuiOuterHorizontalPadding).
-				Render(helpLine)
-		}
+		content = applyOuterHorizontalPadding(content)
+		helpLine := applyOuterHorizontalPadding(m.renderBottomHelpLine(muted, dim, innerWidth))
 		contentHeight := lipgloss.Height(content)
 		if m.height > 0 {
 			helpHeight := lipgloss.Height(helpLine)
@@ -1563,7 +1546,7 @@ func (m Model) View() tea.View {
 	taskByID := m.tasksByID()
 	attentionItems, attentionTotal, attentionBlocked, attentionTop := m.scopeAttentionSummary(taskByID)
 
-	layoutWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
+	layoutWidth := m.appInnerWidth()
 	headerBlock := m.appHeaderBlock(statusStyle, layoutWidth)
 	noticesWidth := m.noticesPanelWidth(layoutWidth)
 	boardWidth := m.boardWidthFor(layoutWidth)
@@ -1793,36 +1776,14 @@ func (m Model) View() tea.View {
 	if count := len(m.selectedTaskIDs); count > 0 {
 		sections = append(sections, statusStyle.Render(fmt.Sprintf("%d tasks selected • %s toggle • esc clear", count, m.keys.multiSelect.Help().Key)))
 	}
-	if status := strings.TrimSpace(m.status); status != "" && status != "ready" {
-		if status != "board focus" && status != "global notifications focus" && status != "project notifications focus" && status != "global notifications" && !strings.HasPrefix(status, "project notifications:") {
-			sections = append(sections, statusStyle.Render(status))
-		}
+	if status := m.boardStatusText(); status != "" {
+		sections = append(sections, statusStyle.Render(status))
 	}
 	content := strings.Join(sections, "\n")
-	innerWidth := layoutWidth
-	if innerWidth > 0 {
-		content = lipgloss.NewStyle().
-			PaddingLeft(tuiOuterHorizontalPadding).
-			PaddingRight(tuiOuterHorizontalPadding).
-			Render(content)
-	}
+	content = applyOuterHorizontalPadding(content)
 
-	helpBubble := m.help
-	helpBubble.ShowAll = false
-	helpBubble.SetWidth(innerWidth)
-	helpMap := m.activeBottomHelpKeyMap()
-	helpLine := lipgloss.NewStyle().
-		Foreground(muted).
-		BorderTop(true).
-		BorderForeground(dim).
-		Width(innerWidth).
-		Render(helpBubble.View(helpMap))
-	if tuiOuterHorizontalPadding > 0 {
-		helpLine = lipgloss.NewStyle().
-			PaddingLeft(tuiOuterHorizontalPadding).
-			PaddingRight(tuiOuterHorizontalPadding).
-			Render(helpLine)
-	}
+	innerWidth := layoutWidth
+	helpLine := applyOuterHorizontalPadding(m.renderBottomHelpLine(muted, dim, innerWidth))
 
 	contentHeight := lipgloss.Height(content)
 	if m.height > 0 {
@@ -3595,6 +3556,14 @@ func formatDueValue(dueAt *time.Time) string {
 	return due.Format("2006-01-02 15:04")
 }
 
+// formatSystemTimestamp renders one system metadata timestamp in local time for info views.
+func formatSystemTimestamp(at *time.Time) string {
+	if at == nil || at.IsZero() {
+		return "-"
+	}
+	return at.In(time.Local).Format(time.RFC3339)
+}
+
 // parseLabelsInput parses input into a normalized form.
 func parseLabelsInput(raw string, current []string) []string {
 	text := strings.TrimSpace(raw)
@@ -3859,12 +3828,15 @@ func wrapIndex(current int, delta int, total int) int {
 
 // isForwardTabKey reports whether a key press should advance panel/form focus.
 func isForwardTabKey(msg tea.KeyPressMsg) bool {
+	if isBackwardTabKey(msg) {
+		return false
+	}
 	return msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i"
 }
 
 // isBackwardTabKey reports whether a key press should reverse panel/form focus.
 func isBackwardTabKey(msg tea.KeyPressMsg) bool {
-	return msg.String() == "shift+tab" || msg.String() == "backtab"
+	return msg.String() == "shift+tab" || msg.String() == "backtab" || (msg.Code == tea.KeyTab && msg.Mod&tea.ModShift != 0)
 }
 
 // isNoticesPanelVisible reports whether the notices panel can be rendered at current width.
@@ -4291,6 +4263,30 @@ func scoreCommandPaletteItem(query string, item commandPaletteItem) (int, bool) 
 	return score, ok
 }
 
+// normalizeCommandPaletteToken canonicalizes typed command ids so dash, underscore, and space variants match.
+func normalizeCommandPaletteToken(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	var out strings.Builder
+	out.Grow(len(value))
+	lastDash := false
+	for _, r := range value {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			out.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_' || unicode.IsSpace(r):
+			if !lastDash {
+				out.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
 // bestFuzzyScore returns the best fuzzy score across candidate strings.
 func bestFuzzyScore(query string, candidates ...string) (int, bool) {
 	best := 0
@@ -4310,8 +4306,8 @@ func bestFuzzyScore(query string, candidates ...string) (int, bool) {
 
 // fuzzyScore returns a deterministic fuzzy score where higher is better.
 func fuzzyScore(query, candidate string) (int, bool) {
-	query = strings.TrimSpace(strings.ToLower(query))
-	candidate = strings.TrimSpace(strings.ToLower(candidate))
+	query = normalizeCommandPaletteToken(query)
+	candidate = normalizeCommandPaletteToken(candidate)
 	if query == "" {
 		return 0, true
 	}
@@ -4364,7 +4360,7 @@ func (m Model) commandToExecute() string {
 		idx := clamp(m.commandIndex, 0, len(m.commandMatches)-1)
 		return m.commandMatches[idx].Command
 	}
-	return strings.TrimSpace(strings.ToLower(m.commandInput.Value()))
+	return normalizeCommandPaletteToken(m.commandInput.Value())
 }
 
 // priorityIndex handles priority index.
@@ -7149,7 +7145,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedColumn = 0
 			m.selectedTask = 0
 			m.mode = modeNone
-			m.status = "project switched"
+			m.status = ""
 			return m, m.loadData
 		default:
 			return m, nil
@@ -8457,6 +8453,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 
 // executeCommandPalette executes command palette.
 func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
+	command = normalizeCommandPaletteToken(command)
 	switch command {
 	case "":
 		m.status = "no command"
@@ -11735,6 +11732,67 @@ func (m Model) renderInfoLine(project domain.Project, muted color.Color) string 
 	return lipgloss.NewStyle().Foreground(muted).Render(strings.Join(parts, " • "))
 }
 
+// shouldSuppressBoardStatus hides low-value transient messages from the board footer/status area.
+func shouldSuppressBoardStatus(status string) bool {
+	status = strings.TrimSpace(strings.ToLower(status))
+	switch status {
+	case "",
+		"ready",
+		"cancelled",
+		"project switched",
+		"board focus",
+		"global notifications focus",
+		"project notifications focus",
+		"global notifications",
+		"quick actions",
+		"command palette",
+		"task info",
+		"parent task info",
+		"edit task",
+		"new task",
+		"edit project",
+		"new project",
+		"thread loaded",
+		"due picker",
+		"resource picker",
+		"label picker",
+		"project picker",
+		"search",
+		"search results",
+		"paths/roots",
+		"description editor":
+		return true
+	}
+	if strings.HasPrefix(status, "project notifications:") {
+		return true
+	}
+	if strings.HasPrefix(status, "loading ") {
+		return true
+	}
+	if strings.HasPrefix(status, "text selection mode ") {
+		return true
+	}
+	if strings.HasPrefix(status, "editing ") {
+		return true
+	}
+	if strings.HasSuffix(status, " cancelled") {
+		return true
+	}
+	if strings.HasSuffix(status, " focus") {
+		return true
+	}
+	return false
+}
+
+// boardStatusText returns the board-visible status string after transient filtering.
+func (m Model) boardStatusText() string {
+	status := strings.TrimSpace(m.status)
+	if shouldSuppressBoardStatus(status) {
+		return ""
+	}
+	return status
+}
+
 // renderHelpOverlay renders output for the current model state.
 func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Style, maxWidth int) string {
 	width := clamp(maxWidth, 56, 100)
@@ -12210,7 +12268,12 @@ func (m Model) taskInfoDescriptionMarkdown(task domain.Task, width int) string {
 
 // taskDescriptionPreviewViewport builds the bounded top-aligned markdown preview used by info/edit screens.
 func (m Model) taskDescriptionPreviewViewport(markdown string, boxWidth int) viewport.Model {
-	contentWidth := max(24, boxWidth-4)
+	return m.taskDescriptionPreviewViewportForContentWidth(markdown, max(24, boxWidth-4))
+}
+
+// taskDescriptionPreviewViewportForContentWidth builds the shared bounded markdown preview for a measured content width.
+func (m Model) taskDescriptionPreviewViewportForContentWidth(markdown string, contentWidth int) viewport.Model {
+	contentWidth = max(24, contentWidth)
 	rendered := m.markdownPreviewContent(markdown, contentWidth, "(no description)")
 	vp := viewport.New()
 	vp.SoftWrap = true
@@ -12492,7 +12555,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	if m.formFocus == taskFieldDescription {
 		setFocus()
 	}
-	descriptionPreview := m.taskDescriptionPreviewViewport(m.taskFormDescription, contentWidth+8)
+	descriptionPreview := m.taskDescriptionPreviewViewportForContentWidth(m.taskFormDescription, contentWidth)
 	lines = append(lines, descriptionPreview.View())
 
 	lines = append(lines, "")
@@ -12734,6 +12797,25 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	renderProjectInput("tags", projectFieldTags)
 	renderProjectInput("root_path", projectFieldRootPath)
 
+	if m.mode == modeEditProject && strings.TrimSpace(m.editingProjectID) != "" {
+		for _, project := range m.projects {
+			if project.ID != m.editingProjectID {
+				continue
+			}
+			lines = append(lines, "")
+			lines = append(lines, hintStyle.Render("system:"))
+			lines = append(lines, hintStyle.Render("id: "+project.ID))
+			lines = append(lines, hintStyle.Render("slug: "+project.Slug))
+			lines = append(lines, hintStyle.Render("kind: "+string(project.Kind)))
+			lines = append(lines, hintStyle.Render("created_at: "+project.CreatedAt.In(time.Local).Format(time.RFC3339)))
+			lines = append(lines, hintStyle.Render("updated_at: "+project.UpdatedAt.In(time.Local).Format(time.RFC3339)))
+			if project.ArchivedAt != nil {
+				lines = append(lines, hintStyle.Render("archived_at: "+formatSystemTimestamp(project.ArchivedAt)))
+			}
+			break
+		}
+	}
+
 	return resolveViewportFocus(lines)
 }
 
@@ -12851,10 +12933,6 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("%s %s", ref.ResourceType, truncate(location, 48))))
 		}
 	}
-	if strings.TrimSpace(task.ParentID) != "" {
-		lines = append(lines, hintStyle.Render("parent: "+task.ParentID))
-	}
-
 	renderMetadataMarkdown := func(label, value string) {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -12881,6 +12959,38 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 		if unmet > 0 {
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("completion: %d unmet checks", unmet)))
 		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("system:"))
+	lines = append(lines, hintStyle.Render("id: "+task.ID))
+	lines = append(lines, hintStyle.Render("project: "+fallbackText(strings.TrimSpace(task.ProjectID), "-")))
+	lines = append(lines, hintStyle.Render("parent: "+fallbackText(strings.TrimSpace(task.ParentID), "-")))
+	lines = append(lines, hintStyle.Render("kind: "+fallbackText(strings.TrimSpace(string(task.Kind)), "-")))
+	lines = append(lines, hintStyle.Render("scope: "+string(task.Scope)))
+	lines = append(lines, hintStyle.Render("state: "+fallbackText(strings.TrimSpace(string(task.LifecycleState)), "-")))
+	lines = append(lines, hintStyle.Render("column: "+fallbackText(strings.TrimSpace(task.ColumnID), "-")))
+	lines = append(lines, hintStyle.Render(fmt.Sprintf("position: %d", task.Position)))
+	lines = append(lines, hintStyle.Render("created_at: "+task.CreatedAt.In(time.Local).Format(time.RFC3339)))
+	lines = append(lines, hintStyle.Render("updated_at: "+task.UpdatedAt.In(time.Local).Format(time.RFC3339)))
+	lines = append(lines, hintStyle.Render("created_by: "+fallbackText(strings.TrimSpace(task.CreatedByActor), "-")))
+	updatedBy := fallbackText(strings.TrimSpace(task.UpdatedByActor), "-")
+	updatedByType := strings.TrimSpace(string(task.UpdatedByType))
+	if updatedByType == "" {
+		updatedByType = "-"
+	}
+	lines = append(lines, hintStyle.Render("updated_by: "+updatedBy+" ("+updatedByType+")"))
+	if task.StartedAt != nil {
+		lines = append(lines, hintStyle.Render("started_at: "+formatSystemTimestamp(task.StartedAt)))
+	}
+	if task.CompletedAt != nil {
+		lines = append(lines, hintStyle.Render("completed_at: "+formatSystemTimestamp(task.CompletedAt)))
+	}
+	if task.ArchivedAt != nil {
+		lines = append(lines, hintStyle.Render("archived_at: "+formatSystemTimestamp(task.ArchivedAt)))
+	}
+	if task.CanceledAt != nil {
+		lines = append(lines, hintStyle.Render("canceled_at: "+formatSystemTimestamp(task.CanceledAt)))
 	}
 	return lines
 }
@@ -13419,13 +13529,17 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		}
 		if m.threadPanelFocus == threadPanelContext {
 			short := []key.Binding{
-				helpBinding("tab/←/→", "panels"),
+				helpBinding("tab/shift+tab", "panels"),
+				helpBinding("←/→", "wrap"),
 				helpBinding("esc", "back"),
 				helpBinding("?", "help"),
 			}
 			return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 		}
-		short := []key.Binding{helpBinding("tab/←/→", "panels")}
+		short := []key.Binding{
+			helpBinding("tab/shift+tab", "panels"),
+			helpBinding("←/→", "wrap"),
+		}
 		if m.threadPanelFocus == threadPanelComments {
 			short = append(short,
 				helpBinding("enter", "comment"),
@@ -14923,10 +15037,8 @@ func (m Model) boardFooterLines() int {
 	if len(m.selectedTaskIDs) > 0 {
 		lines++
 	}
-	if status := strings.TrimSpace(m.status); status != "" && status != "ready" {
-		if status != "board focus" && status != "global notifications focus" && status != "project notifications focus" && status != "global notifications" && !strings.HasPrefix(status, "project notifications:") {
-			lines++
-		}
+	if m.boardStatusText() != "" {
+		lines++
 	}
 	return lines
 }

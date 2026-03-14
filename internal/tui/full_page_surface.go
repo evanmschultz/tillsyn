@@ -16,11 +16,46 @@ type fullPageSurfaceMetrics struct {
 	boxWidth     int
 	contentWidth int
 	bodyHeight   int
+	headerGapY   int
 	topGapY      int
 	bottomGapY   int
 	headerBlock  string
 	helpLine     string
-	statusLine   string
+}
+
+const appScreenHeaderGapY = 1
+
+// appInnerWidth returns the shared usable width between the outer gutters.
+func (m Model) appInnerWidth() int {
+	innerWidth := max(36, m.width-2*tuiOuterHorizontalPadding)
+	if m.width <= 0 {
+		return 0
+	}
+	return innerWidth
+}
+
+// renderBottomHelpLine renders the shared bottom help line for the active screen.
+func (m Model) renderBottomHelpLine(muted, dim color.Color, innerWidth int) string {
+	helpBubble := m.help
+	helpBubble.ShowAll = false
+	helpBubble.SetWidth(innerWidth)
+	return lipgloss.NewStyle().
+		Foreground(muted).
+		BorderTop(true).
+		BorderForeground(dim).
+		Width(innerWidth).
+		Render(helpBubble.View(m.activeBottomHelpKeyMap()))
+}
+
+// applyOuterHorizontalPadding wraps content in the shared left/right gutter.
+func applyOuterHorizontalPadding(content string) string {
+	if tuiOuterHorizontalPadding <= 0 {
+		return content
+	}
+	return lipgloss.NewStyle().
+		PaddingLeft(tuiOuterHorizontalPadding).
+		PaddingRight(tuiOuterHorizontalPadding).
+		Render(content)
 }
 
 // appHeaderBlock renders the shared TILLSYN header with inline path context and the divider rule below it.
@@ -64,10 +99,10 @@ func (m Model) appHeaderPathText(maxWidth int) string {
 func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth int, title, subtitle, status string) fullPageSurfaceMetrics {
 	const (
 		surfaceHorizontalInset = 0
-		surfaceTopGap          = 1
+		surfaceTopGap          = 0
 		surfaceBottomGap       = 0
 	)
-	innerWidth := max(36, m.width-2*tuiOuterHorizontalPadding)
+	innerWidth := m.appInnerWidth()
 	if m.width <= 0 {
 		innerWidth = max(96, boxWidth)
 	}
@@ -80,50 +115,37 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
 	headerBlock := m.appHeaderBlock(statusStyle, innerWidth)
-
-	helpBubble := m.help
-	helpBubble.ShowAll = false
-	helpBubble.SetWidth(innerWidth)
-	helpLine := lipgloss.NewStyle().
-		Foreground(muted).
-		BorderTop(true).
-		BorderForeground(dim).
-		Width(innerWidth).
-		Render(helpBubble.View(m.activeBottomHelpKeyMap()))
+	helpLine := m.renderBottomHelpLine(muted, dim, innerWidth)
 
 	boxChrome := fullPageSurfaceBoxChrome(accent, muted, boxWidth, title, subtitle, status)
-	statusText := strings.TrimSpace(m.status)
-	if m.shouldHideSurfaceStatus(statusText) {
-		statusText = ""
-	}
-	statusLine := ""
-	if statusText != "" {
-		statusLine = statusStyle.Render(truncate(statusText, innerWidth))
-	}
 
 	bodyHeight := taskInfoBodyViewportMinHeight
 	if m.height > 0 {
-		bodyHeight = m.height -
+		availableBodyHeight := m.height -
 			lipgloss.Height(headerBlock) -
+			appScreenHeaderGapY -
 			lipgloss.Height(helpLine) -
-			lipgloss.Height(statusLine) -
 			lipgloss.Height(boxChrome) -
 			nodeModalBoxStyle(accent, boxWidth).GetVerticalFrameSize() -
 			surfaceTopGap -
 			surfaceBottomGap
+		if availableBodyHeight < 1 {
+			availableBodyHeight = 1
+		}
+		bodyHeight = availableBodyHeight
 	}
-	bodyHeight = clamp(bodyHeight, taskInfoBodyViewportMinHeight, taskInfoBodyViewportMaxHeight)
+	bodyHeight = clamp(bodyHeight, 1, taskInfoBodyViewportMaxHeight)
 
 	return fullPageSurfaceMetrics{
 		innerWidth:   innerWidth,
 		boxWidth:     boxWidth,
 		contentWidth: contentWidth,
 		bodyHeight:   bodyHeight,
+		headerGapY:   appScreenHeaderGapY,
 		topGapY:      surfaceTopGap,
 		bottomGapY:   surfaceBottomGap,
 		headerBlock:  headerBlock,
 		helpLine:     helpLine,
-		statusLine:   statusLine,
 	}
 }
 
@@ -177,6 +199,9 @@ func renderFullPageSurfaceViewport(accent, muted color.Color, boxWidth int, titl
 func (m Model) renderFullPageSurfaceView(accent, muted, dim color.Color, metrics fullPageSurfaceMetrics, surface string) tea.View {
 	centeredSurface := lipgloss.PlaceHorizontal(metrics.innerWidth, lipgloss.Center, surface)
 	sections := []string{metrics.headerBlock}
+	for i := 0; i < metrics.headerGapY; i++ {
+		sections = append(sections, "")
+	}
 	for i := 0; i < metrics.topGapY; i++ {
 		sections = append(sections, "")
 	}
@@ -184,20 +209,9 @@ func (m Model) renderFullPageSurfaceView(accent, muted, dim color.Color, metrics
 	for i := 0; i < metrics.bottomGapY; i++ {
 		sections = append(sections, "")
 	}
-	if metrics.statusLine != "" {
-		sections = append(sections, metrics.statusLine)
-	}
 	content := strings.Join(sections, "\n")
-	if tuiOuterHorizontalPadding > 0 {
-		content = lipgloss.NewStyle().
-			PaddingLeft(tuiOuterHorizontalPadding).
-			PaddingRight(tuiOuterHorizontalPadding).
-			Render(content)
-		metrics.helpLine = lipgloss.NewStyle().
-			PaddingLeft(tuiOuterHorizontalPadding).
-			PaddingRight(tuiOuterHorizontalPadding).
-			Render(metrics.helpLine)
-	}
+	content = applyOuterHorizontalPadding(content)
+	metrics.helpLine = applyOuterHorizontalPadding(metrics.helpLine)
 	if m.height > 0 {
 		content = fitLines(content, max(0, m.height-lipgloss.Height(metrics.helpLine)))
 	}

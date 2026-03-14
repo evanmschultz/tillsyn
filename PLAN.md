@@ -1,8 +1,8 @@
 # Kan Plan
 
 Created: 2026-02-21
-Updated: 2026-03-04
-Status: In progress; Wave 4 markdown-first summary/details/comments remediation is gate-green and awaiting final independent QA sign-off (code + docs), plus worksheet completion (`C1`-`C3` user-collaborative and `C4` agent verification)
+Updated: 2026-03-13
+Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-013 phase-creation failure now logged after the user rerun and awaiting user consensus before any new fix scope begins.
 
 ## 1) Primary Goal
 
@@ -3710,3 +3710,182 @@ Addendum 2026-03-13 19:08 local:
   1. Copernicus PASS: code/UI review over shared surface sizing, footer/help cleanup, and thread navigation contract.
   2. Faraday PASS after one tracker-state sync follow-up: tests/docs/worksheet/plan now match the actual failure-driven validation history and retest-ready state.
 - Status update: `T1-01` remains paused pending commit and then the user's rerun of that same blocked step; QA is no longer a blocker.
+
+## Checkpoint 2026-03-13: FR-011 Status-Line Cleanup, Preview Parity, And Thread Tab Direction
+
+Objective:
+- keep the same blocked collaborative step `T1-01` paused while fixing the remaining shared-surface/input mismatches: remove the stale board status notification, make info/edit description previews use the same sizing contract, tighten full-page outer gaps to one equal inset on all sides, and correct thread `tab`/`shift+tab` behavior/help.
+
+User findings captured for this wave:
+1. The board still shows an unwanted `project switched` notification on initial project load; the user does not want that notification at all.
+2. Info mode and edit mode still render different description-preview heights for the same task content.
+3. Full-page info/edit/comments top and bottom outer gaps are still larger than the left/right board-style gaps; the user wants one equal outer inset on all sides.
+4. Comments/thread still moves the same direction on `tab` and `shift+tab`; `shift+tab` should reverse `tab`, and the short help should say so.
+5. The remaining bottom-space mismatch appears coupled to the stale board status line because the board reflows correctly only after leaving and returning.
+
+Context7:
+1. Pre-edit consult: `/charmbracelet/bubbles` viewport/key-handling guidance for consistent viewport sizing, top-aligned offsets, and tab/backtab behavior in Bubble Tea/Bubbles -> PASS.
+
+Local code inspection completed before edits:
+1. `project switched` is still set in the project-picker accept path at `internal/tui/model.go:7152`.
+2. Shared full-page outer gaps are still split in `internal/tui/full_page_surface.go` with `surfaceTopGap = 1` and `surfaceBottomGap = 0`, while horizontal inset is already `0`.
+3. Shared preview height is bounded by `markdownPreviewHeight`, but edit mode still builds its description preview with a different width basis (`contentWidth+8`) than the info-mode path.
+4. Thread panel traversal already routes through `isForwardTabKey` / `isBackwardTabKey`, but the rendered help still advertises `tab/←/→` instead of making `shift+tab` explicit.
+
+Implementation summary:
+1. Removed the stale `project switched` board status assignment from the project-picker accept path so the board no longer reserves a bottom status row after project load.
+2. Split the description preview builder into a shared measured-width helper and routed edit-mode previews through the same width/height contract as info mode.
+3. Tightened the shared full-page surface helper to board-matched outer gaps by setting both top and bottom spacer rows to `0`.
+4. Corrected tab-direction detection so shifted tab cannot fall through the forward-tab path, and updated thread short help to advertise `tab/shift+tab` plus left/right wrap explicitly.
+5. Added focused TUI regressions for project-switch status suppression, shared preview parity, thread tab reversal, and outer-gap parity.
+
+Commands run and outcomes:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> PASS.
+3. `just test-golden` -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+6. QA follow-up found one missing explicit outer-gap regression test plus tracker-state drift -> remediation applied.
+7. `just fmt` -> PASS.
+8. `just test-pkg ./internal/tui` -> PASS.
+9. `just test-golden` -> PASS.
+10. `just check` -> PASS.
+11. `just ci` -> PASS.
+
+Files edited in this checkpoint:
+1. `internal/tui/full_page_surface.go`
+2. `internal/tui/model.go`
+3. `internal/tui/model_test.go`
+4. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+5. `PLAN.md`
+
+QA:
+1. Copernicus initial review -> FAIL due missing explicit outer-gap regression coverage; final re-audit -> PASS after `TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps`.
+2. Faraday initial review -> FAIL due tracker/evidence drift; final re-audit -> PASS after worksheet/plan synchronization.
+
+Status:
+- FR-011 implementation is complete and validation is green (`just fmt`, `just test-pkg ./internal/tui`, `just test-golden`, `just check`, `just ci`).
+- The same blocked collaborative step `T1-01` remains paused for the user's rerun against FR-011.
+
+## Checkpoint 2026-03-13: FR-012 Transient Status Leakage, Command Palette Normalization, And Schema Coverage Audit
+
+Objective:
+- keep the same blocked collaborative step `T1-01` paused while removing transient footer/status leakage from layout sizing, fixing command-palette phase aliases like `new_phase`, and making task/project schema coverage explicit instead of accidental.
+
+User findings captured for this wave:
+1. Transient board/footer noise such as `cancelled` still appears after backing out of task edit and seems to steal bottom space.
+2. `new_phase` from the command palette drops back to the board instead of opening the phase form.
+3. The user wants an explicit schema audit so the TUI/task/project field contract is intentional and consistent across menus.
+
+Context7:
+1. Pre-edit consults:
+   - `/charmbracelet/bubbletea` for key handling and command-oriented input normalization patterns -> PASS.
+   - `/charmbracelet/bubbles` for viewport/help separation and keeping header/footer chrome outside scrollable layout math -> PASS.
+2. Failure-driven re-consults during the follow-up remediation loop:
+   - `/charmbracelet/bubbletea` for `tea.View`/`tea.Layer` inspection in tests after the first compile failure -> PASS.
+   - `/charmbracelet/bubbles` for viewport-bounded height assertions after the short-terminal regression test initially measured unbounded raw content -> PASS.
+   - `/charmbracelet/bubbles` for the canonical viewport import path after the second compile failure in `model_test.go` -> PASS.
+
+Implementation summary:
+1. Shared screen/status cleanup:
+   - removed full-page dependence on global `m.status` from `internal/tui/full_page_surface.go`; full-page body height no longer subtracts status-line rows and no longer appends transient status beneath the bordered surface.
+   - added shared helpers for inner width, bottom help rendering, and outer horizontal padding so board and full-page screens consume the same chrome math.
+2. Board footer filtering:
+   - introduced transient board-status suppression so cancel/loading/focus noise no longer reserves footer rows or appears below the board.
+   - updated board rendering and footer-line sizing to use the same filtered status helper.
+3. Command palette normalization:
+   - normalized command ids so dash, underscore, and space variants resolve to the same canonical command (`new-phase`, `new_phase`, `new phase`).
+4. Explicit schema coverage:
+   - added read-only `system:` sections for task info and project edit so structural/lifecycle fields are surfaced intentionally.
+   - added regression tests that classify top-level task/project fields and task/project metadata fields as editable, read-only, or intentionally internal/unsupported, so future schema drift fails loudly.
+5. Follow-up remediation after QA:
+   - changed shared full-page body-height math to clamp against the actual available terminal height instead of forcing the default minimum back in on short terminals.
+   - expanded the task `system:` section to render `project`, `parent`, `kind`, and `state`, so the read-only task schema contract now matches the UI surface intentionally.
+   - removed the earlier duplicate ad-hoc `parent:` row outside `system:`.
+   - added `TestFullPageSurfaceMetricsShrinkBodyToFitShortTerminal` and updated the task-system assertions to cover the newly surfaced fields.
+
+Commands run and outcomes:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> PASS.
+3. `just check` -> PASS.
+4. `just ci` -> PASS (`internal/tui` coverage 70.7%).
+5. `just test-golden` -> PASS.
+6. QA1 (Bernoulli) initial review -> FAIL:
+   - shared full-page body height still clamped back to `taskInfoBodyViewportMinHeight`, so short terminals could still overflow the bottom border.
+   - task schema coverage claimed read-only fields not all surfaced in the UI.
+7. QA2 (Aristotle) initial review -> FAIL:
+   - worksheet/plan still claimed FR-012 QA closure before the follow-up remediation loop was documented.
+8. `just fmt` -> PASS.
+9. `just test-pkg ./internal/tui` -> FAIL (compile: attempted `string(...)` conversion on Bubble Tea v2 `tea.View`) -> Context7 re-consult.
+10. `just fmt` -> PASS.
+11. `just test-pkg ./internal/tui` -> FAIL (compile: `tea.View.Content` is `tea.Layer`, not `string`) -> Context7 re-consult.
+12. `just fmt` -> PASS.
+13. `just test-pkg ./internal/tui` -> FAIL (regression test measured unbounded raw body content instead of a bounded viewport surface) -> Context7 re-consult.
+14. `just fmt` -> PASS.
+15. `just test-pkg ./internal/tui` -> FAIL (missing `viewport` import in `model_test.go`) -> Context7 re-consult.
+16. `just fmt` -> PASS.
+17. `just test-pkg ./internal/tui` -> PASS.
+18. `just test-golden` -> PASS (needed one escalated rerun for Go build-cache access after sandbox denial).
+19. `just check` -> PASS.
+20. `just ci` -> PASS (`internal/tui` coverage 70.7%).
+
+Files edited in this checkpoint:
+1. `internal/tui/full_page_surface.go`
+2. `internal/tui/model.go`
+3. `internal/tui/model_test.go`
+4. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+5. `PLAN.md`
+
+QA:
+1. Bernoulli initial review -> FAIL due short-terminal height clamp and schema/UI coverage mismatch; final re-audit -> PASS after the follow-up code/test remediation.
+2. Aristotle initial review -> FAIL due worksheet/plan chronology drift; final re-audit -> PASS after the FR-012 tracker state was synchronized.
+
+Status:
+- FR-012 implementation/remediation is complete and validation is green (`just fmt`, `just test-pkg ./internal/tui`, `just test-golden`, `just check`, `just ci`).
+- The same blocked collaborative step `T1-01` remains paused for the user's rerun against FR-012.
+- Next step: hand the same blocked step back to the user for rerun.
+
+## Checkpoint 2026-03-14: FR-013 Phase Creation Still Fails After Rerun
+
+Objective:
+- record the new failure from the user rerun immediately, stop forward collaborative testing on the same blocked step `T1-01`, and gather enough local/code context to present concrete remediation options before any new edits.
+
+User finding captured for this wave:
+1. The rerun now passes except for phase creation; the user still cannot create a phase.
+
+Context7:
+1. Pre-edit consult:
+   - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for explicit command-dispatch handling and keeping typed/selected command execution on the same action path -> PASS.
+
+Local inspection completed before any new edit:
+1. Repo state check: `git status --short` shows the validated FR-012 scope is still uncommitted in:
+   - `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+   - `PLAN.md`
+   - `internal/tui/full_page_surface.go`
+   - `internal/tui/model.go`
+   - `internal/tui/model_test.go`
+2. Protocol check:
+   - the locked collaborative-remediation flow in this repo requires each validated fix scope to be committed before the next one starts; therefore FR-013 cannot begin implementation on top of the current worktree without resolving that baseline first.
+3. Phase-creation code-path inspection:
+   - command palette execution for `new-phase` resolves through `executeCommandPalette()` and requires a branch parent from either `focusedScopeTaskAtLevel("branch")` or `selectedTaskAtLevel("branch")`.
+   - `startPhaseForm()` itself appears straightforward and reuses the shared task form, so the likely failure zone is either:
+     - command-palette dispatch/matching in the real UI path,
+     - branch-context resolution at execution time,
+     - or a separate phase-creation entrypoint the user is actually invoking rather than the direct command-palette path covered by tests.
+4. Parallel inspection lanes launched:
+   - Anscombe: TUI phase-creation code-path review.
+   - Beauvoir: tracker/protocol/worktree-state review.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS (confirmed validated but uncommitted FR-012 scope).
+2. Context7 consult for Bubble Tea command dispatch -> PASS.
+3. `rg -n "func \\(m Model\\) selectedBranchTask|func \\(m Model\\) selectedTaskAtLevel|func \\(m Model\\) focusedScopeTaskAtLevel|func \\(m Model\\) focusedScopeTaskAtLevels|func \\(m Model\\) startPhaseForm|phase-new|new-phase|new phase" internal/tui/model.go` -> PASS.
+4. `sed -n '2560,2665p' internal/tui/model.go` -> PASS.
+5. `sed -n '8470,8505p' internal/tui/model.go` -> PASS.
+6. `sed -n '10488,10540p' internal/tui/model.go` -> PASS.
+7. Worksheet/plan finding logging updates -> IN PROGRESS in this checkpoint.
+
+Status:
+- FR-013 is logged and the same blocked collaborative step `T1-01` remains paused.
+- No implementation has started for FR-013.
+- Next step: present the user with the protocol blocker plus concrete remediation options, get consensus, then either commit the validated FR-012 baseline or receive explicit discard direction before opening the new fix scope.

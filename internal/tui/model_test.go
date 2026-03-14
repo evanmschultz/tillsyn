@@ -14,6 +14,7 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/hylla/tillsyn/internal/app"
@@ -736,6 +737,9 @@ func TestModelProjectSwitchAndSearch(t *testing.T) {
 	if m.selectedProject != 1 {
 		t.Fatalf("expected selectedProject=1 after picker choose, got %d", m.selectedProject)
 	}
+	if got := m.status; got == "project switched" {
+		t.Fatalf("expected project switch to avoid stale board notification, got %q", got)
+	}
 
 	m = applyMsg(t, m, keyRune('/'))
 	m = applyMsg(t, m, keyRune('B'))
@@ -826,6 +830,31 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	}
 	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t2" {
 		t.Fatalf("expected selected task t2 after jump, got %#v ok=%t", task, ok)
+	}
+}
+
+// TestBoardStatusTextSuppressesTransientStatuses verifies stale cancel/focus/loading text cannot reserve board footer rows.
+func TestBoardStatusTextSuppressesTransientStatuses(t *testing.T) {
+	m := NewModel(newFakeService(nil, nil, nil))
+	for _, status := range []string{
+		"",
+		"ready",
+		"cancelled",
+		"project switched",
+		"board focus",
+		"loading thread...",
+		"due picker cancelled",
+		"text selection mode enabled",
+		"edit task",
+	} {
+		m.status = status
+		if got := m.boardStatusText(); got != "" {
+			t.Fatalf("status %q should be suppressed, got %q", status, got)
+		}
+	}
+	m.status = "task updated"
+	if got := m.boardStatusText(); got != "task updated" {
+		t.Fatalf("expected meaningful status to remain visible, got %q", got)
 	}
 }
 
@@ -1088,6 +1117,46 @@ func TestModelThreadModeFromTaskInfoAndBack(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected esc to return to task info from thread mode, got %v", m.mode)
+	}
+}
+
+// TestModelThreadTabAndShiftTabMoveInOppositeDirections verifies thread panel traversal reverses correctly on shift+tab.
+func TestModelThreadTabAndShiftTabMoveInOppositeDirections(t *testing.T) {
+	now := time.Date(2026, 3, 13, 19, 35, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('c'))
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode, got %v", m.mode)
+	}
+	if m.threadPanelFocus != threadPanelDetails {
+		t.Fatalf("expected thread details focus on open, got %d", m.threadPanelFocus)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.threadPanelFocus != threadPanelComments {
+		t.Fatalf("expected tab to advance to comments, got %d", m.threadPanelFocus)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	if m.threadPanelFocus != threadPanelDetails {
+		t.Fatalf("expected shift+tab to reverse back to details, got %d", m.threadPanelFocus)
+	}
+
+	threadView := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(threadView, "tab/shift+tab") {
+		t.Fatalf("expected thread help to advertise shift+tab, got\n%s", threadView)
 	}
 }
 
@@ -2403,6 +2472,37 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	}
 	if m.taskFormParentID != phaseLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToSubphase {
 		t.Fatalf("expected focused-empty-phase subphase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+}
+
+// TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs verifies typed underscore/space variants map to the same command ids.
+func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})))
+	m.focusTaskByID(branch.ID)
+
+	for _, raw := range []string{"new_phase", "new phase"} {
+		updated, cmd := m.executeCommandPalette(raw)
+		next := applyResult(t, updated, cmd)
+		if next.mode != modeAddTask {
+			t.Fatalf("raw command %q should open add-task phase form, got mode=%v status=%q", raw, next.mode, next.status)
+		}
+		if next.taskFormParentID != branch.ID || next.taskFormKind != domain.WorkKindPhase || next.taskFormScope != domain.KindAppliesToPhase {
+			t.Fatalf("raw command %q should preserve phase defaults, got parent=%q kind=%q scope=%q", raw, next.taskFormParentID, next.taskFormKind, next.taskFormScope)
+		}
 	}
 }
 
@@ -4970,6 +5070,82 @@ func TestModelFullPageNodeViewShowsHeaderAndBorder(t *testing.T) {
 	}
 	if !(strings.Contains(editView, "┌") && strings.Contains(editView, "┐") && strings.Contains(editView, "│")) {
 		t.Fatalf("expected bordered full-page node surface in edit view, got\n%s", editView)
+	}
+}
+
+// TestTaskDescriptionPreviewHeightMatchesBetweenInfoAndEdit verifies info/edit use the same description-preview sizing contract.
+func TestTaskDescriptionPreviewHeightMatchesBetweenInfoAndEdit(t *testing.T) {
+	now := time.Date(2026, 3, 13, 19, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Title:       "Task",
+		Priority:    domain.PriorityMedium,
+		Description: "## Overview\n\n- item one\n- item two\n- a much longer bullet that wraps over multiple lines inside the shared preview surface",
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task-info mode, got %v", m.mode)
+	}
+	infoHeight := m.taskInfoDetails.Height()
+	if infoHeight <= 0 {
+		t.Fatalf("expected positive task-info preview height, got %d", infoHeight)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	}
+
+	accent := projectAccentColor(project)
+	metrics := m.fullPageSurfaceMetrics(
+		accent,
+		lipgloss.Color("241"),
+		lipgloss.Color("239"),
+		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"Edit Task",
+		m.taskFormHeaderMeta(),
+		"",
+	)
+	editPreview := m.taskDescriptionPreviewViewportForContentWidth(m.taskFormDescription, metrics.contentWidth)
+	if got := editPreview.Height(); got != infoHeight {
+		t.Fatalf("expected edit preview height %d to match info preview height %d", got, infoHeight)
+	}
+}
+
+// TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps verifies shared full-page surfaces do not reserve extra top/bottom spacer rows.
+func TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps(t *testing.T) {
+	now := time.Date(2026, 3, 13, 19, 40, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	accent := projectAccentColor(project)
+	metrics := m.fullPageSurfaceMetrics(
+		accent,
+		lipgloss.Color("241"),
+		lipgloss.Color("239"),
+		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"Task Info",
+		m.taskInfoHeaderMeta(task),
+		"",
+	)
+	if metrics.topGapY != 0 || metrics.bottomGapY != 0 {
+		t.Fatalf("expected board-matched full-page outer gaps (0/0), got top=%d bottom=%d", metrics.topGapY, metrics.bottomGapY)
 	}
 }
 
@@ -10048,5 +10224,251 @@ func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
 	}
 	if _, err := normalizeAttachmentPathWithinRoot(rootFile, inside); err == nil {
 		t.Fatal("expected non-directory root to be rejected")
+	}
+}
+
+// TestTaskInfoBodyLinesRenderSystemSection verifies task info exposes structural/system fields intentionally.
+func TestTaskInfoBodyLinesRenderSystemSection(t *testing.T) {
+	now := time.Date(2026, 3, 13, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       4,
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		Title:          "Task",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "user-a",
+		UpdatedByActor: "agent-b",
+		UpdatedByType:  domain.ActorTypeAgent,
+	}, now)
+	started := now.Add(2 * time.Hour)
+	task.StartedAt = &started
+	task.UpdatedAt = now.Add(4 * time.Hour)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	lines := m.taskInfoBodyLines(task, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
+	rendered := strings.Join(lines, "\n")
+
+	for _, want := range []string{
+		"system:",
+		"id: t1",
+		"project: p1",
+		"parent: -",
+		"kind: task",
+		"scope: task",
+		"state: todo",
+		"column: c1",
+		"position: 4",
+		"created_by: user-a",
+		"updated_by: agent-b (agent)",
+		"started_at:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected task info system section to contain %q, got\n%s", want, rendered)
+		}
+	}
+}
+
+// TestTaskSchemaCoverageIsExplicit verifies every top-level task field is intentionally editable or read-only in the TUI.
+func TestTaskSchemaCoverageIsExplicit(t *testing.T) {
+	editable := map[string]struct{}{
+		"Title":       {},
+		"Description": {},
+		"Priority":    {},
+		"DueAt":       {},
+		"Labels":      {},
+		"Metadata":    {},
+	}
+	readOnly := map[string]struct{}{
+		"ID":             {},
+		"ProjectID":      {},
+		"ParentID":       {},
+		"Kind":           {},
+		"Scope":          {},
+		"LifecycleState": {},
+		"ColumnID":       {},
+		"Position":       {},
+		"CreatedByActor": {},
+		"UpdatedByActor": {},
+		"UpdatedByType":  {},
+		"CreatedAt":      {},
+		"UpdatedAt":      {},
+		"StartedAt":      {},
+		"CompletedAt":    {},
+		"ArchivedAt":     {},
+		"CanceledAt":     {},
+	}
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Task{}), editable, readOnly, nil)
+}
+
+// TestTaskMetadataSchemaCoverageIsExplicit verifies supported vs intentionally unsupported metadata fields stay documented.
+func TestTaskMetadataSchemaCoverageIsExplicit(t *testing.T) {
+	editable := map[string]struct{}{
+		"Objective":          {},
+		"AcceptanceCriteria": {},
+		"ValidationPlan":     {},
+		"BlockedReason":      {},
+		"RiskNotes":          {},
+		"DependsOn":          {},
+		"BlockedBy":          {},
+		"ResourceRefs":       {},
+	}
+	readOnly := map[string]struct{}{
+		"CompletionContract": {},
+	}
+	internal := map[string]struct{}{
+		"ImplementationNotesUser":  {},
+		"ImplementationNotesAgent": {},
+		"DefinitionOfDone":         {},
+		"CommandSnippets":          {},
+		"ExpectedOutputs":          {},
+		"DecisionLog":              {},
+		"RelatedItems":             {},
+		"TransitionNotes":          {},
+		"ContextBlocks":            {},
+		"KindPayload":              {},
+	}
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.TaskMetadata{}), editable, readOnly, internal)
+}
+
+// TestProjectSchemaCoverageIsExplicit verifies project metadata support remains an intentional contract.
+func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
+	editable := map[string]struct{}{
+		"Name":        {},
+		"Description": {},
+		"Metadata":    {},
+	}
+	readOnly := map[string]struct{}{
+		"ID":         {},
+		"Slug":       {},
+		"Kind":       {},
+		"CreatedAt":  {},
+		"UpdatedAt":  {},
+		"ArchivedAt": {},
+	}
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Project{}), editable, readOnly, nil)
+
+	projectMetadataEditable := map[string]struct{}{
+		"Owner":    {},
+		"Icon":     {},
+		"Color":    {},
+		"Homepage": {},
+		"Tags":     {},
+	}
+	projectMetadataInternal := map[string]struct{}{
+		"StandardsMarkdown": {},
+		"KindPayload":       {},
+		"CapabilityPolicy":  {},
+	}
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ProjectMetadata{}), projectMetadataEditable, nil, projectMetadataInternal)
+}
+
+// TestProjectFormBodyLinesRenderSystemSectionWhenEditing verifies project edit surfaces expose structural read-only fields.
+func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
+	now := time.Date(2026, 3, 13, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p.Kind = "ops"
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, nil, nil)))
+	_ = m.startProjectForm(&p)
+	lines, _ := m.projectFormBodyLines(72, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+
+	for _, want := range []string{
+		"system:",
+		"id: p1",
+		"slug: inbox",
+		"kind: ops",
+		"created_at:",
+		"updated_at:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected project edit system section to contain %q, got\n%s", want, rendered)
+		}
+	}
+}
+
+// TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight verifies transient global status text cannot shrink shared full-page bodies.
+func TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight(t *testing.T) {
+	m := NewModel(newFakeService(nil, nil, nil))
+	m.width = 120
+	m.height = 40
+	accent := lipgloss.Color("62")
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+
+	m.status = ""
+	base := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit Task", "kind: task", "")
+	m.status = "cancelled"
+	cancelled := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit Task", "kind: task", "")
+	if base.bodyHeight != cancelled.bodyHeight {
+		t.Fatalf("expected shared full-page body height to ignore status text, base=%d cancelled=%d", base.bodyHeight, cancelled.bodyHeight)
+	}
+}
+
+// TestFullPageSurfaceMetricsShrinkBodyToFitShortTerminal verifies shared full-page surfaces do not force the body back to the default minimum on short terminals.
+func TestFullPageSurfaceMetricsShrinkBodyToFitShortTerminal(t *testing.T) {
+	m := NewModel(newFakeService(nil, nil, nil))
+	m.width = 120
+	m.height = 16
+	accent := lipgloss.Color("62")
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit Task", "kind: task", "")
+	if metrics.bodyHeight >= taskInfoBodyViewportMinHeight {
+		t.Fatalf("expected shared full-page body height to shrink below the default minimum on short terminals, got %d", metrics.bodyHeight)
+	}
+
+	body := viewport.New()
+	body.SetWidth(metrics.contentWidth)
+	body.SetHeight(metrics.bodyHeight)
+	body.SetContent(strings.Repeat("line\n", 40))
+	surface := renderFullPageSurfaceViewport(accent, muted, metrics.boxWidth, "Edit Task", "kind: task", "", body)
+	totalHeight := lipgloss.Height(metrics.headerBlock) +
+		metrics.headerGapY +
+		metrics.topGapY +
+		lipgloss.Height(surface) +
+		metrics.bottomGapY +
+		lipgloss.Height(metrics.helpLine)
+	if totalHeight > m.height {
+		t.Fatalf("expected shared full-page chrome to fit terminal, got %d want <= %d", totalHeight, m.height)
+	}
+}
+
+// assertExplicitFieldCoverage ensures every exported struct field is classified as editable, read-only, or internal.
+func assertExplicitFieldCoverage(
+	t *testing.T,
+	typ reflect.Type,
+	editable map[string]struct{},
+	readOnly map[string]struct{},
+	internal map[string]struct{},
+) {
+	t.Helper()
+
+	classified := map[string]string{}
+	record := func(kind string, fields map[string]struct{}) {
+		for field := range fields {
+			if existing, ok := classified[field]; ok {
+				t.Fatalf("%s field %q already classified as %s", typ.Name(), field, existing)
+			}
+			classified[field] = kind
+		}
+	}
+	record("editable", editable)
+	record("read-only", readOnly)
+	record("internal", internal)
+
+	for idx := 0; idx < typ.NumField(); idx++ {
+		field := typ.Field(idx)
+		if !field.IsExported() {
+			continue
+		}
+		if _, ok := classified[field.Name]; !ok {
+			t.Fatalf("%s field %q is not classified for TUI/schema coverage", typ.Name(), field.Name)
+		}
 	}
 }
