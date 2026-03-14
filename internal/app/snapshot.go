@@ -338,6 +338,7 @@ func (s *Snapshot) Validate() error {
 	}
 
 	taskIDs := map[string]struct{}{}
+	taskByID := map[string]SnapshotTask{}
 	for i, t := range s.Tasks {
 		if strings.TrimSpace(t.ID) == "" {
 			return fmt.Errorf("tasks[%d].id is required", i)
@@ -364,15 +365,11 @@ func (s *Snapshot) Validate() error {
 			s.Tasks[i].Kind = t.Kind
 		}
 		if t.Scope == "" {
-			if strings.TrimSpace(t.ParentID) == "" {
-				t.Scope = domain.KindAppliesToTask
-			} else {
-				t.Scope = domain.KindAppliesToSubtask
-			}
+			t.Scope = domain.DefaultTaskScope(t.Kind, t.ParentID)
 			s.Tasks[i].Scope = t.Scope
 		}
 		if !domain.IsValidWorkItemAppliesTo(t.Scope) {
-			return fmt.Errorf("tasks[%d].scope must be branch|phase|subphase|task|subtask", i)
+			return fmt.Errorf("tasks[%d].scope must be branch|phase|task|subtask", i)
 		}
 		if t.LifecycleState == "" {
 			t.LifecycleState = domain.StateTodo
@@ -396,6 +393,7 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("duplicate task id: %q", t.ID)
 		}
 		taskIDs[t.ID] = struct{}{}
+		taskByID[t.ID] = s.Tasks[i]
 	}
 	for i, t := range s.Tasks {
 		if strings.TrimSpace(t.ParentID) == "" {
@@ -406,6 +404,10 @@ func (s *Snapshot) Validate() error {
 		}
 		if _, exists := taskIDs[t.ParentID]; !exists {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
+		}
+		parent := taskByID[t.ParentID]
+		if t.Kind == domain.WorkKindPhase && parent.Scope != domain.KindAppliesToBranch && parent.Scope != domain.KindAppliesToPhase {
+			return fmt.Errorf("tasks[%d].parent_id %q invalid for phase parent scope %q", i, t.ParentID, parent.Scope)
 		}
 	}
 
@@ -718,12 +720,7 @@ func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType
 	case domain.WorkKind(domain.KindAppliesToBranch):
 		return domain.CommentTargetTypeBranch
 	case domain.WorkKindPhase:
-		if task.Scope == domain.KindAppliesToSubphase {
-			return domain.CommentTargetTypeSubphase
-		}
 		return domain.CommentTargetTypePhase
-	case domain.WorkKind(domain.KindAppliesToSubphase):
-		return domain.CommentTargetTypeSubphase
 	case domain.WorkKindSubtask:
 		return domain.CommentTargetTypeSubtask
 	case domain.WorkKindDecision:
@@ -736,9 +733,6 @@ func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType
 		}
 		if task.Scope == domain.KindAppliesToSubtask {
 			return domain.CommentTargetTypeSubtask
-		}
-		if task.Scope == domain.KindAppliesToSubphase {
-			return domain.CommentTargetTypeSubphase
 		}
 		if task.Scope == domain.KindAppliesToPhase {
 			return domain.CommentTargetTypePhase
@@ -754,8 +748,6 @@ func snapshotCapabilityScopeTypeForTask(task domain.Task) domain.CapabilityScope
 		return domain.CapabilityScopeBranch
 	case domain.KindAppliesToPhase:
 		return domain.CapabilityScopePhase
-	case domain.KindAppliesToSubphase:
-		return domain.CapabilityScopeSubphase
 	case domain.KindAppliesToSubtask:
 		return domain.CapabilityScopeSubtask
 	default:
@@ -1011,11 +1003,7 @@ func (t SnapshotTask) toDomain() domain.Task {
 	}
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		if strings.TrimSpace(t.ParentID) == "" {
-			scope = domain.KindAppliesToTask
-		} else {
-			scope = domain.KindAppliesToSubtask
-		}
+		scope = domain.DefaultTaskScope(kind, t.ParentID)
 	}
 	updatedType := t.UpdatedByType
 	if updatedType == "" {

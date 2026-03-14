@@ -1,8 +1,8 @@
 # Kan Plan
 
 Created: 2026-02-21
-Updated: 2026-03-13
-Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-013 implementation/QA complete and awaiting the user's rerun of that same step before any forward testing resumes.
+Updated: 2026-03-14
+Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-014 one-nestable-phase migration implemented, validated, QA-closed, and awaiting the user's rerun of that same step before any forward testing resumes.
 
 ## 1) Primary Goal
 
@@ -3918,4 +3918,98 @@ QA:
 Status:
 - FR-013 implementation is complete and validation is green (`just fmt`, `just test-pkg ./internal/tui`, `just test-golden`, `just check`, `just ci`).
 - The same blocked collaborative step `T1-01` remains paused for the user's rerun against FR-013.
-- Next step: hand the same blocked step back to the user for rerun.
+
+## Checkpoint 2026-03-14: FR-014 One Nestable Phase Migration
+
+Objective:
+- close the next blocked gap on `T1-01` by removing first-class `subphase`, migrating persisted data to one nestable `phase`, and keeping phase parents constrained to project root, branch, or phase.
+
+User finding captured for this wave:
+1. After the FR-013 rerun, the user reported phase creation still behaved incorrectly.
+2. The user then selected the product direction explicitly:
+   - keep one `phase`,
+   - remove `new-subphase`,
+   - allow phase parents at project root, branch, or phase,
+   - forbid task parents for phases,
+   - and update the DB/schema contract in the same wave.
+
+Context7:
+1. Pre-edit consult:
+   - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for focused input routing and selection-vs-focus command handling in Bubble Tea update flows -> PASS.
+   - `/websites/sqlite_docs` for safe persisted text and JSON-array rewriting during SQLite migrations -> PASS.
+2. Failure-triggered re-consults:
+   - `/golang/go/go1.26.0` after the first compile failure to confirm the shared exported helper approach for cross-package scope normalization -> PASS.
+   - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` after the TUI timeout/failing test loop to confirm command-handling assumptions while fixing test command draining and selected-vs-focus parent precedence -> PASS.
+
+Local inspection completed before edits:
+1. Parallel impact reviews confirmed `subphase` was a real persisted contract across:
+   - domain enums and normalization,
+   - app snapshot/service mappings,
+   - SQLite migration/seeded kind rules,
+   - transport scope/target surfaces,
+   - TUI command/help/search/filter logic,
+   - and active docs/tests.
+2. The existing storage model did not require new tables or columns; the required change was a contract/data migration from `subphase` markers to `phase`.
+3. The intended lineage contract was locked before edits:
+   - project-level phase -> `kind=phase`, `scope=phase`, `parent_id=""`
+   - branch phase -> `kind=phase`, `scope=phase`, `parent_id=<branch>`
+   - nested phase -> `kind=phase`, `scope=phase`, `parent_id=<phase>`
+   - tasks cannot parent phases.
+
+Implementation summary:
+1. Domain/app contract cleanup:
+   - removed first-class `subphase` enums/targets/scope mappings from `internal/domain` and dependent app/transport code.
+   - centralized default scope inference so `kind=phase` normalizes to `scope=phase`, including project-level phases.
+2. SQLite/data migration:
+   - kept the existing table shape.
+   - added/used migration rewrites that convert legacy `subphase` text values in tasks/work_items/comments/capability leases/attention rows and rewrite kind-catalog JSON arrays plus change-event metadata to `phase`.
+   - normalized legacy `kind=phase, scope=task` rows to `scope=phase`.
+3. Seed/default kind rules:
+   - removed `subphase` from built-in kind applies-to and parent-scope lists.
+   - phase now applies only to `phase` and allows parent scopes `branch` and `phase`.
+4. TUI/transport UX cleanup:
+   - removed `new-subphase` from the command palette/surface.
+   - `new-phase` now creates a project-level phase by default, a branch phase when a branch is selected/focused, and a nested phase when a phase is explicitly selected/focused.
+   - selected phase/branch now takes precedence over the broader focus root when resolving `new-phase` parentage.
+   - removed `subphase` from search/filter/help/label/thread terminology, treating nested phases as `phase` with lineage.
+5. Test infrastructure follow-up:
+   - updated the TUI test helper to stop synchronously waiting on long-lived Bubble Tea timer commands such as cursor blink follow-ups.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS.
+2. `rg -n "subphase|phase" ...` across domain/app/storage/TUI/docs -> PASS (inspection baseline).
+3. Context7 Bubble Tea + SQLite consults -> PASS.
+4. `just fmt` -> PASS.
+5. `just test-pkg ./internal/domain` -> PASS.
+6. `just test-pkg ./internal/app` -> PASS.
+7. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+8. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`).
+9. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+10. `GOFLAGS='-test.timeout=30s' just test-pkg ./internal/tui` -> FAIL (exposed `TestModelCommandPaletteAndQuickActions` hanging on timer-driven cursor blink command in the test helper).
+11. Context7 re-consult for Bubble Tea command handling -> PASS.
+12. `just fmt` -> PASS.
+13. `just test-pkg ./internal/tui` -> FAIL once more on selected-phase parent precedence (`new-phase` still chose focused branch root over selected phase).
+14. Context7 re-consult for Bubble Tea selection/focus handling -> PASS.
+15. `just fmt` -> PASS.
+16. `just test-pkg ./internal/tui` -> PASS.
+17. `just test-golden` -> PASS.
+18. `just check` -> PASS.
+19. `just ci` -> PASS (`internal/tui` coverage 70.6%).
+20. QA follow-up inspection found one remaining real gap: `internal/app/snapshot.go` still used the legacy blank-scope inference and did not reject task-parented phases during snapshot validation.
+21. Context7 Bubble Tea + SQLite guidance already covered the required follow-up patch shape; no new external source was needed before the narrow validator/test fix.
+22. Patched `internal/app/snapshot.go` to use `domain.DefaultTaskScope(t.Kind, t.ParentID)` during snapshot validation and reject `kind=phase` rows whose parent scope is not `branch` or `phase`.
+23. Added snapshot regression coverage for blank-scope phase import defaults, invalid task-parented phase rejection, and valid branch->phase->phase lineage; renamed the last active nested-phase fixture ids in `internal/tui/model_test.go`.
+24. `just fmt` -> PASS.
+25. `just test-pkg ./internal/app` -> PASS.
+26. `just test-pkg ./internal/tui` -> PASS.
+27. `just test-golden` -> PASS.
+28. `just check` -> PASS.
+29. `just ci` -> PASS (`internal/tui` coverage 70.6%).
+30. QA pass 1 (`019ceb96-08e2-72c1-91ba-bf0bbeb39067` Poincare) -> PASS after the snapshot contract fix.
+31. QA pass 2 (`019ceb96-0cda-70c1-b9ee-9c99e38f027c` Leibniz) -> PASS after worksheet/PLAN state synchronization.
+
+Status:
+- FR-014 implementation and the follow-up snapshot contract hardening are complete.
+- Validation is green on both the original migration sweep and the closeout reruns.
+- Final dual QA sign-off is complete, and worksheet/plan state is synchronized.
+- Next step: hand the same blocked step `T1-01` back to the user for rerun.

@@ -2374,7 +2374,7 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 	}
 }
 
-// TestModelCommandPalettePhaseCreationDefaultsToProjectLevel verifies new-phase works without branch context while new-subphase still guards.
+// TestModelCommandPalettePhaseCreationDefaultsToProjectLevel verifies new-phase works without branch context.
 func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 45, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2396,15 +2396,8 @@ func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 	if m.mode != modeAddTask {
 		t.Fatalf("expected project-level new-phase to open add-task mode, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToTask {
+	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected project-level phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-
-	updated, cmd = m.executeCommandPalette("new-subphase")
-	m = applyResult(t, updated, cmd)
-	if m.status != "select a phase/subphase for new subphase" {
-		t.Fatalf("expected new-subphase guard status, got %q", m.status)
 	}
 }
 
@@ -2431,12 +2424,12 @@ func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
 	if m.mode != modeAddTask {
 		t.Fatalf("expected typed new_phase to open add-task mode, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToTask {
+	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected typed new_phase to create project-level phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
 	}
 }
 
-// TestModelCommandPalettePhaseCreationActions verifies phase/subphase commands support selected and focused-empty scopes.
+// TestModelCommandPalettePhaseCreationActions verifies new-phase supports project, branch, and nested phase parents.
 func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
@@ -2518,16 +2511,16 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	m.focusTaskByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	if m.projectionRootTaskID != branch.ID {
-		t.Fatalf("expected focused branch root %q for subphase creation, got %q", branch.ID, m.projectionRootTaskID)
+		t.Fatalf("expected focused branch root %q for nested phase creation, got %q", branch.ID, m.projectionRootTaskID)
 	}
 	m.focusTaskByID(phase.ID)
-	updated, cmd = m.executeCommandPalette("new-subphase")
+	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
 	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for new subphase, got mode=%v status=%q", m.mode, m.status)
+		t.Fatalf("expected add-task mode for nested new phase, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != phase.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToSubphase {
-		t.Fatalf("expected selected-phase subphase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.taskFormParentID != phase.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected selected-phase nested phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
@@ -2536,13 +2529,13 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.projectionRootTaskID != phaseLeaf.ID {
 		t.Fatalf("expected empty phase focus root %q, got %q", phaseLeaf.ID, m.projectionRootTaskID)
 	}
-	updated, cmd = m.executeCommandPalette("new-subphase")
+	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
 	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for focused-empty new subphase, got %v", m.mode)
+		t.Fatalf("expected add-task mode for focused-empty nested new phase, got %v", m.mode)
 	}
-	if m.taskFormParentID != phaseLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToSubphase {
-		t.Fatalf("expected focused-empty-phase subphase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.taskFormParentID != phaseLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected focused-empty-phase nested phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
 	}
 }
 
@@ -8508,7 +8501,7 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 	}
 }
 
-// TestModelFocusSubtreeRendersBoardForHierarchyLevels verifies branch/phase/subphase focus keeps project-board columns visible.
+// TestModelFocusSubtreeRendersBoardForHierarchyLevels verifies branch/phase/nested-phase focus keeps project-board columns visible.
 func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
@@ -8537,13 +8530,13 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	subphase, _ := domain.NewTask(domain.TaskInput{
-		ID:        "w-subphase",
+	nestedPhase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "w-nested-phase",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
 		ColumnID:  done.ID,
 		Position:  0,
-		Title:     "Subphase",
+		Title:     "Nested Phase",
 		Priority:  domain.PriorityMedium,
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
@@ -8551,7 +8544,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	leafTask, _ := domain.NewTask(domain.TaskInput{
 		ID:        "w-task",
 		ProjectID: p.ID,
-		ParentID:  subphase.ID,
+		ParentID:  nestedPhase.ID,
 		ColumnID:  done.ID,
 		Position:  1,
 		Title:     "Task",
@@ -8573,7 +8566,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	svc := newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, progress, done},
-		[]domain.Task{branch, phase, subphase, leafTask, unrelated},
+		[]domain.Task{branch, phase, nestedPhase, leafTask, unrelated},
 	)
 	m := loadReadyModel(t, NewModel(svc))
 	visibleIDs := func(in Model) []string {
@@ -8605,7 +8598,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	assertVisible(m, []string{phase.ID})
 
 	m = applyMsg(t, m, keyRune('f'))
-	assertVisible(m, []string{subphase.ID})
+	assertVisible(m, []string{nestedPhase.ID})
 
 	m = applyMsg(t, m, keyRune('f'))
 	assertVisible(m, []string{leafTask.ID})
@@ -8765,21 +8758,21 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	subphase, _ := domain.NewTask(domain.TaskInput{
+	nestedPhase, _ := domain.NewTask(domain.TaskInput{
 		ID:        "sph1",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
 		ColumnID:  todo.ID,
 		Position:  2,
-		Title:     "Subphase",
+		Title:     "Nested Phase",
 		Priority:  domain.PriorityMedium,
 		Kind:      domain.WorkKindPhase,
-		Scope:     domain.KindAppliesToSubphase,
+		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	task, _ := domain.NewTask(domain.TaskInput{
 		ID:        "t1",
 		ProjectID: p.ID,
-		ParentID:  subphase.ID,
+		ParentID:  nestedPhase.ID,
 		ColumnID:  todo.ID,
 		Position:  3,
 		Title:     "Task",
@@ -8801,7 +8794,7 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo},
-		[]domain.Task{branch, phase, subphase, task, subtask},
+		[]domain.Task{branch, phase, nestedPhase, task, subtask},
 	)))
 
 	assertDefaults := func(parentID string, kind domain.WorkKind, scope domain.KindAppliesTo) {
@@ -8834,7 +8827,7 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(subphase.ID, domain.WorkKindTask, domain.KindAppliesToTask)
+	assertDefaults(nestedPhase.ID, domain.WorkKindTask, domain.KindAppliesToTask)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('f'))
@@ -9230,7 +9223,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	}
 }
 
-// TestSearchLevelFiltering verifies level-scoped filtering for project, branch, phase, subphase, task, and subtask.
+// TestSearchLevelFiltering verifies level-scoped filtering for project, branch, phase, task, and subtask.
 func TestSearchLevelFiltering(t *testing.T) {
 	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Hierarchy", "", now)
@@ -9256,13 +9249,13 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	subphase, _ := domain.NewTask(domain.TaskInput{
-		ID:        "l-subphase",
+	nestedPhase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "l-nested-phase",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
 		ColumnID:  c.ID,
 		Position:  2,
-		Title:     "Subphase",
+		Title:     "Nested Phase",
 		Priority:  domain.PriorityLow,
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
@@ -9270,7 +9263,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 	task, _ := domain.NewTask(domain.TaskInput{
 		ID:        "l-task",
 		ProjectID: p.ID,
-		ParentID:  subphase.ID,
+		ParentID:  nestedPhase.ID,
 		ColumnID:  c.ID,
 		Position:  3,
 		Title:     "Task",
@@ -9291,12 +9284,12 @@ func TestSearchLevelFiltering(t *testing.T) {
 	}, now)
 
 	m := Model{
-		tasks: []domain.Task{branch, phase, subphase, task, subtask},
+		tasks: []domain.Task{branch, phase, nestedPhase, task, subtask},
 	}
 	matches := []app.TaskMatch{
 		{Project: p, Task: branch, StateID: "todo"},
 		{Project: p, Task: phase, StateID: "todo"},
-		{Project: p, Task: subphase, StateID: "todo"},
+		{Project: p, Task: nestedPhase, StateID: "todo"},
 		{Project: p, Task: task, StateID: "todo"},
 		{Project: p, Task: subtask, StateID: "todo"},
 	}
@@ -9313,10 +9306,9 @@ func TestSearchLevelFiltering(t *testing.T) {
 		levels []string
 		want   string
 	}{
-		{name: "project", levels: []string{"project"}, want: "l-branch,l-phase,l-subphase,l-task,l-subtask"},
+		{name: "project", levels: []string{"project"}, want: "l-branch,l-phase,l-nested-phase,l-task,l-subtask"},
 		{name: "branch", levels: []string{"branch"}, want: "l-branch"},
-		{name: "phase", levels: []string{"phase"}, want: "l-phase"},
-		{name: "subphase", levels: []string{"subphase"}, want: "l-subphase"},
+		{name: "phase", levels: []string{"phase"}, want: "l-phase,l-nested-phase"},
 		{name: "task", levels: []string{"task"}, want: "l-task"},
 		{name: "subtask", levels: []string{"subtask"}, want: "l-subtask"},
 	}
@@ -9328,7 +9320,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		}
 	}
 
-	ready := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, subphase, task, subtask})))
+	ready := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, nestedPhase, task, subtask})))
 	ready = applyMsg(t, ready, keyRune('/'))
 	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyTab}) // states
 	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyTab}) // levels
@@ -10261,7 +10253,20 @@ func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	out := m
 	currentCmd := cmd
 	for i := 0; i < 6 && currentCmd != nil; i++ {
-		msg := currentCmd()
+		msgCh := make(chan tea.Msg, 1)
+		// Some bubbles commands schedule timer-driven follow-ups such as cursor
+		// blinking. Tests only need immediate commands, so bail out when a command
+		// does not yield promptly instead of blocking the helper.
+		go func(run tea.Cmd) {
+			msgCh <- run()
+		}(currentCmd)
+
+		var msg tea.Msg
+		select {
+		case msg = <-msgCh:
+		case <-time.After(10 * time.Millisecond):
+			return out
+		}
 		updated, nextCmd := out.Update(msg)
 		out = mustModelValue(t, updated)
 		currentCmd = nextCmd
