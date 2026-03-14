@@ -2629,10 +2629,13 @@ func (m *Model) startBranchForm(parent *domain.Task) tea.Cmd {
 }
 
 // startPhaseForm opens the task form preconfigured for a phase/subphase work item.
-func (m *Model) startPhaseForm(parent domain.Task, subphase bool) tea.Cmd {
+func (m *Model) startPhaseForm(parent *domain.Task, subphase bool) tea.Cmd {
 	cmd := m.startTaskForm(nil)
 	m.taskFormKind = domain.WorkKindPhase
-	m.taskFormParentID = parent.ID
+	m.taskFormParentID = ""
+	if parent != nil && strings.TrimSpace(parent.ID) != "" {
+		m.taskFormParentID = parent.ID
+	}
 	if subphase {
 		m.taskFormScope = domain.KindAppliesToSubphase
 		if len(m.formInputs) > taskFieldTitle {
@@ -2640,7 +2643,10 @@ func (m *Model) startPhaseForm(parent domain.Task, subphase bool) tea.Cmd {
 		}
 		m.status = "new subphase"
 	} else {
-		m.taskFormScope = domain.KindAppliesToPhase
+		m.taskFormScope = domain.KindAppliesToTask
+		if parent != nil && strings.TrimSpace(parent.ID) != "" {
+			m.taskFormScope = domain.KindAppliesToPhase
+		}
 		if len(m.formInputs) > taskFieldTitle {
 			m.formInputs[taskFieldTitle].Placeholder = "phase title (required)"
 		}
@@ -2755,6 +2761,16 @@ func isTaskFormActionField(field int) bool {
 	}
 }
 
+// isTaskFormDirectTextInputField reports whether the focused task-form field should consume printable text directly.
+func isTaskFormDirectTextInputField(field int) bool {
+	return field == taskFieldTitle
+}
+
+// isProjectFormDirectTextInputField reports whether the focused project-form field should consume printable text directly.
+func isProjectFormDirectTextInputField(field int) bool {
+	return field != projectFieldDescription
+}
+
 // taskFormFocusPosition resolves one form-focus field position within the current visual order.
 func (m Model) taskFormFocusPosition(field int) int {
 	for idx, candidate := range m.taskFormFocusOrder() {
@@ -2783,6 +2799,14 @@ func (m *Model) moveTaskFormFocus(delta int, wrap bool) tea.Cmd {
 		next = clamp(next, 0, total-1)
 	}
 	return m.focusTaskFormField(order[next])
+}
+
+// isPrintableFormTextKey reports whether a keypress should insert printable text into a focused input.
+func isPrintableFormTextKey(msg tea.KeyPressMsg) bool {
+	if msg.Text == "" {
+		return false
+	}
+	return (msg.Mod & ^tea.ModShift) == 0
 }
 
 // isTaskFormMarkdownField reports whether one task-form field uses the full-screen markdown editor flow.
@@ -7766,6 +7790,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.status = status
 				return m, nil
 			}
+			if isTaskFormDirectTextInputField(m.formFocus) && isPrintableFormTextKey(msg) {
+				var cmd tea.Cmd
+				m.formInputs[m.formFocus], cmd = m.formInputs[m.formFocus].Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.formInputs[m.formFocus])
+				return m, cmd
+			}
 		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
@@ -7849,6 +7879,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.status = status
 				return m, nil
 			}
+			if isProjectFormDirectTextInputField(m.projectFormFocus) && isPrintableFormTextKey(msg) {
+				var cmd tea.Cmd
+				m.projectFormInputs[m.projectFormFocus], cmd = m.projectFormInputs[m.projectFormFocus].Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.projectFormInputs[m.projectFormFocus])
+				return m, cmd
+			}
 		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
@@ -7859,7 +7895,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.editingProjectID = ""
 			m.status = "cancelled"
 			return m, nil
-		case (msg.String() == "ctrl+r" || msg.String() == "r") && m.projectFormFocus == projectFieldRootPath:
+		case msg.String() == "ctrl+r" && m.projectFormFocus == projectFieldRootPath:
 			return m, m.startResourcePicker("", m.mode)
 		case msg.String() == "i" && m.projectFormFocus == projectFieldDescription:
 			return m, m.startProjectDescriptionEditor(msg)
@@ -8486,11 +8522,10 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		if !ok {
 			parent, ok = m.selectedTaskAtLevel("branch")
 		}
-		if !ok {
-			m.status = "select a branch for new phase"
-			return m, nil
+		if ok {
+			return m, m.startPhaseForm(&parent, false)
 		}
-		return m, m.startPhaseForm(parent, false)
+		return m, m.startPhaseForm(nil, false)
 	case "new-subphase", "subphase-new":
 		parent, ok := m.focusedScopeTaskAtLevels("phase", "subphase")
 		if !ok {
@@ -8500,7 +8535,7 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 			m.status = "select a phase/subphase for new subphase"
 			return m, nil
 		}
-		return m, m.startPhaseForm(parent, true)
+		return m, m.startPhaseForm(&parent, true)
 	case "edit-branch", "branch-edit":
 		task, ok := m.selectedBranchTask()
 		if !ok {

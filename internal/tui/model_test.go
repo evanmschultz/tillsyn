@@ -913,6 +913,45 @@ func TestModelAddAndEditProject(t *testing.T) {
 	}
 }
 
+// TestModelEditProjectRootPathTypingPreservesPrintableKeys verifies focused project text inputs keep printable characters instead of triggering form-level actions.
+func TestModelEditProjectRootPathTypingPreservesPrintableKeys(t *testing.T) {
+	now := time.Date(2026, 3, 14, 0, 5, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+
+	m = applyMsg(t, m, keyRune('M'))
+	if m.mode != modeEditProject {
+		t.Fatalf("expected edit project mode, got %v", m.mode)
+	}
+	m = applyCmd(t, m, m.focusProjectFormField(projectFieldRootPath))
+	if m.projectFormFocus != projectFieldRootPath {
+		t.Fatalf("expected root_path focus, got %d", m.projectFormFocus)
+	}
+
+	before := m.projectFormInputs[projectFieldRootPath].Value()
+	m = applyMsg(t, m, keyRune('r'))
+	if m.mode != modeEditProject {
+		t.Fatalf("expected lowercase r to keep edit project mode, got %v", m.mode)
+	}
+	if got := m.projectFormInputs[projectFieldRootPath].Value(); got != before+"r" {
+		t.Fatalf("expected lowercase r to type into root_path, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'R', Text: "R", Mod: tea.ModShift})
+	if got := m.projectFormInputs[projectFieldRootPath].Value(); got != before+"rR" {
+		t.Fatalf("expected uppercase R to type into root_path, got %q", got)
+	}
+}
+
 // TestModelCommandPaletteAndQuickActions verifies behavior for the covered scenario.
 func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -2335,8 +2374,8 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 	}
 }
 
-// TestModelCommandPalettePhaseCreationGuards verifies phase creation commands require valid hierarchy parents.
-func TestModelCommandPalettePhaseCreationGuards(t *testing.T) {
+// TestModelCommandPalettePhaseCreationDefaultsToProjectLevel verifies new-phase works without branch context while new-subphase still guards.
+func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 45, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -2354,14 +2393,46 @@ func TestModelCommandPalettePhaseCreationGuards(t *testing.T) {
 
 	updated, cmd := m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.status != "select a branch for new phase" {
-		t.Fatalf("expected new-phase guard status, got %q", m.status)
+	if m.mode != modeAddTask {
+		t.Fatalf("expected project-level new-phase to open add-task mode, got mode=%v status=%q", m.mode, m.status)
 	}
+	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToTask {
+		t.Fatalf("expected project-level phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	updated, cmd = m.executeCommandPalette("new-subphase")
 	m = applyResult(t, updated, cmd)
 	if m.status != "select a phase/subphase for new subphase" {
 		t.Fatalf("expected new-subphase guard status, got %q", m.status)
+	}
+}
+
+// TestModelCommandPaletteTypedNormalizedProjectPhaseCreation verifies the real palette update path opens project-level phase creation for normalized raw input.
+func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 50, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+
+	m = applyMsg(t, m, keyRune(':'))
+	for _, r := range "new_phase" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAddTask {
+		t.Fatalf("expected typed new_phase to open add-task mode, got mode=%v status=%q", m.mode, m.status)
+	}
+	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToTask {
+		t.Fatalf("expected typed new_phase to create project-level phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
 	}
 }
 
@@ -8193,6 +8264,22 @@ func TestModelEditTaskCommentsRowOpensThread(t *testing.T) {
 	}
 	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"c" {
 		t.Fatalf("expected lowercase c to type into title, got %q", got)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected lowercase e to remain text input in edit mode, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"ce" {
+		t.Fatalf("expected lowercase e to type into title, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'E', Text: "E", Mod: tea.ModShift})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected uppercase E to remain text input in edit mode, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"ceE" {
+		t.Fatalf("expected uppercase E to type into title, got %q", got)
 	}
 
 	m = applyCmd(t, m, m.focusTaskFormField(taskFieldComments))

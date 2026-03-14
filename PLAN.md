@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-13
-Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-013 phase-creation failure now logged after the user rerun and awaiting user consensus before any new fix scope begins.
+Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-013 implementation/QA complete and awaiting the user's rerun of that same step before any forward testing resumes.
 
 ## 1) Primary Goal
 
@@ -3848,7 +3848,7 @@ Status:
 ## Checkpoint 2026-03-14: FR-013 Phase Creation Still Fails After Rerun
 
 Objective:
-- record the new failure from the user rerun immediately, stop forward collaborative testing on the same blocked step `T1-01`, and gather enough local/code context to present concrete remediation options before any new edits.
+- record the new failure from the user rerun immediately, stop forward collaborative testing on the same blocked step `T1-01`, commit the validated FR-012 baseline first, then remediate the phase-creation semantics and focused text-input hotkey leak without reopening roadmap work.
 
 User finding captured for this wave:
 1. The rerun now passes except for phase creation; the user still cannot create a phase.
@@ -3856,25 +3856,44 @@ User finding captured for this wave:
 Context7:
 1. Pre-edit consult:
    - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for explicit command-dispatch handling and keeping typed/selected command execution on the same action path -> PASS.
+   - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for focused-input key handling so printable text is routed before screen-level hotkeys -> PASS.
+   - `/charmbracelet/bubbles` for focused `textinput`/`textarea` update handling in larger Bubble Tea forms -> PASS.
 
 Local inspection completed before any new edit:
-1. Repo state check: `git status --short` shows the validated FR-012 scope is still uncommitted in:
+1. Repo state check before remediation: `git status --short` showed the validated FR-012 scope was still uncommitted in:
    - `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
    - `PLAN.md`
    - `internal/tui/full_page_surface.go`
    - `internal/tui/model.go`
    - `internal/tui/model_test.go`
 2. Protocol check:
-   - the locked collaborative-remediation flow in this repo requires each validated fix scope to be committed before the next one starts; therefore FR-013 cannot begin implementation on top of the current worktree without resolving that baseline first.
+   - the locked collaborative-remediation flow in this repo requires each validated fix scope to be committed before the next one starts; FR-012 was therefore committed first as `74bbc0e` before FR-013 code changes began.
 3. Phase-creation code-path inspection:
-   - command palette execution for `new-phase` resolves through `executeCommandPalette()` and requires a branch parent from either `focusedScopeTaskAtLevel("branch")` or `selectedTaskAtLevel("branch")`.
-   - `startPhaseForm()` itself appears straightforward and reuses the shared task form, so the likely failure zone is either:
-     - command-palette dispatch/matching in the real UI path,
-     - branch-context resolution at execution time,
-     - or a separate phase-creation entrypoint the user is actually invoking rather than the direct command-palette path covered by tests.
+   - `executeCommandPalette("new-phase")` was hard-coded to require branch context from either `focusedScopeTaskAtLevel("branch")` or `selectedTaskAtLevel("branch")`, so project-level phase creation was impossible.
+   - `startPhaseForm()` always required a concrete parent task, so it could not represent a project-level phase form at all.
+4. Focused-input key-routing inspection:
+   - task edit/add mode still intercepted printable `e` before the focused `textinput` saw it.
+   - project edit/add mode still intercepted printable `r` on `root_path:` via the form-level shortcut path.
 4. Parallel inspection lanes launched:
    - Anscombe: TUI phase-creation code-path review.
    - Beauvoir: tracker/protocol/worktree-state review.
+
+Implementation summary:
+1. Baseline closeout:
+   - committed the validated FR-012 scope as `74bbc0e` (`Finalize FR-012 shared layout and schema audit`) before opening FR-013.
+2. Phase creation semantics:
+   - changed `startPhaseForm()` to accept an optional parent.
+   - `new-phase` now creates a project-level phase (`parent=""`, `kind=phase`, `scope=task`) when no branch is selected/focused.
+   - branch-selected/focused `new-phase` still creates a branch-backed phase (`scope=phase`).
+   - `new-subphase` remains strict and still requires a phase/subphase parent.
+3. Focused text-input routing:
+   - added explicit direct-text-input detection for task/project forms.
+   - printable keys now go to focused task/project text inputs before form-level hotkeys.
+   - bare printable project-form `r` no longer hijacks `root_path:`; only `ctrl+r` remains mapped there.
+4. Regression coverage:
+   - replaced the old branch-only `new-phase` guard test with project-level phase coverage.
+   - added a tea-driven command-palette test for typed `new_phase`.
+   - added printable-key regression tests for task `title:` (`e`/`E`) and project `root_path:` (`r`/`R`).
 
 Commands run and outcomes:
 1. `git status --short` -> PASS (confirmed validated but uncommitted FR-012 scope).
@@ -3883,9 +3902,20 @@ Commands run and outcomes:
 4. `sed -n '2560,2665p' internal/tui/model.go` -> PASS.
 5. `sed -n '8470,8505p' internal/tui/model.go` -> PASS.
 6. `sed -n '10488,10540p' internal/tui/model.go` -> PASS.
-7. Worksheet/plan finding logging updates -> IN PROGRESS in this checkpoint.
+7. `git add COLLAB_VECTOR_MCP_E2E_WORKSHEET.md PLAN.md internal/tui/full_page_surface.go internal/tui/model.go internal/tui/model_test.go && git commit -m "Finalize FR-012 shared layout and schema audit"` -> PASS (`74bbc0e`).
+8. `just fmt` -> PASS.
+9. `just test-pkg ./internal/tui` -> PASS.
+10. `just test-golden` -> PASS.
+11. `just check` -> PASS.
+12. `just ci` -> PASS (`internal/tui` coverage 70.6%).
+13. Worksheet/plan FR-013 evidence updates -> PASS.
 
 Status:
-- FR-013 is logged and the same blocked collaborative step `T1-01` remains paused.
-- No implementation has started for FR-013.
-- Next step: present the user with the protocol blocker plus concrete remediation options, get consensus, then either commit the validated FR-012 baseline or receive explicit discard direction before opening the new fix scope.
+QA:
+1. Copernicus final code/UI re-audit -> PASS.
+2. Galileo tests/docs/tracker re-audit -> PASS after FR-013 tracker state was synchronized.
+
+Status:
+- FR-013 implementation is complete and validation is green (`just fmt`, `just test-pkg ./internal/tui`, `just test-golden`, `just check`, `just ci`).
+- The same blocked collaborative step `T1-01` remains paused for the user's rerun against FR-013.
+- Next step: hand the same blocked step back to the user for rerun.
