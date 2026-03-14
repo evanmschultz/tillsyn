@@ -14,6 +14,8 @@
  │                                                     │ │ no notifications requiring user…   │
  │                                                     │ │                                    │
  │                                                     │ │ Selection                          │
+ │                                                     │ │ Golden board task                  │
+ │                                                     │ │ [medium|#alpha,#beta]              │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
@@ -21,8 +23,6 @@
  │                                                     │ │ Global Notifications               │
  │                                                     │ │ requires user action across pro…   │
  │                                                     │ │                                    │
+ │                                                     │ │                                    │
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
- selected: Golden board task
- 0 overdue * 0 due soon
-
- n new task • enter task info • e edit • tab panels • / search • ? help • q quit[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
+ n new task • enter task info • e edit • tab panels • / search • : commands • q quit • ? help[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

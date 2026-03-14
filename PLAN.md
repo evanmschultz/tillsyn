@@ -3645,3 +3645,68 @@ Status:
     1. PASS: Copernicus (`019ce87f-bb0a-7b13-b2b0-55e97f78f086`) code/UI re-audit after the help-copy/test follow-up.
     2. PASS: Faraday (`019ce87f-bdd0-7112-b89d-44cddb2080be`) tests/docs/tracker re-audit after the gating sync.
 - Next step: commit this follow-up fix scope, then have the user rerun the same blocked collaborative step `T1-01` before any forward testing resumes.
+
+## Checkpoint 2026-03-13: FR-010 Final Board/Footer/Thread Consistency Sweep
+
+Objective:
+- finish the last follow-up cleanup on blocked collaborative step `T1-01` without opening roadmap work: keep the shared full-page architecture, but remove the remaining footer/help/status drift and make thread/project-picker traversal behave consistently.
+
+User findings captured for this wave:
+1. Edit-task could reopen scrolled away from `title`.
+2. Thread panel `tab`/`shift+tab` and arrow behavior still felt inconsistent.
+3. Low-value mode/status text still repeated above bottom help.
+4. Full-page info/edit/thread gutters still felt too padded versus the board panels.
+5. The board footer still repeated selected/focus/overdue information.
+6. Project/global notifications panels still showed inline navigation hints.
+7. The short board help needed `:` restored and `? help` last.
+
+Context7:
+1. Pre-edit consult: Bubble Tea key handling/navigation patterns -> PASS.
+2. After first failed package test: Bubble Tea key handling/backtab reminder -> PASS.
+3. After second failed package test: Bubble Tea model state persistence reminder -> PASS.
+4. After full-gate compile failure: Bubble Tea view/model separation reminder -> PASS.
+5. After final golden-only failure: Bubbles help/golden rendering reminder -> PASS.
+
+Implementation summary:
+1. Reset shared task/project full-page viewports on entry so edit always starts at the top/title.
+2. Tightened shared surface sizing to match the board gutter contract: no extra horizontal inset, no extra bottom spacer, slimmer box padding, and wider usable content width.
+3. Suppressed low-value full-page status text (`edit task`, `task info`, `thread loaded`, focus/status noise) while preserving real mutation/error feedback.
+4. Removed project/global notifications panel-local nav hint rows; overdue/due-soon now surface in warnings instead of the board footer.
+5. Kept only subtree affordances in the board footer; removed redundant selected-task and due-summary footer lines.
+6. Restored board short-help ordering/content with `:` and trailing `? help`.
+7. Kept thread panels on reliable `tab`/`shift+tab` plus `left/right` wrapping, with comments-panel `up/down` scrolling; project picker now accepts `left/right` aliases too.
+8. Fixed one repo-wide compile leak where `boardFooterLines` referenced the test-only `stripANSI` helper.
+9. Refreshed board/help goldens and updated focused TUI tests for the deliberate contract changes.
+
+Commands run and outcomes:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> FAIL (golden drift + thread/notices expectations) -> Context7 re-consult.
+3. `just fmt` -> PASS.
+4. `just test-pkg ./internal/tui` -> FAIL (golden drift only) -> Context7 re-consult.
+5. `just test-golden-update` -> PASS.
+6. `just test-pkg ./internal/tui` -> PASS.
+7. `just check` -> FAIL (`stripANSI` test helper referenced from production code) -> Context7 re-consult.
+8. `just ci` -> FAIL (same compile failure) -> same remediation.
+9. `just fmt` -> PASS.
+10. `just check` -> PASS.
+11. `just ci` -> PASS.
+
+Files edited in this checkpoint:
+1. `internal/tui/full_page_surface.go`
+2. `internal/tui/model.go`
+3. `internal/tui/thread_mode.go`
+4. `internal/tui/model_test.go`
+5. `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+6. `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+7. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+8. `PLAN.md`
+
+Status:
+- FR-010 implementation is complete and validation is green (`just test-golden-update`, `just test-pkg ./internal/tui`, `just check`, `just ci`).
+- The same blocked collaborative step `T1-01` remains paused for the user's rerun after QA sign-off and commit.
+
+Addendum 2026-03-13 19:08 local:
+- Dual QA is now complete for FR-010.
+  1. Copernicus PASS: code/UI review over shared surface sizing, footer/help cleanup, and thread navigation contract.
+  2. Faraday PASS after one tracker-state sync follow-up: tests/docs/worksheet/plan now match the actual failure-driven validation history and retest-ready state.
+- Status update: `T1-01` remains paused pending commit and then the user's rerun of that same blocked step; QA is no longer a blocker.

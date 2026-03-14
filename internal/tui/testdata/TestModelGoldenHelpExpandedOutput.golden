@@ -14,6 +14,8 @@
  │                                                     │ │ no notifications requiring user…   │
  │                                                     │ │                                    │
  │                                                     │ │ Selection                          │
+ │                                                     │ │ Help Golden Task                   │
+ │                                                     │ │ [low]                              │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
@@ -21,11 +23,9 @@
  │                                                     │ │ Global Notifications               │
  │                                                     │ │ requires user action across pro…   │
  │                                                     │ │                                    │
+ │                                                     │ │                                    │
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
- selected: Help Golden Task
- 0 overdue * 0 due soon
-
- n new task • enter task info • e edit • tab panels • / search • ? help • q quit[6A[J[H[K
+ n new task • enter task info • e edit • tab panels • / search • : commands • q quit • ? help[7A[J[H[K
 [K
 [K
 [K
@@ -42,8 +42,7 @@
     │ - / search; p project picker; : command palette; . quick actions [3P
     │ - tab/shift+tab cycle board/project/global panels; left/right wraps panel focus [3P
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
-    │ - ctrl+z undo; ctrl+shift+z redo; g activity log; q quit                             │[K
-    │                                                                                      │[K
-    │ selection mode: off (ctrl+y toggles)              [3P
-    │ press ? or esc to close help                                           [3P
+    │ - ctrl+z undo; ctrl+shift+z redo; g activity log; q quit [3P
+    │                                                   [3P
+    │ press ? or esc to close help                                                         │[K
 [4C╰──────────────────────────────────────────────────────────────────────────────────────╯[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

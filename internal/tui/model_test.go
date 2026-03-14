@@ -731,7 +731,7 @@ func TestModelProjectSwitchAndSearch(t *testing.T) {
 	if m.mode != modeProjectPicker {
 		t.Fatalf("expected project picker mode, got %v", m.mode)
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.selectedProject != 1 {
 		t.Fatalf("expected selectedProject=1 after picker choose, got %d", m.selectedProject)
@@ -1010,7 +1010,7 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 		t.Fatal("expected thread to open in read-first mode with composer inactive")
 	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m = applyMsg(t, m, keyRune('i'))
 	if !m.threadComposerActive {
 		t.Fatal("expected i to activate thread comment composer")
@@ -1118,7 +1118,7 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	if m.mode != modeThread {
 		t.Fatalf("expected work-item thread mode, got %v", m.mode)
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m = applyMsg(t, m, keyRune('i'))
 	m.threadInput.SetValue("fallback check")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
@@ -1169,7 +1169,7 @@ func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
 		t.Fatal("expected i on details panel to leave composer inactive")
 	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m = applyMsg(t, m, keyRune('i'))
 	if !m.threadComposerActive {
 		t.Fatal("expected composer active after i from comments panel")
@@ -1202,7 +1202,7 @@ func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 
 	updated, cmd := m.executeCommandPalette("thread-item")
 	m = applyResult(t, updated, cmd)
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('e'))
 	m = applyMsg(t, m, keyRune('x'))
@@ -6125,8 +6125,6 @@ func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testi
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionWarnings {
 		t.Fatalf("expected notices focus on warnings section, got %v", m.noticesSection)

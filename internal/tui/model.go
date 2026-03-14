@@ -1793,12 +1793,10 @@ func (m Model) View() tea.View {
 	if count := len(m.selectedTaskIDs); count > 0 {
 		sections = append(sections, statusStyle.Render(fmt.Sprintf("%d tasks selected • %s toggle • esc clear", count, m.keys.multiSelect.Help().Key)))
 	}
-	if m.showDueSummary {
-		overdue, dueSoon := m.dueCounts(time.Now().UTC())
-		sections = append(sections, statusStyle.Render(fmt.Sprintf("%d overdue * %d due soon", overdue, dueSoon)))
-	}
-	if strings.TrimSpace(m.status) != "" && m.status != "ready" {
-		sections = append(sections, statusStyle.Render(m.status))
+	if status := strings.TrimSpace(m.status); status != "" && status != "ready" {
+		if status != "board focus" && status != "global notifications focus" && status != "project notifications focus" && status != "global notifications" && !strings.HasPrefix(status, "project notifications:") {
+			sections = append(sections, statusStyle.Render(status))
+		}
 	}
 	content := strings.Join(sections, "\n")
 	innerWidth := layoutWidth
@@ -2492,6 +2490,8 @@ func (m *Model) startQuickActions() tea.Cmd {
 // startProjectForm starts project form.
 func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	m.projectFormFocus = 0
+	m.taskInfoBody.SetYOffset(0)
+	m.taskInfoBody.SetContent("")
 	m.projectFormInputs = []textinput.Model{
 		newModalInput("", "project name", "", 120),
 		newModalInput("", "enter opens markdown description editor", "", 240),
@@ -2531,6 +2531,8 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 // startTaskForm starts task form.
 func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	m.formFocus = 0
+	m.taskInfoBody.SetYOffset(0)
+	m.taskInfoBody.SetContent("")
 	m.priorityIdx = 1
 	m.duePicker = 0
 	m.pickerBack = modeNone
@@ -3987,13 +3989,7 @@ func (m *Model) normalizePanelFocus() {
 
 // noticesFocusStatus returns a status label for the active panel focus target.
 func (m Model) noticesFocusStatus() string {
-	if !m.noticesFocused {
-		return "board focus"
-	}
-	if m.noticesPanel == noticesPanelFocusGlobal {
-		return "global notifications focus"
-	}
-	return "project notifications focus"
+	return ""
 }
 
 // bootstrapActorTypeIndex resolves one actor type to its canonical bootstrap option index.
@@ -6178,7 +6174,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.noticesFocused {
 			m.noticesFocused = false
-			m.status = "board focus"
+			m.status = ""
 			return m, nil
 		}
 		if m.searchApplied || m.searchQuery != "" {
@@ -6206,28 +6202,20 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.status = "reloading..."
 		return m, m.loadData
 	case isForwardTabKey(msg):
-		if !m.cyclePanelFocus(1, true, true) {
-			m.status = "panel focus unchanged"
-			return m, nil
-		}
-		m.status = m.noticesFocusStatus()
+		_ = m.cyclePanelFocus(1, true, true)
+		m.status = ""
 		return m, nil
 	case isBackwardTabKey(msg):
-		if !m.cyclePanelFocus(-1, true, true) {
-			m.status = "panel focus unchanged"
-			return m, nil
-		}
-		m.status = m.noticesFocusStatus()
+		_ = m.cyclePanelFocus(-1, true, true)
+		m.status = ""
 		return m, nil
 	case key.Matches(msg, m.keys.moveLeft):
-		if m.cyclePanelFocus(-1, true, true) {
-			m.status = m.noticesFocusStatus()
-		}
+		_ = m.cyclePanelFocus(-1, true, true)
+		m.status = ""
 		return m, nil
 	case key.Matches(msg, m.keys.moveRight):
-		if m.cyclePanelFocus(1, true, true) {
-			m.status = m.noticesFocusStatus()
-		}
+		_ = m.cyclePanelFocus(1, true, true)
+		m.status = ""
 		return m, nil
 	case key.Matches(msg, m.keys.toggleSelectMode):
 		m.toggleMouseSelectionMode()
@@ -6245,14 +6233,12 @@ func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.
 	if m.noticesPanel == noticesPanelFocusGlobal {
 		switch {
 		case key.Matches(msg, m.keys.moveDown):
-			if m.moveGlobalNoticesSelection(1) {
-				m.status = "global notifications"
-			}
+			m.moveGlobalNoticesSelection(1)
+			m.status = ""
 			return m, nil
 		case key.Matches(msg, m.keys.moveUp):
-			if m.moveGlobalNoticesSelection(-1) {
-				m.status = "global notifications"
-			}
+			m.moveGlobalNoticesSelection(-1)
+			m.status = ""
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			m.beginGlobalNoticeTransition(msg)
@@ -6266,14 +6252,12 @@ func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.
 
 	switch {
 	case key.Matches(msg, m.keys.moveDown):
-		if m.moveNoticesSelection(1) {
-			m.status = "project notifications: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
-		}
+		m.moveNoticesSelection(1)
+		m.status = ""
 		return m, nil
 	case key.Matches(msg, m.keys.moveUp):
-		if m.moveNoticesSelection(-1) {
-			m.status = "project notifications: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
-		}
+		m.moveNoticesSelection(-1)
+		m.status = ""
 		return m, nil
 	case msg.Code == tea.KeyEnter || msg.String() == "enter":
 		return m.activateNoticesSelection()
@@ -6451,10 +6435,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNone
 			if m.isNoticesPanelVisible() {
 				_ = m.setPanelFocusIndex(len(m.columns), false)
-				m.status = m.noticesFocusStatus()
+				m.status = ""
 			} else {
 				m.noticesFocused = false
-				m.status = "board focus"
+				m.status = ""
 			}
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter" || msg.String() == "g":
@@ -6594,7 +6578,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.resetThreadComposerHistory()
 			m.status = "ready"
 			return m, m.threadInput.Focus()
-		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
+		case isForwardTabKey(msg):
 			if m.threadComposerActive {
 				m.threadComposerActive = false
 				m.threadInput.Blur()
@@ -6602,7 +6586,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.focusThreadPanel(threadPanelComments)
 			}
 			return m, m.moveThreadPanelFocus(1)
-		case msg.String() == "shift+tab" || msg.String() == "backtab":
+		case isBackwardTabKey(msg):
 			if m.threadComposerActive {
 				m.threadComposerActive = false
 				m.threadInput.Blur()
@@ -6614,42 +6598,28 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.threadComposerActive {
 				return updateThreadComposerInput()
 			}
-			switch m.threadPanelFocus {
-			case threadPanelContext:
-				return m, m.focusThreadPanel(threadPanelComments)
-			default:
-				return m, m.focusThreadPanel(threadPanelDetails)
-			}
+			return m, m.moveThreadPanelFocus(-1)
 		case msg.String() == "right":
 			if m.threadComposerActive {
 				return updateThreadComposerInput()
 			}
-			switch m.threadPanelFocus {
-			case threadPanelDetails, threadPanelComments:
-				return m, m.focusThreadPanel(threadPanelContext)
-			default:
-				return m, m.focusThreadPanel(threadPanelContext)
-			}
+			return m, m.moveThreadPanelFocus(1)
 		case msg.String() == "up":
 			if m.threadComposerActive {
 				return updateThreadComposerInput()
 			}
-			switch m.threadPanelFocus {
-			case threadPanelComments:
-				return m, m.focusThreadPanel(threadPanelDetails)
-			default:
-				return m, m.focusThreadPanel(threadPanelDetails)
+			if m.threadPanelFocus == threadPanelComments {
+				m.threadScroll = max(0, m.threadScroll-1)
 			}
+			return m, nil
 		case msg.String() == "down":
 			if m.threadComposerActive {
 				return updateThreadComposerInput()
 			}
-			switch m.threadPanelFocus {
-			case threadPanelDetails:
-				return m, m.focusThreadPanel(threadPanelComments)
-			default:
-				return m, m.focusThreadPanel(threadPanelComments)
+			if m.threadPanelFocus == threadPanelComments {
+				m.threadScroll++
 			}
+			return m, nil
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			if m.threadComposerActive {
 				m.threadComposerActive = false
@@ -7161,12 +7131,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.loadData
 		case key.Matches(msg, m.keys.newProject):
 			return m, m.startProjectForm(nil)
-		case msg.String() == "j" || msg.String() == "down":
+		case msg.String() == "j" || msg.String() == "down" || msg.String() == "right":
 			if m.projectPickerIndex < len(m.projects)-1 {
 				m.projectPickerIndex++
 			}
 			return m, nil
-		case msg.String() == "k" || msg.String() == "up":
+		case msg.String() == "k" || msg.String() == "up" || msg.String() == "left":
 			if m.projectPickerIndex > 0 {
 				m.projectPickerIndex--
 			}
@@ -11039,6 +11009,13 @@ func (m Model) noticesWarningPanelItems() []noticesPanelItem {
 		}
 		out = append(out, row)
 	}
+	overdue, dueSoon := m.dueCounts(time.Now().UTC())
+	if overdue > 0 {
+		out = append(out, noticesPanelItem{Label: fmt.Sprintf("overdue: %d", overdue)})
+	}
+	if dueSoon > 0 {
+		out = append(out, noticesPanelItem{Label: fmt.Sprintf("due soon: %d", dueSoon)})
+	}
 	return out
 }
 
@@ -11239,7 +11216,10 @@ func (m *Model) moveNoticesSelection(delta int) bool {
 			m.setNoticesSelectionIndex(next.ID, idx)
 			return true
 		}
-		return false
+		next := sections[0]
+		m.noticesSection = next.ID
+		m.setNoticesSelectionIndex(next.ID, 0)
+		return true
 	}
 
 	if itemIdx > 0 {
@@ -11253,7 +11233,10 @@ func (m *Model) moveNoticesSelection(delta int) bool {
 		m.setNoticesSelectionIndex(prev.ID, idx)
 		return true
 	}
-	return false
+	prev := sections[len(sections)-1]
+	m.noticesSection = prev.ID
+	m.setNoticesSelectionIndex(prev.ID, max(0, len(prev.Items)-1))
+	return true
 }
 
 // moveGlobalNoticesSelection moves row focus inside the global notifications panel.
@@ -11265,12 +11248,9 @@ func (m *Model) moveGlobalNoticesSelection(delta int) bool {
 	if len(items) == 0 {
 		return false
 	}
-	next := clamp(m.globalNoticesIdx+delta, 0, len(items)-1)
-	if next == m.globalNoticesIdx {
-		return false
-	}
+	next := wrapIndex(m.globalNoticesIdx, delta, len(items))
 	m.globalNoticesIdx = next
-	return true
+	return len(items) > 1
 }
 
 // activateGlobalNoticesSelection runs enter behavior for the selected global notifications row.
@@ -11566,8 +11546,6 @@ func (m Model) renderOverviewPanel(
 			)...,
 		)
 	}
-	projectLines = append(projectLines, "")
-	projectLines = append(projectLines, normalStyle.Render(truncate("j/k move • enter open • g full activity log", contentWidth)))
 	projectBorderColor := dim
 	if focused && m.noticesPanel == noticesPanelFocusProject {
 		projectBorderColor = accent
@@ -11658,8 +11636,6 @@ func (m Model) renderGlobalNoticesPanel(
 	if focused && end < len(items) {
 		lines = append(lines, normalStyle.Render(truncate("↓ more", contentWidth)))
 	}
-	lines = append(lines, "", normalStyle.Render(truncate("j/k move • enter open", contentWidth)))
-
 	borderColor := dim
 	if focused {
 		borderColor = accent
@@ -11735,6 +11711,7 @@ func (m Model) renderNoticesSection(
 
 // renderInfoLine renders output for the current model state.
 func (m Model) renderInfoLine(project domain.Project, muted color.Color) string {
+	_ = project
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
 		if strings.TrimSpace(m.projectionRootTaskID) != "" {
@@ -11742,7 +11719,7 @@ func (m Model) renderInfoLine(project domain.Project, muted color.Color) string 
 		}
 		return ""
 	}
-	parts := []string{fmt.Sprintf("selected: %s", truncate(task.Title, 48))}
+	parts := []string{}
 	if children := m.directChildCount(task.ID); children > 0 {
 		parts = append(parts, fmt.Sprintf("children: %d", children))
 		if strings.TrimSpace(m.projectionRootTaskID) == "" {
@@ -11751,6 +11728,9 @@ func (m Model) renderInfoLine(project domain.Project, muted color.Color) string 
 	}
 	if strings.TrimSpace(m.projectionRootTaskID) != "" {
 		parts = append(parts, fmt.Sprintf("%s full board", m.keys.clearFocus.Help().Key))
+	}
+	if len(parts) == 0 {
+		return ""
 	}
 	return lipgloss.NewStyle().Foreground(muted).Render(strings.Join(parts, " • "))
 }
@@ -11768,14 +11748,9 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 	for _, line := range screenHelp {
 		lines = append(lines, "- "+line)
 	}
-	selectionState := "off"
-	if m.mouseSelectionMode {
-		selectionState = "on"
-	}
 	lines = append(
 		lines,
 		"",
-		lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("selection mode: %s (%s toggles)", selectionState, m.keys.toggleSelectMode.Help().Key)),
 		lipgloss.NewStyle().Foreground(muted).Render("press ? or esc to close help"),
 	)
 	style := lipgloss.NewStyle().
@@ -11993,11 +11968,11 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeThread:
 		return "thread", []string{
-			"tab/shift+tab and arrows cycle details, comments, and context panels",
+			"tab/shift+tab or left/right cycle details, comments, and context panels",
 			"enter opens the focused panel action",
 			"i starts comment composition when the comments panel is focused",
 			"ctrl+s posts while composing; esc exits composer or returns to the prior screen",
-			"pgup/pgdown/home/end or mouse wheel scroll comments",
+			"up/down, pgup/pgdown/home/end, or mouse wheel scroll comments",
 		}
 	default:
 		return "current screen", []string{
@@ -12235,7 +12210,7 @@ func (m Model) taskInfoDescriptionMarkdown(task domain.Task, width int) string {
 
 // taskDescriptionPreviewViewport builds the bounded top-aligned markdown preview used by info/edit screens.
 func (m Model) taskDescriptionPreviewViewport(markdown string, boxWidth int) viewport.Model {
-	contentWidth := max(24, boxWidth-8)
+	contentWidth := max(24, boxWidth-4)
 	rendered := m.markdownPreviewContent(markdown, contentWidth, "(no description)")
 	vp := viewport.New()
 	vp.SoftWrap = true
@@ -13444,18 +13419,18 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		}
 		if m.threadPanelFocus == threadPanelContext {
 			short := []key.Binding{
-				helpBinding("tab/↑/↓/←/→", "panels"),
-				helpBinding("pgup/dn", "comments"),
+				helpBinding("tab/←/→", "panels"),
 				helpBinding("esc", "back"),
 				helpBinding("?", "help"),
 			}
 			return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 		}
-		short := []key.Binding{helpBinding("tab/↑/↓/←/→", "panels")}
+		short := []key.Binding{helpBinding("tab/←/→", "panels")}
 		if m.threadPanelFocus == threadPanelComments {
 			short = append(short,
 				helpBinding("enter", "comment"),
 				helpBinding("i", "compose"),
+				helpBinding("↑/↓", "scroll"),
 			)
 		} else {
 			short = append(short, helpBinding("enter", "edit"))
@@ -13473,8 +13448,9 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 				helpBinding("e", "edit"),
 				helpBinding("tab", "panels"),
 				helpBinding("/", "search"),
-				helpBinding("?", "help"),
+				helpBinding(":", "commands"),
 				helpBinding("q", "quit"),
+				helpBinding("?", "help"),
 			}
 			full := [][]key.Binding{
 				short,
@@ -13501,8 +13477,7 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 func nodeModalBoxStyle(accent color.Color, boxWidth int) lipgloss.Style {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(accent).
-		Padding(0, 1)
+		BorderForeground(accent)
 	if boxWidth > 0 {
 		style = style.Width(max(32, boxWidth-style.GetHorizontalFrameSize()))
 	}
@@ -14318,7 +14293,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		isNodeModal := m.mode == modeAddTask || m.mode == modeEditTask || m.mode == modeAddProject || m.mode == modeEditProject
 		if isNodeModal {
 			boxWidth := taskInfoOverlayBoxWidth(maxWidth)
-			contentWidth := max(24, boxWidth-8)
+			contentWidth := max(24, boxWidth-4)
 			subtitle := ""
 			bodyViewport := m.taskInfoBody
 			switch m.mode {
@@ -14346,7 +14321,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if maxWidth > 0 {
 			boxWidth = clamp(maxWidth, 24, 96)
 		}
-		contentWidth := max(24, boxWidth-8)
+		contentWidth := max(24, boxWidth-4)
 		boxStyle := nodeModalBoxStyle(accent, boxWidth)
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		lines := []string{titleStyle.Render(title)}
@@ -14671,7 +14646,7 @@ func (m Model) modePrompt() string {
 	case modeDescriptionEditor:
 		return "description editor: tab preview/edit, ctrl+s save, esc cancel"
 	case modeThread:
-		return "thread: tab or arrows wrap panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; pgup/pgdown/home/end scroll comments; esc backs out"
+		return "thread: tab/shift+tab or left/right wrap panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; up/down or pgup/pgdown/home/end scroll comments; esc backs out"
 	default:
 		return ""
 	}
@@ -14931,7 +14906,14 @@ func (m Model) columnHeight() int {
 
 // boardFooterLines estimates non-board rows that should remain visible below the board panels.
 func (m Model) boardFooterLines() int {
-	lines := 2 // info line + dependency rollup
+	lines := 0
+	if task, ok := m.selectedTaskInCurrentColumn(); ok {
+		if m.directChildCount(task.ID) > 0 || strings.TrimSpace(m.projectionRootTaskID) != "" {
+			lines++
+		}
+	} else if strings.TrimSpace(m.projectionRootTaskID) != "" {
+		lines++
+	}
 	if len(m.attentionItems) > 0 {
 		lines += 2
 	}
@@ -14941,11 +14923,10 @@ func (m Model) boardFooterLines() int {
 	if len(m.selectedTaskIDs) > 0 {
 		lines++
 	}
-	if m.showDueSummary {
-		lines++
-	}
 	if status := strings.TrimSpace(m.status); status != "" && status != "ready" {
-		lines++
+		if status != "board focus" && status != "global notifications focus" && status != "project notifications focus" && status != "global notifications" && !strings.HasPrefix(status, "project notifications:") {
+			lines++
+		}
 	}
 	return lines
 }

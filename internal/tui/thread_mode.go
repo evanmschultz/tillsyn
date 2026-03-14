@@ -140,18 +140,18 @@ func (m Model) threadSurfaceHeader() (string, string) {
 		if projectName == "" {
 			projectName = strings.TrimSpace(m.threadTarget.TargetID)
 		}
-		return title, fmt.Sprintf("project: %s • comments: %d • mode: thread", projectName, len(m.threadComments))
+		return title, fmt.Sprintf("project: %s • comments: %d", projectName, len(m.threadComments))
 	default:
 		taskID := strings.TrimSpace(m.threadTarget.TargetID)
 		if task, ok := m.taskByID(taskID); ok {
 			return taskInfoNodeLabel(task) + " Thread", fmt.Sprintf(
-				"kind: %s • state: %s • complete: %s • mode: thread",
+				"kind: %s • state: %s • complete: %s",
 				string(task.Kind),
 				lifecycleStateLabel(m.lifecycleStateForTask(task)),
 				completionLabel(m.lifecycleStateForTask(task) == domain.StateDone),
 			)
 		}
-		return "Task Thread", fmt.Sprintf("task: %s • comments: %d • mode: thread", truncate(taskID, 36), len(m.threadComments))
+		return "Task Thread", fmt.Sprintf("task: %s • comments: %d", truncate(taskID, 36), len(m.threadComments))
 	}
 }
 

@@ -16,7 +16,8 @@ type fullPageSurfaceMetrics struct {
 	boxWidth     int
 	contentWidth int
 	bodyHeight   int
-	surfaceGapY  int
+	topGapY      int
+	bottomGapY   int
 	headerBlock  string
 	helpLine     string
 	statusLine   string
@@ -62,8 +63,9 @@ func (m Model) appHeaderPathText(maxWidth int) string {
 // fullPageSurfaceMetrics computes the measured chrome and remaining body height for one full-page surface.
 func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth int, title, subtitle, status string) fullPageSurfaceMetrics {
 	const (
-		surfaceHorizontalInset = 1
-		surfaceVerticalInset   = 1
+		surfaceHorizontalInset = 0
+		surfaceTopGap          = 1
+		surfaceBottomGap       = 0
 	)
 	innerWidth := max(36, m.width-2*tuiOuterHorizontalPadding)
 	if m.width <= 0 {
@@ -74,7 +76,7 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 		maxBoxWidth = innerWidth
 	}
 	boxWidth = clamp(boxWidth, 36, maxBoxWidth)
-	contentWidth := max(24, boxWidth-8)
+	contentWidth := max(24, boxWidth-4)
 
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
 	headerBlock := m.appHeaderBlock(statusStyle, innerWidth)
@@ -91,7 +93,7 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 
 	boxChrome := fullPageSurfaceBoxChrome(accent, muted, boxWidth, title, subtitle, status)
 	statusText := strings.TrimSpace(m.status)
-	if statusText == "ready" {
+	if m.shouldHideSurfaceStatus(statusText) {
 		statusText = ""
 	}
 	statusLine := ""
@@ -107,7 +109,8 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 			lipgloss.Height(statusLine) -
 			lipgloss.Height(boxChrome) -
 			nodeModalBoxStyle(accent, boxWidth).GetVerticalFrameSize() -
-			(2 * surfaceVerticalInset)
+			surfaceTopGap -
+			surfaceBottomGap
 	}
 	bodyHeight = clamp(bodyHeight, taskInfoBodyViewportMinHeight, taskInfoBodyViewportMaxHeight)
 
@@ -116,11 +119,28 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 		boxWidth:     boxWidth,
 		contentWidth: contentWidth,
 		bodyHeight:   bodyHeight,
-		surfaceGapY:  surfaceVerticalInset,
+		topGapY:      surfaceTopGap,
+		bottomGapY:   surfaceBottomGap,
 		headerBlock:  headerBlock,
 		helpLine:     helpLine,
 		statusLine:   statusLine,
 	}
+}
+
+// shouldHideSurfaceStatus suppresses low-value repeated status text on full-page views.
+func (m Model) shouldHideSurfaceStatus(status string) bool {
+	status = strings.TrimSpace(strings.ToLower(status))
+	switch status {
+	case "", "ready", "task info", "parent task info", "edit task", "new task", "edit project", "new project", "thread loaded":
+		return true
+	}
+	if strings.HasPrefix(status, "text selection mode ") {
+		return true
+	}
+	if strings.HasSuffix(status, " focus") {
+		return true
+	}
+	return false
 }
 
 // fullPageSurfaceBoxChrome renders the non-body lines that consume height inside one bordered surface.
@@ -131,7 +151,7 @@ func fullPageSurfaceBoxChrome(accent, muted color.Color, boxWidth int, title, su
 	if strings.TrimSpace(subtitle) != "" {
 		lines = append(lines, hintStyle.Render(strings.TrimSpace(subtitle)))
 	}
-	lines = append(lines, titleStyle.Render(strings.Repeat("─", max(12, boxWidth-8))))
+	lines = append(lines, titleStyle.Render(strings.Repeat("─", max(12, boxWidth-4))))
 	if strings.TrimSpace(status) != "" {
 		lines = append(lines, hintStyle.Render(strings.TrimSpace(status)))
 	}
@@ -157,11 +177,11 @@ func renderFullPageSurfaceViewport(accent, muted color.Color, boxWidth int, titl
 func (m Model) renderFullPageSurfaceView(accent, muted, dim color.Color, metrics fullPageSurfaceMetrics, surface string) tea.View {
 	centeredSurface := lipgloss.PlaceHorizontal(metrics.innerWidth, lipgloss.Center, surface)
 	sections := []string{metrics.headerBlock}
-	for i := 0; i < metrics.surfaceGapY; i++ {
+	for i := 0; i < metrics.topGapY; i++ {
 		sections = append(sections, "")
 	}
 	sections = append(sections, centeredSurface)
-	for i := 0; i < metrics.surfaceGapY; i++ {
+	for i := 0; i < metrics.bottomGapY; i++ {
 		sections = append(sections, "")
 	}
 	if metrics.statusLine != "" {
