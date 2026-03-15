@@ -4068,4 +4068,5 @@ Commands run and outcomes:
 Status:
 - FR-015 implementation is complete and validation is green.
 - Final QA sign-off is complete and tracker state is synchronized.
-- Next step: hand the same blocked step `T1-01` back to the user for rerun.
+- User reran the same blocked step `T1-01` and reported PASS.
+- Next step: continue to the next ordered collaborative TUI step `T1-02`.
