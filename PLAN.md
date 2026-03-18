@@ -4214,3 +4214,15 @@ Status:
 - QA pass 2 (Nietzsche `019cfe88-c986-7500-b9c2-082171d37b4d`) reported no findings on tests/docs/tracker state.
 - Tracker/docs are updated through the new attribution worksheet and T1-02 follow-up ledger.
 - Remaining steps before user rerun: commit the validated FR-017 scope, then hand back the exact `T1-02` rerun instructions.
+
+Follow-up on the same blocked step (`T1-02`):
+1. User rerun reported one remaining attribution-rendering defect: project notifications already showed the readable display name, but the task `system:` section still printed raw UUID-like ids for `created_by` and `updated_by`.
+2. Kept the scope render-only in `internal/tui/model.go`: task system ownership lines now resolve through matching project activity entries and local identity display names instead of printing raw actor ids directly.
+3. Added `TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames` in `internal/tui/model_test.go` to lock `created_by: Evan (user)` and `updated_by: Codex Orchestrator (agent)`.
+4. Revalidation after the follow-up fix:
+   - `just fmt` -> PASS
+   - `just test-pkg ./internal/tui` -> PASS
+   - `just test-golden` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
+5. Next step after commit/push: investigate the readonly/auth MCP mutation failure and the requested external auth repos under a non-committed path, then discuss whether the auth approach answers the open MCP questions.

@@ -10680,6 +10680,74 @@ func TestTaskInfoBodyLinesRenderSystemSection(t *testing.T) {
 	}
 }
 
+// TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames verifies system ownership lines reuse activity display names.
+func TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T) {
+	now := time.Date(2026, 3, 17, 18, 34, 10, 0, time.FixedZone("PDT", -7*60*60))
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       3,
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		Title:          "Task",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "c75a483e-6628-475e-b12d-9ee7a928a9d1",
+		UpdatedByActor: "agent-instance-1",
+		UpdatedByType:  domain.ActorTypeAgent,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationCreate,
+			ActorID:    "c75a483e-6628-475e-b12d-9ee7a928a9d1",
+			ActorName:  "Evan",
+			ActorType:  domain.ActorTypeUser,
+			Metadata:   map[string]string{"title": task.Title, "item_scope": "task"},
+			OccurredAt: now,
+		},
+		{
+			ID:         2,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			ActorID:    "agent-instance-1",
+			ActorName:  "Codex Orchestrator",
+			ActorType:  domain.ActorTypeAgent,
+			Metadata:   map[string]string{"title": task.Title, "item_scope": "task"},
+			OccurredAt: now.Add(2 * time.Minute),
+		},
+	}
+
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithIdentityConfig(IdentityConfig{
+			ActorID:          "c75a483e-6628-475e-b12d-9ee7a928a9d1",
+			DisplayName:      "Evan",
+			DefaultActorType: "user",
+		}),
+	))
+	lines := m.taskInfoBodyLines(task, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
+	rendered := strings.Join(lines, "\n")
+
+	for _, want := range []string{
+		"created_by: Evan (user)",
+		"updated_by: Codex Orchestrator (agent)",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected task info system section to contain %q, got\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "created_by: c75a483e-6628-475e-b12d-9ee7a928a9d1") {
+		t.Fatalf("expected system section to avoid raw local actor id, got\n%s", rendered)
+	}
+}
+
 // TestTaskSchemaCoverageIsExplicit verifies every top-level task field is intentionally editable or read-only in the TUI.
 func TestTaskSchemaCoverageIsExplicit(t *testing.T) {
 	editable := map[string]struct{}{

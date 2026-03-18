@@ -12078,6 +12078,68 @@ func (m Model) activityOwnerLabel(entry activityEntry, width int) string {
 	return truncate(label, max(8, width))
 }
 
+// taskSystemActorLine renders one readable system ownership line using activity identity context when available.
+func (m Model) taskSystemActorLine(label string, task domain.Task, actorID string, fallbackType domain.ActorType, preferCreate bool) string {
+	owner, actorType := m.taskSystemActorLabel(task, actorID, fallbackType, preferCreate)
+	if actorType == "" {
+		return label + ": " + owner
+	}
+	return label + ": " + owner + " (" + string(actorType) + ")"
+}
+
+// taskSystemActorLabel resolves one readable task ownership label and actor type for system sections.
+func (m Model) taskSystemActorLabel(task domain.Task, actorID string, fallbackType domain.ActorType, preferCreate bool) (string, domain.ActorType) {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return "-", ""
+	}
+	if entry, ok := m.findTaskActivityActorEntry(task.ID, actorID, preferCreate); ok {
+		actorType, owner := m.displayActivityOwner(entry)
+		return owner, actorType
+	}
+	entry := activityEntry{
+		WorkItemID: task.ID,
+		ActorID:    actorID,
+		ActorType:  fallbackType,
+	}
+	actorType, owner := m.displayActivityOwner(entry)
+	return owner, actorType
+}
+
+// findTaskActivityActorEntry finds a matching activity entry for one task actor, preferring create or latest events.
+func (m Model) findTaskActivityActorEntry(taskID, actorID string, preferCreate bool) (activityEntry, bool) {
+	taskID = strings.TrimSpace(taskID)
+	actorID = strings.TrimSpace(actorID)
+	if taskID == "" || actorID == "" {
+		return activityEntry{}, false
+	}
+	if preferCreate {
+		for _, entry := range m.activityLog {
+			if strings.TrimSpace(entry.WorkItemID) != taskID {
+				continue
+			}
+			if entry.Operation != domain.ChangeOperationCreate {
+				continue
+			}
+			if !strings.EqualFold(strings.TrimSpace(entry.ActorID), actorID) {
+				continue
+			}
+			return entry, true
+		}
+	}
+	for idx := len(m.activityLog) - 1; idx >= 0; idx-- {
+		entry := m.activityLog[idx]
+		if strings.TrimSpace(entry.WorkItemID) != taskID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(entry.ActorID), actorID) {
+			continue
+		}
+		return entry, true
+	}
+	return activityEntry{}, false
+}
+
 // renderOverviewPanel renders the right-side notices panel for board scope context.
 func (m Model) renderOverviewPanel(
 	project domain.Project,
@@ -13578,13 +13640,8 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 	lines = append(lines, hintStyle.Render(fmt.Sprintf("position: %d", task.Position)))
 	lines = append(lines, hintStyle.Render("created_at: "+task.CreatedAt.In(time.Local).Format(time.RFC3339)))
 	lines = append(lines, hintStyle.Render("updated_at: "+task.UpdatedAt.In(time.Local).Format(time.RFC3339)))
-	lines = append(lines, hintStyle.Render("created_by: "+fallbackText(strings.TrimSpace(task.CreatedByActor), "-")))
-	updatedBy := fallbackText(strings.TrimSpace(task.UpdatedByActor), "-")
-	updatedByType := strings.TrimSpace(string(task.UpdatedByType))
-	if updatedByType == "" {
-		updatedByType = "-"
-	}
-	lines = append(lines, hintStyle.Render("updated_by: "+updatedBy+" ("+updatedByType+")"))
+	lines = append(lines, hintStyle.Render(m.taskSystemActorLine("created_by", task, task.CreatedByActor, "", true)))
+	lines = append(lines, hintStyle.Render(m.taskSystemActorLine("updated_by", task, task.UpdatedByActor, task.UpdatedByType, false)))
 	if task.StartedAt != nil {
 		lines = append(lines, hintStyle.Render("started_at: "+formatSystemTimestamp(task.StartedAt)))
 	}
