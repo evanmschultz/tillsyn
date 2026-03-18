@@ -36,6 +36,16 @@ func traceDebug(msg string, keyvals ...any) {
 	log.Debug(msg, keyvals...)
 }
 
+// traceTaskScreenAction emits one structured task-screen interaction trace.
+func traceTaskScreenAction(screen, action string, keyvals ...any) {
+	fields := []any{
+		"screen", strings.TrimSpace(screen),
+		"action", strings.TrimSpace(action),
+	}
+	fields = append(fields, keyvals...)
+	traceDebug("tui.task_screen.action", fields...)
+}
+
 // globalNoticeTransitionID returns the active global-notification transition id.
 func (m Model) globalNoticeTransitionID() string {
 	return strings.TrimSpace(m.globalNoticeTransition.ID)

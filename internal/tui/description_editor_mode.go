@@ -180,10 +180,17 @@ func (m Model) descriptionEditorFrameText(lineWidth int) descriptionEditorFrame 
 
 // descriptionEditorFooterHint returns bottom-hint text for description editor submodes.
 func (m Model) descriptionEditorFooterHint() string {
-	if m.descriptionEditorMode == descriptionEditorViewModePreview {
-		return "preview mode • tab edit mode • j/k or pgup/pgdown scroll • home/end jump • ctrl+s save • esc cancel • ? help"
+	saveVerb := "save"
+	if m.descriptionEditorBack == modeEditTask &&
+		(m.descriptionEditorTarget == descriptionEditorTargetTask || m.descriptionEditorTarget == descriptionEditorTargetTaskFormField) {
+		saveVerb = "save task"
+	} else if m.descriptionEditorBack == modeAddTask {
+		saveVerb = "apply field"
 	}
-	return "edit mode • tab preview mode • ctrl+z undo • ctrl+shift+z redo • ctrl+s save • esc cancel • enter newline • ? inserts '?'"
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		return "preview mode • tab edit mode • j/k or pgup/pgdown scroll • home/end jump • ctrl+s " + saveVerb + " • esc cancel • ? help"
+	}
+	return "edit mode • tab preview mode • ctrl+z undo • ctrl+shift+z redo • ctrl+s " + saveVerb + " • esc cancel • enter newline • ? inserts '?'"
 }
 
 // descriptionEditorPathLabel returns the active path label for description editor header context.

@@ -1,8 +1,8 @@
 # Kan Plan
 
 Created: 2026-02-21
-Updated: 2026-03-14
-Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-015 focus-root-only phase creation semantics implemented and validated, and awaiting the user's rerun of that same step before any forward testing resumes.
+Updated: 2026-03-17
+Status: In progress; collaborative TUI validation advanced past `T1-01` and is now paused on `T1-02` pending the user's rerun after FR-016 metadata-persistence/subtask-management remediation.
 
 ## 1) Primary Goal
 
@@ -4070,3 +4070,67 @@ Status:
 - Final QA sign-off is complete and tracker state is synchronized.
 - User reran the same blocked step `T1-01` and reported PASS.
 - Next step: continue to the next ordered collaborative TUI step `T1-02`.
+
+## Checkpoint 2026-03-17: FR-016 Task Metadata Persistence And Subtask Task-Screen Management
+
+Current objective:
+- remediate the `T1-02` failure without opening roadmap work: fix metadata field persistence semantics, make subtasks fully manageable from task screens, preserve input safety during refresh, and add task-screen logging so future save/reload issues are diagnosable.
+
+Backlog/open-findings review:
+1. Reviewed active collaborative state in this file and confirmed `T1-01` is already complete; the current manual gate is `T1-02`.
+2. Reviewed unresolved collaborative/doc state in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` before opening FR-016.
+3. User-reported `T1-02` failure was narrowed to TUI interaction semantics, not DB persistence: field-editor `ctrl+s` only applied back to the form, empty metadata values were treated as unchanged, task info could not open a selected subtask, and task-screen save/reload/reanchor logging was missing.
+
+Investigation evidence:
+1. Local log inspection of `.tillsyn/log/tillsyn-20260317.log` showed only startup lines plus one `tui.form.control_character_guard` entry for `description`; there were no task-update or subtask-action traces.
+2. Explorer lane `019cfdda-9984-73a3-9500-5c51724e5cee` confirmed backend persistence succeeds when the outer form actually submits, and ranked the likely UX/interaction causes: blank-means-unchanged, editor `ctrl+s` only applying to form state, and multiline markdown fields being backed by single-line `textinput` state.
+3. Explorer lane `019cfdda-ae47-7212-a3e9-77a7aa59fe2d` confirmed task-info `enter` was a no-op even though the subtask row was visibly focused, edit-mode subtask open/create used a separate contract from task-info, and save/reload/reanchor/logging was incomplete.
+
+User consensus:
+1. Presented fix options and got explicit user selection for `Option A`: shared draft-backed markdown fields, immediate persistence from the metadata editor for existing tasks, shared subtask action-row behavior across task screens, stronger logging, and safe refresh that never overwrites active input.
+
+Files edited and why:
+1. `internal/tui/model.go`
+   - introduced dedicated draft/touched state for markdown-backed task metadata fields instead of treating `textinput` rows as the source of truth,
+   - made editor save for existing task description/metadata go through the real `UpdateTask` path,
+   - added task-info `enter` subtask drill-in,
+   - added stable subtask-id reanchor in task-info,
+   - added parent-edit return context for subtask drill-in/save/escape,
+   - added structured task-screen action traces,
+   - preserved deferred auto-refresh behavior for active input modes while allowing reload after successful updates.
+2. `internal/tui/description_editor_mode.go`
+   - made footer copy reflect whether `ctrl+s` applies a draft or saves the existing task.
+3. `internal/tui/trace.go`
+   - added reusable `tui.task_screen.action` structured debug logging for subtask open/toggle and task-save flows.
+4. `internal/tui/model_test.go`
+   - updated metadata draft tests to reflect the new source-of-truth model,
+   - added regression coverage for editor-level metadata persistence, task-info subtask open-on-enter, and parent-edit reopen after subtask save.
+
+Validation loop:
+1. `just test-pkg ./internal/tui` -> FAIL
+   - `TestModelEditTaskMetadataFieldsPrefillAndSubmit` still mutated `formInputs` directly instead of the new markdown draft state.
+   - `TestModelEditTaskKeyboardSaveAndPickerShortcuts` still seeded the editor from `formInputs` instead of the new draft state.
+   - `TestModelEditTaskSubtaskAndResourceRowSelection` expected `Esc` from child edit to drop to board instead of reopening parent edit.
+2. Context7 re-consulted for Bubble Tea/Bubbles input/editor guidance after the failing test loop, then tests were updated to reflect the dedicated draft model and parent-edit return contract.
+3. `just fmt && just test-pkg ./internal/tui` -> FAIL
+   - synthetic `ctrl+s` test event shape was invalid for this Bubble Tea version.
+4. Context7 re-consulted for Bubble Tea key-message semantics after the failing test loop, then the test was switched to call the real editor save/close path directly.
+5. `just fmt && just test-pkg ./internal/tui` -> PASS.
+6. `just test-golden` -> PASS.
+7. `just check` -> PASS.
+8. QA pass 1 (`019cfe16-a239-7121-830a-cb6fa7003188` Schrodinger) -> HIGH finding:
+   - normal child-edit submit cleared the parent reopen context before deriving it, so only `Esc` and editor-level save returned to the parent edit flow.
+9. Follow-up fix:
+   - moved reopen-context capture ahead of edit-state clearing and added `TestModelEditTaskSubtaskSubmitReturnsToParent`.
+10. Revalidation after QA1 finding:
+   - `just fmt && just test-pkg ./internal/tui && just test-golden && just check && just ci` -> PASS.
+11. QA pass 2 (`019cfe16-a49f-75d3-8b6b-c23ae3b3475e` Ramanujan) -> PASS on tracker-state audit after identifying stale `T1-01` references that needed synchronization.
+
+Status:
+- FR-016 implementation is complete and validation is green.
+- Collaborative progression remains paused on `T1-02` until the user reruns the step.
+
+Next step:
+1. Update `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` for FR-016/FX-016 and stale FR-015 references.
+2. Commit the validated FR-016 scope.
+3. Hand the user the exact `T1-02` rerun instructions.

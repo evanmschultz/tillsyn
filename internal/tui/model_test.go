@@ -1673,10 +1673,10 @@ func TestModelEditTaskMetadataFieldsPrefillAndSubmit(t *testing.T) {
 		t.Fatalf("expected risk prefill %q, got %q", "draft risk", got)
 	}
 
-	m.formInputs[taskFieldObjective].SetValue("updated objective")
-	m.formInputs[taskFieldAcceptanceCriteria].SetValue("-")
-	m.formInputs[taskFieldValidationPlan].SetValue("updated validation")
-	m.formInputs[taskFieldRiskNotes].SetValue("updated risk")
+	m.setTaskFormMarkdownDraft(taskFieldObjective, "updated objective", true)
+	m.setTaskFormMarkdownDraft(taskFieldAcceptanceCriteria, "", true)
+	m.setTaskFormMarkdownDraft(taskFieldValidationPlan, "updated validation", true)
+	m.setTaskFormMarkdownDraft(taskFieldRiskNotes, "updated risk", true)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	updated, ok := svc.taskByID(task.ID)
@@ -1694,6 +1694,46 @@ func TestModelEditTaskMetadataFieldsPrefillAndSubmit(t *testing.T) {
 	}
 	if got := updated.Metadata.RiskNotes; got != "updated risk" {
 		t.Fatalf("expected risk notes %q, got %q", "updated risk", got)
+	}
+}
+
+// TestModelEditTaskMetadataEditorCtrlSSavesTask verifies editor-level ctrl+s persists existing task metadata.
+func TestModelEditTaskMetadataEditorCtrlSSavesTask(t *testing.T) {
+	now := time.Date(2026, 3, 3, 10, 40, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			Objective: "draft objective",
+		},
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('e'))
+	m.formFocus = taskFieldObjective
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor for objective, got %v", m.mode)
+	}
+	m.descriptionEditorInput.SetValue("saved from editor")
+	m.saveDescriptionEditor()
+	m = applyCmd(t, m, m.closeDescriptionEditor(true))
+
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit mode after metadata editor save, got %v", m.mode)
+	}
+	updated, ok := svc.taskByID(task.ID)
+	if !ok {
+		t.Fatalf("expected updated task %q in fake service", task.ID)
+	}
+	if got := updated.Metadata.Objective; got != "saved from editor" {
+		t.Fatalf("expected editor ctrl+s to persist objective, got %q", got)
 	}
 }
 
@@ -3958,6 +3998,44 @@ func TestModelTaskInfoAllowsSubtaskCreation(t *testing.T) {
 	}
 }
 
+// TestModelTaskInfoEnterOpensFocusedSubtask verifies enter drills into the highlighted child task.
+func TestModelTaskInfoEnterOpensFocusedSubtask(t *testing.T) {
+	now := time.Date(2026, 3, 3, 15, 10, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "parent",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "child",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		ParentID:  parent.ID,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+		Title:     "Child",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})))
+	m.focusTaskByID(parent.ID)
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode after enter, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != child.ID {
+		t.Fatalf("expected enter to open subtask %q, got %q", child.ID, m.taskInfoTaskID)
+	}
+}
+
 // TestModelTaskInfoMovesCurrentTaskWithBrackets verifies task-info mode supports moving the focused task between columns.
 func TestModelTaskInfoMovesCurrentTaskWithBrackets(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
@@ -5521,7 +5599,7 @@ func TestModelEditTaskKeyboardSaveAndPickerShortcuts(t *testing.T) {
 		t.Fatalf("expected esc from label picker opened by e to return edit mode, got %v", m.mode)
 	}
 
-	m.formInputs[taskFieldObjective].SetValue("existing objective")
+	m.setTaskFormMarkdownDraft(taskFieldObjective, "existing objective", true)
 	m.formFocus = taskFieldObjective
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeDescriptionEditor {
@@ -5709,13 +5787,14 @@ func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeNone {
-		t.Fatalf("expected esc to close subtask edit form before reopening parent, got %v", m.mode)
-	}
-	m.focusTaskByID(parent.ID)
-	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeEditTask {
-		t.Fatalf("expected parent edit mode, got %v", m.mode)
+		t.Fatalf("expected esc to reopen parent edit form, got %v", m.mode)
+	}
+	if m.editingTaskID != parent.ID {
+		t.Fatalf("expected parent edit task %q after esc, got %q", parent.ID, m.editingTaskID)
+	}
+	if m.taskFormSubtaskCursor != 1 {
+		t.Fatalf("expected parent edit to reselect child row, got %d", m.taskFormSubtaskCursor)
 	}
 	m.formFocus = taskFieldResources
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
@@ -5728,6 +5807,62 @@ func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
 	}
 	if m.taskFormResourceEditIndex != 0 {
 		t.Fatalf("expected selected resource row to set edit index 0, got %d", m.taskFormResourceEditIndex)
+	}
+}
+
+// TestModelEditTaskSubtaskSubmitReturnsToParent verifies saving a child edit reopens the parent edit flow.
+func TestModelEditTaskSubtaskSubmitReturnsToParent(t *testing.T) {
+	now := time.Date(2026, 3, 17, 16, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-parent",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-child",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		ParentID:  parent.ID,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('e'))
+	m.formFocus = taskFieldSubtasks
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.editingTaskID != child.ID {
+		t.Fatalf("expected child edit form, got %q", m.editingTaskID)
+	}
+
+	m.formInputs[taskFieldTitle].SetValue("Child updated")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected parent edit mode after child save, got %v", m.mode)
+	}
+	if m.editingTaskID != parent.ID {
+		t.Fatalf("expected parent edit task %q after child save, got %q", parent.ID, m.editingTaskID)
+	}
+	if m.taskFormSubtaskCursor != 1 {
+		t.Fatalf("expected parent edit to reselect saved child row, got %d", m.taskFormSubtaskCursor)
+	}
+	updated, ok := svc.taskByID(child.ID)
+	if !ok {
+		t.Fatalf("expected updated child task %q in fake service", child.ID)
+	}
+	if updated.Title != "Child updated" {
+		t.Fatalf("expected saved child title %q, got %q", "Child updated", updated.Title)
 	}
 }
 

@@ -531,6 +531,8 @@ type Model struct {
 	formInputs           []textinput.Model
 	formFocus            int
 	taskFormDescription  string
+	taskFormMarkdown     map[int]string
+	taskFormTouched      map[int]bool
 	priorityIdx          int
 	duePicker            int
 	duePickerFocus       int
@@ -570,11 +572,15 @@ type Model struct {
 	taskInfoOriginTaskID           string
 	taskInfoPath                   []string
 	taskInfoSubtaskIdx             int
+	taskInfoFocusedSubtaskID       string
 	taskInfoComments               []domain.Comment
 	taskInfoCommentsError          string
 	taskFormParentID               string
 	taskFormKind                   domain.WorkKind
 	taskFormScope                  domain.KindAppliesTo
+	taskFormBackMode               inputMode
+	taskFormBackTaskID             string
+	taskFormBackChildID            string
 	pendingProjectID               string
 	pendingFocusTaskID             string
 	pendingActivityJumpTask        string
@@ -725,6 +731,14 @@ type actionMsg struct {
 	historyUndo     *historyActionSet
 	historyRedo     *historyActionSet
 	activityItem    *activityEntry
+}
+
+// taskUpdatedMsg carries one successful task update with optional reopen context.
+type taskUpdatedMsg struct {
+	task             domain.Task
+	status           string
+	reopenEditTaskID string
+	reselectChildID  string
 }
 
 // autoRefreshTickMsg triggers a periodic external-state refresh attempt.
@@ -1107,6 +1121,15 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		}
 		m.pendingActivityJumpTask = ""
 	}
+	if m.mode == modeTaskInfo {
+		if currentID := strings.TrimSpace(m.taskInfoTaskID); currentID != "" {
+			if task, ok := m.taskByID(currentID); ok {
+				m.reanchorTaskInfoSubtaskSelection(currentID)
+				m.syncTaskInfoDetailsViewport(task)
+				m.syncTaskInfoBodyViewport(task)
+			}
+		}
+	}
 	if m.startupBootstrapRequired {
 		if m.mode != modeBootstrapSettings {
 			return m.startBootstrapSettingsMode(true)
@@ -1259,6 +1282,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resourcePickerIndex = 1
 		}
 		return m, nil
+
+	case taskUpdatedMsg:
+		m.err = nil
+		m.replaceTaskInMemory(msg.task)
+		traceTaskScreenAction(
+			"task_edit",
+			"task_updated",
+			"task_id", msg.task.ID,
+			"reopen_parent_task_id", strings.TrimSpace(msg.reopenEditTaskID),
+			"reselect_child_id", strings.TrimSpace(msg.reselectChildID),
+		)
+		if msg.status != "" {
+			m.status = msg.status
+		}
+		if parentID := strings.TrimSpace(msg.reopenEditTaskID); parentID != "" {
+			parent, ok := m.taskByID(parentID)
+			if !ok {
+				m.status = "parent task not found"
+				return m, m.loadData
+			}
+			cmd := m.startTaskForm(&parent)
+			m.selectTaskFormSubtaskByID(msg.reselectChildID)
+			m.syncTaskFormViewportToFocus()
+			return m, tea.Batch(cmd, m.loadData)
+		}
+		return m, m.loadData
 
 	case actionMsg:
 		if msg.err != nil {
@@ -2506,6 +2555,9 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	m.taskFormSubtaskCursor = 0
 	m.taskFormResourceCursor = 0
 	m.taskFormResourceEditIndex = -1
+	m.taskFormBackMode = modeNone
+	m.taskFormBackTaskID = ""
+	m.taskFormBackChildID = ""
 	m.formInputs = []textinput.Model{
 		newModalInput("", "task title (required)", "", 120),
 		newModalInput("", "enter opens markdown description editor", "", 240),
@@ -2522,6 +2574,7 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	}
 	m.formInputs[taskFieldPriority].SetValue(string(priorityOptions[m.priorityIdx]))
 	m.taskFormDescription = ""
+	m.initTaskFormMarkdownDrafts()
 	if task != nil {
 		m.taskFormParentID = task.ParentID
 		m.taskFormKind = task.Kind
@@ -2543,19 +2596,19 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 			m.formInputs[taskFieldBlockedBy].SetValue(strings.Join(task.Metadata.BlockedBy, ","))
 		}
 		if blockedReason := strings.TrimSpace(task.Metadata.BlockedReason); blockedReason != "" {
-			m.formInputs[taskFieldBlockedReason].SetValue(blockedReason)
+			m.setTaskFormMarkdownDraft(taskFieldBlockedReason, blockedReason, false)
 		}
 		if objective := strings.TrimSpace(task.Metadata.Objective); objective != "" {
-			m.formInputs[taskFieldObjective].SetValue(objective)
+			m.setTaskFormMarkdownDraft(taskFieldObjective, objective, false)
 		}
 		if acceptanceCriteria := strings.TrimSpace(task.Metadata.AcceptanceCriteria); acceptanceCriteria != "" {
-			m.formInputs[taskFieldAcceptanceCriteria].SetValue(acceptanceCriteria)
+			m.setTaskFormMarkdownDraft(taskFieldAcceptanceCriteria, acceptanceCriteria, false)
 		}
 		if validationPlan := strings.TrimSpace(task.Metadata.ValidationPlan); validationPlan != "" {
-			m.formInputs[taskFieldValidationPlan].SetValue(validationPlan)
+			m.setTaskFormMarkdownDraft(taskFieldValidationPlan, validationPlan, false)
 		}
 		if riskNotes := strings.TrimSpace(task.Metadata.RiskNotes); riskNotes != "" {
-			m.formInputs[taskFieldRiskNotes].SetValue(riskNotes)
+			m.setTaskFormMarkdownDraft(taskFieldRiskNotes, riskNotes, false)
 		}
 		m.taskFormResourceRefs = append([]domain.ResourceRef(nil), task.Metadata.ResourceRefs...)
 		m.mode = modeEditTask
@@ -2663,7 +2716,11 @@ func (m *Model) startSubtaskFormFromTaskForm() tea.Cmd {
 			m.status = "task not found"
 			return nil
 		}
-		return m.startSubtaskForm(task)
+		cmd := m.startSubtaskForm(task)
+		m.taskFormBackMode = modeEditTask
+		m.taskFormBackTaskID = task.ID
+		m.taskFormBackChildID = ""
+		return cmd
 	}
 	parentID := strings.TrimSpace(m.taskFormParentID)
 	if parentID == "" {
@@ -2814,6 +2871,20 @@ func isTaskFormMarkdownField(field int) bool {
 	}
 }
 
+// taskFormUsesDedicatedMarkdownDraft reports whether one markdown-capable field should use dedicated draft state.
+func taskFormUsesDedicatedMarkdownDraft(field int) bool {
+	switch field {
+	case taskFieldBlockedReason,
+		taskFieldObjective,
+		taskFieldAcceptanceCriteria,
+		taskFieldValidationPlan,
+		taskFieldRiskNotes:
+		return true
+	default:
+		return false
+	}
+}
+
 // isTaskFormDependencyField reports whether one task-form field maps to dependency relations.
 func isTaskFormDependencyField(field int) bool {
 	return field == taskFieldDependsOn || field == taskFieldBlockedBy
@@ -2861,8 +2932,17 @@ func (m *Model) openFocusedTaskFormSubtask() tea.Cmd {
 		return nil
 	}
 	if subtask, ok := m.selectedTaskFormSubtask(); ok {
-		return m.startTaskForm(&subtask)
+		parentID := strings.TrimSpace(m.editingTaskID)
+		traceTaskScreenAction("task_edit", "subtask_open", "parent_task_id", parentID, "child_task_id", subtask.ID)
+		cmd := m.startTaskForm(&subtask)
+		if parentID != "" {
+			m.taskFormBackMode = modeEditTask
+			m.taskFormBackTaskID = parentID
+			m.taskFormBackChildID = subtask.ID
+		}
+		return cmd
 	}
+	traceTaskScreenAction("task_edit", "subtask_create_from_row", "parent_task_id", strings.TrimSpace(m.editingTaskID))
 	return m.startSubtaskFormFromTaskForm()
 }
 
@@ -2937,12 +3017,57 @@ func taskFormMarkdownFieldLabel(field int) string {
 	}
 }
 
+// initTaskFormMarkdownDrafts resets dedicated markdown draft state for the active task form.
+func (m *Model) initTaskFormMarkdownDrafts() {
+	if m == nil {
+		return
+	}
+	m.taskFormMarkdown = map[int]string{}
+	m.taskFormTouched = map[int]bool{}
+}
+
+// taskFormMarkdownDraft returns one dedicated markdown draft value for a task-form field.
+func (m Model) taskFormMarkdownDraft(field int) string {
+	if !taskFormUsesDedicatedMarkdownDraft(field) {
+		return ""
+	}
+	if m.taskFormMarkdown == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.taskFormMarkdown[field])
+}
+
+// setTaskFormMarkdownDraft stores one dedicated markdown draft and syncs the compact row display.
+func (m *Model) setTaskFormMarkdownDraft(field int, value string, touched bool) {
+	if m == nil || !taskFormUsesDedicatedMarkdownDraft(field) {
+		return
+	}
+	if m.taskFormMarkdown == nil {
+		m.taskFormMarkdown = map[int]string{}
+	}
+	if m.taskFormTouched == nil {
+		m.taskFormTouched = map[int]bool{}
+	}
+	value = strings.TrimSpace(value)
+	m.taskFormMarkdown[field] = value
+	if touched {
+		m.taskFormTouched[field] = true
+	}
+	if field >= 0 && field < len(m.formInputs) {
+		m.formInputs[field].SetValue(descriptionFormDisplayValue(value))
+		m.formInputs[field].CursorEnd()
+	}
+}
+
 // taskFormMarkdownFieldValue returns the current value for one markdown-editable task form field.
 func (m Model) taskFormMarkdownFieldValue(field int) string {
 	switch field {
 	case taskFieldDescription:
 		return strings.TrimSpace(m.taskFormDescription)
 	default:
+		if taskFormUsesDedicatedMarkdownDraft(field) {
+			return m.taskFormMarkdownDraft(field)
+		}
 		if field >= 0 && field < len(m.formInputs) {
 			return strings.TrimSpace(m.formInputs[field].Value())
 		}
@@ -2961,6 +3086,10 @@ func (m *Model) setTaskFormMarkdownFieldValue(field int, value string) {
 		m.taskFormDescription = value
 		m.syncTaskFormDescriptionDisplay()
 	default:
+		if taskFormUsesDedicatedMarkdownDraft(field) {
+			m.setTaskFormMarkdownDraft(field, value, true)
+			return
+		}
 		if field >= 0 && field < len(m.formInputs) {
 			m.formInputs[field].SetValue(value)
 			m.formInputs[field].CursorEnd()
@@ -3234,6 +3363,18 @@ func (m *Model) closeDescriptionEditor(saved bool) tea.Cmd {
 		m.status = "ready"
 		return nil
 	}
+	if saved && back == modeEditTask && (target == descriptionEditorTargetTask || target == descriptionEditorTargetTaskFormField) {
+		cmd, err := m.persistCurrentEditTaskCmd("task updated")
+		if err != nil {
+			m.status = err.Error()
+			if target == descriptionEditorTargetTaskFormField && isTaskFormMarkdownField(field) {
+				return m.focusTaskFormField(field)
+			}
+			return m.focusTaskFormField(taskFieldDescription)
+		}
+		m.status = "saving task..."
+		return cmd
+	}
 	if saved {
 		m.status = "description updated"
 	} else {
@@ -3356,6 +3497,10 @@ func (m Model) taskFormValues() map[string]string {
 	for i, key := range taskFormFields {
 		if i >= len(m.formInputs) {
 			break
+		}
+		if taskFormUsesDedicatedMarkdownDraft(i) {
+			out[key] = sanitizeFormFieldValue(m.taskFormMarkdownDraft(i))
+			continue
 		}
 		out[key] = sanitizeFormFieldValue(m.formInputs[i].Value())
 	}
@@ -3632,52 +3777,187 @@ func (m Model) buildTaskMetadataFromForm(vals map[string]string, current domain.
 	meta.DependsOn = parseTaskRefIDsInput(vals["depends_on"], current.DependsOn)
 	meta.BlockedBy = parseTaskRefIDsInput(vals["blocked_by"], current.BlockedBy)
 	blockedReason := strings.TrimSpace(vals["blocked_reason"])
-	switch blockedReason {
-	case "":
+	switch {
+	case taskFormUsesDedicatedMarkdownDraft(taskFieldBlockedReason) && m.taskFormTouched[taskFieldBlockedReason]:
+		meta.BlockedReason = blockedReason
+	case blockedReason == "":
 		// Keep current metadata when field is untouched.
-	case "-":
+	case blockedReason == "-":
 		meta.BlockedReason = ""
 	default:
 		meta.BlockedReason = blockedReason
 	}
 	objective := strings.TrimSpace(vals["objective"])
-	switch objective {
-	case "":
+	switch {
+	case taskFormUsesDedicatedMarkdownDraft(taskFieldObjective) && m.taskFormTouched[taskFieldObjective]:
+		meta.Objective = objective
+	case objective == "":
 		// Keep current metadata when field is untouched.
-	case "-":
+	case objective == "-":
 		meta.Objective = ""
 	default:
 		meta.Objective = objective
 	}
 	acceptanceCriteria := strings.TrimSpace(vals["acceptance_criteria"])
-	switch acceptanceCriteria {
-	case "":
+	switch {
+	case taskFormUsesDedicatedMarkdownDraft(taskFieldAcceptanceCriteria) && m.taskFormTouched[taskFieldAcceptanceCriteria]:
+		meta.AcceptanceCriteria = acceptanceCriteria
+	case acceptanceCriteria == "":
 		// Keep current metadata when field is untouched.
-	case "-":
+	case acceptanceCriteria == "-":
 		meta.AcceptanceCriteria = ""
 	default:
 		meta.AcceptanceCriteria = acceptanceCriteria
 	}
 	validationPlan := strings.TrimSpace(vals["validation_plan"])
-	switch validationPlan {
-	case "":
+	switch {
+	case taskFormUsesDedicatedMarkdownDraft(taskFieldValidationPlan) && m.taskFormTouched[taskFieldValidationPlan]:
+		meta.ValidationPlan = validationPlan
+	case validationPlan == "":
 		// Keep current metadata when field is untouched.
-	case "-":
+	case validationPlan == "-":
 		meta.ValidationPlan = ""
 	default:
 		meta.ValidationPlan = validationPlan
 	}
 	riskNotes := strings.TrimSpace(vals["risk_notes"])
-	switch riskNotes {
-	case "":
+	switch {
+	case taskFormUsesDedicatedMarkdownDraft(taskFieldRiskNotes) && m.taskFormTouched[taskFieldRiskNotes]:
+		meta.RiskNotes = riskNotes
+	case riskNotes == "":
 		// Keep current metadata when field is untouched.
-	case "-":
+	case riskNotes == "-":
 		meta.RiskNotes = ""
 	default:
 		meta.RiskNotes = riskNotes
 	}
 	meta.ResourceRefs = append([]domain.ResourceRef(nil), m.taskFormResourceRefs...)
 	return meta
+}
+
+// buildCurrentEditTaskInput resolves one UpdateTaskInput from the active edit-task draft state.
+func (m Model) buildCurrentEditTaskInput() (app.UpdateTaskInput, domain.Task, error) {
+	vals := m.taskFormValues()
+	taskID := strings.TrimSpace(m.editingTaskID)
+	if taskID == "" {
+		task, ok := m.selectedTaskInCurrentColumn()
+		if !ok {
+			return app.UpdateTaskInput{}, domain.Task{}, fmt.Errorf("no task selected")
+		}
+		taskID = task.ID
+	}
+	task, ok := m.taskByID(taskID)
+	if !ok {
+		return app.UpdateTaskInput{}, domain.Task{}, fmt.Errorf("task not found")
+	}
+
+	title := vals["title"]
+	if title == "" {
+		title = task.Title
+	}
+	description := vals["description"]
+
+	priority := domain.Priority(strings.ToLower(vals["priority"]))
+	if priority == "" {
+		priority = task.Priority
+	}
+	switch priority {
+	case domain.PriorityLow, domain.PriorityMedium, domain.PriorityHigh:
+	default:
+		return app.UpdateTaskInput{}, domain.Task{}, fmt.Errorf("priority must be low|medium|high")
+	}
+
+	dueAt, err := parseDueInput(vals["due"], task.DueAt)
+	if err != nil {
+		return app.UpdateTaskInput{}, domain.Task{}, err
+	}
+	labels := parseLabelsInput(vals["labels"], task.Labels)
+	if err := m.validateAllowedLabels(labels); err != nil {
+		return app.UpdateTaskInput{}, domain.Task{}, err
+	}
+	metadata := m.buildTaskMetadataFromForm(vals, task.Metadata)
+
+	return app.UpdateTaskInput{
+		TaskID:      taskID,
+		Title:       title,
+		Description: description,
+		Priority:    priority,
+		DueAt:       dueAt,
+		Labels:      labels,
+		Metadata:    &metadata,
+	}, task, nil
+}
+
+// persistCurrentEditTaskCmd writes the active edit-task draft and returns an update message.
+func (m *Model) persistCurrentEditTaskCmd(status string) (tea.Cmd, error) {
+	if m == nil {
+		return nil, fmt.Errorf("task edit unavailable")
+	}
+	in, _, err := m.buildCurrentEditTaskInput()
+	if err != nil {
+		return nil, err
+	}
+	reopenEditTaskID := strings.TrimSpace(m.taskFormBackTaskID)
+	reselectChildID := strings.TrimSpace(m.editingTaskID)
+	if m.taskFormBackMode != modeEditTask {
+		reopenEditTaskID = ""
+		reselectChildID = ""
+	}
+	svc := m.svc
+	traceTaskScreenAction(
+		"task_edit",
+		"persist_draft",
+		"task_id", strings.TrimSpace(in.TaskID),
+		"reopen_parent_task_id", reopenEditTaskID,
+		"reselect_child_id", reselectChildID,
+	)
+	return func() tea.Msg {
+		updated, updateErr := svc.UpdateTask(context.Background(), in)
+		if updateErr != nil {
+			return actionMsg{err: updateErr}
+		}
+		return taskUpdatedMsg{
+			task:             updated,
+			status:           status,
+			reopenEditTaskID: reopenEditTaskID,
+			reselectChildID:  reselectChildID,
+		}
+	}, nil
+}
+
+// replaceTaskInMemory updates one loaded task in place without a full reload.
+func (m *Model) replaceTaskInMemory(updated domain.Task) {
+	if m == nil {
+		return
+	}
+	for idx, existing := range m.tasks {
+		if existing.ID != updated.ID {
+			continue
+		}
+		m.tasks[idx] = updated
+		return
+	}
+	m.tasks = append(m.tasks, updated)
+}
+
+// selectTaskFormSubtaskByID reanchors edit-mode subtask row selection to one stable child id.
+func (m *Model) selectTaskFormSubtaskByID(taskID string) {
+	if m == nil {
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		m.taskFormSubtaskCursor = 0
+		return
+	}
+	subtasks := m.taskFormContextSubtasks()
+	for idx, child := range subtasks {
+		if child.ID == taskID {
+			m.taskFormSubtaskCursor = idx + 1
+			return
+		}
+	}
+	m.taskFormSubtaskCursor = 0
 }
 
 // validateAllowedLabels enforces label allowlists when configured.
@@ -6787,16 +7067,20 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.taskInfoBody.ScrollDown(1)
 			if len(subtasks) > 0 && m.taskInfoSubtaskIdx < len(subtasks)-1 {
 				m.taskInfoSubtaskIdx++
+				m.taskInfoFocusedSubtaskID = subtasks[m.taskInfoSubtaskIdx].ID
 			}
 			return m, nil
 		case msg.String() == "k" || msg.String() == "up":
 			m.taskInfoBody.ScrollUp(1)
 			if m.taskInfoSubtaskIdx > 0 {
 				m.taskInfoSubtaskIdx--
+				if m.taskInfoSubtaskIdx < len(subtasks) {
+					m.taskInfoFocusedSubtaskID = subtasks[m.taskInfoSubtaskIdx].ID
+				}
 			}
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
-			return m, nil
+			return m, m.openFocusedTaskInfoSubtask(task)
 		case msg.Code == tea.KeyBackspace || msg.String() == "backspace" || msg.String() == "h" || msg.String() == "left":
 			if !m.stepBackTaskInfo(task) {
 				return m, nil
@@ -7774,7 +8058,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeAddTask || m.mode == modeEditTask {
-		if len(m.formInputs) > 0 && m.formFocus >= 0 && m.formFocus < len(m.formInputs) && !isTaskFormActionField(m.formFocus) && m.formFocus != taskFieldDescription {
+		if len(m.formInputs) > 0 && m.formFocus >= 0 && m.formFocus < len(m.formInputs) && !isTaskFormActionField(m.formFocus) && !isTaskFormMarkdownField(m.formFocus) {
 			if handled, status := applyClipboardShortcutToInput(msg, &m.formInputs[m.formFocus]); handled {
 				m.status = status
 				return m, nil
@@ -7788,14 +8072,36 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			if m.taskFormBackMode == modeEditTask && strings.TrimSpace(m.taskFormBackTaskID) != "" {
+				parentID := strings.TrimSpace(m.taskFormBackTaskID)
+				childID := strings.TrimSpace(m.editingTaskID)
+				if childID == "" {
+					childID = strings.TrimSpace(m.taskFormBackChildID)
+				}
+				parent, ok := m.taskByID(parentID)
+				if !ok {
+					m.status = "parent task not found"
+					return m, nil
+				}
+				cmd := m.startTaskForm(&parent)
+				m.selectTaskFormSubtaskByID(childID)
+				m.syncTaskFormViewportToFocus()
+				m.status = "edit task"
+				return m, cmd
+			}
 			m.mode = modeNone
 			m.formInputs = nil
 			m.formFocus = 0
 			m.taskFormDescription = ""
+			m.taskFormMarkdown = nil
+			m.taskFormTouched = nil
 			m.editingTaskID = ""
 			m.taskFormParentID = ""
 			m.taskFormKind = domain.WorkKindTask
 			m.taskFormScope = domain.KindAppliesToTask
+			m.taskFormBackMode = modeNone
+			m.taskFormBackTaskID = ""
+			m.taskFormBackChildID = ""
 			m.taskFormResourceRefs = nil
 			m.taskFormSubtaskCursor = 0
 			m.taskFormResourceCursor = 0
@@ -7851,6 +8157,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			if isTaskFormActionField(m.formFocus) {
 				return m, nil
+			}
+			if isTaskFormMarkdownField(m.formFocus) {
+				return m, m.startTaskFormMarkdownEditor(m.formFocus, msg)
 			}
 			if len(m.formInputs) == 0 || m.formFocus < 0 || m.formFocus >= len(m.formInputs) {
 				return m, nil
@@ -8167,9 +8476,14 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.mode = modeNone
 		m.formInputs = nil
 		m.taskFormDescription = ""
+		m.taskFormMarkdown = nil
+		m.taskFormTouched = nil
 		m.taskFormParentID = ""
 		m.taskFormKind = domain.WorkKindTask
 		m.taskFormScope = domain.KindAppliesToTask
+		m.taskFormBackMode = modeNone
+		m.taskFormBackTaskID = ""
+		m.taskFormBackChildID = ""
 		m.taskFormResourceRefs = nil
 		m.taskFormSubtaskCursor = 0
 		m.taskFormResourceCursor = 0
@@ -8211,23 +8525,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			return actionMsg{status: "task renamed", reload: true}
 		}
 	case modeEditTask:
-		vals := m.taskFormValues()
-		taskID := m.editingTaskID
-		if taskID == "" {
-			task, ok := m.selectedTaskInCurrentColumn()
+		if text := strings.TrimSpace(m.input); text != "" {
+			taskID := m.editingTaskID
+			task, ok := m.taskByID(taskID)
 			if !ok {
-				m.status = "no task selected"
+				m.status = "task not found"
 				return m, nil
 			}
-			taskID = task.ID
-		}
-		task, ok := m.taskByID(taskID)
-		if !ok {
-			m.status = "task not found"
-			return m, nil
-		}
-
-		if text := strings.TrimSpace(m.input); text != "" {
 			in, err := parseTaskEditInput(text, task)
 			if err != nil {
 				m.status = "invalid edit format: " + err.Error()
@@ -8236,8 +8540,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.mode = modeNone
 			m.formInputs = nil
 			m.taskFormDescription = ""
+			m.taskFormMarkdown = nil
+			m.taskFormTouched = nil
 			m.input = ""
 			m.editingTaskID = ""
+			m.taskFormBackMode = modeNone
+			m.taskFormBackTaskID = ""
+			m.taskFormBackChildID = ""
 			m.taskFormResourceRefs = nil
 			m.taskFormSubtaskCursor = 0
 			m.taskFormResourceCursor = 0
@@ -8253,62 +8562,48 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				return actionMsg{status: "task updated", reload: true}
 			}
 		}
-
-		title := vals["title"]
-		if title == "" {
-			title = task.Title
-		}
-		description := vals["description"]
-
-		priority := domain.Priority(strings.ToLower(vals["priority"]))
-		if priority == "" {
-			priority = task.Priority
-		}
-		switch priority {
-		case domain.PriorityLow, domain.PriorityMedium, domain.PriorityHigh:
-		default:
-			m.status = "priority must be low|medium|high"
-			return m, nil
-		}
-
-		dueAt, err := parseDueInput(vals["due"], task.DueAt)
+		in, _, err := m.buildCurrentEditTaskInput()
 		if err != nil {
 			m.status = err.Error()
 			return m, nil
 		}
-		labels := parseLabelsInput(vals["labels"], task.Labels)
-		if err := m.validateAllowedLabels(labels); err != nil {
-			m.status = err.Error()
-			return m, nil
+		reopenEditTaskID := strings.TrimSpace(m.taskFormBackTaskID)
+		reselectChildID := strings.TrimSpace(in.TaskID)
+		if m.taskFormBackMode != modeEditTask {
+			reopenEditTaskID = ""
+			reselectChildID = ""
 		}
-		metadata := m.buildTaskMetadataFromForm(vals, task.Metadata)
 
 		m.mode = modeNone
 		m.formInputs = nil
 		m.taskFormDescription = ""
+		m.taskFormMarkdown = nil
+		m.taskFormTouched = nil
 		m.editingTaskID = ""
 		m.taskFormParentID = ""
 		m.taskFormKind = domain.WorkKindTask
 		m.taskFormScope = domain.KindAppliesToTask
+		m.taskFormBackMode = modeNone
+		m.taskFormBackTaskID = ""
+		m.taskFormBackChildID = ""
 		m.taskFormResourceRefs = nil
 		m.taskFormSubtaskCursor = 0
 		m.taskFormResourceCursor = 0
 		m.taskFormResourceEditIndex = -1
-		m.traceFormControlCharacterGuard("task", "update", "title", title)
-		m.traceFormControlCharacterGuard("task", "update", "description", description)
-		in := app.UpdateTaskInput{
-			TaskID:      taskID,
-			Title:       title,
-			Description: description,
-			Priority:    priority,
-			DueAt:       dueAt,
-			Labels:      labels,
-			Metadata:    &metadata,
-		}
+		m.traceFormControlCharacterGuard("task", "update", "title", in.Title)
+		m.traceFormControlCharacterGuard("task", "update", "description", in.Description)
 		return m, func() tea.Msg {
-			_, updateErr := m.svc.UpdateTask(context.Background(), in)
+			updatedTask, updateErr := m.svc.UpdateTask(context.Background(), in)
 			if updateErr != nil {
 				return actionMsg{err: updateErr}
+			}
+			if reopenEditTaskID != "" {
+				return taskUpdatedMsg{
+					task:             updatedTask,
+					status:           "task updated",
+					reopenEditTaskID: reopenEditTaskID,
+					reselectChildID:  reselectChildID,
+				}
 			}
 			return actionMsg{status: "task updated", reload: true}
 		}
@@ -11877,7 +12172,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"subtasks section: left/right selects row; enter or e opens selected row",
 			"comments section: enter or e opens thread/comments",
 			"resources section: left/right selects row; enter or e opens resource picker",
-			"ctrl+s saves form",
+			"ctrl+s saves form; markdown editor ctrl+s saves the task for existing items",
 		}
 	case modeSearch:
 		return "search", []string{
@@ -11909,11 +12204,12 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	case modeTaskInfo:
 		return "task info", []string{
 			"j/k and up/down scroll full info content and move subtask cursor",
+			"enter opens the focused subtask when one is selected",
 			"backspace moves to parent task info when available",
 			"pgup/pgdown, home/end, or ctrl+u/ctrl+d scroll the full info body",
 			"d opens full-screen details preview; tab toggles edit mode there",
-			"e edit; s create subtask; c thread view",
-			"[ / ] move task between columns; esc back/close",
+			"e edits the current task; s creates a subtask; c opens thread view",
+			"[ / ] move task between columns; space toggles the focused subtask; esc back/close",
 		}
 	case modeAddProject:
 		return "new project", []string{
@@ -12211,6 +12507,7 @@ func (m *Model) openTaskInfo(taskID string, status string) bool {
 	m.taskInfoOriginTaskID = taskID
 	m.taskInfoPath = []string{taskID}
 	m.taskInfoSubtaskIdx = 0
+	m.taskInfoFocusedSubtaskID = ""
 	m.taskInfoDetails.SetYOffset(0)
 	m.taskInfoBody.SetYOffset(0)
 	m.loadTaskInfoComments(taskID)
@@ -12230,6 +12527,7 @@ func (m *Model) closeTaskInfo(status string) {
 	m.taskInfoOriginTaskID = ""
 	m.taskInfoPath = nil
 	m.taskInfoSubtaskIdx = 0
+	m.taskInfoFocusedSubtaskID = ""
 	m.taskInfoDetails.SetYOffset(0)
 	m.taskInfoBody.SetYOffset(0)
 	m.clearTaskInfoComments()
@@ -13058,6 +13356,7 @@ func (m *Model) stepBackTaskInfoPath() bool {
 		}
 		m.taskInfoTaskID = prevID
 		m.taskInfoSubtaskIdx = 0
+		m.taskInfoFocusedSubtaskID = ""
 		m.taskInfoDetails.SetYOffset(0)
 		m.taskInfoBody.SetYOffset(0)
 		m.loadTaskInfoComments(prevID)
@@ -13082,6 +13381,7 @@ func (m *Model) stepBackTaskInfo(task domain.Task) bool {
 	}
 	m.taskInfoTaskID = parentID
 	m.taskInfoSubtaskIdx = 0
+	m.taskInfoFocusedSubtaskID = ""
 	m.taskInfoDetails.SetYOffset(0)
 	m.taskInfoBody.SetYOffset(0)
 	m.loadTaskInfoComments(parentID)
@@ -13089,6 +13389,7 @@ func (m *Model) stepBackTaskInfo(task domain.Task) bool {
 	for idx, child := range m.subtasksForParent(parentID) {
 		if child.ID == task.ID {
 			m.taskInfoSubtaskIdx = idx
+			m.taskInfoFocusedSubtaskID = task.ID
 			break
 		}
 	}
@@ -13296,15 +13597,88 @@ func (m Model) firstIncompleteColumnIndex() (int, bool) {
 	return 0, false
 }
 
-// toggleFocusedSubtaskCompletion toggles done/non-done state for the focused subtask in task-info mode.
-func (m Model) toggleFocusedSubtaskCompletion(parent domain.Task) (tea.Model, tea.Cmd) {
+// selectedTaskInfoSubtask returns the focused direct child in task-info mode.
+func (m *Model) selectedTaskInfoSubtask(parent domain.Task) (domain.Task, bool) {
+	if m == nil {
+		return domain.Task{}, false
+	}
 	subtasks := m.subtasksForParent(parent.ID)
 	if len(subtasks) == 0 {
+		m.taskInfoFocusedSubtaskID = ""
+		m.taskInfoSubtaskIdx = 0
+		return domain.Task{}, false
+	}
+	focusedID := strings.TrimSpace(m.taskInfoFocusedSubtaskID)
+	if focusedID != "" {
+		for idx, child := range subtasks {
+			if child.ID != focusedID {
+				continue
+			}
+			m.taskInfoSubtaskIdx = idx
+			return child, true
+		}
+	}
+	idx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
+	m.taskInfoSubtaskIdx = idx
+	m.taskInfoFocusedSubtaskID = subtasks[idx].ID
+	return subtasks[idx], true
+}
+
+// openFocusedTaskInfoSubtask drills task-info into the currently highlighted child task.
+func (m *Model) openFocusedTaskInfoSubtask(parent domain.Task) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	subtask, ok := m.selectedTaskInfoSubtask(parent)
+	if !ok {
+		m.status = "no subtasks"
+		return nil
+	}
+	traceTaskScreenAction("task_info", "subtask_open", "parent_task_id", parent.ID, "child_task_id", subtask.ID)
+	m.openTaskInfo(subtask.ID, "task info")
+	return nil
+}
+
+// reanchorTaskInfoSubtaskSelection keeps the task-info subtask highlight on a stable child id.
+func (m *Model) reanchorTaskInfoSubtaskSelection(parentID string) {
+	if m == nil {
+		return
+	}
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		m.taskInfoFocusedSubtaskID = ""
+		m.taskInfoSubtaskIdx = 0
+		return
+	}
+	subtasks := m.subtasksForParent(parentID)
+	if len(subtasks) == 0 {
+		m.taskInfoFocusedSubtaskID = ""
+		m.taskInfoSubtaskIdx = 0
+		return
+	}
+	if focusedID := strings.TrimSpace(m.taskInfoFocusedSubtaskID); focusedID != "" {
+		for idx, child := range subtasks {
+			if child.ID != focusedID {
+				continue
+			}
+			m.taskInfoSubtaskIdx = idx
+			return
+		}
+	}
+	idx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
+	m.taskInfoSubtaskIdx = idx
+	m.taskInfoFocusedSubtaskID = subtasks[idx].ID
+}
+
+// toggleFocusedSubtaskCompletion toggles done/non-done state for the focused subtask in task-info mode.
+func (m Model) toggleFocusedSubtaskCompletion(parent domain.Task) (tea.Model, tea.Cmd) {
+	subtask, ok := (&m).selectedTaskInfoSubtask(parent)
+	if !ok {
 		m.status = "no subtasks"
 		return m, nil
 	}
-	subtaskIdx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
-	subtask := subtasks[subtaskIdx]
+	traceTaskScreenAction("task_info", "subtask_toggle", "parent_task_id", parent.ID, "child_task_id", subtask.ID)
+	subtaskIdx := m.taskInfoSubtaskIdx
 
 	fromIdx, ok := m.columnIndexByID(subtask.ColumnID)
 	if !ok {
@@ -13340,6 +13714,7 @@ func (m Model) toggleFocusedSubtaskCompletion(parent domain.Task) (tea.Model, te
 	next.mode = modeTaskInfo
 	next.taskInfoTaskID = parent.ID
 	next.taskInfoSubtaskIdx = subtaskIdx
+	next.taskInfoFocusedSubtaskID = subtask.ID
 	return next, cmd
 }
 
@@ -14728,7 +15103,7 @@ func (m Model) modePrompt() string {
 	case modeProjectPicker:
 		return "project picker: j/k select, enter choose, N new project, A archived toggle, esc cancel"
 	case modeTaskInfo:
-		return "task info: d details preview, arrows or j/k scroll, pgup/pgdown/home/end jump, e edit, s new subtask, c thread, [ / ] move, space toggles subtask complete, backspace parent, esc back"
+		return "task info: enter opens selected subtask, d details preview, arrows or j/k scroll, pgup/pgdown/home/end jump, e edit, s new subtask, c thread, [ / ] move, space toggles subtask complete, backspace parent, esc back"
 	case modeAddProject:
 		return "new project: enter save, i edit description, r pick root_path, esc cancel"
 	case modeEditProject:
@@ -14762,7 +15137,7 @@ func (m Model) modePrompt() string {
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeDescriptionEditor:
-		return "description editor: tab preview/edit, ctrl+s save, esc cancel"
+		return "description editor: tab preview/edit, ctrl+s saves current draft, esc cancel"
 	case modeThread:
 		return "thread: tab/shift+tab or left/right wrap panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; up/down or pgup/pgdown/home/end scroll comments; esc backs out"
 	default:
