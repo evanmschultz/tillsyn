@@ -24,6 +24,11 @@ type fakeRepo struct {
 	kindDefs            map[domain.KindID]domain.KindDefinition
 	projectAllowedKinds map[string][]domain.KindID
 	capabilityLeases    map[string]domain.CapabilityLease
+	createProjectActor  MutationActor
+	updateProjectActor  MutationActor
+	createTaskActor     MutationActor
+	updateTaskActor     MutationActor
+	createCommentActor  MutationActor
 }
 
 // newFakeRepo constructs fake repo.
@@ -99,13 +104,15 @@ func (f *fakeTaskSearchIndex) SearchTaskEmbeddings(_ context.Context, in TaskEmb
 }
 
 // CreateProject creates project.
-func (f *fakeRepo) CreateProject(_ context.Context, p domain.Project) error {
+func (f *fakeRepo) CreateProject(ctx context.Context, p domain.Project) error {
+	f.createProjectActor, _ = MutationActorFromContext(ctx)
 	f.projects[p.ID] = p
 	return nil
 }
 
 // UpdateProject updates state for the requested operation.
-func (f *fakeRepo) UpdateProject(_ context.Context, p domain.Project) error {
+func (f *fakeRepo) UpdateProject(ctx context.Context, p domain.Project) error {
+	f.updateProjectActor, _ = MutationActorFromContext(ctx)
 	f.projects[p.ID] = p
 	return nil
 }
@@ -227,13 +234,15 @@ func (f *fakeRepo) ListColumns(_ context.Context, projectID string, includeArchi
 }
 
 // CreateTask creates task.
-func (f *fakeRepo) CreateTask(_ context.Context, t domain.Task) error {
+func (f *fakeRepo) CreateTask(ctx context.Context, t domain.Task) error {
+	f.createTaskActor, _ = MutationActorFromContext(ctx)
 	f.tasks[t.ID] = t
 	return nil
 }
 
 // UpdateTask updates state for the requested operation.
-func (f *fakeRepo) UpdateTask(_ context.Context, t domain.Task) error {
+func (f *fakeRepo) UpdateTask(ctx context.Context, t domain.Task) error {
+	f.updateTaskActor, _ = MutationActorFromContext(ctx)
 	if _, ok := f.tasks[t.ID]; !ok {
 		return ErrNotFound
 	}
@@ -275,7 +284,8 @@ func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
 }
 
 // CreateComment creates comment.
-func (f *fakeRepo) CreateComment(_ context.Context, comment domain.Comment) error {
+func (f *fakeRepo) CreateComment(ctx context.Context, comment domain.Comment) error {
+	f.createCommentActor, _ = MutationActorFromContext(ctx)
 	key := comment.ProjectID + "|" + string(comment.TargetType) + "|" + comment.TargetID
 	f.comments[key] = append(f.comments[key], comment)
 	return nil
@@ -776,6 +786,92 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 	}
 	if updated.UpdatedByType != domain.ActorTypeAgent {
 		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeAgent)
+	}
+}
+
+// TestCreateTaskCarriesHumanActorName verifies task mutations pass display attribution to the repo boundary.
+func TestCreateTaskCarriesHumanActorName(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 26, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
+		ID:        domain.KindID(domain.WorkKindTask),
+		AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewKindDefinition() error = %v", err)
+	}
+	repo.kindDefs[kind.ID] = kind
+
+	svc := NewService(repo, func() string { return "t1" }, func() time.Time { return now }, ServiceConfig{})
+	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Ship attribution",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "user-1",
+		CreatedByName:  "Evan Schultz",
+		UpdatedByType:  domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if created.CreatedByActor != "user-1" || created.UpdatedByActor != "user-1" {
+		t.Fatalf("expected task attribution to use actor id user-1, got %#v", created)
+	}
+	if repo.createTaskActor.ActorID != "user-1" {
+		t.Fatalf("create task actor id = %q, want user-1", repo.createTaskActor.ActorID)
+	}
+	if repo.createTaskActor.ActorName != "Evan Schultz" {
+		t.Fatalf("create task actor name = %q, want Evan Schultz", repo.createTaskActor.ActorName)
+	}
+	if repo.createTaskActor.ActorType != domain.ActorTypeUser {
+		t.Fatalf("create task actor type = %q, want %q", repo.createTaskActor.ActorType, domain.ActorTypeUser)
+	}
+}
+
+// TestUpdateTaskCarriesExplicitActorName verifies explicit update attribution is propagated without a pre-seeded context.
+func TestUpdateTaskCarriesExplicitActorName(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 26, 10, 30, 0, 0, time.UTC)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "old",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
+		TaskID:        task.ID,
+		Title:         "new title",
+		UpdatedBy:     "user-2",
+		UpdatedByName: "Evan Schultz",
+		UpdatedType:   domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask() error = %v", err)
+	}
+	if updated.UpdatedByActor != "user-2" {
+		t.Fatalf("updated actor id = %q, want user-2", updated.UpdatedByActor)
+	}
+	if updated.UpdatedByType != domain.ActorTypeUser {
+		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeUser)
+	}
+	if repo.updateTaskActor.ActorID != "user-2" {
+		t.Fatalf("update task actor id = %q, want user-2", repo.updateTaskActor.ActorID)
+	}
+	if repo.updateTaskActor.ActorName != "Evan Schultz" {
+		t.Fatalf("update task actor name = %q, want Evan Schultz", repo.updateTaskActor.ActorName)
+	}
+	if repo.updateTaskActor.ActorType != domain.ActorTypeUser {
+		t.Fatalf("update task actor type = %q, want %q", repo.updateTaskActor.ActorType, domain.ActorTypeUser)
 	}
 }
 
@@ -1838,6 +1934,36 @@ func TestUpdateProject(t *testing.T) {
 	}
 }
 
+// TestCreateProjectWithMetadataCarriesActorName verifies project mutations carry display attribution to the repo boundary.
+func TestCreateProjectWithMetadataCarriesActorName(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 26, 9, 0, 0, 0, time.UTC)
+	svc := NewService(repo, func() string { return "p1" }, func() time.Time { return now }, ServiceConfig{})
+
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:          "Roadmap",
+		Description:   "Q3 plan",
+		UpdatedBy:     "user-1",
+		UpdatedByName: "Evan Schultz",
+		UpdatedType:   domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	if project.ID != "p1" {
+		t.Fatalf("unexpected project id %q", project.ID)
+	}
+	if repo.createProjectActor.ActorID != "user-1" {
+		t.Fatalf("create project actor id = %q, want user-1", repo.createProjectActor.ActorID)
+	}
+	if repo.createProjectActor.ActorName != "Evan Schultz" {
+		t.Fatalf("create project actor name = %q, want Evan Schultz", repo.createProjectActor.ActorName)
+	}
+	if repo.createProjectActor.ActorType != domain.ActorTypeUser {
+		t.Fatalf("create project actor type = %q, want %q", repo.createProjectActor.ActorType, domain.ActorTypeUser)
+	}
+}
+
 // TestArchiveRestoreAndDeleteProject verifies project archive, restore, and hard-delete behavior.
 func TestArchiveRestoreAndDeleteProject(t *testing.T) {
 	repo := newFakeRepo()
@@ -2275,6 +2401,46 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	}
 	if comments[0].ID != "comment-1" || comments[1].ID != "comment-2" {
 		t.Fatalf("expected deterministic id ordering on equal timestamps, got %#v", comments)
+	}
+}
+
+// TestCreateCommentUsesContextActorNameFallback verifies comment mutations reuse the context display name for matching actors.
+func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 26, 11, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, func() string { return "comment-1" }, func() time.Time { return now }, ServiceConfig{})
+	ctx := WithMutationActor(context.Background(), MutationActor{
+		ActorID:   "user-1",
+		ActorName: "Evan Schultz",
+		ActorType: domain.ActorTypeUser,
+	})
+	comment, err := svc.CreateComment(ctx, CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		BodyMarkdown: "hello",
+		ActorID:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateComment() error = %v", err)
+	}
+	if comment.ActorName != "Evan Schultz" {
+		t.Fatalf("comment actor name = %q, want Evan Schultz", comment.ActorName)
+	}
+	if repo.createCommentActor.ActorName != "Evan Schultz" {
+		t.Fatalf("repo comment actor name = %q, want Evan Schultz", repo.createCommentActor.ActorName)
 	}
 }
 

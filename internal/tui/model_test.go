@@ -1179,18 +1179,18 @@ func TestModelThreadTabAndShiftTabMoveInOppositeDirections(t *testing.T) {
 	if m.mode != modeThread {
 		t.Fatalf("expected thread mode, got %v", m.mode)
 	}
-	if m.threadPanelFocus != threadPanelDetails {
-		t.Fatalf("expected thread details focus on open, got %d", m.threadPanelFocus)
+	if m.threadPanelFocus != threadPanelComments {
+		t.Fatalf("expected thread comments focus on open, got %d", m.threadPanelFocus)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.threadPanelFocus != threadPanelComments {
-		t.Fatalf("expected tab to advance to comments, got %d", m.threadPanelFocus)
+	if m.threadPanelFocus != threadPanelContext {
+		t.Fatalf("expected tab to advance to context, got %d", m.threadPanelFocus)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	if m.threadPanelFocus != threadPanelDetails {
-		t.Fatalf("expected shift+tab to reverse back to details, got %d", m.threadPanelFocus)
+	if m.threadPanelFocus != threadPanelComments {
+		t.Fatalf("expected shift+tab to reverse back to comments, got %d", m.threadPanelFocus)
 	}
 
 	threadView := stripANSI(fmt.Sprint(m.View().Content))
@@ -3706,8 +3706,8 @@ func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 	}
 }
 
-// TestModelResourcePickerRequiresProjectRootForTaskAttach verifies task attachment does not fall back when project root is missing.
-func TestModelResourcePickerRequiresProjectRootForTaskAttach(t *testing.T) {
+// TestModelResourcePickerFallsBackToBootstrapRootInTaskInfo verifies project-root lookup falls back to bootstrap roots while task-info remains read-only.
+func TestModelResourcePickerFallsBackToBootstrapRootInTaskInfo(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -3725,8 +3725,8 @@ func TestModelResourcePickerRequiresProjectRootForTaskAttach(t *testing.T) {
 		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
 		WithSearchRoots([]string{root}),
 	))
-	if got := m.resourcePickerRootForCurrentProject(); got != "" {
-		t.Fatalf("expected empty project root lookup when mapping is missing, got %q", got)
+	if got := m.resourcePickerRootForCurrentProject(); got != root {
+		t.Fatalf("expected bootstrap root fallback %q, got %q", root, got)
 	}
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('r'))
@@ -5807,6 +5807,95 @@ func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
 	}
 	if m.taskFormResourceEditIndex != 0 {
 		t.Fatalf("expected selected resource row to set edit index 0, got %d", m.taskFormResourceEditIndex)
+	}
+}
+
+// TestModelAddTaskActionRowsRequireSaveFirst verifies save-dependent rows stay explicit in the new-task form.
+func TestModelAddTaskActionRowsRequireSaveFirst(t *testing.T) {
+	now := time.Date(2026, 3, 17, 17, 5, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add task mode, got %v", m.mode)
+	}
+
+	m.formFocus = taskFieldSubtasks
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAddTask || !strings.Contains(m.status, "save task first") {
+		t.Fatalf("expected save-first subtask gate in add task, got mode=%v status=%q", m.mode, m.status)
+	}
+
+	m.formFocus = taskFieldComments
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAddTask || !strings.Contains(m.status, "save task first") {
+		t.Fatalf("expected save-first comments gate in add task, got mode=%v status=%q", m.mode, m.status)
+	}
+
+	m.formFocus = taskFieldResources
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAddTask || !strings.Contains(m.status, "save task first") {
+		t.Fatalf("expected save-first resources gate in add task, got mode=%v status=%q", m.mode, m.status)
+	}
+}
+
+// TestModelEditTaskQuickActionsRespectFocusedResources verifies dot opens contextual quick actions for focused action rows.
+func TestModelEditTaskQuickActionsRespectFocusedResources(t *testing.T) {
+	now := time.Date(2026, 3, 17, 17, 15, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	root := t.TempDir()
+	m := loadReadyModel(t, NewModel(
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		WithSearchRoots([]string{root}),
+	))
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit task mode, got %v", m.mode)
+	}
+	m = applyCmd(t, m, m.focusTaskFormField(taskFieldResources))
+	m = applyMsg(t, m, keyRune('.'))
+	if m.mode != modeQuickActions {
+		t.Fatalf("expected focused quick actions from resources row, got %v", m.mode)
+	}
+	if title := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 80)); !strings.Contains(title, "Quick Actions: Resources") {
+		t.Fatalf("expected contextual quick-actions title, got\n%s", title)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeResourcePicker {
+		t.Fatalf("expected enter on focused quick action to open resource picker, got %v", m.mode)
+	}
+}
+
+// TestModelCommentOwnerLabelUsesConfiguredIdentityFallback verifies legacy local-user labels render the configured display name.
+func TestModelCommentOwnerLabelUsesConfiguredIdentityFallback(t *testing.T) {
+	m := Model{identityActorID: "user-uuid", identityDisplayName: "Evan"}
+	comment := domain.Comment{
+		ActorID:   "tillsyn-user",
+		ActorName: "tillsyn-user",
+		ActorType: domain.ActorTypeUser,
+	}
+	if got := m.commentOwnerLabel(comment); got != "Evan" {
+		t.Fatalf("expected legacy local-user label to render configured display name, got %q", got)
+	}
+
+	comment = domain.Comment{
+		ActorID:   "user-uuid",
+		ActorName: "",
+		ActorType: domain.ActorTypeUser,
+	}
+	if got := m.commentOwnerLabel(comment); got != "Evan" {
+		t.Fatalf("expected local actor id fallback to render configured display name, got %q", got)
 	}
 }
 
@@ -8214,9 +8303,9 @@ func TestProjectRootLookup(t *testing.T) {
 	}
 
 	m.projectRoots = map[string]string{}
-	m.defaultRootDir = "."
-	if got := m.resourcePickerRootForCurrentProject(); got != "" {
-		t.Fatalf("expected empty project-root lookup when mapping is unset, got %q", got)
+	m.searchRoots = []string{root}
+	if got := m.resourcePickerRootForCurrentProject(); got != root {
+		t.Fatalf("expected bootstrap/search-root fallback %q when project root missing, got %q", root, got)
 	}
 	if got := m.resourcePickerBrowseRoot(); got == "" {
 		t.Fatal("expected non-empty browse root fallback")
@@ -8418,8 +8507,8 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 	}
 }
 
-// TestModelResourcePickerBlockedWithoutProjectRoot verifies task attachment flows fail closed when project root mapping is missing.
-func TestModelResourcePickerBlockedWithoutProjectRoot(t *testing.T) {
+// TestModelResourcePickerFallsBackToBootstrapRoot verifies task attachment uses the bootstrap/search root when no project root is configured.
+func TestModelResourcePickerFallsBackToBootstrapRoot(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -8432,9 +8521,10 @@ func TestModelResourcePickerBlockedWithoutProjectRoot(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	root := t.TempDir()
 	m := loadReadyModel(t, NewModel(
 		svc,
-		WithSearchRoots([]string{t.TempDir()}),
+		WithSearchRoots([]string{root}),
 	))
 
 	m = applyMsg(t, m, keyRune('i'))
@@ -8444,11 +8534,11 @@ func TestModelResourcePickerBlockedWithoutProjectRoot(t *testing.T) {
 	}
 	m.formFocus = taskFieldResources
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit mode after blocked resources attach, got %v", m.mode)
+	if m.mode != modeResourcePicker {
+		t.Fatalf("expected resource picker when bootstrap root fallback is available, got %v", m.mode)
 	}
-	if !strings.Contains(m.status, "set project root first") {
-		t.Fatalf("expected blocked-attach status in edit mode, got %q", m.status)
+	if got := strings.TrimSpace(m.resourcePickerRoot); got != root {
+		t.Fatalf("expected bootstrap/search-root fallback %q, got %q", root, got)
 	}
 }
 
@@ -8505,6 +8595,9 @@ func TestModelEditTaskCommentsRowOpensThread(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeThread {
 		t.Fatalf("expected enter on comments row to open thread/comments, got %v", m.mode)
+	}
+	if m.threadPanelFocus != threadPanelComments {
+		t.Fatalf("expected comments row to open thread on comments panel, got %d", m.threadPanelFocus)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})

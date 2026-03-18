@@ -1243,14 +1243,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 		return err
 	}
 
-	actorID := chooseActorID(t.CreatedByActor, t.UpdatedByActor)
-	actorName := ""
-	actorType := normalizeActorType(t.UpdatedByType)
-	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
-		actorID = chooseActorID(mutationActor.ActorID, actorID)
-		actorName = chooseActorName(actorID, mutationActor.ActorName)
-		actorType = normalizeActorType(mutationActor.ActorType)
-	}
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.CreatedByActor, "", t.UpdatedByType, t.UpdatedByActor)
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
@@ -1344,14 +1337,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	metadata["title"] = t.Title
 	metadata["item_kind"] = string(t.Kind)
 	metadata["item_scope"] = string(scope)
-	actorID := chooseActorID(t.UpdatedByActor, prev.UpdatedByActor)
-	actorName := ""
-	actorType := normalizeActorType(t.UpdatedByType)
-	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
-		actorID = chooseActorID(mutationActor.ActorID, actorID)
-		actorName = chooseActorName(actorID, mutationActor.ActorName)
-		actorType = normalizeActorType(mutationActor.ActorType)
-	}
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.UpdatedByActor, "", t.UpdatedByType, prev.UpdatedByActor)
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
@@ -1430,14 +1416,7 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	if err := translateNoRows(res); err != nil {
 		return err
 	}
-	actorID := chooseActorID(task.UpdatedByActor, task.CreatedByActor)
-	actorName := ""
-	actorType := normalizeActorType(task.UpdatedByType)
-	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
-		actorID = chooseActorID(mutationActor.ActorID, actorID)
-		actorName = chooseActorName(actorID, mutationActor.ActorName)
-		actorType = normalizeActorType(mutationActor.ActorType)
-	}
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, task.UpdatedByActor, "", task.UpdatedByType, task.CreatedByActor)
 
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  task.ProjectID,
@@ -2091,6 +2070,19 @@ func insertTaskChangeEvent(ctx context.Context, execer execerContext, event doma
 		return fmt.Errorf("insert change event: %w", err)
 	}
 	return nil
+}
+
+// resolveChangeEventActor merges task-level attribution with any context identity metadata.
+func resolveChangeEventActor(ctx context.Context, actorID, actorName string, actorType domain.ActorType, fallbacks ...string) (string, string, domain.ActorType) {
+	actorID = chooseActorID(append([]string{actorID}, fallbacks...)...)
+	actorName = chooseActorName(actorID, actorName)
+	actorType = normalizeActorType(actorType)
+	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
+		actorID = chooseActorID(mutationActor.ActorID, actorID)
+		actorName = chooseActorName(actorID, mutationActor.ActorName, actorName)
+		actorType = normalizeActorType(mutationActor.ActorType)
+	}
+	return actorID, actorName, actorType
 }
 
 // classifyTaskTransition derives the best operation category and metadata for a task update.

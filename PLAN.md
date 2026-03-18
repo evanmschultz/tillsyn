@@ -4134,3 +4134,83 @@ Next step:
 1. Update `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` for FR-016/FX-016 and stale FR-015 references.
 2. Commit the validated FR-016 scope.
 3. Hand the user the exact `T1-02` rerun instructions.
+
+## Checkpoint 2026-03-17: FR-017 Task-Screen Quick Actions, Resource Root Fallback, And Attribution Consistency
+
+Current objective:
+- close the remaining `T1-02` follow-up gaps without opening roadmap work: clarify save-dependent task-screen actions, add focused quick actions/help guidance, route resource attach through `project root -> bootstrap root`, fix local display-name rendering so bootstrap identity replaces visible legacy `tillsyn-user`, propagate actor names through write paths, and seed the next collaborative attribution worksheet.
+
+Backlog/open-findings review:
+1. Stayed on the same blocked collaborative step `T1-02`; no forward section advancement was allowed.
+2. Continued from the active collaborative remediation state already tracked in this file, `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md`, and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
+3. User clarified that task move/state should remain on `[` / `]` with explanation in `? help`, that save-first subtask behavior in `new task` is acceptable if explained clearly, and that future collaborative coverage must explicitly validate attribution for local user/orchestrator/subagent/system actors.
+
+Investigation evidence:
+1. `git status --short` -> confirmed this wave's expected dirty set: `internal/app/service.go`, `internal/app/service_test.go`, `internal/adapters/storage/sqlite/repo.go`, `internal/adapters/storage/sqlite/repo_test.go`, `internal/tui/model.go`, `internal/tui/model_test.go`, `internal/tui/thread_mode.go`, and new tracker markdown.
+2. `git diff -- internal/app/service.go internal/app/service_test.go internal/adapters/storage/sqlite/repo.go internal/adapters/storage/sqlite/repo_test.go` -> reviewed the worker-lane attribution persistence changes before integration.
+3. `rg` audits over TUI/app/adapter call sites showed that task/project update flows still dropped `UpdatedByName`/`CreatedByName`, thread description updates persisted only actor ids, and MCP adapter create/update project/task paths still forwarded ids without names.
+4. Explorer findings already recorded in `COLLAB_T1_02_UX_ATTRIBUTION_FIX_TRACKER.md` remained valid:
+   - Raman confirmed resource attach was hard-gated on project-root lookup.
+   - McClintock confirmed task-screen help/action coverage was incomplete.
+   - Franklin confirmed bootstrap display name was persisted but some comment/thread render paths still showed raw legacy local tuples.
+5. Worker lane Hegel (`019cfe73-714b-7bd0-8dc1-3c998502b2e6`) completed app/storage attribution persistence changes and package-scoped validation before integration.
+
+Context7 / docs checkpoints:
+1. Bubble Tea v2 docs were consulted before this wave's code edits for model-defined key/focus handling.
+2. After the first failed `just test-pkg ./internal/tui` loop, Context7 was re-consulted again before the next test edit, confirming focus order is model-defined and tests should assert the chosen panel cycle.
+
+Files edited and why:
+1. `internal/tui/model.go`
+   - propagated local actor id/name/type into task/project metadata updates, resource attach updates, add-task creation, and labels-config-driven task updates,
+   - added focused `.` quick actions for task info/edit,
+   - clarified `? help` for task move/subtask/resource/comment flows,
+   - defaulted `subtasks:` and `resources:` focus to the first existing item,
+   - made `new task` save-dependent rows explicit,
+   - switched resource-root lookup to fallback from project root to bootstrap/search root.
+2. `internal/tui/thread_mode.go`
+   - opened task-screen comments directly into the comments panel,
+   - propagated actor display names through thread detail updates,
+   - normalized comment/thread owner rendering so the local bootstrap display name replaces visible legacy `tillsyn-user` tuples.
+3. `internal/app/service.go`
+   - added actor-name fields on project/task update/create inputs,
+   - resolved mutation-actor identity from explicit inputs plus context without changing guard semantics,
+   - reused merged attribution for task/comment creation and project/task updates.
+4. `internal/app/service_test.go`
+   - captured mutation-actor context at the fake repo boundary and added attribution propagation tests for project/task/comment writes.
+5. `internal/adapters/storage/sqlite/repo.go`
+   - centralized change-event actor resolution so persisted task events prefer real display names from context/input over fallback labels.
+6. `internal/adapters/storage/sqlite/repo_test.go`
+   - added persistence coverage for user/agent/system change-event attribution plus comment/task actor-name preservation.
+7. `internal/adapters/server/common/app_service_adapter_mcp.go`
+   - forwarded both actor id and actor name into project/task mutations instead of dropping the display name.
+8. `internal/tui/model_test.go`
+   - added/updated regressions for contextual quick actions, bootstrap-root fallback, task-info comment-panel entry, local display-name owner rendering, add-task save-first gating, and thread panel traversal expectations.
+9. `COLLAB_T1_02_UX_ATTRIBUTION_FIX_TRACKER.md`
+   - marked the app/storage worker lane complete and linked the new attribution worksheet.
+10. `COLLAB_ACTOR_ATTRIBUTION_VALIDATION_WORKSHEET.md`
+   - created the future collaborative worksheet covering local user, orchestrator, subagent, and system attribution across task/thread/activity/notices surfaces.
+11. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+   - recorded FR-017/FX-017 and updated the active `T1-02` row with the latest user findings and retest scope.
+
+Validation loop:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> FAIL.
+   - `TestModelThreadTabAndShiftTabMoveInOppositeDirections` still expected details-first thread opening.
+   - `TestModelResourcePickerRequiresProjectRootForTaskAttach` still expected no bootstrap-root fallback.
+3. Context7 re-consulted after the failed TUI test loop.
+4. Updated the stale TUI expectations to match the intended UX.
+5. `just fmt` -> PASS.
+6. `just test-pkg ./internal/tui` -> PASS.
+7. `just test-pkg ./internal/app` -> PASS.
+8. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+9. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`, package build path clean).
+10. `just test-golden` -> PASS.
+11. `just check` -> PASS.
+12. `just ci` -> PASS (`internal/tui` coverage 70.2%).
+
+Status:
+- FR-017 implementation and repo-wide validation are green.
+- QA pass 1 (Archimedes `019cfe8c-7aa5-7bc0-9f61-da2a58fbd6f1`) found one medium contract drift: task move/state had leaked into `.` quick actions even though the agreed UX kept move/state only on `[` / `]`. That drift was removed, then `just fmt`, `just test-pkg ./internal/tui`, `just test-golden`, `just check`, and `just ci` were rerun green.
+- QA pass 2 (Nietzsche `019cfe88-c986-7500-b9c2-082171d37b4d`) reported no findings on tests/docs/tracker state.
+- Tracker/docs are updated through the new attribution worksheet and T1-02 follow-up ledger.
+- Remaining steps before user rerun: commit the validated FR-017 scope, then hand back the exact `T1-02` rerun instructions.

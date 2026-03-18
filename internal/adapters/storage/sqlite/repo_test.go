@@ -340,6 +340,82 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	}
 }
 
+// TestRepository_ServiceCreateCommentPersistsContextActorName verifies comment persistence keeps the context display name.
+func TestRepository_ServiceCreateCommentPersistsContextActorName(t *testing.T) {
+	baseCtx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 26, 11, 30, 0, 0, time.UTC)
+	ids := []string{"p1", "c1", "t1", "comment-1"}
+	idIdx := 0
+	svc := app.NewService(repo, func() string {
+		id := ids[idIdx]
+		idIdx++
+		return id
+	}, func() time.Time {
+		return now
+	}, app.ServiceConfig{})
+
+	project, err := svc.CreateProjectWithMetadata(baseCtx, app.CreateProjectInput{
+		Name: "Inbox",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	column, err := svc.CreateColumn(baseCtx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := svc.CreateTask(baseCtx, app.CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	ctx := app.WithMutationActor(baseCtx, app.MutationActor{
+		ActorID:   "user-1",
+		ActorName: "Evan Schultz",
+		ActorType: domain.ActorTypeUser,
+	})
+	comment, err := svc.CreateComment(ctx, app.CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		BodyMarkdown: "hello",
+		ActorID:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateComment() error = %v", err)
+	}
+	if comment.ActorName != "Evan Schultz" {
+		t.Fatalf("comment actor name = %q, want Evan Schultz", comment.ActorName)
+	}
+	comments, err := repo.ListCommentsByTarget(baseCtx, domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListCommentsByTarget() error = %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(comments))
+	}
+	if comments[0].ActorID != "user-1" || comments[0].ActorName != "Evan Schultz" {
+		t.Fatalf("expected persisted comment attribution user-1/Evan Schultz, got %q/%q", comments[0].ActorID, comments[0].ActorName)
+	}
+}
+
 // TestRepository_NotFoundCases verifies behavior for the covered scenario.
 func TestRepository_NotFoundCases(t *testing.T) {
 	repo, err := OpenInMemory()
@@ -1169,12 +1245,104 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 
 // TestRepository_TaskLifecyclePreservesMutationActorName verifies task change events keep request actor_name attribution.
 func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
-	baseCtx := context.Background()
-	ctx := app.WithMutationActor(baseCtx, app.MutationActor{
-		ActorID:   "actor-1",
-		ActorName: "Actor One",
-		ActorType: domain.ActorTypeAgent,
-	})
+	cases := []struct {
+		name  string
+		actor app.MutationActor
+	}{
+		{
+			name: "user",
+			actor: app.MutationActor{
+				ActorID:   "user-1",
+				ActorName: "Evan Schultz",
+				ActorType: domain.ActorTypeUser,
+			},
+		},
+		{
+			name: "agent",
+			actor: app.MutationActor{
+				ActorID:   "agent-1",
+				ActorName: "Planner Bot",
+				ActorType: domain.ActorTypeAgent,
+			},
+		},
+		{
+			name: "system",
+			actor: app.MutationActor{
+				ActorID:   "system-1",
+				ActorName: "Background Sync",
+				ActorType: domain.ActorTypeSystem,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseCtx := context.Background()
+			ctx := app.WithMutationActor(baseCtx, tc.actor)
+			repo, err := OpenInMemory()
+			if err != nil {
+				t.Fatalf("OpenInMemory() error = %v", err)
+			}
+			t.Cleanup(func() {
+				_ = repo.Close()
+			})
+
+			now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
+			project, _ := domain.NewProject("p1", "Inbox", "", now)
+			if err := repo.CreateProject(baseCtx, project); err != nil {
+				t.Fatalf("CreateProject() error = %v", err)
+			}
+			todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+			if err := repo.CreateColumn(baseCtx, todo); err != nil {
+				t.Fatalf("CreateColumn() error = %v", err)
+			}
+			task, _ := domain.NewTask(domain.TaskInput{
+				ID:        "t1",
+				ProjectID: project.ID,
+				ColumnID:  todo.ID,
+				Position:  0,
+				Title:     "Ownership",
+				Priority:  domain.PriorityLow,
+			}, now)
+			if err := repo.CreateTask(ctx, task); err != nil {
+				t.Fatalf("CreateTask() error = %v", err)
+			}
+
+			if err := task.UpdateDetails("Ownership v2", task.Description, task.Priority, task.DueAt, task.Labels, now.Add(time.Minute)); err != nil {
+				t.Fatalf("UpdateDetails() error = %v", err)
+			}
+			if err := repo.UpdateTask(ctx, task); err != nil {
+				t.Fatalf("UpdateTask() error = %v", err)
+			}
+			if err := repo.DeleteTask(ctx, task.ID); err != nil {
+				t.Fatalf("DeleteTask() error = %v", err)
+			}
+
+			events, err := repo.ListProjectChangeEvents(baseCtx, project.ID, 3)
+			if err != nil {
+				t.Fatalf("ListProjectChangeEvents() error = %v", err)
+			}
+			if len(events) != 3 {
+				t.Fatalf("expected 3 events, got %d (%#v)", len(events), events)
+			}
+			for _, event := range events {
+				if event.ActorID != tc.actor.ActorID {
+					t.Fatalf("expected actor_id %q, got %q", tc.actor.ActorID, event.ActorID)
+				}
+				if event.ActorName != tc.actor.ActorName {
+					t.Fatalf("expected actor_name %q, got %q", tc.actor.ActorName, event.ActorName)
+				}
+				if event.ActorType != tc.actor.ActorType {
+					t.Fatalf("expected actor_type %q, got %q", tc.actor.ActorType, event.ActorType)
+				}
+			}
+		})
+	}
+}
+
+// TestRepository_ServiceCreateTaskPersistsHumanActorName verifies service-provided display names reach persisted change events.
+func TestRepository_ServiceCreateTaskPersistsHumanActorName(t *testing.T) {
+	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {
 		t.Fatalf("OpenInMemory() error = %v", err)
@@ -1183,54 +1351,55 @@ func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
 		_ = repo.Close()
 	})
 
-	now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	if err := repo.CreateProject(baseCtx, project); err != nil {
-		t.Fatalf("CreateProject() error = %v", err)
+	now := time.Date(2026, 2, 26, 11, 0, 0, 0, time.UTC)
+	ids := []string{"p1", "c1", "t1"}
+	idIdx := 0
+	svc := app.NewService(repo, func() string {
+		id := ids[idIdx]
+		idIdx++
+		return id
+	}, func() time.Time {
+		return now
+	}, app.ServiceConfig{})
+
+	project, err := svc.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
+		Name:          "Inbox",
+		Description:   "",
+		UpdatedBy:     "user-1",
+		UpdatedByName: "Evan Schultz",
+		UpdatedType:   domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
-	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	if err := repo.CreateColumn(baseCtx, todo); err != nil {
+	column, err := svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "t1",
-		ProjectID: project.ID,
-		ColumnID:  todo.ID,
-		Position:  0,
-		Title:     "Ownership",
-		Priority:  domain.PriorityLow,
-	}, now)
-	if err := repo.CreateTask(ctx, task); err != nil {
+	created, err := svc.CreateTask(ctx, app.CreateTaskInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Ownership",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "user-1",
+		CreatedByName:  "Evan Schultz",
+		UpdatedByType:  domain.ActorTypeUser,
+	})
+	if err != nil {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
-
-	if err := task.UpdateDetails("Ownership v2", task.Description, task.Priority, task.DueAt, task.Labels, now.Add(time.Minute)); err != nil {
-		t.Fatalf("UpdateDetails() error = %v", err)
-	}
-	if err := repo.UpdateTask(ctx, task); err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
-	}
-	if err := repo.DeleteTask(ctx, task.ID); err != nil {
-		t.Fatalf("DeleteTask() error = %v", err)
-	}
-
-	events, err := repo.ListProjectChangeEvents(baseCtx, project.ID, 3)
+	events, err := repo.ListProjectChangeEvents(ctx, project.ID, 1)
 	if err != nil {
 		t.Fatalf("ListProjectChangeEvents() error = %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("expected 3 events, got %d (%#v)", len(events), events)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d (%#v)", len(events), events)
 	}
-	for _, event := range events {
-		if event.ActorID != "actor-1" {
-			t.Fatalf("expected actor_id actor-1, got %q", event.ActorID)
-		}
-		if event.ActorName != "Actor One" {
-			t.Fatalf("expected actor_name Actor One, got %q", event.ActorName)
-		}
-		if event.ActorType != domain.ActorTypeAgent {
-			t.Fatalf("expected actor_type agent, got %q", event.ActorType)
-		}
+	if events[0].WorkItemID != created.ID {
+		t.Fatalf("expected event work item id %q, got %q", created.ID, events[0].WorkItemID)
+	}
+	if events[0].ActorID != "user-1" || events[0].ActorName != "Evan Schultz" {
+		t.Fatalf("expected human attribution user-1/Evan Schultz, got %q/%q", events[0].ActorID, events[0].ActorName)
 	}
 }
 

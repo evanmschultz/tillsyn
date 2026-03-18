@@ -62,13 +62,15 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 	if err != nil {
 		return domain.Project{}, err
 	}
+	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	project, err := a.service.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:        strings.TrimSpace(in.Name),
-		Description: strings.TrimSpace(in.Description),
-		Kind:        domain.KindID(strings.TrimSpace(in.Kind)),
-		Metadata:    in.Metadata,
-		UpdatedBy:   strings.TrimSpace(in.Actor.AgentName),
-		UpdatedType: actorType,
+		Name:          strings.TrimSpace(in.Name),
+		Description:   strings.TrimSpace(in.Description),
+		Kind:          domain.KindID(strings.TrimSpace(in.Kind)),
+		Metadata:      in.Metadata,
+		UpdatedBy:     actorID,
+		UpdatedByName: actorName,
+		UpdatedType:   actorType,
 	})
 	if err != nil {
 		return domain.Project{}, mapAppError("create project", err)
@@ -85,14 +87,16 @@ func (a *AppServiceAdapter) UpdateProject(ctx context.Context, in UpdateProjectR
 	if err != nil {
 		return domain.Project{}, err
 	}
+	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	project, err := a.service.UpdateProject(ctx, app.UpdateProjectInput{
-		ProjectID:   strings.TrimSpace(in.ProjectID),
-		Name:        strings.TrimSpace(in.Name),
-		Description: strings.TrimSpace(in.Description),
-		Kind:        domain.KindID(strings.TrimSpace(in.Kind)),
-		Metadata:    in.Metadata,
-		UpdatedBy:   strings.TrimSpace(in.Actor.AgentName),
-		UpdatedType: actorType,
+		ProjectID:     strings.TrimSpace(in.ProjectID),
+		Name:          strings.TrimSpace(in.Name),
+		Description:   strings.TrimSpace(in.Description),
+		Kind:          domain.KindID(strings.TrimSpace(in.Kind)),
+		Metadata:      in.Metadata,
+		UpdatedBy:     actorID,
+		UpdatedByName: actorName,
+		UpdatedType:   actorType,
 	})
 	if err != nil {
 		return domain.Project{}, mapAppError("update project", err)
@@ -125,7 +129,7 @@ func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest
 	if err != nil {
 		return domain.Task{}, err
 	}
-	actorID, _ := deriveMutationActorIdentity(in.Actor)
+	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	task, err := a.service.CreateTask(ctx, app.CreateTaskInput{
 		ProjectID:      strings.TrimSpace(in.ProjectID),
 		ParentID:       strings.TrimSpace(in.ParentID),
@@ -139,7 +143,9 @@ func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest
 		Labels:         append([]string(nil), in.Labels...),
 		Metadata:       in.Metadata,
 		CreatedByActor: actorID,
+		CreatedByName:  actorName,
 		UpdatedByActor: actorID,
+		UpdatedByName:  actorName,
 		UpdatedByType:  actorType,
 	})
 	if err != nil {
@@ -161,17 +167,18 @@ func (a *AppServiceAdapter) UpdateTask(ctx context.Context, in UpdateTaskRequest
 	if err != nil {
 		return domain.Task{}, err
 	}
-	actorID, _ := deriveMutationActorIdentity(in.Actor)
+	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	task, err := a.service.UpdateTask(ctx, app.UpdateTaskInput{
-		TaskID:      strings.TrimSpace(in.TaskID),
-		Title:       strings.TrimSpace(in.Title),
-		Description: strings.TrimSpace(in.Description),
-		Priority:    domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
-		DueAt:       dueAt,
-		Labels:      append([]string(nil), in.Labels...),
-		Metadata:    in.Metadata,
-		UpdatedBy:   actorID,
-		UpdatedType: actorType,
+		TaskID:        strings.TrimSpace(in.TaskID),
+		Title:         strings.TrimSpace(in.Title),
+		Description:   strings.TrimSpace(in.Description),
+		Priority:      domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
+		DueAt:         dueAt,
+		Labels:        append([]string(nil), in.Labels...),
+		Metadata:      in.Metadata,
+		UpdatedBy:     actorID,
+		UpdatedByName: actorName,
+		UpdatedType:   actorType,
 	})
 	if err != nil {
 		return domain.Task{}, mapAppError("update task", err)

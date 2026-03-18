@@ -191,12 +191,13 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 
 // CreateProjectInput holds input values for create project operations.
 type CreateProjectInput struct {
-	Name        string
-	Description string
-	Kind        domain.KindID
-	Metadata    domain.ProjectMetadata
-	UpdatedBy   string
-	UpdatedType domain.ActorType
+	Name          string
+	Description   string
+	Kind          domain.KindID
+	Metadata      domain.ProjectMetadata
+	UpdatedBy     string
+	UpdatedByName string
+	UpdatedType   domain.ActorType
 }
 
 // CreateProject creates project.
@@ -212,6 +213,7 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
 		return domain.Project{}, err
 	}
+	ctx, _, _ = withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	now := s.clock()
 	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
 	if err != nil {
@@ -246,13 +248,14 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 
 // UpdateProjectInput holds input values for update project operations.
 type UpdateProjectInput struct {
-	ProjectID   string
-	Name        string
-	Description string
-	Kind        domain.KindID
-	Metadata    domain.ProjectMetadata
-	UpdatedBy   string
-	UpdatedType domain.ActorType
+	ProjectID     string
+	Name          string
+	Description   string
+	Kind          domain.KindID
+	Metadata      domain.ProjectMetadata
+	UpdatedBy     string
+	UpdatedByName string
+	UpdatedType   domain.ActorType
 }
 
 // UpdateProject updates state for the requested operation.
@@ -261,6 +264,7 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	if err != nil {
 		return domain.Project{}, err
 	}
+	ctx, _, _ = withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	actorType := in.UpdatedType
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
@@ -372,21 +376,24 @@ type CreateTaskInput struct {
 	Labels         []string
 	Metadata       domain.TaskMetadata
 	CreatedByActor string
+	CreatedByName  string
 	UpdatedByActor string
+	UpdatedByName  string
 	UpdatedByType  domain.ActorType
 }
 
 // UpdateTaskInput holds input values for update task operations.
 type UpdateTaskInput struct {
-	TaskID      string
-	Title       string
-	Description string
-	Priority    domain.Priority
-	DueAt       *time.Time
-	Labels      []string
-	Metadata    *domain.TaskMetadata
-	UpdatedBy   string
-	UpdatedType domain.ActorType
+	TaskID        string
+	Title         string
+	Description   string
+	Priority      domain.Priority
+	DueAt         *time.Time
+	Labels        []string
+	Metadata      *domain.TaskMetadata
+	UpdatedBy     string
+	UpdatedByName string
+	UpdatedType   domain.ActorType
 }
 
 // CreateCommentInput holds input values for create comment operations.
@@ -438,6 +445,12 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
 	}
+	ctx, resolvedActor, _ := withResolvedMutationActor(
+		ctx,
+		firstNonEmptyTrimmed(in.UpdatedByActor, in.CreatedByActor),
+		firstNonEmptyTrimmed(in.UpdatedByName, in.CreatedByName),
+		actorType,
+	)
 	var parent *domain.Task
 	guardScopes := []mutationScopeCandidate{
 		newProjectMutationScopeCandidate(in.ProjectID),
@@ -499,9 +512,9 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		DueAt:          in.DueAt,
 		Labels:         in.Labels,
 		Metadata:       in.Metadata,
-		CreatedByActor: in.CreatedByActor,
-		UpdatedByActor: in.UpdatedByActor,
-		UpdatedByType:  in.UpdatedByType,
+		CreatedByActor: firstNonEmptyTrimmed(in.CreatedByActor, resolvedActor.ActorID),
+		UpdatedByActor: firstNonEmptyTrimmed(in.UpdatedByActor, resolvedActor.ActorID, in.CreatedByActor),
+		UpdatedByType:  actorType,
 	}, s.clock())
 	if err != nil {
 		return domain.Task{}, err
@@ -655,6 +668,7 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err != nil {
 		return domain.Task{}, err
 	}
+	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	actorType := in.UpdatedType
 	if actorType == "" {
 		actorType = task.UpdatedByType
@@ -669,7 +683,10 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, actorType, guardScopes); err != nil {
 		return domain.Task{}, err
 	}
-	if updatedBy := strings.TrimSpace(in.UpdatedBy); updatedBy != "" {
+	if hasResolvedActor && strings.TrimSpace(resolvedActor.ActorID) != "" {
+		task.UpdatedByActor = resolvedActor.ActorID
+		task.UpdatedByType = actorType
+	} else if updatedBy := strings.TrimSpace(in.UpdatedBy); updatedBy != "" {
 		task.UpdatedByActor = updatedBy
 		task.UpdatedByType = actorType
 	}
@@ -786,6 +803,7 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 	if err != nil {
 		return domain.Comment{}, err
 	}
+	ctx, resolvedActor, _ := withResolvedMutationActor(ctx, in.ActorID, in.ActorName, in.ActorType)
 	actorType := normalizeActorTypeInput(in.ActorType)
 	body := strings.TrimSpace(in.BodyMarkdown)
 	if body == "" {
@@ -822,8 +840,8 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		TargetID:     target.TargetID,
 		Summary:      in.Summary,
 		BodyMarkdown: body,
-		ActorID:      strings.TrimSpace(in.ActorID),
-		ActorName:    strings.TrimSpace(in.ActorName),
+		ActorID:      firstNonEmptyTrimmed(resolvedActor.ActorID, in.ActorID),
+		ActorName:    firstNonEmptyTrimmed(resolvedActor.ActorName, in.ActorName),
 		ActorType:    actorType,
 	}, s.clock())
 	if err != nil {
@@ -1664,6 +1682,46 @@ func applyMutationActorToTask(ctx context.Context, task *domain.Task) {
 		task.UpdatedByActor = actorID
 	}
 	task.UpdatedByType = normalizeActorTypeInput(actor.ActorType)
+}
+
+// withResolvedMutationActor merges explicit mutation-attribution input with context identity metadata.
+func withResolvedMutationActor(ctx context.Context, actorID, actorName string, actorType domain.ActorType) (context.Context, MutationActor, bool) {
+	resolved := MutationActor{
+		ActorID:   strings.TrimSpace(actorID),
+		ActorName: strings.TrimSpace(actorName),
+		ActorType: domain.ActorType(strings.TrimSpace(strings.ToLower(string(actorType)))),
+	}
+	if ctxActor, ok := MutationActorFromContext(ctx); ok {
+		if resolved.ActorID == "" {
+			resolved.ActorID = ctxActor.ActorID
+		}
+		// Only borrow the context display name when the explicit identity is absent or matches.
+		if resolved.ActorName == "" && (resolved.ActorID == "" || resolved.ActorID == ctxActor.ActorID) {
+			resolved.ActorName = ctxActor.ActorName
+		}
+		if resolved.ActorType == "" {
+			resolved.ActorType = normalizeActorTypeInput(ctxActor.ActorType)
+		}
+	}
+	resolved = normalizeMutationActor(resolved)
+	if resolved.ActorID == "" {
+		return ctx, MutationActor{}, false
+	}
+	if resolved.ActorName == "" {
+		resolved.ActorName = resolved.ActorID
+	}
+	return WithMutationActor(ctx, resolved), resolved, true
+}
+
+// firstNonEmptyTrimmed returns the first non-empty trimmed string.
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // createDefaultColumns creates default columns.

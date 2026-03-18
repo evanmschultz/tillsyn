@@ -179,7 +179,7 @@ func (m Model) renderThreadContextPanel(accent, muted, dim color.Color, sectionT
 		for idx := start; idx < len(m.threadComments); idx++ {
 			comment := m.threadComments[idx]
 			actor := string(normalizeCommentActorType(string(comment.ActorType)))
-			label := fmt.Sprintf("[%s] %s • %s", actor, threadCommentOwnerLabel(comment), formatThreadTimestamp(comment.CreatedAt))
+			label := fmt.Sprintf("[%s] %s • %s", actor, m.commentOwnerLabel(comment), formatThreadTimestamp(comment.CreatedAt))
 			lines = append(lines, hintStyle.Render(truncate(label, contentWidth)))
 			if summary := strings.TrimSpace(commentSummaryText(comment)); summary != "" {
 				lines = append(lines, hintStyle.Render("  "+truncate("summary: "+summary, max(8, contentWidth-2))))
@@ -304,7 +304,7 @@ func (m Model) threadCommentListLines(width int, hintStyle lipgloss.Style) []str
 	}
 	lines := make([]string, 0, len(m.threadComments)*4)
 	for idx, comment := range m.threadComments {
-		owner := threadCommentOwnerLabel(comment)
+		owner := m.commentOwnerLabel(comment)
 		actor := string(normalizeCommentActorType(string(comment.ActorType)))
 		lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
 		if summary := commentSummaryText(comment); summary != "" {
@@ -353,7 +353,7 @@ func (m Model) startProjectThread(backMode inputMode) (tea.Model, tea.Cmd) {
 		m.status = "project thread target invalid: " + err.Error()
 		return m, nil
 	}
-	return m.startThread(backMode, target, project.Name, project.Description)
+	return m.startThread(backMode, target, project.Name, project.Description, threadPanelDetails)
 }
 
 // startSelectedWorkItemThread opens thread mode for the currently selected board item.
@@ -368,6 +368,11 @@ func (m Model) startSelectedWorkItemThread(backMode inputMode) (tea.Model, tea.C
 
 // startTaskThread opens thread mode for a specific work item.
 func (m Model) startTaskThread(task domain.Task, backMode inputMode) (tea.Model, tea.Cmd) {
+	return m.startTaskThreadWithPanel(task, backMode, threadPanelDetails)
+}
+
+// startTaskThreadWithPanel opens thread mode for a specific work item and focuses one initial panel.
+func (m Model) startTaskThreadWithPanel(task domain.Task, backMode inputMode, panel int) (tea.Model, tea.Cmd) {
 	targetType, ok := commentTargetTypeForTask(task)
 	if !ok {
 		m.status = "unsupported work-item kind for comments"
@@ -387,11 +392,11 @@ func (m Model) startTaskThread(task domain.Task, backMode inputMode) (tea.Model,
 		title = task.ID
 	}
 	title = fmt.Sprintf("%s: %s", task.Kind, title)
-	return m.startThread(backMode, target, title, task.Description)
+	return m.startThread(backMode, target, title, task.Description, panel)
 }
 
 // startThread initializes thread-mode state and kicks off comment loading.
-func (m Model) startThread(backMode inputMode, target domain.CommentTarget, title, description string) (tea.Model, tea.Cmd) {
+func (m Model) startThread(backMode inputMode, target domain.CommentTarget, title, description string, panel int) (tea.Model, tea.Cmd) {
 	if backMode != modeTaskInfo && backMode != modeEditTask {
 		backMode = modeNone
 	}
@@ -404,8 +409,9 @@ func (m Model) startThread(backMode inputMode, target domain.CommentTarget, titl
 	m.threadScroll = 0
 	m.threadPendingCommentBody = ""
 	m.threadComposerActive = false
-	m.threadDetailsActive = true
-	m.threadPanelFocus = threadPanelDetails
+	panel = wrapIndex(panel, 0, threadPanelCount)
+	m.threadPanelFocus = panel
+	m.threadDetailsActive = panel == threadPanelDetails
 	m.threadDetailsEditorActive = false
 	m.threadInput.SetValue("")
 	m.threadInput.CursorEnd()
@@ -528,6 +534,7 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 	target := m.threadTarget
 	description = strings.TrimSpace(description)
 	actorID := m.threadActorID()
+	actorName := m.threadActorName()
 	actorType := m.threadActorType()
 	return func() tea.Msg {
 		switch target.TargetType {
@@ -552,13 +559,14 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 				return actionMsg{err: fmt.Errorf("thread details update: project %q not found", projectID)}
 			}
 			_, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
-				ProjectID:   project.ID,
-				Name:        project.Name,
-				Description: description,
-				Kind:        project.Kind,
-				Metadata:    project.Metadata,
-				UpdatedBy:   actorID,
-				UpdatedType: actorType,
+				ProjectID:     project.ID,
+				Name:          project.Name,
+				Description:   description,
+				Kind:          project.Kind,
+				Metadata:      project.Metadata,
+				UpdatedBy:     actorID,
+				UpdatedByName: actorName,
+				UpdatedType:   actorType,
 			})
 			if err != nil {
 				return actionMsg{err: err}
@@ -575,15 +583,16 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 			}
 			metadata := task.Metadata
 			_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
-				TaskID:      task.ID,
-				Title:       task.Title,
-				Description: description,
-				Priority:    task.Priority,
-				DueAt:       task.DueAt,
-				Labels:      append([]string(nil), task.Labels...),
-				Metadata:    &metadata,
-				UpdatedBy:   actorID,
-				UpdatedType: actorType,
+				TaskID:        task.ID,
+				Title:         task.Title,
+				Description:   description,
+				Priority:      task.Priority,
+				DueAt:         task.DueAt,
+				Labels:        append([]string(nil), task.Labels...),
+				Metadata:      &metadata,
+				UpdatedBy:     actorID,
+				UpdatedByName: actorName,
+				UpdatedType:   actorType,
 			})
 			if err != nil {
 				return actionMsg{err: err}
@@ -630,15 +639,33 @@ func normalizeCommentActorType(raw string) domain.ActorType {
 	}
 }
 
-// threadCommentOwnerLabel renders comment ownership using actor_name with compact actor_id context.
-func threadCommentOwnerLabel(comment domain.Comment) string {
+// commentOwnerLabel renders comment ownership using local-identity-aware fallback rules.
+func (m Model) commentOwnerLabel(comment domain.Comment) string {
 	actorName := strings.TrimSpace(comment.ActorName)
 	actorID := strings.TrimSpace(comment.ActorID)
+	localFallback := false
+	if normalizeCommentActorType(string(comment.ActorType)) == domain.ActorTypeUser {
+		localActorID := strings.TrimSpace(m.identityActorID)
+		localName := strings.TrimSpace(m.identityDisplayName)
+		if localName != "" {
+			switch {
+			case strings.EqualFold(actorName, "tillsyn-user"),
+				strings.EqualFold(actorID, "tillsyn-user"),
+				(actorName == "" && actorID != "" && strings.EqualFold(actorID, localActorID)),
+				(strings.EqualFold(actorName, actorID) && strings.EqualFold(actorID, localActorID)):
+				actorName = localName
+				localFallback = true
+			}
+		}
+	}
 	if actorName == "" {
 		actorName = actorID
 	}
 	if actorName == "" {
 		return "unknown"
+	}
+	if localFallback {
+		return actorName
 	}
 	if actorID == "" || strings.EqualFold(actorName, actorID) {
 		return actorName

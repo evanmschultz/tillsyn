@@ -513,6 +513,7 @@ type Model struct {
 	searchMatches               []app.TaskMatch
 	searchResultIndex           int
 	quickActionIndex            int
+	quickActionBackMode         inputMode
 	commandMatches              []commandPaletteItem
 	commandIndex                int
 	bootstrapFocus              int
@@ -731,6 +732,24 @@ type actionMsg struct {
 	historyUndo     *historyActionSet
 	historyRedo     *historyActionSet
 	activityItem    *activityEntry
+}
+
+// modeKey returns a stable short string for one input mode in traces.
+func modeKey(mode inputMode) string {
+	switch mode {
+	case modeNone:
+		return "board"
+	case modeAddTask:
+		return "add-task"
+	case modeEditTask:
+		return "edit-task"
+	case modeTaskInfo:
+		return "task-info"
+	case modeQuickActions:
+		return "quick-actions"
+	default:
+		return "other"
+	}
 }
 
 // taskUpdatedMsg carries one successful task update with optional reopen context.
@@ -1205,7 +1224,7 @@ func (m *Model) applyPendingNotificationThread() tea.Cmd {
 
 // startNotificationThread opens thread mode from one notifications-panel action.
 func (m Model) startNotificationThread(target domain.CommentTarget, title, body string) (tea.Model, tea.Cmd) {
-	updated, cmd := m.startThread(modeNone, target, title, body)
+	updated, cmd := m.startThread(modeNone, target, title, body, threadPanelDetails)
 	next, ok := updated.(Model)
 	if !ok {
 		return updated, cmd
@@ -2485,8 +2504,22 @@ func (m *Model) startHighlightColorMode() tea.Cmd {
 
 // startQuickActions starts quick actions.
 func (m *Model) startQuickActions() tea.Cmd {
+	backMode := m.mode
+	actions := m.quickActionsForMode(backMode)
+	if len(actions) == 0 {
+		switch backMode {
+		case modeAddTask, modeEditTask:
+			m.status = "no quick actions for this field"
+		case modeTaskInfo:
+			m.status = "no quick actions for this task"
+		default:
+			m.status = "no quick actions"
+		}
+		return nil
+	}
 	m.mode = modeQuickActions
-	actions := m.quickActions()
+	m.quickActionBackMode = backMode
+	traceTaskScreenAction("quick_actions", "open", "back_mode", modeKey(backMode), "title", m.quickActionsTitle())
 	m.quickActionIndex = 0
 	for idx, action := range actions {
 		if action.Enabled {
@@ -2749,6 +2782,18 @@ func (m *Model) focusTaskFormField(field int) tea.Cmd {
 			field = order[0]
 		}
 	}
+	if m.formFocus != field {
+		switch field {
+		case taskFieldSubtasks:
+			if len(m.taskFormContextSubtasks()) > 0 {
+				m.taskFormSubtaskCursor = max(1, clamp(m.taskFormSubtaskCursor, 1, len(m.taskFormContextSubtasks())))
+			}
+		case taskFieldResources:
+			if len(m.taskFormResourceRefs) > 0 {
+				m.taskFormResourceCursor = max(1, clamp(m.taskFormResourceCursor, 1, len(m.taskFormResourceRefs)))
+			}
+		}
+	}
 	m.formFocus = field
 	for i := range m.formInputs {
 		m.formInputs[i].Blur()
@@ -2965,12 +3010,14 @@ func (m *Model) startTaskFormResourcePickerFromFocus() tea.Cmd {
 	if m == nil {
 		return nil
 	}
+	if m.mode == modeAddTask {
+		m.status = "save task first to attach resources"
+		traceTaskScreenAction("task_edit", "resource_picker_blocked", "reason", "save_task_first")
+		return nil
+	}
 	m.taskFormResourceEditIndex = -1
 	if m.mode == modeEditTask && m.taskFormResourceCursor > 0 {
 		m.taskFormResourceEditIndex = clamp(m.taskFormResourceCursor-1, 0, len(m.taskFormResourceRefs)-1)
-	}
-	if m.mode == modeAddTask {
-		return m.startResourcePicker("", m.mode)
 	}
 	taskID := strings.TrimSpace(m.editingTaskID)
 	if taskID == "" {
@@ -3878,13 +3925,16 @@ func (m Model) buildCurrentEditTaskInput() (app.UpdateTaskInput, domain.Task, er
 	metadata := m.buildTaskMetadataFromForm(vals, task.Metadata)
 
 	return app.UpdateTaskInput{
-		TaskID:      taskID,
-		Title:       title,
-		Description: description,
-		Priority:    priority,
-		DueAt:       dueAt,
-		Labels:      labels,
-		Metadata:    &metadata,
+		TaskID:        taskID,
+		Title:         title,
+		Description:   description,
+		Priority:      priority,
+		DueAt:         dueAt,
+		Labels:        labels,
+		Metadata:      &metadata,
+		UpdatedBy:     m.threadActorID(),
+		UpdatedByName: m.threadActorName(),
+		UpdatedType:   m.threadActorType(),
 	}, task, nil
 }
 
@@ -5484,13 +5534,16 @@ func (m Model) jumpToDependencyCandidateTask() (tea.Model, tea.Cmd) {
 func (m Model) updateTaskMetadataCmd(task domain.Task, metadata domain.TaskMetadata, status string) tea.Cmd {
 	return func() tea.Msg {
 		_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
-			TaskID:      task.ID,
-			Title:       task.Title,
-			Description: task.Description,
-			Priority:    task.Priority,
-			DueAt:       task.DueAt,
-			Labels:      append([]string(nil), task.Labels...),
-			Metadata:    &metadata,
+			TaskID:        task.ID,
+			Title:         task.Title,
+			Description:   task.Description,
+			Priority:      task.Priority,
+			DueAt:         task.DueAt,
+			Labels:        append([]string(nil), task.Labels...),
+			Metadata:      &metadata,
+			UpdatedBy:     m.threadActorID(),
+			UpdatedByName: m.threadActorName(),
+			UpdatedType:   m.threadActorType(),
 		})
 		if err != nil {
 			return actionMsg{err: err}
@@ -6074,13 +6127,16 @@ func (m Model) attachResourceEntry(path string, isDir bool) tea.Cmd {
 		meta := task.Metadata
 		meta.ResourceRefs = refs
 		_, err = m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
-			TaskID:      task.ID,
-			Title:       task.Title,
-			Description: task.Description,
-			Priority:    task.Priority,
-			DueAt:       task.DueAt,
-			Labels:      append([]string(nil), task.Labels...),
-			Metadata:    &meta,
+			TaskID:        task.ID,
+			Title:         task.Title,
+			Description:   task.Description,
+			Priority:      task.Priority,
+			DueAt:         task.DueAt,
+			Labels:        append([]string(nil), task.Labels...),
+			Metadata:      &meta,
+			UpdatedBy:     m.threadActorID(),
+			UpdatedByName: m.threadActorName(),
+			UpdatedType:   m.threadActorType(),
 		})
 		if err != nil {
 			return actionMsg{err: err}
@@ -6104,7 +6160,7 @@ func (m Model) resourcePickerRootForCurrentProject() string {
 			return root
 		}
 	}
-	return ""
+	return m.resourcePickerBrowseRoot()
 }
 
 // resourcePickerBrowseRoot returns a best-effort browse root for non-task picker flows.
@@ -7036,6 +7092,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.syncTaskInfoBodyViewport(task)
 		subtasks := m.subtasksForParent(task.ID)
 		switch {
+		case key.Matches(msg, m.keys.quickActions):
+			return m, m.startQuickActions()
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			if m.stepBackTaskInfoPath() {
 				return m, nil
@@ -7094,7 +7152,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.String() == "s":
 			return m, m.startSubtaskForm(task)
 		case msg.String() == "c":
-			return m.startTaskThread(task, modeTaskInfo)
+			return m.startTaskThreadWithPanel(task, modeTaskInfo, threadPanelComments)
 		case msg.String() == " " || msg.String() == "space":
 			return m.toggleFocusedSubtaskCompletion(task)
 		case msg.String() == "[":
@@ -7731,7 +7789,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		actions := m.quickActions()
 		switch msg.String() {
 		case "esc":
-			m.mode = modeNone
+			if m.quickActionBackMode != modeNone {
+				m.mode = m.quickActionBackMode
+			} else {
+				m.mode = modeNone
+			}
+			m.quickActionBackMode = modeNone
 			m.status = "cancelled"
 			return m, nil
 		case "j", "down":
@@ -8071,6 +8134,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch {
+		case key.Matches(msg, m.keys.quickActions) && (isTaskFormActionField(m.formFocus) || isTaskFormMarkdownField(m.formFocus)):
+			return m, m.startQuickActions()
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			if m.taskFormBackMode == modeEditTask && strings.TrimSpace(m.taskFormBackTaskID) != "" {
 				parentID := strings.TrimSpace(m.taskFormBackTaskID)
@@ -8491,15 +8556,20 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.traceFormControlCharacterGuard("task", "create", "title", title)
 		m.traceFormControlCharacterGuard("task", "create", "description", vals["description"])
 		return m.createTask(app.CreateTaskInput{
-			ParentID:    parentID,
-			Kind:        kind,
-			Scope:       scope,
-			Title:       title,
-			Description: vals["description"],
-			Priority:    priority,
-			DueAt:       dueAt,
-			Labels:      labels,
-			Metadata:    metadata,
+			ParentID:       parentID,
+			Kind:           kind,
+			Scope:          scope,
+			Title:          title,
+			Description:    vals["description"],
+			Priority:       priority,
+			DueAt:          dueAt,
+			Labels:         labels,
+			Metadata:       metadata,
+			CreatedByActor: m.threadActorID(),
+			CreatedByName:  m.threadActorName(),
+			UpdatedByActor: m.threadActorID(),
+			UpdatedByName:  m.threadActorName(),
+			UpdatedByType:  m.threadActorType(),
 		})
 	case modeSearch:
 		return m, m.applySearchFilter()
@@ -8658,13 +8728,16 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 					return nil
 				}
 				_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
-					TaskID:      task.ID,
-					Title:       task.Title,
-					Description: task.Description,
-					Priority:    task.Priority,
-					DueAt:       task.DueAt,
-					Labels:      append([]string(nil), labels...),
-					Metadata:    &task.Metadata,
+					TaskID:        task.ID,
+					Title:         task.Title,
+					Description:   task.Description,
+					Priority:      task.Priority,
+					DueAt:         task.DueAt,
+					Labels:        append([]string(nil), labels...),
+					Metadata:      &task.Metadata,
+					UpdatedBy:     m.threadActorID(),
+					UpdatedByName: m.threadActorName(),
+					UpdatedType:   m.threadActorType(),
 				})
 				return err
 			}
@@ -8722,9 +8795,12 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		if isAdd || projectID == "" {
 			return m, func() tea.Msg {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
-					Name:        name,
-					Description: description,
-					Metadata:    metadata,
+					Name:          name,
+					Description:   description,
+					Metadata:      metadata,
+					UpdatedBy:     m.threadActorID(),
+					UpdatedByName: m.threadActorName(),
+					UpdatedType:   m.threadActorType(),
 				})
 				if err != nil {
 					return actionMsg{err: err}
@@ -8745,10 +8821,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		return m, func() tea.Msg {
 			project, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
-				ProjectID:   projectID,
-				Name:        name,
-				Description: description,
-				Metadata:    metadata,
+				ProjectID:     projectID,
+				Name:          name,
+				Description:   description,
+				Metadata:      metadata,
+				UpdatedBy:     m.threadActorID(),
+				UpdatedByName: m.threadActorName(),
+				UpdatedType:   m.threadActorType(),
 			})
 			if err != nil {
 				return actionMsg{err: err}
@@ -8986,8 +9065,56 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 	}
 }
 
-// quickActions returns state-aware quick actions with enabled entries first.
+// quickActionMode returns the screen mode that owns the active quick-actions overlay.
+func (m Model) quickActionMode() inputMode {
+	if m.mode == modeQuickActions && m.quickActionBackMode != modeNone {
+		return m.quickActionBackMode
+	}
+	return m.mode
+}
+
+// quickActions returns state-aware quick actions for the active screen context.
 func (m Model) quickActions() []quickActionItem {
+	return m.quickActionsForMode(m.quickActionMode())
+}
+
+// quickActionsForMode resolves quick actions for one specific screen context.
+func (m Model) quickActionsForMode(mode inputMode) []quickActionItem {
+	switch mode {
+	case modeAddTask, modeEditTask:
+		return m.taskFormQuickActions(mode)
+	case modeTaskInfo:
+		return m.taskInfoQuickActions()
+	default:
+		return m.boardQuickActions()
+	}
+}
+
+// quickActionsTitle renders a context-aware quick-actions title.
+func (m Model) quickActionsTitle() string {
+	switch m.quickActionMode() {
+	case modeTaskInfo:
+		return "Quick Actions: Task Info"
+	case modeAddTask:
+		return "Quick Actions: New Task"
+	case modeEditTask:
+		switch m.formFocus {
+		case taskFieldSubtasks:
+			return "Quick Actions: Subtasks"
+		case taskFieldResources:
+			return "Quick Actions: Resources"
+		case taskFieldComments:
+			return "Quick Actions: Comments"
+		default:
+			return "Quick Actions: Edit Task"
+		}
+	default:
+		return "Quick Actions"
+	}
+}
+
+// boardQuickActions returns state-aware board quick actions with enabled entries first.
+func (m Model) boardQuickActions() []quickActionItem {
 	_, hasTask := m.selectedTaskInCurrentColumn()
 	hasSelection := len(m.selectedTaskIDs) > 0
 	enabled := make([]quickActionItem, 0, len(quickActionSpecs))
@@ -9009,7 +9136,94 @@ func (m Model) quickActions() []quickActionItem {
 	return append(enabled, disabled...)
 }
 
-// quickActionAvailability returns whether one quick action can run in the current state.
+// taskFormQuickActions resolves focused quick actions for task add/edit screens.
+func (m Model) taskFormQuickActions(_ inputMode) []quickActionItem {
+	_, hasContextTask := m.taskFormContextTask()
+	switch m.formFocus {
+	case taskFieldSubtasks:
+		items := []quickActionItem{{
+			ID:             "task-form-new-subtask",
+			Label:          "Create Subtask",
+			Enabled:        hasContextTask,
+			DisabledReason: "save task first",
+		}}
+		if subtask, ok := m.selectedTaskFormSubtask(); ok {
+			items = append([]quickActionItem{{
+				ID:      "task-form-open-subtask",
+				Label:   "Open Selected Subtask",
+				Enabled: true,
+			}}, items...)
+			_ = subtask
+		}
+		return items
+	case taskFieldResources:
+		enabled := hasContextTask
+		reason := "save task first"
+		if enabled {
+			reason = ""
+		}
+		label := "Attach Resource"
+		if m.taskFormResourceCursor > 0 {
+			label = "Replace Selected Resource"
+		}
+		return []quickActionItem{{
+			ID:             "task-form-resource-action",
+			Label:          label,
+			Enabled:        enabled,
+			DisabledReason: reason,
+		}}
+	case taskFieldComments:
+		return []quickActionItem{{
+			ID:             "task-form-open-thread",
+			Label:          "Open Comments",
+			Enabled:        hasContextTask,
+			DisabledReason: "save task first",
+		}}
+	case taskFieldDue, taskFieldLabels, taskFieldDependsOn, taskFieldBlockedBy:
+		return []quickActionItem{{
+			ID:      "task-form-open-field",
+			Label:   "Open Field Action",
+			Enabled: true,
+		}}
+	default:
+		if isTaskFormMarkdownField(m.formFocus) {
+			return []quickActionItem{{
+				ID:      "task-form-open-field",
+				Label:   "Open Markdown Editor",
+				Enabled: true,
+			}}
+		}
+		return nil
+	}
+}
+
+// taskInfoQuickActions resolves task-info quick actions for the current task and selected subtask.
+func (m Model) taskInfoQuickActions() []quickActionItem {
+	task, ok := m.taskByID(strings.TrimSpace(m.taskInfoTaskID))
+	if !ok {
+		return nil
+	}
+	items := []quickActionItem{
+		{ID: "task-info-edit", Label: "Edit Task", Enabled: true},
+		{ID: "task-info-open-thread", Label: "Open Comments", Enabled: true},
+		{ID: "task-info-new-subtask", Label: "Create Subtask", Enabled: true},
+	}
+	candidate := m
+	if subtask, ok := (&candidate).selectedTaskInfoSubtask(task); ok {
+		state := candidate.lifecycleStateForTask(subtask)
+		toggleLabel := "Mark Selected Subtask Complete"
+		if state == domain.StateDone {
+			toggleLabel = "Mark Selected Subtask Incomplete"
+		}
+		items = append([]quickActionItem{
+			{ID: "task-info-open-subtask", Label: "Open Selected Subtask", Enabled: true},
+			{ID: "task-info-toggle-subtask", Label: toggleLabel, Enabled: true},
+		}, items...)
+	}
+	return items
+}
+
+// quickActionAvailability returns whether one board quick action can run in the current state.
 func (m Model) quickActionAvailability(actionID string, hasTask bool, hasSelection bool) (bool, string) {
 	switch actionID {
 	case "task-info", "edit-task", "archive-task", "hard-delete", "toggle-selection":
@@ -9102,9 +9316,66 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.mode = modeNone
+	contextMode := m.quickActionMode()
+	traceTaskScreenAction("quick_actions", "apply", "back_mode", modeKey(contextMode), "action_id", action.ID, "label", action.Label)
+	m.mode = contextMode
+	m.quickActionBackMode = modeNone
 	switch action.ID {
+	case "task-form-open-field":
+		if next, cmd, handled := m.openFocusedTaskFormField(tea.KeyPressMsg{}); handled {
+			return next, cmd
+		}
+		m.status = "no quick action for this field"
+		return m, nil
+	case "task-form-open-thread":
+		if task, ok := m.taskFormContextTask(); ok {
+			return m.startTaskThreadWithPanel(task, modeEditTask, threadPanelComments)
+		}
+		m.status = "save task first to open comments"
+		return m, nil
+	case "task-form-new-subtask":
+		return m, m.startSubtaskFormFromTaskForm()
+	case "task-form-open-subtask":
+		return m, m.openFocusedTaskFormSubtask()
+	case "task-form-resource-action":
+		return m, m.startTaskFormResourcePickerFromFocus()
+	case "task-info-edit":
+		task, ok := m.taskByID(strings.TrimSpace(m.taskInfoTaskID))
+		if !ok {
+			m.status = "task not found"
+			return m, nil
+		}
+		return m, m.startTaskForm(&task)
+	case "task-info-open-thread":
+		task, ok := m.taskByID(strings.TrimSpace(m.taskInfoTaskID))
+		if !ok {
+			m.status = "task not found"
+			return m, nil
+		}
+		return m.startTaskThreadWithPanel(task, modeTaskInfo, threadPanelComments)
+	case "task-info-new-subtask":
+		task, ok := m.taskByID(strings.TrimSpace(m.taskInfoTaskID))
+		if !ok {
+			m.status = "task not found"
+			return m, nil
+		}
+		return m, m.startSubtaskForm(task)
+	case "task-info-open-subtask":
+		task, ok := m.taskByID(strings.TrimSpace(m.taskInfoTaskID))
+		if !ok {
+			m.status = "task not found"
+			return m, nil
+		}
+		return m, m.openFocusedTaskInfoSubtask(task)
+	case "task-info-toggle-subtask":
+		task, ok := m.taskByID(strings.TrimSpace(m.taskInfoTaskID))
+		if !ok {
+			m.status = "task not found"
+			return m, nil
+		}
+		return m.toggleFocusedSubtaskCompletion(task)
 	case "task-info":
+		m.mode = modeNone
 		task, ok := m.selectedTaskInCurrentColumn()
 		if !ok {
 			m.status = "no task selected"
@@ -9113,6 +9384,7 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 		m.openTaskInfo(task.ID, "task info")
 		return m, nil
 	case "edit-task":
+		m.mode = modeNone
 		task, ok := m.selectedTaskInCurrentColumn()
 		if !ok {
 			m.status = "no task selected"
@@ -9120,16 +9392,22 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 		}
 		return m, m.startTaskForm(&task)
 	case "move-left":
+		m.mode = modeNone
 		return m.moveSelectedTask(-1)
 	case "move-right":
+		m.mode = modeNone
 		return m.moveSelectedTask(1)
 	case "archive-task":
+		m.mode = modeNone
 		return m.confirmDeleteAction(app.DeleteModeArchive, m.confirmArchive, "archive task")
 	case "restore-task":
+		m.mode = modeNone
 		return m.confirmRestoreAction()
 	case "hard-delete":
+		m.mode = modeNone
 		return m.confirmDeleteAction(app.DeleteModeHard, m.confirmHardDelete, "hard delete task")
 	case "toggle-selection":
+		m.mode = modeNone
 		task, ok := m.selectedTaskInCurrentColumn()
 		if !ok {
 			m.status = "no task selected"
@@ -9142,6 +9420,7 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "clear-selection":
+		m.mode = modeNone
 		count := m.clearSelection()
 		if count == 0 {
 			m.status = "selection already empty"
@@ -9150,18 +9429,25 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("cleared %d selected tasks", count)
 		return m, nil
 	case "bulk-move-left":
+		m.mode = modeNone
 		return m.moveSelectedTasks(-1)
 	case "bulk-move-right":
+		m.mode = modeNone
 		return m.moveSelectedTasks(1)
 	case "bulk-archive":
+		m.mode = modeNone
 		return m.confirmBulkDeleteAction(app.DeleteModeArchive, m.confirmArchive, "archive selected")
 	case "bulk-hard-delete":
+		m.mode = modeNone
 		return m.confirmBulkDeleteAction(app.DeleteModeHard, m.confirmHardDelete, "hard delete selected")
 	case "undo":
+		m.mode = modeNone
 		return m.undoLastMutation()
 	case "redo":
+		m.mode = modeNone
 		return m.redoLastMutation()
 	case "activity-log":
+		m.mode = modeNone
 		return m, m.openActivityLog()
 	default:
 		m.status = "unknown quick action"
@@ -12158,7 +12444,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"due field: enter or e opens due picker",
 			"labels field: enter or e opens label picker",
 			"depends_on/blocked_by fields: enter or e opens dependency picker",
-			"subtasks, comments, and resources are action rows; enter or e opens the selected action",
+			"subtasks/comments/resources are save-dependent rows here; save the task first, then manage them in edit mode",
 			"ctrl+s saves form",
 		}
 	case modeEditTask:
@@ -12169,9 +12455,10 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"due field: enter or e opens due picker",
 			"labels field: enter or e opens label picker",
 			"depends_on/blocked_by fields: enter or e opens dependency picker",
-			"subtasks section: left/right selects row; enter or e opens selected row",
-			"comments section: enter or e opens thread/comments",
-			"resources section: left/right selects row; enter or e opens resource picker",
+			"subtasks section: first existing child is focused when present; left returns to + create; enter or e opens selected row",
+			"comments section: enter or e opens thread on the comments panel; . opens focused quick actions",
+			"resources section: first existing item is focused when present; left returns to + attach; enter or e opens resource action",
+			"press . for focused quick actions on subtasks/resources/comments and other action rows",
 			"ctrl+s saves form; markdown editor ctrl+s saves the task for existing items",
 		}
 	case modeSearch:
@@ -12208,7 +12495,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"backspace moves to parent task info when available",
 			"pgup/pgdown, home/end, or ctrl+u/ctrl+d scroll the full info body",
 			"d opens full-screen details preview; tab toggles edit mode there",
-			"e edits the current task; s creates a subtask; c opens thread view",
+			"e edits the current task; s creates a subtask; c opens thread on comments; . opens task/subtask quick actions",
 			"[ / ] move task between columns; space toggles the focused subtask; esc back/close",
 		}
 	case modeAddProject:
@@ -12248,6 +12535,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		return "quick actions", []string{
 			"j/k moves action selection",
 			"enter runs selected action",
+			"actions are scoped to the current screen or focused row",
 			"esc closes quick actions",
 		}
 	case modeConfirmAction:
@@ -12799,7 +13087,7 @@ func (m *Model) openFocusedTaskFormField(seed tea.KeyPressMsg) (Model, tea.Cmd, 
 		return *m, m.startDependencyInspectorFromForm(m.formFocus), true
 	case m.formFocus == taskFieldComments:
 		if task, ok := m.taskFormContextTask(); ok {
-			next, cmd := m.startTaskThread(task, modeEditTask)
+			next, cmd := m.startTaskThreadWithPanel(task, modeEditTask, threadPanelComments)
 			if model, ok := next.(Model); ok {
 				return model, cmd, true
 			}
@@ -12808,8 +13096,16 @@ func (m *Model) openFocusedTaskFormField(seed tea.KeyPressMsg) (Model, tea.Cmd, 
 		m.status = "save task first to start thread/comments"
 		return *m, nil, true
 	case m.formFocus == taskFieldSubtasks:
+		if _, ok := m.taskFormContextTask(); !ok {
+			m.status = "save task first to add subtasks"
+			return *m, nil, true
+		}
 		return *m, m.openFocusedTaskFormSubtask(), true
 	case m.formFocus == taskFieldResources:
+		if _, ok := m.taskFormContextTask(); !ok {
+			m.status = "save task first to attach resources"
+			return *m, nil, true
+		}
 		return *m, m.startTaskFormResourcePickerFromFocus(), true
 	default:
 		return *m, nil, false
@@ -12876,20 +13172,22 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	lines = append(lines, hintStyle.Render(fmt.Sprintf("progress: %d/%d done", done, total)))
 	selectedSubtaskRow := clamp(m.taskFormSubtaskCursor, 0, len(subtasks))
 	newRow := "  + create new subtask"
+	if !hasContextTask {
+		newRow = "  (save this task before adding subtasks)"
+	}
 	if m.formFocus == taskFieldSubtasks && selectedSubtaskRow == 0 {
-		newRow = markViewportFocus(activeRowStyle.Render("> + create new subtask"))
+		newRow = markViewportFocus(activeRowStyle.Render("> " + strings.TrimSpace(newRow)))
 		focusLine = len(lines)
 	}
 	lines = append(lines, newRow)
 	if len(subtasks) == 0 {
 		empty := "  (no subtasks yet)"
-		if !hasContextTask {
-			empty = "  (save this task before adding subtasks)"
-		}
 		if m.formFocus == taskFieldSubtasks && selectedSubtaskRow == 0 && focusLine < 0 {
 			focusLine = len(lines)
 		}
-		lines = append(lines, hintStyle.Render(empty))
+		if hasContextTask {
+			lines = append(lines, hintStyle.Render(empty))
+		}
 	} else {
 		for idx, subtask := range subtasks {
 			state := m.lifecycleStateForTask(subtask)
@@ -12957,7 +13255,7 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	} else {
 		for idx := len(m.taskInfoComments) - 1; idx >= 0; idx-- {
 			comment := m.taskInfoComments[idx]
-			owner := threadCommentOwnerLabel(comment)
+			owner := m.commentOwnerLabel(comment)
 			actor := string(normalizeCommentActorType(string(comment.ActorType)))
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
 			if summary := commentSummaryText(comment); summary != "" {
@@ -13005,8 +13303,11 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 	lines = append(lines, resourcesLabel)
 	selectedResourceRow := clamp(m.taskFormResourceCursor, 0, len(m.taskFormResourceRefs))
 	newResourceLine := "  + attach new resource"
+	if !hasContextTask {
+		newResourceLine = "  (save this task before attaching resources)"
+	}
 	if m.formFocus == taskFieldResources && selectedResourceRow == 0 {
-		newResourceLine = markViewportFocus(activeRowStyle.Render("> + attach new resource"))
+		newResourceLine = markViewportFocus(activeRowStyle.Render("> " + strings.TrimSpace(newResourceLine)))
 		focusLine = len(lines)
 	}
 	lines = append(lines, newResourceLine)
@@ -13014,7 +13315,9 @@ func (m Model) taskFormBodyLines(contentWidth int, hintStyle lipgloss.Style, acc
 		if m.formFocus == taskFieldResources && selectedResourceRow == 0 && focusLine < 0 {
 			focusLine = len(lines)
 		}
-		lines = append(lines, hintStyle.Render("  (no resources yet)"))
+		if hasContextTask {
+			lines = append(lines, hintStyle.Render("  (no resources yet)"))
+		}
 	} else {
 		for idx, ref := range m.taskFormResourceRefs {
 			location := strings.TrimSpace(ref.Location)
@@ -13196,7 +13499,7 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 	} else {
 		for idx := len(m.taskInfoComments) - 1; idx >= 0; idx-- {
 			comment := m.taskInfoComments[idx]
-			owner := threadCommentOwnerLabel(comment)
+			owner := m.commentOwnerLabel(comment)
 			actor := string(normalizeCommentActorType(string(comment.ActorType)))
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
 			if id := strings.TrimSpace(comment.ID); id != "" {
@@ -14716,7 +15019,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		lines := []string{titleStyle.Render("Quick Actions")}
+		lines := []string{titleStyle.Render(m.quickActionsTitle())}
 		actions := m.quickActions()
 		if len(actions) == 0 {
 			lines = append(lines, hintStyle.Render("(no actions available)"))
