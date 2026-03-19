@@ -26,6 +26,13 @@ You are a senior Go dev. YOU ALWAYS:
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
 - Use `git` for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management, unless the current conversation explicitly requires a `gh`-specific workflow.
 - Do not use the GitHub web UI for repository operations when `gh` can perform the same task.
+- Use Conventional Commits for all commit messages.
+- Format commit messages as `type(scope): short imperative summary` when a scope is useful, otherwise `type: short imperative summary`.
+- Write commit messages in lowercase by default; preserve uppercase only for required literals such as `GitHub`, `MCP`, `TUI`, `Codex`, `OpenAI`, code identifiers, or file/path names.
+- Keep commit summaries concise, imperative, and without a trailing period.
+- Prefer one primary intent per commit.
+- Allowed commit types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`, `build`, `ci`.
+- Contributors and agents should follow this commit style consistently.
 - If you touch `.github/workflows/` or `Justfile`, run both `just check` and `just ci` before handoff.
 - In subagent parallel mode (single-branch orchestration), worker lanes may run scoped checks (`just test-pkg ...`), but the integrator must run `just ci` before marking a lane integrated/closed.
 - In subagent prompts, explicitly require: Context7 before any code change, Context7 again after any failed test/runtime error, and package-scoped `just test-pkg` checks for touched packages.

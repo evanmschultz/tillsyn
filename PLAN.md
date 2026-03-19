@@ -4418,6 +4418,8 @@ Edits:
    - made `gh` the default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
    - clarified that `git` remains the default for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management unless the current conversation explicitly requires a `gh`-specific workflow.
    - prohibited using the GitHub web UI for repository operations when `gh` can perform the same task.
+   - added a Conventional Commits policy for all commit messages with lowercase, imperative summaries and a fixed allowed-type list.
+   - stated that contributors and agents should follow the commit-message style consistently.
 
 Validation:
 1. `test_not_applicable`
