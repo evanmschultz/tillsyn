@@ -4406,3 +4406,19 @@ Follow-up on the same blocked step (`T1-02`):
    - `just check` -> PASS
    - `just ci` -> PASS
 5. Next step after commit/push: investigate the readonly/auth MCP mutation failure and the requested external auth repos under a non-committed path, then discuss whether the auth approach answers the open MCP questions.
+
+### 2026-03-19: AGENTS Guidance Clarification
+
+Objective:
+- clarify tool-choice guidance for GitHub-hosted workflow inspection versus local git operations.
+
+Edits:
+1. `AGENTS.md`
+   - refined the rule to prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
+   - made `gh` the default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
+   - clarified that `git` remains the default for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management unless the current conversation explicitly requires a `gh`-specific workflow.
+   - prohibited using the GitHub web UI for repository operations when `gh` can perform the same task.
+
+Validation:
+1. `test_not_applicable`
+   - docs-only guidance update; no code, workflow, or Justfile behavior changed.

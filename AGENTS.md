@@ -22,6 +22,10 @@ You are a senior Go dev. YOU ALWAYS:
 - During normal implementation loops, run `just check` after meaningful increments to catch local regressions early.
 - When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
 - Before asking the user to push or before opening/refreshing a PR, run `just ci` and report results.
+- Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
+- Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
+- Use `git` for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management, unless the current conversation explicitly requires a `gh`-specific workflow.
+- Do not use the GitHub web UI for repository operations when `gh` can perform the same task.
 - If you touch `.github/workflows/` or `Justfile`, run both `just check` and `just ci` before handoff.
 - In subagent parallel mode (single-branch orchestration), worker lanes may run scoped checks (`just test-pkg ...`), but the integrator must run `just ci` before marking a lane integrated/closed.
 - In subagent prompts, explicitly require: Context7 before any code change, Context7 again after any failed test/runtime error, and package-scoped `just test-pkg` checks for touched packages.
