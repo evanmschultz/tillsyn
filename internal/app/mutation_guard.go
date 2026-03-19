@@ -22,6 +22,29 @@ type MutationActor struct {
 	ActorType domain.ActorType
 }
 
+// WithAuthenticatedCaller attaches a normalized authenticated caller to context.
+func WithAuthenticatedCaller(ctx context.Context, caller domain.AuthenticatedCaller) context.Context {
+	caller = domain.NormalizeAuthenticatedCaller(caller)
+	return context.WithValue(ctx, authenticatedCallerContextKey{}, caller)
+}
+
+// AuthenticatedCallerFromContext returns normalized authenticated caller metadata when present.
+func AuthenticatedCallerFromContext(ctx context.Context) (domain.AuthenticatedCaller, bool) {
+	raw := ctx.Value(authenticatedCallerContextKey{})
+	caller, ok := raw.(domain.AuthenticatedCaller)
+	if !ok {
+		return domain.AuthenticatedCaller{}, false
+	}
+	caller = domain.NormalizeAuthenticatedCaller(caller)
+	if caller.IsZero() {
+		return domain.AuthenticatedCaller{}, false
+	}
+	return caller, true
+}
+
+// authenticatedCallerContextKey stores context keys for authenticated caller metadata.
+type authenticatedCallerContextKey struct{}
+
 // WithMutationGuard attaches a normalized mutation guard to context.
 func WithMutationGuard(ctx context.Context, guard MutationGuard) context.Context {
 	guard = normalizeMutationGuard(guard)
@@ -48,17 +71,28 @@ type mutationGuardContextKey struct{}
 // WithMutationActor attaches normalized mutation-actor identity metadata to context.
 func WithMutationActor(ctx context.Context, actor MutationActor) context.Context {
 	actor = normalizeMutationActor(actor)
-	return context.WithValue(ctx, mutationActorContextKey{}, actor)
+	ctx = context.WithValue(ctx, mutationActorContextKey{}, actor)
+	if caller := mutationActorToAuthenticatedCaller(actor); !caller.IsZero() {
+		ctx = WithAuthenticatedCaller(ctx, caller)
+	}
+	return ctx
 }
 
 // MutationActorFromContext returns normalized mutation-actor metadata when present.
 func MutationActorFromContext(ctx context.Context) (MutationActor, bool) {
 	raw := ctx.Value(mutationActorContextKey{})
 	actor, ok := raw.(MutationActor)
+	if ok {
+		actor = normalizeMutationActor(actor)
+		if actor.ActorID != "" {
+			return actor, true
+		}
+	}
+	caller, ok := AuthenticatedCallerFromContext(ctx)
 	if !ok {
 		return MutationActor{}, false
 	}
-	actor = normalizeMutationActor(actor)
+	actor = authenticatedCallerToMutationActor(caller)
 	if actor.ActorID == "" {
 		return MutationActor{}, false
 	}
@@ -103,4 +137,24 @@ func normalizeMutationActor(actor MutationActor) MutationActor {
 		actor.ActorType = domain.ActorTypeUser
 	}
 	return actor
+}
+
+// mutationActorToAuthenticatedCaller converts persisted mutation attribution into caller identity form.
+func mutationActorToAuthenticatedCaller(actor MutationActor) domain.AuthenticatedCaller {
+	actor = normalizeMutationActor(actor)
+	return domain.NormalizeAuthenticatedCaller(domain.AuthenticatedCaller{
+		PrincipalID:   actor.ActorID,
+		PrincipalName: actor.ActorName,
+		PrincipalType: actor.ActorType,
+	})
+}
+
+// authenticatedCallerToMutationActor converts caller identity into mutation attribution form.
+func authenticatedCallerToMutationActor(caller domain.AuthenticatedCaller) MutationActor {
+	caller = domain.NormalizeAuthenticatedCaller(caller)
+	return normalizeMutationActor(MutationActor{
+		ActorID:   caller.PrincipalID,
+		ActorName: caller.PrincipalName,
+		ActorType: caller.PrincipalType,
+	})
 }

@@ -619,16 +619,18 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 		agentInstanceID != ""
 	if hasIdentityInput {
 		actorID, actorName := deriveMutationActorIdentity(actor)
-		ctx = app.WithMutationActor(ctx, app.MutationActor{
-			ActorID:   actorID,
-			ActorName: actorName,
-			ActorType: actorType,
+		ctx = app.WithAuthenticatedCaller(ctx, domain.AuthenticatedCaller{
+			PrincipalID:   actorID,
+			PrincipalName: actorName,
+			PrincipalType: actorType,
 		})
 	}
 	return ctx, actorType, nil
 }
 
 // deriveMutationActorIdentity resolves deterministic actor tuple values for mutating requests.
+// This remains a transport-local fallback until authenticated caller identity comes from an auth
+// session boundary such as a future autent integration.
 func deriveMutationActorIdentity(actor ActorLeaseTuple) (string, string) {
 	actorID := strings.TrimSpace(actor.ActorID)
 	if actorID == "" {

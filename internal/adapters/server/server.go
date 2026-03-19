@@ -110,6 +110,33 @@ func Run(ctx context.Context, cfg Config, deps Dependencies) error {
 	}
 }
 
+// RunStdio starts the MCP server over stdio and blocks until shutdown or startup failure.
+func RunStdio(ctx context.Context, cfg Config, deps Dependencies) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	normalizedCfg, err := normalizeConfig(cfg)
+	if err != nil {
+		return err
+	}
+	if deps.CaptureState == nil {
+		return fmt.Errorf("capture_state dependency is required")
+	}
+	return mcpapi.ServeStdio(
+		mcpapi.Config{
+			ServerName:    normalizedCfg.ServerName,
+			ServerVersion: normalizedCfg.ServerVersion,
+			EndpointPath:  normalizedCfg.MCPEndpoint,
+		},
+		deps.CaptureState,
+		deps.Attention,
+	)
+}
+
 // normalizeConfig applies defaults and validates endpoint collisions.
 func normalizeConfig(cfg Config) (Config, error) {
 	cfg.HTTPBind = strings.TrimSpace(cfg.HTTPBind)

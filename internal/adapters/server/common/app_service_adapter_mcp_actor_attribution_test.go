@@ -145,6 +145,9 @@ func TestAppServiceAdapterUpdateTaskAllowsGuardedNonUserAttribution(t *testing.T
 	if updated.UpdatedByActor != "agent-1" {
 		t.Fatalf("updated updated_by_actor = %q, want agent-1", updated.UpdatedByActor)
 	}
+	if updated.UpdatedByName != "agent-1" {
+		t.Fatalf("updated updated_by_name = %q, want agent-1", updated.UpdatedByName)
+	}
 	if updated.UpdatedByType != domain.ActorTypeAgent {
 		t.Fatalf("updated updated_by_type = %q, want %q", updated.UpdatedByType, domain.ActorTypeAgent)
 	}

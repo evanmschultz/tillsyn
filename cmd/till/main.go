@@ -49,6 +49,11 @@ var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, dep
 	return serveradapter.Run(ctx, cfg, deps)
 }
 
+// mcpCommandRunner starts the stdio MCP flow.
+var mcpCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+	return serveradapter.RunStdio(ctx, cfg, deps)
+}
+
 // supportsStyledOutputFunc allows tests to force styled output mode.
 var supportsStyledOutputFunc = supportsStyledOutput
 
@@ -83,6 +88,9 @@ type serveCommandOptions struct {
 	apiEndpoint string
 	mcpEndpoint string
 }
+
+// mcpCommandOptions stores stdio MCP subcommand option values.
+type mcpCommandOptions struct{}
 
 // exportCommandOptions stores export subcommand option values.
 type exportCommandOptions struct {
@@ -120,6 +128,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		apiEndpoint: "/api/v1",
 		mcpEndpoint: "/mcp",
 	}
+	mcpOpts := mcpCommandOptions{}
 	exportOpts := exportCommandOptions{
 		outPath:         "-",
 		includeArchived: true,
@@ -128,11 +137,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	rootCmd := &cobra.Command{
 		Use:           "till",
-		Short:         "Terminal kanban board with HTTP+MCP adapters",
+		Short:         "Terminal kanban board with stdio MCP and HTTP adapters",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	rootCmd.SetOut(stdout)
@@ -150,19 +159,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Start HTTP and MCP endpoints",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	serveCmd.Flags().StringVar(&serveOpts.httpBind, "http", serveOpts.httpBind, "HTTP listen address")
 	serveCmd.Flags().StringVar(&serveOpts.apiEndpoint, "api-endpoint", serveOpts.apiEndpoint, "HTTP API base endpoint")
 	serveCmd.Flags().StringVar(&serveOpts.mcpEndpoint, "mcp-endpoint", serveOpts.mcpEndpoint, "MCP streamable HTTP endpoint")
 
+	mcpCmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Start MCP over stdio for local integrations",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+
 	exportCmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	exportCmd.Flags().StringVar(&exportOpts.outPath, "out", exportOpts.outPath, "Output file path ('-' for stdout)")
@@ -173,7 +191,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Import a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	importCmd.Flags().StringVar(&importOpts.inPath, "in", "", "Input snapshot JSON file")
@@ -206,7 +224,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -293,6 +311,113 @@ func writePathsPlain(stdout io.Writer, opts rootCommandOptions, paths platform.P
 	}
 	if _, err := fmt.Fprintf(stdout, "db: %s\n", paths.DBPath); err != nil {
 		return fmt.Errorf("write paths db output: %w", err)
+	}
+	return nil
+}
+
+// resolvedRuntimePaths stores CLI runtime config/db path decisions for one command.
+type resolvedRuntimePaths struct {
+	ConfigPath                string
+	DBPath                    string
+	DBOverridden              bool
+	UsesLocalMCPRuntime       bool
+	ConfigUsesLocalMCPRuntime bool
+	DBUsesLocalMCPRuntime     bool
+}
+
+// resolveRuntimePaths resolves config and DB paths, including stdio-MCP local runtime defaults.
+func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform.Paths) (resolvedRuntimePaths, error) {
+	configPath := strings.TrimSpace(opts.configPath)
+	configOverridden := configPath != ""
+	if !configOverridden {
+		if envPath := strings.TrimSpace(os.Getenv("TILL_CONFIG")); envPath != "" {
+			configPath = envPath
+			configOverridden = true
+		} else {
+			configPath = paths.ConfigPath
+		}
+	}
+
+	dbPath := strings.TrimSpace(opts.dbPath)
+	dbOverridden := dbPath != ""
+	if !dbOverridden {
+		if envPath := strings.TrimSpace(os.Getenv("TILL_DB_PATH")); envPath != "" {
+			dbPath = envPath
+			dbOverridden = true
+		} else {
+			dbPath = paths.DBPath
+		}
+	}
+
+	out := resolvedRuntimePaths{
+		ConfigPath:   configPath,
+		DBPath:       dbPath,
+		DBOverridden: dbOverridden,
+	}
+	if command != "mcp" {
+		return out, nil
+	}
+
+	localPaths, err := localMCPRuntimePaths(opts)
+	if err != nil {
+		return resolvedRuntimePaths{}, fmt.Errorf("resolve local mcp runtime paths: %w", err)
+	}
+	if !configOverridden {
+		out.ConfigPath = localPaths.ConfigPath
+		out.ConfigUsesLocalMCPRuntime = true
+	}
+	if !dbOverridden {
+		out.DBPath = localPaths.DBPath
+		out.DBUsesLocalMCPRuntime = true
+	}
+	out.UsesLocalMCPRuntime = out.ConfigUsesLocalMCPRuntime || out.DBUsesLocalMCPRuntime
+	return out, nil
+}
+
+// localMCPRuntimePaths resolves repo-local config/data paths for stdio MCP sessions.
+func localMCPRuntimePaths(opts rootCommandOptions) (platform.Paths, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return platform.Paths{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	appName := effectiveAppName(opts.appName, opts.devMode)
+	baseDir := filepath.Join(workspaceRootFrom(cwd), ".tillsyn", "mcp", appName)
+	return platform.Paths{
+		ConfigPath: filepath.Join(baseDir, "config.toml"),
+		DataDir:    baseDir,
+		DBPath:     filepath.Join(baseDir, appName+".db"),
+	}, nil
+}
+
+// effectiveAppName normalizes app naming the same way as platform path resolution.
+func effectiveAppName(appName string, devMode bool) string {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		appName = "tillsyn"
+	}
+	if devMode {
+		appName += "-dev"
+	}
+	return appName
+}
+
+// ensureRuntimePathParents creates repo-local stdio MCP runtime parents before startup.
+func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
+	if command != "mcp" || !paths.UsesLocalMCPRuntime {
+		return nil
+	}
+
+	parents := make([]string, 0, 2)
+	if paths.ConfigUsesLocalMCPRuntime {
+		parents = append(parents, filepath.Dir(paths.ConfigPath))
+	}
+	if paths.DBUsesLocalMCPRuntime {
+		parents = append(parents, filepath.Dir(paths.DBPath))
+	}
+	for _, parent := range parents {
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			return fmt.Errorf("create local mcp runtime directory %q: %w", parent, err)
+		}
 	}
 	return nil
 }
@@ -478,6 +603,7 @@ func executeCommandFlow(
 	command string,
 	rootOpts rootCommandOptions,
 	serveOpts serveCommandOptions,
+	_ mcpCommandOptions,
 	exportOpts exportCommandOptions,
 	importOpts importCommandOptions,
 	stdout io.Writer,
@@ -495,23 +621,15 @@ func executeCommandFlow(
 		return err
 	}
 
-	configPath := rootOpts.configPath
-	dbPath := rootOpts.dbPath
-	dbOverridden := strings.TrimSpace(dbPath) != ""
-	if configPath == "" {
-		if envPath := strings.TrimSpace(os.Getenv("TILL_CONFIG")); envPath != "" {
-			configPath = envPath
-		} else {
-			configPath = paths.ConfigPath
-		}
+	resolvedPaths, err := resolveRuntimePaths(command, rootOpts, paths)
+	if err != nil {
+		return err
 	}
-	if !dbOverridden {
-		if envPath := strings.TrimSpace(os.Getenv("TILL_DB_PATH")); envPath != "" {
-			dbPath = envPath
-			dbOverridden = true
-		} else {
-			dbPath = paths.DBPath
-		}
+	configPath := resolvedPaths.ConfigPath
+	dbPath := resolvedPaths.DBPath
+	dbOverridden := resolvedPaths.DBOverridden
+	if err := ensureRuntimePathParents(command, resolvedPaths); err != nil {
+		return err
 	}
 	if err := seedStartupConfigFromExampleIfMissing(command, configPath); err != nil {
 		return fmt.Errorf("seed startup config %q: %w", configPath, err)
@@ -522,7 +640,7 @@ func executeCommandFlow(
 	if err != nil {
 		return fmt.Errorf("load config %q: %w", configPath, err)
 	}
-	if dbOverridden {
+	if dbOverridden || (command == "mcp" && resolvedPaths.DBUsesLocalMCPRuntime) {
 		cfg.Database.Path = dbPath
 	}
 	if command == "" {
@@ -606,6 +724,14 @@ func executeCommandFlow(
 			return fmt.Errorf("run serve command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "serve")
+		return nil
+	case "mcp":
+		logger.Info("command flow start", "command", "mcp", "transport", "stdio")
+		if err := runMCP(ctx, svc, rootOpts.appName, serveOpts); err != nil {
+			logger.Error("command flow failed", "command", "mcp", "transport", "stdio", "err", err)
+			return fmt.Errorf("run mcp command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "mcp", "transport", "stdio")
 		return nil
 	case "export":
 		logger.Info("command flow start", "command", "export")
@@ -698,6 +824,19 @@ func runServe(ctx context.Context, svc *app.Service, appName string, opts serveC
 	return serveCommandRunner(ctx, serveradapter.Config{
 		HTTPBind:      opts.httpBind,
 		APIEndpoint:   opts.apiEndpoint,
+		MCPEndpoint:   opts.mcpEndpoint,
+		ServerName:    appName,
+		ServerVersion: version,
+	}, serveradapter.Dependencies{
+		CaptureState: appAdapter,
+		Attention:    appAdapter,
+	})
+}
+
+// runMCP runs the stdio MCP subcommand flow.
+func runMCP(ctx context.Context, svc *app.Service, appName string, opts serveCommandOptions) error {
+	appAdapter := servercommon.NewAppServiceAdapter(svc)
+	return mcpCommandRunner(ctx, serveradapter.Config{
 		MCPEndpoint:   opts.mcpEndpoint,
 		ServerName:    appName,
 		ServerVersion: version,

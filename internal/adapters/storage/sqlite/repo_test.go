@@ -1167,7 +1167,9 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		Title:          "Track me",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "user-1",
+		CreatedByName:  "Evan Schultz",
 		UpdatedByActor: "user-1",
+		UpdatedByName:  "Evan Schultz",
 		UpdatedByType:  domain.ActorTypeUser,
 	}, now)
 	if err := repo.CreateTask(ctx, task); err != nil {
@@ -1178,6 +1180,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		t.Fatalf("UpdateDetails() error = %v", err)
 	}
 	task.UpdatedByActor = "agent-1"
+	task.UpdatedByName = "Planner Bot"
 	task.UpdatedByType = domain.ActorTypeAgent
 	if err := repo.UpdateTask(ctx, task); err != nil {
 		t.Fatalf("UpdateTask(update) error = %v", err)
@@ -1187,6 +1190,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		t.Fatalf("Move() error = %v", err)
 	}
 	task.UpdatedByActor = "user-2"
+	task.UpdatedByName = "Evan Schultz"
 	task.UpdatedByType = domain.ActorTypeUser
 	if err := repo.UpdateTask(ctx, task); err != nil {
 		t.Fatalf("UpdateTask(move) error = %v", err)
@@ -1194,6 +1198,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 
 	task.Archive(now.Add(3 * time.Minute))
 	task.UpdatedByActor = "user-3"
+	task.UpdatedByName = "Evan Schultz"
 	task.UpdatedByType = domain.ActorTypeUser
 	if err := repo.UpdateTask(ctx, task); err != nil {
 		t.Fatalf("UpdateTask(archive) error = %v", err)
@@ -1201,6 +1206,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 
 	task.Restore(now.Add(4 * time.Minute))
 	task.UpdatedByActor = "user-4"
+	task.UpdatedByName = "Evan Schultz"
 	task.UpdatedByType = domain.ActorTypeUser
 	if err := repo.UpdateTask(ctx, task); err != nil {
 		t.Fatalf("UpdateTask(restore) error = %v", err)
@@ -1238,8 +1244,11 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 	if events[5].ActorID != "user-1" {
 		t.Fatalf("expected create actor user-1, got %q", events[5].ActorID)
 	}
-	if events[5].ActorName != "user-1" {
-		t.Fatalf("expected create actor_name user-1, got %q", events[5].ActorName)
+	if events[5].ActorName != "Evan Schultz" {
+		t.Fatalf("expected create actor_name Evan Schultz, got %q", events[5].ActorName)
+	}
+	if events[4].ActorName != "Planner Bot" {
+		t.Fatalf("expected update actor_name Planner Bot, got %q", events[4].ActorName)
 	}
 }
 
@@ -1400,6 +1409,13 @@ func TestRepository_ServiceCreateTaskPersistsHumanActorName(t *testing.T) {
 	}
 	if events[0].ActorID != "user-1" || events[0].ActorName != "Evan Schultz" {
 		t.Fatalf("expected human attribution user-1/Evan Schultz, got %q/%q", events[0].ActorID, events[0].ActorName)
+	}
+	loaded, err := repo.GetTask(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if loaded.CreatedByName != "Evan Schultz" || loaded.UpdatedByName != "Evan Schultz" {
+		t.Fatalf("expected persisted task names Evan Schultz/Evan Schultz, got %q/%q", loaded.CreatedByName, loaded.UpdatedByName)
 	}
 }
 

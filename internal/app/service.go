@@ -513,7 +513,9 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		Labels:         in.Labels,
 		Metadata:       in.Metadata,
 		CreatedByActor: firstNonEmptyTrimmed(in.CreatedByActor, resolvedActor.ActorID),
+		CreatedByName:  firstNonEmptyTrimmed(in.CreatedByName, resolvedActor.ActorName, in.CreatedByActor, resolvedActor.ActorID),
 		UpdatedByActor: firstNonEmptyTrimmed(in.UpdatedByActor, resolvedActor.ActorID, in.CreatedByActor),
+		UpdatedByName:  firstNonEmptyTrimmed(in.UpdatedByName, resolvedActor.ActorName, in.UpdatedByActor, resolvedActor.ActorID, in.CreatedByName, in.CreatedByActor),
 		UpdatedByType:  actorType,
 	}, s.clock())
 	if err != nil {
@@ -685,9 +687,11 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	}
 	if hasResolvedActor && strings.TrimSpace(resolvedActor.ActorID) != "" {
 		task.UpdatedByActor = resolvedActor.ActorID
+		task.UpdatedByName = firstNonEmptyTrimmed(resolvedActor.ActorName, resolvedActor.ActorID)
 		task.UpdatedByType = actorType
 	} else if updatedBy := strings.TrimSpace(in.UpdatedBy); updatedBy != "" {
 		task.UpdatedByActor = updatedBy
+		task.UpdatedByName = firstNonEmptyTrimmed(in.UpdatedByName, updatedBy)
 		task.UpdatedByType = actorType
 	}
 	applyMutationActorToTask(ctx, &task)
@@ -1680,6 +1684,11 @@ func applyMutationActorToTask(ctx context.Context, task *domain.Task) {
 	}
 	if actorID := strings.TrimSpace(actor.ActorID); actorID != "" {
 		task.UpdatedByActor = actorID
+	}
+	if actorName := strings.TrimSpace(actor.ActorName); actorName != "" {
+		task.UpdatedByName = actorName
+	} else if strings.TrimSpace(task.UpdatedByName) == "" && strings.TrimSpace(task.UpdatedByActor) != "" {
+		task.UpdatedByName = task.UpdatedByActor
 	}
 	task.UpdatedByType = normalizeActorTypeInput(actor.ActorType)
 }

@@ -691,13 +691,16 @@ func TestModelCreateTaskFocusesNewTask(t *testing.T) {
 	for _, r := range []rune("New focus task") {
 		m = applyMsg(t, m, keyRune(r))
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t-new" {
 		t.Fatalf("expected focus on created task t-new, got %#v ok=%t", task, ok)
 	}
 	if m.selectedTask != 1 {
 		t.Fatalf("expected selectedTask index to move to new row, got %d", m.selectedTask)
+	}
+	if svc.createTaskCalls != 1 {
+		t.Fatalf("expected create task to be submitted once, got %d", svc.createTaskCalls)
 	}
 }
 
@@ -1221,7 +1224,7 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 		}),
 	))
 
-	updated, cmd := m.executeCommandPalette("thread-item")
+	updated, cmd := m.startSelectedWorkItemThread(modeNone)
 	m = applyResult(t, updated, cmd)
 	if m.mode != modeThread {
 		t.Fatalf("expected work-item thread mode, got %v", m.mode)
@@ -10768,7 +10771,9 @@ func TestTaskSchemaCoverageIsExplicit(t *testing.T) {
 		"ColumnID":       {},
 		"Position":       {},
 		"CreatedByActor": {},
+		"CreatedByName":  {},
 		"UpdatedByActor": {},
+		"UpdatedByName":  {},
 		"UpdatedByType":  {},
 		"CreatedAt":      {},
 		"UpdatedAt":      {},

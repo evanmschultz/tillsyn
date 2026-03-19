@@ -1,12 +1,12 @@
-# Kan Plan
+# Tillsyn Plan
 
 Created: 2026-02-21
 Updated: 2026-03-17
-Status: In progress; collaborative TUI validation advanced past `T1-01` and is now paused on `T1-02` pending the user's rerun after FR-016 metadata-persistence/subtask-management remediation.
+Status: In progress; collaborative TUI validation passed `T1-01`, `T1-02` is substantially remediated, and the next implementation wave is now locked on STDIO-first MCP, an `autent`-aligned authenticated-caller foundation, and remaining attribution/runtime closeout.
 
 ## 1) Primary Goal
 
-Finish `kan` as a reliable local-first planning system for human + agent collaboration, with:
+Finish `tillsyn` as a reliable local-first planning system for human + agent collaboration, with:
 1. stable TUI workflows,
 2. strict mutation guardrails,
 3. MCP/HTTP parity for critical flows,
@@ -64,7 +64,7 @@ Objective:
 Tasks:
 1. `P0-T01` Run remaining manual TUI validation for C4/C6/C9/C10/C11/C12/C13.
 2. `P0-T02` Run archived/search/keybinding targeted checks and record PASS/FAIL/BLOCKED.
-3. `P0-T03` Re-run focused MCP checks for known failures (`kan_restore_task`, `capture_state` readiness).
+3. `P0-T03` Re-run focused MCP checks for known failures (`till_restore_task`, `capture_state` readiness).
 4. `P0-T04` Capture logging/help discoverability evidence (`./kan --help`, `./kan serve --help`, runtime log parity).
 5. `P0-T05` Fill all blank checkpoints and sign-off blocks in `MCP_DOGFOODING_WORKSHEET.md`.
 6. `P0-T06` Update `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` with final evidence paths and verdict.
@@ -213,6 +213,186 @@ Current next action lock:
 5. Active docs are accurate and mutually consistent.
 
 ## 8) Lightweight Execution Log
+
+### 2026-03-17: STDIO MCP Runtime Findings
+
+Objective:
+- capture the first live stdio MCP findings after Codex config-layering was fixed.
+
+Commands run and outcomes:
+1. `codex mcp list` -> PASS; `tillsyn` registered as `command=/Users/evanschultz/Documents/Code/hylla/tillsyn/till`, `args=mcp`.
+2. `./till mcp` -> PASS; process started as stdio MCP and logged a repo-local MCP runtime path under `.tillsyn/mcp/tillsyn-dev/...`.
+3. `./till --dev paths` -> PASS; normal TUI dev DB remains `~/Library/Application Support/tillsyn-dev/tillsyn-dev.db`.
+4. `./till --dev=false paths` -> PASS; non-dev path resolves to `~/Library/Application Support/tillsyn/tillsyn.db`.
+5. `till.list_projects` through the bound MCP tool -> PASS with empty result `[]`.
+6. `till.get_bootstrap_guide` through the bound MCP tool -> PASS; output still contains stale `Kan` product copy.
+
+Findings:
+1. The prior Codex startup failure was caused by config layering, not `tillsyn` transport wiring.
+   - home config defined stdio `mcp_servers.tillsyn`
+   - repo-local `.codex/config.toml` still defined HTTP `mcp_servers.tillsyn`
+   - trusted-project config merging produced the invalid stdio+`url` conflict.
+2. Stdio MCP is currently using an isolated repo-local runtime by design.
+   - this is why the existing `User Project` from the normal dev DB did not appear in `till.list_projects`
+   - the behavior is technically correct but confusing from a user perspective.
+3. Bootstrap guide content is stale and still says `Kan`.
+4. Local builds currently default to dev mode because `rootOpts.devMode` is initialized from `version == "dev"`.
+   - this means `./till` defaults to app-support `tillsyn-dev` paths for locally built binaries unless the user passes `--dev=false`
+   - this is undesirable for dogfooding if the product should default to the real runtime.
+5. `Ctrl-C` on `./till mcp` appears to stop the stdio server, but the CLI logs `context canceled` as an error.
+   - shutdown UX should likely treat interrupt cancellation as normal instead of surfacing a failure-level log.
+
+Current discussion lock:
+1. consensus reached: `./till` and `./till mcp` should stop silently defaulting to dev mode for dogfooding and should share the same real runtime by default,
+2. consensus reached: keep both `mcp` and `serve`; `serve` remains the optional HTTP path and should follow the same default-runtime change,
+3. consensus reached: keep `till mcp` as the raw protocol-clean stdio server and add a future visible `till mcp-inspect` developer MCP inspector/debug client,
+4. consensus reached: normalize `Ctrl-C` shutdown UX for raw stdio MCP so normal interrupt is not logged as an error,
+5. consensus reached: remove stale `Kan` branding from current product/runtime surfaces in place, with no backward-compatibility naming shims,
+6. remaining discussion: audit and prioritize which user-visible help/command/bootstrap strings get fixed in the next implementation wave versus a later cleanup wave.
+
+### 2026-03-17: MCP STDIO + Autent Wave Locked
+
+Objective:
+- replace the current HTTP-first / ad hoc guard model with a STDIO-first MCP runtime and an `autent`-aligned authenticated-caller foundation while preserving `tillsyn` as a self-contained product.
+
+Discussion outcome:
+1. `blick` is explicitly out of scope for this wave and remains an optional higher-level layer only.
+2. `tillsyn` must expose MCP without requiring `./till serve`.
+3. STDIO becomes the default/primary transport surface.
+4. `autent` moves earlier in the roadmap as the target auth/session/grant foundation under `tillsyn`.
+5. Current readable-name and attribution inconsistencies remain in scope for this wave.
+
+Evidence and planning docs:
+1. [COLLAB_MCP_STDIO_AUTENT_EXECUTION_PLAN.md](/Users/evanschultz/Documents/Code/hylla/tillsyn/COLLAB_MCP_STDIO_AUTENT_EXECUTION_PLAN.md)
+2. [COLLAB_MCP_STDIO_AUTENT_VALIDATION_WORKSHEET.md](/Users/evanschultz/Documents/Code/hylla/tillsyn/COLLAB_MCP_STDIO_AUTENT_VALIDATION_WORKSHEET.md)
+
+Research basis:
+1. Context7: `/mark3labs/mcp-go` for STDIO vs streamable HTTP server setup (`server.ServeStdio`, `server.NewStreamableHTTPServer`)
+2. Fallback source for `autent`: `.artifacts/external/autent/README.md`
+
+Commands run and outcomes:
+1. `sed -n '1,240p' Justfile` -> PASS
+2. `sed -n '1,260p' PLAN.md` -> PASS
+3. `sed -n '1,240p' COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` -> PASS
+4. `sed -n '1,240p' COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` -> PASS
+5. `git status --short` -> PASS
+6. `rg -n "serve|stdio|mcp|autent|capability lease|issue_capability_lease|display_name|tillsyn-user" cmd/till internal -g'*.go'` -> PASS
+
+Current lane plan:
+1. Transport/runtime lane:
+   - `cmd/till/**`
+   - `internal/adapters/server/**`
+2. Auth foundation lane:
+   - `internal/domain/**`
+   - `internal/app/**`
+   - `internal/adapters/storage/sqlite/**`
+   - `internal/adapters/server/common/**`
+3. TUI/docs/validation lane:
+   - `internal/tui/**`
+   - collaborative worksheets/docs
+
+Next step:
+1. spawn worker lanes with explicit lock scopes and package-scoped `just test-pkg` expectations,
+2. integrate lane handoffs,
+3. run `just fmt`, `just test-golden`, `just check`, and `just ci`,
+4. then hand the new collaborative worksheet to the user.
+
+### 2026-03-17: MCP STDIO + Auth/Attribution Integration Closed
+
+Objective:
+- finish the stdio-first MCP and attribution foundation wave on the current branch, get the full gate green, and prepare the next collaborative rerun worksheet.
+
+Research / fallback checkpoints:
+1. Context7 re-consulted after failing test loops:
+   - Bubble Tea key/focus handling for TUI test alignment
+   - SQLite placeholder-count/insert-contract sanity for repo write fixes
+   - Cobra command/help execution behavior for CLI coverage tests
+2. `autent` remained on recorded fallback source:
+   - `.artifacts/external/autent/README.md`
+   - `.artifacts/external/autent/docs/06-tillsyn-integration.md`
+
+Commands run and outcomes:
+1. `git status --short` -> PASS
+2. `just test-pkg ./cmd/till` -> FAIL
+   - `TestRunImportCommandReadsSnapshot` failed with `sql: expected 25 destination arguments in Scan, not 23`
+3. `just test-pkg ./internal/tui` -> FAIL
+   - stale tests around create-task submit path, thread fallback setup, and task schema coverage
+4. Context7 re-consulted before edits.
+5. Fixed sqlite task scan destinations and aligned the stale TUI tests.
+6. `just fmt` -> PASS
+7. `just test-pkg ./cmd/till` -> PASS
+8. `just test-pkg ./internal/tui` -> PASS
+9. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS
+10. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`)
+11. `just test-pkg ./internal/app` -> PASS
+12. `just test-golden` -> PASS
+13. `just check` -> PASS
+14. `just ci` -> FAIL
+   - `cmd/till` coverage was `69.8%`, below the 70% floor
+15. Context7 re-consulted before the next edit.
+16. Added `cmd/till` coverage for:
+   - root help includes `mcp`
+   - `mcp --help`
+   - stdio-MCP repo-local runtime fallback
+   - stdio MCP command wiring without `serve`
+17. `just fmt` -> PASS
+18. `just test-pkg ./cmd/till` -> FAIL
+   - test incorrectly assumed stdio MCP auto-seeds a config file
+19. Context7 re-consulted before the next edit.
+20. Tightened the test to assert the real contract:
+   - repo-local runtime directory exists
+   - repo-local DB exists
+   - config is not auto-seeded for non-startup commands
+21. `just fmt` -> PASS
+22. `just test-pkg ./cmd/till` -> PASS
+23. `just ci` -> PASS
+24. Final confirmation: `just check` -> PASS
+25. QA review flagged one remaining runtime-path edge:
+   - `till mcp --config ...` still used an all-or-nothing local fallback and could fall back to the platform DB path.
+26. Final remediation:
+   - changed `resolveRuntimePaths` / `ensureRuntimePathParents` to apply stdio MCP fallback per-path,
+   - added `cmd/till` coverage for config-only override + local DB fallback,
+   - corrected plan/worksheet wording so this wave is described as an authenticated-caller foundation for later `autent` integration, not full `autent` replacement.
+27. `just fmt` -> PASS
+28. `just test-pkg ./cmd/till` -> PASS
+29. `just ci` -> PASS (`cmd/till` coverage 75.2%)
+30. Final confirmation after the per-path fallback fix: `just check` -> PASS
+
+Files edited and why:
+1. `cmd/till/main_test.go`
+   - added stdio-MCP help/runtime-path coverage and aligned non-startup config-seeding expectations.
+2. `internal/adapters/storage/sqlite/repo.go`
+   - fixed `scanTask` for name columns,
+   - persisted `created_by_name` / `updated_by_name` on task writes,
+   - improved change-event actor-name fallback.
+3. `internal/adapters/storage/sqlite/repo_test.go`
+   - locked readable task-row and change-event attribution behavior.
+4. `internal/adapters/server/common/app_service_adapter_mcp_actor_attribution_test.go`
+   - asserted readable `UpdatedByName` on guarded agent mutations.
+5. `internal/tui/model_test.go`
+   - aligned tests with the current task-form save path, direct thread setup, and task schema coverage.
+6. `COLLAB_MCP_STDIO_AUTENT_EXECUTION_PLAN.md`
+   - updated integrated implementation/validation status.
+7. `COLLAB_MCP_STDIO_AUTENT_VALIDATION_WORKSHEET.md`
+   - replaced the placeholder with a concrete collaborative section-by-section worksheet.
+
+QA / review evidence:
+1. Worker review Hubble:
+   - confirmed the main remaining transport gap was missing CLI/runtime-path coverage, not a structural stdio wiring hole.
+2. Worker review Euclid:
+   - confirmed the three TUI failures were stale tests, not live product regressions.
+3. Worker review Cicero:
+   - found one real remaining attribution gap in sqlite task-row writes, which was then fixed and test-covered.
+
+Current status:
+1. Implementation is green.
+2. `just check` is green.
+3. `just ci` is green.
+4. The new stdio/auth collaborative worksheet is ready for user rerun.
+
+Next step:
+1. complete the final independent QA sign-off on code/docs,
+2. then hand the user the first collaborative worksheet section (`S1`).
 
 ### 2026-02-27: PLAN Restructure For Full Phase/Lane Execution
 

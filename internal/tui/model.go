@@ -12039,33 +12039,65 @@ func normalizeActivityActorType(actorType domain.ActorType) domain.ActorType {
 	}
 }
 
-// displayActivityOwner returns display-safe owner fields for activity rendering.
-func (m Model) displayActivityOwner(entry activityEntry) (domain.ActorType, string) {
-	actorType := normalizeActivityActorType(entry.ActorType)
-	actorName := strings.TrimSpace(entry.ActorName)
-	actorID := strings.TrimSpace(entry.ActorID)
+// opaqueActorIDPattern matches UUID-like actor identifiers that add noise in read surfaces.
+var opaqueActorIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+// readableActorLabel resolves one human-facing actor label and whether raw-id context should stay hidden.
+func (m Model) readableActorLabel(actorType domain.ActorType, actorID, actorName string) (string, bool) {
+	actorType = normalizeActivityActorType(actorType)
+	actorName = strings.TrimSpace(actorName)
+	actorID = strings.TrimSpace(actorID)
+	hideActorIDContext := false
 	if actorType == domain.ActorTypeUser {
-		switch {
-		case strings.EqualFold(actorName, "tillsyn-user"), strings.EqualFold(actorID, "tillsyn-user"):
-			if name := strings.TrimSpace(m.identityDisplayName); name != "" && (actorName == "" || strings.EqualFold(actorName, "tillsyn-user")) {
-				actorName = name
+		localActorID := strings.TrimSpace(m.identityActorID)
+		localName := strings.TrimSpace(m.identityDisplayName)
+		if localName != "" {
+			switch {
+			case strings.EqualFold(actorName, "tillsyn-user"),
+				strings.EqualFold(actorID, "tillsyn-user"),
+				(actorName == "" && actorID != "" && strings.EqualFold(actorID, localActorID)),
+				(strings.EqualFold(actorName, actorID) && strings.EqualFold(actorID, localActorID)):
+				actorName = localName
+				hideActorIDContext = true
+			case actorName != "" && strings.EqualFold(actorID, localActorID):
+				hideActorIDContext = true
 			}
 		}
 	}
 	if actorName != "" {
-		return actorType, actorName
+		return actorName, hideActorIDContext
 	}
 	if actorID != "" {
-		return actorType, actorID
+		return actorID, hideActorIDContext
 	}
-	return actorType, "unknown"
+	return "unknown", hideActorIDContext
+}
+
+// isOpaqueActorID reports whether one actor identifier is too noisy to include in read surfaces.
+func isOpaqueActorID(actorID string) bool {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return false
+	}
+	if strings.EqualFold(actorID, "tillsyn-user") {
+		return true
+	}
+	return opaqueActorIDPattern.MatchString(actorID)
+}
+
+// displayActivityOwner returns display-safe owner fields for activity rendering.
+func (m Model) displayActivityOwner(entry activityEntry) (domain.ActorType, string) {
+	actorType := normalizeActivityActorType(entry.ActorType)
+	owner, _ := m.readableActorLabel(actorType, entry.ActorID, entry.ActorName)
+	return actorType, owner
 }
 
 // displayActivityOwnerWithContext returns owner text with compact actor-id context when informative.
 func (m Model) displayActivityOwnerWithContext(entry activityEntry) (domain.ActorType, string) {
-	actorType, owner := m.displayActivityOwner(entry)
+	actorType := normalizeActivityActorType(entry.ActorType)
+	owner, hideActorIDContext := m.readableActorLabel(actorType, entry.ActorID, entry.ActorName)
 	actorID := strings.TrimSpace(entry.ActorID)
-	if actorID == "" || strings.EqualFold(owner, actorID) || strings.EqualFold(actorID, "unknown") {
+	if hideActorIDContext || actorID == "" || strings.EqualFold(owner, actorID) || strings.EqualFold(actorID, "unknown") || isOpaqueActorID(actorID) {
 		return actorType, owner
 	}
 	return actorType, owner + " (" + actorID + ")"

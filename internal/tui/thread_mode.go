@@ -161,7 +161,7 @@ func (m Model) renderThreadContextPanel(accent, muted, dim color.Color, sectionT
 	contentHeight := max(4, height-2)
 	lines := []string{
 		sectionTitleStyle.Render("Owner"),
-		hintStyle.Render(truncate(m.threadActorName()+" ("+m.threadActorID()+")", contentWidth)),
+		hintStyle.Render(truncate(m.threadActorDisplayLabel(), contentWidth)),
 		hintStyle.Render("type: " + string(m.threadActorType())),
 		"",
 		sectionTitleStyle.Render("Target"),
@@ -625,6 +625,12 @@ func (m Model) threadActorType() domain.ActorType {
 	return normalizeCommentActorType(m.identityDefaultActorType)
 }
 
+// threadActorDisplayLabel resolves the current thread author label for read surfaces.
+func (m Model) threadActorDisplayLabel() string {
+	owner, _ := m.readableActorLabel(m.threadActorType(), m.threadActorID(), m.threadActorName())
+	return owner
+}
+
 // normalizeCommentActorType canonicalizes actor text and applies a safe user fallback.
 func normalizeCommentActorType(raw string) domain.ActorType {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
@@ -641,36 +647,19 @@ func normalizeCommentActorType(raw string) domain.ActorType {
 
 // commentOwnerLabel renders comment ownership using local-identity-aware fallback rules.
 func (m Model) commentOwnerLabel(comment domain.Comment) string {
-	actorName := strings.TrimSpace(comment.ActorName)
+	actorType := normalizeCommentActorType(string(comment.ActorType))
 	actorID := strings.TrimSpace(comment.ActorID)
-	localFallback := false
-	if normalizeCommentActorType(string(comment.ActorType)) == domain.ActorTypeUser {
-		localActorID := strings.TrimSpace(m.identityActorID)
-		localName := strings.TrimSpace(m.identityDisplayName)
-		if localName != "" {
-			switch {
-			case strings.EqualFold(actorName, "tillsyn-user"),
-				strings.EqualFold(actorID, "tillsyn-user"),
-				(actorName == "" && actorID != "" && strings.EqualFold(actorID, localActorID)),
-				(strings.EqualFold(actorName, actorID) && strings.EqualFold(actorID, localActorID)):
-				actorName = localName
-				localFallback = true
-			}
-		}
-	}
-	if actorName == "" {
-		actorName = actorID
-	}
-	if actorName == "" {
+	owner, hideActorIDContext := m.readableActorLabel(actorType, actorID, comment.ActorName)
+	if owner == "unknown" {
 		return "unknown"
 	}
-	if localFallback {
-		return actorName
+	if hideActorIDContext {
+		return owner
 	}
-	if actorID == "" || strings.EqualFold(actorName, actorID) {
-		return actorName
+	if actorID == "" || strings.EqualFold(owner, actorID) {
+		return owner
 	}
-	return fmt.Sprintf("%s (%s)", actorName, actorID)
+	return fmt.Sprintf("%s (%s)", owner, actorID)
 }
 
 // commentSummaryText returns the normalized summary text used in thread and task-info read views.

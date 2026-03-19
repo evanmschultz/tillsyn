@@ -1,4 +1,4 @@
-// Package mcpapi provides a stateless MCP streamable-HTTP adapter.
+// Package mcpapi provides stateless HTTP and stdio MCP adapters.
 package mcpapi
 
 import (
@@ -26,10 +26,10 @@ type Handler struct {
 	httpHandler http.Handler
 }
 
-// NewHandler builds one stateless MCP adapter with capture_state, attention, and optional app-backed tools.
-func NewHandler(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*Handler, error) {
+// NewServer builds one MCP server with the full tillsyn tool surface.
+func NewServer(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*mcpserver.MCPServer, Config, error) {
 	if captureState == nil {
-		return nil, fmt.Errorf("capture_state service is required")
+		return nil, Config{}, fmt.Errorf("capture_state service is required")
 	}
 	cfg = normalizeConfig(cfg)
 
@@ -54,13 +54,30 @@ func NewHandler(cfg Config, captureState common.CaptureStateReader, attention co
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention))
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
+	return mcpSrv, cfg, nil
+}
 
+// NewHandler builds one stateless MCP streamable HTTP adapter with capture_state, attention, and optional app-backed tools.
+func NewHandler(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*Handler, error) {
+	mcpSrv, cfg, err := NewServer(cfg, captureState, attention)
+	if err != nil {
+		return nil, err
+	}
 	streamable := mcpserver.NewStreamableHTTPServer(
 		mcpSrv,
 		mcpserver.WithEndpointPath(cfg.EndpointPath),
 		mcpserver.WithStateLess(true),
 	)
 	return &Handler{httpHandler: streamable}, nil
+}
+
+// ServeStdio starts one MCP server over stdio for local tool integrations.
+func ServeStdio(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) error {
+	mcpSrv, _, err := NewServer(cfg, captureState, attention)
+	if err != nil {
+		return err
+	}
+	return mcpserver.ServeStdio(mcpSrv)
 }
 
 // ServeHTTP handles one MCP streamable HTTP request.

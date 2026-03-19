@@ -784,6 +784,7 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 			updated.UpdatedAt = s.clock().UTC()
 			updated.UpdatedByType = domain.ActorTypeSystem
 			updated.UpdatedByActor = "tillsyn-system-template"
+			updated.UpdatedByName = "Tillsyn System Template"
 			if err := s.repo.UpdateTask(ctx, updated); err != nil {
 				return err
 			}
@@ -833,7 +834,9 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 			Labels:         childSpec.Labels,
 			Metadata:       childMetadata,
 			CreatedByActor: "tillsyn-system-template",
+			CreatedByName:  "Tillsyn System Template",
 			UpdatedByActor: "tillsyn-system-template",
+			UpdatedByName:  "Tillsyn System Template",
 			UpdatedByType:  domain.ActorTypeSystem,
 		}, s.clock())
 		if childErr != nil {

@@ -37,7 +37,9 @@ type Task struct {
 	Labels         []string
 	Metadata       TaskMetadata
 	CreatedByActor string
+	CreatedByName  string
 	UpdatedByActor string
+	UpdatedByName  string
 	UpdatedByType  ActorType
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -64,7 +66,9 @@ type TaskInput struct {
 	Labels         []string
 	Metadata       TaskMetadata
 	CreatedByActor string
+	CreatedByName  string
 	UpdatedByActor string
+	UpdatedByName  string
 	UpdatedByType  ActorType
 }
 
@@ -151,8 +155,19 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 	if strings.TrimSpace(in.CreatedByActor) == "" {
 		in.CreatedByActor = "tillsyn-user"
 	}
+	if strings.TrimSpace(in.CreatedByName) == "" {
+		in.CreatedByName = strings.TrimSpace(in.CreatedByActor)
+	}
 	if strings.TrimSpace(in.UpdatedByActor) == "" {
 		in.UpdatedByActor = in.CreatedByActor
+	}
+	if strings.TrimSpace(in.UpdatedByName) == "" {
+		if strings.TrimSpace(in.UpdatedByActor) == strings.TrimSpace(in.CreatedByActor) {
+			in.UpdatedByName = strings.TrimSpace(in.CreatedByName)
+		}
+		if strings.TrimSpace(in.UpdatedByName) == "" {
+			in.UpdatedByName = strings.TrimSpace(in.UpdatedByActor)
+		}
 	}
 
 	labels := normalizeLabels(in.Labels)
@@ -177,7 +192,9 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 		Labels:         labels,
 		Metadata:       metadata,
 		CreatedByActor: strings.TrimSpace(in.CreatedByActor),
+		CreatedByName:  strings.TrimSpace(in.CreatedByName),
 		UpdatedByActor: strings.TrimSpace(in.UpdatedByActor),
+		UpdatedByName:  strings.TrimSpace(in.UpdatedByName),
 		UpdatedByType:  in.UpdatedByType,
 		CreatedAt:      now.UTC(),
 		UpdatedAt:      now.UTC(),

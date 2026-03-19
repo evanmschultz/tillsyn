@@ -328,7 +328,7 @@ func TestRunRootHelp(t *testing.T) {
 	if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 		t.Fatalf("expected root usage output, got %q", out.String())
 	}
-	for _, want := range []string{"serve", "export", "import", "paths", "init-dev-config"} {
+	for _, want := range []string{"serve", "mcp", "export", "import", "paths", "init-dev-config"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q command in root help, got %q", want, out.String())
 		}
@@ -353,6 +353,11 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "serve",
 			args: []string{"serve", "--help"},
 			want: []string{"till serve", "--http", "--api-endpoint", "--mcp-endpoint"},
+		},
+		{
+			name: "mcp",
+			args: []string{"mcp", "--help"},
+			want: []string{"till mcp", "start mcp over stdio"},
 		},
 		{
 			name: "export",
@@ -425,6 +430,145 @@ func TestRunHelpPathsDoNotSeedMissingConfig(t *testing.T) {
 				t.Fatalf("expected help path to avoid seeding config %q, stat err = %v", cfgPath, err)
 			}
 		})
+	}
+}
+
+// TestResolveRuntimePathsMCPUsesRepoLocalFallback verifies stdio MCP uses a repo-local runtime when paths are not overridden.
+func TestResolveRuntimePathsMCPUsesRepoLocalFallback(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	out, err := resolveRuntimePaths("mcp", rootCommandOptions{appName: "tillsyn", devMode: true}, platform.Paths{
+		ConfigPath: filepath.Join(workspace, "outside-config.toml"),
+		DBPath:     filepath.Join(workspace, "outside.db"),
+	})
+	if err != nil {
+		t.Fatalf("resolveRuntimePaths(mcp) error = %v", err)
+	}
+	if !out.UsesLocalMCPRuntime {
+		t.Fatal("expected stdio MCP to use repo-local runtime paths")
+	}
+	wantBase := filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn-dev")
+	if out.ConfigPath != filepath.Join(wantBase, "config.toml") {
+		t.Fatalf("config path = %q, want %q", out.ConfigPath, filepath.Join(wantBase, "config.toml"))
+	}
+	if out.DBPath != filepath.Join(wantBase, "tillsyn-dev.db") {
+		t.Fatalf("db path = %q, want %q", out.DBPath, filepath.Join(wantBase, "tillsyn-dev.db"))
+	}
+}
+
+// TestResolveRuntimePathsMCPUsesPerPathFallback verifies stdio MCP keeps local fallback for whichever path is not explicitly overridden.
+func TestResolveRuntimePathsMCPUsesPerPathFallback(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	configOverride := filepath.Join(workspace, "custom-config.toml")
+	out, err := resolveRuntimePaths("mcp", rootCommandOptions{
+		appName:    "tillsyn",
+		devMode:    false,
+		configPath: configOverride,
+	}, platform.Paths{
+		ConfigPath: filepath.Join(workspace, "platform-config.toml"),
+		DBPath:     filepath.Join(workspace, "platform.db"),
+	})
+	if err != nil {
+		t.Fatalf("resolveRuntimePaths(mcp override config) error = %v", err)
+	}
+	if out.ConfigPath != configOverride {
+		t.Fatalf("config path = %q, want %q", out.ConfigPath, configOverride)
+	}
+	if out.DBPath != filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn", "tillsyn.db") {
+		t.Fatalf("db path = %q, want local stdio db", out.DBPath)
+	}
+	if !out.DBUsesLocalMCPRuntime || out.ConfigUsesLocalMCPRuntime {
+		t.Fatalf("expected only db to use local stdio runtime, got %#v", out)
+	}
+}
+
+// TestRunMCPCommandWiresStdioAndLocalRuntime verifies the stdio MCP subcommand wires the adapter and local runtime paths.
+func TestRunMCPCommandWiresStdioAndLocalRuntime(t *testing.T) {
+	origRunner := mcpCommandRunner
+	t.Cleanup(func() { mcpCommandRunner = origRunner })
+
+	var gotCfg serveradapter.Config
+	var gotDeps serveradapter.Dependencies
+	mcpCommandRunner = func(_ context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+		gotCfg = cfg
+		gotDeps = deps
+		return nil
+	}
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	writeConfigExample(t, workspace, "[logging]\nlevel = \"debug\"\n")
+
+	if err := run(context.Background(), []string{"--app", "tillsyn-mcp", "--dev", "mcp"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(mcp) error = %v", err)
+	}
+
+	if gotCfg.ServerName != "tillsyn-mcp" {
+		t.Fatalf("mcp server name = %q, want tillsyn-mcp", gotCfg.ServerName)
+	}
+	if gotCfg.MCPEndpoint != "/mcp" {
+		t.Fatalf("mcp endpoint = %q, want /mcp", gotCfg.MCPEndpoint)
+	}
+	if gotDeps.CaptureState == nil || gotDeps.Attention == nil {
+		t.Fatalf("expected stdio MCP dependencies to be wired, got %#v", gotDeps)
+	}
+
+	baseDir := filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn-mcp-dev")
+	if info, err := os.Stat(baseDir); err != nil {
+		t.Fatalf("expected local mcp runtime directory at %q, stat error = %v", baseDir, err)
+	} else if !info.IsDir() {
+		t.Fatalf("expected %q to be a directory", baseDir)
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "tillsyn-mcp-dev.db")); err != nil {
+		t.Fatalf("expected local mcp db at %q, stat error = %v", filepath.Join(baseDir, "tillsyn-mcp-dev.db"), err)
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "config.toml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected stdio mcp to avoid seeding config automatically, stat err = %v", err)
+	}
+}
+
+// TestRunMCPCommandConfigOverrideStillUsesLocalDB verifies a config override does not pull stdio MCP back onto a non-local DB path.
+func TestRunMCPCommandConfigOverrideStillUsesLocalDB(t *testing.T) {
+	origRunner := mcpCommandRunner
+	t.Cleanup(func() { mcpCommandRunner = origRunner })
+	mcpCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		return nil
+	}
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	customConfig := filepath.Join(workspace, "custom.toml")
+	customDB := filepath.Join(workspace, "wrong.db")
+	if err := os.WriteFile(customConfig, []byte("[database]\npath = \""+customDB+"\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(custom config) error = %v", err)
+	}
+
+	if err := run(context.Background(), []string{"--app", "tillsyn-mcp", "--dev", "--config", customConfig, "mcp"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(mcp with config override) error = %v", err)
+	}
+
+	localDB := filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn-mcp-dev", "tillsyn-mcp-dev.db")
+	if _, err := os.Stat(localDB); err != nil {
+		t.Fatalf("expected local stdio db at %q, stat error = %v", localDB, err)
+	}
+	if _, err := os.Stat(customDB); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected config database path %q to stay unused, stat err = %v", customDB, err)
 	}
 }
 

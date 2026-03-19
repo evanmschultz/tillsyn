@@ -132,7 +132,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 			labels_json TEXT NOT NULL DEFAULT '[]',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
+			created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
 			updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
+			updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
 			updated_by_type TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -159,7 +161,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 			labels_json TEXT NOT NULL DEFAULT '[]',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
+			created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
 			updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
+			updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
 			updated_by_type TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -300,7 +304,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE tasks ADD COLUMN created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
 		`ALTER TABLE tasks ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE tasks ADD COLUMN updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
 		`ALTER TABLE tasks ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
 		`ALTER TABLE tasks ADD COLUMN started_at TEXT`,
 		`ALTER TABLE tasks ADD COLUMN completed_at TEXT`,
@@ -318,7 +324,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`ALTER TABLE work_items ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE work_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE work_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE work_items ADD COLUMN created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
 		`ALTER TABLE work_items ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE work_items ADD COLUMN updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
 		`ALTER TABLE work_items ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
 		`ALTER TABLE work_items ADD COLUMN started_at TEXT`,
 		`ALTER TABLE work_items ADD COLUMN completed_at TEXT`,
@@ -336,6 +344,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := r.migrateChangeEventsActorName(ctx); err != nil {
+		return err
+	}
+	if err := r.migrateTaskActorNames(ctx); err != nil {
 		return err
 	}
 	if err := r.migratePhaseScopeContract(ctx); err != nil {
@@ -623,6 +634,25 @@ func (r *Repository) migrateChangeEventsActorName(ctx context.Context) error {
 	return nil
 }
 
+// migrateTaskActorNames adds and backfills readable task actor-name columns on both task tables.
+func (r *Repository) migrateTaskActorNames(ctx context.Context) error {
+	statements := []struct {
+		name string
+		sql  string
+	}{
+		{name: "tasks.created_by_name", sql: `UPDATE tasks SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
+		{name: "tasks.updated_by_name", sql: `UPDATE tasks SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
+		{name: "work_items.created_by_name", sql: `UPDATE work_items SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
+		{name: "work_items.updated_by_name", sql: `UPDATE work_items SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
+	}
+	for _, stmt := range statements {
+		if _, err := r.db.ExecContext(ctx, stmt.sql); err != nil {
+			return fmt.Errorf("migrate sqlite backfill %s: %w", stmt.name, err)
+		}
+	}
+	return nil
+}
+
 // ensureCommentIndexes restores comment indexes that may be dropped during table rewrite.
 func (r *Repository) ensureCommentIndexes(ctx context.Context) error {
 	statements := []string{
@@ -679,7 +709,7 @@ func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO work_items(
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
-			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
 		SELECT
 			t.id,
@@ -697,7 +727,9 @@ func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
 			t.labels_json,
 			t.metadata_json,
 			t.created_by_actor,
+			COALESCE(NULLIF(TRIM(t.created_by_name), ''), NULLIF(TRIM(t.created_by_actor), ''), 'tillsyn-user'),
 			t.updated_by_actor,
+			COALESCE(NULLIF(TRIM(t.updated_by_name), ''), NULLIF(TRIM(t.updated_by_actor), ''), COALESCE(NULLIF(TRIM(t.created_by_name), ''), NULLIF(TRIM(t.created_by_actor), ''), 'tillsyn-user')),
 			t.updated_by_type,
 			t.created_at,
 			t.updated_at,
@@ -1211,9 +1243,9 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO work_items(
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
-			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		t.ID,
 		t.ProjectID,
@@ -1230,7 +1262,9 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 		string(labelsJSON),
 		string(metadataJSON),
 		t.CreatedByActor,
+		t.CreatedByName,
 		t.UpdatedByActor,
+		t.UpdatedByName,
 		string(t.UpdatedByType),
 		ts(t.CreatedAt),
 		ts(t.UpdatedAt),
@@ -1243,7 +1277,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 		return err
 	}
 
-	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.CreatedByActor, "", t.UpdatedByType, t.UpdatedByActor)
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.CreatedByActor, t.CreatedByName, t.UpdatedByType, t.UpdatedByActor, t.UpdatedByName)
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
@@ -1302,7 +1336,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE work_items
 		SET parent_id = ?, kind = ?, scope = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
-		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
+		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_name = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
 	`,
 		t.ParentID,
@@ -1318,6 +1352,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 		string(labelsJSON),
 		string(metadataJSON),
 		t.UpdatedByActor,
+		t.UpdatedByName,
 		string(t.UpdatedByType),
 		ts(t.UpdatedAt),
 		nullableTS(t.StartedAt),
@@ -1337,7 +1372,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	metadata["title"] = t.Title
 	metadata["item_kind"] = string(t.Kind)
 	metadata["item_scope"] = string(scope)
-	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.UpdatedByActor, "", t.UpdatedByType, prev.UpdatedByActor)
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.UpdatedByActor, t.UpdatedByName, t.UpdatedByType, prev.UpdatedByActor, prev.UpdatedByName)
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
@@ -1366,7 +1401,7 @@ func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArc
 	query := `
 		SELECT
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
-			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM work_items
 		WHERE project_id = ?
 	`
@@ -1416,7 +1451,7 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	if err := translateNoRows(res); err != nil {
 		return err
 	}
-	actorID, actorName, actorType := resolveChangeEventActor(ctx, task.UpdatedByActor, "", task.UpdatedByType, task.CreatedByActor)
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, task.UpdatedByActor, task.UpdatedByName, task.UpdatedByType, task.CreatedByActor, task.CreatedByName)
 
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  task.ProjectID,
@@ -2020,7 +2055,7 @@ func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, err
 	row := q.QueryRowContext(ctx, `
 		SELECT
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
-			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM work_items
 		WHERE id = ?
 	`, id)
@@ -2349,7 +2384,9 @@ func scanTask(s scanner) (domain.Task, error) {
 		&labelsRaw,
 		&metadataRaw,
 		&t.CreatedByActor,
+		&t.CreatedByName,
 		&t.UpdatedByActor,
+		&t.UpdatedByName,
 		&updatedType,
 		&createdRaw,
 		&updatedRaw,
@@ -2400,8 +2437,14 @@ func scanTask(s scanner) (domain.Task, error) {
 	if strings.TrimSpace(t.CreatedByActor) == "" {
 		t.CreatedByActor = "tillsyn-user"
 	}
+	if strings.TrimSpace(t.CreatedByName) == "" {
+		t.CreatedByName = t.CreatedByActor
+	}
 	if strings.TrimSpace(t.UpdatedByActor) == "" {
 		t.UpdatedByActor = t.CreatedByActor
+	}
+	if strings.TrimSpace(t.UpdatedByName) == "" {
+		t.UpdatedByName = t.CreatedByName
 	}
 	if t.UpdatedByType == "" {
 		t.UpdatedByType = domain.ActorTypeUser

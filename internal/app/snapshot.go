@@ -70,7 +70,9 @@ type SnapshotTask struct {
 	Labels         []string              `json:"labels"`
 	Metadata       domain.TaskMetadata   `json:"metadata"`
 	CreatedByActor string                `json:"created_by_actor"`
+	CreatedByName  string                `json:"created_by_name,omitempty"`
 	UpdatedByActor string                `json:"updated_by_actor"`
+	UpdatedByName  string                `json:"updated_by_name,omitempty"`
 	UpdatedByType  domain.ActorType      `json:"updated_by_type"`
 	CreatedAt      time.Time             `json:"created_at"`
 	UpdatedAt      time.Time             `json:"updated_at"`
@@ -889,7 +891,9 @@ func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
 		Labels:         append([]string(nil), t.Labels...),
 		Metadata:       t.Metadata,
 		CreatedByActor: t.CreatedByActor,
+		CreatedByName:  t.CreatedByName,
 		UpdatedByActor: t.UpdatedByActor,
+		UpdatedByName:  t.UpdatedByName,
 		UpdatedByType:  t.UpdatedByType,
 		CreatedAt:      t.CreatedAt.UTC(),
 		UpdatedAt:      t.UpdatedAt.UTC(),
@@ -1013,9 +1017,22 @@ func (t SnapshotTask) toDomain() domain.Task {
 	if createdBy == "" {
 		createdBy = "tillsyn-user"
 	}
+	createdByName := strings.TrimSpace(t.CreatedByName)
+	if createdByName == "" {
+		createdByName = createdBy
+	}
 	updatedBy := strings.TrimSpace(t.UpdatedByActor)
 	if updatedBy == "" {
 		updatedBy = createdBy
+	}
+	updatedByName := strings.TrimSpace(t.UpdatedByName)
+	if updatedByName == "" {
+		if updatedBy == createdBy {
+			updatedByName = createdByName
+		}
+		if updatedByName == "" {
+			updatedByName = updatedBy
+		}
 	}
 	return domain.Task{
 		ID:             strings.TrimSpace(t.ID),
@@ -1033,7 +1050,9 @@ func (t SnapshotTask) toDomain() domain.Task {
 		Labels:         labels,
 		Metadata:       t.Metadata,
 		CreatedByActor: createdBy,
+		CreatedByName:  createdByName,
 		UpdatedByActor: updatedBy,
+		UpdatedByName:  updatedByName,
 		UpdatedByType:  updatedType,
 		CreatedAt:      t.CreatedAt.UTC(),
 		UpdatedAt:      t.UpdatedAt.UTC(),
