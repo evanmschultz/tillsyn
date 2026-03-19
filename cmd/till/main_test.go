@@ -555,7 +555,7 @@ func TestRunMCPCommandConfigOverrideStillUsesLocalDB(t *testing.T) {
 
 	customConfig := filepath.Join(workspace, "custom.toml")
 	customDB := filepath.Join(workspace, "wrong.db")
-	if err := os.WriteFile(customConfig, []byte("[database]\npath = \""+customDB+"\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(customConfig, []byte("[database]\npath = '"+customDB+"'\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(custom config) error = %v", err)
 	}
 
