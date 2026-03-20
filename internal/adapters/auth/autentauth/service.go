@@ -50,10 +50,10 @@ type AuthorizationRequest struct {
 
 // AuthorizationResult stores one auth decision plus the authenticated caller when allowed.
 type AuthorizationResult struct {
-	Caller        domain.AuthenticatedCaller
-	DecisionCode  string
+	Caller         domain.AuthenticatedCaller
+	DecisionCode   string
 	DecisionReason string
-	GrantID       string
+	GrantID        string
 }
 
 // IssueSessionInput describes one local dogfood session issuance request.

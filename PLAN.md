@@ -365,6 +365,11 @@ Commands run:
 44. independent QA rerun requested after remediation:
    - transport/copy lane -> PASS
    - runtime/auth lane -> PASS
+45. post-push GitHub Actions follow-up:
+   - `gh run view 23355810990 --log-failed` -> FAIL on `fmt-check` only for `internal/adapters/auth/autentauth/service.go` and `internal/adapters/server/mcpapi/handler_integration_test.go`
+   - `just fmt` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
 
 Docs/process edits in this run so far:
 1. `.gitignore` updated to ignore `.nvimlog`

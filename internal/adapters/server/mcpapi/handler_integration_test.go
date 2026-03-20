@@ -82,13 +82,13 @@ func TestHandlerAttentionMutationPersistsAuthenticatedAttribution(t *testing.T) 
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.raise_attention_item", map[string]any{
-		"project_id":          projectID,
-		"scope_type":          "project",
-		"scope_id":            projectID,
-		"kind":                "risk_note",
-		"summary":             "Raised by MCP auth",
-		"session_id":          issued.Session.ID,
-		"session_secret":      issued.Secret,
+		"project_id":           projectID,
+		"scope_type":           "project",
+		"scope_id":             projectID,
+		"kind":                 "risk_note",
+		"summary":              "Raised by MCP auth",
+		"session_id":           issued.Session.ID,
+		"session_secret":       issued.Secret,
 		"requires_user_action": false,
 	}))
 	raised := toolResultStructured(t, raiseResp.Result)
