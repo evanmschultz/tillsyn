@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
 )
@@ -17,11 +18,53 @@ import (
 // AppServiceAdapter maps transport contracts onto app.Service capture_state and attention APIs.
 type AppServiceAdapter struct {
 	service *app.Service
+	auth    *autentauth.Service
 }
 
 // NewAppServiceAdapter builds one common adapter over an app.Service instance.
-func NewAppServiceAdapter(service *app.Service) *AppServiceAdapter {
-	return &AppServiceAdapter{service: service}
+func NewAppServiceAdapter(service *app.Service, auth *autentauth.Service) *AppServiceAdapter {
+	return &AppServiceAdapter{
+		service: service,
+		auth:    auth,
+	}
+}
+
+// AuthorizeMutation resolves one authenticated caller for a mutating MCP request.
+func (a *AppServiceAdapter) AuthorizeMutation(ctx context.Context, in MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
+	if a == nil || a.auth == nil {
+		return domain.AuthenticatedCaller{}, fmt.Errorf("mutation auth is not configured")
+	}
+	result, err := a.auth.Authorize(ctx, autentauth.AuthorizationRequest{
+		SessionID:     strings.TrimSpace(in.SessionID),
+		SessionSecret: strings.TrimSpace(in.SessionSecret),
+		Action:        strings.TrimSpace(in.Action),
+		Namespace:     strings.TrimSpace(in.Namespace),
+		ResourceType:  strings.TrimSpace(in.ResourceType),
+		ResourceID:    strings.TrimSpace(in.ResourceID),
+		Context:       cloneStringMap(in.Context),
+	})
+	if err != nil {
+		return domain.AuthenticatedCaller{}, err
+	}
+	switch result.DecisionCode {
+	case "allow":
+		return domain.NormalizeAuthenticatedCaller(result.Caller), nil
+	case "session_required":
+		return domain.AuthenticatedCaller{}, fmt.Errorf("session is required: %w", ErrSessionRequired)
+	case "session_expired":
+		return domain.AuthenticatedCaller{}, fmt.Errorf("session expired: %w", ErrSessionExpired)
+	case "grant_required":
+		if strings.TrimSpace(result.GrantID) != "" {
+			return domain.AuthenticatedCaller{}, fmt.Errorf("grant %q is required: %w", result.GrantID, ErrGrantRequired)
+		}
+		return domain.AuthenticatedCaller{}, fmt.Errorf("grant approval is required: %w", ErrGrantRequired)
+	case "deny":
+		return domain.AuthenticatedCaller{}, fmt.Errorf("auth denied: %w", ErrAuthorizationDenied)
+	case "invalid":
+		return domain.AuthenticatedCaller{}, fmt.Errorf("invalid session or secret: %w", ErrInvalidAuthentication)
+	default:
+		return domain.AuthenticatedCaller{}, fmt.Errorf("unsupported auth decision %q", result.DecisionCode)
+	}
 }
 
 // CaptureState resolves one summary-first capture_state snapshot through app-level APIs.
@@ -108,6 +151,11 @@ func (a *AppServiceAdapter) RaiseAttentionItem(ctx context.Context, in RaiseAtte
 	if err != nil {
 		return AttentionItem{}, err
 	}
+	ctx, actorType, err := withMutationGuardContext(ctx, req.Actor)
+	if err != nil {
+		return AttentionItem{}, err
+	}
+	actorID, _ := deriveMutationActorIdentity(req.Actor)
 
 	item, err := a.service.RaiseAttentionItem(ctx, app.RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
@@ -119,8 +167,8 @@ func (a *AppServiceAdapter) RaiseAttentionItem(ctx context.Context, in RaiseAtte
 		Summary:            req.Summary,
 		BodyMarkdown:       req.BodyMarkdown,
 		RequiresUserAction: req.RequiresUserAction,
-		CreatedBy:          "tillsyn-serve",
-		CreatedType:        domain.ActorTypeUser,
+		CreatedBy:          actorID,
+		CreatedType:        actorType,
 	})
 	if err != nil {
 		return AttentionItem{}, mapAppError("raise attention item", err)
@@ -138,11 +186,15 @@ func (a *AppServiceAdapter) ResolveAttentionItem(ctx context.Context, in Resolve
 	if err != nil {
 		return AttentionItem{}, err
 	}
-
+	ctx, actorType, err := withMutationGuardContext(ctx, req.Actor)
+	if err != nil {
+		return AttentionItem{}, err
+	}
+	actorID, _ := deriveMutationActorIdentity(req.Actor)
 	item, err := a.service.ResolveAttentionItem(ctx, app.ResolveAttentionItemInput{
 		AttentionID:  req.ID,
-		ResolvedBy:   req.ResolvedBy,
-		ResolvedType: domain.ActorTypeUser,
+		ResolvedBy:   actorID,
+		ResolvedType: actorType,
 	})
 	if err != nil {
 		return AttentionItem{}, mapAppError("resolve attention item", err)
@@ -216,6 +268,7 @@ func normalizeRaiseAttentionItemRequest(in RaiseAttentionItemRequest) (RaiseAtte
 		Summary:            summary,
 		BodyMarkdown:       strings.TrimSpace(in.BodyMarkdown),
 		RequiresUserAction: in.RequiresUserAction,
+		Actor:              in.Actor,
 	}, nil
 }
 
@@ -226,10 +279,22 @@ func normalizeResolveAttentionItemRequest(in ResolveAttentionItemRequest) (Resol
 		return ResolveAttentionItemRequest{}, fmt.Errorf("id is required: %w", ErrInvalidCaptureStateRequest)
 	}
 	return ResolveAttentionItemRequest{
-		ID:         itemID,
-		ResolvedBy: strings.TrimSpace(in.ResolvedBy),
-		Reason:     strings.TrimSpace(in.Reason),
+		ID:     itemID,
+		Reason: strings.TrimSpace(in.Reason),
+		Actor:  in.Actor,
 	}, nil
+}
+
+// cloneStringMap deep-copies string maps used by auth and request normalization helpers.
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // normalizeScopeTuple validates and canonicalizes one project/scope tuple.

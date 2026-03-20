@@ -39,7 +39,7 @@ func newActorAttributionAdapterFixture(t *testing.T) (*AppServiceAdapter, *app.S
 		DefaultDeleteMode:        app.DeleteModeArchive,
 		AutoCreateProjectColumns: true,
 	})
-	adapter := NewAppServiceAdapter(service)
+	adapter := NewAppServiceAdapter(service, nil)
 
 	project, err := service.CreateProject(context.Background(), "Actor Fixture", "")
 	if err != nil {

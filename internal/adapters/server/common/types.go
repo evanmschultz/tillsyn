@@ -196,13 +196,14 @@ type RaiseAttentionItemRequest struct {
 	Summary            string `json:"summary"`
 	BodyMarkdown       string `json:"body_markdown,omitempty"`
 	RequiresUserAction bool   `json:"requires_user_action"`
+	Actor              ActorLeaseTuple
 }
 
 // ResolveAttentionItemRequest captures input for resolving one attention record.
 type ResolveAttentionItemRequest struct {
-	ID         string `json:"id"`
-	ResolvedBy string `json:"resolved_by,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	ID     string `json:"id"`
+	Reason string `json:"reason,omitempty"`
+	Actor  ActorLeaseTuple
 }
 
 // AttentionService captures optional attention operations exposed by app services.

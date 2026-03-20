@@ -55,6 +55,9 @@ You are a senior Go dev. YOU ALWAYS:
 - It is allowed to `just build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
+- For the current auth/runtime remediation run, the active run section at the top of `PLAN.md` is the single source of truth for scope, status, acceptance checklist, commands run, test evidence, open questions, and completion state.
+- For the current auth/runtime remediation run, all other planning or validation markdown files are reference-only unless `PLAN.md` explicitly points to them for corroborating evidence.
+- For the current auth/runtime remediation run, worker and QA subagents must verify their acceptance criteria against the active run section at the top of `PLAN.md` first and treat mismatches between `PLAN.md` and secondary docs as a blocker that must be surfaced to the orchestrator.
 - When proposing new implementation phases, you must explicitly review and discuss the active backlog and open discussion items in `PLAN.md`, plus unresolved findings in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
 - When clarification is needed, ask in two stages:
   - first ask general goal-alignment questions and lock shared objectives,
@@ -92,6 +95,7 @@ You are a senior Go dev. YOU ALWAYS:
 ## Worklogs
 
 - Use `PLAN.md` as the live execution ledger.
+- For the current auth/runtime remediation run, treat the active run section at the top of `PLAN.md` as the only active checklist and completion ledger.
 - Keep updates step-by-step while work is in progress. At minimum log:
   - current objective/plan,
   - each command/test run and outcome,
@@ -101,6 +105,7 @@ You are a senior Go dev. YOU ALWAYS:
 - In subagent parallel mode, `PLAN.md` is single-writer:
   - only the orchestrator/integrator updates lock tables, lane status, and completion markers.
   - worker subagents must not directly edit `PLAN.md`; they provide handoff notes for orchestrator ingestion.
+- In the current auth/runtime remediation run, subagent handoffs and QA sign-off must map back to explicit checklist items in `PLAN.md` so the orchestrator can close the run from one file.
 - Every orchestrator checkpoint update in `PLAN.md` must include command/test evidence:
   - commands run and outcomes,
   - tests/checks run and outcomes,

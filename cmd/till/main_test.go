@@ -15,8 +15,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	charmLog "github.com/charmbracelet/log"
+	autentdomain "github.com/evanmschultz/autent/domain"
 	"github.com/google/uuid"
+	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
 	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
+	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/config"
 	"github.com/hylla/tillsyn/internal/domain"
@@ -97,6 +101,53 @@ func writeConfigExample(t *testing.T, workspace, content string) {
 	if err := os.WriteFile(filepath.Join(workspace, "config.example.toml"), []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
 	}
+}
+
+// newAuthAdapterForTest constructs one shared-DB auth adapter for mutation authorization tests.
+func newAuthAdapterForTest(t *testing.T) (*servercommon.AppServiceAdapter, *autentauth.Service) {
+	t.Helper()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	auth, err := autentauth.NewSharedDB(autentauth.Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	return servercommon.NewAppServiceAdapter(nil, auth), auth
+}
+
+// mustIssueUserSessionForAdapterTest issues one deterministic session for adapter authorization tests.
+func mustIssueUserSessionForAdapterTest(t *testing.T, auth *autentauth.Service) (string, string) {
+	t.Helper()
+
+	issued, err := auth.IssueSession(context.Background(), autentauth.IssueSessionInput{
+		PrincipalID:   "user-1",
+		PrincipalType: "user",
+		PrincipalName: "User One",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+	})
+	if err != nil {
+		t.Fatalf("IssueSession() error = %v", err)
+	}
+	return issued.Session.ID, issued.Secret
+}
+
+// mustNormalizeAuthRuleForTest validates one auth rule for stable adapter tests.
+func mustNormalizeAuthRuleForTest(t *testing.T, rule autentdomain.Rule) autentdomain.Rule {
+	t.Helper()
+
+	normalized, err := autentdomain.ValidateAndNormalizeRule(rule)
+	if err != nil {
+		t.Fatalf("ValidateAndNormalizeRule() error = %v", err)
+	}
+	return normalized
 }
 
 // TestRunVersion verifies behavior for the covered scenario.
@@ -328,7 +379,7 @@ func TestRunRootHelp(t *testing.T) {
 	if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 		t.Fatalf("expected root usage output, got %q", out.String())
 	}
-	for _, want := range []string{"serve", "mcp", "export", "import", "paths", "init-dev-config"} {
+	for _, want := range []string{"serve", "mcp", "auth", "export", "import", "paths", "init-dev-config"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q command in root help, got %q", want, out.String())
 		}
@@ -357,7 +408,22 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "mcp",
 			args: []string{"mcp", "--help"},
-			want: []string{"till mcp", "start mcp over stdio"},
+			want: []string{"till mcp", "start raw mcp over stdio"},
+		},
+		{
+			name: "auth",
+			args: []string{"auth", "--help"},
+			want: []string{"till auth", "issue-session", "revoke-session"},
+		},
+		{
+			name: "auth issue-session",
+			args: []string{"auth", "issue-session", "--help"},
+			want: []string{"till auth issue-session", "--principal-id", "--ttl"},
+		},
+		{
+			name: "auth revoke-session",
+			args: []string{"auth", "revoke-session", "--help"},
+			want: []string{"till auth revoke-session", "--session-id", "--reason"},
 		},
 		{
 			name: "export",
@@ -391,6 +457,239 @@ func TestRunSubcommandHelp(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRunAuthIssueAndRevokeSession verifies the local dogfood auth command issues and revokes real shared-DB sessions.
+func TestRunAuthIssueAndRevokeSession(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+
+	var issuedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "issue-session",
+		"--principal-id", "agent-1",
+		"--principal-type", "agent",
+		"--principal-name", "Agent One",
+		"--client-id", "till-mcp-stdio",
+		"--client-type", "mcp-stdio",
+		"--client-name", "Till MCP STDIO",
+	}, &issuedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth issue-session) error = %v", err)
+	}
+
+	var issued struct {
+		SessionID     string    `json:"session_id"`
+		SessionSecret string    `json:"session_secret"`
+		PrincipalID   string    `json:"principal_id"`
+		PrincipalType string    `json:"principal_type"`
+		ExpiresAt     time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal([]byte(issuedOut.String()), &issued); err != nil {
+		t.Fatalf("Unmarshal(issue-session) error = %v", err)
+	}
+	if issued.SessionID == "" || issued.SessionSecret == "" {
+		t.Fatalf("issue-session returned empty credentials: %q", issuedOut.String())
+	}
+	if issued.PrincipalID != "agent-1" {
+		t.Fatalf("issue-session principal_id = %q, want agent-1", issued.PrincipalID)
+	}
+	if issued.PrincipalType != "agent" {
+		t.Fatalf("issue-session principal_type = %q, want agent", issued.PrincipalType)
+	}
+	if issued.ExpiresAt.IsZero() {
+		t.Fatalf("issue-session expires_at = zero, want timestamp")
+	}
+
+	var revokedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "revoke-session",
+		"--session-id", issued.SessionID,
+		"--reason", "operator_revoke",
+	}, &revokedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth revoke-session) error = %v", err)
+	}
+
+	var revoked struct {
+		SessionID        string     `json:"session_id"`
+		RevokedAt        *time.Time `json:"revoked_at"`
+		RevocationReason string     `json:"revocation_reason"`
+	}
+	if err := json.Unmarshal([]byte(revokedOut.String()), &revoked); err != nil {
+		t.Fatalf("Unmarshal(revoke-session) error = %v", err)
+	}
+	if revoked.SessionID != issued.SessionID {
+		t.Fatalf("revoke-session session_id = %q, want %q", revoked.SessionID, issued.SessionID)
+	}
+	if revoked.RevokedAt == nil {
+		t.Fatal("revoke-session revoked_at = nil, want timestamp")
+	}
+	if revoked.RevocationReason != "operator_revoke" {
+		t.Fatalf("revoke-session reason = %q, want operator_revoke", revoked.RevocationReason)
+	}
+}
+
+// TestRunAuthIssueSessionCredentialsAuthorizeMutation verifies CLI-issued credentials are usable through the auth-backed mutation adapter seam.
+func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+
+	var issuedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "issue-session",
+		"--principal-id", "agent-1",
+		"--principal-type", "agent",
+		"--client-id", "till-mcp-stdio",
+		"--client-type", "mcp-stdio",
+	}, &issuedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth issue-session) error = %v", err)
+	}
+
+	var issued struct {
+		SessionID     string `json:"session_id"`
+		SessionSecret string `json:"session_secret"`
+	}
+	if err := json.Unmarshal([]byte(issuedOut.String()), &issued); err != nil {
+		t.Fatalf("Unmarshal(issue-session) error = %v", err)
+	}
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	authService, err := autentauth.NewSharedDB(autentauth.Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := authService.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+	auth, err := servercommon.NewAppServiceAdapter(nil, authService).AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+		SessionID:     issued.SessionID,
+		SessionSecret: issued.SessionSecret,
+		Action:        "create_task",
+		Namespace:     "project:p1",
+		ResourceType:  "task",
+		ResourceID:    "new",
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeMutation() error = %v", err)
+	}
+	if auth.PrincipalID != "agent-1" {
+		t.Fatalf("AuthorizeMutation() principal_id = %q, want agent-1", auth.PrincipalID)
+	}
+	if auth.PrincipalType != domain.ActorTypeAgent {
+		t.Fatalf("AuthorizeMutation() principal_type = %q, want agent", auth.PrincipalType)
+	}
+}
+
+// TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication verifies revoked sessions fail closed in the real auth-backed adapter path.
+func TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication(t *testing.T) {
+	adapter, auth := newAuthAdapterForTest(t)
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+	sessionID, sessionSecret := mustIssueUserSessionForAdapterTest(t, auth)
+	if _, err := auth.RevokeSession(context.Background(), sessionID, "operator_revoke"); err != nil {
+		t.Fatalf("RevokeSession() error = %v", err)
+	}
+
+	_, err := adapter.AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+		SessionID:     sessionID,
+		SessionSecret: sessionSecret,
+		Action:        "create_task",
+		Namespace:     "project:p1",
+		ResourceType:  "task",
+		ResourceID:    "new",
+	})
+	if !errors.Is(err, servercommon.ErrInvalidAuthentication) {
+		t.Fatalf("AuthorizeMutation() error = %v, want ErrInvalidAuthentication", err)
+	}
+}
+
+// TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied verifies real deny decisions map through the adapter boundary.
+func TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied(t *testing.T) {
+	adapter, auth := newAuthAdapterForTest(t)
+	if err := auth.ReplaceRules(context.Background(), []autentdomain.Rule{
+		mustNormalizeAuthRuleForTest(t, autentdomain.Rule{
+			ID:     "deny-create-task",
+			Effect: autentdomain.EffectDeny,
+			Actions: []autentdomain.StringPattern{
+				{Operator: autentdomain.MatchExact, Value: "create_task"},
+			},
+			Resources: []autentdomain.ResourcePattern{
+				{
+					Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
+					Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+					ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
+				},
+			},
+			Priority: 10,
+		}),
+	}); err != nil {
+		t.Fatalf("ReplaceRules() error = %v", err)
+	}
+	sessionID, sessionSecret := mustIssueUserSessionForAdapterTest(t, auth)
+
+	_, err := adapter.AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+		SessionID:     sessionID,
+		SessionSecret: sessionSecret,
+		Action:        "create_task",
+		Namespace:     "project:p1",
+		ResourceType:  "task",
+		ResourceID:    "new",
+	})
+	if !errors.Is(err, servercommon.ErrAuthorizationDenied) {
+		t.Fatalf("AuthorizeMutation() error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestAuthorizeMutationGrantRequiredReturnsGrantRequired verifies real grant-required decisions map through the adapter boundary.
+func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
+	adapter, auth := newAuthAdapterForTest(t)
+	if err := auth.ReplaceRules(context.Background(), []autentdomain.Rule{
+		mustNormalizeAuthRuleForTest(t, autentdomain.Rule{
+			ID:     "grant-create-task",
+			Effect: autentdomain.EffectAllow,
+			Actions: []autentdomain.StringPattern{
+				{Operator: autentdomain.MatchExact, Value: "create_task"},
+			},
+			Resources: []autentdomain.ResourcePattern{
+				{
+					Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
+					Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+					ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
+				},
+			},
+			Escalation: &autentdomain.EscalationRequirement{Allowed: true},
+			Priority:   10,
+		}),
+	}); err != nil {
+		t.Fatalf("ReplaceRules() error = %v", err)
+	}
+	sessionID, sessionSecret := mustIssueUserSessionForAdapterTest(t, auth)
+
+	_, err := adapter.AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+		SessionID:     sessionID,
+		SessionSecret: sessionSecret,
+		Action:        "create_task",
+		Namespace:     "project:p1",
+		ResourceType:  "task",
+		ResourceID:    "new",
+	})
+	if !errors.Is(err, servercommon.ErrGrantRequired) {
+		t.Fatalf("AuthorizeMutation() error = %v, want ErrGrantRequired", err)
 	}
 }
 
@@ -433,8 +732,8 @@ func TestRunHelpPathsDoNotSeedMissingConfig(t *testing.T) {
 	}
 }
 
-// TestResolveRuntimePathsMCPUsesRepoLocalFallback verifies stdio MCP uses a repo-local runtime when paths are not overridden.
-func TestResolveRuntimePathsMCPUsesRepoLocalFallback(t *testing.T) {
+// TestResolveRuntimePathsMCPUsesSharedDefaultRuntime verifies stdio MCP uses the same default runtime as the base app.
+func TestResolveRuntimePathsMCPUsesSharedDefaultRuntime(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
 	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
@@ -442,26 +741,22 @@ func TestResolveRuntimePathsMCPUsesRepoLocalFallback(t *testing.T) {
 	}
 
 	out, err := resolveRuntimePaths("mcp", rootCommandOptions{appName: "tillsyn", devMode: true}, platform.Paths{
-		ConfigPath: filepath.Join(workspace, "outside-config.toml"),
-		DBPath:     filepath.Join(workspace, "outside.db"),
+		ConfigPath: filepath.Join(workspace, "platform-config.toml"),
+		DBPath:     filepath.Join(workspace, "platform.db"),
 	})
 	if err != nil {
 		t.Fatalf("resolveRuntimePaths(mcp) error = %v", err)
 	}
-	if !out.UsesLocalMCPRuntime {
-		t.Fatal("expected stdio MCP to use repo-local runtime paths")
+	if out.ConfigPath != filepath.Join(workspace, "platform-config.toml") {
+		t.Fatalf("config path = %q, want shared platform config", out.ConfigPath)
 	}
-	wantBase := filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn-dev")
-	if out.ConfigPath != filepath.Join(wantBase, "config.toml") {
-		t.Fatalf("config path = %q, want %q", out.ConfigPath, filepath.Join(wantBase, "config.toml"))
-	}
-	if out.DBPath != filepath.Join(wantBase, "tillsyn-dev.db") {
-		t.Fatalf("db path = %q, want %q", out.DBPath, filepath.Join(wantBase, "tillsyn-dev.db"))
+	if out.DBPath != filepath.Join(workspace, "platform.db") {
+		t.Fatalf("db path = %q, want shared platform db", out.DBPath)
 	}
 }
 
-// TestResolveRuntimePathsMCPUsesPerPathFallback verifies stdio MCP keeps local fallback for whichever path is not explicitly overridden.
-func TestResolveRuntimePathsMCPUsesPerPathFallback(t *testing.T) {
+// TestResolveRuntimePathsMCPConfigOverrideUsesSharedDBContract verifies stdio MCP honors the same config/db contract as the base app.
+func TestResolveRuntimePathsMCPConfigOverrideUsesSharedDBContract(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
 	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
@@ -483,16 +778,46 @@ func TestResolveRuntimePathsMCPUsesPerPathFallback(t *testing.T) {
 	if out.ConfigPath != configOverride {
 		t.Fatalf("config path = %q, want %q", out.ConfigPath, configOverride)
 	}
-	if out.DBPath != filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn", "tillsyn.db") {
-		t.Fatalf("db path = %q, want local stdio db", out.DBPath)
-	}
-	if !out.DBUsesLocalMCPRuntime || out.ConfigUsesLocalMCPRuntime {
-		t.Fatalf("expected only db to use local stdio runtime, got %#v", out)
+	if out.DBPath != filepath.Join(workspace, "platform.db") {
+		t.Fatalf("db path = %q, want shared platform db", out.DBPath)
 	}
 }
 
-// TestRunMCPCommandWiresStdioAndLocalRuntime verifies the stdio MCP subcommand wires the adapter and local runtime paths.
-func TestRunMCPCommandWiresStdioAndLocalRuntime(t *testing.T) {
+// TestResolveRuntimePathsCommandsShareDefaultNonDevRuntime verifies root, mcp, and serve resolve the same non-dev default runtime.
+func TestResolveRuntimePathsCommandsShareDefaultNonDevRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	defaultPaths := platform.Paths{
+		ConfigPath: filepath.Join(workspace, "platform-config.toml"),
+		DBPath:     filepath.Join(workspace, "platform.db"),
+	}
+	commands := []string{"", "mcp", "serve"}
+	for _, command := range commands {
+		command := command
+		t.Run(firstNonEmpty(command, "root"), func(t *testing.T) {
+			got, err := resolveRuntimePaths(command, rootCommandOptions{
+				appName: "tillsyn",
+				devMode: false,
+			}, defaultPaths)
+			if err != nil {
+				t.Fatalf("resolveRuntimePaths(%q) error = %v", command, err)
+			}
+			if got.ConfigPath != defaultPaths.ConfigPath {
+				t.Fatalf("config path = %q, want %q", got.ConfigPath, defaultPaths.ConfigPath)
+			}
+			if got.DBPath != defaultPaths.DBPath {
+				t.Fatalf("db path = %q, want %q", got.DBPath, defaultPaths.DBPath)
+			}
+		})
+	}
+}
+
+// TestRunMCPCommandWiresStdioAndSharedRuntime verifies the stdio MCP subcommand wires the adapter and shared runtime paths.
+func TestRunMCPCommandWiresStdioAndSharedRuntime(t *testing.T) {
 	origRunner := mcpCommandRunner
 	t.Cleanup(func() { mcpCommandRunner = origRunner })
 
@@ -525,22 +850,23 @@ func TestRunMCPCommandWiresStdioAndLocalRuntime(t *testing.T) {
 		t.Fatalf("expected stdio MCP dependencies to be wired, got %#v", gotDeps)
 	}
 
-	baseDir := filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn-mcp-dev")
-	if info, err := os.Stat(baseDir); err != nil {
-		t.Fatalf("expected local mcp runtime directory at %q, stat error = %v", baseDir, err)
-	} else if !info.IsDir() {
-		t.Fatalf("expected %q to be a directory", baseDir)
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-mcp", DevMode: true})
+	if err != nil {
+		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(baseDir, "tillsyn-mcp-dev.db")); err != nil {
-		t.Fatalf("expected local mcp db at %q, stat error = %v", filepath.Join(baseDir, "tillsyn-mcp-dev.db"), err)
+	if _, err := os.Stat(filepath.Dir(paths.DBPath)); err != nil {
+		t.Fatalf("expected shared runtime directory at %q, stat error = %v", filepath.Dir(paths.DBPath), err)
 	}
-	if _, err := os.Stat(filepath.Join(baseDir, "config.toml")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(paths.DBPath); err != nil {
+		t.Fatalf("expected shared runtime db at %q, stat error = %v", paths.DBPath, err)
+	}
+	if _, err := os.Stat(paths.ConfigPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected stdio mcp to avoid seeding config automatically, stat err = %v", err)
 	}
 }
 
-// TestRunMCPCommandConfigOverrideStillUsesLocalDB verifies a config override does not pull stdio MCP back onto a non-local DB path.
-func TestRunMCPCommandConfigOverrideStillUsesLocalDB(t *testing.T) {
+// TestRunMCPCommandConfigOverrideUsesConfiguredDB verifies stdio MCP now follows the same config/db contract as the base app.
+func TestRunMCPCommandConfigOverrideUsesConfiguredDB(t *testing.T) {
 	origRunner := mcpCommandRunner
 	t.Cleanup(func() { mcpCommandRunner = origRunner })
 	mcpCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
@@ -563,12 +889,36 @@ func TestRunMCPCommandConfigOverrideStillUsesLocalDB(t *testing.T) {
 		t.Fatalf("run(mcp with config override) error = %v", err)
 	}
 
-	localDB := filepath.Join(workspace, ".tillsyn", "mcp", "tillsyn-mcp-dev", "tillsyn-mcp-dev.db")
-	if _, err := os.Stat(localDB); err != nil {
-		t.Fatalf("expected local stdio db at %q, stat error = %v", localDB, err)
+	if _, err := os.Stat(customDB); err != nil {
+		t.Fatalf("expected configured database path %q to be used, stat err = %v", customDB, err)
 	}
-	if _, err := os.Stat(customDB); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected config database path %q to stay unused, stat err = %v", customDB, err)
+}
+
+// TestRunMCPCommandTreatsCanceledRunnerAsCleanShutdown verifies stdio MCP interrupt shutdown does not surface as an error.
+func TestRunMCPCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
+	origRunner := mcpCommandRunner
+	t.Cleanup(func() { mcpCommandRunner = origRunner })
+	started := make(chan struct{})
+	mcpCommandRunner = func(ctx context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	writeConfigExample(t, workspace, "[logging]\nlevel = \"debug\"\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	if err := run(ctx, []string{"--app", "tillsyn-mcp", "--dev", "mcp"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(mcp canceled) error = %v, want nil clean shutdown", err)
 	}
 }
 

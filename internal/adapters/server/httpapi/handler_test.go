@@ -14,6 +14,7 @@ import (
 
 	charmLog "github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // stubCaptureStateReader provides deterministic capture-state responses for handler tests.
@@ -34,6 +35,7 @@ func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.Capt
 
 // stubAttentionService provides deterministic attention responses for handler tests.
 type stubAttentionService struct {
+	stubMutationAuthorizer
 	items       []common.AttentionItem
 	raised      common.AttentionItem
 	resolved    common.AttentionItem
@@ -68,6 +70,34 @@ func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req commo
 		return common.AttentionItem{}, s.err
 	}
 	return s.resolved, nil
+}
+
+// stubMutationAuthorizer provides deterministic session-auth results for HTTP mutation tests.
+type stubMutationAuthorizer struct {
+	authErr         error
+	authCaller      domain.AuthenticatedCaller
+	lastAuthRequest common.MutationAuthorizationRequest
+}
+
+// AuthorizeMutation records one auth request and returns one deterministic caller/error.
+func (s *stubMutationAuthorizer) AuthorizeMutation(_ context.Context, req common.MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
+	s.lastAuthRequest = req
+	if s.authErr != nil {
+		return domain.AuthenticatedCaller{}, s.authErr
+	}
+	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.SessionSecret) == "" {
+		return domain.AuthenticatedCaller{}, errors.Join(common.ErrSessionRequired, errors.New("missing session credentials"))
+	}
+	caller := domain.NormalizeAuthenticatedCaller(s.authCaller)
+	if caller.IsZero() {
+		caller = domain.AuthenticatedCaller{
+			PrincipalID:   "user-1",
+			PrincipalName: "User One",
+			PrincipalType: domain.ActorTypeUser,
+			SessionID:     strings.TrimSpace(req.SessionID),
+		}
+	}
+	return caller, nil
 }
 
 // decodeBody decodes one JSON response body into the requested type.
@@ -266,7 +296,7 @@ func TestHandlerAttentionEndpoints(t *testing.T) {
 	raiseReq := httptest.NewRequest(
 		http.MethodPost,
 		"/attention/items",
-		strings.NewReader(`{"project_id":"p1","scope_type":"project","scope_id":"p1","kind":"risk_note","summary":"Raised by API"}`),
+		strings.NewReader(`{"project_id":"p1","scope_type":"project","scope_id":"p1","kind":"risk_note","summary":"Raised by API","session_id":"sess-1","session_secret":"secret-1"}`),
 	)
 	raiseReq.Header.Set("Content-Type", "application/json")
 	raiseRec := httptest.NewRecorder()
@@ -281,12 +311,18 @@ func TestHandlerAttentionEndpoints(t *testing.T) {
 	if raised.ID != "a2" {
 		t.Fatalf("raised id = %q, want a2", raised.ID)
 	}
+	if attention.lastAuthRequest.SessionID != "sess-1" {
+		t.Fatalf("raise auth session_id = %q, want sess-1", attention.lastAuthRequest.SessionID)
+	}
+	if attention.lastRaise.Actor.ActorID != "user-1" {
+		t.Fatalf("raise actor_id = %q, want user-1", attention.lastRaise.Actor.ActorID)
+	}
 
 	// Resolve
 	resolveReq := httptest.NewRequest(
 		http.MethodPost,
 		"/attention/items/a1/resolve",
-		strings.NewReader(`{"resolved_by":"tester","reason":"approved"}`),
+		strings.NewReader(`{"reason":"approved","session_id":"sess-1","session_secret":"secret-1"}`),
 	)
 	resolveReq.Header.Set("Content-Type", "application/json")
 	resolveRec := httptest.NewRecorder()
@@ -303,6 +339,9 @@ func TestHandlerAttentionEndpoints(t *testing.T) {
 	}
 	if attention.lastResolve.ID != "a1" {
 		t.Fatalf("resolve request id = %q, want a1", attention.lastResolve.ID)
+	}
+	if attention.lastResolve.Actor.ActorID != "user-1" {
+		t.Fatalf("resolve actor_id = %q, want user-1", attention.lastResolve.Actor.ActorID)
 	}
 }
 
@@ -423,7 +462,7 @@ func TestHandlerAttentionEndpointsUnavailable(t *testing.T) {
 		{
 			name: "resolve endpoint unavailable",
 			path: "/attention/items/a1/resolve",
-			body: `{"resolved_by":"tester"}`,
+			body: `{"reason":"approved"}`,
 		},
 	}
 
@@ -474,7 +513,7 @@ func TestHandlerAttentionJSONValidation(t *testing.T) {
 		{
 			name: "resolve endpoint malformed json",
 			path: "/attention/items/a1/resolve",
-			body: `{"resolved_by":"user"`,
+			body: `{"reason":"approved"`,
 		},
 	}
 
@@ -497,6 +536,85 @@ func TestHandlerAttentionJSONValidation(t *testing.T) {
 	}
 }
 
+// TestHandlerAttentionMutationsRequireSession verifies HTTP attention write routes fail closed without session credentials.
+func TestHandlerAttentionMutationsRequireSession(t *testing.T) {
+	attention := &stubAttentionService{}
+	handler := NewHandler(&stubCaptureStateReader{}, attention)
+
+	cases := []struct {
+		name       string
+		path       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "raise requires session",
+			path:       "/attention/items",
+			body:       `{"project_id":"p1","scope_type":"project","scope_id":"p1","kind":"risk","summary":"x"}`,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "session_required",
+		},
+		{
+			name:       "resolve requires session",
+			path:       "/attention/items/a1/resolve",
+			body:       `{"reason":"approved"}`,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "session_required",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			envelope := decodeErrorEnvelope(t, rec)
+			if envelope.Error.Code != tc.wantCode {
+				t.Fatalf("error.code = %q, want %q", envelope.Error.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+// TestHandlerAttentionAgentMutationsRequireGuardTuple verifies authenticated agent sessions still require the local lease tuple.
+func TestHandlerAttentionAgentMutationsRequireGuardTuple(t *testing.T) {
+	attention := &stubAttentionService{
+		stubMutationAuthorizer: stubMutationAuthorizer{
+			authCaller: domain.AuthenticatedCaller{
+				PrincipalID:   "agent-1",
+				PrincipalName: "Agent One",
+				PrincipalType: domain.ActorTypeAgent,
+				SessionID:     "sess-1",
+			},
+		},
+	}
+	handler := NewHandler(&stubCaptureStateReader{}, attention)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/attention/items",
+		strings.NewReader(`{"project_id":"p1","scope_type":"project","scope_id":"p1","kind":"risk","summary":"x","session_id":"sess-1","session_secret":"secret-1"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	envelope := decodeErrorEnvelope(t, rec)
+	if envelope.Error.Code != "invalid_request" {
+		t.Fatalf("error.code = %q, want invalid_request", envelope.Error.Code)
+	}
+}
+
 // TestHandlerRaiseAttentionScopeValidationErrorMapping verifies scope validation errors map to invalid_request responses.
 func TestHandlerRaiseAttentionScopeValidationErrorMapping(t *testing.T) {
 	attention := &stubAttentionService{
@@ -506,7 +624,7 @@ func TestHandlerRaiseAttentionScopeValidationErrorMapping(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/attention/items",
-		strings.NewReader(`{"project_id":"p1","kind":"risk_note","summary":"x"}`),
+		strings.NewReader(`{"project_id":"p1","kind":"risk_note","summary":"x","session_id":"sess-1","session_secret":"secret-1"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -539,8 +657,8 @@ func TestHandlerAttentionListRequiresProjectID(t *testing.T) {
 	}
 }
 
-// TestHandlerResolveAttentionItemEmptyBody verifies empty resolve payloads are accepted.
-func TestHandlerResolveAttentionItemEmptyBody(t *testing.T) {
+// TestHandlerResolveAttentionItemMinimalBody verifies resolve accepts the minimal authenticated payload.
+func TestHandlerResolveAttentionItemMinimalBody(t *testing.T) {
 	attention := &stubAttentionService{
 		resolved: common.AttentionItem{
 			ID:    "a1",
@@ -548,7 +666,7 @@ func TestHandlerResolveAttentionItemEmptyBody(t *testing.T) {
 		},
 	}
 	handler := NewHandler(&stubCaptureStateReader{}, attention)
-	req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(""))
+	req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"session_id":"sess-1","session_secret":"secret-1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -559,9 +677,6 @@ func TestHandlerResolveAttentionItemEmptyBody(t *testing.T) {
 	}
 	if attention.lastResolve.ID != "a1" {
 		t.Fatalf("resolve request id = %q, want a1", attention.lastResolve.ID)
-	}
-	if attention.lastResolve.ResolvedBy != "" {
-		t.Fatalf("resolved_by = %q, want empty", attention.lastResolve.ResolvedBy)
 	}
 	if attention.lastResolve.Reason != "" {
 		t.Fatalf("reason = %q, want empty", attention.lastResolve.Reason)
@@ -620,7 +735,7 @@ func TestDecodeOptionalJSONBodyBranches(t *testing.T) {
 	})
 
 	t.Run("malformed body maps to invalid capture request", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"resolved_by":"u"`))
+		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"reason":"approved"`))
 		var payload common.ResolveAttentionItemRequest
 		err := decodeOptionalJSONBody(context.Background(), w, req, &payload)
 		if err == nil {
@@ -634,7 +749,7 @@ func TestDecodeOptionalJSONBodyBranches(t *testing.T) {
 	t.Run("canceled context returns context canceled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"resolved_by":"u"}`)).WithContext(ctx)
+		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"reason":"approved"}`)).WithContext(ctx)
 		var payload common.ResolveAttentionItemRequest
 		err := decodeOptionalJSONBody(req.Context(), w, req, &payload)
 		if err == nil {
@@ -671,6 +786,46 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 			wantCode:      "guardrail_failed",
 			wantClass:     "guardrail",
 			wantMsgSubstr: "lease mismatch",
+		},
+		{
+			name:          "session required maps to unauthorized",
+			err:           errors.Join(common.ErrSessionRequired, errors.New("missing session")),
+			wantStatus:    http.StatusUnauthorized,
+			wantCode:      "session_required",
+			wantClass:     "auth",
+			wantMsgSubstr: "missing session",
+		},
+		{
+			name:          "invalid auth maps to unauthorized",
+			err:           errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			wantStatus:    http.StatusUnauthorized,
+			wantCode:      "invalid_auth",
+			wantClass:     "auth",
+			wantMsgSubstr: "bad secret",
+		},
+		{
+			name:          "session expired maps to unauthorized",
+			err:           errors.Join(common.ErrSessionExpired, errors.New("expired")),
+			wantStatus:    http.StatusUnauthorized,
+			wantCode:      "session_expired",
+			wantClass:     "auth",
+			wantMsgSubstr: "expired",
+		},
+		{
+			name:          "auth denied maps to forbidden",
+			err:           errors.Join(common.ErrAuthorizationDenied, errors.New("policy deny")),
+			wantStatus:    http.StatusForbidden,
+			wantCode:      "auth_denied",
+			wantClass:     "auth",
+			wantMsgSubstr: "policy deny",
+		},
+		{
+			name:          "grant required maps to forbidden",
+			err:           errors.Join(common.ErrGrantRequired, errors.New("approval needed")),
+			wantStatus:    http.StatusForbidden,
+			wantCode:      "grant_required",
+			wantClass:     "auth",
+			wantMsgSubstr: "approval needed",
 		},
 		{
 			name:          "unsupported scope is invalid request",

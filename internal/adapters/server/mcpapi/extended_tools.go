@@ -12,45 +12,91 @@ import (
 )
 
 const (
-	mcpMutationActorTypeOrchestrator = "agent_orchestrator"
-	mcpMutationActorTypeSubagent     = "agent_subagent"
+	mcpMutationSessionDescription       = "Authenticated MCP session identifier"
+	mcpMutationSessionSecretDescription = "Authenticated MCP session secret"
 )
 
-// normalizeMCPMutationActorType validates MCP mutation actor roles and maps them to domain agent actor type.
-func normalizeMCPMutationActorType(raw string) (string, error) {
-	normalized := strings.TrimSpace(strings.ToLower(raw))
-	if normalized == "" {
-		normalized = mcpMutationActorTypeOrchestrator
-	}
-	switch normalized {
-	case mcpMutationActorTypeOrchestrator, mcpMutationActorTypeSubagent:
-		return string(domain.ActorTypeAgent), nil
-	default:
-		return "", fmt.Errorf(`invalid_request: actor_type must be "agent_orchestrator" or "agent_subagent"`)
-	}
+// mcpSessionAuthArgs stores the session-secret pair required for mutating MCP calls.
+type mcpSessionAuthArgs struct {
+	SessionID     string `json:"session_id"`
+	SessionSecret string `json:"session_secret"`
 }
 
-// buildMCPMutationActorTuple normalizes actor_type for MCP writes while preserving identity/lease tuple fields.
-func buildMCPMutationActorTuple(actorType, actorID, actorName, agentName, agentInstanceID, leaseToken, overrideToken string) (common.ActorLeaseTuple, error) {
-	normalizedActorType, err := normalizeMCPMutationActorType(actorType)
-	if err != nil {
-		return common.ActorLeaseTuple{}, err
+// mcpMutationGuardArgs stores the secondary local lease tuple used after session auth succeeds.
+type mcpMutationGuardArgs struct {
+	AgentInstanceID string `json:"agent_instance_id"`
+	LeaseToken      string `json:"lease_token"`
+	OverrideToken   string `json:"override_token"`
+}
+
+// authorizeMCPMutation validates the caller session for one mutating tool.
+func authorizeMCPMutation(
+	ctx context.Context,
+	authorizer common.MutationAuthorizer,
+	auth mcpSessionAuthArgs,
+	action string,
+	namespace string,
+	resourceType string,
+	resourceID string,
+	authContext map[string]string,
+) (domain.AuthenticatedCaller, error) {
+	if authorizer == nil {
+		return domain.AuthenticatedCaller{}, fmt.Errorf("mutation authorizer is unavailable")
 	}
-	agentName = strings.TrimSpace(agentName)
-	agentInstanceID = strings.TrimSpace(agentInstanceID)
-	leaseToken = strings.TrimSpace(leaseToken)
-	if agentName == "" || agentInstanceID == "" || leaseToken == "" {
-		return common.ActorLeaseTuple{}, fmt.Errorf(`invalid_request: agent_name, agent_instance_id, and lease_token are required for authenticated MCP mutations`)
+	return authorizer.AuthorizeMutation(ctx, common.MutationAuthorizationRequest{
+		SessionID:     strings.TrimSpace(auth.SessionID),
+		SessionSecret: strings.TrimSpace(auth.SessionSecret),
+		Action:        strings.TrimSpace(action),
+		Namespace:     strings.TrimSpace(namespace),
+		ResourceType:  strings.TrimSpace(resourceType),
+		ResourceID:    strings.TrimSpace(resourceID),
+		Context:       authContext,
+	})
+}
+
+// buildAuthenticatedMutationActor converts one authenticated caller plus optional guard tuple into the app adapter actor contract.
+func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mcpMutationGuardArgs) (common.ActorLeaseTuple, error) {
+	caller = domain.NormalizeAuthenticatedCaller(caller)
+	if caller.IsZero() {
+		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: authenticated caller is required for mutating MCP tools")
 	}
-	return common.ActorLeaseTuple{
-		ActorID:         actorID,
-		ActorName:       actorName,
-		ActorType:       normalizedActorType,
-		AgentName:       agentName,
-		AgentInstanceID: agentInstanceID,
-		LeaseToken:      leaseToken,
-		OverrideToken:   overrideToken,
-	}, nil
+	actor := common.ActorLeaseTuple{
+		ActorID:   caller.PrincipalID,
+		ActorName: caller.PrincipalName,
+		ActorType: string(caller.PrincipalType),
+	}
+
+	guard.AgentInstanceID = strings.TrimSpace(guard.AgentInstanceID)
+	guard.LeaseToken = strings.TrimSpace(guard.LeaseToken)
+	guard.OverrideToken = strings.TrimSpace(guard.OverrideToken)
+	hasGuardTuple := guard.AgentInstanceID != "" || guard.LeaseToken != "" || guard.OverrideToken != ""
+
+	if caller.PrincipalType != domain.ActorTypeAgent {
+		if hasGuardTuple {
+			return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: guarded mutation tuple requires an authenticated agent session")
+		}
+		return actor, nil
+	}
+	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
+		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_name, agent_instance_id, and lease_token are required for authenticated agent mutations")
+	}
+
+	actor.AgentName = firstNonEmptyString(caller.PrincipalName, caller.PrincipalID)
+	actor.AgentInstanceID = guard.AgentInstanceID
+	actor.LeaseToken = guard.LeaseToken
+	actor.OverrideToken = guard.OverrideToken
+	return actor, nil
+}
+
+// firstNonEmptyString returns the first non-empty trimmed string in order.
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // registerBootstrapTool registers the onboarding guidance tool for empty-instance flows.
@@ -110,10 +156,10 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
-			mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-			mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-			mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-			mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -122,8 +168,8 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 				Description     string                 `json:"description"`
 				Kind            string                 `json:"kind"`
 				Metadata        domain.ProjectMetadata `json:"metadata"`
-				ActorType       string                 `json:"actor_type"`
-				AgentName       string                 `json:"agent_name"`
+				SessionID       string                 `json:"session_id"`
+				SessionSecret   string                 `json:"session_secret"`
 				AgentInstanceID string                 `json:"agent_instance_id"`
 				LeaseToken      string                 `json:"lease_token"`
 				OverrideToken   string                 `json:"override_token"`
@@ -134,15 +180,27 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			if strings.TrimSpace(args.Name) == "" {
 				return mcp.NewToolResultError(`invalid_request: required argument "name" not found`), nil
 			}
-			actor, err := buildMCPMutationActorTuple(
-				args.ActorType,
-				"",
-				"",
-				args.AgentName,
-				args.AgentInstanceID,
-				args.LeaseToken,
-				args.OverrideToken,
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(projects),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"create_project",
+				"tillsyn",
+				"project",
+				"new",
+				map[string]string{"name": strings.TrimSpace(args.Name)},
 			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
+				OverrideToken:   args.OverrideToken,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -173,10 +231,10 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
-			mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-			mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-			mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-			mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -186,8 +244,8 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 				Description     string                 `json:"description"`
 				Kind            string                 `json:"kind"`
 				Metadata        domain.ProjectMetadata `json:"metadata"`
-				ActorType       string                 `json:"actor_type"`
-				AgentName       string                 `json:"agent_name"`
+				SessionID       string                 `json:"session_id"`
+				SessionSecret   string                 `json:"session_secret"`
 				AgentInstanceID string                 `json:"agent_instance_id"`
 				LeaseToken      string                 `json:"lease_token"`
 				OverrideToken   string                 `json:"override_token"`
@@ -201,15 +259,27 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			if strings.TrimSpace(args.Name) == "" {
 				return mcp.NewToolResultError(`invalid_request: required argument "name" not found`), nil
 			}
-			actor, err := buildMCPMutationActorTuple(
-				args.ActorType,
-				"",
-				"",
-				args.AgentName,
-				args.AgentInstanceID,
-				args.LeaseToken,
-				args.OverrideToken,
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(projects),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"update_project",
+				"tillsyn",
+				"project",
+				args.ProjectID,
+				map[string]string{"project_id": strings.TrimSpace(args.ProjectID)},
 			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
+				OverrideToken:   args.OverrideToken,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -280,12 +350,10 @@ func registerTaskTools(
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
 				mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
-				mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
-				mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
-				mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-				mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-				mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -301,10 +369,8 @@ func registerTaskTools(
 					DueAt           string              `json:"due_at"`
 					Labels          []string            `json:"labels"`
 					Metadata        domain.TaskMetadata `json:"metadata"`
-					ActorID         string              `json:"actor_id"`
-					ActorName       string              `json:"actor_name"`
-					ActorType       string              `json:"actor_type"`
-					AgentName       string              `json:"agent_name"`
+					SessionID       string              `json:"session_id"`
+					SessionSecret   string              `json:"session_secret"`
 					AgentInstanceID string              `json:"agent_instance_id"`
 					LeaseToken      string              `json:"lease_token"`
 					OverrideToken   string              `json:"override_token"`
@@ -321,15 +387,31 @@ func registerTaskTools(
 				if strings.TrimSpace(args.Title) == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
 				}
-				actor, err := buildMCPMutationActorTuple(
-					args.ActorType,
-					args.ActorID,
-					args.ActorName,
-					args.AgentName,
-					args.AgentInstanceID,
-					args.LeaseToken,
-					args.OverrideToken,
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"create_task",
+					"project:"+strings.TrimSpace(args.ProjectID),
+					"task",
+					"new",
+					map[string]string{
+						"project_id": strings.TrimSpace(args.ProjectID),
+						"column_id":  strings.TrimSpace(args.ColumnID),
+						"scope":      strings.TrimSpace(args.Scope),
+					},
 				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -369,12 +451,10 @@ func registerTaskTools(
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
 				mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
-				mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
-				mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
-				mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-				mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-				mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -386,10 +466,8 @@ func registerTaskTools(
 					DueAt           string               `json:"due_at"`
 					Labels          []string             `json:"labels"`
 					Metadata        *domain.TaskMetadata `json:"metadata"`
-					ActorID         string               `json:"actor_id"`
-					ActorName       string               `json:"actor_name"`
-					ActorType       string               `json:"actor_type"`
-					AgentName       string               `json:"agent_name"`
+					SessionID       string               `json:"session_id"`
+					SessionSecret   string               `json:"session_secret"`
 					AgentInstanceID string               `json:"agent_instance_id"`
 					LeaseToken      string               `json:"lease_token"`
 					OverrideToken   string               `json:"override_token"`
@@ -403,15 +481,27 @@ func registerTaskTools(
 				if strings.TrimSpace(args.Title) == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
 				}
-				actor, err := buildMCPMutationActorTuple(
-					args.ActorType,
-					args.ActorID,
-					args.ActorName,
-					args.AgentName,
-					args.AgentInstanceID,
-					args.LeaseToken,
-					args.OverrideToken,
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"update_task",
+					"tillsyn",
+					"task",
+					strings.TrimSpace(args.TaskID),
+					map[string]string{"task_id": strings.TrimSpace(args.TaskID)},
 				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -443,41 +533,62 @@ func registerTaskTools(
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("to_column_id", mcp.Required(), mcp.Description("Destination column identifier")),
 				mcp.WithNumber("position", mcp.Required(), mcp.Description("Destination position")),
-				mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-				mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-				mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				taskID, err := req.RequireString("task_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				var args struct {
+					TaskID          string `json:"task_id"`
+					ToColumnID      string `json:"to_column_id"`
+					Position        int    `json:"position"`
+					SessionID       string `json:"session_id"`
+					SessionSecret   string `json:"session_secret"`
+					AgentInstanceID string `json:"agent_instance_id"`
+					LeaseToken      string `json:"lease_token"`
+					OverrideToken   string `json:"override_token"`
 				}
-				toColumnID, err := req.RequireString("to_column_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
 				}
-				position, err := req.RequireInt("position")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
 				}
-				actor, err := buildMCPMutationActorTuple(
-					req.GetString("actor_type", ""),
-					"",
-					"",
-					req.GetString("agent_name", ""),
-					req.GetString("agent_instance_id", ""),
-					req.GetString("lease_token", ""),
-					req.GetString("override_token", ""),
+				toColumnID := strings.TrimSpace(args.ToColumnID)
+				if toColumnID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "to_column_id" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"move_task",
+					"tillsyn",
+					"task",
+					taskID,
+					map[string]string{"task_id": taskID, "to_column_id": toColumnID},
 				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				task, err := tasks.MoveTask(ctx, common.MoveTaskRequest{
 					TaskID:     taskID,
 					ToColumnID: toColumnID,
-					Position:   position,
+					Position:   args.Position,
 					Actor:      actor,
 				})
 				if err != nil {
@@ -497,32 +608,56 @@ func registerTaskTools(
 				mcp.WithDescription("Delete one task/work-item (archive or hard)."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
-				mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-				mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-				mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				taskID, err := req.RequireString("task_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				var args struct {
+					TaskID          string `json:"task_id"`
+					Mode            string `json:"mode"`
+					SessionID       string `json:"session_id"`
+					SessionSecret   string `json:"session_secret"`
+					AgentInstanceID string `json:"agent_instance_id"`
+					LeaseToken      string `json:"lease_token"`
+					OverrideToken   string `json:"override_token"`
 				}
-				actor, err := buildMCPMutationActorTuple(
-					req.GetString("actor_type", ""),
-					"",
-					"",
-					req.GetString("agent_name", ""),
-					req.GetString("agent_instance_id", ""),
-					req.GetString("lease_token", ""),
-					req.GetString("override_token", ""),
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"delete_task",
+					"tillsyn",
+					"task",
+					taskID,
+					map[string]string{"task_id": taskID, "mode": strings.TrimSpace(args.Mode)},
 				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				if err := tasks.DeleteTask(ctx, common.DeleteTaskRequest{
 					TaskID: taskID,
-					Mode:   req.GetString("mode", ""),
+					Mode:   args.Mode,
 					Actor:  actor,
 				}); err != nil {
 					return toolResultFromError(err), nil
@@ -530,7 +665,7 @@ func registerTaskTools(
 				result, err := mcp.NewToolResultJSON(map[string]any{
 					"deleted": true,
 					"task_id": taskID,
-					"mode":    req.GetString("mode", ""),
+					"mode":    args.Mode,
 				})
 				if err != nil {
 					return nil, fmt.Errorf("encode delete_task result: %w", err)
@@ -544,26 +679,49 @@ func registerTaskTools(
 				"till.restore_task",
 				mcp.WithDescription("Restore one archived task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-				mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-				mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-				mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				taskID, err := req.RequireString("task_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				var args struct {
+					TaskID          string `json:"task_id"`
+					SessionID       string `json:"session_id"`
+					SessionSecret   string `json:"session_secret"`
+					AgentInstanceID string `json:"agent_instance_id"`
+					LeaseToken      string `json:"lease_token"`
+					OverrideToken   string `json:"override_token"`
 				}
-				actor, err := buildMCPMutationActorTuple(
-					req.GetString("actor_type", ""),
-					"",
-					"",
-					req.GetString("agent_name", ""),
-					req.GetString("agent_instance_id", ""),
-					req.GetString("lease_token", ""),
-					req.GetString("override_token", ""),
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"restore_task",
+					"tillsyn",
+					"task",
+					taskID,
+					map[string]string{"task_id": taskID},
 				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -588,32 +746,56 @@ func registerTaskTools(
 				mcp.WithDescription("Change parent relationship for one task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
-				mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-				mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-				mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				taskID, err := req.RequireString("task_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				var args struct {
+					TaskID          string `json:"task_id"`
+					ParentID        string `json:"parent_id"`
+					SessionID       string `json:"session_id"`
+					SessionSecret   string `json:"session_secret"`
+					AgentInstanceID string `json:"agent_instance_id"`
+					LeaseToken      string `json:"lease_token"`
+					OverrideToken   string `json:"override_token"`
 				}
-				actor, err := buildMCPMutationActorTuple(
-					req.GetString("actor_type", ""),
-					"",
-					"",
-					req.GetString("agent_name", ""),
-					req.GetString("agent_instance_id", ""),
-					req.GetString("lease_token", ""),
-					req.GetString("override_token", ""),
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"reparent_task",
+					"tillsyn",
+					"task",
+					taskID,
+					map[string]string{"task_id": taskID, "parent_id": strings.TrimSpace(args.ParentID)},
 				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				task, err := tasks.ReparentTask(ctx, common.ReparentTaskRequest{
 					TaskID:   taskID,
-					ParentID: req.GetString("parent_id", ""),
+					ParentID: args.ParentID,
 					Actor:    actor,
 				})
 				if err != nil {
@@ -801,6 +983,8 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			mcp.WithArray("allowed_parent_scopes", mcp.Description("Allowed parent scope list"), mcp.WithStringItems()),
 			mcp.WithString("payload_schema_json", mcp.Description("Optional payload schema JSON")),
 			mcp.WithObject("template", mcp.Description("Optional template object")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args struct {
@@ -811,6 +995,8 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 				AllowedParentScopes []string            `json:"allowed_parent_scopes"`
 				PayloadSchemaJSON   string              `json:"payload_schema_json"`
 				Template            domain.KindTemplate `json:"template"`
+				SessionID           string              `json:"session_id"`
+				SessionSecret       string              `json:"session_secret"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -820,6 +1006,21 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			}
 			if len(args.AppliesTo) == 0 {
 				return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(kinds),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"upsert_kind_definition",
+				"tillsyn",
+				"kind_definition",
+				strings.TrimSpace(args.ID),
+				map[string]string{"kind_id": strings.TrimSpace(args.ID)},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			kind, err := kinds.UpsertKindDefinition(ctx, common.UpsertKindDefinitionRequest{
 				ID:                  args.ID,
@@ -847,26 +1048,51 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			mcp.WithDescription("Set explicit project allowed kind identifiers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithArray("kind_ids", mcp.Required(), mcp.Description("Allowed kind id list"), mcp.WithStringItems()),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				ProjectID     string   `json:"project_id"`
+				KindIDs       []string `json:"kind_ids"`
+				SessionID     string   `json:"session_id"`
+				SessionSecret string   `json:"session_secret"`
 			}
-			kindIDs, err := req.RequireStringSlice("kind_ids")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			projectID := strings.TrimSpace(args.ProjectID)
+			if projectID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+			}
+			if len(args.KindIDs) == 0 {
+				return mcp.NewToolResultError(`invalid_request: required argument "kind_ids" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(kinds),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"set_project_allowed_kinds",
+				"tillsyn",
+				"project",
+				projectID,
+				map[string]string{"project_id": projectID},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			if err := kinds.SetProjectAllowedKinds(ctx, common.SetProjectAllowedKindsRequest{
 				ProjectID: projectID,
-				KindIDs:   append([]string(nil), kindIDs...),
+				KindIDs:   append([]string(nil), args.KindIDs...),
 			}); err != nil {
 				return toolResultFromError(err), nil
 			}
 			result, err := mcp.NewToolResultJSON(map[string]any{
 				"updated":    true,
 				"project_id": projectID,
-				"kind_ids":   kindIDs,
+				"kind_ids":   args.KindIDs,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encode set_project_allowed_kinds result: %w", err)
@@ -919,35 +1145,73 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithBoolean("allow_equal_scope_delegation", mcp.Description("Allow equal-scope delegation")),
 			mcp.WithNumber("requested_ttl_seconds", mcp.Description("Optional TTL in seconds")),
 			mcp.WithString("override_token", mcp.Description("Optional orchestrator overlap override token")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				ProjectID                 string `json:"project_id"`
+				ScopeType                 string `json:"scope_type"`
+				ScopeID                   string `json:"scope_id"`
+				Role                      string `json:"role"`
+				AgentName                 string `json:"agent_name"`
+				AgentInstanceID           string `json:"agent_instance_id"`
+				ParentInstanceID          string `json:"parent_instance_id"`
+				AllowEqualScopeDelegation bool   `json:"allow_equal_scope_delegation"`
+				RequestedTTLSeconds       int    `json:"requested_ttl_seconds"`
+				OverrideToken             string `json:"override_token"`
+				SessionID                 string `json:"session_id"`
+				SessionSecret             string `json:"session_secret"`
 			}
-			scopeType, err := req.RequireString("scope_type")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
 			}
-			role, err := req.RequireString("role")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			projectID := strings.TrimSpace(args.ProjectID)
+			if projectID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 			}
-			agentName, err := req.RequireString("agent_name")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			scopeType := strings.TrimSpace(args.ScopeType)
+			if scopeType == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
+			}
+			role := strings.TrimSpace(args.Role)
+			if role == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "role" not found`), nil
+			}
+			agentName := strings.TrimSpace(args.AgentName)
+			if agentName == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(leases),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"issue_capability_lease",
+				"project:"+projectID,
+				"capability_lease",
+				firstNonEmptyString(strings.TrimSpace(args.ScopeID), projectID),
+				map[string]string{
+					"project_id": projectID,
+					"scope_type": scopeType,
+					"role":       role,
+				},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			lease, err := leases.IssueCapabilityLease(ctx, common.IssueCapabilityLeaseRequest{
 				ProjectID:                 projectID,
 				ScopeType:                 scopeType,
-				ScopeID:                   req.GetString("scope_id", ""),
+				ScopeID:                   args.ScopeID,
 				Role:                      role,
 				AgentName:                 agentName,
-				AgentInstanceID:           req.GetString("agent_instance_id", ""),
-				ParentInstanceID:          req.GetString("parent_instance_id", ""),
-				AllowEqualScopeDelegation: req.GetBool("allow_equal_scope_delegation", false),
-				RequestedTTLSeconds:       req.GetInt("requested_ttl_seconds", 0),
-				OverrideToken:             req.GetString("override_token", ""),
+				AgentInstanceID:           args.AgentInstanceID,
+				ParentInstanceID:          args.ParentInstanceID,
+				AllowEqualScopeDelegation: args.AllowEqualScopeDelegation,
+				RequestedTTLSeconds:       args.RequestedTTLSeconds,
+				OverrideToken:             args.OverrideToken,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -966,15 +1230,41 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithDescription("Heartbeat one active capability lease."),
 			mcp.WithString("agent_instance_id", mcp.Required(), mcp.Description("Agent instance identifier")),
 			mcp.WithString("lease_token", mcp.Required(), mcp.Description("Lease token")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			instanceID, err := req.RequireString("agent_instance_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				SessionID       string `json:"session_id"`
+				SessionSecret   string `json:"session_secret"`
 			}
-			leaseToken, err := req.RequireString("lease_token")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			instanceID := strings.TrimSpace(args.AgentInstanceID)
+			if instanceID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+			}
+			leaseToken := strings.TrimSpace(args.LeaseToken)
+			if leaseToken == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(leases),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"heartbeat_capability_lease",
+				"tillsyn",
+				"capability_lease",
+				instanceID,
+				map[string]string{"agent_instance_id": instanceID},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			lease, err := leases.HeartbeatCapabilityLease(ctx, common.HeartbeatCapabilityLeaseRequest{
 				AgentInstanceID: instanceID,
@@ -998,20 +1288,47 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("agent_instance_id", mcp.Required(), mcp.Description("Agent instance identifier")),
 			mcp.WithString("lease_token", mcp.Required(), mcp.Description("Lease token")),
 			mcp.WithNumber("ttl_seconds", mcp.Description("Optional renewal TTL in seconds")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			instanceID, err := req.RequireString("agent_instance_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				TTLSeconds      int    `json:"ttl_seconds"`
+				SessionID       string `json:"session_id"`
+				SessionSecret   string `json:"session_secret"`
 			}
-			leaseToken, err := req.RequireString("lease_token")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			instanceID := strings.TrimSpace(args.AgentInstanceID)
+			if instanceID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+			}
+			leaseToken := strings.TrimSpace(args.LeaseToken)
+			if leaseToken == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(leases),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"renew_capability_lease",
+				"tillsyn",
+				"capability_lease",
+				instanceID,
+				map[string]string{"agent_instance_id": instanceID},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			lease, err := leases.RenewCapabilityLease(ctx, common.RenewCapabilityLeaseRequest{
 				AgentInstanceID: instanceID,
 				LeaseToken:      leaseToken,
-				TTLSeconds:      req.GetInt("ttl_seconds", 0),
+				TTLSeconds:      args.TTLSeconds,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -1030,15 +1347,41 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithDescription("Revoke one capability lease by instance id."),
 			mcp.WithString("agent_instance_id", mcp.Required(), mcp.Description("Agent instance identifier")),
 			mcp.WithString("reason", mcp.Description("Optional revocation reason")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			instanceID, err := req.RequireString("agent_instance_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				AgentInstanceID string `json:"agent_instance_id"`
+				Reason          string `json:"reason"`
+				SessionID       string `json:"session_id"`
+				SessionSecret   string `json:"session_secret"`
+			}
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			instanceID := strings.TrimSpace(args.AgentInstanceID)
+			if instanceID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(leases),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"revoke_capability_lease",
+				"tillsyn",
+				"capability_lease",
+				instanceID,
+				map[string]string{"agent_instance_id": instanceID},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			lease, err := leases.RevokeCapabilityLease(ctx, common.RevokeCapabilityLeaseRequest{
 				AgentInstanceID: instanceID,
-				Reason:          req.GetString("reason", ""),
+				Reason:          args.Reason,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -1059,21 +1402,49 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("reason", mcp.Description("Optional revocation reason")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				ProjectID     string `json:"project_id"`
+				ScopeType     string `json:"scope_type"`
+				ScopeID       string `json:"scope_id"`
+				Reason        string `json:"reason"`
+				SessionID     string `json:"session_id"`
+				SessionSecret string `json:"session_secret"`
 			}
-			scopeType, err := req.RequireString("scope_type")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			projectID := strings.TrimSpace(args.ProjectID)
+			if projectID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+			}
+			scopeType := strings.TrimSpace(args.ScopeType)
+			if scopeType == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
+			}
+			if _, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(leases),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"revoke_all_capability_leases",
+				"project:"+projectID,
+				"capability_lease",
+				firstNonEmptyString(strings.TrimSpace(args.ScopeID), projectID),
+				map[string]string{"project_id": projectID, "scope_type": scopeType},
+			); err != nil {
+				return toolResultFromError(err), nil
 			}
 			if err := leases.RevokeAllCapabilityLeases(ctx, common.RevokeAllCapabilityLeasesRequest{
 				ProjectID: projectID,
 				ScopeType: scopeType,
-				ScopeID:   req.GetString("scope_id", ""),
-				Reason:    req.GetString("reason", ""),
+				ScopeID:   args.ScopeID,
+				Reason:    args.Reason,
 			}); err != nil {
 				return toolResultFromError(err), nil
 			}
@@ -1081,7 +1452,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 				"updated":    true,
 				"project_id": projectID,
 				"scope_type": scopeType,
-				"scope_id":   req.GetString("scope_id", ""),
+				"scope_id":   args.ScopeID,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encode revoke_all_capability_leases result: %w", err)
@@ -1106,40 +1477,65 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),
 			mcp.WithString("summary", mcp.Required(), mcp.Description("Markdown-rich summary for thread previews")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment")),
-			mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
-			mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
-			mcp.WithString("actor_type", mcp.Description("agent_orchestrator|agent_subagent")),
-			mcp.WithString("agent_name", mcp.Description("Agent name for authenticated agent mutations")),
-			mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for authenticated agent mutations")),
-			mcp.WithString("lease_token", mcp.Description("Lease token for authenticated agent mutations")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				ProjectID       string `json:"project_id"`
+				TargetType      string `json:"target_type"`
+				TargetID        string `json:"target_id"`
+				Summary         string `json:"summary"`
+				BodyMarkdown    string `json:"body_markdown"`
+				SessionID       string `json:"session_id"`
+				SessionSecret   string `json:"session_secret"`
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				OverrideToken   string `json:"override_token"`
 			}
-			targetType, err := req.RequireString("target_type")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
 			}
-			targetID, err := req.RequireString("target_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			projectID := strings.TrimSpace(args.ProjectID)
+			if projectID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 			}
-			summary, err := req.RequireString("summary")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			targetType := strings.TrimSpace(args.TargetType)
+			if targetType == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "target_type" not found`), nil
 			}
-			actor, err := buildMCPMutationActorTuple(
-				req.GetString("actor_type", ""),
-				req.GetString("actor_id", ""),
-				req.GetString("actor_name", ""),
-				req.GetString("agent_name", ""),
-				req.GetString("agent_instance_id", ""),
-				req.GetString("lease_token", ""),
-				req.GetString("override_token", ""),
+			targetID := strings.TrimSpace(args.TargetID)
+			if targetID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "target_id" not found`), nil
+			}
+			summary := strings.TrimSpace(args.Summary)
+			if summary == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "summary" not found`), nil
+			}
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(comments),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"create_comment",
+				"project:"+projectID,
+				"comment",
+				targetID,
+				map[string]string{"project_id": projectID, "target_type": targetType},
 			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
+				OverrideToken:   args.OverrideToken,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -1148,7 +1544,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				TargetType:   targetType,
 				TargetID:     targetID,
 				Summary:      summary,
-				BodyMarkdown: req.GetString("body_markdown", ""),
+				BodyMarkdown: strings.TrimSpace(args.BodyMarkdown),
 				Actor:        actor,
 			})
 			if err != nil {

@@ -11,3 +11,4 @@ bin/
 .go-build-cache/
 .tillsyn/
 .codex/
+.nvimlog

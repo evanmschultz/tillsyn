@@ -51,6 +51,14 @@ type Repository struct {
 	vecAvailable bool
 }
 
+// DB returns the underlying SQLite handle used by the repository.
+func (r *Repository) DB() *sql.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 // Open opens the requested operation.
 func Open(path string) (*Repository, error) {
 	if strings.TrimSpace(path) == "" {

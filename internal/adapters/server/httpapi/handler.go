@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // maxRequestBodyBytes limits decoded JSON payload size for fail-closed request handling.
@@ -21,6 +22,7 @@ const maxRequestBodyBytes int64 = 1 << 20
 type Handler struct {
 	captureState common.CaptureStateReader
 	attention    common.AttentionService
+	auth         common.MutationAuthorizer
 }
 
 // APIError represents one structured API failure response.
@@ -36,11 +38,49 @@ type ErrorEnvelope struct {
 	Error APIError `json:"error"`
 }
 
+// raiseAttentionItemPayload captures HTTP attention-create inputs plus session auth.
+type raiseAttentionItemPayload struct {
+	ProjectID          string `json:"project_id"`
+	ScopeType          string `json:"scope_type"`
+	ScopeID            string `json:"scope_id"`
+	Kind               string `json:"kind"`
+	Summary            string `json:"summary"`
+	BodyMarkdown       string `json:"body_markdown,omitempty"`
+	RequiresUserAction bool   `json:"requires_user_action"`
+	SessionID          string `json:"session_id"`
+	SessionSecret      string `json:"session_secret"`
+	AgentInstanceID    string `json:"agent_instance_id,omitempty"`
+	LeaseToken         string `json:"lease_token,omitempty"`
+	OverrideToken      string `json:"override_token,omitempty"`
+}
+
+// resolveAttentionItemPayload captures HTTP attention-resolve inputs plus session auth.
+type resolveAttentionItemPayload struct {
+	Reason          string `json:"reason,omitempty"`
+	SessionID       string `json:"session_id"`
+	SessionSecret   string `json:"session_secret"`
+	AgentInstanceID string `json:"agent_instance_id,omitempty"`
+	LeaseToken      string `json:"lease_token,omitempty"`
+	OverrideToken   string `json:"override_token,omitempty"`
+}
+
+// httpMutationGuardArgs stores the local lease tuple used after session auth succeeds.
+type httpMutationGuardArgs struct {
+	AgentInstanceID string
+	LeaseToken      string
+	OverrideToken   string
+}
+
 // NewHandler constructs one HTTP API adapter from capture and optional attention services.
 func NewHandler(captureState common.CaptureStateReader, attention common.AttentionService) *Handler {
+	var auth common.MutationAuthorizer
+	if authorizer, ok := attention.(common.MutationAuthorizer); ok {
+		auth = authorizer
+	}
 	return &Handler{
 		captureState: captureState,
 		attention:    attention,
+		auth:         auth,
 	}
 }
 
@@ -147,10 +187,49 @@ func (h *Handler) handleRaiseAttentionItem(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req common.RaiseAttentionItemRequest
-	if err := decodeJSONBody(r.Context(), w, r, &req); err != nil {
+	var payload raiseAttentionItemPayload
+	if err := decodeJSONBody(r.Context(), w, r, &payload); err != nil {
 		writeErrorFrom(w, err)
 		return
+	}
+	caller, err := authorizeHTTPMutation(
+		r.Context(),
+		h.auth,
+		payload.SessionID,
+		payload.SessionSecret,
+		"raise_attention_item",
+		"project:"+strings.TrimSpace(payload.ProjectID),
+		"attention_item",
+		"new",
+		map[string]string{
+			"project_id": strings.TrimSpace(payload.ProjectID),
+			"scope_type": strings.TrimSpace(payload.ScopeType),
+			"scope_id":   strings.TrimSpace(payload.ScopeID),
+			"kind":       strings.TrimSpace(payload.Kind),
+		},
+	)
+	if err != nil {
+		writeErrorFrom(w, err)
+		return
+	}
+	actor, err := buildAuthenticatedHTTPActor(caller, httpMutationGuardArgs{
+		AgentInstanceID: payload.AgentInstanceID,
+		LeaseToken:      payload.LeaseToken,
+		OverrideToken:   payload.OverrideToken,
+	})
+	if err != nil {
+		writeErrorFrom(w, err)
+		return
+	}
+	req := common.RaiseAttentionItemRequest{
+		ProjectID:          strings.TrimSpace(payload.ProjectID),
+		ScopeType:          strings.TrimSpace(payload.ScopeType),
+		ScopeID:            strings.TrimSpace(payload.ScopeID),
+		Kind:               strings.TrimSpace(payload.Kind),
+		Summary:            strings.TrimSpace(payload.Summary),
+		BodyMarkdown:       strings.TrimSpace(payload.BodyMarkdown),
+		RequiresUserAction: payload.RequiresUserAction,
+		Actor:              actor,
 	}
 	item, err := h.attention.RaiseAttentionItem(r.Context(), req)
 	if err != nil {
@@ -173,17 +252,39 @@ func (h *Handler) handleResolveAttentionItem(w http.ResponseWriter, r *http.Requ
 	req := common.ResolveAttentionItemRequest{
 		ID: itemID,
 	}
-	var payload common.ResolveAttentionItemRequest
+	var payload resolveAttentionItemPayload
 	if err := decodeOptionalJSONBody(r.Context(), w, r, &payload); err != nil {
 		writeErrorFrom(w, err)
 		return
 	}
-	if trimmed := strings.TrimSpace(payload.ResolvedBy); trimmed != "" {
-		req.ResolvedBy = trimmed
+	caller, err := authorizeHTTPMutation(
+		r.Context(),
+		h.auth,
+		payload.SessionID,
+		payload.SessionSecret,
+		"resolve_attention_item",
+		"attention",
+		"attention_item",
+		strings.TrimSpace(itemID),
+		nil,
+	)
+	if err != nil {
+		writeErrorFrom(w, err)
+		return
+	}
+	actor, err := buildAuthenticatedHTTPActor(caller, httpMutationGuardArgs{
+		AgentInstanceID: payload.AgentInstanceID,
+		LeaseToken:      payload.LeaseToken,
+		OverrideToken:   payload.OverrideToken,
+	})
+	if err != nil {
+		writeErrorFrom(w, err)
+		return
 	}
 	if trimmed := strings.TrimSpace(payload.Reason); trimmed != "" {
 		req.Reason = trimmed
 	}
+	req.Actor = actor
 
 	item, err := h.attention.ResolveAttentionItem(r.Context(), req)
 	if err != nil {
@@ -191,6 +292,63 @@ func (h *Handler) handleResolveAttentionItem(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+// authorizeHTTPMutation validates one authenticated session for HTTP write routes.
+func authorizeHTTPMutation(
+	ctx context.Context,
+	authorizer common.MutationAuthorizer,
+	sessionID string,
+	sessionSecret string,
+	action string,
+	namespace string,
+	resourceType string,
+	resourceID string,
+	authContext map[string]string,
+) (domain.AuthenticatedCaller, error) {
+	if authorizer == nil {
+		return domain.AuthenticatedCaller{}, fmt.Errorf("mutation authorizer is unavailable")
+	}
+	return authorizer.AuthorizeMutation(ctx, common.MutationAuthorizationRequest{
+		SessionID:     strings.TrimSpace(sessionID),
+		SessionSecret: strings.TrimSpace(sessionSecret),
+		Action:        strings.TrimSpace(action),
+		Namespace:     strings.TrimSpace(namespace),
+		ResourceType:  strings.TrimSpace(resourceType),
+		ResourceID:    strings.TrimSpace(resourceID),
+		Context:       authContext,
+	})
+}
+
+// buildAuthenticatedHTTPActor derives the app-level actor tuple from one authenticated caller.
+func buildAuthenticatedHTTPActor(caller domain.AuthenticatedCaller, guard httpMutationGuardArgs) (common.ActorLeaseTuple, error) {
+	caller = domain.NormalizeAuthenticatedCaller(caller)
+	if caller.IsZero() {
+		return common.ActorLeaseTuple{}, fmt.Errorf("authenticated caller is required: %w", common.ErrInvalidCaptureStateRequest)
+	}
+	actor := common.ActorLeaseTuple{
+		ActorID:   caller.PrincipalID,
+		ActorName: caller.PrincipalName,
+		ActorType: string(caller.PrincipalType),
+	}
+	guard.AgentInstanceID = strings.TrimSpace(guard.AgentInstanceID)
+	guard.LeaseToken = strings.TrimSpace(guard.LeaseToken)
+	guard.OverrideToken = strings.TrimSpace(guard.OverrideToken)
+	hasGuardTuple := guard.AgentInstanceID != "" || guard.LeaseToken != "" || guard.OverrideToken != ""
+	if caller.PrincipalType != domain.ActorTypeAgent {
+		if hasGuardTuple {
+			return common.ActorLeaseTuple{}, fmt.Errorf("guarded mutation tuple requires an authenticated agent session: %w", common.ErrInvalidCaptureStateRequest)
+		}
+		return actor, nil
+	}
+	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
+		return common.ActorLeaseTuple{}, fmt.Errorf("agent_instance_id and lease_token are required for authenticated agent mutations: %w", common.ErrInvalidCaptureStateRequest)
+	}
+	actor.AgentName = firstNonEmptyString(caller.PrincipalName, caller.PrincipalID)
+	actor.AgentInstanceID = guard.AgentInstanceID
+	actor.LeaseToken = guard.LeaseToken
+	actor.OverrideToken = guard.OverrideToken
+	return actor, nil
 }
 
 // resolveAttentionItemID parses `/attention/items/{id}/resolve` and returns `{id}`.
@@ -273,6 +431,51 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
+	case errors.Is(err, common.ErrSessionRequired):
+		return httpErrorMapping{
+			Class:      "auth",
+			StatusCode: http.StatusUnauthorized,
+			APIError: APIError{
+				Code:    "session_required",
+				Message: err.Error(),
+			},
+		}
+	case errors.Is(err, common.ErrInvalidAuthentication):
+		return httpErrorMapping{
+			Class:      "auth",
+			StatusCode: http.StatusUnauthorized,
+			APIError: APIError{
+				Code:    "invalid_auth",
+				Message: err.Error(),
+			},
+		}
+	case errors.Is(err, common.ErrSessionExpired):
+		return httpErrorMapping{
+			Class:      "auth",
+			StatusCode: http.StatusUnauthorized,
+			APIError: APIError{
+				Code:    "session_expired",
+				Message: err.Error(),
+			},
+		}
+	case errors.Is(err, common.ErrAuthorizationDenied):
+		return httpErrorMapping{
+			Class:      "auth",
+			StatusCode: http.StatusForbidden,
+			APIError: APIError{
+				Code:    "auth_denied",
+				Message: err.Error(),
+			},
+		}
+	case errors.Is(err, common.ErrGrantRequired):
+		return httpErrorMapping{
+			Class:      "auth",
+			StatusCode: http.StatusForbidden,
+			APIError: APIError{
+				Code:    "grant_required",
+				Message: err.Error(),
+			},
+		}
 	case errors.Is(err, common.ErrNotFound):
 		return httpErrorMapping{
 			Class:      "not_found",
@@ -310,6 +513,16 @@ func mapHTTPError(err error) httpErrorMapping {
 			},
 		}
 	}
+}
+
+// firstNonEmptyString returns the first trimmed non-empty string in order.
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // writeMethodNotAllowed writes a structured 405 response with `Allow` headers.

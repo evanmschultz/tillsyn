@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
 	"github.com/google/uuid"
+	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
 	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
 	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
 	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
@@ -68,7 +70,12 @@ var loggingLevelLinePattern = regexp.MustCompile(`(?m)^[ \t]*level[ \t]*=[^\r\n]
 
 // main handles main.
 func main() {
-	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		os.Exit(1)
 	}
 }
@@ -92,6 +99,26 @@ type serveCommandOptions struct {
 // mcpCommandOptions stores stdio MCP subcommand option values.
 type mcpCommandOptions struct{}
 
+// authCommandOptions stores auth subcommand option values.
+type authCommandOptions struct{}
+
+// issueSessionCommandOptions stores issue-session flag values.
+type issueSessionCommandOptions struct {
+	principalID   string
+	principalType string
+	principalName string
+	clientID      string
+	clientType    string
+	clientName    string
+	ttl           time.Duration
+}
+
+// revokeSessionCommandOptions stores revoke-session flag values.
+type revokeSessionCommandOptions struct {
+	sessionID string
+	reason    string
+}
+
 // exportCommandOptions stores export subcommand option values.
 type exportCommandOptions struct {
 	outPath         string
@@ -114,7 +141,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	rootOpts := rootCommandOptions{
 		appName: "tillsyn",
-		devMode: version == "dev",
+		devMode: false,
 	}
 	if envDev, ok := parseBoolEnv("TILL_DEV_MODE"); ok {
 		rootOpts.devMode = envDev
@@ -129,6 +156,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		mcpEndpoint: "/mcp",
 	}
 	mcpOpts := mcpCommandOptions{}
+	authOpts := authCommandOptions{}
+	issueSessionOpts := issueSessionCommandOptions{
+		principalType: "user",
+		clientID:      "till-mcp-stdio",
+		clientType:    "mcp-stdio",
+		clientName:    "Till MCP STDIO",
+		ttl:           8 * time.Hour,
+	}
+	revokeSessionOpts := revokeSessionCommandOptions{}
 	exportOpts := exportCommandOptions{
 		outPath:         "-",
 		includeArchived: true,
@@ -137,11 +173,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	rootCmd := &cobra.Command{
 		Use:           "till",
-		Short:         "Terminal kanban board with stdio MCP and HTTP adapters",
+		Short:         "Local-first planning TUI with stdio MCP and HTTP adapters",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	rootCmd.SetOut(stdout)
@@ -156,10 +192,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	serveCmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start HTTP and MCP endpoints",
+		Short: "Start HTTP API and streamable HTTP MCP endpoints",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	serveCmd.Flags().StringVar(&serveOpts.httpBind, "http", serveOpts.httpBind, "HTTP listen address")
@@ -168,19 +204,53 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Start MCP over stdio for local integrations",
+		Short: "Start raw MCP over stdio for local integrations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
+
+	authCmd := &cobra.Command{
+		Use:   "auth",
+		Short: "Manage local dogfood auth sessions",
+		Args:  cobra.NoArgs,
+	}
+
+	issueSessionCmd := &cobra.Command{
+		Use:   "issue-session",
+		Short: "Issue one local auth session for MCP dogfooding",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.issue-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalID, "principal-id", "", "Principal identifier")
+	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalType, "principal-type", issueSessionOpts.principalType, "Principal type (user|agent|service)")
+	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalName, "principal-name", "", "Optional principal display name")
+	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientID, "client-id", issueSessionOpts.clientID, "Client identifier")
+	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientType, "client-type", issueSessionOpts.clientType, "Client type")
+	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientName, "client-name", issueSessionOpts.clientName, "Client display name")
+	issueSessionCmd.Flags().DurationVar(&issueSessionOpts.ttl, "ttl", issueSessionOpts.ttl, "Session time-to-live duration")
+
+	revokeSessionCmd := &cobra.Command{
+		Use:   "revoke-session",
+		Short: "Revoke one local auth session",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.revoke-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	revokeSessionCmd.Flags().StringVar(&revokeSessionOpts.sessionID, "session-id", "", "Session identifier")
+	revokeSessionCmd.Flags().StringVar(&revokeSessionOpts.reason, "reason", "", "Revocation reason")
+	authCmd.AddCommand(issueSessionCmd, revokeSessionCmd)
 
 	exportCmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	exportCmd.Flags().StringVar(&exportOpts.outPath, "out", exportOpts.outPath, "Output file path ('-' for stdout)")
@@ -191,7 +261,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Import a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	importCmd.Flags().StringVar(&importOpts.inPath, "in", "", "Input snapshot JSON file")
@@ -224,7 +294,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, mcpCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -325,7 +395,7 @@ type resolvedRuntimePaths struct {
 	DBUsesLocalMCPRuntime     bool
 }
 
-// resolveRuntimePaths resolves config and DB paths, including stdio-MCP local runtime defaults.
+// resolveRuntimePaths resolves config and DB paths for the current command.
 func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform.Paths) (resolvedRuntimePaths, error) {
 	configPath := strings.TrimSpace(opts.configPath)
 	configOverridden := configPath != ""
@@ -354,71 +424,13 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 		DBPath:       dbPath,
 		DBOverridden: dbOverridden,
 	}
-	if command != "mcp" {
-		return out, nil
-	}
-
-	localPaths, err := localMCPRuntimePaths(opts)
-	if err != nil {
-		return resolvedRuntimePaths{}, fmt.Errorf("resolve local mcp runtime paths: %w", err)
-	}
-	if !configOverridden {
-		out.ConfigPath = localPaths.ConfigPath
-		out.ConfigUsesLocalMCPRuntime = true
-	}
-	if !dbOverridden {
-		out.DBPath = localPaths.DBPath
-		out.DBUsesLocalMCPRuntime = true
-	}
-	out.UsesLocalMCPRuntime = out.ConfigUsesLocalMCPRuntime || out.DBUsesLocalMCPRuntime
 	return out, nil
 }
 
-// localMCPRuntimePaths resolves repo-local config/data paths for stdio MCP sessions.
-func localMCPRuntimePaths(opts rootCommandOptions) (platform.Paths, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return platform.Paths{}, fmt.Errorf("resolve working directory: %w", err)
-	}
-	appName := effectiveAppName(opts.appName, opts.devMode)
-	baseDir := filepath.Join(workspaceRootFrom(cwd), ".tillsyn", "mcp", appName)
-	return platform.Paths{
-		ConfigPath: filepath.Join(baseDir, "config.toml"),
-		DataDir:    baseDir,
-		DBPath:     filepath.Join(baseDir, appName+".db"),
-	}, nil
-}
-
-// effectiveAppName normalizes app naming the same way as platform path resolution.
-func effectiveAppName(appName string, devMode bool) string {
-	appName = strings.TrimSpace(appName)
-	if appName == "" {
-		appName = "tillsyn"
-	}
-	if devMode {
-		appName += "-dev"
-	}
-	return appName
-}
-
-// ensureRuntimePathParents creates repo-local stdio MCP runtime parents before startup.
+// ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	if command != "mcp" || !paths.UsesLocalMCPRuntime {
-		return nil
-	}
-
-	parents := make([]string, 0, 2)
-	if paths.ConfigUsesLocalMCPRuntime {
-		parents = append(parents, filepath.Dir(paths.ConfigPath))
-	}
-	if paths.DBUsesLocalMCPRuntime {
-		parents = append(parents, filepath.Dir(paths.DBPath))
-	}
-	for _, parent := range parents {
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			return fmt.Errorf("create local mcp runtime directory %q: %w", parent, err)
-		}
-	}
+	_ = command
+	_ = paths
 	return nil
 }
 
@@ -493,6 +505,17 @@ func shellEscapePath(path string) string {
 		out.WriteRune(r)
 	}
 	return out.String()
+}
+
+// firstNonEmpty returns the first non-empty trimmed value in order.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // configExamplePath resolves the repository-local config example path.
@@ -604,6 +627,9 @@ func executeCommandFlow(
 	rootOpts rootCommandOptions,
 	serveOpts serveCommandOptions,
 	_ mcpCommandOptions,
+	_ authCommandOptions,
+	issueSessionOpts issueSessionCommandOptions,
+	revokeSessionOpts revokeSessionCommandOptions,
 	exportOpts exportCommandOptions,
 	importOpts importCommandOptions,
 	stdout io.Writer,
@@ -640,7 +666,7 @@ func executeCommandFlow(
 	if err != nil {
 		return fmt.Errorf("load config %q: %w", configPath, err)
 	}
-	if dbOverridden || (command == "mcp" && resolvedPaths.DBUsesLocalMCPRuntime) {
+	if dbOverridden {
 		cfg.Database.Path = dbPath
 	}
 	if command == "" {
@@ -687,6 +713,29 @@ func executeCommandFlow(
 	}()
 	logger.Info("sqlite repository ready", "db_path", cfg.Database.Path, "migrations", "ensured")
 
+	authSvc, err := autentauth.NewSharedDB(autentauth.Config{
+		DB:          repo.DB(),
+		TablePrefix: autentauth.DefaultTablePrefix,
+		IDGenerator: uuid.NewString,
+	})
+	if err != nil {
+		logger.Error("autent setup failed", "db_path", cfg.Database.Path, "err", err)
+		return fmt.Errorf("configure autent service: %w", err)
+	}
+	if err := authSvc.EnsureDogfoodPolicy(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			commandName := command
+			if commandName == "" {
+				commandName = "tui"
+			}
+			logger.Info("command flow complete", "command", commandName, "shutdown", "interrupt")
+			return nil
+		}
+		logger.Error("autent dogfood policy setup failed", "db_path", cfg.Database.Path, "err", err)
+		return fmt.Errorf("ensure autent dogfood policy: %w", err)
+	}
+	logger.Info("autent service ready", "db_path", cfg.Database.Path, "table_prefix", autentauth.DefaultTablePrefix)
+
 	var embeddingGenerator app.EmbeddingGenerator
 	if cfg.Embeddings.Enabled {
 		generator, err := fantasyembed.New(ctx, fantasyembed.Config{
@@ -719,7 +768,11 @@ func executeCommandFlow(
 		logger.Info("command flow start", "command", "tui")
 	case "serve":
 		logger.Info("command flow start", "command", "serve")
-		if err := runServe(ctx, svc, rootOpts.appName, serveOpts); err != nil {
+		if err := runServe(ctx, svc, authSvc, rootOpts.appName, serveOpts); err != nil {
+			if errors.Is(err, context.Canceled) {
+				logger.Info("command flow complete", "command", "serve", "shutdown", "interrupt")
+				return nil
+			}
 			logger.Error("command flow failed", "command", "serve", "err", err)
 			return fmt.Errorf("run serve command: %w", err)
 		}
@@ -727,11 +780,31 @@ func executeCommandFlow(
 		return nil
 	case "mcp":
 		logger.Info("command flow start", "command", "mcp", "transport", "stdio")
-		if err := runMCP(ctx, svc, rootOpts.appName, serveOpts); err != nil {
+		if err := runMCP(ctx, svc, authSvc, rootOpts.appName, serveOpts); err != nil {
+			if errors.Is(err, context.Canceled) {
+				logger.Info("command flow complete", "command", "mcp", "transport", "stdio", "shutdown", "interrupt")
+				return nil
+			}
 			logger.Error("command flow failed", "command", "mcp", "transport", "stdio", "err", err)
 			return fmt.Errorf("run mcp command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "mcp", "transport", "stdio")
+		return nil
+	case "auth.issue-session":
+		logger.Info("command flow start", "command", "auth.issue-session")
+		if err := runAuthIssueSession(ctx, authSvc, issueSessionOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.issue-session", "err", err)
+			return fmt.Errorf("run auth issue-session command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.issue-session")
+		return nil
+	case "auth.revoke-session":
+		logger.Info("command flow start", "command", "auth.revoke-session")
+		if err := runAuthRevokeSession(ctx, authSvc, revokeSessionOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.revoke-session", "err", err)
+			return fmt.Errorf("run auth revoke-session command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.revoke-session")
 		return nil
 	case "export":
 		logger.Info("command flow start", "command", "export")
@@ -819,8 +892,8 @@ func executeCommandFlow(
 }
 
 // runServe runs the serve subcommand flow.
-func runServe(ctx context.Context, svc *app.Service, appName string, opts serveCommandOptions) error {
-	appAdapter := servercommon.NewAppServiceAdapter(svc)
+func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts serveCommandOptions) error {
+	appAdapter := servercommon.NewAppServiceAdapter(svc, auth)
 	return serveCommandRunner(ctx, serveradapter.Config{
 		HTTPBind:      opts.httpBind,
 		APIEndpoint:   opts.apiEndpoint,
@@ -834,8 +907,8 @@ func runServe(ctx context.Context, svc *app.Service, appName string, opts serveC
 }
 
 // runMCP runs the stdio MCP subcommand flow.
-func runMCP(ctx context.Context, svc *app.Service, appName string, opts serveCommandOptions) error {
-	appAdapter := servercommon.NewAppServiceAdapter(svc)
+func runMCP(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts serveCommandOptions) error {
+	appAdapter := servercommon.NewAppServiceAdapter(svc, auth)
 	return mcpCommandRunner(ctx, serveradapter.Config{
 		MCPEndpoint:   opts.mcpEndpoint,
 		ServerName:    appName,
@@ -844,6 +917,88 @@ func runMCP(ctx context.Context, svc *app.Service, appName string, opts serveCom
 		CaptureState: appAdapter,
 		Attention:    appAdapter,
 	})
+}
+
+// runAuthIssueSession issues one local auth session for dogfood MCP use.
+func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts issueSessionCommandOptions, stdout io.Writer) error {
+	if auth == nil {
+		return fmt.Errorf("autent service is not configured")
+	}
+	principalID := strings.TrimSpace(opts.principalID)
+	if principalID == "" {
+		return fmt.Errorf("--principal-id is required")
+	}
+	issued, err := auth.IssueSession(ctx, autentauth.IssueSessionInput{
+		PrincipalID:   principalID,
+		PrincipalType: strings.TrimSpace(opts.principalType),
+		PrincipalName: strings.TrimSpace(opts.principalName),
+		ClientID:      strings.TrimSpace(opts.clientID),
+		ClientType:    strings.TrimSpace(opts.clientType),
+		ClientName:    strings.TrimSpace(opts.clientName),
+		TTL:           opts.ttl,
+	})
+	if err != nil {
+		return fmt.Errorf("issue auth session: %w", err)
+	}
+	payload, err := json.MarshalIndent(struct {
+		SessionID     string    `json:"session_id"`
+		SessionSecret string    `json:"session_secret"`
+		PrincipalID   string    `json:"principal_id"`
+		PrincipalType string    `json:"principal_type"`
+		PrincipalName string    `json:"principal_name"`
+		ClientID      string    `json:"client_id"`
+		ClientType    string    `json:"client_type"`
+		ClientName    string    `json:"client_name"`
+		ExpiresAt     time.Time `json:"expires_at"`
+	}{
+		SessionID:     issued.Session.ID,
+		SessionSecret: issued.Secret,
+		PrincipalID:   principalID,
+		PrincipalType: strings.TrimSpace(opts.principalType),
+		PrincipalName: firstNonEmpty(strings.TrimSpace(opts.principalName), principalID),
+		ClientID:      strings.TrimSpace(opts.clientID),
+		ClientType:    strings.TrimSpace(opts.clientType),
+		ClientName:    firstNonEmpty(strings.TrimSpace(opts.clientName), strings.TrimSpace(opts.clientID)),
+		ExpiresAt:     issued.Session.ExpiresAt.UTC(),
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode issued auth session: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "%s\n", payload); err != nil {
+		return fmt.Errorf("write issued auth session: %w", err)
+	}
+	return nil
+}
+
+// runAuthRevokeSession revokes one local auth session.
+func runAuthRevokeSession(ctx context.Context, auth *autentauth.Service, opts revokeSessionCommandOptions, stdout io.Writer) error {
+	if auth == nil {
+		return fmt.Errorf("autent service is not configured")
+	}
+	sessionID := strings.TrimSpace(opts.sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("--session-id is required")
+	}
+	session, err := auth.RevokeSession(ctx, sessionID, strings.TrimSpace(opts.reason))
+	if err != nil {
+		return fmt.Errorf("revoke auth session: %w", err)
+	}
+	payload, err := json.MarshalIndent(struct {
+		SessionID        string     `json:"session_id"`
+		RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+		RevocationReason string     `json:"revocation_reason,omitempty"`
+	}{
+		SessionID:        session.ID,
+		RevokedAt:        session.RevokedAt,
+		RevocationReason: session.RevocationReason,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode revoked auth session: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "%s\n", payload); err != nil {
+		return fmt.Errorf("write revoked auth session: %w", err)
+	}
+	return nil
 }
 
 // runExport runs the requested command flow.

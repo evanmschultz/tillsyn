@@ -190,25 +190,75 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("summary", mcp.Required(), mcp.Description("Markdown-rich summary for quick triage")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context")),
 			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			var args struct {
+				ProjectID          string `json:"project_id"`
+				ScopeType          string `json:"scope_type"`
+				ScopeID            string `json:"scope_id"`
+				Kind               string `json:"kind"`
+				Summary            string `json:"summary"`
+				BodyMarkdown       string `json:"body_markdown"`
+				RequiresUserAction bool   `json:"requires_user_action"`
+				SessionID          string `json:"session_id"`
+				SessionSecret      string `json:"session_secret"`
+				AgentInstanceID    string `json:"agent_instance_id"`
+				LeaseToken         string `json:"lease_token"`
+				OverrideToken      string `json:"override_token"`
 			}
-			scopeType, err := req.RequireString("scope_type")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
 			}
-			scopeID, err := req.RequireString("scope_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			projectID := strings.TrimSpace(args.ProjectID)
+			if projectID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 			}
-			kind, err := req.RequireString("kind")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			scopeType := strings.TrimSpace(args.ScopeType)
+			if scopeType == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
 			}
-			summary, err := req.RequireString("summary")
+			scopeID := strings.TrimSpace(args.ScopeID)
+			if scopeID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "scope_id" not found`), nil
+			}
+			kind := strings.TrimSpace(args.Kind)
+			if kind == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "kind" not found`), nil
+			}
+			summary := strings.TrimSpace(args.Summary)
+			if summary == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "summary" not found`), nil
+			}
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(attention),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"raise_attention_item",
+				"project:"+projectID,
+				"attention_item",
+				scopeID,
+				map[string]string{
+					"project_id": projectID,
+					"scope_type": scopeType,
+					"scope_id":   scopeID,
+				},
+			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
+				OverrideToken:   args.OverrideToken,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -218,8 +268,9 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 				ScopeID:            scopeID,
 				Kind:               kind,
 				Summary:            summary,
-				BodyMarkdown:       req.GetString("body_markdown", ""),
-				RequiresUserAction: req.GetBool("requires_user_action", false),
+				BodyMarkdown:       strings.TrimSpace(args.BodyMarkdown),
+				RequiresUserAction: args.RequiresUserAction,
+				Actor:              actor,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -237,18 +288,58 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			"till.resolve_attention_item",
 			mcp.WithDescription("Resolve one attention item by id."),
 			mcp.WithString("id", mcp.Required(), mcp.Description("Attention item id")),
-			mcp.WithString("resolved_by", mcp.Description("Actor resolving the item")),
 			mcp.WithString("reason", mcp.Description("Resolution reason")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			itemID, err := req.RequireString("id")
+			var args struct {
+				ID              string `json:"id"`
+				Reason          string `json:"reason"`
+				SessionID       string `json:"session_id"`
+				SessionSecret   string `json:"session_secret"`
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				OverrideToken   string `json:"override_token"`
+			}
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			itemID := strings.TrimSpace(args.ID)
+			if itemID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
+			}
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(attention),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"resolve_attention_item",
+				"tillsyn",
+				"attention_item",
+				itemID,
+				map[string]string{"attention_id": itemID},
+			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
+				OverrideToken:   args.OverrideToken,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			item, err := attention.ResolveAttentionItem(ctx, common.ResolveAttentionItemRequest{
-				ID:         itemID,
-				ResolvedBy: req.GetString("resolved_by", ""),
-				Reason:     req.GetString("reason", ""),
+				ID:     itemID,
+				Reason: strings.TrimSpace(args.Reason),
+				Actor:  actor,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -306,6 +397,36 @@ func mapToolError(err error) toolErrorMapping {
 			Class: "guardrail",
 			Code:  "guardrail_failed",
 			Text:  "guardrail_failed: " + err.Error(),
+		}
+	case errors.Is(err, common.ErrSessionRequired):
+		return toolErrorMapping{
+			Class: "auth",
+			Code:  "session_required",
+			Text:  "session_required: " + err.Error(),
+		}
+	case errors.Is(err, common.ErrInvalidAuthentication):
+		return toolErrorMapping{
+			Class: "auth",
+			Code:  "invalid_auth",
+			Text:  "invalid_auth: " + err.Error(),
+		}
+	case errors.Is(err, common.ErrSessionExpired):
+		return toolErrorMapping{
+			Class: "auth",
+			Code:  "session_expired",
+			Text:  "session_expired: " + err.Error(),
+		}
+	case errors.Is(err, common.ErrAuthorizationDenied):
+		return toolErrorMapping{
+			Class: "auth",
+			Code:  "auth_denied",
+			Text:  "auth_denied: " + err.Error(),
+		}
+	case errors.Is(err, common.ErrGrantRequired):
+		return toolErrorMapping{
+			Class: "auth",
+			Code:  "grant_required",
+			Text:  "grant_required: " + err.Error(),
 		}
 	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
 		return toolErrorMapping{
@@ -420,4 +541,10 @@ func pickCommentService(captureState common.CaptureStateReader, attention common
 		return svc
 	}
 	return nil
+}
+
+// pickMutationAuthorizer resolves one mutation authorizer from any service that supports auth-backed writes.
+func pickMutationAuthorizer(service any) common.MutationAuthorizer {
+	authorizer, _ := service.(common.MutationAuthorizer)
+	return authorizer
 }

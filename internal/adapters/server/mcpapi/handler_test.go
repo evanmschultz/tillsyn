@@ -36,6 +36,7 @@ func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.Capt
 
 // stubAttentionService provides deterministic attention responses for MCP tool tests.
 type stubAttentionService struct {
+	stubMutationAuthorizer
 	items       []common.AttentionItem
 	raised      common.AttentionItem
 	resolved    common.AttentionItem
@@ -50,6 +51,7 @@ type stubAttentionService struct {
 // stubProjectService provides deterministic project responses for expanded MCP tool registration tests.
 type stubProjectService struct {
 	stubCaptureStateReader
+	stubMutationAuthorizer
 	projects            []domain.Project
 	createResult        domain.Project
 	updateResult        domain.Project
@@ -59,6 +61,34 @@ type stubProjectService struct {
 	lastIncludeArchived bool
 	lastCreate          common.CreateProjectRequest
 	lastUpdate          common.UpdateProjectRequest
+}
+
+// stubMutationAuthorizer provides deterministic session-auth results for mutating MCP tool tests.
+type stubMutationAuthorizer struct {
+	authErr         error
+	authCaller      domain.AuthenticatedCaller
+	lastAuthRequest common.MutationAuthorizationRequest
+}
+
+// AuthorizeMutation records one auth request and returns one deterministic caller/error.
+func (s *stubMutationAuthorizer) AuthorizeMutation(_ context.Context, req common.MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
+	s.lastAuthRequest = req
+	if s.authErr != nil {
+		return domain.AuthenticatedCaller{}, s.authErr
+	}
+	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.SessionSecret) == "" {
+		return domain.AuthenticatedCaller{}, errors.Join(common.ErrSessionRequired, errors.New("missing session credentials"))
+	}
+	caller := domain.NormalizeAuthenticatedCaller(s.authCaller)
+	if caller.IsZero() {
+		caller = domain.AuthenticatedCaller{
+			PrincipalID:   "agent-1",
+			PrincipalName: "Agent One",
+			PrincipalType: domain.ActorTypeAgent,
+			SessionID:     strings.TrimSpace(req.SessionID),
+		}
+	}
+	return caller, nil
 }
 
 // ListProjects returns deterministic project list rows.
@@ -133,6 +163,25 @@ func callToolRequest(id int, toolName string, arguments map[string]any) map[stri
 			"arguments": arguments,
 		},
 	}
+}
+
+// validSessionArgs returns one deterministic auth session argument set for mutating tool calls.
+func validSessionArgs() map[string]any {
+	return map[string]any{
+		"session_id":     "sess-1",
+		"session_secret": "secret-1",
+	}
+}
+
+// mergeArgs returns one shallow-merged copy of multiple argument maps.
+func mergeArgs(maps ...map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, input := range maps {
+		for key, value := range input {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 // toolResultText decodes the first text entry from one tool-call result payload.
@@ -658,6 +707,41 @@ func TestToolResultFromErrorMapping(t *testing.T) {
 			wantLogClass: "guardrail",
 		},
 		{
+			name:         "session required",
+			err:          errors.Join(common.ErrSessionRequired, errors.New("missing session")),
+			wantPrefix:   "session_required:",
+			wantLogCode:  "session_required",
+			wantLogClass: "auth",
+		},
+		{
+			name:         "invalid auth",
+			err:          errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			wantPrefix:   "invalid_auth:",
+			wantLogCode:  "invalid_auth",
+			wantLogClass: "auth",
+		},
+		{
+			name:         "session expired",
+			err:          errors.Join(common.ErrSessionExpired, errors.New("expired")),
+			wantPrefix:   "session_expired:",
+			wantLogCode:  "session_expired",
+			wantLogClass: "auth",
+		},
+		{
+			name:         "auth denied",
+			err:          errors.Join(common.ErrAuthorizationDenied, errors.New("policy deny")),
+			wantPrefix:   "auth_denied:",
+			wantLogCode:  "auth_denied",
+			wantLogClass: "auth",
+		},
+		{
+			name:         "grant required",
+			err:          errors.Join(common.ErrGrantRequired, errors.New("approval needed")),
+			wantPrefix:   "grant_required:",
+			wantLogCode:  "grant_required",
+			wantLogClass: "auth",
+		},
+		{
 			name:         "invalid capture request",
 			err:          errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("bad request")),
 			wantPrefix:   "invalid_request:",
@@ -831,7 +915,7 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		t.Fatalf("list state = %q, want open", attention.lastList.State)
 	}
 
-	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.raise_attention_item", map[string]any{
+	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.raise_attention_item", mergeArgs(validSessionArgs(), map[string]any{
 		"project_id":           "p1",
 		"scope_type":           "project",
 		"scope_id":             "p1",
@@ -839,7 +923,9 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		"summary":              "Raised by tool",
 		"body_markdown":        "Details",
 		"requires_user_action": true,
-	}))
+		"agent_instance_id":    "inst-1",
+		"lease_token":          "lease-1",
+	})))
 	raiseStructured := toolResultStructured(t, raiseResp.Result)
 	if got, _ := raiseStructured["id"].(string); got != "a2" {
 		t.Fatalf("raised id = %q, want a2", got)
@@ -865,12 +951,16 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	if !attention.lastRaise.RequiresUserAction {
 		t.Fatalf("raise requires_user_action = false, want true")
 	}
+	if got := attention.lastRaise.Actor.ActorID; got != "agent-1" {
+		t.Fatalf("raise actor_id = %q, want agent-1", got)
+	}
 
-	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.resolve_attention_item", map[string]any{
-		"id":          "a1",
-		"resolved_by": "tester",
-		"reason":      "approved",
-	}))
+	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.resolve_attention_item", mergeArgs(validSessionArgs(), map[string]any{
+		"id":                "a1",
+		"reason":            "approved",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
+	})))
 	resolveStructured := toolResultStructured(t, resolveResp.Result)
 	if got, _ := resolveStructured["state"].(string); got != common.AttentionStateResolved {
 		t.Fatalf("resolved state = %q, want %q", got, common.AttentionStateResolved)
@@ -878,11 +968,11 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	if attention.lastResolve.ID != "a1" {
 		t.Fatalf("resolve id = %q, want a1", attention.lastResolve.ID)
 	}
-	if attention.lastResolve.ResolvedBy != "tester" {
-		t.Fatalf("resolve resolved_by = %q, want tester", attention.lastResolve.ResolvedBy)
-	}
 	if attention.lastResolve.Reason != "approved" {
 		t.Fatalf("resolve reason = %q, want approved", attention.lastResolve.Reason)
+	}
+	if got := attention.lastResolve.Actor.ActorID; got != "agent-1" {
+		t.Fatalf("resolve actor_id = %q, want agent-1", got)
 	}
 }
 

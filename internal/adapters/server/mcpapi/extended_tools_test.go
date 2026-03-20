@@ -2,6 +2,7 @@ package mcpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -16,6 +17,7 @@ import (
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
 type stubExpandedService struct {
 	stubCaptureStateReader
+	stubMutationAuthorizer
 	lastCreateTaskReq    common.CreateTaskRequest
 	lastUpdateTaskReq    common.UpdateTaskRequest
 	lastRestoreTaskReq   common.RestoreTaskRequest
@@ -539,94 +541,76 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.get_bootstrap_guide", args: map[string]any{}},
 		{name: "till.get_instructions", args: map[string]any{"include_markdown": false}},
 		{name: "till.list_projects", args: map[string]any{"include_archived": true}},
-		{name: "till.create_project", args: map[string]any{
+		{name: "till.create_project", args: mergeArgs(validSessionArgs(), map[string]any{
 			"name":              "Project One",
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
-		{name: "till.update_project", args: map[string]any{
+		})},
+		{name: "till.update_project", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",
 			"name":              "Project One Updated",
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
+		})},
 		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
-		{name: "till.create_task", args: map[string]any{
+		{name: "till.create_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",
 			"column_id":         "c1",
 			"title":             "Task One",
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
-		{name: "till.update_task", args: map[string]any{
+		})},
+		{name: "till.update_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"task_id":           "t1",
 			"title":             "Task One Updated",
-			"actor_type":        "agent_subagent",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
-		{name: "till.move_task", args: map[string]any{
+		})},
+		{name: "till.move_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"task_id":           "t1",
 			"to_column_id":      "c2",
 			"position":          1,
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
-		{name: "till.delete_task", args: map[string]any{
+		})},
+		{name: "till.delete_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"task_id":           "t1",
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
-		{name: "till.restore_task", args: map[string]any{
+		})},
+		{name: "till.restore_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"task_id":           "t1",
-			"actor_type":        "agent_subagent",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
-		{name: "till.reparent_task", args: map[string]any{
+		})},
+		{name: "till.reparent_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"task_id":           "t1",
 			"parent_id":         "parent-1",
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
+		})},
 		{name: "till.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
 		{name: "till.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
 		{name: "till.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
 		{name: "till.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
 		{name: "till.list_kind_definitions", args: map[string]any{}},
-		{name: "till.upsert_kind_definition", args: map[string]any{"id": "phase", "applies_to": []any{"phase"}}},
-		{name: "till.set_project_allowed_kinds", args: map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}}},
+		{name: "till.upsert_kind_definition", args: mergeArgs(validSessionArgs(), map[string]any{"id": "phase", "applies_to": []any{"phase"}})},
+		{name: "till.set_project_allowed_kinds", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}})},
 		{name: "till.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
-		{name: "till.issue_capability_lease", args: map[string]any{"project_id": "p1", "scope_type": "project", "role": "worker", "agent_name": "agent-1"}},
-		{name: "till.heartbeat_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"}},
-		{name: "till.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
-		{name: "till.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
-		{name: "till.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
-		{name: "till.create_comment", args: map[string]any{
+		{name: "till.issue_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "scope_type": "project", "role": "worker", "agent_name": "agent-1"})},
+		{name: "till.heartbeat_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"})},
+		{name: "till.renew_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
+		{name: "till.revoke_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1"})},
+		{name: "till.revoke_all_capability_leases", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "scope_type": "project"})},
+		{name: "till.create_comment", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",
 			"target_type":       "task",
 			"target_id":         "t1",
 			"summary":           "Thread summary",
 			"body_markdown":     "hello",
-			"actor_type":        "agent_orchestrator",
-			"agent_name":        "agent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
-		}},
+		})},
 		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
 	}
 	for idx, tc := range calls {
@@ -943,11 +927,19 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedToolForwardsActorTupleFields verifies actor tuple fields flow through task/comment tool requests.
-func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
+// TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession verifies mutation identity comes from auth, not caller-supplied actor fields.
+func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
 			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{
+			authCaller: domain.AuthenticatedCaller{
+				PrincipalID:   "agent-session-1",
+				PrincipalName: "Agent Session One",
+				PrincipalType: domain.ActorTypeAgent,
+				SessionID:     "sess-1",
+			},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -959,101 +951,87 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.create_task", map[string]any{
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.create_task", mergeArgs(validSessionArgs(), map[string]any{
 		"project_id":        "p1",
 		"column_id":         "c1",
 		"title":             "Task One",
-		"actor_type":        "agent_orchestrator",
-		"actor_id":          "actor-1",
-		"actor_name":        "Actor One",
-		"agent_name":        "agent-name",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
-	}))
+	})))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_task returned isError=true: %#v", createResp.Result)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("create_task actor_type = %q, want agent", got)
 	}
-	if got := service.lastCreateTaskReq.Actor.ActorID; got != "actor-1" {
-		t.Fatalf("create_task actor_id = %q, want actor-1", got)
+	if got := service.lastCreateTaskReq.Actor.ActorID; got != "agent-session-1" {
+		t.Fatalf("create_task actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastCreateTaskReq.Actor.ActorName; got != "Actor One" {
-		t.Fatalf("create_task actor_name = %q, want Actor One", got)
+	if got := service.lastCreateTaskReq.Actor.ActorName; got != "Agent Session One" {
+		t.Fatalf("create_task actor_name = %q, want Agent Session One", got)
 	}
 
-	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.update_task", map[string]any{
+	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.update_task", mergeArgs(validSessionArgs(), map[string]any{
 		"task_id":           "t1",
 		"title":             "Task One Updated",
-		"actor_type":        "agent_subagent",
-		"actor_id":          "upd-1",
-		"actor_name":        "Updater One",
-		"agent_name":        "EVAN",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
-	}))
+	})))
 	if isError, _ := updateResp.Result["isError"].(bool); isError {
 		t.Fatalf("update_task returned isError=true: %#v", updateResp.Result)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("update_task actor_type = %q, want agent", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "EVAN" {
-		t.Fatalf("update_task agent_name = %q, want EVAN", got)
+	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "Agent Session One" {
+		t.Fatalf("update_task agent_name = %q, want Agent Session One", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "upd-1" {
-		t.Fatalf("update_task actor_id = %q, want upd-1", got)
+	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "agent-session-1" {
+		t.Fatalf("update_task actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Updater One" {
-		t.Fatalf("update_task actor_name = %q, want Updater One", got)
+	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Agent Session One" {
+		t.Fatalf("update_task actor_name = %q, want Agent Session One", got)
 	}
 
-	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", map[string]any{
+	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", mergeArgs(validSessionArgs(), map[string]any{
 		"project_id":        "p1",
 		"target_type":       "task",
 		"target_id":         "t1",
 		"summary":           "Thread summary",
 		"body_markdown":     "hello",
-		"actor_id":          "commenter-1",
-		"actor_name":        "Commenter One",
-		"actor_type":        "agent_orchestrator",
-		"agent_name":        "agent-comment",
 		"agent_instance_id": "inst-comment",
 		"lease_token":       "lease-comment",
-	}))
+	})))
 	if isError, _ := commentResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_comment returned isError=true: %#v", commentResp.Result)
 	}
 	if got := service.lastCreateCommentReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("create_comment actor_type = %q, want agent", got)
 	}
-	if got := service.lastCreateCommentReq.Actor.ActorID; got != "commenter-1" {
-		t.Fatalf("create_comment actor_id = %q, want commenter-1", got)
+	if got := service.lastCreateCommentReq.Actor.ActorID; got != "agent-session-1" {
+		t.Fatalf("create_comment actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastCreateCommentReq.Actor.ActorName; got != "Commenter One" {
-		t.Fatalf("create_comment actor_name = %q, want Commenter One", got)
+	if got := service.lastCreateCommentReq.Actor.ActorName; got != "Agent Session One" {
+		t.Fatalf("create_comment actor_name = %q, want Agent Session One", got)
 	}
 	if got := service.lastCreateCommentReq.Summary; got != "Thread summary" {
 		t.Fatalf("create_comment summary = %q, want Thread summary", got)
 	}
 
-	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", map[string]any{
+	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", mergeArgs(validSessionArgs(), map[string]any{
 		"task_id":           "t1",
-		"actor_type":        "agent_subagent",
-		"agent_name":        "agent-1",
 		"agent_instance_id": "agent-1",
 		"lease_token":       "lease-1",
 		"override_token":    "override-1",
-	}))
+	})))
 	if isError, _ := restoreResp.Result["isError"].(bool); isError {
 		t.Fatalf("restore_task returned isError=true: %#v", restoreResp.Result)
 	}
 	if got := service.lastRestoreTaskReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("restore_task actor_type = %q, want agent", got)
 	}
-	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "agent-1" {
-		t.Fatalf("restore_task agent_name = %q, want agent-1", got)
+	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "Agent Session One" {
+		t.Fatalf("restore_task agent_name = %q, want Agent Session One", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.AgentInstanceID; got != "agent-1" {
 		t.Fatalf("restore_task agent_instance_id = %q, want agent-1", got)
@@ -1066,8 +1044,8 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedToolRejectsMCPUserSystemActorsAndMissingLease verifies MCP mutation actor policy enforcement.
-func TestHandlerExpandedToolRejectsMCPUserSystemActorsAndMissingLease(t *testing.T) {
+// TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples verifies session-first auth failures and tuple validation.
+func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
 			captureState: common.CaptureState{StateHash: "abc123"},
@@ -1082,59 +1060,66 @@ func TestHandlerExpandedToolRejectsMCPUserSystemActorsAndMissingLease(t *testing
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	userHTTPResp, userResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.create_task", map[string]any{
-		"project_id":        "p1",
-		"column_id":         "c1",
-		"title":             "user mutation",
-		"actor_type":        "user",
-		"agent_name":        "agent-1",
-		"agent_instance_id": "inst-1",
-		"lease_token":       "lease-1",
+	missingSessionHTTPResp, missingSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.create_task", map[string]any{
+		"project_id": "p1",
+		"column_id":  "c1",
+		"title":      "missing session mutation",
 	}))
-	if userHTTPResp.StatusCode == http.StatusOK {
-		if isError, _ := userResp.Result["isError"].(bool); !isError && len(userResp.Error) == 0 {
-			t.Fatalf("user actor_type call isError = %v, want true", userResp.Result["isError"])
+	if missingSessionHTTPResp.StatusCode == http.StatusOK {
+		if isError, _ := missingSessionResp.Result["isError"].(bool); !isError && len(missingSessionResp.Error) == 0 {
+			t.Fatalf("missing session call isError = %v, want true", missingSessionResp.Result["isError"])
 		}
 	}
-	if isError, _ := userResp.Result["isError"].(bool); isError {
-		if got := toolResultText(t, userResp.Result); !strings.Contains(got, "actor_type must be") {
-			t.Fatalf("user actor_type error = %q, want actor_type guidance", got)
+	if isError, _ := missingSessionResp.Result["isError"].(bool); isError {
+		if got := toolResultText(t, missingSessionResp.Result); !strings.Contains(got, "session_required:") {
+			t.Fatalf("missing session error = %q, want session_required guidance", got)
 		}
 	}
-	if userHTTPResp.StatusCode != http.StatusOK && userHTTPResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("user actor_type call isError = %v, want true", userResp.Result["isError"])
+	if missingSessionHTTPResp.StatusCode != http.StatusOK && missingSessionHTTPResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing session call isError = %v, want true", missingSessionResp.Result["isError"])
 	}
 
-	systemHTTPResp, systemResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.create_task", map[string]any{
-		"project_id":        "p1",
-		"column_id":         "c1",
-		"title":             "system mutation",
-		"actor_type":        "system",
-		"agent_name":        "agent-1",
-		"agent_instance_id": "inst-1",
-		"lease_token":       "lease-1",
-	}))
-	if systemHTTPResp.StatusCode == http.StatusOK {
-		if isError, _ := systemResp.Result["isError"].(bool); !isError && len(systemResp.Error) == 0 {
-			t.Fatalf("system actor_type call isError = %v, want true", systemResp.Result["isError"])
-		}
-	}
-	if isError, _ := systemResp.Result["isError"].(bool); isError {
-		if got := toolResultText(t, systemResp.Result); !strings.Contains(got, "actor_type must be") {
-			t.Fatalf("system actor_type error = %q, want actor_type guidance", got)
-		}
-	}
-	if systemHTTPResp.StatusCode != http.StatusOK && systemHTTPResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("system actor_type call isError = %v, want true", systemResp.Result["isError"])
+	service.authCaller = domain.AuthenticatedCaller{
+		PrincipalID:   "user-1",
+		PrincipalName: "User One",
+		PrincipalType: domain.ActorTypeUser,
+		SessionID:     "sess-1",
 	}
 
+	guardedUserHTTPResp, guardedUserResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.create_task", mergeArgs(validSessionArgs(), map[string]any{
+		"project_id":        "p1",
+		"column_id":         "c1",
+		"title":             "guarded user mutation",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
+	})))
+	if guardedUserHTTPResp.StatusCode == http.StatusOK {
+		if isError, _ := guardedUserResp.Result["isError"].(bool); !isError && len(guardedUserResp.Error) == 0 {
+			t.Fatalf("guarded user call isError = %v, want true", guardedUserResp.Result["isError"])
+		}
+	}
+	if isError, _ := guardedUserResp.Result["isError"].(bool); isError {
+		if got := toolResultText(t, guardedUserResp.Result); !strings.Contains(got, "guarded mutation tuple requires an authenticated agent session") {
+			t.Fatalf("guarded user error = %q, want guarded tuple guidance", got)
+		}
+	}
+	if guardedUserHTTPResp.StatusCode != http.StatusOK && guardedUserHTTPResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("guarded user call isError = %v, want true", guardedUserResp.Result["isError"])
+	}
+
+	service.authCaller = domain.AuthenticatedCaller{
+		PrincipalID:   "agent-1",
+		PrincipalName: "Agent One",
+		PrincipalType: domain.ActorTypeAgent,
+		SessionID:     "sess-1",
+	}
 	missingLeaseHTTPResp, missingLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4012, "till.create_task", map[string]any{
-		"project_id":  "p1",
-		"column_id":   "c1",
-		"title":       "missing lease mutation",
-		"actor_type":  "agent_orchestrator",
-		"agent_name":  "agent-1",
-		"lease_token": "lease-1",
+		"project_id":     "p1",
+		"column_id":      "c1",
+		"title":          "missing lease mutation",
+		"session_id":     "sess-1",
+		"session_secret": "secret-1",
+		"lease_token":    "lease-1",
 	}))
 	if missingLeaseHTTPResp.StatusCode == http.StatusOK {
 		if isError, _ := missingLeaseResp.Result["isError"].(bool); !isError && len(missingLeaseResp.Error) == 0 {
@@ -1167,17 +1152,15 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(401, "till.create_comment", map[string]any{
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(401, "till.create_comment", mergeArgs(validSessionArgs(), map[string]any{
 		"project_id":        "p1",
 		"target_type":       "branch",
 		"target_id":         "branch-1",
 		"summary":           "Branch note",
 		"body_markdown":     "hello",
-		"actor_type":        "agent_orchestrator",
-		"agent_name":        "agent-1",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
-	}))
+	})))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_comment returned isError=true: %#v", createResp.Result)
 	}
@@ -1228,5 +1211,69 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	}
 	if got := toolResultText(t, callResp.Result); !strings.HasPrefix(got, "invalid_request:") {
 		t.Fatalf("error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestHandlerExpandedMutationAuthErrorsMap verifies session/auth outcomes surface as deterministic tool-result errors for expanded mutation tools.
+func TestHandlerExpandedMutationAuthErrorsMap(t *testing.T) {
+	cases := []struct {
+		name       string
+		authErr    error
+		wantPrefix string
+	}{
+		{
+			name:       "invalid auth",
+			authErr:    errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			wantPrefix: "invalid_auth:",
+		},
+		{
+			name:       "session expired",
+			authErr:    errors.Join(common.ErrSessionExpired, errors.New("expired")),
+			wantPrefix: "session_expired:",
+		},
+		{
+			name:       "auth denied",
+			authErr:    errors.Join(common.ErrAuthorizationDenied, errors.New("policy deny")),
+			wantPrefix: "auth_denied:",
+		},
+		{
+			name:       "grant required",
+			authErr:    errors.Join(common.ErrGrantRequired, errors.New("approval needed")),
+			wantPrefix: "grant_required:",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			service := &stubExpandedService{
+				stubCaptureStateReader: stubCaptureStateReader{
+					captureState: common.CaptureState{StateHash: "abc123"},
+				},
+				stubMutationAuthorizer: stubMutationAuthorizer{
+					authErr: tc.authErr,
+				},
+			}
+			handler, err := NewHandler(Config{}, service, nil)
+			if err != nil {
+				t.Fatalf("NewHandler() error = %v", err)
+			}
+
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+			_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(1201, "till.create_project", mergeArgs(validSessionArgs(), map[string]any{
+				"name":              "Project One",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "lease-1",
+			})))
+			if isError, _ := callResp.Result["isError"].(bool); !isError {
+				t.Fatalf("isError = %v, want true", callResp.Result["isError"])
+			}
+			if got := toolResultText(t, callResp.Result); !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Fatalf("error text = %q, want prefix %q", got, tc.wantPrefix)
+			}
+		})
 	}
 }

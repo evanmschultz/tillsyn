@@ -1,25 +1,433 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-17
-Status: In progress; collaborative TUI validation passed `T1-01`, `T1-02` is substantially remediated, and the next implementation wave is now locked on STDIO-first MCP, an `autent`-aligned authenticated-caller foundation, and remaining attribution/runtime closeout.
+Updated: 2026-03-20
+Status: In progress; automated implementation plus QA-remediation follow-up for the current dogfood-to-MVP auth/runtime wave is now passing `just check` and `just ci`, with dual independent QA sign-off complete and collaborative retest still pending.
 
-## 1) Primary Goal
+## 1) Active Run Source Of Truth
 
-Finish `tillsyn` as a reliable local-first planning system for human + agent collaboration, with:
-1. stable TUI workflows,
-2. strict mutation guardrails,
-3. MCP/HTTP parity for critical flows,
-4. evidence-backed validation and closeout.
+This section is authoritative for the current auth/runtime remediation run.
 
-## 2) Canonical Active Docs
+1. `PLAN.md` is the only active checklist, status ledger, and completion ledger for this run.
+2. All other planning or validation markdown is reference-only unless this file explicitly points to it for corroborating evidence.
+3. Worker and QA subagents must map every acceptance claim, open blocker, command result, and sign-off note back to checklist ids in this file.
+4. If any secondary doc conflicts with this file, treat the mismatch as a blocker and resolve it here first.
+5. The orchestrator is the only writer for run completion state in this file.
 
-1. `PLAN.md` (this file): execution plan and phase/task tracker.
-2. `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`: canonical collaborative validation evidence.
-3. `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md`: remediation requirements and checkpoints.
-4. `MCP_FULL_TESTER_AGENT_RUNBOOK.md`: canonical MCP full-sweep run protocol.
-5. `MCP_DOGFOODING_WORKSHEET.md`: MCP/HTTP dogfooding worksheet.
-6. `PARALLEL_AGENT_RUNBOOK.md`: subagent orchestration policy.
+## 2) Run Goal
+
+Get `tillsyn` to a dogfood-ready near-MVP state for local human + agent collaboration by finishing one integrated wave that closes the current runtime, MCP, branding, and auth gaps without leaving confusing transitional behavior behind.
+
+This run is successful only if:
+1. `./till`, `./till mcp`, and `./till serve` dogfood the same real default runtime.
+2. Raw stdio MCP remains the primary local MCP path and is clean to operate.
+3. Stale product/runtime copy is cleaned up in live surfaces.
+4. Real `autent` integration replaces the current brittle tuple-first MCP auth boundary.
+5. Hierarchy-aware local workflow guardrails remain intact and test-covered.
+6. The resulting behavior is collaboratively revalidated with evidence.
+
+## 3) Locked Product Direction
+
+1. `till mcp` remains the raw stdio MCP server.
+2. `till serve` remains the secondary HTTP/API + HTTP MCP path.
+3. `./till`, `./till mcp`, and `./till serve` must use the same real default runtime unless the user explicitly opts into a different runtime.
+4. Local builds must not silently force dev mode.
+5. `Ctrl-C` on `till mcp` must be treated as normal shutdown, not an error-style failure.
+6. Remove stale `Kan` branding from live product/runtime surfaces in place. No compatibility naming shims.
+7. Do not add `till mcp-inspect` in this run unless the user explicitly approves it.
+8. `autent` is required in this run because the current MCP tuple/lease gatekeeping is too brittle for dogfooding.
+9. `autent` becomes the source of truth for caller identity, session lifecycle, generic authz decisions, grant escalation, and auth audit.
+10. `tillsyn` keeps hierarchy-derived scope/workflow rules local.
+11. Current request-local identity synthesis and tuple-first MCP auth must stop being the primary gate.
+12. Capability leases may remain temporarily only as secondary local workflow/delegation guardrails until auth integration is proven stable.
+
+## 4) Scope And Non-Goals
+
+In scope:
+1. runtime default-path unification
+2. stdio/serve runtime parity
+3. clean stdio shutdown behavior
+4. live product/help/bootstrap copy cleanup
+5. real `autent` embedding
+6. replacement of brittle MCP auth boundary
+7. attribution correctness from authenticated identity
+8. strong automated tests and collaborative rerun evidence
+
+Out of scope for this run unless the user explicitly reopens them:
+1. `till mcp-inspect`
+2. remote/team auth-tenancy
+3. broad operator/admin auth UI surfaces
+4. removal of all local workflow leases in the same wave
+5. unrelated roadmap items not required for this dogfood wave
+
+## 5) Architecture Decision Lock
+
+### 5.1 Auth Boundary
+
+`autent` owns:
+1. principal identity
+2. client identity
+3. session issue/validate/revoke
+4. generic authz decisioning
+5. grant escalation
+6. auth-owned audit
+
+`tillsyn` owns:
+1. project/branch/phase/task/subtask hierarchy
+2. hierarchy-derived resource mapping
+3. hierarchy-derived scope validation
+4. workflow semantics such as completion/start/cancel/archive rules
+5. local delegation/lock semantics if capability leases remain
+
+### 5.2 Storage Decision
+
+Current locked direction for this run:
+1. embed `autent` in shared-DB mode against the same `tillsyn` SQLite runtime
+2. use `autent_`-prefixed tables in the shared DB
+3. keep one local runtime and one SQLite file for dogfooding clarity
+
+Known caveat:
+1. shared DB does not automatically provide one cross-library outer transaction boundary; this must be handled explicitly or accepted as a limitation in the first wave
+
+### 5.3 MCP Auth Model
+
+1. MCP mutation auth must be session-first, not tuple-first.
+2. A valid authenticated session is required before local mutation logic runs.
+3. MCP write operations must derive caller identity from validated `autent` session state, not caller-supplied actor fallbacks.
+4. Local hierarchy/scope/delegation checks run after auth validation and are distinguishable from auth failures.
+
+## 6) Acceptance Matrix
+
+Every mutation-capable MCP surface in scope must satisfy the matrix below.
+
+| ID | Condition | Expected Result | Status | Evidence |
+|---|---|---|---|---|
+| AM-01 | no session supplied | fail closed before mutation with session-required semantics | PASS | `TestServiceAuthorizeSessionRequired`; `TestHandlerAttentionMutationsRequireSession`; `TestHandlerExpandedMutationAuthErrorsMap` |
+| AM-02 | invalid session id or secret | fail closed before mutation with invalid-auth semantics | PASS | `TestServiceAuthorizeInvalidSecretReturnsDecision`; `TestHandlerExpandedMutationAuthErrorsMap` |
+| AM-03 | expired session | fail closed before mutation with session-expired semantics | PASS | `TestServiceAuthorizeExpiredSessionReturnsDecision`; `TestHandlerExpandedMutationAuthErrorsMap` |
+| AM-04 | revoked session | fail closed before mutation with revoked/invalid auth semantics | PASS | `TestServiceAuthorizeRevokedSessionReturnsDecision`; `TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication` |
+| AM-05 | valid session but denied by policy | fail closed with deny semantics | PASS | `TestServiceAuthorizeDenyRuleReturnsDecision`; `TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied` |
+| AM-06 | valid session and escalation path required | return grant-required semantics without mutating | PASS | `TestServiceAuthorizeGrantRequiredReturnsDecision`; `TestAuthorizeMutationGrantRequiredReturnsGrantRequired` |
+| AM-07 | valid session and auth allow | proceed to local hierarchy/workflow validation | PASS | `TestServiceSharedDBAuthorizeAllow`; `TestRunAuthIssueSessionCredentialsAuthorizeMutation` |
+| AM-08 | auth allow but local scope/workflow/delegation reject | fail locally, distinct from auth failure | PASS | `TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples`; `TestHandlerAttentionAgentMutationsRequireGuardTuple` |
+| AM-09 | allowed mutation succeeds | mutation persists and visible behavior is correct | PASS | `internal/adapters/server/httpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution`; `internal/adapters/server/mcpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution` |
+| AM-10 | persisted attribution after allowed mutation | actor name/type come from authenticated identity, not request-local fallback strings | PASS | `internal/adapters/server/httpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution`; `internal/adapters/server/mcpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution`; `TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession` |
+
+## 7) Workstreams
+
+### 7.1 WS-Runtime
+
+Objective:
+Unify default runtime behavior and keep stdio MCP raw and clean.
+
+Acceptance:
+1. local builds no longer silently default to dev mode
+2. `./till`, `./till mcp`, and `./till serve` share the same real default runtime
+3. explicit dev/isolation still works by opt-in
+4. `Ctrl-C` on `till mcp` exits cleanly without error-style logging
+
+Primary likely files:
+1. `cmd/till/main.go`
+2. `cmd/till/main_test.go`
+3. `internal/platform/**`
+4. `internal/config/**`
+
+### 7.2 WS-Copy
+
+Objective:
+Remove stale product/runtime copy and align help/bootstrap output with current product direction.
+
+Acceptance:
+1. no live `Kan` product/runtime references remain in active user-facing surfaces
+2. bootstrap/help/runtime copy matches the locked runtime/auth model
+3. no compatibility copy shims are added
+
+Primary likely files:
+1. `cmd/till/main.go`
+2. `internal/adapters/server/common/app_service_adapter_mcp.go`
+3. `internal/adapters/server/common/mcp_surface.go`
+4. relevant tests
+
+### 7.3 WS-Auth
+
+Objective:
+Replace tuple-first MCP auth with real `autent` integration.
+
+Acceptance:
+1. `autent` is embedded and initialized from the shared runtime DB
+2. MCP write paths validate session/authz before local mutation logic
+3. request-local fallback identity is no longer the primary auth source
+4. auth decision results are mapped cleanly into MCP-visible outcomes
+5. attribution is derived from authenticated identity
+
+Primary likely files:
+1. new auth adapter package under `internal/adapters/**`
+2. `cmd/till/main.go`
+3. `internal/app/**`
+4. `internal/adapters/server/common/**`
+5. `internal/adapters/server/mcpapi/**`
+6. `internal/adapters/storage/sqlite/**`
+7. `go.mod`
+
+### 7.4 WS-Guard
+
+Objective:
+Keep local hierarchy/workflow guardrails correct after auth integration.
+
+Acceptance:
+1. hierarchy-derived local checks still fail closed where expected
+2. if capability leases remain, they are secondary local workflow/delegation guards only
+3. auth failures and local guard failures are distinguishable in tests and user-facing behavior
+
+Primary likely files:
+1. `internal/app/kind_capability.go`
+2. `internal/app/service.go`
+3. `internal/domain/**`
+4. relevant transport tests
+
+### 7.5 WS-Validation
+
+Objective:
+Prove the integrated result with automated tests and collaborative reruns.
+
+Acceptance:
+1. package-scoped `just test-pkg` checks pass for touched packages
+2. `just check` passes
+3. `just ci` passes
+4. collaborative auth/runtime rerun steps are executed and logged here
+5. QA sign-off is recorded here before handoff
+
+## 8) File And Module Investigation Checklist
+
+Before implementation in any lane, inspect and account for:
+1. `cmd/till/main.go`
+2. `cmd/till/main_test.go`
+3. `internal/domain/authenticated_caller.go`
+4. `internal/app/mutation_guard.go`
+5. `internal/app/kind_capability.go`
+6. `internal/app/service.go`
+7. `internal/app/ports.go`
+8. `internal/adapters/server/common/app_service_adapter_mcp.go`
+9. `internal/adapters/server/common/mcp_surface.go`
+10. `internal/adapters/server/mcpapi/extended_tools.go`
+11. `internal/adapters/server/mcpapi/handler.go`
+12. `internal/adapters/storage/sqlite/repo.go`
+13. `.tmp/autent/app/service.go`
+14. `.tmp/autent/sqlite/store.go`
+15. `.tmp/autent/docs/02-trust-model.md`
+16. `.tmp/autent/docs/03-sqlite-integration.md`
+17. `.tmp/autent/docs/06-tillsyn-integration.md`
+
+## 9) Implementation Sequence
+
+1. Finalize and lock this active run plan in `PLAN.md`.
+2. Keep all implementation subagents and QA sign-off mapped to ids in this file.
+3. Land runtime and copy cleanup required for shared dogfood runtime.
+4. Embed `autent` in shared-DB mode and wire startup/runtime integration.
+5. Replace MCP write-path auth to use session-first validation and authz decisions.
+6. Reconcile local hierarchy/workflow/delegation checks after auth.
+7. Update attribution persistence/read surfaces as needed.
+8. Run touched-package tests after each meaningful increment.
+9. Run `just check`.
+10. Run `just ci`.
+11. Execute collaborative rerun steps for the historical auth/runtime failure points.
+12. Record QA sign-off and remaining risks in this file before handoff.
+
+## 10) Test Plan
+
+Required automated coverage:
+1. runtime path/default-mode tests
+2. stdio shutdown behavior tests
+3. bootstrap/help/copy tests
+4. auth adapter tests:
+   - valid session
+   - invalid secret
+   - missing session
+   - revoked session
+   - expired session
+5. MCP transport tests:
+   - mutation succeeds with valid authenticated session
+   - mutation fails before mutation on auth failure
+   - restore-task regression is covered
+6. app-layer composition tests:
+   - auth allow + local allow
+   - auth allow + local scope/delegation reject
+   - auth deny/session failure before local mutation
+7. attribution tests:
+   - persisted user/agent identity is readable and correct
+8. storage integration tests:
+   - shared DB `autent_` table setup
+   - no accidental collision with existing `tillsyn` tables
+
+Required repo gates before handoff:
+1. `just check`
+2. `just ci`
+
+## 11) Collaborative Retest Checklist
+
+| ID | Step | Expected | Status | Evidence |
+|---|---|---|---|---|
+| CR-01 | start `./till mcp` on the shared real runtime | starts cleanly without `serve` | TODO | |
+| CR-02 | verify MCP tool discovery | tool list is present and healthy | TODO | |
+| CR-03 | run one allowed authenticated mutation | succeeds | TODO | |
+| CR-04 | revoke or invalidate the session and retry the same mutation | fails before mutation | TODO | |
+| CR-05 | run one valid-auth but local-scope-invalid mutation | fails locally, not as auth failure | TODO | |
+| CR-06 | rerun historical restore-task path | no brittle tuple mismatch | TODO | |
+| CR-07 | inspect attribution surfaces after authenticated mutation | readable actor name/type is correct | TODO | |
+| CR-08 | verify `./till`, `./till mcp`, and `./till serve` path parity | same real default runtime | TODO | |
+| CR-09 | verify `Ctrl-C` on `till mcp` | clean shutdown without error-style logging | TODO | |
+| CR-10 | verify no live `Kan` product/runtime copy remains in active surfaces | copy is clean | TODO | |
+
+## 12) Subagent And QA Completion Contract
+
+Every worker handoff for this run must include:
+1. checklist ids completed from this file
+2. files changed
+3. commands run and pass/fail outcomes
+4. exact tests run
+5. unresolved risks
+
+Every QA handoff for this run must include:
+1. checklist ids reviewed from this file
+2. explicit pass/fail for each reviewed id
+3. missing evidence or drift found
+4. sign-off or blocker status
+
+No lane or the run as a whole is complete until:
+1. all relevant checklist ids here are complete with evidence
+2. two QA reviews have signed off against this file
+3. `just check` and `just ci` pass
+4. the user confirms the collaborative retest behavior for the affected sections
+
+## 13) Evidence Ledger
+
+Commands run:
+1. `sed -n '1,240p' Justfile` -> PASS
+2. `sed -n '1,260p' PLAN.md` -> PASS
+3. `sed -n '1,260p' COLLAB_MCP_STDIO_AUTENT_EXECUTION_PLAN.md` -> PASS
+4. `sed -n '1,260p' COLLAB_MCP_STDIO_AUTENT_VALIDATION_WORKSHEET.md` -> PASS
+5. `rg -n --hidden --glob '!**/.git/**' "Kan|kan" .` -> PASS
+6. `sed -n '1,260p' cmd/till/main.go` and follow-up reads -> PASS
+7. Context7 on `/mark3labs/mcp-go` transport APIs -> PASS
+8. `gh repo clone evanmschultz/autent .tmp/autent` -> PASS
+9. `.tmp/autent` code/docs inspection -> PASS
+10. parallel subagent investigations across current code, docs, and `autent` -> PASS
+11. Context7 resolve/query pass for `/mark3labs/mcp-go` re-run before implementation edits -> PASS
+12. Context7 lookup for `autent` unavailable; recorded fallback to local `.tmp/autent` docs/source -> PASS
+13. `git status --short` and targeted `rg`/`sed` inspection across runtime/auth hotspots -> PASS
+14. `just test-pkg ./cmd/till` -> PASS
+15. `just check` -> PASS
+16. `just test-pkg ./internal/adapters/server/common` -> PASS
+17. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+18. user ran `go get github.com/evanmschultz/autent@v0.1.1` -> PASS
+19. user ran `go mod tidy && go mod verify` -> PASS
+20. `just fmt` -> PASS
+21. `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+22. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`)
+23. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+24. `just test-pkg ./cmd/till` -> PASS
+25. `just check` -> PASS
+26. `just ci` -> PASS
+27. `rg -n "what_kan_is|Kan is|\\bKan\\b" cmd internal -g '*.go' -S` -> PASS (no live stale `Kan` product/runtime strings remain)
+28. `rg -n 'actor_id|actor_name|actor_type' internal/adapters/server/mcpapi -g '*.go' -S` -> PASS (matches only current tests, not production transport code)
+29. `rg -n 'session_id|session_secret' internal/adapters/server/mcpapi -g '*.go' -S` -> PASS (mutating MCP tools now advertise session-first auth fields)
+30. independent QA lane spawn:
+   - `QA-1` runtime/auth startup + CLI review -> pending final report
+   - `QA-2` MCP/auth transport review -> pending final report
+31. follow-up QA remediation loop:
+   - fixed secondary HTTP attention mutation auth bypass by requiring session-first auth on HTTP write routes and aligning HTTP auth error mapping -> PASS
+   - removed the remaining implicit-agent backward-compat mutation-guard shim -> PASS
+32. `just fmt` -> PASS
+33. `just test-pkg ./internal/adapters/server/httpapi` -> PASS
+34. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`; executable proof moved to higher-level packages to keep repo coverage gates honest)
+35. `just test-pkg ./cmd/till` -> PASS
+36. `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+37. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+38. `just check` -> PASS
+39. `just ci` -> PASS
+40. runtime/auth evidence additions:
+   - `TestResolveRuntimePathsCommandsShareDefaultNonDevRuntime` -> PASS
+   - `TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication` -> PASS
+   - `TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied` -> PASS
+   - `TestAuthorizeMutationGrantRequiredReturnsGrantRequired` -> PASS
+   - `TestServiceAuthorizeRevokedSessionReturnsDecision` -> PASS
+   - `TestServiceAuthorizeDenyRuleReturnsDecision` -> PASS
+   - `TestServiceAuthorizeGrantRequiredReturnsDecision` -> PASS
+41. HTTP auth evidence additions:
+   - `TestHandlerAttentionMutationsRequireSession` -> PASS
+   - `TestHandlerAttentionAgentMutationsRequireGuardTuple` -> PASS
+   - `TestWriteErrorFromMappingBranches` -> PASS for HTTP auth error codes
+42. persisted mutation / shutdown evidence additions:
+   - `TestHandlerAttentionMutationPersistsAuthenticatedAttribution` -> PASS
+   - `TestRunMCPCommandTreatsCanceledRunnerAsCleanShutdown` -> PASS (runner now reached before cancel)
+43. MCP persisted mutation evidence addition:
+   - `internal/adapters/server/mcpapi/handler_integration_test.go` -> `TestHandlerAttentionMutationPersistsAuthenticatedAttribution` -> PASS
+44. independent QA rerun requested after remediation:
+   - transport/copy lane -> PASS
+   - runtime/auth lane -> PASS
+
+Docs/process edits in this run so far:
+1. `.gitignore` updated to ignore `.nvimlog`
+2. `AGENTS.md` updated so this file is the active source of truth for the current run
+3. this active run plan was consolidated into `PLAN.md`
+4. recorded active implementation evidence and current blocker status in this ledger
+
+Product/code edits in this run so far:
+1. `cmd/till/main.go`
+   - default local runtime no longer silently enables dev mode
+   - `./till`, `./till mcp`, and `./till serve` now resolve the same default runtime paths
+   - `till mcp` cleanly treats interrupt-driven shutdown as non-error completion
+   - live CLI help copy now reflects stdio-primary / serve-secondary direction
+   - shared-DB `autent` startup is now wired into the runtime
+   - added local `till auth issue-session` and `till auth revoke-session` dogfood commands
+2. `cmd/till/main_test.go`
+   - runtime tests updated for shared-runtime dogfood contract
+   - added auth CLI help and issue/revoke session coverage
+3. `internal/adapters/server/common/mcp_surface.go`
+   - bootstrap JSON field renamed from `what_kan_is` to `what_tillsyn_is`
+4. `internal/adapters/server/common/app_service_adapter_mcp.go`
+   - stale bootstrap product copy changed from `Kan` to `Tillsyn`
+5. `internal/adapters/auth/autentauth/service.go`
+   - added shared-DB `autent` adapter with dogfood policy seeding, session issue/revoke, and session-first authorization
+6. `internal/adapters/auth/autentauth/service_test.go`
+   - added shared-DB setup, invalid secret, missing session, expired session, revoke, and record-reuse coverage
+7. `internal/adapters/server/common/app_service_adapter.go`
+   - added auth-backed `AuthorizeMutation` and attention mutation attribution/guard integration
+8. `internal/adapters/server/common/types.go`
+   - attention mutation request types now carry authenticated actor tuples
+9. `internal/adapters/server/mcpapi/extended_tools.go`
+   - mutating MCP tools now require `session_id` + `session_secret`
+   - stale caller-supplied MCP mutation identity fields were removed from production transport contracts
+   - session-authenticated caller identity now builds the downstream actor/lease tuple
+10. `internal/adapters/server/mcpapi/handler.go`
+   - attention mutation tools now use session-first auth
+   - MCP error mapping now distinguishes `session_required`, `invalid_auth`, `session_expired`, `auth_denied`, and `grant_required`
+11. `internal/adapters/server/mcpapi/*_test.go`
+   - MCP transport tests now cover session-first mutation paths and attention mutation auth
+12. `internal/adapters/storage/sqlite/repo.go`
+   - shared SQLite handle is exposed for `autent` shared-DB embedding
+
+Current blocker notes:
+1. Automated gates are green; no active code blocker remains for this wave.
+2. Pending closeout items are:
+   - final independent QA sign-off against the active top of `PLAN.md`
+   - collaborative manual retest on the new session-first stdio MCP flow
+
+Tests run:
+1. `just test-pkg ./cmd/till` -> PASS
+2. `just check` -> PASS
+3. `just test-pkg ./internal/adapters/server/common` -> PASS (`[no test files]`)
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+5. `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+6. `just fmt` -> PASS
+7. `just test-pkg ./cmd/till` -> PASS
+8. `just check` -> PASS
+9. `just ci` -> PASS
+
+## 14) Historical Material Boundary
+
+Everything below this point is retained as historical/reference material.
+It is not the active run checklist for the current auth/runtime remediation wave unless this active run section explicitly points back to it.
 
 ## 3) Locked Constraints And References
 

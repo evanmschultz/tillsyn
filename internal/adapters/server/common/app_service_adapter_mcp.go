@@ -16,9 +16,9 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 		return BootstrapGuide{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	return BootstrapGuide{
-		Mode:      "bootstrap_required",
-		Summary:   "No project context exists yet. Start by creating your first project and then capture state.",
-		WhatKanIs: "Kan is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, and summary-first recovery context.",
+		Mode:          "bootstrap_required",
+		Summary:       "No project context exists yet. Start by creating your first project and then capture state.",
+		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, and summary-first recovery context.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
 			"Task graph operations across branch/phase/task/subtask scopes",
@@ -583,7 +583,6 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	requestedActorType := strings.TrimSpace(strings.ToLower(actor.ActorType))
 	actorType := normalizeActorType(actor.ActorType)
 	if !isValidActorType(actorType) {
 		return nil, "", fmt.Errorf("actor_type %q is unsupported: %w", actor.ActorType, ErrInvalidCaptureStateRequest)
@@ -595,12 +594,7 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 	overrideToken := strings.TrimSpace(actor.OverrideToken)
 	hasGuardTuple := agentInstanceID != "" || leaseToken != "" || overrideToken != ""
 	if hasGuardTuple && actorType == domain.ActorTypeUser {
-		// Preserve backward compatibility for guard-aware callers that omitted actor_type.
-		if requestedActorType == "" {
-			actorType = domain.ActorTypeAgent
-		} else {
-			return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple: %w", ErrInvalidCaptureStateRequest)
-		}
+		return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple: %w", ErrInvalidCaptureStateRequest)
 	}
 	if actorType != domain.ActorTypeUser || hasGuardTuple {
 		if agentName == "" || agentInstanceID == "" || leaseToken == "" {
@@ -629,8 +623,7 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 }
 
 // deriveMutationActorIdentity resolves deterministic actor tuple values for mutating requests.
-// This remains a transport-local fallback until authenticated caller identity comes from an auth
-// session boundary such as a future autent integration.
+// Transport adapters should populate this from authenticated session identity whenever available.
 func deriveMutationActorIdentity(actor ActorLeaseTuple) (string, string) {
 	actorID := strings.TrimSpace(actor.ActorID)
 	if actorID == "" {

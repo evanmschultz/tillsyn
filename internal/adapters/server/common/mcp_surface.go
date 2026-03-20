@@ -18,7 +18,7 @@ var ErrGuardrailViolation = errors.New("guardrail violation")
 type BootstrapGuide struct {
 	Mode          string   `json:"mode"`
 	Summary       string   `json:"summary"`
-	WhatKanIs     string   `json:"what_kan_is"`
+	WhatTillsynIs string   `json:"what_tillsyn_is"`
 	Capabilities  []string `json:"capabilities"`
 	NextSteps     []string `json:"next_steps"`
 	Recommended   []string `json:"recommended_tools"`

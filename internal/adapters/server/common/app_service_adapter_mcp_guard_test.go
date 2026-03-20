@@ -54,19 +54,14 @@ func TestWithMutationGuardContext(t *testing.T) {
 			wantInvalidErr: true,
 		},
 		{
-			name: "omitted actor type with guard tuple normalizes to agent",
+			name: "omitted actor type with guard tuple is rejected",
 			actor: ActorLeaseTuple{
 				AgentName:       "agent-b",
 				AgentInstanceID: "agent-b-1",
 				LeaseToken:      "lease-b",
 				OverrideToken:   "override-b",
 			},
-			wantActorType:   domain.ActorTypeAgent,
-			wantGuard:       true,
-			wantAgentName:   "agent-b",
-			wantInstanceID:  "agent-b-1",
-			wantLeaseToken:  "lease-b",
-			wantOverrideTok: "override-b",
+			wantInvalidErr: true,
 		},
 		{
 			name: "explicit agent actor with guard tuple is accepted",
