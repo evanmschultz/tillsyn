@@ -78,6 +78,12 @@ type ApprovedAuthRequestResult struct {
 	SessionSecret string
 }
 
+// ClaimedAuthRequestResult carries one requester-visible auth request plus continuation secret material when available.
+type ClaimedAuthRequestResult struct {
+	Request       domain.AuthRequest
+	SessionSecret string
+}
+
 // ApproveAuthRequestInput captures fields for approving one auth request.
 type ApproveAuthRequestInput struct {
 	RequestID      string
@@ -121,12 +127,19 @@ type CancelAuthRequestInput struct {
 	ResolutionNote string
 }
 
+// ClaimAuthRequestInput captures fields for resuming one auth request through continuation metadata.
+type ClaimAuthRequestInput struct {
+	RequestID   string
+	ResumeToken string
+}
+
 // AuthRequestGateway defines the auth-request lifecycle needed by the app service.
 type AuthRequestGateway interface {
 	CreateAuthRequest(context.Context, domain.AuthRequest) (domain.AuthRequest, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, ApproveAuthRequestGatewayInput) (ApprovedAuthRequestResult, error)
+	ClaimAuthRequest(context.Context, string, string) (ClaimedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, string, string, domain.ActorType, string) (domain.AuthRequest, error)
 	CancelAuthRequest(context.Context, string, string, domain.ActorType, string) (domain.AuthRequest, error)
 }
@@ -255,6 +268,21 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestI
 		return ApprovedAuthRequestResult{}, err
 	}
 	return out, nil
+}
+
+// ClaimAuthRequest returns one requester-visible auth request state and approved session secret when the continuation token matches.
+func (s *Service) ClaimAuthRequest(ctx context.Context, in ClaimAuthRequestInput) (ClaimedAuthRequestResult, error) {
+	if s.authRequests == nil {
+		return ClaimedAuthRequestResult{}, fmt.Errorf("auth requests are not configured")
+	}
+	result, err := s.authRequests.ClaimAuthRequest(ctx, strings.TrimSpace(in.RequestID), strings.TrimSpace(in.ResumeToken))
+	if err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	return result, nil
 }
 
 // DenyAuthRequest denies one pending request and resolves its notification row.

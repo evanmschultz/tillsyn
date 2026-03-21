@@ -56,9 +56,8 @@ Implemented now:
 - Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
-- clearer `till auth` help, examples, and next-step guidance
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
-- richer MCP-client continuation and full client-side approval handoff ergonomics
+- orchestrator/subagent scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
@@ -87,7 +86,8 @@ Current auth note:
 - Normal TUI users should not need to manually issue themselves auth sessions for routine TUI use.
 - `till auth request create|list|show|approve|deny|cancel` and `till auth session list|validate|revoke` are now active for dogfood/operator use.
 - TUI auth-request notifications route to focused-project vs global panels, and `enter` opens auth review directly instead of a generic thread fallback.
-- TUI deny flow supports an editable note so the user can explain why a request was rejected.
+- TUI auth review now renders visible `[approve] [deny]` decision controls, and deny remains note-first with explicit confirm/cancel.
+- MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 
 Instruction-tool usage guidance:
@@ -163,6 +163,23 @@ Dogfood auth request/session commands:
 ./till auth session validate --session-id <session-id> --session-secret <session-secret>
 ./till auth session revoke --session-id <session-id> --reason operator_revoke
 ```
+
+Dogfood MCP continuation pattern:
+```json
+{
+  "tool": "till.create_auth_request",
+  "arguments": {
+    "path": "project/<project-id>",
+    "principal_id": "review-agent",
+    "principal_type": "agent",
+    "client_id": "till-mcp-stdio",
+    "reason": "dogfood request",
+    "continuation_json": "{\"resume_token\":\"opaque-requester-token\",\"resume_tool\":\"till.raise_attention_item\"}"
+  }
+}
+```
+
+After the user approves the request in the TUI, the requester can claim the approved session through MCP with the same `request_id` plus that `resume_token` using `till.claim_auth_request`.
 
 Current auth caveat:
 - the request/session commands above are the primary operator dogfood path

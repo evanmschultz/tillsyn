@@ -27,6 +27,7 @@ type stubExpandedService struct {
 	lastCreateAuthRequestReq common.CreateAuthRequestRequest
 	lastListAuthRequestsReq  common.ListAuthRequestsRequest
 	lastGetAuthRequestID     string
+	lastClaimAuthRequestReq  common.ClaimAuthRequestRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -126,6 +127,34 @@ func (s *stubExpandedService) GetAuthRequest(_ context.Context, requestID string
 		Reason:              "manual MCP review",
 		CreatedAt:           now,
 		ExpiresAt:           now.Add(30 * time.Minute),
+	}, nil
+}
+
+// ClaimAuthRequest returns one deterministic approved continuation result.
+func (s *stubExpandedService) ClaimAuthRequest(_ context.Context, in common.ClaimAuthRequestRequest) (common.AuthRequestClaimResult, error) {
+	s.lastClaimAuthRequestReq = in
+	expiresAt := time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return common.AuthRequestClaimResult{
+		Request: common.AuthRequestRecord{
+			ID:                     strings.TrimSpace(in.RequestID),
+			State:                  "approved",
+			Path:                   "project/p1",
+			ProjectID:              "p1",
+			ScopeType:              common.ScopeTypeProject,
+			ScopeID:                "p1",
+			PrincipalID:            "review-agent",
+			PrincipalType:          "agent",
+			ClientID:               "till-mcp-stdio",
+			ClientType:             "mcp-stdio",
+			RequestedSessionTTL:    "2h0m0s",
+			Reason:                 "manual MCP review",
+			CreatedAt:              now,
+			ExpiresAt:              now.Add(30 * time.Minute),
+			IssuedSessionID:        "sess-1",
+			IssuedSessionExpiresAt: &expiresAt,
+		},
+		SessionSecret: "secret-1",
 	}, nil
 }
 
@@ -570,6 +599,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.create_auth_request",
 		"till.list_auth_requests",
 		"till.get_auth_request",
+		"till.claim_auth_request",
 		"till.list_tasks",
 		"till.create_task",
 		"till.update_task",
@@ -636,6 +666,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		}},
 		{name: "till.list_auth_requests", args: map[string]any{"project_id": "p1", "state": "pending", "limit": 10}},
 		{name: "till.get_auth_request", args: map[string]any{"request_id": "req-1"}},
+		{name: "till.claim_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123"}},
 		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
 		{name: "till.create_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",

@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-21
-Status: In progress; the auth UX implementation wave is now green in local gates, including the restored coverage floor, but collaborative dogfood retest and final closeout evidence are still pending.
+Status: In progress; the auth UX implementation wave is green in local gates, the TUI review modal now has visible decision controls, and MCP request continuation now has a supported claim/resume path. The remaining dogfood blocker is first-class orchestrator/subagent scoped-auth choreography, including the orchestrator-only multi-project/general scope rules.
 
 ## 1) Active Run Source Of Truth
 
@@ -61,6 +61,25 @@ This run is successful only if:
 25. Notifications remain a first-class UX surface with global count, quick navigation, and quick-info drill-in for important runtime/MCP warnings and errors.
 26. Any substantial notifications-panel redesign must start with an ASCII-art proposal and clarifying questions before implementation.
 27. `MCP_DOGFOODING_WORKSHEET.md` and `VECTOR_SEARCH_EXECUTION_PLAN.md` are retired; the active run contract must now live in `PLAN.md`, with only user-facing summary material kept in `README.md`.
+28. Manual shell request creation remains a valid operator/debug path, but real dogfooding must work when the orchestrator requests auth through MCP and the user approves it in the TUI.
+29. The TUI auth review surface must use visible decision controls; users must not need hidden `a`/`d` hotkeys inside the review modal to understand or change the decision.
+30. Deny UX must be note-first and explicit: the user picks `deny`, writes an optional explanation for the requester, then confirms or cancels.
+31. Approve UX must be explicit and visible: the user picks `approve`, optionally narrows `path` and `ttl`, optionally edits the approval note, then confirms or cancels.
+32. After approval, the requesting MCP client must have a supported continuation path to resume without manual shell inspection/copying as the primary flow.
+33. Orchestrator and subagent auth must follow the same request/approval model with scoped path and lifecycle constraints; subagents should not depend on raw operator-issued sessions as the steady-state workflow.
+34. Approval, denial, and operator notes must be fully operable from both the CLI and the TUI.
+35. Operators must be able to view waiting approvals and resolved auth-request inventory from both CLI and TUI surfaces.
+36. Approved scope remains path-first:
+   - project-only,
+   - project/branch,
+   - project/branch/nested phase lineage.
+37. Subagents may only request one single-project rooted path at a time.
+38. Orchestrators may request either:
+   - one single-project rooted path,
+   - a multi-project scope,
+   - or one general/global orchestration scope.
+39. Multi-project or general/global scopes are orchestrator-only; subagents must never receive them.
+40. Any future multi-project or general/global scope shape must still be reviewable, approvable, deniable, listed, and audited through the same auth-request lifecycle.
 
 ## 4) Scope And Non-Goals
 
@@ -181,6 +200,30 @@ Known caveat:
    - decision labels must be explicit and user-facing,
    - request state must distinguish pending, approved, denied, canceled, and expired/timeout paths,
    - timeout/cancel behavior must be reviewable in CLI, TUI, and audit surfaces.
+16. MCP continuation after approval is part of the product contract for dogfooding:
+   - the requester must be able to discover approval completion,
+   - the requester must be able to retrieve or resume with the approved session through a supported MCP/operator flow,
+   - shell inspection may remain as a fallback, but not as the primary expected dogfood workflow.
+17. Orchestrator/subagent auth choreography is part of the next implementation scope:
+   - orchestrator requests its own scoped session through MCP,
+   - user approves or denies in TUI,
+   - orchestrator resumes through the supported continuation path,
+   - orchestrator can then request narrower subagent scopes through the same model rather than bypassing it with raw session issuance.
+18. Approval and denial notes are part of the primary lifecycle contract in both CLI and TUI:
+   - approve must support an optional operator note,
+   - deny must support an optional explanation for the requester,
+   - list/show surfaces must preserve enough note/state detail for later review.
+19. Waiting-approval inventory is a first-class auth surface:
+   - CLI must support listing pending requests deterministically,
+   - TUI must expose pending requests through notifications/review surfaces,
+   - resolved inventory must remain inspectable for audit and troubleshooting.
+20. Scope rules for this run are:
+   - subagents: one project-rooted path with optional branch and nested phases,
+   - orchestrators: one project-rooted path, multi-project scope, or general/global scope.
+21. Path remains part of approval itself, not only request creation:
+   - approvals may narrow the requested path,
+   - approval output must clearly show the final approved path/scope,
+   - denial/cancel flows must still retain the originally requested path in inventory/audit.
 
 ### 5.5 Notification Routing Contract
 
@@ -195,6 +238,9 @@ Known caveat:
 9. Auth review must allow both approve and deny decisions with an editable resolution note; approve also keeps editable path and TTL constraints.
 10. Actionable notifications copy should describe required review work, not imply a misleading actor taxonomy such as `Agent/User Action`.
 11. If the notifications UX is redesigned in this wave, start with ASCII-art and clarifying questions before implementation.
+12. Auth review must present decision state visibly in the modal itself, with explicit `approve` and `deny` controls rather than hidden modal-only decision hotkeys.
+13. Deny review should simplify the surface to note + confirm/cancel once `deny` is chosen.
+14. Approve review should keep the richer constrained fields visible only when `approve` is chosen.
 
 ### 5.6 CLI Help And Discoverability Contract
 
@@ -247,6 +293,15 @@ The dogfood auth UX and operator/help surfaces must satisfy the matrix below bef
 | AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, direct auth review, and clear actionable section wording remain explicit and testable | PASS | `TestModelPanelFocusTraversalIncludesGlobalNotifications`; `TestModelGlobalNotificationsEnterOpensAuthReview`; `TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible`; `TestModelViewRendersGenericConfirmHints` |
 | AU-13 | operator chooses shell approval instead of TUI approval | full request/session lifecycle is operable from CLI with explicit examples and deterministic outputs | PASS | `cmd/till/main_test.go:442`; `cmd/till/main_test.go:601`; `cmd/till/main_test.go:648`; `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; `cmd/till/main_test.go:786` |
 | AU-14 | `till auth request approve --help` is opened | exact decision labels, `--path` semantics, and continuation behavior are explicit | PASS | `cmd/till/main_test.go:450` |
+| AU-15 | a user opens auth review in the TUI | review modal shows visible approve vs deny controls instead of relying on hidden decision hotkeys | PASS | `internal/tui/model_test.go:7520`; collaborative finding fixed 2026-03-21 |
+| AU-16 | a user denies an auth request in the TUI | deny path becomes note-first with explicit confirm/cancel, and does not expose irrelevant approve-only fields | PASS | `internal/tui/model_test.go:7331`; collaborative finding fixed 2026-03-21 |
+| AU-17 | an orchestrator requests access through MCP and the user approves it in the TUI | orchestrator can resume through a supported continuation/poll path without shell-only glue as the primary workflow | PASS | `internal/adapters/server/mcpapi/handler_test.go:1234`; `internal/app/auth_requests_test.go:147`; `internal/adapters/server/common/app_service_adapter_auth_requests_test.go:146` |
+| AU-18 | an orchestrator needs to provision scoped subagent access | subagent auth requests follow the same request/approval model with narrower path/lifecycle scopes instead of bypassing through raw operator-issued sessions | PENDING | missing orchestrator/subagent auth choreography; plan expansion 2026-03-21 |
+| AU-19 | an operator needs to review pending approvals from the shell | CLI can list pending auth requests clearly enough to approve, deny, or inspect them without guesswork | PASS | `cmd/till/main_test.go:627`; collaborative shell retest 2026-03-21 |
+| AU-20 | an operator needs to review approved/denied/canceled inventory from the shell | CLI list/show surfaces preserve path, state, and resolution-note context | PASS | `cmd/till/main_test.go:648`; `cmd/till/main_test.go:769`; collaborative shell retest 2026-03-21 |
+| AU-21 | a user approves or denies from the shell | CLI approve/deny both support notes and preserve path-aware output/audit fields | PASS | `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; collaborative shell retest 2026-03-21 |
+| AU-22 | a subagent requests access | requested scope is limited to one single-project rooted path with optional branch/nested phases | PENDING | scope-policy addition from 2026-03-21; not implemented yet |
+| AU-23 | an orchestrator requests access across multiple projects or generally | only orchestrator-shaped requests may carry multi-project or general/global scope, and those scopes remain explicit in review/audit surfaces | PENDING | scope-policy addition from 2026-03-21; not implemented yet |
 
 ### 6.1 Latest Checkpoint Evidence
 
@@ -326,6 +381,40 @@ Outcome: pass after the TUI auth-review remediation.
 Outcome:
    - TUI QA pass after fixing the generic confirm-hint regression and adding direct decision-switch coverage.
    - Docs QA pass after syncing `README.md` and `PLAN.md` to the landed auth-review behavior and current dates.
+20. collaborative dogfood finding after the first end-to-end retest
+Outcome:
+   - the current auth review modal still feels confusing in live use because the decision switch relies on hidden modal hotkeys,
+   - the desired next contract is visible `approve|deny` decision UI, note-first deny review, and explicit confirm/cancel,
+   - the current orchestrator/MCP flow still depends on manual shell glue after approval and therefore is not yet the real dogfood-ready path.
+21. follow-up remediation after the collaborative auth UX findings
+Outcome:
+   - auth review now renders visible `[approve] [deny]` decision controls in the modal itself,
+   - deny review remains note-first with explicit confirm/cancel and no approve-only scope fields,
+   - MCP callers can now use continuation-backed `till.claim_auth_request` to resume after approval and retrieve the approved session secret without shell-only glue,
+   - CI Node 20 warnings were addressed by bumping `goreleaser/goreleaser-action` from `@v6` to `@v7` in both workflow files.
+22. `just test-pkg ./internal/adapters/auth/autentauth`
+Outcome: pass.
+23. `just test-pkg ./internal/app`
+Outcome: pass.
+24. `just test-pkg ./internal/adapters/server/common`
+Outcome: pass after fixing the test fixture to use unique request ids and valid client type for the continuation case.
+25. `just test-pkg ./internal/adapters/server/mcpapi`
+Outcome: pass after extending the expanded tool surface test stub with the new claim tool.
+26. `just test-pkg ./internal/tui`
+Outcome: pass after updating confirm-hint assertions for the visible decision selector flow.
+27. `just check`
+Outcome: pass after the continuation/TUI/CI remediation.
+28. `just ci`
+Outcome: pass after the continuation/TUI/CI remediation.
+29. transport hardening follow-up for the new claim path
+Outcome:
+   - added MCP negative-path coverage so invalid continuation claims fail as `invalid_request`,
+   - reran `just test-pkg ./internal/adapters/server/mcpapi` -> pass,
+   - reran `just check` and `just ci` -> pass.
+30. independent QA reviews after the continuation/TUI/CI remediation
+Outcome:
+   - TUI/docs QA pass: visible decision controls, deny note-first review, and docs alignment confirmed,
+   - auth/CLI/MCP QA pass: no blocker found; residual note was addressed by adding MCP negative-path claim coverage.
 
 Checkpoint summary:
 1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.
@@ -343,6 +432,10 @@ Checkpoint summary:
    - `internal/adapters/auth/autentauth`: 74.1%
    - `internal/adapters/server/common`: 78.2%
    - `internal/tui`: 70.3%
+8. Collaborative retest is still not complete for true dogfood readiness because the next UX/continuation scope remains open:
+   - orchestrator/subagent scoped auth choreography,
+   - explicit orchestrator-only multi-project/general scope enforcement,
+   - user retest of the new MCP claim/resume path.
 
 ## 7) Workstreams
 
@@ -417,6 +510,11 @@ Acceptance:
 9. shell/operator approvals are fully supported as a first-class path, not a hidden emergency seam
 10. the CLI lifecycle and help quality borrow directly from the stronger `blick` patterns while staying `tillsyn`-specific on naming and project-path semantics
 11. principal/client lifecycle remains mostly implicit for dogfood users unless explicit registration is proven necessary
+12. TUI auth review uses visible decision controls instead of hidden modal hotkeys
+13. deny review collapses to note + confirm/cancel once deny is selected
+14. approve review keeps visible constrained path/ttl/note editing only when approve is selected
+15. CLI request/session inventory clearly supports pending-approval review, decision notes, and path-aware audit inspection
+16. scope rules distinguish orchestrator-only multi-project/general approvals from subagent single-project approvals
 
 Primary likely files:
 1. `cmd/till/main.go`
@@ -428,7 +526,28 @@ Primary likely files:
 7. `internal/adapters/auth/autentauth/**`
 8. `README.md`
 
-### 7.5 WS-Guard
+### 7.5 WS-Auth-Continuation
+
+Objective:
+Replace manual shell glue in the MCP/orchestrator approval loop with one supported continuation path that works for orchestrators and future subagent delegation.
+
+Acceptance:
+1. an MCP/orchestrator caller can create an auth request through MCP and later determine whether it was approved, denied, canceled, or expired without shell-only inspection as the primary workflow
+2. after approval, the orchestrator has one supported path to resume with the approved session/continuation data
+3. orchestrator-side follow-up flow is explicit enough to support requesting narrower subagent access through the same auth model
+4. continuation semantics are documented and test-covered across MCP and CLI/operator fallback surfaces
+5. orchestrator continuation/handoff is explicit enough to support later subagent request fan-out without shell-only glue
+6. path/scope information remains visible and final in continuation results so the requester knows the exact granted scope
+
+Primary likely files:
+1. `internal/adapters/server/mcpapi/**`
+2. `internal/adapters/server/common/**`
+3. `internal/app/**`
+4. `internal/adapters/auth/autentauth/**`
+5. `cmd/till/main.go`
+6. `cmd/till/main_test.go`
+
+### 7.6 WS-Guard
 
 Objective:
 Keep local hierarchy/workflow guardrails correct after auth integration.
@@ -444,7 +563,7 @@ Primary likely files:
 3. `internal/domain/**`
 4. relevant transport tests
 
-### 7.6 WS-Validation
+### 7.7 WS-Validation
 
 Objective:
 Prove the integrated result with automated tests and collaborative reruns.
@@ -488,14 +607,24 @@ Before implementation in any lane, inspect and account for:
 4. Embed `autent` in shared-DB mode and wire startup/runtime integration.
 5. Replace MCP write-path auth to use session-first validation and authz decisions.
 6. Lock the auth request/approval UX, notification routing, and CLI help contract against the real dogfood requirements.
-7. Reconcile local hierarchy/workflow/delegation checks after auth.
-8. Update attribution persistence/read surfaces as needed.
-9. Run touched-package tests after each meaningful increment.
-10. Run `just check`.
-11. Run `just ci`.
-12. Execute collaborative rerun steps for the historical auth/runtime failure points plus the newly exposed auth UX/help flows.
-13. Record QA sign-off and remaining risks in this file before handoff.
-14. Run this implementation wave with one explicit build lane and two explicit QA lanes logged in the split worklog for this checkpoint.
+7. Close the remaining TUI auth review UX gaps:
+   - visible approve vs deny controls,
+   - deny note-first flow,
+   - explicit confirm/cancel after the decision is visible.
+8. Land MCP/orchestrator continuation flow so approval can resume without shell-only glue.
+9. Tighten CLI/TUI approval inventory so waiting approvals, resolution notes, and final approved paths are explicit and easy to review.
+10. Define and implement the first orchestrator/subagent scoped-auth choreography on top of that continuation path.
+11. Enforce scope-policy boundaries:
+   - subagents single-project only,
+   - orchestrators may be single-project, multi-project, or general/global.
+12. Reconcile local hierarchy/workflow/delegation checks after auth.
+13. Update attribution persistence/read surfaces as needed.
+14. Run touched-package tests after each meaningful increment.
+15. Run `just check`.
+16. Run `just ci`.
+17. Execute collaborative rerun steps for the historical auth/runtime failure points plus the newly exposed auth UX/help flows.
+18. Record QA sign-off and remaining risks in this file before handoff.
+19. Run this implementation wave with one explicit build lane and two explicit QA lanes logged in the split worklog for this checkpoint.
 
 ### 9.1 Execution Model For The Next Auth UX Wave
 

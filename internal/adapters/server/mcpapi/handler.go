@@ -180,6 +180,37 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			return result, nil
 		},
 	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.claim_auth_request",
+			mcp.WithDescription("Claim one auth request continuation result by request id and requester-owned resume token."),
+			mcp.WithString("request_id", mcp.Required(), mcp.Description("Auth request identifier")),
+			mcp.WithString("resume_token", mcp.Required(), mcp.Description("Opaque requester-owned token stored in continuation_json when the request was created")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			requestID, err := req.RequireString("request_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			resumeToken, err := req.RequireString("resume_token")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			record, err := authRequests.ClaimAuthRequest(ctx, common.ClaimAuthRequestRequest{
+				RequestID:   requestID,
+				ResumeToken: resumeToken,
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(record)
+			if err != nil {
+				return nil, fmt.Errorf("encode claim_auth_request result: %w", err)
+			}
+			return result, nil
+		},
+	)
 }
 
 // NewHandler builds one stateless MCP streamable HTTP adapter with capture_state, attention, and optional app-backed tools.

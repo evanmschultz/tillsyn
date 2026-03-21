@@ -442,6 +442,25 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in app.ApproveAuthRequ
 	}, nil
 }
 
+// ClaimAuthRequest returns requester-visible request state and approved session secret when the continuation token matches.
+func (s *Service) ClaimAuthRequest(ctx context.Context, requestID, resumeToken string) (app.ClaimedAuthRequestResult, error) {
+	if s == nil || s.db == nil {
+		return app.ClaimedAuthRequestResult{}, fmt.Errorf("autent service is not configured: %w", autentdomain.ErrInvalidConfig)
+	}
+	req, err := s.GetAuthRequest(ctx, requestID)
+	if err != nil {
+		return app.ClaimedAuthRequestResult{}, err
+	}
+	if !authRequestResumeTokenMatches(req.Continuation, resumeToken) {
+		return app.ClaimedAuthRequestResult{}, domain.ErrInvalidAuthContinuation
+	}
+	result := app.ClaimedAuthRequestResult{Request: req}
+	if domain.NormalizeAuthRequestState(req.State) == domain.AuthRequestStateApproved {
+		result.SessionSecret = req.IssuedSessionSecret
+	}
+	return result, nil
+}
+
 // DenyAuthRequest denies one pending auth request.
 func (s *Service) DenyAuthRequest(ctx context.Context, requestID, resolvedBy string, resolvedType domain.ActorType, note string) (domain.AuthRequest, error) {
 	req, err := s.GetAuthRequest(ctx, requestID)
@@ -978,6 +997,16 @@ func authRequestPathWithin(requested, candidate domain.AuthRequestPath) bool {
 		}
 	}
 	return true
+}
+
+// authRequestResumeTokenMatches reports whether one continuation payload carries the expected requester token.
+func authRequestResumeTokenMatches(continuation map[string]any, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	got, _ := continuation["resume_token"].(string)
+	return strings.TrimSpace(got) == want
 }
 
 // authorizeApprovedPath enforces approved request path limits carried on session metadata.

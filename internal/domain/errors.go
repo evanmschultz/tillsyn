@@ -32,6 +32,7 @@ var (
 	ErrInvalidAuthRequestPath   = errors.New("invalid auth request path")
 	ErrInvalidAuthRequestState  = errors.New("invalid auth request state")
 	ErrInvalidAuthRequestTTL    = errors.New("invalid auth request ttl")
+	ErrInvalidAuthContinuation  = errors.New("invalid auth request continuation")
 	ErrInvalidCapabilityRole    = errors.New("invalid capability role")
 	ErrInvalidCapabilityScope   = errors.New("invalid capability scope")
 	ErrInvalidCapabilityToken   = errors.New("invalid capability token")

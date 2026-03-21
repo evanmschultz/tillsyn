@@ -225,6 +225,12 @@ type ListAuthRequestsRequest struct {
 	Limit     int
 }
 
+// ClaimAuthRequestRequest stores transport input for continuation-based auth-request resume.
+type ClaimAuthRequestRequest struct {
+	RequestID   string
+	ResumeToken string
+}
+
 // AuthRequestRecord stores one transport-facing auth request row.
 type AuthRequestRecord struct {
 	ID                     string         `json:"id"`
@@ -254,6 +260,12 @@ type AuthRequestRecord struct {
 	ResolutionNote         string         `json:"resolution_note,omitempty"`
 	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
 	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
+}
+
+// AuthRequestClaimResult stores one requester-visible auth request state plus approved session secret material.
+type AuthRequestClaimResult struct {
+	Request       AuthRequestRecord `json:"request"`
+	SessionSecret string            `json:"session_secret,omitempty"`
 }
 
 // ListCommentsByTargetRequest stores transport input for comment list queries.
@@ -341,6 +353,7 @@ type AuthRequestService interface {
 	CreateAuthRequest(context.Context, CreateAuthRequestRequest) (AuthRequestRecord, error)
 	ListAuthRequests(context.Context, ListAuthRequestsRequest) ([]AuthRequestRecord, error)
 	GetAuthRequest(context.Context, string) (AuthRequestRecord, error)
+	ClaimAuthRequest(context.Context, ClaimAuthRequestRequest) (AuthRequestClaimResult, error)
 }
 
 // durationFromSeconds converts positive integer seconds to a transport duration.

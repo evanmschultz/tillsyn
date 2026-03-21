@@ -383,7 +383,8 @@ const (
 
 // confirm dialog focus indexes used by auth-request approval editing.
 const (
-	confirmFocusAuthPath = iota
+	confirmFocusAuthDecision = iota
+	confirmFocusAuthPath
 	confirmFocusAuthTTL
 	confirmFocusAuthNote
 	confirmFocusButtons
@@ -2354,10 +2355,17 @@ func (m *Model) setConfirmFocus(focus int) tea.Cmd {
 	if m == nil {
 		return nil
 	}
-	if focus < confirmFocusAuthPath || focus > confirmFocusButtons {
+	if focus < confirmFocusAuthDecision || focus > confirmFocusButtons {
 		focus = confirmFocusButtons
 	}
 	if !m.authConfirmScopeFieldsActive() && focus <= confirmFocusAuthTTL {
+		if focus <= confirmFocusAuthDecision {
+			focus = confirmFocusAuthDecision
+		} else {
+			focus = confirmFocusAuthNote
+		}
+	}
+	if !m.authConfirmFieldsActive() && focus == confirmFocusAuthDecision {
 		focus = confirmFocusAuthNote
 	}
 	m.confirmFocus = focus
@@ -2365,6 +2373,8 @@ func (m *Model) setConfirmFocus(focus int) tea.Cmd {
 	m.confirmAuthTTLInput.Blur()
 	m.confirmAuthNoteInput.Blur()
 	switch focus {
+	case confirmFocusAuthDecision:
+		return nil
 	case confirmFocusAuthPath:
 		return m.confirmAuthPathInput.Focus()
 	case confirmFocusAuthTTL:
@@ -2404,10 +2414,10 @@ func (m Model) prepareConfirmAction() (confirmAction, error) {
 // confirmActionHints returns modal help copy for the current confirmation surface.
 func confirmActionHints(authMode, scopeEditable bool) string {
 	if authMode && scopeEditable {
-		return "a approve • d deny • tab move fields • enter next/apply • esc cancel • h/l switch buttons • y confirm • n cancel"
+		return "left/right choose decision • tab move fields • enter next/apply • esc cancel • h/l switch confirm buttons • y confirm • n cancel"
 	}
 	if authMode {
-		return "a approve • d deny • enter apply • esc cancel • h/l switch • y confirm • n cancel"
+		return "left/right choose decision • tab move fields • enter next/apply • esc cancel • h/l switch confirm buttons • y confirm • n cancel"
 	}
 	return "enter apply • esc cancel • h/l switch • y confirm • n cancel"
 }
@@ -2446,10 +2456,7 @@ func (m *Model) setPendingAuthRequestDecision(decision string) tea.Cmd {
 	m.pendingConfirm.Label = decision + " auth request"
 	m.pendingConfirm.AuthRequestDecision = decision
 	m.pendingConfirm.AuthRequestNote = currentNote
-	if decision == "approve" {
-		return m.setConfirmFocus(confirmFocusAuthPath)
-	}
-	return m.setConfirmFocus(confirmFocusAuthNote)
+	return nil
 }
 
 // configureTextInputClipboardBindings adds platform-friendly clipboard paste bindings for text inputs.
@@ -7923,6 +7930,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "d":
 				return m, m.setPendingAuthRequestDecision("deny")
 			case "h", "left", "l", "right":
+				if m.confirmFocus == confirmFocusAuthDecision {
+					if strings.TrimSpace(m.pendingConfirm.AuthRequestDecision) == "approve" {
+						return m, m.setPendingAuthRequestDecision("deny")
+					}
+					return m, m.setPendingAuthRequestDecision("approve")
+				}
 				if m.confirmFocus != confirmFocusButtons {
 					return m, m.setConfirmFocus(confirmFocusButtons)
 				}
@@ -7973,6 +7986,14 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m.applyConfirmedAction(action)
 			default:
 				switch m.confirmFocus {
+				case confirmFocusAuthDecision:
+					if msg.Code == tea.KeyEnter || msg.String() == "enter" {
+						if m.authConfirmScopeFieldsActive() {
+							return m, m.setConfirmFocus(confirmFocusAuthPath)
+						}
+						return m, m.setConfirmFocus(confirmFocusAuthNote)
+					}
+					return m, nil
 				case confirmFocusAuthPath:
 					var cmd tea.Cmd
 					m.confirmAuthPathInput, cmd = m.confirmAuthPathInput.Update(msg)
@@ -12203,7 +12224,8 @@ func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea
 	m.confirmAuthTTLInput.CursorEnd()
 	m.confirmAuthNoteInput.SetValue(m.pendingConfirm.AuthRequestNote)
 	m.confirmAuthNoteInput.CursorEnd()
-	return m, m.setPendingAuthRequestDecision(decision), true
+	_ = m.setPendingAuthRequestDecision(decision)
+	return m, m.setConfirmFocus(confirmFocusAuthDecision), true
 }
 
 // moveNoticesSelection moves section/item focus inside the notices panel.
@@ -15536,6 +15558,21 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			ttlInput.SetWidth(max(10, maxWidth-18))
 			noteInput.SetWidth(max(18, maxWidth-18))
 			lines = append(lines, hintStyle.Render("decision: "+strings.TrimSpace(m.pendingConfirm.AuthRequestDecision)))
+			approveStyle := lipgloss.NewStyle().Foreground(muted)
+			denyStyle := lipgloss.NewStyle().Foreground(muted)
+			if strings.TrimSpace(m.pendingConfirm.AuthRequestDecision) == "approve" {
+				approveStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
+			} else {
+				denyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+			}
+			if m.confirmFocus == confirmFocusAuthDecision {
+				if strings.TrimSpace(m.pendingConfirm.AuthRequestDecision) == "approve" {
+					approveStyle = approveStyle.Underline(true)
+				} else {
+					denyStyle = denyStyle.Underline(true)
+				}
+			}
+			lines = append(lines, approveStyle.Render("[approve]")+"  "+denyStyle.Render("[deny]"))
 			if m.authConfirmScopeFieldsActive() {
 				lines = append(lines,
 					hintStyle.Render("approve with scoped constraints"),

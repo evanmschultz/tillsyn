@@ -644,7 +644,7 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 		ClientName:          "Till MCP STDIO",
 		RequestedSessionTTL: 2 * time.Hour,
 		Reason:              "needs review",
-		Continuation:        map[string]any{"resume_tool": "till.raise_attention_item", "resume": map[string]any{"path": "project/p1"}},
+		Continuation:        map[string]any{"resume_tool": "till.raise_attention_item", "resume_token": "resume-123", "resume": map[string]any{"path": "project/p1"}},
 		State:               domain.AuthRequestStatePending,
 		RequestedByActor:    "lane-user",
 		RequestedByType:     domain.ActorTypeUser,
@@ -688,6 +688,16 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 	}
 	if approved.SessionSecret == "" {
 		t.Fatal("ApproveAuthRequest() returned empty session secret")
+	}
+	claimed, err := auth.ClaimAuthRequest(ctx, request.ID, "resume-123")
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	}
+	if claimed.Request.State != domain.AuthRequestStateApproved {
+		t.Fatalf("ClaimAuthRequest() state = %q, want approved", claimed.Request.State)
+	}
+	if claimed.SessionSecret != approved.SessionSecret {
+		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", claimed.SessionSecret)
 	}
 
 	allowed, err := auth.Authorize(ctx, AuthorizationRequest{

@@ -584,6 +584,7 @@ func mapAppError(operation string, err error) error {
 		errors.Is(err, domain.ErrInvalidAuthRequestPath),
 		errors.Is(err, domain.ErrInvalidAuthRequestState),
 		errors.Is(err, domain.ErrInvalidAuthRequestTTL),
+		errors.Is(err, domain.ErrInvalidAuthContinuation),
 		errors.Is(err, domain.ErrAuthRequestNotPending),
 		errors.Is(err, domain.ErrAuthRequestExpired),
 		errors.Is(err, domain.ErrInvalidSummary),

@@ -72,15 +72,18 @@ type stubProjectService struct {
 // stubAuthRequestService provides deterministic auth-request responses for MCP tool tests.
 type stubAuthRequestService struct {
 	stubCaptureStateReader
-	created    common.AuthRequestRecord
-	requests   []common.AuthRequestRecord
-	getResult  common.AuthRequestRecord
-	createErr  error
-	listErr    error
-	getErr     error
-	lastCreate common.CreateAuthRequestRequest
-	lastList   common.ListAuthRequestsRequest
-	lastGetID  string
+	created     common.AuthRequestRecord
+	requests    []common.AuthRequestRecord
+	getResult   common.AuthRequestRecord
+	claimResult common.AuthRequestClaimResult
+	createErr   error
+	listErr     error
+	getErr      error
+	claimErr    error
+	lastCreate  common.CreateAuthRequestRequest
+	lastList    common.ListAuthRequestsRequest
+	lastGetID   string
+	lastClaim   common.ClaimAuthRequestRequest
 }
 
 // stubMutationAuthorizer provides deterministic session-auth results for mutating MCP tool tests.
@@ -163,6 +166,15 @@ func (s *stubAuthRequestService) GetAuthRequest(_ context.Context, requestID str
 		return common.AuthRequestRecord{}, s.getErr
 	}
 	return s.getResult, nil
+}
+
+// ClaimAuthRequest records one continuation claim and returns one deterministic claim result.
+func (s *stubAuthRequestService) ClaimAuthRequest(_ context.Context, req common.ClaimAuthRequestRequest) (common.AuthRequestClaimResult, error) {
+	s.lastClaim = req
+	if s.claimErr != nil {
+		return common.AuthRequestClaimResult{}, s.claimErr
+	}
+	return s.claimResult, nil
 }
 
 // ListAttentionItems returns deterministic list data.
@@ -259,6 +271,11 @@ func mergeArgs(maps ...map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+// ptrTime returns one heap-stable copy of the input time.
+func ptrTime(ts time.Time) *time.Time {
+	return &ts
 }
 
 // toolResultText decodes the first text entry from one tool-call result payload.
@@ -1155,6 +1172,27 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			CreatedAt:           now,
 			ExpiresAt:           now.Add(30 * time.Minute),
 		},
+		claimResult: common.AuthRequestClaimResult{
+			Request: common.AuthRequestRecord{
+				ID:                     "req-1",
+				State:                  "approved",
+				Path:                   "project/p1",
+				ProjectID:              "p1",
+				ScopeType:              common.ScopeTypeProject,
+				ScopeID:                "p1",
+				PrincipalID:            "review-agent",
+				PrincipalType:          "agent",
+				ClientID:               "till-mcp-stdio",
+				ClientType:             "mcp-stdio",
+				RequestedSessionTTL:    "2h0m0s",
+				Reason:                 "manual MCP review",
+				CreatedAt:              now,
+				ExpiresAt:              now.Add(30 * time.Minute),
+				IssuedSessionID:        "sess-1",
+				IssuedSessionExpiresAt: ptrTime(now.Add(2 * time.Hour)),
+			},
+			SessionSecret: "secret-1",
+		},
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -1214,6 +1252,58 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	}
 	if got := capture.lastGetID; got != "req-1" {
 		t.Fatalf("GetAuthRequest() request_id = %q, want req-1", got)
+	}
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(5, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+	}))
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	requestRecord, ok := claimStructured["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("claim auth request payload = %#v, want nested request record", claimStructured)
+	}
+	if got := requestRecord["state"].(string); got != "approved" {
+		t.Fatalf("claim auth request state = %q, want approved", got)
+	}
+	if got := claimStructured["session_secret"].(string); got != "secret-1" {
+		t.Fatalf("claim auth request session_secret = %q, want secret-1", got)
+	}
+	if got := capture.lastClaim.RequestID; got != "req-1" {
+		t.Fatalf("ClaimAuthRequest() request_id = %q, want req-1", got)
+	}
+	if got := capture.lastClaim.ResumeToken; got != "resume-1" {
+		t.Fatalf("ClaimAuthRequest() resume_token = %q, want resume-1", got)
+	}
+}
+
+// TestHandlerClaimAuthRequestErrorMapping verifies invalid continuation claims fail as invalid_request tool errors.
+func TestHandlerClaimAuthRequestErrorMapping(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		claimErr: errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("invalid auth request continuation")),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "wrong-token",
+	}))
+	if isError, _ := claimResp.Result["isError"].(bool); !isError {
+		t.Fatalf("claim_auth_request isError = %v, want true", claimResp.Result["isError"])
+	}
+	if got := toolResultText(t, claimResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+		t.Fatalf("claim_auth_request error text = %q, want prefix invalid_request:", got)
 	}
 }
 

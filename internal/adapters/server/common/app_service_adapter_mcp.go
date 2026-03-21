@@ -128,6 +128,28 @@ func (a *AppServiceAdapter) GetAuthRequest(ctx context.Context, requestID string
 	return mapAuthRequestRecord(request), nil
 }
 
+// ClaimAuthRequest returns one requester-visible auth request state and approved session secret through continuation proof.
+func (a *AppServiceAdapter) ClaimAuthRequest(ctx context.Context, in ClaimAuthRequestRequest) (AuthRequestClaimResult, error) {
+	if a == nil || a.service == nil {
+		return AuthRequestClaimResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return AuthRequestClaimResult{}, fmt.Errorf("request_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	result, err := a.service.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
+		RequestID:   requestID,
+		ResumeToken: strings.TrimSpace(in.ResumeToken),
+	})
+	if err != nil {
+		return AuthRequestClaimResult{}, mapAppError("claim auth request", err)
+	}
+	return AuthRequestClaimResult{
+		Request:       mapAuthRequestRecord(result.Request),
+		SessionSecret: result.SessionSecret,
+	}, nil
+}
+
 // CreateProject creates one project with optional kind and metadata.
 func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectRequest) (domain.Project, error) {
 	if a == nil || a.service == nil {

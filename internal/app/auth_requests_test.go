@@ -150,6 +150,73 @@ func TestServiceAuthRequestApproveMirrorsAttention(t *testing.T) {
 	}
 }
 
+// TestServiceClaimAuthRequestReturnsApprovedSecret verifies continuation-based claim returns the approved secret only when the resume token matches.
+func TestServiceClaimAuthRequestReturnsApprovedSecret(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                "project/" + fixture.project.ID,
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "resume after approval",
+		Continuation:        map[string]any{"resume_token": "resume-123", "resume_tool": "till.raise_attention_item"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for resume",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	claimed, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-123",
+	})
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	}
+	if got := claimed.Request.State; got != domain.AuthRequestStateApproved {
+		t.Fatalf("ClaimAuthRequest() state = %q, want approved", got)
+	}
+	if got := claimed.Request.IssuedSessionID; got != approved.Request.IssuedSessionID {
+		t.Fatalf("ClaimAuthRequest() issued_session_id = %q, want %q", got, approved.Request.IssuedSessionID)
+	}
+	if got := claimed.SessionSecret; got != approved.SessionSecret {
+		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)
+	}
+}
+
+// TestServiceClaimAuthRequestRejectsWrongResumeToken verifies continuation claim fails closed when the requester token does not match.
+func TestServiceClaimAuthRequestRejectsWrongResumeToken(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:         "project/" + fixture.project.ID,
+		PrincipalID:  "review-agent",
+		ClientID:     "till-mcp-stdio",
+		Reason:       "resume after approval",
+		Continuation: map[string]any{"resume_token": "resume-123"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if _, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "wrong-token",
+	}); err == nil || err != domain.ErrInvalidAuthContinuation {
+		t.Fatalf("ClaimAuthRequest() error = %v, want ErrInvalidAuthContinuation", err)
+	}
+}
+
 // TestServiceAuthRequestDenyAndCancelResolveAttention verifies non-approved terminal states also resolve their mirrored notifications.
 func TestServiceAuthRequestDenyAndCancelResolveAttention(t *testing.T) {
 	fixture := newAuthRequestServiceFixture(t)

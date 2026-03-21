@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,7 +44,12 @@ func newAuthRequestAdapterForTest(t *testing.T) (*AppServiceAdapter, *sqlite.Rep
 	if err := repo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
-	svc := app.NewService(repo, func() string { return "req-1" }, func() time.Time { return authRequestTestNow }, app.ServiceConfig{
+	nextID := 0
+	idGen := func() string {
+		nextID++
+		return fmt.Sprintf("req-%d", nextID)
+	}
+	svc := app.NewService(repo, idGen, func() time.Time { return authRequestTestNow }, app.ServiceConfig{
 		AuthRequests: auth,
 		AuthBackend:  auth,
 	})
@@ -108,6 +114,62 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	}
 	if got.Path != "project/p1" {
 		t.Fatalf("GetAuthRequest() path = %q, want project/p1", got.Path)
+	}
+
+	approved, err := adapter.service.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      created.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for continuation",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	if approved.SessionSecret == "" {
+		t.Fatal("ApproveAuthRequest() returned empty session secret")
+	}
+
+	claimed, err := adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
+		RequestID:   created.ID,
+		ResumeToken: "",
+	})
+	if err == nil {
+		t.Fatal("ClaimAuthRequest() error = nil, want invalid continuation")
+	}
+
+	adapterCreated, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "resume-agent",
+		PrincipalType:    "agent",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		Reason:           "continuation claim",
+		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.create_task"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(continuation) error = %v", err)
+	}
+	approved, err = adapter.service.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      adapterCreated.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for continuation",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(continuation) error = %v", err)
+	}
+	claimed, err = adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
+		RequestID:   adapterCreated.ID,
+		ResumeToken: "resume-123",
+	})
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	}
+	if got := claimed.Request.State; got != "approved" {
+		t.Fatalf("ClaimAuthRequest() state = %q, want approved", got)
+	}
+	if got := claimed.SessionSecret; got != approved.SessionSecret {
+		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)
 	}
 }
 

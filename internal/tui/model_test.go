@@ -7362,8 +7362,8 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	if m.mode != modeConfirmAction {
 		t.Fatalf("expected confirm mode, got %v", m.mode)
 	}
-	if m.confirmFocus != confirmFocusAuthNote {
-		t.Fatalf("confirmFocus = %d, want note focus", m.confirmFocus)
+	if m.confirmFocus != confirmFocusAuthDecision {
+		t.Fatalf("confirmFocus = %d, want decision focus", m.confirmFocus)
 	}
 	if !m.authConfirmFieldsActive() {
 		t.Fatal("authConfirmFieldsActive() = false for deny flow, want true")
@@ -7371,11 +7371,11 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	if m.authConfirmScopeFieldsActive() {
 		t.Fatal("authConfirmScopeFieldsActive() = true for deny flow, want false")
 	}
-	if !m.confirmAuthNoteInput.Focused() {
-		t.Fatal("expected deny flow to focus the note input")
+	if m.confirmAuthNoteInput.Focused() {
+		t.Fatal("expected deny flow to start on the visible decision selector, not the note input")
 	}
-	if got := confirmActionHints(m.authConfirmFieldsActive(), m.authConfirmScopeFieldsActive()); !strings.Contains(got, "a approve") || !strings.Contains(got, "d deny") {
-		t.Fatalf("confirmActionHints() = %q, want decision shortcuts", got)
+	if got := confirmActionHints(m.authConfirmFieldsActive(), m.authConfirmScopeFieldsActive()); !strings.Contains(got, "left/right choose decision") {
+		t.Fatalf("confirmActionHints() = %q, want visible decision guidance", got)
 	}
 }
 
@@ -7483,11 +7483,20 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	if got := confirmActionHints(true, true); !strings.Contains(got, "tab move fields") {
 		t.Fatalf("confirmActionHints(true) = %q, want auth field guidance", got)
 	}
+	if got := confirmActionHints(true, true); !strings.Contains(got, "left/right choose decision") {
+		t.Fatalf("confirmActionHints(true, true) = %q, want visible decision guidance", got)
+	}
 	if got := confirmActionHints(false, false); strings.Contains(got, "a approve") {
 		t.Fatalf("confirmActionHints(false, false) = %q, want generic confirm guidance", got)
 	}
-	if got := confirmActionHints(true, false); strings.Contains(got, "tab move fields") {
-		t.Fatalf("confirmActionHints(false) = %q, want button-only guidance", got)
+	if got := confirmActionHints(true, false); strings.Contains(got, "a approve") {
+		t.Fatalf("confirmActionHints(true, false) = %q, want visible decision guidance without hotkey reliance", got)
+	}
+	if got := confirmActionHints(true, false); !strings.Contains(got, "tab move fields") {
+		t.Fatalf("confirmActionHints(true, false) = %q, want note-field navigation guidance", got)
+	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthDecision); cmd != nil {
+		t.Fatalf("setConfirmFocus(decision) = %v, want nil focus cmd for decision selector", cmd)
 	}
 	if cmd := m.setConfirmFocus(confirmFocusAuthPath); cmd == nil || !m.confirmAuthPathInput.Focused() {
 		t.Fatalf("setConfirmFocus(path) = %v, want focused path input", cmd)
@@ -7545,6 +7554,8 @@ func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
 		"Confirm Action",
 		"Review Agent request @ project/p1/branch/b1",
 		"decision: approve",
+		"[approve]",
+		"[deny]",
 		"approve with scoped constraints",
 		"project/p1/branch/b1",
 		"2h",
