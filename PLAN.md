@@ -1,7 +1,7 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-20
+Updated: 2026-03-21
 Status: In progress; the auth UX implementation wave is now green in local gates, including the restored coverage floor, but collaborative dogfood retest and final closeout evidence are still pending.
 
 ## 1) Active Run Source Of Truth
@@ -191,7 +191,10 @@ Known caveat:
 5. Important runtime/MCP warnings and errors must bubble into notifications and quick-info drill-in surfaces.
 6. Auth request notifications must be actionable and must preserve enough detail for approve/deny decisions without forcing the user into shell commands.
 7. External MCP-originated changes should refresh the current project view and related notifications without requiring the user to switch projects to see them.
-8. If the notifications UX is redesigned in this wave, start with ASCII-art and clarifying questions before implementation.
+8. `enter` on an auth-request notification must open auth review directly, not a generic project/thread fallback.
+9. Auth review must allow both approve and deny decisions with an editable resolution note; approve also keeps editable path and TTL constraints.
+10. Actionable notifications copy should describe required review work, not imply a misleading actor taxonomy such as `Agent/User Action`.
+11. If the notifications UX is redesigned in this wave, start with ASCII-art and clarifying questions before implementation.
 
 ### 5.6 CLI Help And Discoverability Contract
 
@@ -231,17 +234,17 @@ The dogfood auth UX and operator/help surfaces must satisfy the matrix below bef
 | ID | Condition | Expected Result | Status | Evidence |
 |---|---|---|---|---|
 | AU-01 | an MCP agent needs access without a valid approved session | caller is routed into request/approval semantics, not silent tuple fallback or surprise shell-only workflow | PASS | `internal/adapters/server/mcpapi/handler_test.go:834`; `internal/adapters/server/mcpapi/handler_test.go:862`; `internal/adapters/server/mcpapi/handler_test.go:1169` |
-| AU-02 | a local user wants to authorize an agent from the TUI | auth request can be reviewed and acted on without requiring the user to manually mint their own session | PASS | `internal/tui/model_test.go:6929`; `internal/tui/model_test.go:7489` |
+| AU-02 | a local user wants to authorize an agent from the TUI | auth request can be reviewed and acted on without requiring the user to manually mint their own session | PASS | `TestModelProjectNotificationsAuthRequestApproveShortcut`; `TestModelGlobalNotificationsEnterOpensAuthReview`; `TestModelAuthReviewCanSwitchDecisionBeforeApply` |
 | AU-03 | an auth request targets the currently focused project | request appears in that project's notifications panel | PASS | `internal/tui/model_test.go:7047` |
 | AU-04 | an auth request targets a different project or no focused project exists | request appears in global notifications | PASS | `internal/tui/model_test.go:7489` |
-| AU-05 | a user approves a request with scoped constraints | resulting session/grant is limited to the approved path and lifetime | PASS | `internal/tui/model_test.go:7100`; `internal/adapters/auth/autentauth/service_test.go:592` |
-| AU-06 | a user denies a request | request closes cleanly and the agent remains blocked | PASS | `internal/tui/model_test.go:7489`; `internal/adapters/auth/autentauth/service_test.go:774` |
+| AU-05 | a user approves a request with scoped constraints | resulting session/grant is limited to the approved path and lifetime | PASS | `TestModelProjectNotificationsAuthRequestApproveForwardsConstraints`; `internal/adapters/auth/autentauth/service_test.go:592` |
+| AU-06 | a user denies a request | request closes cleanly, the agent remains blocked, and the user can supply a denial note | PASS | `TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus`; `TestModelAuthReviewCanSwitchDecisionBeforeApply`; `internal/adapters/auth/autentauth/service_test.go:774` |
 | AU-07 | `till auth --help` is opened | help explains the auth surface, required follow-up steps, and available workflows with examples | PASS | `cmd/till/main_test.go:437` |
 | AU-08 | `till auth issue-session --help` is opened | required flags, returned fields, `--path` semantics when relevant, and examples are explicit | PASS | `cmd/till/main_test.go:465` |
 | AU-09 | `till auth revoke-session --help` is opened | `--session-id` requirement and examples are explicit; positional invocation ambiguity is removed from the UX contract | PASS | `cmd/till/main_test.go:470` |
 | AU-10 | operator needs inventory or review surfaces | plan includes `list/show/request/approve/deny/revoke` lifecycle coverage so gatekeeping is user-operable, not just developer-operable | PASS | `cmd/till/main_test.go:442`; `cmd/till/main_test.go:627`; `cmd/till/main_test.go:648`; `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; `cmd/till/main_test.go:786` |
-| AU-11 | external MCP mutation or auth-request activity occurs while the related project is open in the TUI | current project view and notifications refresh without a project-switch workaround | PASS | `internal/tui/model_test.go:7164` |
-| AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, and quick-info drill-in remain explicit and testable | PASS | `internal/tui/model_test.go:7637`; `internal/tui/model_test.go:7695`; `internal/tui/model_test.go:8203`; `internal/tui/model_test.go:10131` |
+| AU-11 | external MCP mutation or auth-request activity occurs while the related project is open in the TUI | current project view and notifications refresh without a project-switch workaround | PASS | `TestModelAutoRefreshLoadsExternalAuthRequest` |
+| AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, direct auth review, and clear actionable section wording remain explicit and testable | PASS | `TestModelPanelFocusTraversalIncludesGlobalNotifications`; `TestModelGlobalNotificationsEnterOpensAuthReview`; `TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible`; `TestModelViewRendersGenericConfirmHints` |
 | AU-13 | operator chooses shell approval instead of TUI approval | full request/session lifecycle is operable from CLI with explicit examples and deterministic outputs | PASS | `cmd/till/main_test.go:442`; `cmd/till/main_test.go:601`; `cmd/till/main_test.go:648`; `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; `cmd/till/main_test.go:786` |
 | AU-14 | `till auth request approve --help` is opened | exact decision labels, `--path` semantics, and continuation behavior are explicit | PASS | `cmd/till/main_test.go:450` |
 
@@ -302,16 +305,41 @@ Outcome: pass after the QA remediation patch.
 Outcome: pass; reconciled two lingering gofmt-only test files (`internal/adapters/server/common/capture_test.go`, `internal/app/auth_requests_test.go`).
 12. post-format `just check` and `just ci`
 Outcome: both pass; no behavior or coverage regressions introduced by the formatting-only cleanup.
+13. collaborative retest findings from 2026-03-21
+Outcome:
+   - confirmed shared runtime paths through `./till paths`, `./till mcp`, and `./till serve`,
+   - confirmed clean stdio `Ctrl-C` shutdown,
+   - confirmed shell auth request create/show/approve/session list/validate/revoke flows,
+   - found TUI auth-request review regression: `enter` opened project-thread fallback and deny had no editable note,
+   - remediated the TUI review flow and refreshed TUI docs/evidence.
+14. `just fmt`
+Outcome: pass after the TUI auth-review remediation and docs sync.
+15. `just test-golden-update`
+Outcome: pass after updating the TUI golden snapshots for the `Action Required` section label.
+16. `just test-pkg ./internal/tui`
+Outcome: pass after adding direct auth-review enter, deny-note, decision-switch, and generic-confirm-hint coverage.
+17. `just check`
+Outcome: pass after the TUI auth-review remediation.
+18. `just ci`
+Outcome: pass after the TUI auth-review remediation.
+19. final independent QA re-review after TUI fix and docs sync
+Outcome:
+   - TUI QA pass after fixing the generic confirm-hint regression and adding direct decision-switch coverage.
+   - Docs QA pass after syncing `README.md` and `PLAN.md` to the landed auth-review behavior and current dates.
 
 Checkpoint summary:
 1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.
 2. MCP now exposes persisted auth-request creation/list/show tools and routes `session_required` and `grant_required` failures toward request creation instead of tuple fallback.
 3. Shared-DB `autent` now persists pre-session auth requests, approval decisions, scoped approvals, and app-facing session inventory or validation wrappers.
-4. TUI notifications now route focused-project auth requests locally, off-project requests globally, allow approve or deny actions, support scoped approval constraints, and auto-refresh external auth-request activity.
+4. TUI notifications now route focused-project auth requests locally, off-project requests globally, allow approve or deny actions, support scoped approval constraints, open auth review directly on `enter`, preserve editable denial notes, and auto-refresh external auth-request activity.
 5. Final QA review findings were resolved before closeout:
    - invalid `auth session list --state` input now fails closed through the app-facing adapter path,
-   - continuation metadata now preserves nested JSON objects for CLI and MCP auth-request flows.
-6. Local coverage floors now pass across the touched auth/runtime packages:
+   - continuation metadata now preserves nested JSON objects for CLI and MCP auth-request flows,
+   - auth-request review no longer falls back into generic project threads on `enter`,
+   - denial review now preserves a user-editable note,
+   - generic confirm modals no longer show auth-specific `a`/`d` hint text.
+6. Independent QA lanes re-reviewed the finished code/docs state and passed after the final remediation/docs-sync pass.
+7. Local coverage floors now pass across the touched auth/runtime packages:
    - `internal/adapters/auth/autentauth`: 74.1%
    - `internal/adapters/server/common`: 78.2%
    - `internal/tui`: 70.3%

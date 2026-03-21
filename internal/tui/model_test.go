@@ -6925,7 +6925,7 @@ func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction
 	}
 }
 
-// TestModelProjectNotificationsAuthRequestApproveShortcut verifies auth-request rows keep their id and reuse the confirm modal for approvals.
+// TestModelProjectNotificationsAuthRequestEnterOpensReview verifies auth-request rows open the review modal instead of a generic project thread.
 func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 12, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -7001,27 +7001,11 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeThread {
-		t.Fatalf("expected enter to keep opening thread mode, got %v", m.mode)
-	}
-	if m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != project.ID {
-		t.Fatalf("expected project thread target for auth-request row, got %#v", m.threadTarget)
-	}
-
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeNone {
-		t.Fatalf("expected escape to close thread mode, got %v", m.mode)
-	}
-	m.noticesFocused = true
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected notices section to stay on attention row, got %v", m.noticesSection)
-	}
-	m = applyMsg(t, m, keyRune('a'))
 	if m.mode != modeConfirmAction {
-		t.Fatalf("expected approve shortcut to open confirm modal, got %v", m.mode)
+		t.Fatalf("expected enter to open auth review modal, got %v", m.mode)
 	}
 	if m.pendingConfirm.Kind != "approve-auth-request" {
-		t.Fatalf("expected approve confirm kind, got %q", m.pendingConfirm.Kind)
+		t.Fatalf("expected approve review kind, got %q", m.pendingConfirm.Kind)
 	}
 	if m.pendingConfirm.AuthRequestID != authRequest.ID {
 		t.Fatalf("expected confirm auth request id %q, got %q", authRequest.ID, m.pendingConfirm.AuthRequestID)
@@ -7326,7 +7310,7 @@ func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.
 	}
 }
 
-// TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus verifies deny decisions skip editable auth-approval fields.
+// TestModelBeginSelectedAuthRequestDecisionDenyUsesEditableNote verifies deny review keeps the note field editable.
 func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -7378,14 +7362,20 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	if m.mode != modeConfirmAction {
 		t.Fatalf("expected confirm mode, got %v", m.mode)
 	}
-	if m.confirmFocus != confirmFocusButtons {
-		t.Fatalf("confirmFocus = %d, want button focus", m.confirmFocus)
+	if m.confirmFocus != confirmFocusAuthNote {
+		t.Fatalf("confirmFocus = %d, want note focus", m.confirmFocus)
 	}
-	if m.authConfirmFieldsActive() {
-		t.Fatal("authConfirmFieldsActive() = true for deny flow, want false")
+	if !m.authConfirmFieldsActive() {
+		t.Fatal("authConfirmFieldsActive() = false for deny flow, want true")
 	}
-	if got := confirmActionHints(m.authConfirmFieldsActive()); !strings.Contains(got, "enter apply") {
-		t.Fatalf("confirmActionHints() = %q, want non-editable confirm hints", got)
+	if m.authConfirmScopeFieldsActive() {
+		t.Fatal("authConfirmScopeFieldsActive() = true for deny flow, want false")
+	}
+	if !m.confirmAuthNoteInput.Focused() {
+		t.Fatal("expected deny flow to focus the note input")
+	}
+	if got := confirmActionHints(m.authConfirmFieldsActive(), m.authConfirmScopeFieldsActive()); !strings.Contains(got, "a approve") || !strings.Contains(got, "d deny") {
+		t.Fatalf("confirmActionHints() = %q, want decision shortcuts", got)
 	}
 }
 
@@ -7397,6 +7387,10 @@ func TestModelSetConfirmFocusHandlesNilAndBounds(t *testing.T) {
 	}
 
 	m := NewModel(newFakeService(nil, nil, nil))
+	m.pendingConfirm = confirmAction{
+		Kind:          "approve-auth-request",
+		AuthRequestID: "req-1",
+	}
 	if cmd := m.setConfirmFocus(-1); cmd != nil {
 		t.Fatalf("setConfirmFocus(invalid low) cmd = %#v, want nil", cmd)
 	}
@@ -7414,6 +7408,12 @@ func TestModelSetConfirmFocusHandlesNilAndBounds(t *testing.T) {
 	}
 	if m.confirmFocus != confirmFocusAuthTTL {
 		t.Fatalf("confirmFocus = %d, want auth ttl focus", m.confirmFocus)
+	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthNote); cmd == nil {
+		t.Fatal("setConfirmFocus(note) cmd = nil, want focus command")
+	}
+	if m.confirmFocus != confirmFocusAuthNote {
+		t.Fatalf("confirmFocus = %d, want auth note focus", m.confirmFocus)
 	}
 }
 
@@ -7472,17 +7472,21 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	}
 	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
 	m.confirmAuthTTLInput.SetValue("90m")
+	m.confirmAuthNoteInput.SetValue("operator note")
 	action, err := m.prepareConfirmAction()
 	if err != nil {
 		t.Fatalf("prepareConfirmAction() error = %v", err)
 	}
-	if action.AuthRequestPath != "project/p1/branch/b1" || action.AuthRequestTTL != "90m" {
-		t.Fatalf("prepareConfirmAction() = %#v, want path + ttl snapshot", action)
+	if action.AuthRequestPath != "project/p1/branch/b1" || action.AuthRequestTTL != "90m" || action.AuthRequestNote != "operator note" {
+		t.Fatalf("prepareConfirmAction() = %#v, want path + ttl + note snapshot", action)
 	}
-	if got := confirmActionHints(true); !strings.Contains(got, "tab move fields") {
+	if got := confirmActionHints(true, true); !strings.Contains(got, "tab move fields") {
 		t.Fatalf("confirmActionHints(true) = %q, want auth field guidance", got)
 	}
-	if got := confirmActionHints(false); strings.Contains(got, "tab move fields") {
+	if got := confirmActionHints(false, false); strings.Contains(got, "a approve") {
+		t.Fatalf("confirmActionHints(false, false) = %q, want generic confirm guidance", got)
+	}
+	if got := confirmActionHints(true, false); strings.Contains(got, "tab move fields") {
 		t.Fatalf("confirmActionHints(false) = %q, want button-only guidance", got)
 	}
 	if cmd := m.setConfirmFocus(confirmFocusAuthPath); cmd == nil || !m.confirmAuthPathInput.Focused() {
@@ -7491,9 +7495,12 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	if cmd := m.setConfirmFocus(confirmFocusAuthTTL); cmd == nil || !m.confirmAuthTTLInput.Focused() {
 		t.Fatalf("setConfirmFocus(ttl) = %v, want focused ttl input", cmd)
 	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthNote); cmd == nil || !m.confirmAuthNoteInput.Focused() {
+		t.Fatalf("setConfirmFocus(note) = %v, want focused note input", cmd)
+	}
 	_ = m.setConfirmFocus(999)
-	if m.confirmFocus != confirmFocusButtons || m.confirmAuthPathInput.Focused() || m.confirmAuthTTLInput.Focused() {
-		t.Fatalf("setConfirmFocus(default) left stale focus state: focus=%d path=%t ttl=%t", m.confirmFocus, m.confirmAuthPathInput.Focused(), m.confirmAuthTTLInput.Focused())
+	if m.confirmFocus != confirmFocusButtons || m.confirmAuthPathInput.Focused() || m.confirmAuthTTLInput.Focused() || m.confirmAuthNoteInput.Focused() {
+		t.Fatalf("setConfirmFocus(default) left stale focus state: focus=%d path=%t ttl=%t note=%t", m.confirmFocus, m.confirmAuthPathInput.Focused(), m.confirmAuthTTLInput.Focused(), m.confirmAuthNoteInput.Focused())
 	}
 	m.confirmAuthPathInput.SetValue("not-a-valid-auth-path")
 	if _, err := m.prepareConfirmAction(); err == nil {
@@ -7525,24 +7532,59 @@ func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
 		AuthRequestPrincipal: "Review Agent",
 		AuthRequestPath:      "project/p1/branch/b1",
 		AuthRequestTTL:       "2h",
+		AuthRequestDecision:  "approve",
 		AuthRequestNote:      "approved via TUI notifications for Review Agent at project/p1/branch/b1",
 	}
 	m.confirmChoice = 0
 	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
 	m.confirmAuthTTLInput.SetValue("2h")
+	m.confirmAuthNoteInput.SetValue("approved via TUI notifications for Review Agent at project/p1/branch/b1")
 
 	rendered := fmt.Sprint(m.View())
 	for _, want := range []string{
 		"Confirm Action",
 		"Review Agent request @ project/p1/branch/b1",
+		"decision: approve",
 		"approve with scoped constraints",
 		"project/p1/branch/b1",
 		"2h",
-		"note: approved via TUI notifications",
+		"note: approved via TUI notifications for Review Agent at project/p1/branch/b1",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in confirm modal:\n%s", want, rendered)
 		}
+	}
+}
+
+// TestModelViewRendersGenericConfirmHints verifies non-auth confirm modals keep generic confirmation hints.
+func TestModelViewRendersGenericConfirmHints(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 19, 30, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.mode = modeConfirmAction
+	m.pendingConfirm = confirmAction{
+		Kind:  "delete-task",
+		Label: "delete task",
+		Task:  task,
+	}
+
+	rendered := fmt.Sprint(m.View())
+	if !strings.Contains(rendered, "enter apply") {
+		t.Fatalf("View() missing generic confirm hint:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "a approve") || strings.Contains(rendered, "d deny") {
+		t.Fatalf("View() unexpectedly rendered auth review hints for generic confirm modal:\n%s", rendered)
 	}
 }
 
@@ -7749,6 +7791,76 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 	}
 }
 
+// TestModelAuthReviewCanSwitchDecisionBeforeApply verifies review modals can switch from approve to deny before confirmation.
+func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 29, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-switch-decision",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "agent-switch",
+		PrincipalType:       "agent",
+		PrincipalName:       "Agent Switch",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "switch decision test",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[authRequest.ID] = authRequest
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 authRequest.ID,
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "auth request review",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('d'))
+	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestDecision); got != "deny" {
+		t.Fatalf("pendingConfirm.AuthRequestDecision = %q, want deny", got)
+	}
+	m.confirmAuthNoteInput.SetValue("switched to deny after review")
+	m = applyMsg(t, m, keyRune('y'))
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
+		t.Fatalf("expected deny request id %q, got %q", authRequest.ID, got)
+	}
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); got != "switched to deny after review" {
+		t.Fatalf("expected switched denial note, got %q", got)
+	}
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.RequestID); got != "" {
+		t.Fatalf("unexpected approve request id %q after switching to deny", got)
+	}
+}
+
 // TestModelGlobalNotificationsAuthRequestDenyShortcut verifies global auth-request rows reuse the confirm modal for denials.
 func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
@@ -7821,12 +7933,85 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	if m.pendingConfirm.AuthRequestID != authRequest.ID {
 		t.Fatalf("expected confirm auth request id %q, got %q", authRequest.ID, m.pendingConfirm.AuthRequestID)
 	}
+	m.confirmAuthNoteInput.SetValue("denied in global panel for missing scope")
 	m = applyMsg(t, m, keyRune('y'))
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
 		t.Fatalf("expected deny request id %q, got %q", authRequest.ID, got)
 	}
-	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); !strings.Contains(got, "denied via TUI notifications") {
-		t.Fatalf("expected denial note to be forwarded, got %q", got)
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); got != "denied in global panel for missing scope" {
+		t.Fatalf("expected edited denial note to be forwarded, got %q", got)
+	}
+}
+
+// TestModelGlobalNotificationsEnterOpensAuthReview verifies enter on a global auth-request row opens the auth review modal.
+func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 25, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	task1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p1.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Inbox Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	task2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p2.ID,
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Roadmap Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-global-enter",
+		Path:                domain.AuthRequestPath{ProjectID: p2.ID},
+		PrincipalID:         "agent-2",
+		PrincipalType:       "agent",
+		PrincipalName:       "Agent Two",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "global review",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{task1, task2})
+	svc.authRequests[authRequest.ID] = authRequest
+	m := loadReadyModel(t, NewModel(svc))
+	m.globalNotices = []globalNoticesPanelItem{{
+		StableKey:         globalNoticesStableKey(p2.ID, authRequest.ID, domain.ScopeLevelProject, p2.ID, "auth request review"),
+		AttentionID:       authRequest.ID,
+		ProjectID:         p2.ID,
+		ProjectLabel:      p2.Name,
+		ScopeType:         domain.ScopeLevelProject,
+		ScopeID:           p2.ID,
+		Summary:           "auth request review",
+		ThreadDescription: "Please review this request.",
+	}}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('l'))
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
+		t.Fatalf("expected global notifications focus, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected enter to open auth review modal, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestID); got != authRequest.ID {
+		t.Fatalf("pendingConfirm.AuthRequestID = %q, want %q", got, authRequest.ID)
+	}
+	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestDecision); got != "approve" {
+		t.Fatalf("pendingConfirm.AuthRequestDecision = %q, want approve", got)
 	}
 }
 
@@ -10151,7 +10336,7 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if !strings.Contains(rendered, "Global Notifications") {
 		t.Fatalf("expected global notifications panel title, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "Agent/User Action") {
+	if !strings.Contains(rendered, "Action Required") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "requires user action across") {

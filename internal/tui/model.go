@@ -385,6 +385,7 @@ const (
 const (
 	confirmFocusAuthPath = iota
 	confirmFocusAuthTTL
+	confirmFocusAuthNote
 	confirmFocusButtons
 )
 
@@ -515,6 +516,7 @@ type Model struct {
 	dependencyInput             textinput.Model
 	confirmAuthPathInput        textinput.Model
 	confirmAuthTTLInput         textinput.Model
+	confirmAuthNoteInput        textinput.Model
 	threadInput                 textarea.Model
 	threadDetailsInput          textarea.Model
 	descriptionEditorInput      textarea.Model
@@ -879,6 +881,7 @@ func NewModel(svc Service, opts ...Option) Model {
 	configureTextInputClipboardBindings(&dependencyInput)
 	confirmAuthPathInput := newModalInput("path: ", "project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]", "", 256)
 	confirmAuthTTLInput := newModalInput("ttl: ", "for example 2h or 30m", "", 32)
+	confirmAuthNoteInput := newModalInput("note: ", "optional note for the requester and audit trail", "", 256)
 	threadInput := textarea.New()
 	threadInput.Prompt = ""
 	threadInput.Placeholder = "Write markdown comment (Ctrl+S posts)"
@@ -944,6 +947,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		dependencyInput:                dependencyInput,
 		confirmAuthPathInput:           confirmAuthPathInput,
 		confirmAuthTTLInput:            confirmAuthTTLInput,
+		confirmAuthNoteInput:           confirmAuthNoteInput,
 		threadInput:                    threadInput,
 		threadDetailsInput:             threadDetailsInput,
 		descriptionEditorInput:         descriptionEditorInput,
@@ -2335,8 +2339,13 @@ func newModalInput(prompt, placeholder, value string, limit int) textinput.Model
 	return in
 }
 
-// authConfirmFieldsActive reports whether the current confirm modal is editing auth approval constraints.
+// authConfirmFieldsActive reports whether the current confirm modal is reviewing one auth request.
 func (m Model) authConfirmFieldsActive() bool {
+	return strings.TrimSpace(m.pendingConfirm.AuthRequestID) != ""
+}
+
+// authConfirmScopeFieldsActive reports whether the auth confirm modal currently allows path/ttl edits.
+func (m Model) authConfirmScopeFieldsActive() bool {
 	return strings.TrimSpace(m.pendingConfirm.Kind) == "approve-auth-request"
 }
 
@@ -2348,14 +2357,20 @@ func (m *Model) setConfirmFocus(focus int) tea.Cmd {
 	if focus < confirmFocusAuthPath || focus > confirmFocusButtons {
 		focus = confirmFocusButtons
 	}
+	if !m.authConfirmScopeFieldsActive() && focus <= confirmFocusAuthTTL {
+		focus = confirmFocusAuthNote
+	}
 	m.confirmFocus = focus
 	m.confirmAuthPathInput.Blur()
 	m.confirmAuthTTLInput.Blur()
+	m.confirmAuthNoteInput.Blur()
 	switch focus {
 	case confirmFocusAuthPath:
 		return m.confirmAuthPathInput.Focus()
 	case confirmFocusAuthTTL:
 		return m.confirmAuthTTLInput.Focus()
+	case confirmFocusAuthNote:
+		return m.confirmAuthNoteInput.Focus()
 	default:
 		return nil
 	}
@@ -2367,28 +2382,74 @@ func (m Model) prepareConfirmAction() (confirmAction, error) {
 	if !m.authConfirmFieldsActive() {
 		return action, nil
 	}
-	if path := strings.TrimSpace(m.confirmAuthPathInput.Value()); path != "" {
-		if _, err := domain.ParseAuthRequestPath(path); err != nil {
-			return confirmAction{}, err
+	action.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
+	if m.authConfirmScopeFieldsActive() {
+		if path := strings.TrimSpace(m.confirmAuthPathInput.Value()); path != "" {
+			if _, err := domain.ParseAuthRequestPath(path); err != nil {
+				return confirmAction{}, err
+			}
+			action.AuthRequestPath = path
 		}
-		action.AuthRequestPath = path
-	}
-	ttlRaw := strings.TrimSpace(m.confirmAuthTTLInput.Value())
-	if ttlRaw != "" {
-		if _, err := time.ParseDuration(ttlRaw); err != nil {
-			return confirmAction{}, fmt.Errorf("invalid auth approval ttl %q: %w", ttlRaw, err)
+		ttlRaw := strings.TrimSpace(m.confirmAuthTTLInput.Value())
+		if ttlRaw != "" {
+			if _, err := time.ParseDuration(ttlRaw); err != nil {
+				return confirmAction{}, fmt.Errorf("invalid auth approval ttl %q: %w", ttlRaw, err)
+			}
+			action.AuthRequestTTL = ttlRaw
 		}
-		action.AuthRequestTTL = ttlRaw
 	}
 	return action, nil
 }
 
 // confirmActionHints returns modal help copy for the current confirmation surface.
-func confirmActionHints(authEditable bool) string {
-	if authEditable {
-		return "tab move fields • enter next/apply • esc cancel • h/l switch buttons • y confirm • n cancel"
+func confirmActionHints(authMode, scopeEditable bool) string {
+	if authMode && scopeEditable {
+		return "a approve • d deny • tab move fields • enter next/apply • esc cancel • h/l switch buttons • y confirm • n cancel"
+	}
+	if authMode {
+		return "a approve • d deny • enter apply • esc cancel • h/l switch • y confirm • n cancel"
 	}
 	return "enter apply • esc cancel • h/l switch • y confirm • n cancel"
+}
+
+// authRequestReviewNoteDefault returns deterministic default note text for one auth-request decision.
+func authRequestReviewNoteDefault(confirm confirmAction, decision string) string {
+	req := domain.AuthRequest{
+		ID:            strings.TrimSpace(confirm.AuthRequestID),
+		Path:          strings.TrimSpace(confirm.AuthRequestPath),
+		PrincipalID:   strings.TrimSpace(confirm.AuthRequestPrincipal),
+		PrincipalName: strings.TrimSpace(confirm.AuthRequestPrincipal),
+		ClientID:      strings.TrimSpace(confirm.AuthRequestClient),
+		ClientName:    strings.TrimSpace(confirm.AuthRequestClient),
+	}
+	return authRequestResolutionNote(req, decision)
+}
+
+// setPendingAuthRequestDecision switches the active auth-request decision without leaving the review modal.
+func (m *Model) setPendingAuthRequestDecision(decision string) tea.Cmd {
+	if m == nil || !m.authConfirmFieldsActive() {
+		return nil
+	}
+	decision = strings.TrimSpace(strings.ToLower(decision))
+	if decision != "approve" && decision != "deny" {
+		return nil
+	}
+	currentDefault := authRequestReviewNoteDefault(m.pendingConfirm, m.pendingConfirm.AuthRequestDecision)
+	nextDefault := authRequestReviewNoteDefault(m.pendingConfirm, decision)
+	currentNote := strings.TrimSpace(m.confirmAuthNoteInput.Value())
+	if currentNote == "" || currentNote == currentDefault {
+		m.confirmAuthNoteInput.SetValue(nextDefault)
+		m.confirmAuthNoteInput.CursorEnd()
+		currentNote = nextDefault
+	}
+	m.pendingConfirm.Kind = decision + "-auth-request"
+	m.pendingConfirm.Label = decision + " auth request"
+	m.pendingConfirm.AuthRequestDecision = decision
+	m.pendingConfirm.AuthRequestNote = currentNote
+	if decision == "approve" {
+		return m.setConfirmFocus(confirmFocusAuthPath)
+	}
+	return m.setConfirmFocus(confirmFocusAuthNote)
 }
 
 // configureTextInputClipboardBindings adds platform-friendly clipboard paste bindings for text inputs.
@@ -7850,12 +7911,17 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.pendingConfirm = confirmAction{}
 				m.confirmAuthPathInput.Blur()
 				m.confirmAuthTTLInput.Blur()
+				m.confirmAuthNoteInput.Blur()
 				m.status = "cancelled"
 				return m, nil
 			case "tab", "down":
 				return m, m.setConfirmFocus(m.confirmFocus + 1)
 			case "shift+tab", "up":
 				return m, m.setConfirmFocus(m.confirmFocus - 1)
+			case "a":
+				return m, m.setPendingAuthRequestDecision("approve")
+			case "d":
+				return m, m.setPendingAuthRequestDecision("deny")
 			case "h", "left", "l", "right":
 				if m.confirmFocus != confirmFocusButtons {
 					return m, m.setConfirmFocus(confirmFocusButtons)
@@ -7877,6 +7943,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.pendingConfirm = confirmAction{}
 				m.confirmAuthPathInput.Blur()
 				m.confirmAuthTTLInput.Blur()
+				m.confirmAuthNoteInput.Blur()
 				m.status = "applying action..."
 				return m.applyConfirmedAction(action)
 			case "enter":
@@ -7888,6 +7955,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.pendingConfirm = confirmAction{}
 					m.confirmAuthPathInput.Blur()
 					m.confirmAuthTTLInput.Blur()
+					m.confirmAuthNoteInput.Blur()
 					m.status = "cancelled"
 					return m, nil
 				}
@@ -7900,6 +7968,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.pendingConfirm = confirmAction{}
 				m.confirmAuthPathInput.Blur()
 				m.confirmAuthTTLInput.Blur()
+				m.confirmAuthNoteInput.Blur()
 				m.status = "applying action..."
 				return m.applyConfirmedAction(action)
 			default:
@@ -7913,6 +7982,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					var cmd tea.Cmd
 					m.confirmAuthTTLInput, cmd = m.confirmAuthTTLInput.Update(msg)
 					_ = scrubTextInputTerminalArtifacts(&m.confirmAuthTTLInput)
+					return m, cmd
+				case confirmFocusAuthNote:
+					var cmd tea.Cmd
+					m.confirmAuthNoteInput, cmd = m.confirmAuthNoteInput.Update(msg)
+					_ = scrubTextInputTerminalArtifacts(&m.confirmAuthNoteInput)
+					m.pendingConfirm.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
 					return m, cmd
 				}
 			}
@@ -11756,7 +11831,7 @@ func noticesSectionTitle(section noticesSectionID) string {
 	case noticesSectionWarnings:
 		return "Warnings"
 	case noticesSectionAttention:
-		return "Agent/User Action"
+		return "Action Required"
 	case noticesSectionSelection:
 		return "Selection"
 	case noticesSectionRecentActivity:
@@ -12126,13 +12201,9 @@ func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea
 	m.confirmAuthPathInput.CursorEnd()
 	m.confirmAuthTTLInput.SetValue(req.RequestedSessionTTL.String())
 	m.confirmAuthTTLInput.CursorEnd()
-	if decision == "approve" {
-		return m, m.setConfirmFocus(confirmFocusAuthPath), true
-	}
-	m.confirmAuthPathInput.Blur()
-	m.confirmAuthTTLInput.Blur()
-	m.confirmFocus = confirmFocusButtons
-	return m, nil, true
+	m.confirmAuthNoteInput.SetValue(m.pendingConfirm.AuthRequestNote)
+	m.confirmAuthNoteInput.CursorEnd()
+	return m, m.setPendingAuthRequestDecision(decision), true
 }
 
 // moveNoticesSelection moves section/item focus inside the notices panel.
@@ -12216,6 +12287,12 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	}
 	m.clampGlobalNoticesSelection()
 	item := items[clamp(m.globalNoticesIdx, 0, len(items)-1)]
+	if req, ok := m.selectedAuthRequestForActiveNotice(); ok && strings.TrimSpace(req.ID) != "" {
+		m.traceGlobalNoticeBranch("auth_request_open_review", "request_id", strings.TrimSpace(req.ID))
+		m.completeGlobalNoticeTransition("auth_request_review")
+		next, cmd, _ := m.beginSelectedAuthRequestDecision("approve")
+		return next, cmd
+	}
 	m.traceGlobalNoticeBranch(
 		"selection",
 		"stable_key", strings.TrimSpace(item.StableKey),
@@ -12334,6 +12411,10 @@ func (m Model) activateNoticesSelection() (tea.Model, tea.Cmd) {
 	if !ok {
 		m.status = "no notices available"
 		return m, nil
+	}
+	if req, ok := m.selectedAuthRequestForActiveNotice(); ok && strings.TrimSpace(req.ID) != "" {
+		next, cmd, _ := m.beginSelectedAuthRequestDecision("approve")
+		return next, cmd
 	}
 	if item.HasActivity {
 		m.activityInfoItem = item.Activity
@@ -15450,20 +15531,25 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if m.authConfirmFieldsActive() {
 			pathInput := m.confirmAuthPathInput
 			ttlInput := m.confirmAuthTTLInput
+			noteInput := m.confirmAuthNoteInput
 			pathInput.SetWidth(max(18, maxWidth-18))
 			ttlInput.SetWidth(max(10, maxWidth-18))
-			lines = append(lines,
-				hintStyle.Render("approve with scoped constraints"),
-				pathInput.View(),
-				ttlInput.View(),
-			)
-		}
-		if note := strings.TrimSpace(m.pendingConfirm.AuthRequestNote); note != "" {
-			lines = append(lines, hintStyle.Render("note: "+note))
+			noteInput.SetWidth(max(18, maxWidth-18))
+			lines = append(lines, hintStyle.Render("decision: "+strings.TrimSpace(m.pendingConfirm.AuthRequestDecision)))
+			if m.authConfirmScopeFieldsActive() {
+				lines = append(lines,
+					hintStyle.Render("approve with scoped constraints"),
+					pathInput.View(),
+					ttlInput.View(),
+				)
+			} else {
+				lines = append(lines, hintStyle.Render("deny request with optional note"))
+			}
+			lines = append(lines, noteInput.View())
 		}
 		lines = append(lines,
 			confirmStyle.Render("[confirm]")+"  "+cancelStyle.Render("[cancel]"),
-			hintStyle.Render(confirmActionHints(m.authConfirmFieldsActive())),
+			hintStyle.Render(confirmActionHints(m.authConfirmFieldsActive(), m.authConfirmScopeFieldsActive())),
 		)
 		return style.Render(strings.Join(lines, "\n"))
 

@@ -35,7 +35,7 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-03-20)
+## Active Status (2026-03-21)
 Implemented now:
 - Use `PLAN.md` as the active source of truth for the current dogfood auth/runtime wave.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
@@ -56,11 +56,10 @@ Implemented now:
 - Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
-- user-configurable auth request and approval flow across MCP and TUI
-- auth request notifications in project-vs-global notification surfaces
 - clearer `till auth` help, examples, and next-step guidance
-- list/show/request/approve/deny auth lifecycle surfaces
-- external MCP-originated live refresh without a project-switch workaround
+- broader user-configurable policy/grant management beyond the current local dogfood request/session flow
+- richer MCP-client continuation and full client-side approval handoff ergonomics
+- final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
 - `capture_state` is a summary-first recovery surface for level-scoped workflows.
@@ -86,7 +85,10 @@ Current MCP/runtime direction:
 
 Current auth note:
 - Normal TUI users should not need to manually issue themselves auth sessions for routine TUI use.
-- `till auth issue-session` and `till auth revoke-session` currently exist as temporary operator/developer dogfood commands while the in-product request/approval flow is being built.
+- `till auth request create|list|show|approve|deny|cancel` and `till auth session list|validate|revoke` are now active for dogfood/operator use.
+- TUI auth-request notifications route to focused-project vs global panels, and `enter` opens auth review directly instead of a generic thread fallback.
+- TUI deny flow supports an editable note so the user can explain why a request was rejected.
+- The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
@@ -154,14 +156,17 @@ Start the secondary HTTP/API + HTTP MCP server:
 ./till serve
 ```
 
-Temporary dogfood auth commands:
+Dogfood auth request/session commands:
 ```bash
-./till auth issue-session --principal-id evan
-./till auth revoke-session --session-id <session-id>
+./till auth request create --path project/<project-id> --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --reason "dogfood request"
+./till auth request approve --request-id <request-id> --note "approved for dogfood"
+./till auth session validate --session-id <session-id> --session-secret <session-secret>
+./till auth session revoke --session-id <session-id> --reason operator_revoke
 ```
 
 Current auth caveat:
-- these auth commands are temporary operator/developer seams
+- the request/session commands above are the primary operator dogfood path
+- `till auth issue-session` remains a lower-level temporary operator/developer seam
 - the intended end-user flow is request-and-approval inside the product, not routine manual session minting from the shell
 
 ## Config
