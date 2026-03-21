@@ -52,6 +52,7 @@ This run is successful only if:
 20. External MCP-originated changes should refresh the current TUI project without requiring a project-switch workaround.
 21. Notifications remain a first-class UX surface with global count, quick navigation, and quick-info drill-in for important runtime/MCP warnings and errors.
 22. Any substantial notifications-panel redesign must start with an ASCII-art proposal and clarifying questions before implementation.
+23. `MCP_DOGFOODING_WORKSHEET.md` and `VECTOR_SEARCH_EXECUTION_PLAN.md` are retired; the active run contract must now live in `PLAN.md`, with only user-facing summary material kept in `README.md`.
 
 ## 4) Scope And Non-Goals
 
@@ -325,9 +326,8 @@ Before implementation in any lane, inspect and account for:
 16. `.tmp/autent/docs/03-sqlite-integration.md`
 17. `.tmp/autent/docs/06-tillsyn-integration.md`
 18. `README.md`
-19. `MCP_DOGFOODING_WORKSHEET.md`
-20. `COLLAB_MCP_STDIO_AUTENT_EXECUTION_PLAN.md`
-21. `COLLAB_MCP_STDIO_AUTENT_VALIDATION_WORKSHEET.md`
+19. `AGENTS.md`
+20. `CONTRIBUTING.md`
 
 ## 9) Implementation Sequence
 
@@ -524,6 +524,10 @@ Commands run:
    - retired split collab/remediation markdown files removed from the repo root after consolidating active requirements into `PLAN.md` and active user-facing guidance into `README.md` -> PASS
    - `AGENTS.md` updated to stop pointing at deleted collab/runbook markdown and to treat `PLAN.md` as the active remediation source -> PASS
    - tests not run in this pass because the changes were docs-only -> PASS
+51. final root-plan consolidation follow-up:
+   - retired `MCP_DOGFOODING_WORKSHEET.md` and `VECTOR_SEARCH_EXECUTION_PLAN.md` after confirming they did not contain any remaining must-copy active-run requirement missing from `PLAN.md` -> PASS
+   - `PLAN.md` and `README.md` updated to stop relying on those retired side plans -> PASS
+   - tests not run in this pass because the changes were docs-only -> PASS
 
 Docs/process edits in this run so far:
 1. `.gitignore` updated to ignore `.nvimlog`
@@ -533,6 +537,7 @@ Docs/process edits in this run so far:
 5. expanded the active `PLAN.md` contract to include auth request/approval UX, notification routing, path-scoped session requests, and auth help/example requirements
 6. aligned `README.md` with the active runtime/auth contract and active-source-of-truth policy
 7. removed retired root collab/remediation markdown after consolidating active requirements into `PLAN.md`
+8. removed retired dogfood/vector side-plan markdown after confirming `PLAN.md` now carries the necessary active run contract
 
 Product/code edits in this run so far:
 1. `cmd/till/main.go`

@@ -130,7 +130,7 @@ You are a senior Go dev. YOU ALWAYS:
   - keep docs synchronized as implementation lands (`README.md` and affected planning/testing docs),
   - ensure `just check` and `just ci` both pass before marking work complete,
   - keep `PLAN.md` as the remediation requirement/worklog source and active validation contract,
-  - use `MCP_DOGFOODING_WORKSHEET.md` only as secondary corroborating worksheet material when `PLAN.md` explicitly points to it,
+  - use `PLAN.md` itself for secondary corroborating checklist detail during this run unless the user explicitly asks for a new split worksheet,
   - do not recreate retired collab/runbook markdown unless the user explicitly asks for a new split document.
 - Dogfooding requirement:
   - testing docs must support collaborative user+agent validation and clearly call out guardrails, blockers, and recovery workflows.

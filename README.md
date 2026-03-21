@@ -12,7 +12,6 @@ Current scope:
 - local tracking and planning workflows (human-operated TUI).
 - local runtime diagnostics with styled logging and dev-mode local log files.
 - the active auth/runtime dogfood run is tracked in `PLAN.md`.
-- secondary MCP dogfooding evidence may be captured in `MCP_DOGFOODING_WORKSHEET.md` when the active plan calls for it.
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
