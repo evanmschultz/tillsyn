@@ -248,6 +248,12 @@ Outcome: pass.
 Outcome: pass after the QA remediation patch.
 10. `just ci`
 Outcome: pass after the QA remediation patch.
+11. post-commit `just fmt`
+Outcome: PASS; normalized two lingering gofmt-only test files.
+12. post-format `just check`
+Outcome: PASS.
+13. post-format `just ci`
+Outcome: PASS.
 
 ### Current Status
 1. Local implementation and local gates are green.

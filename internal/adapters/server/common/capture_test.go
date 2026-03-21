@@ -12,14 +12,14 @@ import (
 
 // fakeCaptureReadModel provides deterministic capture-state read data for tests.
 type fakeCaptureReadModel struct {
-	projects         []domain.Project
-	columns          []domain.Column
-	tasks            []domain.Task
-	comments         []domain.Comment
-	listProjectsErr  error
-	listColumnsErr   error
-	listTasksErr     error
-	listCommentsErr  error
+	projects        []domain.Project
+	columns         []domain.Column
+	tasks           []domain.Task
+	comments        []domain.Comment
+	listProjectsErr error
+	listColumnsErr  error
+	listTasksErr    error
+	listCommentsErr error
 }
 
 // ListProjects returns configured projects or one injected error.

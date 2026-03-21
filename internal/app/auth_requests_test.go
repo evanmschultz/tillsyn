@@ -15,9 +15,9 @@ import (
 
 // authRequestServiceFixture stores one real service stack for auth-request lifecycle tests.
 type authRequestServiceFixture struct {
-	svc      *app.Service
-	repo     *sqlite.Repository
-	project  domain.Project
+	svc     *app.Service
+	repo    *sqlite.Repository
+	project domain.Project
 }
 
 // newAuthRequestServiceFixture constructs one real app/auth/sqlite stack for lifecycle tests.

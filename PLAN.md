@@ -298,6 +298,10 @@ Outcome: pass.
 Outcome: pass after the QA remediation patch.
 10. `just ci`
 Outcome: pass after the QA remediation patch.
+11. post-commit `just fmt`
+Outcome: pass; reconciled two lingering gofmt-only test files (`internal/adapters/server/common/capture_test.go`, `internal/app/auth_requests_test.go`).
+12. post-format `just check` and `just ci`
+Outcome: both pass; no behavior or coverage regressions introduced by the formatting-only cleanup.
 
 Checkpoint summary:
 1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.
