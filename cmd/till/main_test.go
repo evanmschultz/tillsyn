@@ -150,6 +150,27 @@ func mustNormalizeAuthRuleForTest(t *testing.T, rule autentdomain.Rule) autentdo
 	return normalized
 }
 
+// seedProjectForAuthCLITest stores one minimal project row for auth CLI lifecycle tests.
+func seedProjectForAuthCLITest(t *testing.T, dbPath, projectID string) {
+	t.Helper()
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+
+	project, err := domain.NewProject(projectID, "Project "+projectID, "", time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+}
+
 // TestRunVersion verifies behavior for the covered scenario.
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
@@ -413,12 +434,37 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "auth",
 			args: []string{"auth", "--help"},
-			want: []string{"till auth", "issue-session", "revoke-session"},
+			want: []string{"till auth", "request", "session", "issue-session", "session revoke --session-id"},
+		},
+		{
+			name: "auth request",
+			args: []string{"auth", "request", "--help"},
+			want: []string{"till auth request", "create", "approve", "project/<project-id>"},
+		},
+		{
+			name: "auth request create",
+			args: []string{"auth", "request", "create", "--help"},
+			want: []string{"till auth request create", "--path", "--principal-id", "--continuation-json", "next step"},
+		},
+		{
+			name: "auth request approve",
+			args: []string{"auth", "request", "approve", "--help"},
+			want: []string{"till auth request approve", "--path", "--ttl", "session_secret", "resume"},
+		},
+		{
+			name: "auth session",
+			args: []string{"auth", "session", "--help"},
+			want: []string{"till auth session", "list", "validate", "revoke"},
+		},
+		{
+			name: "auth session revoke",
+			args: []string{"auth", "session", "revoke", "--help"},
+			want: []string{"till auth session revoke", "--session-id", "does not accept the session id"},
 		},
 		{
 			name: "auth issue-session",
 			args: []string{"auth", "issue-session", "--help"},
-			want: []string{"till auth issue-session", "--principal-id", "--ttl"},
+			want: []string{"till auth issue-session", "--principal-id", "--ttl", "session_id", "session_secret", "next step"},
 		},
 		{
 			name: "auth revoke-session",
@@ -531,6 +577,304 @@ func TestRunAuthIssueAndRevokeSession(t *testing.T) {
 	}
 	if revoked.RevocationReason != "operator_revoke" {
 		t.Fatalf("revoke-session reason = %q, want operator_revoke", revoked.RevocationReason)
+	}
+}
+
+// TestRunAuthRequestApproveLifecycle verifies the primary request/session CLI issues an approved session and validates it.
+func TestRunAuthRequestApproveLifecycle(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var createdOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "create",
+		"--path", "project/p1",
+		"--principal-id", "review-agent",
+		"--principal-type", "agent",
+		"--client-id", "till-mcp-stdio",
+		"--client-type", "mcp-stdio",
+		"--reason", "manual MCP review",
+		"--continuation-json", `{"resume_tool":"till.raise_attention_item","resume_path":"project/p1","resume":{"path":"project/p1","attempt":1,"tags":["auth","dogfood"]}}`,
+	}, &createdOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request create) error = %v", err)
+	}
+
+	var created authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(createdOut.String()), &created); err != nil {
+		t.Fatalf("Unmarshal(create) error = %v", err)
+	}
+	if got := created.State; got != "pending" {
+		t.Fatalf("create state = %q, want pending", got)
+	}
+	if got := created.Path; got != "project/p1" {
+		t.Fatalf("create path = %q, want project/p1", got)
+	}
+	if got, _ := created.Continuation["resume_tool"].(string); got != "till.raise_attention_item" {
+		t.Fatalf("create continuation resume_tool = %q, want till.raise_attention_item", got)
+	}
+	resume, ok := created.Continuation["resume"].(map[string]any)
+	if !ok {
+		t.Fatalf("create continuation resume = %#v, want object", created.Continuation["resume"])
+	}
+	if got, _ := resume["path"].(string); got != "project/p1" {
+		t.Fatalf("create continuation resume.path = %q, want project/p1", got)
+	}
+
+	var shownOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "show",
+		"--request-id", created.ID,
+	}, &shownOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request show) error = %v", err)
+	}
+
+	var shown authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(shownOut.String()), &shown); err != nil {
+		t.Fatalf("Unmarshal(show) error = %v", err)
+	}
+	if shown.ID != created.ID {
+		t.Fatalf("show id = %q, want %q", shown.ID, created.ID)
+	}
+
+	var approvedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "approve",
+		"--request-id", created.ID,
+		"--path", "project/p1/branch/review-branch",
+		"--ttl", "2h",
+		"--note", "approved for dogfood",
+	}, &approvedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request approve) error = %v", err)
+	}
+
+	var approved authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(approvedOut.String()), &approved); err != nil {
+		t.Fatalf("Unmarshal(approve) error = %v", err)
+	}
+	if got := approved.State; got != "approved" {
+		t.Fatalf("approve state = %q, want approved", got)
+	}
+	if got := approved.Path; got != "project/p1/branch/review-branch" {
+		t.Fatalf("approve path = %q, want project/p1/branch/review-branch", got)
+	}
+	if got := approved.RequestedSessionTTL; got != "2h0m0s" {
+		t.Fatalf("approve requested_session_ttl = %q, want 2h0m0s", got)
+	}
+	if got, _ := approved.Continuation["resume_path"].(string); got != "project/p1" {
+		t.Fatalf("approve continuation resume_path = %q, want project/p1", got)
+	}
+	if approved.IssuedSessionID == "" || approved.IssuedSessionSecret == "" {
+		t.Fatalf("approve output missing issued credentials: %q", approvedOut.String())
+	}
+
+	var validatedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "session", "validate",
+		"--session-id", approved.IssuedSessionID,
+		"--session-secret", approved.IssuedSessionSecret,
+	}, &validatedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth session validate) error = %v", err)
+	}
+
+	var validated authSessionPayloadJSON
+	if err := json.Unmarshal([]byte(validatedOut.String()), &validated); err != nil {
+		t.Fatalf("Unmarshal(validate) error = %v", err)
+	}
+	if got := validated.PrincipalID; got != "review-agent" {
+		t.Fatalf("validate principal_id = %q, want review-agent", got)
+	}
+	if got := validated.State; got != "active" {
+		t.Fatalf("validate state = %q, want active", got)
+	}
+
+	var sessionListOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "session", "list",
+		"--principal-id", "review-agent",
+	}, &sessionListOut, io.Discard); err != nil {
+		t.Fatalf("run(auth session list) error = %v", err)
+	}
+
+	var sessions []authSessionPayloadJSON
+	if err := json.Unmarshal([]byte(sessionListOut.String()), &sessions); err != nil {
+		t.Fatalf("Unmarshal(session list) error = %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != approved.IssuedSessionID {
+		t.Fatalf("expected active session inventory for approved request, got %#v", sessions)
+	}
+
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "session", "list",
+		"--state", "definitely-invalid",
+	}, io.Discard, io.Discard); err == nil {
+		t.Fatal("run(auth session list invalid state) error = nil, want validation failure")
+	}
+}
+
+// TestRunAuthRequestTerminalStatesAndFilters verifies deny and cancel flows land in explicit stored states.
+func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	createRequest := func(principalID string) authRequestPayloadJSON {
+		t.Helper()
+		var out strings.Builder
+		if err := run(context.Background(), []string{
+			"--db", dbPath,
+			"--config", cfgPath,
+			"auth", "request", "create",
+			"--path", "project/p1",
+			"--principal-id", principalID,
+			"--client-id", "till-tui",
+			"--client-type", "tui",
+			"--reason", "review access",
+		}, &out, io.Discard); err != nil {
+			t.Fatalf("run(auth request create %q) error = %v", principalID, err)
+		}
+		var request authRequestPayloadJSON
+		if err := json.Unmarshal([]byte(out.String()), &request); err != nil {
+			t.Fatalf("Unmarshal(create %q) error = %v", principalID, err)
+		}
+		return request
+	}
+
+	deniedRequest := createRequest("user-deny")
+	var deniedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "deny",
+		"--request-id", deniedRequest.ID,
+		"--note", "outside current scope",
+	}, &deniedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request deny) error = %v", err)
+	}
+	var denied authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(deniedOut.String()), &denied); err != nil {
+		t.Fatalf("Unmarshal(deny) error = %v", err)
+	}
+	if got := denied.State; got != "denied" {
+		t.Fatalf("deny state = %q, want denied", got)
+	}
+
+	canceledRequest := createRequest("user-cancel")
+	var canceledOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "cancel",
+		"--request-id", canceledRequest.ID,
+		"--note", "superseded by another request",
+	}, &canceledOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request cancel) error = %v", err)
+	}
+	var canceled authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(canceledOut.String()), &canceled); err != nil {
+		t.Fatalf("Unmarshal(cancel) error = %v", err)
+	}
+	if got := canceled.State; got != "canceled" {
+		t.Fatalf("cancel state = %q, want canceled", got)
+	}
+
+	var deniedListOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "list",
+		"--state", "denied",
+	}, &deniedListOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request list denied) error = %v", err)
+	}
+	var deniedList []authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(deniedListOut.String()), &deniedList); err != nil {
+		t.Fatalf("Unmarshal(denied list) error = %v", err)
+	}
+	if len(deniedList) != 1 || deniedList[0].ID != deniedRequest.ID {
+		t.Fatalf("expected one denied request in filtered list, got %#v", deniedList)
+	}
+
+	var canceledListOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "list",
+		"--state", "canceled",
+	}, &canceledListOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request list canceled) error = %v", err)
+	}
+	var canceledList []authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(canceledListOut.String()), &canceledList); err != nil {
+		t.Fatalf("Unmarshal(canceled list) error = %v", err)
+	}
+	if len(canceledList) != 1 || canceledList[0].ID != canceledRequest.ID {
+		t.Fatalf("expected one canceled request in filtered list, got %#v", canceledList)
+	}
+}
+
+// TestRunAuthRequestTimeoutMaterializesExpiredState verifies request show surfaces the timeout lifecycle explicitly.
+func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var createdOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "create",
+		"--path", "project/p1",
+		"--principal-id", "review-user",
+		"--client-id", "till-tui",
+		"--client-type", "tui",
+		"--timeout", "1ms",
+		"--reason", "brief review",
+	}, &createdOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request create timeout) error = %v", err)
+	}
+
+	var created authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(createdOut.String()), &created); err != nil {
+		t.Fatalf("Unmarshal(create timeout) error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	var shownOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "show",
+		"--request-id", created.ID,
+	}, &shownOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request show timeout) error = %v", err)
+	}
+
+	var shown authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(shownOut.String()), &shown); err != nil {
+		t.Fatalf("Unmarshal(show timeout) error = %v", err)
+	}
+	if got := shown.State; got != "expired" {
+		t.Fatalf("show state = %q, want expired", got)
+	}
+	if got := shown.ResolutionNote; got != "timed_out" {
+		t.Fatalf("show resolution_note = %q, want timed_out", got)
 	}
 }
 

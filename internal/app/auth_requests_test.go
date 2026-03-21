@@ -1,0 +1,249 @@
+package app_test
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
+	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
+)
+
+// authRequestServiceFixture stores one real service stack for auth-request lifecycle tests.
+type authRequestServiceFixture struct {
+	svc      *app.Service
+	repo     *sqlite.Repository
+	project  domain.Project
+}
+
+// newAuthRequestServiceFixture constructs one real app/auth/sqlite stack for lifecycle tests.
+func newAuthRequestServiceFixture(t *testing.T) authRequestServiceFixture {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "tillsyn.db")
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	nextID := 0
+	next := func() string {
+		nextID++
+		return fmt.Sprintf("id-%02d", nextID)
+	}
+
+	auth, err := autentauth.NewSharedDB(autentauth.Config{
+		DB:          repo.DB(),
+		IDGenerator: next,
+		Clock:       time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+
+	project, err := domain.NewProject("p1", "Project One", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	svc := app.NewService(repo, next, time.Now, app.ServiceConfig{
+		AuthRequests: auth,
+		AuthBackend:  auth,
+	})
+	return authRequestServiceFixture{
+		svc:     svc,
+		repo:    repo,
+		project: project,
+	}
+}
+
+// TestServiceAuthRequestApproveMirrorsAttention verifies create and approve flows mirror into attention and issue a usable session.
+func TestServiceAuthRequestApproveMirrorsAttention(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                "project/" + fixture.project.ID,
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		PrincipalName:       "Review Agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "manual MCP review",
+		RequestedBy:         "lane-user",
+		RequestedType:       domain.ActorTypeUser,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if got := request.State; got != domain.AuthRequestStatePending {
+		t.Fatalf("CreateAuthRequest() state = %q, want pending", got)
+	}
+
+	attention, err := fixture.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: fixture.project.ID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   fixture.project.ID,
+		},
+		UnresolvedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(open) error = %v", err)
+	}
+	if len(attention) != 1 || attention[0].ID != request.ID {
+		t.Fatalf("expected mirrored attention for request %q, got %#v", request.ID, attention)
+	}
+	if !attention[0].RequiresUserAction {
+		t.Fatal("expected mirrored attention item to require user action")
+	}
+
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for dogfood",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	if got := approved.Request.State; got != domain.AuthRequestStateApproved {
+		t.Fatalf("ApproveAuthRequest() state = %q, want approved", got)
+	}
+	if approved.SessionSecret == "" {
+		t.Fatal("ApproveAuthRequest() returned empty session secret")
+	}
+
+	resolvedAttention, err := fixture.repo.GetAttentionItem(context.Background(), request.ID)
+	if err != nil {
+		t.Fatalf("GetAttentionItem() error = %v", err)
+	}
+	if got := resolvedAttention.State; got != domain.AttentionStateResolved {
+		t.Fatalf("attention state = %q, want resolved", got)
+	}
+
+	validated, err := fixture.svc.ValidateAuthSession(context.Background(), approved.Request.IssuedSessionID, approved.SessionSecret)
+	if err != nil {
+		t.Fatalf("ValidateAuthSession() error = %v", err)
+	}
+	if got := validated.Session.PrincipalID; got != "review-agent" {
+		t.Fatalf("validated principal_id = %q, want review-agent", got)
+	}
+	if got := validated.Session.ClientID; got != "till-mcp-stdio" {
+		t.Fatalf("validated client_id = %q, want till-mcp-stdio", got)
+	}
+}
+
+// TestServiceAuthRequestDenyAndCancelResolveAttention verifies non-approved terminal states also resolve their mirrored notifications.
+func TestServiceAuthRequestDenyAndCancelResolveAttention(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	createRequest := func(principalID string) domain.AuthRequest {
+		t.Helper()
+		request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+			Path:          "project/" + fixture.project.ID,
+			PrincipalID:   principalID,
+			PrincipalType: "user",
+			ClientID:      "till-tui",
+			ClientType:    "tui",
+			Reason:        "review access",
+		})
+		if err != nil {
+			t.Fatalf("CreateAuthRequest(%q) error = %v", principalID, err)
+		}
+		return request
+	}
+
+	deniedRequest := createRequest("user-deny")
+	denied, err := fixture.svc.DenyAuthRequest(context.Background(), app.DenyAuthRequestInput{
+		RequestID:      deniedRequest.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "outside approved scope",
+	})
+	if err != nil {
+		t.Fatalf("DenyAuthRequest() error = %v", err)
+	}
+	if got := denied.State; got != domain.AuthRequestStateDenied {
+		t.Fatalf("DenyAuthRequest() state = %q, want denied", got)
+	}
+
+	canceledRequest := createRequest("user-cancel")
+	canceled, err := fixture.svc.CancelAuthRequest(context.Background(), app.CancelAuthRequestInput{
+		RequestID:      canceledRequest.ID,
+		ResolvedBy:     "operator-2",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "superseded by another request",
+	})
+	if err != nil {
+		t.Fatalf("CancelAuthRequest() error = %v", err)
+	}
+	if got := canceled.State; got != domain.AuthRequestStateCanceled {
+		t.Fatalf("CancelAuthRequest() state = %q, want canceled", got)
+	}
+
+	for _, requestID := range []string{deniedRequest.ID, canceledRequest.ID} {
+		item, err := fixture.repo.GetAttentionItem(context.Background(), requestID)
+		if err != nil {
+			t.Fatalf("GetAttentionItem(%q) error = %v", requestID, err)
+		}
+		if got := item.State; got != domain.AttentionStateResolved {
+			t.Fatalf("attention %q state = %q, want resolved", requestID, got)
+		}
+	}
+}
+
+// TestServiceGetAuthRequestMaterializesTimeoutAndResolvesAttention verifies timed-out requests become expired and clear mirrored notifications on read.
+func TestServiceGetAuthRequestMaterializesTimeoutAndResolvesAttention(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:          "project/" + fixture.project.ID,
+		PrincipalID:   "review-user",
+		PrincipalType: "user",
+		ClientID:      "till-tui",
+		ClientType:    "tui",
+		Reason:        "brief review",
+		Timeout:       time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	expired, err := fixture.svc.GetAuthRequest(context.Background(), request.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if got := expired.State; got != domain.AuthRequestStateExpired {
+		t.Fatalf("GetAuthRequest() state = %q, want expired", got)
+	}
+	if got := expired.ResolutionNote; got != "timed_out" {
+		t.Fatalf("GetAuthRequest() resolution_note = %q, want timed_out", got)
+	}
+
+	item, err := fixture.repo.GetAttentionItem(context.Background(), request.ID)
+	if err != nil {
+		t.Fatalf("GetAttentionItem() error = %v", err)
+	}
+	if got := item.State; got != domain.AttentionStateResolved {
+		t.Fatalf("attention state = %q, want resolved after timeout materialization", got)
+	}
+}

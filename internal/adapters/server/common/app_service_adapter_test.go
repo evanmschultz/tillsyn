@@ -1,8 +1,7 @@
-//go:build commonhash
-
 package common
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -119,5 +118,80 @@ func TestComputeCaptureSummaryHashSortsAttentionItems(t *testing.T) {
 	}
 	if hashA != hashB {
 		t.Fatalf("hash mismatch for equivalent attention sets: %q != %q", hashA, hashB)
+	}
+}
+
+// TestNormalizeCommonHelpers exercises the common transport normalization helpers and their failure modes.
+func TestNormalizeCommonHelpers(t *testing.T) {
+	t.Parallel()
+
+	projectID, scopeType, scopeID, err := normalizeScopeTuple("p1", "", "")
+	if err != nil {
+		t.Fatalf("normalizeScopeTuple(project) error = %v", err)
+	}
+	if projectID != "p1" || scopeType != ScopeTypeProject || scopeID != "p1" {
+		t.Fatalf("normalizeScopeTuple(project) = %q %q %q, want p1 project p1", projectID, scopeType, scopeID)
+	}
+
+	projectID, scopeType, scopeID, err = normalizeScopeTuple("p1", ScopeTypeBranch, "b1")
+	if err != nil {
+		t.Fatalf("normalizeScopeTuple(branch) error = %v", err)
+	}
+	if projectID != "p1" || scopeType != ScopeTypeBranch || scopeID != "b1" {
+		t.Fatalf("normalizeScopeTuple(branch) = %q %q %q, want p1 branch b1", projectID, scopeType, scopeID)
+	}
+
+	if _, _, _, err := normalizeScopeTuple("p1", ScopeTypeTask, ""); err == nil {
+		t.Fatal("normalizeScopeTuple(task) expected error for missing scope_id")
+	}
+
+	if state, err := normalizeAttentionStateFilter("acknowledged"); err != nil || state != AttentionStateAcknowledged {
+		t.Fatalf("normalizeAttentionStateFilter() = %q, %v, want acknowledged, nil", state, err)
+	}
+	if _, err := normalizeAttentionStateFilter("invalid"); !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("normalizeAttentionStateFilter(invalid) error = %v, want ErrInvalidCaptureStateRequest", err)
+	}
+
+	raise, err := normalizeRaiseAttentionItemRequest(RaiseAttentionItemRequest{
+		ProjectID:    "p1",
+		ScopeType:    ScopeTypeProject,
+		ScopeID:      "p1",
+		Kind:         string(domain.AttentionKindBlocker),
+		Summary:      "  summary  ",
+		BodyMarkdown: "  body  ",
+	})
+	if err != nil {
+		t.Fatalf("normalizeRaiseAttentionItemRequest() error = %v", err)
+	}
+	if raise.Summary != "summary" || raise.BodyMarkdown != "body" {
+		t.Fatalf("normalizeRaiseAttentionItemRequest() = %#v", raise)
+	}
+	if _, err := normalizeResolveAttentionItemRequest(ResolveAttentionItemRequest{}); err == nil {
+		t.Fatal("normalizeResolveAttentionItemRequest() expected error for empty id")
+	}
+}
+
+// TestMapAppErrorAndCommentMarkdown exercises error mapping and comment-body helpers used by common transport adapters.
+func TestMapAppErrorAndCommentMarkdown(t *testing.T) {
+	t.Parallel()
+
+	if got := buildCommentBodyMarkdown("summary", "details"); got != "summary\n\ndetails" {
+		t.Fatalf("buildCommentBodyMarkdown() = %q, want summary\\n\\ndetails", got)
+	}
+	if got := buildCommentBodyMarkdown("summary", ""); got != "summary" {
+		t.Fatalf("buildCommentBodyMarkdown(summary only) = %q, want summary", got)
+	}
+	if got := commentSummaryFromMarkdown("  # heading\n\nbody line"); got != "heading" {
+		t.Fatalf("commentSummaryFromMarkdown() = %q, want heading", got)
+	}
+
+	if err := mapAppError("op", app.ErrNotFound); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("mapAppError(app not found) = %v, want ErrNotFound", err)
+	}
+	if err := mapAppError("op", domain.ErrInvalidID); !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("mapAppError(invalid id) = %v, want ErrInvalidCaptureStateRequest", err)
+	}
+	if err := mapAppError("op", domain.ErrMutationLeaseRequired); !errors.Is(err, ErrGuardrailViolation) {
+		t.Fatalf("mapAppError(lease required) = %v, want ErrGuardrailViolation", err)
 	}
 }

@@ -203,6 +203,59 @@ type CreateCommentRequest struct {
 	Actor        ActorLeaseTuple
 }
 
+// CreateAuthRequestRequest stores transport input for pre-session auth request creation.
+type CreateAuthRequestRequest struct {
+	Path             string
+	PrincipalID      string
+	PrincipalType    string
+	PrincipalName    string
+	ClientID         string
+	ClientType       string
+	ClientName       string
+	RequestedTTL     string
+	Timeout          string
+	Reason           string
+	ContinuationJSON string
+}
+
+// ListAuthRequestsRequest stores transport input for auth request inventory.
+type ListAuthRequestsRequest struct {
+	ProjectID string
+	State     string
+	Limit     int
+}
+
+// AuthRequestRecord stores one transport-facing auth request row.
+type AuthRequestRecord struct {
+	ID                     string         `json:"id"`
+	State                  string         `json:"state"`
+	Path                   string         `json:"path"`
+	ProjectID              string         `json:"project_id"`
+	BranchID               string         `json:"branch_id,omitempty"`
+	PhaseIDs               []string       `json:"phase_ids,omitempty"`
+	ScopeType              string         `json:"scope_type"`
+	ScopeID                string         `json:"scope_id"`
+	PrincipalID            string         `json:"principal_id"`
+	PrincipalType          string         `json:"principal_type"`
+	PrincipalName          string         `json:"principal_name,omitempty"`
+	ClientID               string         `json:"client_id"`
+	ClientType             string         `json:"client_type"`
+	ClientName             string         `json:"client_name,omitempty"`
+	RequestedSessionTTL    string         `json:"requested_session_ttl"`
+	Reason                 string         `json:"reason,omitempty"`
+	Continuation           map[string]any `json:"continuation,omitempty"`
+	RequestedByActor       string         `json:"requested_by_actor"`
+	RequestedByType        string         `json:"requested_by_type"`
+	CreatedAt              time.Time      `json:"created_at"`
+	ExpiresAt              time.Time      `json:"expires_at"`
+	ResolvedByActor        string         `json:"resolved_by_actor,omitempty"`
+	ResolvedByType         string         `json:"resolved_by_type,omitempty"`
+	ResolvedAt             *time.Time     `json:"resolved_at,omitempty"`
+	ResolutionNote         string         `json:"resolution_note,omitempty"`
+	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
+	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
+}
+
 // ListCommentsByTargetRequest stores transport input for comment list queries.
 type ListCommentsByTargetRequest struct {
 	ProjectID  string
@@ -281,6 +334,13 @@ type CapabilityLeaseService interface {
 type CommentService interface {
 	CreateComment(context.Context, CreateCommentRequest) (CommentRecord, error)
 	ListCommentsByTarget(context.Context, ListCommentsByTargetRequest) ([]CommentRecord, error)
+}
+
+// AuthRequestService exposes pre-session auth request creation and inventory operations.
+type AuthRequestService interface {
+	CreateAuthRequest(context.Context, CreateAuthRequestRequest) (AuthRequestRecord, error)
+	ListAuthRequests(context.Context, ListAuthRequestsRequest) ([]AuthRequestRecord, error)
+	GetAuthRequest(context.Context, string) (AuthRequestRecord, error)
 }
 
 // durationFromSeconds converts positive integer seconds to a transport duration.

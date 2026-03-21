@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-20
-Status: In progress; the landed runtime/session-first auth wave is green in local gates, but collaborative retest exposed missing auth request/approval UX, notification routing, and help discoverability requirements that now need to be locked in the active run plan before closeout.
+Status: In progress; the auth UX implementation wave is now green in local gates, including the restored coverage floor, but collaborative dogfood retest and final closeout evidence are still pending.
 
 ## 1) Active Run Source Of Truth
 
@@ -230,20 +230,87 @@ The dogfood auth UX and operator/help surfaces must satisfy the matrix below bef
 
 | ID | Condition | Expected Result | Status | Evidence |
 |---|---|---|---|---|
-| AU-01 | an MCP agent needs access without a valid approved session | caller is routed into request/approval semantics, not silent tuple fallback or surprise shell-only workflow | TODO | |
-| AU-02 | a local user wants to authorize an agent from the TUI | auth request can be reviewed and acted on without requiring the user to manually mint their own session | TODO | |
-| AU-03 | an auth request targets the currently focused project | request appears in that project's notifications panel | TODO | |
-| AU-04 | an auth request targets a different project or no focused project exists | request appears in global notifications | TODO | |
-| AU-05 | a user approves a request with scoped constraints | resulting session/grant is limited to the approved path and lifetime | TODO | |
-| AU-06 | a user denies a request | request closes cleanly and the agent remains blocked | TODO | |
-| AU-07 | `till auth --help` is opened | help explains the auth surface, required follow-up steps, and available workflows with examples | TODO | |
-| AU-08 | `till auth issue-session --help` is opened | required flags, returned fields, `--path` semantics when relevant, and examples are explicit | TODO | |
-| AU-09 | `till auth revoke-session --help` is opened | `--session-id` requirement and examples are explicit; positional invocation ambiguity is removed from the UX contract | TODO | |
-| AU-10 | operator needs inventory or review surfaces | plan includes `list/show/request/approve/deny/revoke` lifecycle coverage so gatekeeping is user-operable, not just developer-operable | TODO | |
-| AU-11 | external MCP mutation or auth-request activity occurs while the related project is open in the TUI | current project view and notifications refresh without a project-switch workaround | TODO | |
-| AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, and quick-info drill-in remain explicit and testable | TODO | |
-| AU-13 | operator chooses shell approval instead of TUI approval | full request/session lifecycle is operable from CLI with explicit examples and deterministic outputs | TODO | |
-| AU-14 | `till auth request approve --help` is opened | exact decision labels, `--path` semantics, and continuation behavior are explicit | TODO | |
+| AU-01 | an MCP agent needs access without a valid approved session | caller is routed into request/approval semantics, not silent tuple fallback or surprise shell-only workflow | PASS | `internal/adapters/server/mcpapi/handler_test.go:834`; `internal/adapters/server/mcpapi/handler_test.go:862`; `internal/adapters/server/mcpapi/handler_test.go:1169` |
+| AU-02 | a local user wants to authorize an agent from the TUI | auth request can be reviewed and acted on without requiring the user to manually mint their own session | PASS | `internal/tui/model_test.go:6929`; `internal/tui/model_test.go:7489` |
+| AU-03 | an auth request targets the currently focused project | request appears in that project's notifications panel | PASS | `internal/tui/model_test.go:7047` |
+| AU-04 | an auth request targets a different project or no focused project exists | request appears in global notifications | PASS | `internal/tui/model_test.go:7489` |
+| AU-05 | a user approves a request with scoped constraints | resulting session/grant is limited to the approved path and lifetime | PASS | `internal/tui/model_test.go:7100`; `internal/adapters/auth/autentauth/service_test.go:592` |
+| AU-06 | a user denies a request | request closes cleanly and the agent remains blocked | PASS | `internal/tui/model_test.go:7489`; `internal/adapters/auth/autentauth/service_test.go:774` |
+| AU-07 | `till auth --help` is opened | help explains the auth surface, required follow-up steps, and available workflows with examples | PASS | `cmd/till/main_test.go:437` |
+| AU-08 | `till auth issue-session --help` is opened | required flags, returned fields, `--path` semantics when relevant, and examples are explicit | PASS | `cmd/till/main_test.go:465` |
+| AU-09 | `till auth revoke-session --help` is opened | `--session-id` requirement and examples are explicit; positional invocation ambiguity is removed from the UX contract | PASS | `cmd/till/main_test.go:470` |
+| AU-10 | operator needs inventory or review surfaces | plan includes `list/show/request/approve/deny/revoke` lifecycle coverage so gatekeeping is user-operable, not just developer-operable | PASS | `cmd/till/main_test.go:442`; `cmd/till/main_test.go:627`; `cmd/till/main_test.go:648`; `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; `cmd/till/main_test.go:786` |
+| AU-11 | external MCP mutation or auth-request activity occurs while the related project is open in the TUI | current project view and notifications refresh without a project-switch workaround | PASS | `internal/tui/model_test.go:7164` |
+| AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, and quick-info drill-in remain explicit and testable | PASS | `internal/tui/model_test.go:7637`; `internal/tui/model_test.go:7695`; `internal/tui/model_test.go:8203`; `internal/tui/model_test.go:10131` |
+| AU-13 | operator chooses shell approval instead of TUI approval | full request/session lifecycle is operable from CLI with explicit examples and deterministic outputs | PASS | `cmd/till/main_test.go:442`; `cmd/till/main_test.go:601`; `cmd/till/main_test.go:648`; `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; `cmd/till/main_test.go:786` |
+| AU-14 | `till auth request approve --help` is opened | exact decision labels, `--path` semantics, and continuation behavior are explicit | PASS | `cmd/till/main_test.go:450` |
+
+### 6.1 Latest Checkpoint Evidence
+
+Timestamp:
+1. 2026-03-20 local implementation checkpoint after the auth UX dogfood wave landed and the coverage floor was restored.
+
+Files changed in this checkpoint:
+1. `cmd/till/main.go`
+2. `cmd/till/main_test.go`
+3. `internal/adapters/auth/autentauth/service.go`
+4. `internal/adapters/auth/autentauth/service_test.go`
+5. `internal/adapters/auth/autentauth/service_app_sessions_test.go`
+6. `internal/adapters/server/common/app_service_adapter.go`
+7. `internal/adapters/server/common/app_service_adapter_mcp.go`
+8. `internal/adapters/server/common/mcp_surface.go`
+9. `internal/adapters/server/common/capture_test.go`
+10. `internal/adapters/server/common/app_service_adapter_auth_requests_test.go`
+11. `internal/adapters/server/common/app_service_adapter_helpers_test.go`
+12. `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`
+13. `internal/adapters/server/common/app_service_adapter_mcp_helpers_test.go`
+14. `internal/adapters/server/mcpapi/handler.go`
+15. `internal/adapters/server/mcpapi/handler_test.go`
+16. `internal/adapters/storage/sqlite/repo.go`
+17. `internal/adapters/storage/sqlite/repo_test.go`
+18. `internal/app/auth_requests.go`
+19. `internal/app/service.go`
+20. `internal/app/service_test.go`
+21. `internal/domain/auth_request.go`
+22. `internal/domain/auth_request_test.go`
+23. `internal/tui/model.go`
+24. `internal/tui/model_test.go`
+
+Commands run:
+1. `just fmt`
+Outcome: pass after auth UX implementation and follow-up coverage fixes.
+2. `just test-pkg ./internal/adapters/server/common`
+Outcome: pass after adding capture-state, attention, auth-request, and lease lifecycle coverage.
+3. `just test-pkg ./internal/adapters/auth/autentauth`
+Outcome: pass; package coverage raised to 74.1%.
+4. `just test-pkg ./internal/tui`
+Outcome: pass; package coverage raised to 70.3%.
+5. `just test-pkg ./internal/app`
+Outcome: pass.
+6. `just check`
+Outcome: pass.
+7. `just ci`
+Outcome: pass.
+8. final QA review findings fixed:
+   - `auth session list --state` now fails closed on unsupported state values in the app-facing auth adapter.
+   - auth-request continuation metadata now round-trips as a real JSON object instead of a flat string-only map.
+9. `just check`
+Outcome: pass after the QA remediation patch.
+10. `just ci`
+Outcome: pass after the QA remediation patch.
+
+Checkpoint summary:
+1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.
+2. MCP now exposes persisted auth-request creation/list/show tools and routes `session_required` and `grant_required` failures toward request creation instead of tuple fallback.
+3. Shared-DB `autent` now persists pre-session auth requests, approval decisions, scoped approvals, and app-facing session inventory or validation wrappers.
+4. TUI notifications now route focused-project auth requests locally, off-project requests globally, allow approve or deny actions, support scoped approval constraints, and auto-refresh external auth-request activity.
+5. Final QA review findings were resolved before closeout:
+   - invalid `auth session list --state` input now fails closed through the app-facing adapter path,
+   - continuation metadata now preserves nested JSON objects for CLI and MCP auth-request flows.
+6. Local coverage floors now pass across the touched auth/runtime packages:
+   - `internal/adapters/auth/autentauth`: 74.1%
+   - `internal/adapters/server/common`: 78.2%
+   - `internal/tui`: 70.3%
 
 ## 7) Workstreams
 
@@ -618,6 +685,33 @@ Commands run:
    - `README.md` inspected -> PASS
    - `MCP_DOGFOODING_WORKSHEET.md` inspected -> PASS
    - `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` inspected -> PASS
+49. auth UX coverage recovery loop:
+   - Context7 `/golang/go/go1.26.0` consulted before adding new test coverage -> PASS
+   - attempted subagent coverage split, but subagent-spawn tooling was unavailable in this session; coverage audit was completed manually with package-local read/test loops -> PASS
+50. focused auth UX coverage tests added:
+   - `internal/adapters/server/common/capture_test.go` -> PASS
+   - `internal/adapters/auth/autentauth/service_app_sessions_test.go` helper fixture -> PASS
+   - `internal/tui/model_test.go` auth request helper coverage -> PASS
+51. package-level validation loop:
+   - `just fmt` -> PASS
+   - `just test-pkg ./internal/adapters/server/common` -> PASS
+   - `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+   - `just test-pkg ./internal/tui` -> PASS
+52. failure remediation loop during coverage recovery:
+   - `just test-pkg ./internal/adapters/server/common` -> initial FAIL on capture/lifecycle assertions
+   - Context7 `/golang/go/go1.26.0` re-run before the next edits -> PASS
+   - `internal/adapters/server/common/capture_test.go` and `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` assertions corrected to match actual contract behavior -> PASS
+53. repo smoke gate after coverage remediation:
+   - `just check` -> PASS
+54. final full gate after coverage remediation:
+   - `just ci` -> PASS
+55. current package coverage floor evidence:
+   - `internal/adapters/auth/autentauth` -> `73.8%`
+   - `internal/adapters/server/common` -> `79.1%`
+   - `internal/tui` -> `70.3%`
+56. current run status checkpoint:
+   - auth UX implementation is locally gate-green
+   - remaining closeout is collaborative dogfood retest, run-ledger completion, and final user confirmation -> IN PROGRESS
    - audit result: secondary markdown still contains stale runtime/auth assumptions and older worksheet authority claims; those docs are reference-only until explicitly reconciled to this file -> PASS
 49. source-of-truth consolidation follow-up:
    - `PLAN.md` updated again to absorb the remaining notifications, approval-continuation, audit-trail, quick-info, and live-refresh requirements that were only partially captured in older collab docs -> PASS

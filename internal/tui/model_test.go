@@ -23,22 +23,26 @@ import (
 
 // fakeService represents fake service data used by this package.
 type fakeService struct {
-	projects              []domain.Project
-	columns               map[string][]domain.Column
-	tasks                 map[string][]domain.Task
-	lastSearchFilter      app.SearchTasksFilter
-	lastCreateTask        app.CreateTaskInput
-	createTaskCalls       int
-	comments              map[string][]domain.Comment
-	lastCreateComment     app.CreateCommentInput
-	err                   error
-	rollups               map[string]domain.DependencyRollup
-	changeEvents          map[string][]domain.ChangeEvent
-	changeEventsErr       error
-	attentionErrByProject map[string]error
-	commentCreateErr      error
-	commentListErr        error
-	commentSeq            int
+	projects                []domain.Project
+	columns                 map[string][]domain.Column
+	tasks                   map[string][]domain.Task
+	lastSearchFilter        app.SearchTasksFilter
+	lastCreateTask          app.CreateTaskInput
+	createTaskCalls         int
+	comments                map[string][]domain.Comment
+	lastCreateComment       app.CreateCommentInput
+	authRequests            map[string]domain.AuthRequest
+	lastApproveAuthRequest  app.ApproveAuthRequestInput
+	lastDenyAuthRequest     app.DenyAuthRequestInput
+	err                     error
+	rollups                 map[string]domain.DependencyRollup
+	changeEvents            map[string][]domain.ChangeEvent
+	changeEventsErr         error
+	attentionErrByProject   map[string]error
+	attentionItemsByProject map[string][]domain.AttentionItem
+	commentCreateErr        error
+	commentListErr          error
+	commentSeq              int
 }
 
 // newFakeService constructs fake service.
@@ -52,13 +56,15 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		taskByProject[t.ProjectID] = append(taskByProject[t.ProjectID], t)
 	}
 	return &fakeService{
-		projects:              projects,
-		columns:               colByProject,
-		tasks:                 taskByProject,
-		comments:              map[string][]domain.Comment{},
-		rollups:               map[string]domain.DependencyRollup{},
-		changeEvents:          map[string][]domain.ChangeEvent{},
-		attentionErrByProject: map[string]error{},
+		projects:                projects,
+		columns:                 colByProject,
+		tasks:                   taskByProject,
+		comments:                map[string][]domain.Comment{},
+		authRequests:            map[string]domain.AuthRequest{},
+		rollups:                 map[string]domain.DependencyRollup{},
+		changeEvents:            map[string][]domain.ChangeEvent{},
+		attentionErrByProject:   map[string]error{},
+		attentionItemsByProject: map[string][]domain.AttentionItem{},
 	}
 }
 
@@ -163,6 +169,19 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 	if err := f.attentionErrByProject[projectID]; err != nil {
 		return nil, err
 	}
+	if rows, ok := f.attentionItemsByProject[projectID]; ok {
+		out := make([]domain.AttentionItem, 0, len(rows))
+		for _, item := range rows {
+			if req, ok := f.authRequests[strings.TrimSpace(item.ID)]; ok && req.State != domain.AuthRequestStatePending {
+				continue
+			}
+			out = append(out, item)
+		}
+		if in.Limit > 0 && len(out) > in.Limit {
+			out = out[:in.Limit]
+		}
+		return out, nil
+	}
 	tasks := f.tasks[projectID]
 	out := make([]domain.AttentionItem, 0, len(tasks))
 	for idx, task := range tasks {
@@ -191,6 +210,50 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 		out = out[:in.Limit]
 	}
 	return out, nil
+}
+
+// GetAuthRequest returns one auth request by id.
+func (f *fakeService) GetAuthRequest(_ context.Context, requestID string) (domain.AuthRequest, error) {
+	request, ok := f.authRequests[strings.TrimSpace(requestID)]
+	if !ok {
+		return domain.AuthRequest{}, domain.ErrInvalidID
+	}
+	return request, nil
+}
+
+// ApproveAuthRequest approves one fake auth request and records the request payload.
+func (f *fakeService) ApproveAuthRequest(_ context.Context, in app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error) {
+	requestID := strings.TrimSpace(in.RequestID)
+	request, ok := f.authRequests[requestID]
+	if !ok {
+		return app.ApprovedAuthRequestResult{}, domain.ErrInvalidID
+	}
+	f.lastApproveAuthRequest = in
+	request.State = domain.AuthRequestStateApproved
+	request.ResolvedByActor = strings.TrimSpace(in.ResolvedBy)
+	request.ResolvedByType = in.ResolvedType
+	request.ResolutionNote = strings.TrimSpace(in.ResolutionNote)
+	f.authRequests[requestID] = request
+	return app.ApprovedAuthRequestResult{
+		Request:       request,
+		SessionSecret: "session-secret",
+	}, nil
+}
+
+// DenyAuthRequest denies one fake auth request and records the request payload.
+func (f *fakeService) DenyAuthRequest(_ context.Context, in app.DenyAuthRequestInput) (domain.AuthRequest, error) {
+	requestID := strings.TrimSpace(in.RequestID)
+	request, ok := f.authRequests[requestID]
+	if !ok {
+		return domain.AuthRequest{}, domain.ErrInvalidID
+	}
+	f.lastDenyAuthRequest = in
+	request.State = domain.AuthRequestStateDenied
+	request.ResolvedByActor = strings.TrimSpace(in.ResolvedBy)
+	request.ResolvedByType = in.ResolvedType
+	request.ResolutionNote = strings.TrimSpace(in.ResolutionNote)
+	f.authRequests[requestID] = request
+	return request, nil
 }
 
 // GetProjectDependencyRollup returns project dependency rollup totals.
@@ -6849,6 +6912,9 @@ func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction
 		if len(section.Items) != 1 {
 			t.Fatalf("expected one action-required row, got %d", len(section.Items))
 		}
+		if section.Items[0].AttentionID != "att-requires-action" {
+			t.Fatalf("expected attention id %q, got %q", "att-requires-action", section.Items[0].AttentionID)
+		}
 		if !strings.Contains(section.Items[0].Label, "requires action include") {
 			t.Fatalf("expected requires-user-action row label, got %q", section.Items[0].Label)
 		}
@@ -6859,8 +6925,629 @@ func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction
 	}
 }
 
-// TestModelProjectNotificationsEnterFallsBackToThreadWhenTaskUnavailable verifies project-notification Enter opens a thread when the scoped task is not currently visible.
-func TestModelProjectNotificationsEnterFallsBackToThreadWhenTaskUnavailable(t *testing.T) {
+// TestModelProjectNotificationsAuthRequestApproveShortcut verifies auth-request rows keep their id and reuse the confirm modal for approvals.
+func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 12, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-1",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		PrincipalName:       "Agent One",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "approval needed",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[authRequest.ID] = authRequest
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{
+		{
+			ID:                 authRequest.ID,
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindConsensusRequired,
+			Summary:            "auth request review",
+			BodyMarkdown:       "Please review this approval request.",
+			RequiresUserAction: true,
+			CreatedAt:          now,
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
+	}
+	sections := m.noticesSectionsForInteraction()
+	var row noticesPanelItem
+	found := false
+	for _, section := range sections {
+		if section.ID != noticesSectionAttention {
+			continue
+		}
+		if len(section.Items) != 1 {
+			t.Fatalf("expected one auth-request row, got %d", len(section.Items))
+		}
+		row = section.Items[0]
+		found = true
+	}
+	if !found {
+		t.Fatal("expected auth-request row in attention section")
+	}
+	if row.AttentionID != authRequest.ID {
+		t.Fatalf("expected attention id %q, got %q", authRequest.ID, row.AttentionID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected enter to keep opening thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != project.ID {
+		t.Fatalf("expected project thread target for auth-request row, got %#v", m.threadTarget)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to close thread mode, got %v", m.mode)
+	}
+	m.noticesFocused = true
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected notices section to stay on attention row, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected approve shortcut to open confirm modal, got %v", m.mode)
+	}
+	if m.pendingConfirm.Kind != "approve-auth-request" {
+		t.Fatalf("expected approve confirm kind, got %q", m.pendingConfirm.Kind)
+	}
+	if m.pendingConfirm.AuthRequestID != authRequest.ID {
+		t.Fatalf("expected confirm auth request id %q, got %q", authRequest.ID, m.pendingConfirm.AuthRequestID)
+	}
+	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "approved via TUI notifications") {
+		t.Fatalf("expected deterministic approval note, got %q", m.pendingConfirm.AuthRequestNote)
+	}
+	m = applyMsg(t, m, keyRune('y'))
+	if m.mode != modeNone {
+		t.Fatalf("expected confirm to close modal, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.RequestID); got != authRequest.ID {
+		t.Fatalf("expected approve request id %q, got %q", authRequest.ID, got)
+	}
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); !strings.Contains(got, "approved via TUI notifications") {
+		t.Fatalf("expected approval note to be forwarded, got %q", got)
+	}
+	if len(m.attentionItems) != 0 {
+		t.Fatalf("expected reload to clear pending auth-request row, got %d attention items", len(m.attentionItems))
+	}
+}
+
+// TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel verifies focused-project requests do not duplicate into global notices.
+func TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 13, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	other, _ := domain.NewProject("p2", "Elsewhere", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-focused",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "focused review",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{task})
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 authRequest.ID,
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "auth request review",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+	svc.authRequests[authRequest.ID] = authRequest
+
+	m := loadReadyModel(t, NewModel(svc))
+	if len(m.attentionItems) != 1 {
+		t.Fatalf("attentionItems = %d, want 1", len(m.attentionItems))
+	}
+	if len(m.globalNotices) != 0 {
+		t.Fatalf("globalNotices = %d, want 0 for focused-project request", len(m.globalNotices))
+	}
+}
+
+// TestModelProjectNotificationsAuthRequestApproveForwardsConstraints verifies TUI approval can narrow path and lifetime before submission.
+func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 14, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-approve-constraints",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID, BranchID: "requested"},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "needs narrowed scope",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[authRequest.ID] = authRequest
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 authRequest.ID,
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "auth request review",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m.noticesFocused = true
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode, got %v", m.mode)
+	}
+	m.confirmAuthPathInput.SetValue("project/p1/branch/narrowed")
+	m.confirmAuthTTLInput.SetValue("2h")
+	m.confirmFocus = confirmFocusButtons
+	m = applyMsg(t, m, keyRune('y'))
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.Path); got != "project/p1/branch/narrowed" {
+		t.Fatalf("ApproveAuthRequest() path = %q, want project/p1/branch/narrowed", got)
+	}
+	if got := svc.lastApproveAuthRequest.SessionTTL; got != 2*time.Hour {
+		t.Fatalf("ApproveAuthRequest() ttl = %s, want 2h", got)
+	}
+}
+
+// TestModelAutoRefreshLoadsExternalAuthRequest verifies externally created auth requests appear without project-switch workarounds.
+func TestModelAutoRefreshLoadsExternalAuthRequest(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 16, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+	m.autoRefreshInterval = time.Second
+
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-refresh",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "external create",
+		RequestedByActor:    "remote-agent",
+		RequestedByType:     domain.ActorTypeAgent,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc.authRequests[authRequest.ID] = authRequest
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 authRequest.ID,
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "external auth request",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+
+	var cmd tea.Cmd
+	m, cmd = applyAutoRefreshTickMsg(t, m)
+	m = applyAutoRefreshLoadResult(t, m, cmd)
+	if len(m.attentionItems) != 1 {
+		t.Fatalf("attentionItems = %d, want 1 after auto refresh", len(m.attentionItems))
+	}
+	if got := m.attentionItems[0].ID; got != authRequest.ID {
+		t.Fatalf("attentionItems[0].ID = %q, want %q", got, authRequest.ID)
+	}
+}
+
+// TestModelAuthRequestApproveRejectsInvalidTTL verifies invalid approval TTL input stays in the confirm modal.
+func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 17, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-invalid-ttl",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "invalid ttl branch",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[authRequest.ID] = authRequest
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 authRequest.ID,
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "auth request review",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m.noticesFocused = true
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode, got %v", m.mode)
+	}
+	m.confirmAuthTTLInput.SetValue("definitely-not-a-duration")
+	m.confirmFocus = confirmFocusButtons
+	m.confirmChoice = 0
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected invalid ttl to keep confirm mode, got %v", m.mode)
+	}
+	if svc.lastApproveAuthRequest.RequestID != "" {
+		t.Fatalf("ApproveAuthRequest() should not have been called, got %#v", svc.lastApproveAuthRequest)
+	}
+}
+
+// TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest verifies auth-request shortcuts fail closed when the selected notice cannot resolve a pending request.
+func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 "req-missing",
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "auth request review",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m.noticesFocused = true
+
+	if _, ok := m.selectedAuthRequestForActiveNotice(); ok {
+		t.Fatal("selectedAuthRequestForActiveNotice() = true, want false for missing auth request state")
+	}
+	next, cmd, ok := m.beginSelectedAuthRequestDecision("approve")
+	if ok || cmd != nil {
+		t.Fatalf("beginSelectedAuthRequestDecision() = ok=%t cmd=%v, want false nil", ok, cmd)
+	}
+	if got := next.(Model).mode; got == modeConfirmAction {
+		t.Fatalf("beginSelectedAuthRequestDecision() opened confirm mode unexpectedly: %v", got)
+	}
+}
+
+// TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus verifies deny decisions skip editable auth-approval fields.
+func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-deny-focus",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "deny flow",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[authRequest.ID] = authRequest
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
+		ID:                 authRequest.ID,
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            project.ID,
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindConsensusRequired,
+		Summary:            "auth request review",
+		RequiresUserAction: true,
+		CreatedAt:          now,
+	}}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m.noticesFocused = true
+	m = applyMsg(t, m, keyRune('d'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode, got %v", m.mode)
+	}
+	if m.confirmFocus != confirmFocusButtons {
+		t.Fatalf("confirmFocus = %d, want button focus", m.confirmFocus)
+	}
+	if m.authConfirmFieldsActive() {
+		t.Fatal("authConfirmFieldsActive() = true for deny flow, want false")
+	}
+	if got := confirmActionHints(m.authConfirmFieldsActive()); !strings.Contains(got, "enter apply") {
+		t.Fatalf("confirmActionHints() = %q, want non-editable confirm hints", got)
+	}
+}
+
+// TestModelSetConfirmFocusHandlesNilAndBounds verifies auth confirm focus clamps invalid values and tolerates nil receivers.
+func TestModelSetConfirmFocusHandlesNilAndBounds(t *testing.T) {
+	var nilModel *Model
+	if cmd := nilModel.setConfirmFocus(confirmFocusAuthPath); cmd != nil {
+		t.Fatalf("nil setConfirmFocus() cmd = %#v, want nil", cmd)
+	}
+
+	m := NewModel(newFakeService(nil, nil, nil))
+	if cmd := m.setConfirmFocus(-1); cmd != nil {
+		t.Fatalf("setConfirmFocus(invalid low) cmd = %#v, want nil", cmd)
+	}
+	if m.confirmFocus != confirmFocusButtons {
+		t.Fatalf("confirmFocus = %d, want buttons after low clamp", m.confirmFocus)
+	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthPath); cmd == nil {
+		t.Fatal("setConfirmFocus(path) cmd = nil, want focus command")
+	}
+	if m.confirmFocus != confirmFocusAuthPath {
+		t.Fatalf("confirmFocus = %d, want auth path focus", m.confirmFocus)
+	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthTTL); cmd == nil {
+		t.Fatal("setConfirmFocus(ttl) cmd = nil, want focus command")
+	}
+	if m.confirmFocus != confirmFocusAuthTTL {
+		t.Fatalf("confirmFocus = %d, want auth ttl focus", m.confirmFocus)
+	}
+}
+
+// TestAuthRequestResolutionHelpers verifies auth-request note helpers keep deterministic user-visible wording.
+func TestAuthRequestResolutionHelpers(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
+	req, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-helper",
+		Path:                domain.AuthRequestPath{ProjectID: "p1", BranchID: "b1"},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "helper coverage",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	if got := authRequestResolutionNote(req, "deny"); !strings.Contains(got, "denied via TUI notifications") || !strings.Contains(got, "agent-1") {
+		t.Fatalf("authRequestResolutionNote(deny) = %q, want denied note with principal fallback", got)
+	}
+	if got := authRequestResolutionNote(req, ""); !strings.Contains(got, "resolved via TUI notifications") {
+		t.Fatalf("authRequestResolutionNote(default) = %q, want resolved note", got)
+	}
+	if got := firstNonEmptyTrimmed("", "  ", "value", "fallback"); got != "value" {
+		t.Fatalf("firstNonEmptyTrimmed() = %q, want value", got)
+	}
+}
+
+// TestModelAuthConfirmHelpers verifies auth approval confirm helpers validate edits and render field-aware hints.
+func TestModelAuthConfirmHelpers(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.pendingConfirm = confirmAction{
+		Kind:          "approve-auth-request",
+		AuthRequestID: "req-1",
+	}
+	if !m.authConfirmFieldsActive() {
+		t.Fatal("authConfirmFieldsActive() = false, want true for auth approval")
+	}
+	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
+	m.confirmAuthTTLInput.SetValue("90m")
+	action, err := m.prepareConfirmAction()
+	if err != nil {
+		t.Fatalf("prepareConfirmAction() error = %v", err)
+	}
+	if action.AuthRequestPath != "project/p1/branch/b1" || action.AuthRequestTTL != "90m" {
+		t.Fatalf("prepareConfirmAction() = %#v, want path + ttl snapshot", action)
+	}
+	if got := confirmActionHints(true); !strings.Contains(got, "tab move fields") {
+		t.Fatalf("confirmActionHints(true) = %q, want auth field guidance", got)
+	}
+	if got := confirmActionHints(false); strings.Contains(got, "tab move fields") {
+		t.Fatalf("confirmActionHints(false) = %q, want button-only guidance", got)
+	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthPath); cmd == nil || !m.confirmAuthPathInput.Focused() {
+		t.Fatalf("setConfirmFocus(path) = %v, want focused path input", cmd)
+	}
+	if cmd := m.setConfirmFocus(confirmFocusAuthTTL); cmd == nil || !m.confirmAuthTTLInput.Focused() {
+		t.Fatalf("setConfirmFocus(ttl) = %v, want focused ttl input", cmd)
+	}
+	_ = m.setConfirmFocus(999)
+	if m.confirmFocus != confirmFocusButtons || m.confirmAuthPathInput.Focused() || m.confirmAuthTTLInput.Focused() {
+		t.Fatalf("setConfirmFocus(default) left stale focus state: focus=%d path=%t ttl=%t", m.confirmFocus, m.confirmAuthPathInput.Focused(), m.confirmAuthTTLInput.Focused())
+	}
+	m.confirmAuthPathInput.SetValue("not-a-valid-auth-path")
+	if _, err := m.prepareConfirmAction(); err == nil {
+		t.Fatal("prepareConfirmAction() expected invalid auth path error")
+	}
+}
+
+// TestModelViewRendersAuthConfirmDetails verifies the confirm modal renders auth-request subject, constraints, and note text.
+func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 19, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.mode = modeConfirmAction
+	m.pendingConfirm = confirmAction{
+		Kind:                 "approve-auth-request",
+		Label:                "approve auth request",
+		AuthRequestID:        "req-1",
+		AuthRequestPrincipal: "Review Agent",
+		AuthRequestPath:      "project/p1/branch/b1",
+		AuthRequestTTL:       "2h",
+		AuthRequestNote:      "approved via TUI notifications for Review Agent at project/p1/branch/b1",
+	}
+	m.confirmChoice = 0
+	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
+	m.confirmAuthTTLInput.SetValue("2h")
+
+	rendered := fmt.Sprint(m.View())
+	for _, want := range []string{
+		"Confirm Action",
+		"Review Agent request @ project/p1/branch/b1",
+		"approve with scoped constraints",
+		"project/p1/branch/b1",
+		"2h",
+		"note: approved via TUI notifications",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("View() missing %q in confirm modal:\n%s", want, rendered)
+		}
+	}
+}
+
+// TestModelProjectNotificationsEnterRecoversArchivedTask verifies project-notification Enter can reopen an archived hidden task before falling back to a thread.
+func TestModelProjectNotificationsEnterRecoversArchivedTask(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -6891,11 +7578,14 @@ func TestModelProjectNotificationsEnterFallsBackToThreadWhenTaskUnavailable(t *t
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeThread {
-		t.Fatalf("expected unavailable task notice to open thread mode, got %v", m.mode)
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected archived task notice to recover into task info, got %v", m.mode)
 	}
-	if m.threadTarget.ProjectID != project.ID || m.threadTarget.TargetType != domain.CommentTargetTypeTask || m.threadTarget.TargetID != archivedBlocked.ID {
-		t.Fatalf("expected task-scoped thread target for archived item %q, got %#v", archivedBlocked.ID, m.threadTarget)
+	if m.taskInfoTaskID != archivedBlocked.ID {
+		t.Fatalf("expected task info target %q, got %q", archivedBlocked.ID, m.taskInfoTaskID)
+	}
+	if !m.showArchived {
+		t.Fatal("expected archived task recovery to enable archived visibility")
 	}
 }
 
@@ -7056,6 +7746,87 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 	}
 	if m.noticesFocused {
 		t.Fatalf("expected notices focus cleared after global notification activation, got noticesFocused=%t", m.noticesFocused)
+	}
+}
+
+// TestModelGlobalNotificationsAuthRequestDenyShortcut verifies global auth-request rows reuse the confirm modal for denials.
+func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	task1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p1.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Inbox Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	task2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p2.ID,
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Roadmap Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-2",
+		Path:                domain.AuthRequestPath{ProjectID: p2.ID},
+		PrincipalID:         "agent-2",
+		PrincipalType:       "agent",
+		PrincipalName:       "Agent Two",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "scope denied",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{task1, task2})
+	svc.authRequests[authRequest.ID] = authRequest
+	m := loadReadyModel(t, NewModel(svc))
+	m.globalNotices = []globalNoticesPanelItem{
+		{
+			StableKey:         globalNoticesStableKey(p2.ID, authRequest.ID, domain.ScopeLevelProject, p2.ID, "auth request review"),
+			AttentionID:       authRequest.ID,
+			ProjectID:         p2.ID,
+			ProjectLabel:      p2.Name,
+			ScopeType:         domain.ScopeLevelProject,
+			ScopeID:           p2.ID,
+			Summary:           "auth request review",
+			ThreadDescription: "Please review this denial request.",
+		},
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('l'))
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
+		t.Fatalf("expected global notifications focus, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+	m = applyMsg(t, m, keyRune('d'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected deny shortcut to open confirm modal, got %v", m.mode)
+	}
+	if m.pendingConfirm.Kind != "deny-auth-request" {
+		t.Fatalf("expected deny confirm kind, got %q", m.pendingConfirm.Kind)
+	}
+	if m.pendingConfirm.AuthRequestID != authRequest.ID {
+		t.Fatalf("expected confirm auth request id %q, got %q", authRequest.ID, m.pendingConfirm.AuthRequestID)
+	}
+	m = applyMsg(t, m, keyRune('y'))
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
+		t.Fatalf("expected deny request id %q, got %q", authRequest.ID, got)
+	}
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); !strings.Contains(got, "denied via TUI notifications") {
+		t.Fatalf("expected denial note to be forwarded, got %q", got)
 	}
 }
 
@@ -7222,8 +7993,8 @@ func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T
 	}
 }
 
-// TestModelGlobalNotificationsEnterRecoversFromSearchAndArchivedFilters verifies global-row enter recovery when target task is hidden by filters.
-func TestModelGlobalNotificationsEnterRecoversFromSearchAndArchivedFilters(t *testing.T) {
+// TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters verifies project-row enter recovery when the target task is hidden by filters.
+func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -7253,19 +8024,40 @@ func TestModelGlobalNotificationsEnterRecoversFromSearchAndArchivedFilters(t *te
 		[]domain.Column{column},
 		[]domain.Task{active, archivedBlocked},
 	)))
-	if len(m.globalNotices) == 0 {
-		t.Fatal("expected archived blocked task to appear in global notices")
+	if len(m.attentionItems) == 0 {
+		t.Fatal("expected archived blocked task to appear in project notifications")
 	}
 	m.searchApplied = true
 	m.searchQuery = "visible active"
 	m.showArchived = false
 
+	sections := m.noticesSectionsForInteraction()
+	targetSection := noticesSectionRecentActivity
+	found := false
+	for _, section := range sections {
+		for idx, item := range section.Items {
+			if item.TaskID != archivedBlocked.ID {
+				continue
+			}
+			targetSection = section.ID
+			m.setNoticesSelectionIndex(section.ID, idx)
+			found = true
+			break
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected archived blocked task row in project notifications")
+	}
+
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('l'))
+	m.noticesSection = targetSection
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if m.mode != modeTaskInfo {
-		t.Fatalf("expected hidden global target to recover into task info, got %v", m.mode)
+		t.Fatalf("expected hidden project target to recover into task info, got %v", m.mode)
 	}
 	if m.taskInfoTaskID != archivedBlocked.ID {
 		t.Fatalf("expected archived task-info target %q, got %q", archivedBlocked.ID, m.taskInfoTaskID)

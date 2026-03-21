@@ -18,12 +18,15 @@ import (
 type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
-	lastCreateTaskReq    common.CreateTaskRequest
-	lastUpdateTaskReq    common.UpdateTaskRequest
-	lastRestoreTaskReq   common.RestoreTaskRequest
-	lastCreateCommentReq common.CreateCommentRequest
-	lastListCommentReq   common.ListCommentsByTargetRequest
-	lastSearchTasksReq   common.SearchTasksRequest
+	lastCreateTaskReq        common.CreateTaskRequest
+	lastUpdateTaskReq        common.UpdateTaskRequest
+	lastRestoreTaskReq       common.RestoreTaskRequest
+	lastCreateCommentReq     common.CreateCommentRequest
+	lastListCommentReq       common.ListCommentsByTargetRequest
+	lastSearchTasksReq       common.SearchTasksRequest
+	lastCreateAuthRequestReq common.CreateAuthRequestRequest
+	lastListAuthRequestsReq  common.ListAuthRequestsRequest
+	lastGetAuthRequestID     string
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -58,6 +61,72 @@ func (s *stubExpandedService) CreateProject(_ context.Context, _ common.CreatePr
 func (s *stubExpandedService) UpdateProject(_ context.Context, _ common.UpdateProjectRequest) (domain.Project, error) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One Updated", CreatedAt: now, UpdatedAt: now}, nil
+}
+
+// CreateAuthRequest returns one deterministic auth-request row.
+func (s *stubExpandedService) CreateAuthRequest(_ context.Context, in common.CreateAuthRequestRequest) (common.AuthRequestRecord, error) {
+	s.lastCreateAuthRequestReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return common.AuthRequestRecord{
+		ID:                  "req-1",
+		State:               "pending",
+		Path:                strings.TrimSpace(in.Path),
+		ProjectID:           "p1",
+		ScopeType:           common.ScopeTypeProject,
+		ScopeID:             "p1",
+		PrincipalID:         strings.TrimSpace(in.PrincipalID),
+		PrincipalType:       strings.TrimSpace(in.PrincipalType),
+		ClientID:            strings.TrimSpace(in.ClientID),
+		ClientType:          strings.TrimSpace(in.ClientType),
+		RequestedSessionTTL: "2h0m0s",
+		Reason:              strings.TrimSpace(in.Reason),
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(30 * time.Minute),
+	}, nil
+}
+
+// ListAuthRequests returns one deterministic auth-request inventory row.
+func (s *stubExpandedService) ListAuthRequests(_ context.Context, in common.ListAuthRequestsRequest) ([]common.AuthRequestRecord, error) {
+	s.lastListAuthRequestsReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return []common.AuthRequestRecord{{
+		ID:                  "req-1",
+		State:               "pending",
+		Path:                "project/p1",
+		ProjectID:           "p1",
+		ScopeType:           common.ScopeTypeProject,
+		ScopeID:             "p1",
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: "2h0m0s",
+		Reason:              "manual MCP review",
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(30 * time.Minute),
+	}}, nil
+}
+
+// GetAuthRequest returns one deterministic auth-request record.
+func (s *stubExpandedService) GetAuthRequest(_ context.Context, requestID string) (common.AuthRequestRecord, error) {
+	s.lastGetAuthRequestID = requestID
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return common.AuthRequestRecord{
+		ID:                  strings.TrimSpace(requestID),
+		State:               "pending",
+		Path:                "project/p1",
+		ProjectID:           "p1",
+		ScopeType:           common.ScopeTypeProject,
+		ScopeID:             "p1",
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: "2h0m0s",
+		Reason:              "manual MCP review",
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(30 * time.Minute),
+	}, nil
 }
 
 // ListTasks returns one deterministic task row.
@@ -498,6 +567,9 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.list_projects",
 		"till.create_project",
 		"till.update_project",
+		"till.create_auth_request",
+		"till.list_auth_requests",
+		"till.get_auth_request",
 		"till.list_tasks",
 		"till.create_task",
 		"till.update_task",
@@ -552,6 +624,18 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
+		{name: "till.create_auth_request", args: map[string]any{
+			"path":           "project/p1",
+			"principal_id":   "review-agent",
+			"principal_type": "agent",
+			"client_id":      "till-mcp-stdio",
+			"client_type":    "mcp-stdio",
+			"requested_ttl":  "2h",
+			"timeout":        "30m",
+			"reason":         "manual MCP review",
+		}},
+		{name: "till.list_auth_requests", args: map[string]any{"project_id": "p1", "state": "pending", "limit": 10}},
+		{name: "till.get_auth_request", args: map[string]any{"request_id": "req-1"}},
 		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
 		{name: "till.create_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",

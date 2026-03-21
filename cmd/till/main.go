@@ -27,6 +27,7 @@ import (
 	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/config"
+	"github.com/hylla/tillsyn/internal/domain"
 	"github.com/hylla/tillsyn/internal/platform"
 	"github.com/hylla/tillsyn/internal/tui"
 	"github.com/spf13/cobra"
@@ -113,6 +114,56 @@ type issueSessionCommandOptions struct {
 	ttl           time.Duration
 }
 
+// requestCreateCommandOptions stores auth request create flag values.
+type requestCreateCommandOptions struct {
+	path          string
+	principalID   string
+	principalType string
+	principalName string
+	clientID      string
+	clientType    string
+	clientName    string
+	ttl           time.Duration
+	timeout       time.Duration
+	reason        string
+	continuation  string
+}
+
+// requestListCommandOptions stores auth request list flag values.
+type requestListCommandOptions struct {
+	projectID string
+	state     string
+	limit     int
+}
+
+// requestShowCommandOptions stores auth request show flag values.
+type requestShowCommandOptions struct {
+	requestID string
+}
+
+// requestResolveCommandOptions stores auth request resolve flag values.
+type requestResolveCommandOptions struct {
+	requestID string
+	path      string
+	ttl       time.Duration
+	note      string
+}
+
+// sessionListCommandOptions stores auth session list flag values.
+type sessionListCommandOptions struct {
+	sessionID   string
+	principalID string
+	clientID    string
+	state       string
+	limit       int
+}
+
+// sessionValidateCommandOptions stores auth session validate flag values.
+type sessionValidateCommandOptions struct {
+	sessionID     string
+	sessionSecret string
+}
+
 // revokeSessionCommandOptions stores revoke-session flag values.
 type revokeSessionCommandOptions struct {
 	sessionID string
@@ -164,6 +215,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		clientName:    "Till MCP STDIO",
 		ttl:           8 * time.Hour,
 	}
+	requestCreateOpts := requestCreateCommandOptions{
+		principalType: "user",
+		clientID:      "till-mcp-stdio",
+		clientType:    "mcp-stdio",
+		clientName:    "Till MCP STDIO",
+		ttl:           8 * time.Hour,
+		timeout:       15 * time.Minute,
+	}
+	requestListOpts := requestListCommandOptions{limit: 50}
+	requestShowOpts := requestShowCommandOptions{}
+	requestApproveOpts := requestResolveCommandOptions{}
+	requestDenyOpts := requestResolveCommandOptions{}
+	requestCancelOpts := requestResolveCommandOptions{}
+	sessionListOpts := sessionListCommandOptions{state: "active", limit: 50}
+	sessionValidateOpts := sessionValidateCommandOptions{}
 	revokeSessionOpts := revokeSessionCommandOptions{}
 	exportOpts := exportCommandOptions{
 		outPath:         "-",
@@ -177,7 +243,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	rootCmd.SetOut(stdout)
@@ -195,7 +261,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Start HTTP API and streamable HTTP MCP endpoints",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	serveCmd.Flags().StringVar(&serveOpts.httpBind, "http", serveOpts.httpBind, "HTTP listen address")
@@ -207,22 +273,297 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Start raw MCP over stdio for local integrations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 
 	authCmd := &cobra.Command{
 		Use:   "auth",
-		Short: "Manage local dogfood auth sessions",
-		Args:  cobra.NoArgs,
+		Short: "Manage dogfood auth requests and autent-backed sessions",
+		Long: strings.TrimSpace(`
+Manage dogfood auth requests and autent-backed sessions.
+
+Use request create to raise one project-rooted approval request, then inspect or
+resolve it with request list, show, approve, deny, or cancel. Use session list,
+validate, and revoke to inspect or rotate approved caller sessions. The low-level
+issue-session seam remains available for direct local testing, but request/session
+subcommands are the primary operator UX.
+`),
+		Example: strings.Join([]string{
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
+			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
+			"  till auth session list --state active",
+			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
+		}, "\n"),
+		Args: cobra.NoArgs,
 	}
+
+	requestCmd := &cobra.Command{
+		Use:   "request",
+		Short: "Create, inspect, and resolve persisted auth requests",
+		Long: strings.TrimSpace(`
+Create and resolve persisted auth requests tied to one explicit project-rooted
+path. The required --path root is project/<project-id> with optional
+/branch/<branch-id> and repeated /phase/<phase-id> segments.
+
+After create, use request show or request list to track the pending request, and
+use approve, deny, or cancel to move it to a terminal state.
+`),
+		Example: strings.Join([]string{
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request list --project-id p1 --state pending",
+			"  till auth request show --request-id <request-id>",
+		}, "\n"),
+		Args: cobra.NoArgs,
+	}
+
+	requestCreateCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create one persisted auth request",
+		Long: strings.TrimSpace(`
+Create one persisted auth request for a specific principal, client, and
+project-rooted path. The request remains pending until it is approved, denied,
+canceled, or times out.
+
+Optional --continuation-json stores client resume metadata so the requesting
+surface can continue cleanly after approval.
+
+Next step: use till auth request show --request-id <request-id> or till auth
+request list --state pending to inspect the stored request, then resolve it with
+approve, deny, or cancel.
+`),
+		Example: strings.Join([]string{
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/p1/branch/branch-1/phase/phase-a --principal-id review-user --principal-type user --client-id till-tui --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_tool\":\"till.raise_attention_item\",\"resume_path\":\"project/p1\"}'",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.request.create", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required project-rooted path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalID, "principal-id", "", "Principal identifier")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalType, "principal-type", requestCreateOpts.principalType, "Principal type (user|agent|service)")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalName, "principal-name", "", "Optional principal display name")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientID, "client-id", requestCreateOpts.clientID, "Client identifier")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientType, "client-type", requestCreateOpts.clientType, "Client type")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientName, "client-name", requestCreateOpts.clientName, "Optional client display name")
+	requestCreateCmd.Flags().DurationVar(&requestCreateOpts.ttl, "ttl", requestCreateOpts.ttl, "Requested approved-session lifetime")
+	requestCreateCmd.Flags().DurationVar(&requestCreateOpts.timeout, "timeout", requestCreateOpts.timeout, "How long the request stays pending before timing out")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.reason, "reason", "", "Human-readable approval reason")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.continuation, "continuation-json", "", "Optional JSON object string with client continuation metadata for post-approval resume")
+	mustMarkFlagRequired(requestCreateCmd, "path")
+	mustMarkFlagRequired(requestCreateCmd, "principal-id")
+	mustMarkFlagRequired(requestCreateCmd, "client-id")
+	mustMarkFlagRequired(requestCreateCmd, "reason")
+
+	requestListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List persisted auth requests",
+		Long: strings.TrimSpace(`
+List persisted auth requests in deterministic newest-first order.
+
+Next step: use till auth request show --request-id <request-id> to inspect one
+row in detail, then resolve it with approve, deny, or cancel.
+`),
+		Example: strings.Join([]string{
+			"  till auth request list",
+			"  till auth request list --project-id p1 --state pending",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.request.list", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	requestListCmd.Flags().StringVar(&requestListOpts.projectID, "project-id", "", "Optional project identifier filter")
+	requestListCmd.Flags().StringVar(&requestListOpts.state, "state", "", "Optional state filter (pending|approved|denied|canceled|expired)")
+	requestListCmd.Flags().IntVar(&requestListOpts.limit, "limit", requestListOpts.limit, "Maximum rows to return")
+
+	requestShowCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show one persisted auth request",
+		Long: strings.TrimSpace(`
+Show one persisted auth request by id.
+
+Next step: if the request is still pending, resolve it with till auth request
+approve, deny, or cancel.
+`),
+		Example: "  till auth request show --request-id <request-id>",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.request.show", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	requestShowCmd.Flags().StringVar(&requestShowOpts.requestID, "request-id", "", "Auth request identifier")
+	mustMarkFlagRequired(requestShowCmd, "request-id")
+
+	requestApproveCmd := &cobra.Command{
+		Use:   "approve",
+		Short: "Approve one pending auth request and issue a session",
+		Long: strings.TrimSpace(`
+Approve one pending auth request and issue a usable autent session for the
+requested principal, client, path, and lifetime.
+
+Optional --path and --ttl overrides let the operator narrow or adjust the
+approved scope and session lifetime before the session is issued.
+
+Next step: hand off the issued session_id and session_secret to the requesting
+client. If the request stored continuation metadata, resume the requesting
+client workflow with that metadata after handoff. You can also use till auth
+request show --request-id <request-id> to inspect the approved record again.
+`),
+		Example: strings.Join([]string{
+			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
+			"  till auth request approve --request-id <request-id> --path project/p1/branch/branch-1 --ttl 2h --note \"limited branch review\"",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.request.approve", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	requestApproveCmd.Flags().StringVar(&requestApproveOpts.requestID, "request-id", "", "Auth request identifier")
+	requestApproveCmd.Flags().StringVar(&requestApproveOpts.path, "path", "", "Optional approved path override rooted at project/<project-id>")
+	requestApproveCmd.Flags().DurationVar(&requestApproveOpts.ttl, "ttl", 0, "Optional approved session lifetime override")
+	requestApproveCmd.Flags().StringVar(&requestApproveOpts.note, "note", "", "Optional operator note")
+	mustMarkFlagRequired(requestApproveCmd, "request-id")
+
+	requestDenyCmd := &cobra.Command{
+		Use:   "deny",
+		Short: "Deny one pending auth request",
+		Long: strings.TrimSpace(`
+Deny one pending auth request and record an operator-visible note.
+
+Next step: use till auth request show --request-id <request-id> to verify the
+stored terminal state.
+`),
+		Example: "  till auth request deny --request-id <request-id> --note \"outside current scope\"",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.request.deny", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	requestDenyCmd.Flags().StringVar(&requestDenyOpts.requestID, "request-id", "", "Auth request identifier")
+	requestDenyCmd.Flags().StringVar(&requestDenyOpts.note, "note", "", "Optional operator note")
+	mustMarkFlagRequired(requestDenyCmd, "request-id")
+
+	requestCancelCmd := &cobra.Command{
+		Use:   "cancel",
+		Short: "Cancel one pending auth request",
+		Long: strings.TrimSpace(`
+Cancel one pending auth request before it is approved or denied.
+
+Next step: use till auth request show --request-id <request-id> to verify the
+stored terminal state.
+`),
+		Example: "  till auth request cancel --request-id <request-id> --note \"superseded by a new request\"",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.request.cancel", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	requestCancelCmd.Flags().StringVar(&requestCancelOpts.requestID, "request-id", "", "Auth request identifier")
+	requestCancelCmd.Flags().StringVar(&requestCancelOpts.note, "note", "", "Optional operator note")
+	mustMarkFlagRequired(requestCancelCmd, "request-id")
+	requestCmd.AddCommand(requestCreateCmd, requestListCmd, requestShowCmd, requestApproveCmd, requestDenyCmd, requestCancelCmd)
+
+	sessionCmd := &cobra.Command{
+		Use:   "session",
+		Short: "Inspect and manage autent-backed sessions",
+		Long: strings.TrimSpace(`
+Inspect caller-safe autent-backed sessions that were issued through auth request
+approval or the low-level issue-session seam.
+`),
+		Example: strings.Join([]string{
+			"  till auth session list --state active",
+			"  till auth session validate --session-id <session-id> --session-secret <session-secret>",
+			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
+		}, "\n"),
+		Args: cobra.NoArgs,
+	}
+
+	sessionListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List caller-safe auth sessions",
+		Long: strings.TrimSpace(`
+List caller-safe autent session state without exposing bearer secrets.
+
+Next step: use till auth session validate with --session-id and --session-secret
+to verify one specific credential pair, or use revoke to rotate it.
+`),
+		Example: strings.Join([]string{
+			"  till auth session list",
+			"  till auth session list --state active --principal-id review-agent",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.session.list", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	sessionListCmd.Flags().StringVar(&sessionListOpts.sessionID, "session-id", "", "Optional session identifier filter")
+	sessionListCmd.Flags().StringVar(&sessionListOpts.principalID, "principal-id", "", "Optional principal identifier filter")
+	sessionListCmd.Flags().StringVar(&sessionListOpts.clientID, "client-id", "", "Optional client identifier filter")
+	sessionListCmd.Flags().StringVar(&sessionListOpts.state, "state", sessionListOpts.state, "Session state filter (active|revoked|expired)")
+	sessionListCmd.Flags().IntVar(&sessionListOpts.limit, "limit", sessionListOpts.limit, "Maximum rows to return")
+
+	sessionValidateCmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate one session id/secret pair",
+		Long: strings.TrimSpace(`
+Validate one session_id and session_secret pair and return caller-safe identity
+details for the credential.
+
+Next step: if the session is valid, use it with MCP mutation calls. If it is no
+longer needed, revoke it with till auth session revoke --session-id <session-id>.
+`),
+		Example: "  till auth session validate --session-id <session-id> --session-secret <session-secret>",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.session.validate", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	sessionValidateCmd.Flags().StringVar(&sessionValidateOpts.sessionID, "session-id", "", "Session identifier")
+	sessionValidateCmd.Flags().StringVar(&sessionValidateOpts.sessionSecret, "session-secret", "", "Session secret")
+	mustMarkFlagRequired(sessionValidateCmd, "session-id")
+	mustMarkFlagRequired(sessionValidateCmd, "session-secret")
+
+	sessionRevokeCmd := &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke one local auth session",
+		Long: strings.TrimSpace(`
+Revoke one autent-backed session.
+
+This command requires the --session-id flag; it does not accept the session id
+as a positional argument.
+`),
+		Example: "  till auth session revoke --session-id <session-id> --reason operator_revoke",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "auth.session.revoke", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	sessionRevokeCmd.Flags().StringVar(&revokeSessionOpts.sessionID, "session-id", "", "Session identifier")
+	sessionRevokeCmd.Flags().StringVar(&revokeSessionOpts.reason, "reason", "", "Revocation reason")
+	mustMarkFlagRequired(sessionRevokeCmd, "session-id")
+	sessionCmd.AddCommand(sessionListCmd, sessionValidateCmd, sessionRevokeCmd)
 
 	issueSessionCmd := &cobra.Command{
 		Use:   "issue-session",
 		Short: "Issue one local auth session for MCP dogfooding",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Issue one local auth session directly without going through the request/approval
+lifecycle. This is a low-level seam for local testing only.
+
+This command requires --principal-id. On success it returns session_id and
+session_secret.
+
+Next step: pass the returned session_id and session_secret to the requesting MCP
+client, or validate the pair with till auth session validate.
+`),
+		Example: "  till auth issue-session --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.issue-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.issue-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalID, "principal-id", "", "Principal identifier")
@@ -232,25 +573,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientType, "client-type", issueSessionOpts.clientType, "Client type")
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientName, "client-name", issueSessionOpts.clientName, "Client display name")
 	issueSessionCmd.Flags().DurationVar(&issueSessionOpts.ttl, "ttl", issueSessionOpts.ttl, "Session time-to-live duration")
+	mustMarkFlagRequired(issueSessionCmd, "principal-id")
 
 	revokeSessionCmd := &cobra.Command{
 		Use:   "revoke-session",
 		Short: "Revoke one local auth session",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Revoke one autent-backed session directly. This is a low-level seam; prefer
+till auth session revoke for the primary session lifecycle UX.
+
+This command requires the --session-id flag; it does not accept the session id
+as a positional argument.
+`),
+		Example: "  till auth revoke-session --session-id <session-id> --reason operator_revoke",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.revoke-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.revoke-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	revokeSessionCmd.Flags().StringVar(&revokeSessionOpts.sessionID, "session-id", "", "Session identifier")
 	revokeSessionCmd.Flags().StringVar(&revokeSessionOpts.reason, "reason", "", "Revocation reason")
-	authCmd.AddCommand(issueSessionCmd, revokeSessionCmd)
+	mustMarkFlagRequired(revokeSessionCmd, "session-id")
+	authCmd.AddCommand(requestCmd, sessionCmd, issueSessionCmd, revokeSessionCmd)
 
 	exportCmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	exportCmd.Flags().StringVar(&exportOpts.outPath, "out", exportOpts.outPath, "Output file path ('-' for stdout)")
@@ -261,7 +612,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Import a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	importCmd.Flags().StringVar(&importOpts.inPath, "in", "", "Input snapshot JSON file")
@@ -302,6 +653,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		fang.WithoutManpage(),
 		fang.WithoutVersion(),
 	)
+}
+
+// mustMarkFlagRequired fails fast when Cobra cannot mark one required flag.
+func mustMarkFlagRequired(cmd *cobra.Command, name string) {
+	if err := cmd.MarkFlagRequired(name); err != nil {
+		panic(fmt.Sprintf("mark %s flag required: %v", name, err))
+	}
 }
 
 // writeVersion writes the current CLI version to stdout.
@@ -629,6 +987,14 @@ func executeCommandFlow(
 	_ mcpCommandOptions,
 	_ authCommandOptions,
 	issueSessionOpts issueSessionCommandOptions,
+	requestCreateOpts requestCreateCommandOptions,
+	requestListOpts requestListCommandOptions,
+	requestShowOpts requestShowCommandOptions,
+	requestApproveOpts requestResolveCommandOptions,
+	requestDenyOpts requestResolveCommandOptions,
+	requestCancelOpts requestResolveCommandOptions,
+	sessionListOpts sessionListCommandOptions,
+	sessionValidateOpts sessionValidateCommandOptions,
 	revokeSessionOpts revokeSessionCommandOptions,
 	exportOpts exportCommandOptions,
 	importOpts importCommandOptions,
@@ -756,6 +1122,8 @@ func executeCommandFlow(
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode:        app.DeleteMode(cfg.Delete.DefaultMode),
 		AutoCreateProjectColumns: true,
+		AuthRequests:             authSvc,
+		AuthBackend:              authSvc,
 		EmbeddingGenerator:       embeddingGenerator,
 		SearchLexicalWeight:      cfg.Embeddings.LexicalWeight,
 		SearchSemanticWeight:     cfg.Embeddings.SemanticWeight,
@@ -797,6 +1165,78 @@ func executeCommandFlow(
 			return fmt.Errorf("run auth issue-session command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "auth.issue-session")
+		return nil
+	case "auth.request.create":
+		logger.Info("command flow start", "command", "auth.request.create")
+		if err := runAuthRequestCreate(ctx, svc, cfg, requestCreateOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.request.create", "err", err)
+			return fmt.Errorf("run auth request create command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.request.create")
+		return nil
+	case "auth.request.list":
+		logger.Info("command flow start", "command", "auth.request.list")
+		if err := runAuthRequestList(ctx, svc, requestListOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.request.list", "err", err)
+			return fmt.Errorf("run auth request list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.request.list")
+		return nil
+	case "auth.request.show":
+		logger.Info("command flow start", "command", "auth.request.show")
+		if err := runAuthRequestShow(ctx, svc, requestShowOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.request.show", "err", err)
+			return fmt.Errorf("run auth request show command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.request.show")
+		return nil
+	case "auth.request.approve":
+		logger.Info("command flow start", "command", "auth.request.approve")
+		if err := runAuthRequestApprove(ctx, svc, cfg, requestApproveOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.request.approve", "err", err)
+			return fmt.Errorf("run auth request approve command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.request.approve")
+		return nil
+	case "auth.request.deny":
+		logger.Info("command flow start", "command", "auth.request.deny")
+		if err := runAuthRequestDeny(ctx, svc, cfg, requestDenyOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.request.deny", "err", err)
+			return fmt.Errorf("run auth request deny command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.request.deny")
+		return nil
+	case "auth.request.cancel":
+		logger.Info("command flow start", "command", "auth.request.cancel")
+		if err := runAuthRequestCancel(ctx, svc, cfg, requestCancelOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.request.cancel", "err", err)
+			return fmt.Errorf("run auth request cancel command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.request.cancel")
+		return nil
+	case "auth.session.list":
+		logger.Info("command flow start", "command", "auth.session.list")
+		if err := runAuthSessionList(ctx, svc, sessionListOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.session.list", "err", err)
+			return fmt.Errorf("run auth session list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.session.list")
+		return nil
+	case "auth.session.validate":
+		logger.Info("command flow start", "command", "auth.session.validate")
+		if err := runAuthSessionValidate(ctx, svc, sessionValidateOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.session.validate", "err", err)
+			return fmt.Errorf("run auth session validate command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.session.validate")
+		return nil
+	case "auth.session.revoke":
+		logger.Info("command flow start", "command", "auth.session.revoke")
+		if err := runAuthSessionRevoke(ctx, svc, revokeSessionOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "auth.session.revoke", "err", err)
+			return fmt.Errorf("run auth session revoke command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "auth.session.revoke")
 		return nil
 	case "auth.revoke-session":
 		logger.Info("command flow start", "command", "auth.revoke-session")
@@ -1001,6 +1441,187 @@ func runAuthRevokeSession(ctx context.Context, auth *autentauth.Service, opts re
 	return nil
 }
 
+// runAuthRequestCreate creates one persisted auth request and mirrors it into notifications.
+func runAuthRequestCreate(ctx context.Context, svc *app.Service, cfg config.Config, opts requestCreateCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	continuation, err := parseCLIContinuationJSON(opts.continuation)
+	if err != nil {
+		return err
+	}
+	actorID, actorType := cliMutationActor(cfg)
+	request, err := svc.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
+		Path:                strings.TrimSpace(opts.path),
+		PrincipalID:         strings.TrimSpace(opts.principalID),
+		PrincipalType:       strings.TrimSpace(opts.principalType),
+		PrincipalName:       strings.TrimSpace(opts.principalName),
+		ClientID:            strings.TrimSpace(opts.clientID),
+		ClientType:          strings.TrimSpace(opts.clientType),
+		ClientName:          strings.TrimSpace(opts.clientName),
+		RequestedSessionTTL: opts.ttl,
+		Reason:              strings.TrimSpace(opts.reason),
+		Continuation:        continuation,
+		RequestedBy:         actorID,
+		RequestedType:       actorType,
+		Timeout:             opts.timeout,
+	})
+	if err != nil {
+		return fmt.Errorf("create auth request: %w", err)
+	}
+	return writeJSON(stdout, authRequestPayload(request, ""))
+}
+
+// parseCLIContinuationJSON validates one optional CLI continuation JSON object string.
+func parseCLIContinuationJSON(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("parse --continuation-json: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("parse --continuation-json: continuation metadata must be a non-empty JSON object")
+	}
+	return out, nil
+}
+
+// runAuthRequestList lists persisted auth requests in deterministic order.
+func runAuthRequestList(ctx context.Context, svc *app.Service, opts requestListCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	requests, err := svc.ListAuthRequests(ctx, domain.AuthRequestListFilter{
+		ProjectID: strings.TrimSpace(opts.projectID),
+		State:     domain.AuthRequestState(strings.TrimSpace(opts.state)),
+		Limit:     opts.limit,
+	})
+	if err != nil {
+		return fmt.Errorf("list auth requests: %w", err)
+	}
+	payload := make([]authRequestPayloadJSON, 0, len(requests))
+	for _, request := range requests {
+		payload = append(payload, authRequestPayload(request, ""))
+	}
+	return writeJSON(stdout, payload)
+}
+
+// runAuthRequestShow returns one auth request by id.
+func runAuthRequestShow(ctx context.Context, svc *app.Service, opts requestShowCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	request, err := svc.GetAuthRequest(ctx, strings.TrimSpace(opts.requestID))
+	if err != nil {
+		return fmt.Errorf("get auth request: %w", err)
+	}
+	return writeJSON(stdout, authRequestPayload(request, ""))
+}
+
+// runAuthRequestApprove approves one pending auth request and issues one usable session.
+func runAuthRequestApprove(ctx context.Context, svc *app.Service, cfg config.Config, opts requestResolveCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	actorID, actorType := cliMutationActor(cfg)
+	approved, err := svc.ApproveAuthRequest(ctx, app.ApproveAuthRequestInput{
+		RequestID:      strings.TrimSpace(opts.requestID),
+		Path:           strings.TrimSpace(opts.path),
+		SessionTTL:     opts.ttl,
+		ResolvedBy:     actorID,
+		ResolvedType:   actorType,
+		ResolutionNote: strings.TrimSpace(opts.note),
+	})
+	if err != nil {
+		return fmt.Errorf("approve auth request: %w", err)
+	}
+	return writeJSON(stdout, authRequestPayload(approved.Request, approved.SessionSecret))
+}
+
+// runAuthRequestDeny denies one pending auth request.
+func runAuthRequestDeny(ctx context.Context, svc *app.Service, cfg config.Config, opts requestResolveCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	actorID, actorType := cliMutationActor(cfg)
+	request, err := svc.DenyAuthRequest(ctx, app.DenyAuthRequestInput{
+		RequestID:      strings.TrimSpace(opts.requestID),
+		ResolvedBy:     actorID,
+		ResolvedType:   actorType,
+		ResolutionNote: strings.TrimSpace(opts.note),
+	})
+	if err != nil {
+		return fmt.Errorf("deny auth request: %w", err)
+	}
+	return writeJSON(stdout, authRequestPayload(request, ""))
+}
+
+// runAuthRequestCancel cancels one pending auth request.
+func runAuthRequestCancel(ctx context.Context, svc *app.Service, cfg config.Config, opts requestResolveCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	actorID, actorType := cliMutationActor(cfg)
+	request, err := svc.CancelAuthRequest(ctx, app.CancelAuthRequestInput{
+		RequestID:      strings.TrimSpace(opts.requestID),
+		ResolvedBy:     actorID,
+		ResolvedType:   actorType,
+		ResolutionNote: strings.TrimSpace(opts.note),
+	})
+	if err != nil {
+		return fmt.Errorf("cancel auth request: %w", err)
+	}
+	return writeJSON(stdout, authRequestPayload(request, ""))
+}
+
+// runAuthSessionList returns caller-safe auth-session inventory.
+func runAuthSessionList(ctx context.Context, svc *app.Service, opts sessionListCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	sessions, err := svc.ListAuthSessions(ctx, app.AuthSessionFilter{
+		SessionID:   strings.TrimSpace(opts.sessionID),
+		PrincipalID: strings.TrimSpace(opts.principalID),
+		ClientID:    strings.TrimSpace(opts.clientID),
+		State:       strings.TrimSpace(opts.state),
+		Limit:       opts.limit,
+	})
+	if err != nil {
+		return fmt.Errorf("list auth sessions: %w", err)
+	}
+	payload := make([]authSessionPayloadJSON, 0, len(sessions))
+	for _, session := range sessions {
+		payload = append(payload, authSessionPayload(session))
+	}
+	return writeJSON(stdout, payload)
+}
+
+// runAuthSessionValidate validates one session credential pair.
+func runAuthSessionValidate(ctx context.Context, svc *app.Service, opts sessionValidateCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	validated, err := svc.ValidateAuthSession(ctx, strings.TrimSpace(opts.sessionID), strings.TrimSpace(opts.sessionSecret))
+	if err != nil {
+		return fmt.Errorf("validate auth session: %w", err)
+	}
+	return writeJSON(stdout, authSessionPayload(validated.Session))
+}
+
+// runAuthSessionRevoke revokes one auth session through the app-facing backend.
+func runAuthSessionRevoke(ctx context.Context, svc *app.Service, opts revokeSessionCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	session, err := svc.RevokeAuthSession(ctx, strings.TrimSpace(opts.sessionID), strings.TrimSpace(opts.reason))
+	if err != nil {
+		return fmt.Errorf("revoke auth session: %w", err)
+	}
+	return writeJSON(stdout, authSessionPayload(session))
+}
+
 // runExport runs the requested command flow.
 func runExport(ctx context.Context, svc *app.Service, opts exportCommandOptions, stdout io.Writer) error {
 	snap, err := svc.ExportSnapshot(ctx, opts.includeArchived)
@@ -1174,6 +1795,174 @@ func persistIdentity(configPath, actorID, displayName, defaultActorType string) 
 		return fmt.Errorf("persist identity config: %w", err)
 	}
 	return nil
+}
+
+// authRequestPayloadJSON stores JSON-friendly auth-request output fields.
+type authRequestPayloadJSON struct {
+	ID                     string         `json:"id"`
+	State                  string         `json:"state"`
+	Path                   string         `json:"path"`
+	ProjectID              string         `json:"project_id"`
+	BranchID               string         `json:"branch_id,omitempty"`
+	PhaseIDs               []string       `json:"phase_ids,omitempty"`
+	ScopeType              string         `json:"scope_type"`
+	ScopeID                string         `json:"scope_id"`
+	PrincipalID            string         `json:"principal_id"`
+	PrincipalType          string         `json:"principal_type"`
+	PrincipalName          string         `json:"principal_name,omitempty"`
+	ClientID               string         `json:"client_id"`
+	ClientType             string         `json:"client_type"`
+	ClientName             string         `json:"client_name,omitempty"`
+	RequestedSessionTTL    string         `json:"requested_session_ttl"`
+	Reason                 string         `json:"reason,omitempty"`
+	Continuation           map[string]any `json:"continuation,omitempty"`
+	RequestedByActor       string         `json:"requested_by_actor"`
+	RequestedByType        string         `json:"requested_by_type"`
+	CreatedAt              time.Time      `json:"created_at"`
+	ExpiresAt              time.Time      `json:"expires_at"`
+	ResolvedByActor        string         `json:"resolved_by_actor,omitempty"`
+	ResolvedByType         string         `json:"resolved_by_type,omitempty"`
+	ResolvedAt             *time.Time     `json:"resolved_at,omitempty"`
+	ResolutionNote         string         `json:"resolution_note,omitempty"`
+	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
+	IssuedSessionSecret    string         `json:"issued_session_secret,omitempty"`
+	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
+}
+
+// authSessionPayloadJSON stores JSON-friendly auth-session output fields.
+type authSessionPayloadJSON struct {
+	SessionID        string     `json:"session_id"`
+	State            string     `json:"state"`
+	PrincipalID      string     `json:"principal_id"`
+	PrincipalType    string     `json:"principal_type,omitempty"`
+	PrincipalName    string     `json:"principal_name,omitempty"`
+	ClientID         string     `json:"client_id"`
+	ClientType       string     `json:"client_type,omitempty"`
+	ClientName       string     `json:"client_name,omitempty"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	RevocationReason string     `json:"revocation_reason,omitempty"`
+}
+
+// writeJSON renders one stable indented JSON payload followed by a trailing newline.
+func writeJSON(stdout io.Writer, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode json output: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "%s\n", encoded); err != nil {
+		return fmt.Errorf("write json output: %w", err)
+	}
+	return nil
+}
+
+// cliMutationActor resolves deterministic CLI mutation attribution from persisted identity defaults.
+func cliMutationActor(cfg config.Config) (string, domain.ActorType) {
+	actorID := strings.TrimSpace(cfg.Identity.ActorID)
+	if actorID == "" {
+		actorID = "tillsyn-user"
+	}
+	actorType := domain.ActorType(strings.TrimSpace(strings.ToLower(cfg.Identity.DefaultActorType)))
+	switch actorType {
+	case domain.ActorTypeAgent, domain.ActorTypeUser, domain.ActorTypeSystem:
+	default:
+		actorType = domain.ActorTypeUser
+	}
+	return actorID, actorType
+}
+
+// authRequestPayload maps one domain auth-request row into stable CLI JSON output.
+func authRequestPayload(request domain.AuthRequest, sessionSecret string) authRequestPayloadJSON {
+	sessionSecret = strings.TrimSpace(sessionSecret)
+	if sessionSecret == "" {
+		sessionSecret = strings.TrimSpace(request.IssuedSessionSecret)
+	}
+	return authRequestPayloadJSON{
+		ID:                     request.ID,
+		State:                  string(request.State),
+		Path:                   request.Path,
+		ProjectID:              request.ProjectID,
+		BranchID:               request.BranchID,
+		PhaseIDs:               append([]string(nil), request.PhaseIDs...),
+		ScopeType:              string(request.ScopeType),
+		ScopeID:                request.ScopeID,
+		PrincipalID:            request.PrincipalID,
+		PrincipalType:          request.PrincipalType,
+		PrincipalName:          request.PrincipalName,
+		ClientID:               request.ClientID,
+		ClientType:             request.ClientType,
+		ClientName:             request.ClientName,
+		RequestedSessionTTL:    request.RequestedSessionTTL.String(),
+		Reason:                 request.Reason,
+		Continuation:           cloneCLIObjectMap(request.Continuation),
+		RequestedByActor:       request.RequestedByActor,
+		RequestedByType:        string(request.RequestedByType),
+		CreatedAt:              request.CreatedAt.UTC(),
+		ExpiresAt:              request.ExpiresAt.UTC(),
+		ResolvedByActor:        request.ResolvedByActor,
+		ResolvedByType:         string(request.ResolvedByType),
+		ResolvedAt:             request.ResolvedAt,
+		ResolutionNote:         request.ResolutionNote,
+		IssuedSessionID:        request.IssuedSessionID,
+		IssuedSessionSecret:    sessionSecret,
+		IssuedSessionExpiresAt: request.IssuedSessionExpiresAt,
+	}
+}
+
+// authSessionPayload maps one app-facing session row into stable CLI JSON output.
+func authSessionPayload(session app.AuthSession) authSessionPayloadJSON {
+	return authSessionPayloadJSON{
+		SessionID:        session.SessionID,
+		State:            authSessionState(session, time.Now().UTC()),
+		PrincipalID:      session.PrincipalID,
+		PrincipalType:    session.PrincipalType,
+		PrincipalName:    session.PrincipalName,
+		ClientID:         session.ClientID,
+		ClientType:       session.ClientType,
+		ClientName:       session.ClientName,
+		ExpiresAt:        session.ExpiresAt.UTC(),
+		RevokedAt:        session.RevokedAt,
+		RevocationReason: session.RevocationReason,
+	}
+}
+
+// authSessionState normalizes one auth session into the user-facing lifecycle label.
+func authSessionState(session app.AuthSession, now time.Time) string {
+	if session.RevokedAt != nil {
+		return "revoked"
+	}
+	if !session.ExpiresAt.IsZero() && !now.Before(session.ExpiresAt.UTC()) {
+		return "expired"
+	}
+	return "active"
+}
+
+// cloneCLIObjectMap deep-copies optional CLI JSON metadata maps.
+func cloneCLIObjectMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = cloneCLIObjectValue(value)
+	}
+	return out
+}
+
+// cloneCLIObjectValue deep-copies one JSON-compatible CLI metadata value.
+func cloneCLIObjectValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneCLIObjectMap(typed)
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, cloneCLIObjectValue(item))
+		}
+		return out
+	default:
+		return typed
+	}
 }
 
 // persistSearchRoots updates global search roots in the TOML config file.

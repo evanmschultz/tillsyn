@@ -38,6 +38,10 @@ type Repository interface {
 	GetAttentionItem(context.Context, string) (domain.AttentionItem, error)
 	ListAttentionItems(context.Context, domain.AttentionListFilter) ([]domain.AttentionItem, error)
 	ResolveAttentionItem(context.Context, string, string, domain.ActorType, time.Time) (domain.AttentionItem, error)
+	CreateAuthRequest(context.Context, domain.AuthRequest) error
+	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
+	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
+	UpdateAuthRequest(context.Context, domain.AuthRequest) error
 
 	CreateCapabilityLease(context.Context, domain.CapabilityLease) error
 	UpdateCapabilityLease(context.Context, domain.CapabilityLease) error

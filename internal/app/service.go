@@ -64,11 +64,13 @@ type ServiceConfig struct {
 	AutoCreateProjectColumns bool
 	CapabilityLeaseTTL       time.Duration
 	RequireAgentLease        *bool
+	AuthRequests             AuthRequestGateway
 	EmbeddingGenerator       EmbeddingGenerator
 	SearchIndex              TaskSearchIndex
 	SearchLexicalWeight      float64
 	SearchSemanticWeight     float64
 	SearchSemanticCandidates int
+	AuthBackend              AuthBackend
 }
 
 // StateTemplate represents state template data used by this package.
@@ -95,6 +97,7 @@ type Service struct {
 	autoProjectCols    bool
 	defaultLeaseTTL    time.Duration
 	requireAgentLease  bool
+	authRequests       AuthRequestGateway
 	schemaCache        map[string]schemaCacheEntry
 	schemaCacheMu      sync.RWMutex
 	kindBootstrap      kindBootstrapState
@@ -103,6 +106,7 @@ type Service struct {
 	searchLexicalW     float64
 	searchSemanticW    float64
 	searchSemanticK    int
+	authBackend        AuthBackend
 }
 
 // NewService constructs a new value for this package.
@@ -148,12 +152,14 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		autoProjectCols:    cfg.AutoCreateProjectColumns,
 		defaultLeaseTTL:    cfg.CapabilityLeaseTTL,
 		requireAgentLease:  requireAgentLease,
+		authRequests:       cfg.AuthRequests,
 		schemaCache:        map[string]schemaCacheEntry{},
 		embeddingGenerator: cfg.EmbeddingGenerator,
 		searchIndex:        searchIndex,
 		searchLexicalW:     lexicalWeight,
 		searchSemanticW:    semanticWeight,
 		searchSemanticK:    semanticCandidates,
+		authBackend:        cfg.AuthBackend,
 	}
 }
 

@@ -1871,3 +1871,162 @@ func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 		t.Fatalf("expected persisted task scope phase, got %q", loadedNestedPhaseTask.Scope)
 	}
 }
+
+// TestRepositoryAuthRequestCRUD verifies auth-request persistence, listing, and update behavior.
+func TestRepositoryAuthRequestCRUD(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("p1", "Project One", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	var projectCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id = ?`, project.ID).Scan(&projectCount); err != nil {
+		t.Fatalf("project count query error = %v", err)
+	}
+	if projectCount != 1 {
+		t.Fatalf("project count = %d, want 1", projectCount)
+	}
+	request := domain.AuthRequest{
+		ID:                  "req-1",
+		ProjectID:           project.ID,
+		BranchID:            "b1",
+		PhaseIDs:            []string{"ph1", "ph2"},
+		Path:                "project/p1/branch/b1/phase/ph1/phase/ph2",
+		ScopeType:           domain.ScopeLevelPhase,
+		ScopeID:             "ph2",
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		PrincipalName:       "Agent One",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "needs review",
+		Continuation:        map[string]any{"resume_tool": "till.raise_attention_item", "resume": map[string]any{"path": "project/p1"}},
+		State:               domain.AuthRequestStatePending,
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(30 * time.Minute),
+	}
+	if err := repo.CreateAuthRequest(ctx, request); err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	got, err := repo.GetAuthRequest(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if got.Path != request.Path || got.ScopeType != request.ScopeType || got.ScopeID != request.ScopeID {
+		t.Fatalf("GetAuthRequest() = %#v, want persisted request %#v", got, request)
+	}
+	if gotValue, _ := got.Continuation["resume_tool"].(string); gotValue != "till.raise_attention_item" {
+		t.Fatalf("GetAuthRequest() continuation = %#v, want resume_tool", got.Continuation)
+	}
+
+	listed, err := repo.ListAuthRequests(ctx, domain.AuthRequestListFilter{ProjectID: project.ID, State: domain.AuthRequestStatePending, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuthRequests() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != request.ID {
+		t.Fatalf("ListAuthRequests() = %#v, want request %q", listed, request.ID)
+	}
+
+	request.State = domain.AuthRequestStateApproved
+	request.ResolutionNote = "approved"
+	request.ResolvedByActor = "approver"
+	request.ResolvedByType = domain.ActorTypeUser
+	request.ResolvedAt = &now
+	request.IssuedSessionID = "sess-1"
+	request.IssuedSessionSecret = "secret-1"
+	exp := now.Add(2 * time.Hour)
+	request.IssuedSessionExpiresAt = &exp
+	if err := repo.UpdateAuthRequest(ctx, request); err != nil {
+		t.Fatalf("UpdateAuthRequest() error = %v", err)
+	}
+	approved, err := repo.GetAuthRequest(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest(after update) error = %v", err)
+	}
+	if approved.State != domain.AuthRequestStateApproved || approved.IssuedSessionID != "sess-1" {
+		t.Fatalf("GetAuthRequest(after update) = %#v, want approved session", approved)
+	}
+	approvedList, err := repo.ListAuthRequests(ctx, domain.AuthRequestListFilter{ProjectID: project.ID, State: domain.AuthRequestStateApproved, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuthRequests(approved) error = %v", err)
+	}
+	if len(approvedList) != 1 || approvedList[0].ID != request.ID {
+		t.Fatalf("ListAuthRequests(approved) = %#v, want approved request", approvedList)
+	}
+}
+
+// TestRepositoryAuthRequestScanErrors verifies malformed persisted JSON surfaces scan errors.
+func TestRepositoryAuthRequestScanErrors(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 3, 20, 12, 5, 0, 0, time.UTC)
+	project, err := domain.NewProject("p1", "Project One", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	var projectCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id = ?`, project.ID).Scan(&projectCount); err != nil {
+		t.Fatalf("project count query error = %v", err)
+	}
+	if projectCount != 1 {
+		t.Fatalf("project count = %d, want 1", projectCount)
+	}
+	request := domain.AuthRequest{
+		ID:                  "req-bad-json",
+		ProjectID:           project.ID,
+		Path:                "project/p1",
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             "p1",
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "client-1",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		State:               domain.AuthRequestStatePending,
+		RequestedByType:     domain.ActorTypeUser,
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(time.Hour),
+	}
+	if err := repo.CreateAuthRequest(ctx, request); err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `UPDATE auth_requests SET continuation_json = '{bad json' WHERE id = ?`, request.ID); err != nil {
+		t.Fatalf("update malformed continuation_json error = %v", err)
+	}
+	if _, err := repo.GetAuthRequest(ctx, request.ID); err == nil {
+		t.Fatal("GetAuthRequest() error = nil, want scan decode error")
+	}
+	if _, err := repo.db.ExecContext(ctx, `UPDATE auth_requests SET continuation_json = '{}', phase_ids_json = '[bad json' WHERE id = ?`, request.ID); err != nil {
+		t.Fatalf("update malformed phase_ids_json error = %v", err)
+	}
+	if _, err := repo.ListAuthRequests(ctx, domain.AuthRequestListFilter{ProjectID: project.ID}); err == nil {
+		t.Fatal("ListAuthRequests() error = nil, want scan decode error")
+	}
+}

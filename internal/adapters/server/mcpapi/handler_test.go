@@ -37,15 +37,21 @@ func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.Capt
 // stubAttentionService provides deterministic attention responses for MCP tool tests.
 type stubAttentionService struct {
 	stubMutationAuthorizer
-	items       []common.AttentionItem
-	raised      common.AttentionItem
-	resolved    common.AttentionItem
-	listErr     error
-	raiseErr    error
-	resolveErr  error
-	lastList    common.ListAttentionItemsRequest
-	lastRaise   common.RaiseAttentionItemRequest
-	lastResolve common.ResolveAttentionItemRequest
+	items          []common.AttentionItem
+	raised         common.AttentionItem
+	resolved       common.AttentionItem
+	authRequests   []common.AuthRequestRecord
+	authRequest    common.AuthRequestRecord
+	listErr        error
+	raiseErr       error
+	resolveErr     error
+	authRequestErr error
+	lastList       common.ListAttentionItemsRequest
+	lastRaise      common.RaiseAttentionItemRequest
+	lastResolve    common.ResolveAttentionItemRequest
+	lastCreateAuth common.CreateAuthRequestRequest
+	lastListAuth   common.ListAuthRequestsRequest
+	lastGetAuthID  string
 }
 
 // stubProjectService provides deterministic project responses for expanded MCP tool registration tests.
@@ -61,6 +67,20 @@ type stubProjectService struct {
 	lastIncludeArchived bool
 	lastCreate          common.CreateProjectRequest
 	lastUpdate          common.UpdateProjectRequest
+}
+
+// stubAuthRequestService provides deterministic auth-request responses for MCP tool tests.
+type stubAuthRequestService struct {
+	stubCaptureStateReader
+	created    common.AuthRequestRecord
+	requests   []common.AuthRequestRecord
+	getResult  common.AuthRequestRecord
+	createErr  error
+	listErr    error
+	getErr     error
+	lastCreate common.CreateAuthRequestRequest
+	lastList   common.ListAuthRequestsRequest
+	lastGetID  string
 }
 
 // stubMutationAuthorizer provides deterministic session-auth results for mutating MCP tool tests.
@@ -118,6 +138,33 @@ func (s *stubProjectService) UpdateProject(_ context.Context, req common.UpdateP
 	return s.updateResult, nil
 }
 
+// CreateAuthRequest records and returns one deterministic auth-request row.
+func (s *stubAuthRequestService) CreateAuthRequest(_ context.Context, req common.CreateAuthRequestRequest) (common.AuthRequestRecord, error) {
+	s.lastCreate = req
+	if s.createErr != nil {
+		return common.AuthRequestRecord{}, s.createErr
+	}
+	return s.created, nil
+}
+
+// ListAuthRequests records and returns deterministic auth-request rows.
+func (s *stubAuthRequestService) ListAuthRequests(_ context.Context, req common.ListAuthRequestsRequest) ([]common.AuthRequestRecord, error) {
+	s.lastList = req
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return append([]common.AuthRequestRecord(nil), s.requests...), nil
+}
+
+// GetAuthRequest records and returns one deterministic auth-request row.
+func (s *stubAuthRequestService) GetAuthRequest(_ context.Context, requestID string) (common.AuthRequestRecord, error) {
+	s.lastGetID = requestID
+	if s.getErr != nil {
+		return common.AuthRequestRecord{}, s.getErr
+	}
+	return s.getResult, nil
+}
+
 // ListAttentionItems returns deterministic list data.
 func (s *stubAttentionService) ListAttentionItems(_ context.Context, req common.ListAttentionItemsRequest) ([]common.AttentionItem, error) {
 	s.lastList = req
@@ -143,6 +190,36 @@ func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req commo
 		return common.AttentionItem{}, s.resolveErr
 	}
 	return s.resolved, nil
+}
+
+// CreateAuthRequest records and returns one deterministic auth request row.
+func (s *stubAttentionService) CreateAuthRequest(_ context.Context, req common.CreateAuthRequestRequest) (common.AuthRequestRecord, error) {
+	s.lastCreateAuth = req
+	if s.authRequestErr != nil {
+		return common.AuthRequestRecord{}, s.authRequestErr
+	}
+	if s.authRequest.ID != "" {
+		return s.authRequest, nil
+	}
+	return common.AuthRequestRecord{}, nil
+}
+
+// ListAuthRequests records list filters and returns deterministic auth request rows.
+func (s *stubAttentionService) ListAuthRequests(_ context.Context, req common.ListAuthRequestsRequest) ([]common.AuthRequestRecord, error) {
+	s.lastListAuth = req
+	if s.authRequestErr != nil {
+		return nil, s.authRequestErr
+	}
+	return append([]common.AuthRequestRecord(nil), s.authRequests...), nil
+}
+
+// GetAuthRequest records the requested id and returns one deterministic auth request row.
+func (s *stubAttentionService) GetAuthRequest(_ context.Context, requestID string) (common.AuthRequestRecord, error) {
+	s.lastGetAuthID = requestID
+	if s.authRequestErr != nil {
+		return common.AuthRequestRecord{}, s.authRequestErr
+	}
+	return s.authRequest, nil
 }
 
 // jsonRPCResponse models minimal JSON-RPC response fields used in MCP adapter tests.
@@ -396,6 +473,51 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 		"till.list_attention_items",
 		"till.raise_attention_item",
 		"till.resolve_attention_item",
+	} {
+		if !slices.Contains(toolNames, required) {
+			t.Fatalf("tool list missing %q: %#v", required, toolNames)
+		}
+	}
+}
+
+// TestHandlerRegistersAuthRequestToolsWhenAvailable verifies optional auth-request tools register when the service exposes that surface.
+func TestHandlerRegistersAuthRequestToolsWhenAvailable(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+	toolNames := make([]string, 0, len(toolsRaw))
+	for _, toolRaw := range toolsRaw {
+		toolMap, ok := toolRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := toolMap["name"].(string)
+		toolNames = append(toolNames, name)
+	}
+	for _, required := range []string{
+		"till.create_auth_request",
+		"till.list_auth_requests",
+		"till.get_auth_request",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
@@ -973,6 +1095,125 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	}
 	if got := attention.lastResolve.Actor.ActorID; got != "agent-1" {
 		t.Fatalf("resolve actor_id = %q, want agent-1", got)
+	}
+}
+
+// TestHandlerAuthRequestToolCalls verifies auth-request create/list/show tools map request arguments and JSON results.
+func TestHandlerAuthRequestToolCalls(t *testing.T) {
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		created: common.AuthRequestRecord{
+			ID:                  "req-1",
+			State:               "pending",
+			Path:                "project/p1",
+			ProjectID:           "p1",
+			ScopeType:           common.ScopeTypeProject,
+			ScopeID:             "p1",
+			PrincipalID:         "review-agent",
+			PrincipalType:       "agent",
+			ClientID:            "till-mcp-stdio",
+			ClientType:          "mcp-stdio",
+			RequestedSessionTTL: "2h0m0s",
+			Reason:              "manual MCP review",
+			CreatedAt:           now,
+			ExpiresAt:           now.Add(30 * time.Minute),
+		},
+		requests: []common.AuthRequestRecord{
+			{
+				ID:                  "req-1",
+				State:               "pending",
+				Path:                "project/p1",
+				ProjectID:           "p1",
+				ScopeType:           common.ScopeTypeProject,
+				ScopeID:             "p1",
+				PrincipalID:         "review-agent",
+				PrincipalType:       "agent",
+				ClientID:            "till-mcp-stdio",
+				ClientType:          "mcp-stdio",
+				RequestedSessionTTL: "2h0m0s",
+				Reason:              "manual MCP review",
+				CreatedAt:           now,
+				ExpiresAt:           now.Add(30 * time.Minute),
+			},
+		},
+		getResult: common.AuthRequestRecord{
+			ID:                  "req-1",
+			State:               "pending",
+			Path:                "project/p1",
+			ProjectID:           "p1",
+			ScopeType:           common.ScopeTypeProject,
+			ScopeID:             "p1",
+			PrincipalID:         "review-agent",
+			PrincipalType:       "agent",
+			ClientID:            "till-mcp-stdio",
+			ClientType:          "mcp-stdio",
+			RequestedSessionTTL: "2h0m0s",
+			Reason:              "manual MCP review",
+			CreatedAt:           now,
+			ExpiresAt:           now.Add(30 * time.Minute),
+		},
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.create_auth_request", map[string]any{
+		"path":              "project/p1",
+		"principal_id":      "review-agent",
+		"principal_type":    "agent",
+		"client_id":         "till-mcp-stdio",
+		"client_type":       "mcp-stdio",
+		"requested_ttl":     "2h",
+		"timeout":           "30m",
+		"reason":            "manual MCP review",
+		"continuation_json": `{"resume_tool":"till.create_task"}`,
+	}))
+	createStructured := toolResultStructured(t, createResp.Result)
+	if got := createStructured["id"].(string); got != "req-1" {
+		t.Fatalf("create auth request id = %q, want req-1", got)
+	}
+	if got := capture.lastCreate.Path; got != "project/p1" {
+		t.Fatalf("CreateAuthRequest() path = %q, want project/p1", got)
+	}
+	if got := capture.lastCreate.ContinuationJSON; !strings.Contains(got, "resume_tool") {
+		t.Fatalf("CreateAuthRequest() continuation_json = %q, want resume payload", got)
+	}
+
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.list_auth_requests", map[string]any{
+		"project_id": "p1",
+		"state":      "pending",
+		"limit":      10,
+	}))
+	listStructured := toolResultStructured(t, listResp.Result)
+	requestsRaw, ok := listStructured["requests"].([]any)
+	if !ok || len(requestsRaw) != 1 {
+		t.Fatalf("list auth requests payload = %#v, want one request", listStructured)
+	}
+	if got := capture.lastList.ProjectID; got != "p1" {
+		t.Fatalf("ListAuthRequests() project_id = %q, want p1", got)
+	}
+	if got := capture.lastList.State; got != "pending" {
+		t.Fatalf("ListAuthRequests() state = %q, want pending", got)
+	}
+
+	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.get_auth_request", map[string]any{
+		"request_id": "req-1",
+	}))
+	getStructured := toolResultStructured(t, getResp.Result)
+	if got := getStructured["id"].(string); got != "req-1" {
+		t.Fatalf("get auth request id = %q, want req-1", got)
+	}
+	if got := capture.lastGetID; got != "req-1" {
+		t.Fatalf("GetAuthRequest() request_id = %q, want req-1", got)
 	}
 }
 

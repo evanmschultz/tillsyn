@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -51,6 +52,80 @@ func (a *AppServiceAdapter) ListProjects(ctx context.Context, includeArchived bo
 		return nil, mapAppError("list projects", err)
 	}
 	return projects, nil
+}
+
+// CreateAuthRequest creates one persisted pre-session auth request through app-level APIs.
+func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuthRequestRequest) (AuthRequestRecord, error) {
+	if a == nil || a.service == nil {
+		return AuthRequestRecord{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	requestedTTL, err := parseOptionalDurationString(in.RequestedTTL, "requested_ttl")
+	if err != nil {
+		return AuthRequestRecord{}, err
+	}
+	timeout, err := parseOptionalDurationString(in.Timeout, "timeout")
+	if err != nil {
+		return AuthRequestRecord{}, err
+	}
+	continuation, err := parseContinuationJSON(in.ContinuationJSON)
+	if err != nil {
+		return AuthRequestRecord{}, err
+	}
+	request, err := a.service.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
+		Path:                strings.TrimSpace(in.Path),
+		PrincipalID:         strings.TrimSpace(in.PrincipalID),
+		PrincipalType:       strings.TrimSpace(in.PrincipalType),
+		PrincipalName:       strings.TrimSpace(in.PrincipalName),
+		ClientID:            strings.TrimSpace(in.ClientID),
+		ClientType:          strings.TrimSpace(in.ClientType),
+		ClientName:          strings.TrimSpace(in.ClientName),
+		RequestedSessionTTL: requestedTTL,
+		Reason:              strings.TrimSpace(in.Reason),
+		Continuation:        continuation,
+		RequestedBy:         strings.TrimSpace(in.PrincipalID),
+		RequestedType:       requestedActorTypeFromPrincipalType(in.PrincipalType),
+		Timeout:             timeout,
+	})
+	if err != nil {
+		return AuthRequestRecord{}, mapAppError("create auth request", err)
+	}
+	return mapAuthRequestRecord(request), nil
+}
+
+// ListAuthRequests returns auth-request inventory rows from app-level APIs.
+func (a *AppServiceAdapter) ListAuthRequests(ctx context.Context, in ListAuthRequestsRequest) ([]AuthRequestRecord, error) {
+	if a == nil || a.service == nil {
+		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	requests, err := a.service.ListAuthRequests(ctx, domain.AuthRequestListFilter{
+		ProjectID: strings.TrimSpace(in.ProjectID),
+		State:     domain.AuthRequestState(strings.TrimSpace(in.State)),
+		Limit:     in.Limit,
+	})
+	if err != nil {
+		return nil, mapAppError("list auth requests", err)
+	}
+	out := make([]AuthRequestRecord, 0, len(requests))
+	for _, request := range requests {
+		out = append(out, mapAuthRequestRecord(request))
+	}
+	return out, nil
+}
+
+// GetAuthRequest returns one auth request by id through app-level APIs.
+func (a *AppServiceAdapter) GetAuthRequest(ctx context.Context, requestID string) (AuthRequestRecord, error) {
+	if a == nil || a.service == nil {
+		return AuthRequestRecord{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return AuthRequestRecord{}, fmt.Errorf("request_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	request, err := a.service.GetAuthRequest(ctx, requestID)
+	if err != nil {
+		return AuthRequestRecord{}, mapAppError("get auth request", err)
+	}
+	return mapAuthRequestRecord(request), nil
 }
 
 // CreateProject creates one project with optional kind and metadata.
@@ -363,6 +438,75 @@ func (a *AppServiceAdapter) SetProjectAllowedKinds(ctx context.Context, in SetPr
 		return mapAppError("set project allowed kinds", err)
 	}
 	return nil
+}
+
+// parseOptionalDurationString parses one optional Go duration string used by transport auth request inputs.
+func parseOptionalDurationString(raw, field string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q is invalid: %w", field, raw, ErrInvalidCaptureStateRequest)
+	}
+	return value, nil
+}
+
+// parseContinuationJSON decodes one optional continuation metadata object encoded as JSON.
+func parseContinuationJSON(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var continuation map[string]any
+	if err := json.Unmarshal([]byte(raw), &continuation); err != nil {
+		return nil, fmt.Errorf("continuation_json is invalid: %w", ErrInvalidCaptureStateRequest)
+	}
+	return cloneJSONObject(continuation), nil
+}
+
+// requestedActorTypeFromPrincipalType maps one auth request principal type into local actor attribution.
+func requestedActorTypeFromPrincipalType(raw string) domain.ActorType {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "agent", "service", "system":
+		return domain.ActorTypeAgent
+	default:
+		return domain.ActorTypeUser
+	}
+}
+
+// mapAuthRequestRecord converts one domain auth request into one transport-facing record.
+func mapAuthRequestRecord(request domain.AuthRequest) AuthRequestRecord {
+	return AuthRequestRecord{
+		ID:                     request.ID,
+		State:                  string(request.State),
+		Path:                   request.Path,
+		ProjectID:              request.ProjectID,
+		BranchID:               request.BranchID,
+		PhaseIDs:               append([]string(nil), request.PhaseIDs...),
+		ScopeType:              string(request.ScopeType),
+		ScopeID:                request.ScopeID,
+		PrincipalID:            request.PrincipalID,
+		PrincipalType:          request.PrincipalType,
+		PrincipalName:          request.PrincipalName,
+		ClientID:               request.ClientID,
+		ClientType:             request.ClientType,
+		ClientName:             request.ClientName,
+		RequestedSessionTTL:    request.RequestedSessionTTL.String(),
+		Reason:                 request.Reason,
+		Continuation:           cloneJSONObject(request.Continuation),
+		RequestedByActor:       request.RequestedByActor,
+		RequestedByType:        string(request.RequestedByType),
+		CreatedAt:              request.CreatedAt.UTC(),
+		ExpiresAt:              request.ExpiresAt.UTC(),
+		ResolvedByActor:        request.ResolvedByActor,
+		ResolvedByType:         string(request.ResolvedByType),
+		ResolvedAt:             request.ResolvedAt,
+		ResolutionNote:         request.ResolutionNote,
+		IssuedSessionID:        request.IssuedSessionID,
+		IssuedSessionExpiresAt: request.IssuedSessionExpiresAt,
+	}
 }
 
 // ListProjectAllowedKinds lists canonical kind ids in one project's allowlist.
@@ -680,4 +824,32 @@ func toKindIDList(kindIDs []string) []domain.KindID {
 		out = append(out, domain.KindID(strings.TrimSpace(kindID)))
 	}
 	return out
+}
+
+// cloneJSONObject deep-copies one JSON-compatible object map.
+func cloneJSONObject(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = cloneJSONValue(value)
+	}
+	return out
+}
+
+// cloneJSONValue deep-copies one JSON-compatible nested value.
+func cloneJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneJSONObject(typed)
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, cloneJSONValue(item))
+		}
+		return out
+	default:
+		return typed
+	}
 }

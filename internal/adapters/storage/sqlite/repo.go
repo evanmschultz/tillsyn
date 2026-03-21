@@ -280,6 +280,37 @@ func (r *Repository) migrate(ctx context.Context) error {
 			resolved_at TEXT,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS auth_requests (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			branch_id TEXT NOT NULL DEFAULT '',
+			phase_ids_json TEXT NOT NULL DEFAULT '[]',
+			path TEXT NOT NULL,
+			scope_type TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			principal_id TEXT NOT NULL,
+			principal_type TEXT NOT NULL,
+			principal_name TEXT NOT NULL DEFAULT '',
+			client_id TEXT NOT NULL,
+			client_type TEXT NOT NULL DEFAULT '',
+			client_name TEXT NOT NULL DEFAULT '',
+			requested_session_ttl_seconds INTEGER NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			continuation_json TEXT NOT NULL DEFAULT '{}',
+			state TEXT NOT NULL,
+			requested_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
+			requested_by_type TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			resolved_by_actor TEXT NOT NULL DEFAULT '',
+			resolved_by_type TEXT NOT NULL DEFAULT '',
+			resolved_at TEXT,
+			resolution_note TEXT NOT NULL DEFAULT '',
+			issued_session_id TEXT NOT NULL DEFAULT '',
+			issued_session_secret TEXT NOT NULL DEFAULT '',
+			issued_session_expires_at TEXT,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_work_items_project_column_position ON work_items(project_id, column_id, position);`,
@@ -292,6 +323,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_capability_leases_expiry ON capability_leases(expires_at, revoked_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_attention_scope_state_created_at ON attention_items(project_id, scope_type, scope_id, state, requires_user_action, created_at DESC, id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_attention_project_state_kind_created_at ON attention_items(project_id, state, kind, created_at DESC, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_requests_project_state_created_at ON auth_requests(project_id, state, created_at DESC, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_requests_expiry_state ON auth_requests(state, expires_at, created_at DESC);`,
 	}
 
 	for _, stmt := range stmts {
@@ -1932,6 +1965,181 @@ func (r *Repository) ResolveAttentionItem(ctx context.Context, attentionID strin
 	return item, nil
 }
 
+// CreateAuthRequest creates one persisted auth request row.
+func (r *Repository) CreateAuthRequest(ctx context.Context, request domain.AuthRequest) error {
+	phaseIDsJSON, err := json.Marshal(request.PhaseIDs)
+	if err != nil {
+		return fmt.Errorf("encode auth request phase ids: %w", err)
+	}
+	continuationJSON, err := json.Marshal(request.Continuation)
+	if err != nil {
+		return fmt.Errorf("encode auth request continuation: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO auth_requests(
+			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
+			principal_id, principal_type, principal_name, client_id, client_type, client_name,
+			requested_session_ttl_seconds, reason, continuation_json, state,
+			requested_by_actor, requested_by_type, created_at, expires_at,
+			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
+			issued_session_id, issued_session_secret, issued_session_expires_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		strings.TrimSpace(request.ID),
+		strings.TrimSpace(request.ProjectID),
+		strings.TrimSpace(request.BranchID),
+		string(phaseIDsJSON),
+		strings.TrimSpace(request.Path),
+		string(domain.NormalizeScopeLevel(request.ScopeType)),
+		strings.TrimSpace(request.ScopeID),
+		strings.TrimSpace(request.PrincipalID),
+		strings.TrimSpace(request.PrincipalType),
+		strings.TrimSpace(request.PrincipalName),
+		strings.TrimSpace(request.ClientID),
+		strings.TrimSpace(request.ClientType),
+		strings.TrimSpace(request.ClientName),
+		int(request.RequestedSessionTTL.Seconds()),
+		strings.TrimSpace(request.Reason),
+		string(continuationJSON),
+		string(domain.NormalizeAuthRequestState(request.State)),
+		strings.TrimSpace(request.RequestedByActor),
+		string(normalizeActorType(request.RequestedByType)),
+		ts(request.CreatedAt),
+		ts(request.ExpiresAt),
+		strings.TrimSpace(request.ResolvedByActor),
+		normalizeOptionalActorType(request.ResolvedByType),
+		nullableTS(request.ResolvedAt),
+		strings.TrimSpace(request.ResolutionNote),
+		strings.TrimSpace(request.IssuedSessionID),
+		strings.TrimSpace(request.IssuedSessionSecret),
+		nullableTS(request.IssuedSessionExpiresAt),
+	)
+	if err != nil {
+		return fmt.Errorf("insert auth request: %w", err)
+	}
+	return nil
+}
+
+// GetAuthRequest returns one persisted auth request row by id.
+func (r *Repository) GetAuthRequest(ctx context.Context, requestID string) (domain.AuthRequest, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
+			principal_id, principal_type, principal_name, client_id, client_type, client_name,
+			requested_session_ttl_seconds, reason, continuation_json, state,
+			requested_by_actor, requested_by_type, created_at, expires_at,
+			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
+			issued_session_id, issued_session_secret, issued_session_expires_at
+		FROM auth_requests
+		WHERE id = ?
+	`, strings.TrimSpace(requestID))
+	return scanAuthRequest(row)
+}
+
+// ListAuthRequests lists persisted auth requests in deterministic order.
+func (r *Repository) ListAuthRequests(ctx context.Context, filter domain.AuthRequestListFilter) ([]domain.AuthRequest, error) {
+	filter, err := domain.NormalizeAuthRequestListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT
+			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
+			principal_id, principal_type, principal_name, client_id, client_type, client_name,
+			requested_session_ttl_seconds, reason, continuation_json, state,
+			requested_by_actor, requested_by_type, created_at, expires_at,
+			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
+			issued_session_id, issued_session_secret, issued_session_expires_at
+		FROM auth_requests
+		WHERE 1 = 1
+	`
+	args := make([]any, 0, 3)
+	if filter.ProjectID != "" {
+		query += ` AND project_id = ?`
+		args = append(args, filter.ProjectID)
+	}
+	if filter.State != "" {
+		query += ` AND state = ?`
+		args = append(args, string(filter.State))
+	}
+	query += ` ORDER BY created_at DESC, id DESC`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.AuthRequest, 0)
+	for rows.Next() {
+		request, scanErr := scanAuthRequest(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, request)
+	}
+	return out, rows.Err()
+}
+
+// UpdateAuthRequest updates one persisted auth request row.
+func (r *Repository) UpdateAuthRequest(ctx context.Context, request domain.AuthRequest) error {
+	phaseIDsJSON, err := json.Marshal(request.PhaseIDs)
+	if err != nil {
+		return fmt.Errorf("encode auth request phase ids: %w", err)
+	}
+	continuationJSON, err := json.Marshal(request.Continuation)
+	if err != nil {
+		return fmt.Errorf("encode auth request continuation: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE auth_requests
+		SET project_id = ?, branch_id = ?, phase_ids_json = ?, path = ?, scope_type = ?, scope_id = ?,
+			principal_id = ?, principal_type = ?, principal_name = ?, client_id = ?, client_type = ?, client_name = ?,
+			requested_session_ttl_seconds = ?, reason = ?, continuation_json = ?, state = ?,
+			requested_by_actor = ?, requested_by_type = ?, created_at = ?, expires_at = ?,
+			resolved_by_actor = ?, resolved_by_type = ?, resolved_at = ?, resolution_note = ?,
+			issued_session_id = ?, issued_session_secret = ?, issued_session_expires_at = ?
+		WHERE id = ?
+	`,
+		strings.TrimSpace(request.ProjectID),
+		strings.TrimSpace(request.BranchID),
+		string(phaseIDsJSON),
+		strings.TrimSpace(request.Path),
+		string(domain.NormalizeScopeLevel(request.ScopeType)),
+		strings.TrimSpace(request.ScopeID),
+		strings.TrimSpace(request.PrincipalID),
+		strings.TrimSpace(request.PrincipalType),
+		strings.TrimSpace(request.PrincipalName),
+		strings.TrimSpace(request.ClientID),
+		strings.TrimSpace(request.ClientType),
+		strings.TrimSpace(request.ClientName),
+		int(request.RequestedSessionTTL.Seconds()),
+		strings.TrimSpace(request.Reason),
+		string(continuationJSON),
+		string(domain.NormalizeAuthRequestState(request.State)),
+		strings.TrimSpace(request.RequestedByActor),
+		string(normalizeActorType(request.RequestedByType)),
+		ts(request.CreatedAt),
+		ts(request.ExpiresAt),
+		strings.TrimSpace(request.ResolvedByActor),
+		normalizeOptionalActorType(request.ResolvedByType),
+		nullableTS(request.ResolvedAt),
+		strings.TrimSpace(request.ResolutionNote),
+		strings.TrimSpace(request.IssuedSessionID),
+		strings.TrimSpace(request.IssuedSessionSecret),
+		nullableTS(request.IssuedSessionExpiresAt),
+		strings.TrimSpace(request.ID),
+	)
+	if err != nil {
+		return err
+	}
+	return translateNoRows(res)
+}
+
 // CreateCapabilityLease creates one capability lease row.
 func (r *Repository) CreateCapabilityLease(ctx context.Context, lease domain.CapabilityLease) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -2658,6 +2866,81 @@ func scanAttentionItem(s scanner) (domain.AttentionItem, error) {
 	item.ResolvedAt = parseNullTS(resolvedAtRaw)
 
 	return item, nil
+}
+
+// scanAuthRequest decodes one auth_requests row.
+func scanAuthRequest(s scanner) (domain.AuthRequest, error) {
+	var (
+		request                   domain.AuthRequest
+		phaseIDsRaw               string
+		scopeTypeRaw              string
+		requestedSessionTTL       int
+		continuationRaw           string
+		stateRaw                  string
+		requestedByTypeRaw        string
+		createdRaw                string
+		expiresRaw                string
+		resolvedByTypeRaw         string
+		resolvedAtRaw             sql.NullString
+		issuedSessionExpiresAtRaw sql.NullString
+	)
+	if err := s.Scan(
+		&request.ID,
+		&request.ProjectID,
+		&request.BranchID,
+		&phaseIDsRaw,
+		&request.Path,
+		&scopeTypeRaw,
+		&request.ScopeID,
+		&request.PrincipalID,
+		&request.PrincipalType,
+		&request.PrincipalName,
+		&request.ClientID,
+		&request.ClientType,
+		&request.ClientName,
+		&requestedSessionTTL,
+		&request.Reason,
+		&continuationRaw,
+		&stateRaw,
+		&request.RequestedByActor,
+		&requestedByTypeRaw,
+		&createdRaw,
+		&expiresRaw,
+		&request.ResolvedByActor,
+		&resolvedByTypeRaw,
+		&resolvedAtRaw,
+		&request.ResolutionNote,
+		&request.IssuedSessionID,
+		&request.IssuedSessionSecret,
+		&issuedSessionExpiresAtRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.AuthRequest{}, app.ErrNotFound
+		}
+		return domain.AuthRequest{}, err
+	}
+	if strings.TrimSpace(phaseIDsRaw) == "" {
+		phaseIDsRaw = "[]"
+	}
+	if err := json.Unmarshal([]byte(phaseIDsRaw), &request.PhaseIDs); err != nil {
+		return domain.AuthRequest{}, fmt.Errorf("decode auth_requests.phase_ids_json: %w", err)
+	}
+	if strings.TrimSpace(continuationRaw) == "" {
+		continuationRaw = "{}"
+	}
+	if err := json.Unmarshal([]byte(continuationRaw), &request.Continuation); err != nil {
+		return domain.AuthRequest{}, fmt.Errorf("decode auth_requests.continuation_json: %w", err)
+	}
+	request.ScopeType = domain.NormalizeScopeLevel(domain.ScopeLevel(scopeTypeRaw))
+	request.RequestedSessionTTL = time.Duration(requestedSessionTTL) * time.Second
+	request.State = domain.NormalizeAuthRequestState(domain.AuthRequestState(stateRaw))
+	request.RequestedByType = normalizeActorType(domain.ActorType(requestedByTypeRaw))
+	request.CreatedAt = parseTS(createdRaw)
+	request.ExpiresAt = parseTS(expiresRaw)
+	request.ResolvedByType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(resolvedByTypeRaw)))
+	request.ResolvedAt = parseNullTS(resolvedAtRaw)
+	request.IssuedSessionExpiresAt = parseNullTS(issuedSessionExpiresAtRaw)
+	return request, nil
 }
 
 // translateNoRows handles translate no rows.

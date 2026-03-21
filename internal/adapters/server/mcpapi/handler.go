@@ -42,6 +42,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	if attention != nil {
 		registerAttentionTools(mcpSrv, attention)
 	}
+	registerAuthRequestTools(mcpSrv, pickAuthRequestService(captureState, attention))
 	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
 	registerInstructionsTool(mcpSrv)
 	registerProjectTools(mcpSrv, pickProjectService(captureState, attention))
@@ -55,6 +56,130 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention))
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
 	return mcpSrv, cfg, nil
+}
+
+// registerAuthRequestTools registers optional pre-session auth-request tools for MCP callers.
+func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.AuthRequestService) {
+	if authRequests == nil {
+		return
+	}
+	srv.AddTool(
+		mcp.NewTool(
+			"till.create_auth_request",
+			mcp.WithDescription("Create one persisted pre-session auth request for MCP or local dogfooding."),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Required project-rooted path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]")),
+			mcp.WithString("principal_id", mcp.Required(), mcp.Description("Requested principal identifier")),
+			mcp.WithString("principal_type", mcp.Description("Requested principal type"), mcp.Enum("user", "agent", "service")),
+			mcp.WithString("principal_name", mcp.Description("Optional principal display name")),
+			mcp.WithString("client_id", mcp.Required(), mcp.Description("Requesting client identifier")),
+			mcp.WithString("client_type", mcp.Description("Requesting client type")),
+			mcp.WithString("client_name", mcp.Description("Optional client display name")),
+			mcp.WithString("requested_ttl", mcp.Description("Optional approved-session lifetime override, for example 2h")),
+			mcp.WithString("timeout", mcp.Description("Optional pending-request timeout, for example 30m")),
+			mcp.WithString("reason", mcp.Required(), mcp.Description("Human-readable reason shown to the approving user")),
+			mcp.WithString("continuation_json", mcp.Description("Optional JSON object string with client continuation metadata for post-approval resume")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args struct {
+				Path             string `json:"path"`
+				PrincipalID      string `json:"principal_id"`
+				PrincipalType    string `json:"principal_type"`
+				PrincipalName    string `json:"principal_name"`
+				ClientID         string `json:"client_id"`
+				ClientType       string `json:"client_type"`
+				ClientName       string `json:"client_name"`
+				RequestedTTL     string `json:"requested_ttl"`
+				Timeout          string `json:"timeout"`
+				Reason           string `json:"reason"`
+				ContinuationJSON string `json:"continuation_json"`
+			}
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			if strings.TrimSpace(args.Path) == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "path" not found`), nil
+			}
+			if strings.TrimSpace(args.PrincipalID) == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "principal_id" not found`), nil
+			}
+			if strings.TrimSpace(args.ClientID) == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "client_id" not found`), nil
+			}
+			if strings.TrimSpace(args.Reason) == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "reason" not found`), nil
+			}
+			record, err := authRequests.CreateAuthRequest(ctx, common.CreateAuthRequestRequest{
+				Path:             args.Path,
+				PrincipalID:      args.PrincipalID,
+				PrincipalType:    args.PrincipalType,
+				PrincipalName:    args.PrincipalName,
+				ClientID:         args.ClientID,
+				ClientType:       args.ClientType,
+				ClientName:       args.ClientName,
+				RequestedTTL:     args.RequestedTTL,
+				Timeout:          args.Timeout,
+				Reason:           args.Reason,
+				ContinuationJSON: args.ContinuationJSON,
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(record)
+			if err != nil {
+				return nil, fmt.Errorf("encode create_auth_request result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.list_auth_requests",
+			mcp.WithDescription("List persisted pre-session auth requests."),
+			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
+			mcp.WithString("state", mcp.Description("Optional request state filter"), mcp.Enum("pending", "approved", "denied", "canceled", "expired")),
+			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			limitRaw := req.GetFloat("limit", 0)
+			requests, err := authRequests.ListAuthRequests(ctx, common.ListAuthRequestsRequest{
+				ProjectID: req.GetString("project_id", ""),
+				State:     req.GetString("state", ""),
+				Limit:     int(limitRaw),
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(map[string]any{"requests": requests})
+			if err != nil {
+				return nil, fmt.Errorf("encode list_auth_requests result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.get_auth_request",
+			mcp.WithDescription("Show one persisted pre-session auth request by id."),
+			mcp.WithString("request_id", mcp.Required(), mcp.Description("Auth request identifier")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			requestID, err := req.RequireString("request_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			record, err := authRequests.GetAuthRequest(ctx, requestID)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(record)
+			if err != nil {
+				return nil, fmt.Errorf("encode get_auth_request result: %w", err)
+			}
+			return result, nil
+		},
+	)
 }
 
 // NewHandler builds one stateless MCP streamable HTTP adapter with capture_state, attention, and optional app-backed tools.
@@ -402,7 +527,7 @@ func mapToolError(err error) toolErrorMapping {
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "session_required",
-			Text:  "session_required: " + err.Error(),
+			Text:  "session_required: " + err.Error() + "; next step: call till.create_auth_request to request scoped access",
 		}
 	case errors.Is(err, common.ErrInvalidAuthentication):
 		return toolErrorMapping{
@@ -426,7 +551,7 @@ func mapToolError(err error) toolErrorMapping {
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "grant_required",
-			Text:  "grant_required: " + err.Error(),
+			Text:  "grant_required: " + err.Error() + "; next step: call till.create_auth_request or wait for approval on the existing request",
 		}
 	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
 		return toolErrorMapping{
@@ -538,6 +663,17 @@ func pickCommentService(captureState common.CaptureStateReader, attention common
 		return svc
 	}
 	if svc, ok := attention.(common.CommentService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickAuthRequestService resolves one auth-request service provider from available services.
+func pickAuthRequestService(captureState common.CaptureStateReader, attention common.AttentionService) common.AuthRequestService {
+	if svc, ok := captureState.(common.AuthRequestService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.AuthRequestService); ok {
 		return svc
 	}
 	return nil

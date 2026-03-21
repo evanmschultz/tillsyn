@@ -1,5 +1,3 @@
-//go:build commonhash
-
 package common
 
 import (

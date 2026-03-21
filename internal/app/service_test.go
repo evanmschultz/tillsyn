@@ -20,6 +20,7 @@ type fakeRepo struct {
 	tasks               map[string]domain.Task
 	comments            map[string][]domain.Comment
 	attentionItems      map[string]domain.AttentionItem
+	authRequests        map[string]domain.AuthRequest
 	changeEvents        map[string][]domain.ChangeEvent
 	kindDefs            map[domain.KindID]domain.KindDefinition
 	projectAllowedKinds map[string][]domain.KindID
@@ -39,6 +40,7 @@ func newFakeRepo() *fakeRepo {
 		tasks:               map[string]domain.Task{},
 		comments:            map[string][]domain.Comment{},
 		attentionItems:      map[string]domain.AttentionItem{},
+		authRequests:        map[string]domain.AuthRequest{},
 		changeEvents:        map[string][]domain.ChangeEvent{},
 		kindDefs:            map[domain.KindID]domain.KindDefinition{},
 		projectAllowedKinds: map[string][]domain.KindID{},
@@ -388,6 +390,58 @@ func (f *fakeRepo) ResolveAttentionItem(_ context.Context, attentionID string, r
 	}
 	f.attentionItems[attentionID] = item
 	return item, nil
+}
+
+// CreateAuthRequest stores one auth request row.
+func (f *fakeRepo) CreateAuthRequest(_ context.Context, request domain.AuthRequest) error {
+	f.authRequests[request.ID] = request
+	return nil
+}
+
+// GetAuthRequest returns one auth request by id.
+func (f *fakeRepo) GetAuthRequest(_ context.Context, requestID string) (domain.AuthRequest, error) {
+	request, ok := f.authRequests[requestID]
+	if !ok {
+		return domain.AuthRequest{}, ErrNotFound
+	}
+	return request, nil
+}
+
+// ListAuthRequests lists auth requests with deterministic filtering.
+func (f *fakeRepo) ListAuthRequests(_ context.Context, filter domain.AuthRequestListFilter) ([]domain.AuthRequest, error) {
+	filter, err := domain.NormalizeAuthRequestListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.AuthRequest, 0, len(f.authRequests))
+	for _, request := range f.authRequests {
+		if filter.ProjectID != "" && request.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.State != "" && domain.NormalizeAuthRequestState(request.State) != filter.State {
+			continue
+		}
+		out = append(out, request)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// UpdateAuthRequest stores one auth request update.
+func (f *fakeRepo) UpdateAuthRequest(_ context.Context, request domain.AuthRequest) error {
+	if _, ok := f.authRequests[request.ID]; !ok {
+		return ErrNotFound
+	}
+	f.authRequests[request.ID] = request
+	return nil
 }
 
 // ListProjectChangeEvents lists change events.
