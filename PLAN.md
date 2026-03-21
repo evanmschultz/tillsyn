@@ -43,16 +43,24 @@ This run is successful only if:
 13. Normal TUI users should not need to manually mint auth sessions for routine TUI use.
 14. Agent access must support an explicit request-and-approval flow that can originate from MCP and from the TUI.
 15. Agent gatekeeping must be user-configurable, including lifecycle limits and scope/path restrictions.
-16. Auth requests must surface in the TUI notifications model:
+16. Shell approvals remain a required first-class operator path even though normal user approval should be TUI-first.
+17. The shell/operator auth flow should copy the strongest parts of `blick` as closely as practical:
+   - explicit lifecycle verbs,
+   - Fang/Cobra help with examples,
+   - deterministic machine-friendly output,
+   - persisted request/approval/audit state rather than ad-hoc shell-local side effects.
+18. `tillsyn` should not copy `blick`'s access-profile abstraction directly; `tillsyn` auth/grant scope must stay project-path-centered.
+19. `tillsyn` should not copy `blick`'s generic `requested-scope key=value` bag directly; `tillsyn` should use one explicit project-rooted `--path`.
+20. Auth requests must surface in the TUI notifications model:
    - when the request targets the currently focused project, show it in that project's notifications panel,
    - when the request targets a different project or no project is currently focused, show it in global notifications until the matching project is focused.
-17. Session or grant requests must carry one explicit scope path argument rooted at a project, with optional branch and nested phase lineage.
-18. Any command that requires follow-up user action must say so directly in its help output.
-19. `till auth --help` and subcommand help must enumerate required flags, path semantics, lifecycle controls, and concrete examples.
-20. External MCP-originated changes should refresh the current TUI project without requiring a project-switch workaround.
-21. Notifications remain a first-class UX surface with global count, quick navigation, and quick-info drill-in for important runtime/MCP warnings and errors.
-22. Any substantial notifications-panel redesign must start with an ASCII-art proposal and clarifying questions before implementation.
-23. `MCP_DOGFOODING_WORKSHEET.md` and `VECTOR_SEARCH_EXECUTION_PLAN.md` are retired; the active run contract must now live in `PLAN.md`, with only user-facing summary material kept in `README.md`.
+21. Session or grant requests must carry one explicit scope path argument rooted at a project, with optional branch and nested phase lineage.
+22. Any command that requires follow-up user action must say so directly in its help output.
+23. `till auth --help` and subcommand help must enumerate required flags, path semantics, lifecycle controls, and concrete examples.
+24. External MCP-originated changes should refresh the current TUI project without requiring a project-switch workaround.
+25. Notifications remain a first-class UX surface with global count, quick navigation, and quick-info drill-in for important runtime/MCP warnings and errors.
+26. Any substantial notifications-panel redesign must start with an ASCII-art proposal and clarifying questions before implementation.
+27. `MCP_DOGFOODING_WORKSHEET.md` and `VECTOR_SEARCH_EXECUTION_PLAN.md` are retired; the active run contract must now live in `PLAN.md`, with only user-facing summary material kept in `README.md`.
 
 ## 4) Scope And Non-Goals
 
@@ -139,6 +147,40 @@ Known caveat:
 7. Approvals must be user-configurable rather than hard-coded allow-all behavior.
 8. Approval flows must support user continuation from the client surface after the user authorizes the request.
 9. Approval and denial actions must leave a guardrail-compatible audit trail.
+10. The shell/operator request and approval flow is required in this run and should mirror `blick`'s lifecycle quality:
+   - request creation,
+   - request listing,
+   - request detail inspection,
+   - request approval,
+   - request denial,
+   - request cancellation,
+   - session listing,
+   - session validation,
+   - session revocation,
+   - audit inspection.
+11. The intended `till` command shape for this wave is:
+   - `till auth request create`
+   - `till auth request list`
+   - `till auth request show`
+   - `till auth request approve`
+   - `till auth request deny`
+   - `till auth request cancel`
+   - `till auth session list`
+   - `till auth session validate`
+   - `till auth session revoke`
+12. `till auth issue-session` may remain temporarily as a low-level operator/dev seam, but it must not be the primary documented workflow for normal dogfooding.
+13. Principal/client registration should stay implicit or auto-managed for dogfooding unless implementation proves that explicit operator registration is truly required.
+14. The request payload contract for CLI, TUI, and MCP request creation must stay aligned:
+   - principal identity,
+   - client identity,
+   - explicit `--path`,
+   - requested TTL/lifetime,
+   - human-readable reason,
+   - enough continuation metadata for the requesting client to resume after approval.
+15. Approval and request lifecycle labels are product behavior:
+   - decision labels must be explicit and user-facing,
+   - request state must distinguish pending, approved, denied, canceled, and expired/timeout paths,
+   - timeout/cancel behavior must be reviewable in CLI, TUI, and audit surfaces.
 
 ### 5.5 Notification Routing Contract
 
@@ -162,6 +204,10 @@ Known caveat:
 3. `issue-session` help must explicitly say it returns `session_id` and `session_secret`.
 4. `revoke-session` help must explicitly say it requires `--session-id`; positional IDs are not supported.
 5. If `request-session`, `list-sessions`, `show-session`, `approve-request`, or `deny-request` are added in this wave, they must ship with examples in help output on first landing.
+6. `till auth` must move from the current ad-hoc two-command shape to a real Fang/Cobra auth tree with grouped request/session help similar in clarity to `blick`.
+7. Shell help/output should be treated as product behavior and regression-tested explicitly.
+8. Approval help must expose exact decision labels, path semantics, and examples, not generic prose.
+9. Request list/show output must surface lifecycle state and timeout/cancel status clearly enough for operators to act without guessing.
 
 ## 6) Acceptance Matrix
 
@@ -196,6 +242,8 @@ The dogfood auth UX and operator/help surfaces must satisfy the matrix below bef
 | AU-10 | operator needs inventory or review surfaces | plan includes `list/show/request/approve/deny/revoke` lifecycle coverage so gatekeeping is user-operable, not just developer-operable | TODO | |
 | AU-11 | external MCP mutation or auth-request activity occurs while the related project is open in the TUI | current project view and notifications refresh without a project-switch workaround | TODO | |
 | AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, and quick-info drill-in remain explicit and testable | TODO | |
+| AU-13 | operator chooses shell approval instead of TUI approval | full request/session lifecycle is operable from CLI with explicit examples and deterministic outputs | TODO | |
+| AU-14 | `till auth request approve --help` is opened | exact decision labels, `--path` semantics, and continuation behavior are explicit | TODO | |
 
 ## 7) Workstreams
 
@@ -267,6 +315,9 @@ Acceptance:
 6. approval continuation and audit trail behavior are explicit in the surfaced contract
 7. external MCP activity refreshes the current project and notifications surfaces
 8. notifications retain global count, quick-nav, and quick-info warning/error surfacing
+9. shell/operator approvals are fully supported as a first-class path, not a hidden emergency seam
+10. the CLI lifecycle and help quality borrow directly from the stronger `blick` patterns while staying `tillsyn`-specific on naming and project-path semantics
+11. principal/client lifecycle remains mostly implicit for dogfood users unless explicit registration is proven necessary
 
 Primary likely files:
 1. `cmd/till/main.go`
@@ -275,7 +326,8 @@ Primary likely files:
 4. `internal/app/**`
 5. `internal/adapters/server/common/**`
 6. `internal/adapters/server/mcpapi/**`
-7. `README.md`
+7. `internal/adapters/auth/autentauth/**`
+8. `README.md`
 
 ### 7.5 WS-Guard
 
@@ -344,6 +396,46 @@ Before implementation in any lane, inspect and account for:
 11. Run `just ci`.
 12. Execute collaborative rerun steps for the historical auth/runtime failure points plus the newly exposed auth UX/help flows.
 13. Record QA sign-off and remaining risks in this file before handoff.
+14. Run this implementation wave with one explicit build lane and two explicit QA lanes logged in the split worklog for this checkpoint.
+
+### 9.1 Execution Model For The Next Auth UX Wave
+
+This run will use one implementation lane plus two independent QA lanes unless the user explicitly asks for a different split.
+
+Build lane:
+1. `BLD-AUTH-UX-01`
+2. Objective:
+   - implement the `blick`-inspired shell auth lifecycle,
+   - add persisted request approval state,
+   - add TUI request review and notification routing,
+   - add external refresh behavior,
+   - add tests that cover the new shell and TUI contracts.
+3. Expected lock scope:
+   - `cmd/till/**`
+   - `internal/adapters/auth/**`
+   - `internal/app/**`
+   - `internal/adapters/server/common/**`
+   - `internal/adapters/server/mcpapi/**`
+   - `internal/tui/**`
+4. Hotspot ownership must remain serialized for:
+   - `cmd/till/main.go`
+   - `internal/app/service.go`
+   - `internal/tui/model.go`
+5. Worker requirements:
+   - Context7 before first code edit,
+   - Context7 again after every failed test/runtime error,
+   - `just test-pkg` only for touched packages during the worker loop,
+   - no repo-wide gate in the worker lane.
+
+Independent QA lanes:
+1. `QA-AUTH-CLI-01`
+   - review shell/operator auth lifecycle, help examples, deterministic output, and package-test evidence
+   - inspect `cmd/till/**`, auth adapter code, and auth request tests
+2. `QA-AUTH-TUI-01`
+   - review TUI request notifications, focused-vs-global routing, approve/deny flows, refresh behavior, and package-test evidence
+   - inspect `internal/tui/**`, related app/server wiring, and notification tests
+3. Both QA lanes are read-only except for their own worklog files.
+4. Neither QA lane may sign off without mapping reviewed acceptance ids back to this file.
 
 ## 10) Test Plan
 
@@ -373,8 +465,11 @@ Required automated coverage:
 9. auth request/approval tests:
    - request creation from MCP-side and TUI-side entrypoints
    - approve and deny flows
+   - cancel and timeout/expiry flows
    - scoped path parsing and validation
    - TTL/lifecycle enforcement
+   - shell/operator request lifecycle parity with the planned `till auth request` tree
+   - shell approve/deny/cancel outputs remain deterministic and auditable
 10. notifications routing tests:
    - focused-project auth request notification
    - global notification for off-project request
@@ -382,10 +477,16 @@ Required automated coverage:
    - `till auth --help` contains examples and next-step guidance
    - `issue-session` help shows required flags and returned values
    - `revoke-session` help shows `--session-id` usage explicitly
+   - `till auth request --help` contains examples and path semantics
+   - `till auth request approve --help` exposes exact approval labels and follow-up behavior
 12. live refresh and notifications tests:
    - external MCP-originated changes refresh the current project without project switch
    - notifications global count and quick-nav remain correct
    - warning/error bubbling into notifications and quick-info drill-in is covered
+13. `blick`-parity CLI tests:
+   - root/auth help includes auth examples
+   - request/session subcommand help includes examples
+   - unknown-command and missing-flag paths still print actionable Fang-style usage hints
 
 Required repo gates before handoff:
 1. `just check`
@@ -410,6 +511,8 @@ Required repo gates before handoff:
 | CR-13 | inspect `./till auth --help` and affected subcommand help | required flags, examples, and next-step guidance are explicit | TODO | |
 | CR-14 | trigger one external MCP-originated change while the related project is open in the TUI | current project view and notifications refresh without project switch | TODO | |
 | CR-15 | inspect notifications surfaces during auth/runtime events | global count, quick-nav, and quick-info warning/error surfacing behave as locked in this plan | TODO | |
+| CR-16 | complete one shell-only approval cycle for a scoped auth request | request/create/list/show/approve or deny/session follow-up works without hidden arguments | TODO | |
+| CR-17 | compare shell help against the new operator contract | `till auth request*` and `till auth session*` help is explicit enough to follow without guesswork | TODO | |
 
 ## 12) Subagent And QA Completion Contract
 
@@ -528,6 +631,26 @@ Commands run:
    - retired `MCP_DOGFOODING_WORKSHEET.md` and `VECTOR_SEARCH_EXECUTION_PLAN.md` after confirming they did not contain any remaining must-copy active-run requirement missing from `PLAN.md` -> PASS
    - `PLAN.md` and `README.md` updated to stop relying on those retired side plans -> PASS
    - tests not run in this pass because the changes were docs-only -> PASS
+52. `blick` comparison and next-wave auth UX planning:
+   - `gh repo clone evanmschultz/blick .tmp/blick` -> PASS
+   - `rg -n "fang|auth|grant|approve|approval|session|request" .tmp/blick/go.mod .tmp/blick/cmd .tmp/blick/internal .tmp/blick -g '!**/.git/**'` -> PASS
+   - `sed -n '1,260p' .tmp/blick/cmd/blick/main.go` -> PASS
+   - `sed -n '1,260p' .tmp/blick/cmd/blick/main_test.go` -> PASS
+   - `sed -n '1,360p' .tmp/blick/cmd/blick/auth_cmd.go` -> PASS
+   - `sed -n '360,760p' .tmp/blick/cmd/blick/auth_cmd.go` -> PASS
+   - `sed -n '260,760p' .tmp/blick/cmd/blick/main.go` -> PASS
+   - `sed -n '1,320p' .tmp/blick/internal/app/auth/grant_service.go` -> PASS
+   - `sed -n '1,260p' .tmp/blick/internal/adapters/auth/autent/grant_backend.go` -> PASS
+   - Context7 resolve/query pass for `/charmbracelet/fang` CLI integration patterns -> PASS
+   - outcome: adopt `blick`'s strong shell lifecycle/help/testing patterns, but keep `tillsyn` project-path semantics and TUI-first approval UX -> PASS
+53. split-worklog planning checkpoint:
+   - user explicitly requested a separate worklog for this next implementation wave -> PASS
+   - active run plan expanded with shell-approval parity, lane model, and new acceptance/retest rows -> PASS
+   - tests not run in this pass because the changes were docs-only planning updates -> PASS
+54. independent read-only completeness audit on the next auth UX wave:
+   - existing subagent audited `PLAN.md`, `README.md`, current `till` auth CLI, and `blick` auth/grant surfaces -> PASS
+   - audit confirmed the main remaining gaps are lifecycle commands, help quality, notification/TUI approval behavior, and stronger QA gates -> PASS
+   - plan refined to make decision labels and timeout/cancel lifecycle behavior explicit product requirements -> PASS
 
 Docs/process edits in this run so far:
 1. `.gitignore` updated to ignore `.nvimlog`
@@ -538,6 +661,8 @@ Docs/process edits in this run so far:
 6. aligned `README.md` with the active runtime/auth contract and active-source-of-truth policy
 7. removed retired root collab/remediation markdown after consolidating active requirements into `PLAN.md`
 8. removed retired dogfood/vector side-plan markdown after confirming `PLAN.md` now carries the necessary active run contract
+9. expanded `PLAN.md` with the `blick`-inspired shell approval plan, explicit build/QA lane model, and additional auth UX acceptance/retest coverage
+10. created one split worklog file for this next auth UX planning checkpoint because the user explicitly requested a separate worklog
 
 Product/code edits in this run so far:
 1. `cmd/till/main.go`
