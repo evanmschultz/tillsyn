@@ -7010,8 +7010,14 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	if m.pendingConfirm.AuthRequestID != authRequest.ID {
 		t.Fatalf("expected confirm auth request id %q, got %q", authRequest.ID, m.pendingConfirm.AuthRequestID)
 	}
+	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestPathLabel); got != "Inbox" {
+		t.Fatalf("pendingConfirm.AuthRequestPathLabel = %q, want Inbox", got)
+	}
 	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "approved via TUI notifications") {
 		t.Fatalf("expected deterministic approval note, got %q", m.pendingConfirm.AuthRequestNote)
+	}
+	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "at Inbox") {
+		t.Fatalf("expected approval note to use project label, got %q", m.pendingConfirm.AuthRequestNote)
 	}
 	m = applyMsg(t, m, keyRune('y'))
 	if m.mode != modeNone {
@@ -7020,8 +7026,8 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	if got := strings.TrimSpace(svc.lastApproveAuthRequest.RequestID); got != authRequest.ID {
 		t.Fatalf("expected approve request id %q, got %q", authRequest.ID, got)
 	}
-	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); !strings.Contains(got, "approved via TUI notifications") {
-		t.Fatalf("expected approval note to be forwarded, got %q", got)
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); !strings.Contains(got, "approved via TUI notifications") || !strings.Contains(got, "at Inbox") {
+		t.Fatalf("expected approval note to be forwarded with project label, got %q", got)
 	}
 	if len(m.attentionItems) != 0 {
 		t.Fatalf("expected reload to clear pending auth-request row, got %d attention items", len(m.attentionItems))
@@ -7442,6 +7448,9 @@ func TestAuthRequestResolutionHelpers(t *testing.T) {
 	if got := authRequestResolutionNote(req, ""); !strings.Contains(got, "resolved via TUI notifications") {
 		t.Fatalf("authRequestResolutionNote(default) = %q, want resolved note", got)
 	}
+	if got := authRequestResolutionNoteWithPathLabel(req, "approve", "Inbox -> branch:b1"); !strings.Contains(got, "approved via TUI notifications") || !strings.Contains(got, "Inbox -> branch:b1") {
+		t.Fatalf("authRequestResolutionNoteWithPathLabel() = %q, want user-facing scope label", got)
+	}
 	if got := firstNonEmptyTrimmed("", "  ", "value", "fallback"); got != "value" {
 		t.Fatalf("firstNonEmptyTrimmed() = %q, want value", got)
 	}
@@ -7517,6 +7526,28 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	}
 }
 
+// TestModelAuthRequestPathDisplayUsesProjectName verifies auth review labels prefer user-facing project names over raw ids.
+func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 18, 30, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Planning Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{branch})))
+
+	if got := strings.TrimSpace(m.authRequestPathDisplay("project/p1/branch/b1")); got != "Inbox -> Planning Branch" {
+		t.Fatalf("authRequestPathDisplay() = %q, want Inbox -> Planning Branch", got)
+	}
+}
+
 // TestModelViewRendersAuthConfirmDetails verifies the confirm modal renders auth-request subject, constraints, and note text.
 func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 19, 0, 0, time.UTC)
@@ -7540,26 +7571,27 @@ func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
 		AuthRequestID:        "req-1",
 		AuthRequestPrincipal: "Review Agent",
 		AuthRequestPath:      "project/p1/branch/b1",
+		AuthRequestPathLabel: "Inbox -> branch:b1",
 		AuthRequestTTL:       "2h",
 		AuthRequestDecision:  "approve",
-		AuthRequestNote:      "approved via TUI notifications for Review Agent at project/p1/branch/b1",
+		AuthRequestNote:      "approved via TUI notifications for Review Agent at Inbox -> branch:b1",
 	}
 	m.confirmChoice = 0
 	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
 	m.confirmAuthTTLInput.SetValue("2h")
-	m.confirmAuthNoteInput.SetValue("approved via TUI notifications for Review Agent at project/p1/branch/b1")
+	m.confirmAuthNoteInput.SetValue("approved via TUI notifications for Review Agent at Inbox -> branch:b1")
 
 	rendered := fmt.Sprint(m.View())
 	for _, want := range []string{
 		"Confirm Action",
-		"Review Agent request @ project/p1/branch/b1",
+		"Review Agent request @ Inbox -> branch:b1",
 		"decision: approve",
 		"[approve]",
 		"[deny]",
 		"approve with scoped constraints",
 		"project/p1/branch/b1",
 		"2h",
-		"note: approved via TUI notifications for Review Agent at project/p1/branch/b1",
+		"note: approved via TUI notifications for Review Agent at Inbox -> branch:b1",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in confirm modal:\n%s", want, rendered)

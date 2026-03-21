@@ -351,6 +351,7 @@ type confirmAction struct {
 	AuthRequestPrincipal string
 	AuthRequestClient    string
 	AuthRequestPath      string
+	AuthRequestPathLabel string
 	AuthRequestTTL       string
 	AuthRequestDecision  string
 	AuthRequestNote      string
@@ -2432,7 +2433,7 @@ func authRequestReviewNoteDefault(confirm confirmAction, decision string) string
 		ClientID:      strings.TrimSpace(confirm.AuthRequestClient),
 		ClientName:    strings.TrimSpace(confirm.AuthRequestClient),
 	}
-	return authRequestResolutionNote(req, decision)
+	return authRequestResolutionNoteWithPathLabel(req, decision, confirm.AuthRequestPathLabel)
 }
 
 // setPendingAuthRequestDecision switches the active auth-request decision without leaving the review modal.
@@ -10229,7 +10230,7 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 				PrincipalID: action.AuthRequestPrincipal,
 				ClientID:    action.AuthRequestClient,
 			}
-			note = authRequestResolutionNote(req, "approve")
+			note = authRequestResolutionNoteWithPathLabel(req, "approve", action.AuthRequestPathLabel)
 		}
 		return m, func() tea.Msg {
 			result, err := m.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
@@ -10264,7 +10265,7 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 				PrincipalID: action.AuthRequestPrincipal,
 				ClientID:    action.AuthRequestClient,
 			}
-			note = authRequestResolutionNote(req, "deny")
+			note = authRequestResolutionNoteWithPathLabel(req, "deny", action.AuthRequestPathLabel)
 		}
 		return m, func() tea.Msg {
 			if _, err := m.svc.DenyAuthRequest(context.Background(), app.DenyAuthRequestInput{
@@ -11555,6 +11556,20 @@ func (m Model) taskByID(taskID string) (domain.Task, bool) {
 	return domain.Task{}, false
 }
 
+// projectByID resolves one loaded project by stable id.
+func (m Model) projectByID(projectID string) (domain.Project, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.Project{}, false
+	}
+	for _, project := range m.projects {
+		if strings.TrimSpace(project.ID) == projectID {
+			return project, true
+		}
+	}
+	return domain.Project{}, false
+}
+
 // directChildCount returns the number of direct children for one task id.
 func (m Model) directChildCount(taskID string) int {
 	taskID = strings.TrimSpace(taskID)
@@ -12167,6 +12182,11 @@ func (m Model) selectedAuthRequestForActiveNotice() (domain.AuthRequest, bool) {
 
 // authRequestResolutionNote builds a deterministic audit-friendly note for one auth-request decision.
 func authRequestResolutionNote(req domain.AuthRequest, decision string) string {
+	return authRequestResolutionNoteWithPathLabel(req, decision, req.Path)
+}
+
+// authRequestResolutionNoteWithPathLabel builds one deterministic audit-friendly note with one user-facing scope label.
+func authRequestResolutionNoteWithPathLabel(req domain.AuthRequest, decision, pathLabel string) string {
 	decision = strings.TrimSpace(strings.ToLower(decision))
 	action := "resolved"
 	switch decision {
@@ -12176,8 +12196,8 @@ func authRequestResolutionNote(req domain.AuthRequest, decision string) string {
 		action = "denied"
 	}
 	principal := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
-	path := strings.TrimSpace(req.Path)
-	return fmt.Sprintf("%s via TUI notifications for %s at %s", action, principal, path)
+	pathLabel = firstNonEmptyTrimmed(pathLabel, req.Path)
+	return fmt.Sprintf("%s via TUI notifications for %s at %s", action, principal, pathLabel)
 }
 
 // firstNonEmptyTrimmed returns the first non-empty trimmed string in order.
@@ -12189,6 +12209,43 @@ func firstNonEmptyTrimmed(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// authRequestPathDisplay converts one canonical auth-request path into a user-facing hierarchy label.
+func (m Model) authRequestPathDisplay(rawPath string) string {
+	path, err := domain.ParseAuthRequestPath(rawPath)
+	if err != nil {
+		return strings.TrimSpace(rawPath)
+	}
+	segments := make([]string, 0, 1+len(path.PhaseIDs)+1)
+	if project, ok := m.projectByID(path.ProjectID); ok {
+		segments = append(segments, firstNonEmptyTrimmed(projectDisplayName(project), path.ProjectID))
+	} else {
+		segments = append(segments, path.ProjectID)
+	}
+	if path.BranchID != "" {
+		segments = append(segments, m.authRequestScopeSegmentDisplay("branch", path.BranchID))
+	}
+	for _, phaseID := range path.PhaseIDs {
+		segments = append(segments, m.authRequestScopeSegmentDisplay("phase", phaseID))
+	}
+	return strings.Join(segments, " -> ")
+}
+
+// authRequestScopeSegmentDisplay resolves one branch/phase id to a user-facing label with stable fallback text.
+func (m Model) authRequestScopeSegmentDisplay(scopeKind, scopeID string) string {
+	scopeID = strings.TrimSpace(scopeID)
+	if scopeID == "" {
+		return ""
+	}
+	if task, ok := m.taskByID(scopeID); ok {
+		return firstNonEmptyTrimmed(strings.TrimSpace(task.Title), scopeID)
+	}
+	scopeKind = strings.TrimSpace(scopeKind)
+	if scopeKind == "" {
+		return scopeID
+	}
+	return scopeKind + ":" + scopeID
 }
 
 // beginSelectedAuthRequestDecision opens the existing confirm modal for one auth-request row.
@@ -12203,6 +12260,7 @@ func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea
 	}
 	principal := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
 	client := firstNonEmptyTrimmed(req.ClientName, req.ClientID)
+	pathLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
 	m.mode = modeConfirmAction
 	m.pendingConfirm = confirmAction{
 		Kind:                 decision + "-auth-request",
@@ -12212,9 +12270,10 @@ func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea
 		AuthRequestPrincipal: principal,
 		AuthRequestClient:    client,
 		AuthRequestPath:      req.Path,
+		AuthRequestPathLabel: pathLabel,
 		AuthRequestTTL:       req.RequestedSessionTTL.String(),
 		AuthRequestDecision:  decision,
-		AuthRequestNote:      authRequestResolutionNote(req, decision),
+		AuthRequestNote:      authRequestResolutionNoteWithPathLabel(req, decision, pathLabel),
 	}
 	m.confirmChoice = 1
 	m.status = "confirm action"
@@ -15542,7 +15601,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				subject = strings.TrimSpace(m.pendingConfirm.AuthRequestID)
 			}
 			targetTitle = fmt.Sprintf("%s request", subject)
-			if path := strings.TrimSpace(m.pendingConfirm.AuthRequestPath); path != "" {
+			if path := firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPathLabel, m.pendingConfirm.AuthRequestPath); path != "" {
 				targetTitle += " @ " + path
 			}
 		}

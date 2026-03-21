@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-21
-Status: In progress; the auth UX implementation wave is green in local gates, the TUI review modal now has visible decision controls, and MCP request continuation now has a supported claim/resume path. The remaining dogfood blocker is first-class orchestrator/subagent scoped-auth choreography, including the orchestrator-only multi-project/general scope rules.
+Status: In progress; the auth UX implementation wave is green in local gates, the TUI review modal now has visible decision controls and human-readable scope labels, and MCP request continuation now has a supported native claim/resume path. The remaining dogfood blockers are first-class orchestrator/subagent scoped-auth choreography, explicit anti-adoption gatekeeping for existing auth contexts, and one full collaborative E2E dogfood worksheet/run.
 
 ## 1) Active Run Source Of Truth
 
@@ -80,6 +80,9 @@ This run is successful only if:
    - or one general/global orchestration scope.
 39. Multi-project or general/global scopes are orchestrator-only; subagents must never receive them.
 40. Any future multi-project or general/global scope shape must still be reviewable, approvable, deniable, listed, and audited through the same auth-request lifecycle.
+41. User-facing auth review surfaces must prefer human-meaningful project and hierarchy names over opaque ids wherever the corresponding names are already available locally.
+42. The raw scoped path must remain visible and editable as the actual approval contract even when the user-facing review label uses human-readable names.
+43. Claiming, attaching to, or reusing an existing approved auth/session context must require explicit user-approved lifecycle handling; an agent must not be able to hop onto an existing approved auth context and bypass gatekeeping.
 
 ## 4) Scope And Non-Goals
 
@@ -224,6 +227,13 @@ Known caveat:
    - approvals may narrow the requested path,
    - approval output must clearly show the final approved path/scope,
    - denial/cancel flows must still retain the originally requested path in inventory/audit.
+22. Claim and continuation flows must be requester-bound:
+   - continuation or claim requires requester-owned proof material,
+   - claiming an already-approved auth context for a different client/principal requires a new user-reviewed request,
+   - there is no implicit "adopt existing auth" bypass for agents.
+23. Auth review surfaces should present both:
+   - one human-readable scope label built from project/task names where available,
+   - and the underlying raw scoped path as the actual editable approval value.
 
 ### 5.5 Notification Routing Contract
 
@@ -241,6 +251,7 @@ Known caveat:
 12. Auth review must present decision state visibly in the modal itself, with explicit `approve` and `deny` controls rather than hidden modal-only decision hotkeys.
 13. Deny review should simplify the surface to note + confirm/cancel once `deny` is chosen.
 14. Approve review should keep the richer constrained fields visible only when `approve` is chosen.
+15. Auth review titles, summaries, and default notes should use human-readable project/task names where possible instead of opaque ids.
 
 ### 5.6 CLI Help And Discoverability Contract
 
@@ -415,6 +426,20 @@ Outcome:
 Outcome:
    - TUI/docs QA pass: visible decision controls, deny note-first review, and docs alignment confirmed,
    - auth/CLI/MCP QA pass: no blocker found; residual note was addressed by adding MCP negative-path claim coverage.
+31. collaborative native-MCP retest after session refresh on 2026-03-21
+Outcome:
+   - native `till.create_auth_request` successfully created one live pending request for project `cead38cc-3430-4ca1-8425-fbb340e5ccd9`,
+   - native `till.claim_auth_request` returned the pending request before approval and then returned the approved request plus `session_secret` after user approval in the TUI,
+   - this confirmed the native mounted MCP tools and the user TUI were operating on the same live runtime/database.
+32. collaborative auth-review UX finding after the native-MCP approval retest
+Outcome:
+   - the auth review modal still showed the raw project id/path as the primary review label, which is not user-meaningful enough for approval decisions,
+   - user feedback also locked a new requirement that agents must not be able to adopt an existing approved auth context without explicit user approval.
+33. follow-up remediation for user-facing auth scope labels
+Outcome:
+   - auth review titles and default approve/deny notes now use human-readable project/task hierarchy names where available while preserving the raw scoped path as the actual editable approval value,
+   - updated `PLAN.md` to lock the anti-adoption requirement for existing auth contexts,
+   - reran `just test-pkg ./internal/tui`, `just check`, and `just ci` -> pass.
 
 Checkpoint summary:
 1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.
@@ -427,6 +452,7 @@ Checkpoint summary:
    - auth-request review no longer falls back into generic project threads on `enter`,
    - denial review now preserves a user-editable note,
    - generic confirm modals no longer show auth-specific `a`/`d` hint text.
+6. Native mounted MCP request creation and claim/resume now work against the live dogfood runtime, and the auth review surface uses human-readable scope labels instead of raw project ids when the names are available locally.
 6. Independent QA lanes re-reviewed the finished code/docs state and passed after the final remediation/docs-sync pass.
 7. Local coverage floors now pass across the touched auth/runtime packages:
    - `internal/adapters/auth/autentauth`: 74.1%
