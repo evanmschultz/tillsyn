@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-20
-Status: In progress; automated implementation plus QA-remediation follow-up for the current dogfood-to-MVP auth/runtime wave is now passing `just check` and `just ci`, with dual independent QA sign-off complete and collaborative retest still pending.
+Status: In progress; the landed runtime/session-first auth wave is green in local gates, but collaborative retest exposed missing auth request/approval UX, notification routing, and help discoverability requirements that now need to be locked in the active run plan before closeout.
 
 ## 1) Active Run Source Of Truth
 
@@ -40,6 +40,18 @@ This run is successful only if:
 10. `tillsyn` keeps hierarchy-derived scope/workflow rules local.
 11. Current request-local identity synthesis and tuple-first MCP auth must stop being the primary gate.
 12. Capability leases may remain temporarily only as secondary local workflow/delegation guardrails until auth integration is proven stable.
+13. Normal TUI users should not need to manually mint auth sessions for routine TUI use.
+14. Agent access must support an explicit request-and-approval flow that can originate from MCP and from the TUI.
+15. Agent gatekeeping must be user-configurable, including lifecycle limits and scope/path restrictions.
+16. Auth requests must surface in the TUI notifications model:
+   - when the request targets the currently focused project, show it in that project's notifications panel,
+   - when the request targets a different project or no project is currently focused, show it in global notifications until the matching project is focused.
+17. Session or grant requests must carry one explicit scope path argument rooted at a project, with optional branch and nested phase lineage.
+18. Any command that requires follow-up user action must say so directly in its help output.
+19. `till auth --help` and subcommand help must enumerate required flags, path semantics, lifecycle controls, and concrete examples.
+20. External MCP-originated changes should refresh the current TUI project without requiring a project-switch workaround.
+21. Notifications remain a first-class UX surface with global count, quick navigation, and quick-info drill-in for important runtime/MCP warnings and errors.
+22. Any substantial notifications-panel redesign must start with an ASCII-art proposal and clarifying questions before implementation.
 
 ## 4) Scope And Non-Goals
 
@@ -52,11 +64,15 @@ In scope:
 6. replacement of brittle MCP auth boundary
 7. attribution correctness from authenticated identity
 8. strong automated tests and collaborative rerun evidence
+9. auth request/approval UX across MCP, TUI, and CLI
+10. notification routing for auth requests
+11. user-configurable scoped agent gatekeeping
+12. auth help/output cleanup with examples and next-step guidance
 
 Out of scope for this run unless the user explicitly reopens them:
 1. `till mcp-inspect`
 2. remote/team auth-tenancy
-3. broad operator/admin auth UI surfaces
+3. full remote operator/admin console beyond the local dogfood auth workflows required here
 4. removal of all local workflow leases in the same wave
 5. unrelated roadmap items not required for this dogfood wave
 
@@ -96,6 +112,56 @@ Known caveat:
 3. MCP write operations must derive caller identity from validated `autent` session state, not caller-supplied actor fallbacks.
 4. Local hierarchy/scope/delegation checks run after auth validation and are distinguishable from auth failures.
 
+### 5.4 Auth Request And Approval Model
+
+1. The current `till auth issue-session` command is a temporary operator/developer seam, not the intended normal end-user workflow.
+2. The intended dogfood product path is:
+   - an agent or MCP caller requests access,
+   - the user reviews the request in `tillsyn`,
+   - the user approves or denies it with configurable scope and lifetime,
+   - only then does a usable session/grant become active.
+3. Auth requests must be creatable from:
+   - MCP-initiated agent flows,
+   - TUI-initiated local operator flows.
+4. Auth request records must capture at minimum:
+   - requested principal identity,
+   - requested client identity,
+   - requested path scope,
+   - requested lifetime/TTL,
+   - request status,
+   - approval/denial audit fields.
+5. The request path contract for this wave is one explicit `--path` argument rooted at a project:
+   - required root: `project/<project-id>`
+   - optional branch: `/branch/<branch-id>`
+   - optional nested phases: `/phase/<phase-id>` repeated as needed
+6. Task/subtask-level session-request paths are out of scope unless explicitly reopened later.
+7. Approvals must be user-configurable rather than hard-coded allow-all behavior.
+8. Approval flows must support user continuation from the client surface after the user authorizes the request.
+9. Approval and denial actions must leave a guardrail-compatible audit trail.
+
+### 5.5 Notification Routing Contract
+
+1. Every auth request must resolve to one owning project from its path.
+2. If the TUI is currently focused on that same project, the request must appear in that project's notifications panel.
+3. If the TUI is focused on a different project, or no project is focused, the request must appear in global notifications.
+4. Notifications must expose a global count and quick-navigation affordances.
+5. Important runtime/MCP warnings and errors must bubble into notifications and quick-info drill-in surfaces.
+6. Auth request notifications must be actionable and must preserve enough detail for approve/deny decisions without forcing the user into shell commands.
+7. External MCP-originated changes should refresh the current project view and related notifications without requiring the user to switch projects to see them.
+8. If the notifications UX is redesigned in this wave, start with ASCII-art and clarifying questions before implementation.
+
+### 5.6 CLI Help And Discoverability Contract
+
+1. `till auth --help` must explain what the auth surface is for and what it is not for.
+2. Help for every auth subcommand must list:
+   - required flags,
+   - optional lifecycle flags such as TTL or reason,
+   - runtime/path flags inherited from the root command when relevant,
+   - exactly what follow-up step is required after the command succeeds.
+3. `issue-session` help must explicitly say it returns `session_id` and `session_secret`.
+4. `revoke-session` help must explicitly say it requires `--session-id`; positional IDs are not supported.
+5. If `request-session`, `list-sessions`, `show-session`, `approve-request`, or `deny-request` are added in this wave, they must ship with examples in help output on first landing.
+
 ## 6) Acceptance Matrix
 
 Every mutation-capable MCP surface in scope must satisfy the matrix below.
@@ -112,6 +178,23 @@ Every mutation-capable MCP surface in scope must satisfy the matrix below.
 | AM-08 | auth allow but local scope/workflow/delegation reject | fail locally, distinct from auth failure | PASS | `TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples`; `TestHandlerAttentionAgentMutationsRequireGuardTuple` |
 | AM-09 | allowed mutation succeeds | mutation persists and visible behavior is correct | PASS | `internal/adapters/server/httpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution`; `internal/adapters/server/mcpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution` |
 | AM-10 | persisted attribution after allowed mutation | actor name/type come from authenticated identity, not request-local fallback strings | PASS | `internal/adapters/server/httpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution`; `internal/adapters/server/mcpapi/handler_integration_test.go:TestHandlerAttentionMutationPersistsAuthenticatedAttribution`; `TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession` |
+
+The dogfood auth UX and operator/help surfaces must satisfy the matrix below before this run is truly complete.
+
+| ID | Condition | Expected Result | Status | Evidence |
+|---|---|---|---|---|
+| AU-01 | an MCP agent needs access without a valid approved session | caller is routed into request/approval semantics, not silent tuple fallback or surprise shell-only workflow | TODO | |
+| AU-02 | a local user wants to authorize an agent from the TUI | auth request can be reviewed and acted on without requiring the user to manually mint their own session | TODO | |
+| AU-03 | an auth request targets the currently focused project | request appears in that project's notifications panel | TODO | |
+| AU-04 | an auth request targets a different project or no focused project exists | request appears in global notifications | TODO | |
+| AU-05 | a user approves a request with scoped constraints | resulting session/grant is limited to the approved path and lifetime | TODO | |
+| AU-06 | a user denies a request | request closes cleanly and the agent remains blocked | TODO | |
+| AU-07 | `till auth --help` is opened | help explains the auth surface, required follow-up steps, and available workflows with examples | TODO | |
+| AU-08 | `till auth issue-session --help` is opened | required flags, returned fields, `--path` semantics when relevant, and examples are explicit | TODO | |
+| AU-09 | `till auth revoke-session --help` is opened | `--session-id` requirement and examples are explicit; positional invocation ambiguity is removed from the UX contract | TODO | |
+| AU-10 | operator needs inventory or review surfaces | plan includes `list/show/request/approve/deny/revoke` lifecycle coverage so gatekeeping is user-operable, not just developer-operable | TODO | |
+| AU-11 | external MCP mutation or auth-request activity occurs while the related project is open in the TUI | current project view and notifications refresh without a project-switch workaround | TODO | |
+| AU-12 | notifications UX is reviewed for auth/workflow events | global count, quick-nav, and quick-info drill-in remain explicit and testable | TODO | |
 
 ## 7) Workstreams
 
@@ -169,7 +252,31 @@ Primary likely files:
 6. `internal/adapters/storage/sqlite/**`
 7. `go.mod`
 
-### 7.4 WS-Guard
+### 7.4 WS-Auth-UX
+
+Objective:
+Make auth request, approval, revocation, and help flows operable for dogfooding without forcing the normal TUI user into shell-only session issuance.
+
+Acceptance:
+1. auth requests can originate from MCP and TUI flows
+2. auth request notifications follow the focused-project vs global routing contract
+3. path-scoped approval data is captured with project-rooted optional branch/phase lineage
+4. user-configurable lifetime and scope constraints are part of the surfaced contract
+5. auth help/output clearly describes required follow-up steps and examples
+6. approval continuation and audit trail behavior are explicit in the surfaced contract
+7. external MCP activity refreshes the current project and notifications surfaces
+8. notifications retain global count, quick-nav, and quick-info warning/error surfacing
+
+Primary likely files:
+1. `cmd/till/main.go`
+2. `cmd/till/main_test.go`
+3. `internal/tui/**`
+4. `internal/app/**`
+5. `internal/adapters/server/common/**`
+6. `internal/adapters/server/mcpapi/**`
+7. `README.md`
+
+### 7.5 WS-Guard
 
 Objective:
 Keep local hierarchy/workflow guardrails correct after auth integration.
@@ -185,7 +292,7 @@ Primary likely files:
 3. `internal/domain/**`
 4. relevant transport tests
 
-### 7.5 WS-Validation
+### 7.6 WS-Validation
 
 Objective:
 Prove the integrated result with automated tests and collaborative reruns.
@@ -217,6 +324,10 @@ Before implementation in any lane, inspect and account for:
 15. `.tmp/autent/docs/02-trust-model.md`
 16. `.tmp/autent/docs/03-sqlite-integration.md`
 17. `.tmp/autent/docs/06-tillsyn-integration.md`
+18. `README.md`
+19. `MCP_DOGFOODING_WORKSHEET.md`
+20. `COLLAB_MCP_STDIO_AUTENT_EXECUTION_PLAN.md`
+21. `COLLAB_MCP_STDIO_AUTENT_VALIDATION_WORKSHEET.md`
 
 ## 9) Implementation Sequence
 
@@ -225,13 +336,14 @@ Before implementation in any lane, inspect and account for:
 3. Land runtime and copy cleanup required for shared dogfood runtime.
 4. Embed `autent` in shared-DB mode and wire startup/runtime integration.
 5. Replace MCP write-path auth to use session-first validation and authz decisions.
-6. Reconcile local hierarchy/workflow/delegation checks after auth.
-7. Update attribution persistence/read surfaces as needed.
-8. Run touched-package tests after each meaningful increment.
-9. Run `just check`.
-10. Run `just ci`.
-11. Execute collaborative rerun steps for the historical auth/runtime failure points.
-12. Record QA sign-off and remaining risks in this file before handoff.
+6. Lock the auth request/approval UX, notification routing, and CLI help contract against the real dogfood requirements.
+7. Reconcile local hierarchy/workflow/delegation checks after auth.
+8. Update attribution persistence/read surfaces as needed.
+9. Run touched-package tests after each meaningful increment.
+10. Run `just check`.
+11. Run `just ci`.
+12. Execute collaborative rerun steps for the historical auth/runtime failure points plus the newly exposed auth UX/help flows.
+13. Record QA sign-off and remaining risks in this file before handoff.
 
 ## 10) Test Plan
 
@@ -258,6 +370,22 @@ Required automated coverage:
 8. storage integration tests:
    - shared DB `autent_` table setup
    - no accidental collision with existing `tillsyn` tables
+9. auth request/approval tests:
+   - request creation from MCP-side and TUI-side entrypoints
+   - approve and deny flows
+   - scoped path parsing and validation
+   - TTL/lifecycle enforcement
+10. notifications routing tests:
+   - focused-project auth request notification
+   - global notification for off-project request
+11. auth help/discoverability tests:
+   - `till auth --help` contains examples and next-step guidance
+   - `issue-session` help shows required flags and returned values
+   - `revoke-session` help shows `--session-id` usage explicitly
+12. live refresh and notifications tests:
+   - external MCP-originated changes refresh the current project without project switch
+   - notifications global count and quick-nav remain correct
+   - warning/error bubbling into notifications and quick-info drill-in is covered
 
 Required repo gates before handoff:
 1. `just check`
@@ -277,6 +405,11 @@ Required repo gates before handoff:
 | CR-08 | verify `./till`, `./till mcp`, and `./till serve` path parity | same real default runtime | TODO | |
 | CR-09 | verify `Ctrl-C` on `till mcp` | clean shutdown without error-style logging | TODO | |
 | CR-10 | verify no live `Kan` product/runtime copy remains in active surfaces | copy is clean | TODO | |
+| CR-11 | create one auth request scoped to the focused project | request appears in project notifications | TODO | |
+| CR-12 | create one auth request scoped to a different project than the current focus | request appears in global notifications | TODO | |
+| CR-13 | inspect `./till auth --help` and affected subcommand help | required flags, examples, and next-step guidance are explicit | TODO | |
+| CR-14 | trigger one external MCP-originated change while the related project is open in the TUI | current project view and notifications refresh without project switch | TODO | |
+| CR-15 | inspect notifications surfaces during auth/runtime events | global count, quick-nav, and quick-info warning/error surfacing behave as locked in this plan | TODO | |
 
 ## 12) Subagent And QA Completion Contract
 
@@ -370,12 +503,36 @@ Commands run:
    - `just fmt` -> PASS
    - `just check` -> PASS
    - `just ci` -> PASS
+46. remote CI confirmation follow-up:
+   - `gh run watch 23356975371 --exit-status` -> IN PROGRESS while waiting on the Windows job; ubuntu and macOS legs already completed green
+   - `AGENTS.md` updated to require `gh run watch --exit-status` on the new run before claiming pushed CI is green
+47. plan expansion after collaborative auth UX retest:
+   - user rerun confirmed shared `$HOME` runtime paths and clean `Ctrl-C` shutdown for `./till mcp`
+   - user feedback exposed missing auth request/approval UX, notification routing, `--path` scope requirements, and insufficient `till auth` help discoverability
+   - active run plan expanded to lock those missing auth UX requirements in sections 3, 4, 5, 6, 7, 9, 10, and 11 -> PASS
+48. secondary markdown audit after plan expansion:
+   - `rg -n --glob '*.md' --glob '!worklogs/**' --glob '!third_party/**' "repo-local|\\.tillsyn/mcp|autent-aligned|future .*autent|issue-session|revoke-session|request-and-approval|notifications|global notifications|project notifications|principal-id|session-id|Kan\\b|tillsyn-user|dev_mode=true|--dev=false|same real default runtime|PLAN.md is the only active|source of truth" .` -> PASS
+   - `README.md` inspected -> PASS
+   - `MCP_DOGFOODING_WORKSHEET.md` inspected -> PASS
+   - `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` inspected -> PASS
+   - audit result: secondary markdown still contains stale runtime/auth assumptions and older worksheet authority claims; those docs are reference-only until explicitly reconciled to this file -> PASS
+49. source-of-truth consolidation follow-up:
+   - `PLAN.md` updated again to absorb the remaining notifications, approval-continuation, audit-trail, quick-info, and live-refresh requirements that were only partially captured in older collab docs -> PASS
+   - `README.md` updated to reflect the current runtime/auth contract and to stop implying older worksheet authority or stale local-user fallback behavior -> PASS
+   - tests not run in this pass because the changes were docs-only -> PASS
+50. root markdown cleanup follow-up:
+   - retired split collab/remediation markdown files removed from the repo root after consolidating active requirements into `PLAN.md` and active user-facing guidance into `README.md` -> PASS
+   - `AGENTS.md` updated to stop pointing at deleted collab/runbook markdown and to treat `PLAN.md` as the active remediation source -> PASS
+   - tests not run in this pass because the changes were docs-only -> PASS
 
 Docs/process edits in this run so far:
 1. `.gitignore` updated to ignore `.nvimlog`
 2. `AGENTS.md` updated so this file is the active source of truth for the current run
 3. this active run plan was consolidated into `PLAN.md`
 4. recorded active implementation evidence and current blocker status in this ledger
+5. expanded the active `PLAN.md` contract to include auth request/approval UX, notification routing, path-scoped session requests, and auth help/example requirements
+6. aligned `README.md` with the active runtime/auth contract and active-source-of-truth policy
+7. removed retired root collab/remediation markdown after consolidating active requirements into `PLAN.md`
 
 Product/code edits in this run so far:
 1. `cmd/till/main.go`
@@ -417,6 +574,8 @@ Current blocker notes:
 2. Pending closeout items are:
    - final independent QA sign-off against the active top of `PLAN.md`
    - collaborative manual retest on the new session-first stdio MCP flow
+   - implementation of the newly locked auth request/approval UX and help requirements
+   - secondary markdown cleanup so root docs and active worksheets no longer contradict the active run contract
 
 Tests run:
 1. `just test-pkg ./cmd/till` -> PASS

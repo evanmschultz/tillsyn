@@ -22,6 +22,7 @@ You are a senior Go dev. YOU ALWAYS:
 - During normal implementation loops, run `just check` after meaningful increments to catch local regressions early.
 - When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
 - Before asking the user to push or before opening/refreshing a PR, run `just ci` and report results.
+- After pushing a change that is meant to fix or validate CI, run `gh run watch --exit-status` on the new GitHub Actions run and do not claim CI passes until the remote run finishes green.
 - Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
 - Use `git` for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management, unless the current conversation explicitly requires a `gh`-specific workflow.
@@ -58,7 +59,7 @@ You are a senior Go dev. YOU ALWAYS:
 - For the current auth/runtime remediation run, the active run section at the top of `PLAN.md` is the single source of truth for scope, status, acceptance checklist, commands run, test evidence, open questions, and completion state.
 - For the current auth/runtime remediation run, all other planning or validation markdown files are reference-only unless `PLAN.md` explicitly points to them for corroborating evidence.
 - For the current auth/runtime remediation run, worker and QA subagents must verify their acceptance criteria against the active run section at the top of `PLAN.md` first and treat mismatches between `PLAN.md` and secondary docs as a blocker that must be surfaced to the orchestrator.
-- When proposing new implementation phases, you must explicitly review and discuss the active backlog and open discussion items in `PLAN.md`, plus unresolved findings in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
+- When proposing new implementation phases, you must explicitly review and discuss the active backlog and open discussion items in `PLAN.md` first; for the current run, treat older deleted collab docs as retired and do not depend on them.
 - When clarification is needed, ask in two stages:
   - first ask general goal-alignment questions and lock shared objectives,
   - only after that consensus ask specific implementation-detail questions.
@@ -128,10 +129,9 @@ You are a senior Go dev. YOU ALWAYS:
 - Delivery requirements for this temporary phase:
   - keep docs synchronized as implementation lands (`README.md` and affected planning/testing docs),
   - ensure `just check` and `just ci` both pass before marking work complete,
-  - keep `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` as the remediation requirement/worklog source,
-  - keep `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` as the canonical collaborative TUI/runtime validation worksheet,
-  - keep `MCP_FULL_TESTER_AGENT_RUNBOOK.md` as the canonical MCP full-sweep execution runbook,
-  - create/update one HTTP/MCP (MCP-primary) dogfooding worksheet for user+agent validation.
+  - keep `PLAN.md` as the remediation requirement/worklog source and active validation contract,
+  - use `MCP_DOGFOODING_WORKSHEET.md` only as secondary corroborating worksheet material when `PLAN.md` explicitly points to it,
+  - do not recreate retired collab/runbook markdown unless the user explicitly asks for a new split document.
 - Dogfooding requirement:
   - testing docs must support collaborative user+agent validation and clearly call out guardrails, blockers, and recovery workflows.
 - Cleanup requirement:

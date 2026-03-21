@@ -11,8 +11,8 @@ A core product purpose is maintaining one DB-backed source of truth for planning
 Current scope:
 - local tracking and planning workflows (human-operated TUI).
 - local runtime diagnostics with styled logging and dev-mode local log files.
-- active collaborative remediation and validation tracked in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
-- canonical MCP full-sweep execution procedure tracked in `MCP_FULL_TESTER_AGENT_RUNBOOK.md`.
+- the active auth/runtime dogfood run is tracked in `PLAN.md`.
+- secondary MCP dogfooding evidence may be captured in `MCP_DOGFOODING_WORKSHEET.md` when the active plan calls for it.
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
@@ -26,20 +26,24 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - Project and work-item thread mode with ownership-attributed markdown comments.
 - Descriptions/comments are stored as markdown source fields and rendered in TUI views.
 - MCP instruction tool for embedded docs + agent recommendations (`till.get_instructions`).
+- Raw stdio MCP via `./till mcp` as the primary local MCP transport.
+- Secondary HTTP/API + HTTP MCP serve surface via `./till serve`.
 - Project roots are real filesystem directory mappings; resource attachment is blocked outside the allowed root.
 - Runtime kind-catalog + project allowlist validation for project/task mutations.
 - Runtime JSON-schema validation for kind metadata payloads (with compiled-validator caching).
-- Capability-lease primitives for strict mutation locking (issue/heartbeat/renew/revoke/revoke-all).
-- Serve mode for HTTP (`/api/v1`) + stateless MCP (`/mcp`) transport surfaces.
+- Shared-DB `autent` integration for session-first MCP mutation auth.
+- Capability leases retained as secondary local workflow/delegation guards while the auth UX is still being completed.
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-02-27)
+## Active Status (2026-03-20)
 Implemented now:
-- Use `tillsyn` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
-- Keep collaborative validation notes in `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
-- Use `MCP_FULL_TESTER_AGENT_RUNBOOK.md` for MCP full-sweep execution protocol and evidence contract.
+- Use `PLAN.md` as the active source of truth for the current dogfood auth/runtime wave.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
+- `./till`, `./till mcp`, and `./till serve` now share the same real default runtime unless the user explicitly opts into a different runtime.
+- Local builds no longer silently force dev mode.
+- `./till mcp` stays the raw stdio MCP server and shuts down cleanly on `Ctrl-C`.
+- Shared-DB `autent` wiring is active for session-first MCP mutation auth.
 - Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase navigation, including nested phases.
 - Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase views show immediate children for that level (not full descendant dumps).
 - Task-focused scope renders direct subtasks in the board so `f` on a task opens subtask-level board context.
@@ -52,11 +56,18 @@ Implemented now:
 - Kind template system actions can auto-append checklist items and auto-create child work items during task creation.
 - Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
 
-Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
-- Transport/tool direction is REST/tool-style with markdown description/comment fields documented as markdown-write text.
+Still in progress for this dogfood wave:
+- user-configurable auth request and approval flow across MCP and TUI
+- auth request notifications in project-vs-global notification surfaces
+- clearer `till auth` help, examples, and next-step guidance
+- list/show/request/approve/deny auth lifecycle surfaces
+- external MCP-originated live refresh without a project-switch workaround
+
+Current MCP/runtime direction:
 - `capture_state` is a summary-first recovery surface for level-scoped workflows.
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
-- Transport-level lease/scope request contracts enforce non-user mutation guardrails.
+- MCP mutation auth is session-first.
+- transport-level lease/scope request contracts remain secondary local workflow guardrails for non-user mutations.
 - MCP tool surface now includes:
   - instructions: `till.get_instructions`
   - bootstrap guidance: `till.get_bootstrap_guide`
@@ -73,6 +84,10 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
     - `till.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
     - `till.create_comment` fails closed when the target does not exist in the referenced project;
     - `till.update_task` title-only updates preserve existing priority when `priority` is omitted.
+
+Current auth note:
+- Normal TUI users should not need to manually issue themselves auth sessions for routine TUI use.
+- `till auth issue-session` and `till auth revoke-session` currently exist as temporary operator/developer dogfood commands while the in-product request/approval flow is being built.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
@@ -130,6 +145,26 @@ Include only active records in export:
 ./till export --out /tmp/till-active.json --include-archived=false
 ```
 
+Start the raw stdio MCP server:
+```bash
+./till mcp
+```
+
+Start the secondary HTTP/API + HTTP MCP server:
+```bash
+./till serve
+```
+
+Temporary dogfood auth commands:
+```bash
+./till auth issue-session --principal-id evan
+./till auth revoke-session --session-id <session-id>
+```
+
+Current auth caveat:
+- these auth commands are temporary operator/developer seams
+- the intended end-user flow is request-and-approval inside the product, not routine manual session minting from the shell
+
 ## Config
 `till` loads TOML config from platform defaults, or from `--config` / `TILL_CONFIG`.
 Help-only paths (`--help`) render usage without running runtime bootstrap side effects (including config seeding).
@@ -142,7 +177,8 @@ Database path precedence:
 
 Path resolution controls:
 - `--app` / `TILL_APP_NAME` to namespace paths (default `tillsyn`)
-- `--dev` / `TILL_DEV_MODE` to use `<app>-dev` path roots
+- `--dev` / `TILL_DEV_MODE` to explicitly use `<app>-dev` path roots
+- `./till`, `./till mcp`, and `./till serve` all use the same default platform runtime when `--dev` is not enabled
 - `till paths` prints the resolved config/data/db paths for the current environment
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
@@ -225,7 +261,7 @@ Command palette highlights:
 - Open project thread from command palette with `thread-project` (`project-thread` alias).
 - Open selected work-item thread with `thread-item` (`item-thread` / `task-thread` aliases), or `c` from task info.
 - Supported thread targets: project, task, subtask, phase, decision, and note.
-- New comments use configured identity defaults; invalid/empty identity safely falls back to `[user] tillsyn-user`.
+- New comments use configured identity defaults and should render readable actor names when available.
 
 ## Fang Context
 Fang is Charmbracelet's experimental batteries-included wrapper for Cobra CLIs.
