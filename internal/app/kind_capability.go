@@ -230,6 +230,14 @@ func (s *Service) IssueCapabilityLease(ctx context.Context, in IssueCapabilityLe
 	if err != nil {
 		return domain.CapabilityLease{}, err
 	}
+	scopeID, err := s.validateCapabilityScopeTuple(ctx, projectID, lease.ScopeType, lease.ScopeID)
+	if err != nil {
+		return domain.CapabilityLease{}, err
+	}
+	lease.ScopeID = scopeID
+	if lease.Role.IsInternalOnly() {
+		return domain.CapabilityLease{}, domain.ErrInvalidCapabilityRole
+	}
 
 	if strings.TrimSpace(in.ParentInstanceID) != "" {
 		parent, parentErr := s.repo.GetCapabilityLease(ctx, strings.TrimSpace(in.ParentInstanceID))
@@ -242,8 +250,26 @@ func (s *Service) IssueCapabilityLease(ctx context.Context, in IssueCapabilityLe
 		if parent.ProjectID != lease.ProjectID {
 			return domain.CapabilityLease{}, domain.ErrInvalidCapabilityScope
 		}
-		if !in.AllowEqualScopeDelegation && parent.ScopeType == lease.ScopeType && parent.ScopeID == lease.ScopeID {
-			return domain.CapabilityLease{}, domain.ErrInvalidCapabilityScope
+		if !parent.Role.CanDelegateTo(lease.Role) {
+			return domain.CapabilityLease{}, domain.ErrInvalidCapabilityDelegation
+		}
+		childScopes, scopeErr := s.capabilityScopesForLease(ctx, lease.ProjectID, lease.ScopeType, lease.ScopeID)
+		if scopeErr != nil {
+			return domain.CapabilityLease{}, scopeErr
+		}
+		parentMatched := false
+		for _, candidate := range childScopes {
+			if candidate.ScopeType == parent.ScopeType && candidate.ScopeID == parent.ScopeID {
+				parentMatched = true
+				break
+			}
+		}
+		if !parentMatched {
+			return domain.CapabilityLease{}, domain.ErrInvalidCapabilityDelegation
+		}
+		allowEqualScopeDelegation := parent.AllowEqualScopeDelegation || project.Metadata.CapabilityPolicy.AllowEqualScopeDelegation
+		if !allowEqualScopeDelegation && parent.ScopeType == lease.ScopeType && parent.ScopeID == lease.ScopeID {
+			return domain.CapabilityLease{}, domain.ErrInvalidCapabilityDelegation
 		}
 	}
 
@@ -430,17 +456,17 @@ func (s *Service) ensureOrchestratorOverlapPolicy(ctx context.Context, project d
 }
 
 // enforceMutationGuard validates capability lease requirements for one requested scope tuple.
-func (s *Service) enforceMutationGuard(ctx context.Context, projectID string, actorType domain.ActorType, scopeType domain.CapabilityScopeType, scopeID string) error {
+func (s *Service) enforceMutationGuard(ctx context.Context, projectID string, actorType domain.ActorType, scopeType domain.CapabilityScopeType, scopeID string, action domain.CapabilityAction) error {
 	return s.enforceMutationGuardAcrossScopes(ctx, projectID, actorType, []mutationScopeCandidate{
 		{
 			ScopeType: scopeType,
 			ScopeID:   scopeID,
 		},
-	})
+	}, action)
 }
 
 // enforceMutationGuardAcrossScopes validates capability lease requirements against allowed scopes.
-func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectID string, actorType domain.ActorType, scopes []mutationScopeCandidate) error {
+func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectID string, actorType domain.ActorType, scopes []mutationScopeCandidate, action domain.CapabilityAction) error {
 	if !s.requireAgentLease {
 		return nil
 	}
@@ -472,6 +498,15 @@ func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectI
 	if lease.ProjectID != strings.TrimSpace(projectID) {
 		log.Error("mutation blocked: lease project mismatch", "project_id", projectID, "lease_project_id", lease.ProjectID, "agent_instance_id", guard.AgentInstanceID)
 		return domain.ErrMutationLeaseInvalid
+	}
+	action = domain.NormalizeCapabilityAction(action)
+	if !domain.IsValidCapabilityAction(action) {
+		log.Error("mutation blocked: invalid capability action", "project_id", projectID, "action", action, "agent_instance_id", guard.AgentInstanceID)
+		return domain.ErrInvalidCapabilityAction
+	}
+	if !lease.Role.CanPerform(action) {
+		log.Error("mutation blocked: lease action not allowed", "project_id", projectID, "role", lease.Role, "action", action, "agent_instance_id", guard.AgentInstanceID)
+		return domain.ErrInvalidCapabilityAction
 	}
 	now := s.clock().UTC()
 	if lease.IsRevoked() {

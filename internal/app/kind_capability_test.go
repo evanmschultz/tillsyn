@@ -135,7 +135,7 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-1",
 		AgentInstanceID: "agent-1-instance",
 		RequestedTTL:    30 * time.Minute,
@@ -191,7 +191,7 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-2",
 		AgentInstanceID: "agent-2-instance",
 	})
@@ -261,10 +261,34 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
-	if err := svc.enforceMutationGuard(context.Background(), project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		ScopeID:         "wrong-project",
+		Role:            domain.CapabilityRoleBuilder,
+		AgentName:       "bad-project",
+		AgentInstanceID: "bad-project",
+	}); !errors.Is(err, domain.ErrInvalidCapabilityScope) {
+		t.Fatalf("IssueCapabilityLease(bad project scope) error = %v, want ErrInvalidCapabilityScope", err)
+	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeID:         "missing-branch",
+		Role:            domain.CapabilityRoleBuilder,
+		AgentName:       "missing-branch",
+		AgentInstanceID: "missing-branch",
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("IssueCapabilityLease(missing branch) error = %v, want ErrNotFound", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if err := svc.enforceMutationGuard(context.Background(), project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); err != nil {
 		t.Fatalf("enforceMutationGuard(user) error = %v", err)
 	}
-	if err := svc.enforceMutationGuard(context.Background(), project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID); !errors.Is(err, domain.ErrMutationLeaseRequired) {
+	if err := svc.enforceMutationGuard(context.Background(), project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseRequired) {
 		t.Fatalf("enforceMutationGuard(no guard) error = %v, want ErrMutationLeaseRequired", err)
 	}
 
@@ -273,7 +297,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		AgentInstanceID: "missing",
 		LeaseToken:      "missing-token",
 	})
-	if err := svc.enforceMutationGuard(missingCtx, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+	if err := svc.enforceMutationGuard(missingCtx, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
 		t.Fatalf("enforceMutationGuard(missing lease) error = %v, want ErrMutationLeaseInvalid", err)
 	}
 
@@ -281,7 +305,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-y",
 		AgentInstanceID: "agent-y-instance",
 	})
@@ -293,7 +317,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		AgentInstanceID: lease.InstanceID,
 		LeaseToken:      lease.LeaseToken,
 	})
-	if err := svc.enforceMutationGuard(badIdentity, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+	if err := svc.enforceMutationGuard(badIdentity, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
 		t.Fatalf("enforceMutationGuard(identity mismatch) error = %v, want ErrMutationLeaseInvalid", err)
 	}
 
@@ -302,7 +326,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		AgentInstanceID: lease.InstanceID,
 		LeaseToken:      lease.LeaseToken,
 	})
-	if err := svc.enforceMutationGuard(validGuard, "wrong-project", domain.ActorTypeAgent, domain.CapabilityScopeProject, "wrong-project"); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+	if err := svc.enforceMutationGuard(validGuard, "wrong-project", domain.ActorTypeAgent, domain.CapabilityScopeProject, "wrong-project", domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
 		t.Fatalf("enforceMutationGuard(project mismatch) error = %v, want ErrMutationLeaseInvalid", err)
 	}
 
@@ -310,7 +334,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	if err := repo.UpdateCapabilityLease(context.Background(), lease); err != nil {
 		t.Fatalf("UpdateCapabilityLease(revoke) error = %v", err)
 	}
-	if err := svc.enforceMutationGuard(validGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID); !errors.Is(err, domain.ErrMutationLeaseRevoked) {
+	if err := svc.enforceMutationGuard(validGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseRevoked) {
 		t.Fatalf("enforceMutationGuard(revoked) error = %v, want ErrMutationLeaseRevoked", err)
 	}
 
@@ -318,7 +342,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-z",
 		AgentInstanceID: "agent-z-instance",
 	})
@@ -334,15 +358,26 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		AgentInstanceID: expired.InstanceID,
 		LeaseToken:      expired.LeaseToken,
 	})
-	if err := svc.enforceMutationGuard(expiredGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID); !errors.Is(err, domain.ErrMutationLeaseExpired) {
+	if err := svc.enforceMutationGuard(expiredGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseExpired) {
 		t.Fatalf("enforceMutationGuard(expired) error = %v, want ErrMutationLeaseExpired", err)
 	}
 
+	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
 	branchLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeBranch,
-		ScopeID:         "branch-1",
-		Role:            domain.CapabilityRoleWorker,
+		ScopeID:         branch.ID,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-branch",
 		AgentInstanceID: "agent-branch-instance",
 	})
@@ -354,10 +389,10 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		AgentInstanceID: branchLease.InstanceID,
 		LeaseToken:      branchLease.LeaseToken,
 	})
-	if err := svc.enforceMutationGuard(branchGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+	if err := svc.enforceMutationGuard(branchGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
 		t.Fatalf("enforceMutationGuard(scope mismatch) error = %v, want ErrMutationLeaseInvalid", err)
 	}
-	if err := svc.enforceMutationGuard(branchGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeBranch, "branch-1"); err != nil {
+	if err := svc.enforceMutationGuard(branchGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeBranch, branch.ID, domain.CapabilityActionEditNode); err != nil {
 		t.Fatalf("enforceMutationGuard(scope match) error = %v", err)
 	}
 	storedBranch, err := repo.GetCapabilityLease(context.Background(), branchLease.InstanceID)
@@ -446,6 +481,219 @@ func TestCreateTaskAppliesKindTemplateActions(t *testing.T) {
 	}
 	if !foundChild {
 		t.Fatal("expected template-created child task")
+	}
+}
+
+// TestIssueCapabilityLeaseParentDelegationPolicy verifies bounded parent-child delegation by role and scope.
+func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Delegation", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Task A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(task) error = %v", err)
+	}
+
+	parent, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-1",
+		AgentInstanceID: "orch-1",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(parent orchestrator) error = %v", err)
+	}
+	if got := parent.ScopeID; got != project.ID {
+		t.Fatalf("parent ScopeID = %q, want normalized project id %q", got, project.ID)
+	}
+	child, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:        project.ID,
+		ScopeType:        domain.CapabilityScopeBranch,
+		ScopeID:          branch.ID,
+		Role:             domain.CapabilityRoleBuilder,
+		AgentName:        "builder-1",
+		AgentInstanceID:  "builder-1",
+		ParentInstanceID: parent.InstanceID,
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(child builder) error = %v", err)
+	}
+	if got := child.ParentInstanceID; got != parent.InstanceID {
+		t.Fatalf("child ParentInstanceID = %q, want %q", got, parent.InstanceID)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:        project.ID,
+		ScopeType:        domain.CapabilityScopeProject,
+		ScopeID:          project.ID,
+		Role:             domain.CapabilityRoleBuilder,
+		AgentName:        "builder-project",
+		AgentInstanceID:  "builder-project",
+		ParentInstanceID: parent.InstanceID,
+	}); !errors.Is(err, domain.ErrInvalidCapabilityDelegation) {
+		t.Fatalf("IssueCapabilityLease(equal scope child) error = %v, want ErrInvalidCapabilityDelegation", err)
+	}
+
+	parentAllowed, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:                 project.ID,
+		ScopeType:                 domain.CapabilityScopeBranch,
+		ScopeID:                   branch.ID,
+		Role:                      domain.CapabilityRoleOrchestrator,
+		AgentName:                 "orch-allowed",
+		AgentInstanceID:           "orch-allowed",
+		AllowEqualScopeDelegation: true,
+		OverrideToken:             "override-equal",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(parent allowed) error = %v", err)
+	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:        project.ID,
+		ScopeType:        domain.CapabilityScopeBranch,
+		ScopeID:          branch.ID,
+		Role:             domain.CapabilityRoleBuilder,
+		AgentName:        "builder-branch-allowed",
+		AgentInstanceID:  "builder-branch-allowed",
+		ParentInstanceID: parentAllowed.InstanceID,
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(equal scope allowed) error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:        project.ID,
+		ScopeType:        domain.CapabilityScopeTask,
+		ScopeID:          task.ID,
+		Role:             domain.CapabilityRoleOrchestrator,
+		AgentName:        "child-orch",
+		AgentInstanceID:  "child-orch",
+		ParentInstanceID: parent.InstanceID,
+	}); !errors.Is(err, domain.ErrInvalidCapabilityDelegation) {
+		t.Fatalf("IssueCapabilityLease(orchestrator child) error = %v, want ErrInvalidCapabilityDelegation", err)
+	}
+
+	builderParent, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeID:         branch.ID,
+		Role:            domain.CapabilityRoleBuilder,
+		AgentName:       "builder-parent",
+		AgentInstanceID: "builder-parent",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(builder parent) error = %v", err)
+	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:        project.ID,
+		ScopeType:        domain.CapabilityScopeTask,
+		ScopeID:          task.ID,
+		Role:             domain.CapabilityRoleQA,
+		AgentName:        "qa-child",
+		AgentInstanceID:  "qa-child",
+		ParentInstanceID: builderParent.InstanceID,
+	}); !errors.Is(err, domain.ErrInvalidCapabilityDelegation) {
+		t.Fatalf("IssueCapabilityLease(builder parent child) error = %v, want ErrInvalidCapabilityDelegation", err)
+	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleSystem,
+		AgentName:       "system-1",
+		AgentInstanceID: "system-1",
+	}); !errors.Is(err, domain.ErrInvalidCapabilityRole) {
+		t.Fatalf("IssueCapabilityLease(system) error = %v, want ErrInvalidCapabilityRole", err)
+	}
+}
+
+// TestQALeaseActionPolicy verifies qa leases may comment but cannot perform builder-style node edits.
+func TestQALeaseActionPolicy(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 11, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{
+		DefaultDeleteMode:  DeleteModeArchive,
+		RequireAgentLease:  boolPtr(true),
+		CapabilityLeaseTTL: time.Hour,
+	})
+
+	project, err := svc.CreateProject(context.Background(), "QA Policy", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "Task A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	qaLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleQA,
+		AgentName:       "qa-1",
+		AgentInstanceID: "qa-1",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(qa) error = %v", err)
+	}
+	qaCtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       qaLease.AgentName,
+		AgentInstanceID: qaLease.InstanceID,
+		LeaseToken:      qaLease.LeaseToken,
+	})
+	if _, err := svc.CreateComment(qaCtx, CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		BodyMarkdown: "qa note",
+		ActorID:      "qa-1",
+		ActorType:    domain.ActorTypeAgent,
+	}); err != nil {
+		t.Fatalf("CreateComment(qa) error = %v", err)
+	}
+	if _, err := svc.UpdateTask(qaCtx, UpdateTaskInput{
+		TaskID:      task.ID,
+		Title:       "Task A",
+		Description: "qa-edited",
+		Priority:    domain.PriorityMedium,
+		UpdatedBy:   "qa-1",
+		UpdatedType: domain.ActorTypeAgent,
+	}); !errors.Is(err, domain.ErrInvalidCapabilityAction) {
+		t.Fatalf("UpdateTask(qa) error = %v, want ErrInvalidCapabilityAction", err)
 	}
 }
 

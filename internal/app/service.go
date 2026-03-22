@@ -278,7 +278,7 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
 	}
-	if err := s.enforceMutationGuard(ctx, project.ID, actorType, domain.CapabilityScopeProject, project.ID); err != nil {
+	if err := s.enforceMutationGuard(ctx, project.ID, actorType, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); err != nil {
 		return domain.Project{}, err
 	}
 	nextKind := project.Kind
@@ -313,7 +313,7 @@ func (s *Service) ArchiveProject(ctx context.Context, projectID string) (domain.
 	if err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionArchiveOrCleanup); err != nil {
 		return domain.Project{}, err
 	}
 	project.Archive(s.clock())
@@ -333,7 +333,7 @@ func (s *Service) RestoreProject(ctx context.Context, projectID string) (domain.
 	if err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionArchiveOrCleanup); err != nil {
 		return domain.Project{}, err
 	}
 	project.Restore(s.clock())
@@ -353,7 +353,7 @@ func (s *Service) DeleteProject(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionArchiveOrCleanup); err != nil {
 		return err
 	}
 	return s.repo.DeleteProject(ctx, project.ID)
@@ -478,7 +478,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 			return domain.Task{}, err
 		}
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, in.ProjectID, actorType, guardScopes); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, in.ProjectID, actorType, guardScopes, domain.CapabilityActionCreateChild); err != nil {
 		return domain.Task{}, err
 	}
 
@@ -551,9 +551,6 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes); err != nil {
-		return domain.Task{}, err
-	}
 	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
 	if err != nil {
 		return domain.Task{}, err
@@ -565,6 +562,16 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	toState := lifecycleStateForColumnID(columns, toColumnID)
 	if toState == "" {
 		toState = fromState
+	}
+	moveAction := domain.CapabilityActionEditNode
+	switch {
+	case toState == domain.StateDone:
+		moveAction = domain.CapabilityActionMarkComplete
+	case fromState == domain.StateTodo && toState == domain.StateProgress:
+		moveAction = domain.CapabilityActionMarkInProgress
+	}
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, moveAction); err != nil {
+		return domain.Task{}, err
 	}
 	if fromState == domain.StateTodo && toState == domain.StateProgress {
 		if unmet := task.StartCriteriaUnmet(); len(unmet) > 0 {
@@ -626,7 +633,7 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	if actor, ok := MutationActorFromContext(ctx); ok {
 		guardActorType = normalizeActorTypeInput(actor.ActorType)
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, guardActorType, guardScopes); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, guardActorType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
 		return domain.Task{}, err
 	}
 	task.Restore(s.clock())
@@ -659,7 +666,7 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, domain.CapabilityActionEditNode); err != nil {
 		return domain.Task{}, err
 	}
 	if err := task.UpdateDetails(title, task.Description, task.Priority, task.DueAt, task.Labels, s.clock()); err != nil {
@@ -691,7 +698,7 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, actorType, guardScopes); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, actorType, guardScopes, domain.CapabilityActionEditNode); err != nil {
 		return domain.Task{}, err
 	}
 	if hasResolvedActor && strings.TrimSpace(resolvedActor.ActorID) != "" {
@@ -750,7 +757,7 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if guardErr != nil {
 			return guardErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
 			return err
 		}
 		task.Archive(s.clock())
@@ -765,7 +772,7 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if guardErr != nil {
 			return guardErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
 			return err
 		}
 		if err := s.repo.DeleteTask(ctx, taskID); err != nil {
@@ -839,7 +846,7 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 			return domain.Comment{}, err
 		}
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, target.ProjectID, actorType, guardScopes); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, target.ProjectID, actorType, guardScopes, domain.CapabilityActionComment); err != nil {
 		return domain.Comment{}, err
 	}
 	if err := s.ensureCommentTargetExists(ctx, target); err != nil {
@@ -964,7 +971,7 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, taskScopes); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, taskScopes, domain.CapabilityActionEditNode); err != nil {
 		return domain.Task{}, err
 	}
 	parentID = strings.TrimSpace(parentID)
@@ -982,7 +989,7 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 		if scopeErr != nil {
 			return domain.Task{}, scopeErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, parentScopes); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, parentScopes, domain.CapabilityActionEditNode); err != nil {
 			return domain.Task{}, err
 		}
 		tasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)

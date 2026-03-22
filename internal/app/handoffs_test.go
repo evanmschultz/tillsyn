@@ -96,7 +96,7 @@ func TestServiceCreateHandoffUsesResolvedMutationActor(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-1",
 		AgentInstanceID: "agent-1-instance",
 	})
@@ -115,11 +115,11 @@ func TestServiceCreateHandoffUsesResolvedMutationActor(t *testing.T) {
 	})
 
 	handoff, err := svc.CreateHandoff(ctx, CreateHandoffInput{
-		Level:      domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
-		SourceRole: "orchestrator",
-		TargetRole: "builder",
-		Summary:    "Use resolved actor",
-		CreatedBy:  "user-ignored",
+		Level:       domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
+		SourceRole:  "orchestrator",
+		TargetRole:  "builder",
+		Summary:     "Use resolved actor",
+		CreatedBy:   "user-ignored",
 		CreatedType: domain.ActorTypeUser,
 	})
 	if err != nil {

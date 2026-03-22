@@ -115,7 +115,7 @@ func (s *Service) RaiseAttentionItem(ctx context.Context, in RaiseAttentionItemI
 	level.ScopeID = scopeID
 
 	createdType := normalizeActorTypeInput(in.CreatedType)
-	if err := s.enforceMutationGuard(ctx, level.ProjectID, createdType, level.ScopeType.ToCapabilityScopeType(), level.ScopeID); err != nil {
+	if err := s.enforceMutationGuard(ctx, level.ProjectID, createdType, level.ScopeType.ToCapabilityScopeType(), level.ScopeID, domain.CapabilityActionComment); err != nil {
 		return domain.AttentionItem{}, err
 	}
 
@@ -175,7 +175,7 @@ func (s *Service) ResolveAttentionItem(ctx context.Context, in ResolveAttentionI
 		return domain.AttentionItem{}, err
 	}
 	resolvedType := normalizeActorTypeInput(in.ResolvedType)
-	if err := s.enforceMutationGuard(ctx, existing.ProjectID, resolvedType, existing.ScopeType.ToCapabilityScopeType(), existing.ScopeID); err != nil {
+	if err := s.enforceMutationGuard(ctx, existing.ProjectID, resolvedType, existing.ScopeType.ToCapabilityScopeType(), existing.ScopeID, domain.CapabilityActionResolveAttention); err != nil {
 		return domain.AttentionItem{}, err
 	}
 	return s.repo.ResolveAttentionItem(ctx, attentionID, strings.TrimSpace(in.ResolvedBy), resolvedType, s.clock().UTC())

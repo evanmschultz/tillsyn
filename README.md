@@ -53,11 +53,11 @@ Implemented now:
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
 - Kind template system actions can auto-append checklist items and auto-create child work items during task creation; the broader post-dogfood hierarchy-wide template/agent/communication direction is tracked in `TEMPLATE_AGENT_CONSENSUS.md`.
-- Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
+- Capability leases now normalize project scope ids, validate scope tuples on issuance, enforce bounded parent delegation, and apply builder/qa/orchestrator action checks in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
-- orchestrator/subagent scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement
+- orchestrator/builder/qa scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement and bounded delegation
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 

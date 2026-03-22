@@ -257,12 +257,12 @@ func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
 
 	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
 		Path:              "project/" + fixture.project.ID,
-		PrincipalID:       "subagent-1",
+		PrincipalID:       "builder-1",
 		PrincipalType:     "agent",
-		PrincipalRole:     "subagent",
-		ClientID:          "subagent-client",
+		PrincipalRole:     "builder",
+		ClientID:          "builder-client",
 		ClientType:        "mcp-stdio",
-		Reason:            "orchestrator requests subagent scope",
+		Reason:            "orchestrator requests builder scope",
 		Continuation:      map[string]any{"resume_token": "resume-456"},
 		RequestedBy:       "orchestrator-1",
 		RequestedType:     domain.ActorTypeAgent,
@@ -275,7 +275,7 @@ func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
 		RequestID:      request.ID,
 		ResolvedBy:     "approver-1",
 		ResolvedType:   domain.ActorTypeUser,
-		ResolutionNote: "approved for subagent handoff",
+		ResolutionNote: "approved for builder handoff",
 	})
 	if err != nil {
 		t.Fatalf("ApproveAuthRequest() error = %v", err)
@@ -293,8 +293,8 @@ func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
 	if got := claimed.Request.RequestedByActor; got != "orchestrator-1" {
 		t.Fatalf("ClaimAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
 	}
-	if got := claimed.Request.PrincipalID; got != "subagent-1" {
-		t.Fatalf("ClaimAuthRequest() principal_id = %q, want subagent-1", got)
+	if got := claimed.Request.PrincipalID; got != "builder-1" {
+		t.Fatalf("ClaimAuthRequest() principal_id = %q, want builder-1", got)
 	}
 	if got := claimed.SessionSecret; got != approved.SessionSecret {
 		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)

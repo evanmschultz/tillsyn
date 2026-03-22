@@ -144,6 +144,12 @@ func TestAuthRequestNormalizationHelpers(t *testing.T) {
 	if got := NormalizeAuthRequestRole(" Orchestrator "); got != AuthRequestRoleOrchestrator {
 		t.Fatalf("NormalizeAuthRequestRole() = %q, want orchestrator", got)
 	}
+	if got := NormalizeAuthRequestRole(" Builder "); got != AuthRequestRoleBuilder {
+		t.Fatalf("NormalizeAuthRequestRole(builder) = %q, want builder", got)
+	}
+	if got := NormalizeAuthRequestRole(" worker "); got != AuthRequestRoleBuilder {
+		t.Fatalf("NormalizeAuthRequestRole(worker) = %q, want builder alias", got)
+	}
 	if !IsValidAuthRequestRole(AuthRequestRoleSubagent) {
 		t.Fatal("IsValidAuthRequestRole(subagent) = false, want true")
 	}
@@ -318,7 +324,7 @@ func TestAuthRequestLifecycleTransitions(t *testing.T) {
 	}
 }
 
-// TestNewAuthRequestAgentRoleDefaultsAndValidation verifies agent requests default to subagent while invalid role combinations fail closed.
+// TestNewAuthRequestAgentRoleDefaultsAndValidation verifies agent requests default to builder while invalid role combinations fail closed.
 func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 	t.Parallel()
 
@@ -337,8 +343,8 @@ func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest(agent default role) error = %v", err)
 	}
-	if req.PrincipalRole != string(AuthRequestRoleSubagent) {
-		t.Fatalf("NewAuthRequest(agent default role) principal_role = %q, want subagent", req.PrincipalRole)
+	if req.PrincipalRole != string(AuthRequestRoleBuilder) {
+		t.Fatalf("NewAuthRequest(agent default role) principal_role = %q, want builder", req.PrincipalRole)
 	}
 
 	req, err = NewAuthRequest(AuthRequestInput{
@@ -360,12 +366,31 @@ func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("NewAuthRequest(orchestrator role) principal_role = %q, want orchestrator", req.PrincipalRole)
 	}
 
+	req, err = NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-qa",
+		Path:                AuthRequestPath{ProjectID: "p1"},
+		PrincipalID:         "qa-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "qa",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "needs qa scope",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(qa role) error = %v", err)
+	}
+	if req.PrincipalRole != string(AuthRequestRoleQA) {
+		t.Fatalf("NewAuthRequest(qa role) principal_role = %q, want qa", req.PrincipalRole)
+	}
+
 	if _, err := NewAuthRequest(AuthRequestInput{
 		ID:                  "req-role-3",
 		Path:                AuthRequestPath{ProjectID: "p1"},
 		PrincipalID:         "user-1",
 		PrincipalType:       "user",
-		PrincipalRole:       "subagent",
+		PrincipalRole:       "builder",
 		ClientID:            "till-tui",
 		ClientType:          "tui",
 		RequestedSessionTTL: time.Hour,
@@ -378,16 +403,16 @@ func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 	if _, err := NewAuthRequest(AuthRequestInput{
 		ID:                  "req-role-4",
 		Path:                AuthRequestPath{Kind: AuthRequestPathKindProjects, ProjectIDs: []string{"p1", "p2"}},
-		PrincipalID:         "subagent-1",
+		PrincipalID:         "builder-1",
 		PrincipalType:       "agent",
-		PrincipalRole:       "subagent",
+		PrincipalRole:       "builder",
 		ClientID:            "till-mcp-stdio",
 		ClientType:          "mcp-stdio",
 		RequestedSessionTTL: time.Hour,
-		Reason:              "invalid broader subagent scope",
+		Reason:              "invalid broader builder scope",
 		Timeout:             30 * time.Minute,
 	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
-		t.Fatalf("NewAuthRequest(subagent broader scope) error = %v, want ErrInvalidAuthRequestRole", err)
+		t.Fatalf("NewAuthRequest(builder broader scope) error = %v, want ErrInvalidAuthRequestRole", err)
 	}
 
 	req, err = NewAuthRequest(AuthRequestInput{

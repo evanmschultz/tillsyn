@@ -58,12 +58,17 @@ type AuthRequestRole string
 // Auth request role values.
 const (
 	AuthRequestRoleOrchestrator AuthRequestRole = "orchestrator"
-	AuthRequestRoleSubagent     AuthRequestRole = "subagent"
+	AuthRequestRoleBuilder      AuthRequestRole = "builder"
+	AuthRequestRoleQA           AuthRequestRole = "qa"
+
+	// AuthRequestRoleSubagent preserves the legacy subagent token as an alias for builder.
+	AuthRequestRoleSubagent AuthRequestRole = AuthRequestRoleBuilder
 )
 
 var validAuthRequestRoles = []AuthRequestRole{
 	AuthRequestRoleOrchestrator,
-	AuthRequestRoleSubagent,
+	AuthRequestRoleBuilder,
+	AuthRequestRoleQA,
 }
 
 // AuthRequest stores one persisted auth request and its approval outcome.
@@ -180,7 +185,16 @@ func ParseAuthRequestPath(raw string) (AuthRequestPath, error) {
 
 // NormalizeAuthRequestRole canonicalizes one auth-request role value.
 func NormalizeAuthRequestRole(role AuthRequestRole) AuthRequestRole {
-	return AuthRequestRole(strings.TrimSpace(strings.ToLower(string(role))))
+	switch strings.TrimSpace(strings.ToLower(string(role))) {
+	case string(AuthRequestRoleOrchestrator):
+		return AuthRequestRoleOrchestrator
+	case string(AuthRequestRoleBuilder), "subagent", "worker":
+		return AuthRequestRoleBuilder
+	case string(AuthRequestRoleQA):
+		return AuthRequestRoleQA
+	default:
+		return AuthRequestRole(strings.TrimSpace(strings.ToLower(string(role))))
+	}
 }
 
 // IsValidAuthRequestRole reports whether one auth-request role is supported.
@@ -374,7 +388,7 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 	principalRole := strings.TrimSpace(string(NormalizeAuthRequestRole(AuthRequestRole(in.PrincipalRole))))
 	if principalType == "agent" {
 		if principalRole == "" {
-			principalRole = string(AuthRequestRoleSubagent)
+			principalRole = string(AuthRequestRoleBuilder)
 		}
 		if !IsValidAuthRequestRole(AuthRequestRole(principalRole)) {
 			return AuthRequest{}, ErrInvalidAuthRequestRole

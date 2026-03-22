@@ -79,7 +79,7 @@ func (s *Service) CreateHandoff(ctx context.Context, in CreateHandoffInput) (dom
 		createdBy = resolvedActor.ActorID
 		createdType = resolvedActor.ActorType
 	}
-	if err := s.enforceMutationGuard(ctx, level.ProjectID, createdType, level.ScopeType.ToCapabilityScopeType(), level.ScopeID); err != nil {
+	if err := s.enforceMutationGuard(ctx, level.ProjectID, createdType, level.ScopeType.ToCapabilityScopeType(), level.ScopeID, domain.CapabilityActionComment); err != nil {
 		return domain.Handoff{}, err
 	}
 
@@ -192,7 +192,7 @@ func (s *Service) UpdateHandoff(ctx context.Context, in UpdateHandoffInput) (dom
 			resolvedType = resolvedActor.ActorType
 		}
 	}
-	if err := s.enforceMutationGuard(ctx, existing.ProjectID, updatedType, existing.ScopeType.ToCapabilityScopeType(), existing.ScopeID); err != nil {
+	if err := s.enforceMutationGuard(ctx, existing.ProjectID, updatedType, existing.ScopeType.ToCapabilityScopeType(), existing.ScopeID, domain.CapabilityActionComment); err != nil {
 		return domain.Handoff{}, err
 	}
 

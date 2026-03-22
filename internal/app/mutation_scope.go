@@ -58,6 +58,36 @@ func (s *Service) capabilityScopesForTaskLineage(ctx context.Context, task domai
 	return scopes, nil
 }
 
+// capabilityScopesForLease resolves the scope candidates a lease request should inherit or match.
+func (s *Service) capabilityScopesForLease(ctx context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string) ([]mutationScopeCandidate, error) {
+	projectID = strings.TrimSpace(projectID)
+	scopeType = domain.NormalizeCapabilityScopeType(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	if !domain.IsValidCapabilityScopeType(scopeType) {
+		return nil, domain.ErrInvalidCapabilityScope
+	}
+	if scopeType == domain.CapabilityScopeProject {
+		return []mutationScopeCandidate{newProjectMutationScopeCandidate(projectID)}, nil
+	}
+	if scopeID == "" {
+		return nil, domain.ErrInvalidCapabilityScope
+	}
+	task, err := s.repo.GetTask(ctx, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(task.ProjectID) != projectID {
+		return nil, ErrNotFound
+	}
+	if capabilityScopeTypeForTask(task) != scopeType {
+		return nil, domain.ErrInvalidCapabilityScope
+	}
+	return s.capabilityScopesForTaskLineage(ctx, task)
+}
+
 // appendMutationScopeCandidate adds one scope candidate only when valid and unique.
 func appendMutationScopeCandidate(scopes []mutationScopeCandidate, candidate mutationScopeCandidate) []mutationScopeCandidate {
 	candidate.ScopeType = domain.NormalizeCapabilityScopeType(candidate.ScopeType)

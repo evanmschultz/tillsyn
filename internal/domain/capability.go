@@ -6,14 +6,55 @@ import (
 	"time"
 )
 
+// CapabilityAction identifies one explicit policy action class for agent roles.
+type CapabilityAction string
+
+// Capability action values.
+const (
+	CapabilityActionRead                    CapabilityAction = "read"
+	CapabilityActionComment                 CapabilityAction = "comment"
+	CapabilityActionCreateChild             CapabilityAction = "create-child"
+	CapabilityActionEditNode                CapabilityAction = "edit-node"
+	CapabilityActionRequestAuth             CapabilityAction = "request-auth"
+	CapabilityActionApproveAuthWithinBounds CapabilityAction = "approve-auth-within-bounds"
+	CapabilityActionMarkInProgress          CapabilityAction = "mark-in-progress"
+	CapabilityActionMarkComplete            CapabilityAction = "mark-complete"
+	CapabilityActionReopen                  CapabilityAction = "reopen"
+	CapabilityActionAttachEvidence          CapabilityAction = "attach-evidence"
+	CapabilityActionSignoff                 CapabilityAction = "signoff"
+	CapabilityActionResolveAttention        CapabilityAction = "resolve-attention"
+	CapabilityActionArchiveOrCleanup        CapabilityAction = "archive-or-cleanup"
+)
+
+// validCapabilityActions stores supported policy-action values.
+var validCapabilityActions = []CapabilityAction{
+	CapabilityActionRead,
+	CapabilityActionComment,
+	CapabilityActionCreateChild,
+	CapabilityActionEditNode,
+	CapabilityActionRequestAuth,
+	CapabilityActionApproveAuthWithinBounds,
+	CapabilityActionMarkInProgress,
+	CapabilityActionMarkComplete,
+	CapabilityActionReopen,
+	CapabilityActionAttachEvidence,
+	CapabilityActionSignoff,
+	CapabilityActionResolveAttention,
+	CapabilityActionArchiveOrCleanup,
+}
+
 // CapabilityRole identifies the role of a capability lease owner.
 type CapabilityRole string
 
 // Capability role values.
 const (
 	CapabilityRoleOrchestrator CapabilityRole = "orchestrator"
-	CapabilityRoleWorker       CapabilityRole = "worker"
+	CapabilityRoleBuilder      CapabilityRole = "builder"
+	CapabilityRoleQA           CapabilityRole = "qa"
 	CapabilityRoleSystem       CapabilityRole = "system"
+
+	// CapabilityRoleWorker preserves the legacy worker token as an alias for builder.
+	CapabilityRoleWorker CapabilityRole = CapabilityRoleBuilder
 )
 
 // CapabilityScopeType identifies the scope a capability lease is bound to.
@@ -31,7 +72,8 @@ const (
 // validCapabilityRoles stores supported capability roles.
 var validCapabilityRoles = []CapabilityRole{
 	CapabilityRoleOrchestrator,
-	CapabilityRoleWorker,
+	CapabilityRoleBuilder,
+	CapabilityRoleQA,
 	CapabilityRoleSystem,
 }
 
@@ -102,6 +144,9 @@ func NewCapabilityLease(in CapabilityLeaseInput, now time.Time) (CapabilityLease
 	if !IsValidCapabilityScopeType(in.ScopeType) {
 		return CapabilityLease{}, ErrInvalidCapabilityScope
 	}
+	if in.ScopeType == CapabilityScopeProject && in.ScopeID == "" {
+		in.ScopeID = in.ProjectID
+	}
 	if in.ScopeType != CapabilityScopeProject && in.ScopeID == "" {
 		return CapabilityLease{}, ErrInvalidCapabilityScope
 	}
@@ -131,7 +176,18 @@ func NewCapabilityLease(in CapabilityLeaseInput, now time.Time) (CapabilityLease
 
 // NormalizeCapabilityRole canonicalizes role values.
 func NormalizeCapabilityRole(role CapabilityRole) CapabilityRole {
-	return CapabilityRole(strings.TrimSpace(strings.ToLower(string(role))))
+	switch strings.TrimSpace(strings.ToLower(string(role))) {
+	case string(CapabilityRoleOrchestrator):
+		return CapabilityRoleOrchestrator
+	case string(CapabilityRoleBuilder), "worker", "subagent":
+		return CapabilityRoleBuilder
+	case string(CapabilityRoleQA):
+		return CapabilityRoleQA
+	case string(CapabilityRoleSystem):
+		return CapabilityRoleSystem
+	default:
+		return CapabilityRole(strings.TrimSpace(strings.ToLower(string(role))))
+	}
 }
 
 // NormalizeCapabilityScopeType canonicalizes scope values.
@@ -143,6 +199,102 @@ func NormalizeCapabilityScopeType(scope CapabilityScopeType) CapabilityScopeType
 func IsValidCapabilityRole(role CapabilityRole) bool {
 	role = NormalizeCapabilityRole(role)
 	return slices.Contains(validCapabilityRoles, role)
+}
+
+// NormalizeCapabilityAction canonicalizes one policy action value.
+func NormalizeCapabilityAction(action CapabilityAction) CapabilityAction {
+	return CapabilityAction(strings.TrimSpace(strings.ToLower(string(action))))
+}
+
+// IsValidCapabilityAction reports whether a policy action value is supported.
+func IsValidCapabilityAction(action CapabilityAction) bool {
+	return slices.Contains(validCapabilityActions, NormalizeCapabilityAction(action))
+}
+
+// DefaultCapabilityActions returns the default policy-action set for one role.
+func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
+	switch NormalizeCapabilityRole(role) {
+	case CapabilityRoleOrchestrator:
+		return []CapabilityAction{
+			CapabilityActionRead,
+			CapabilityActionComment,
+			CapabilityActionCreateChild,
+			CapabilityActionRequestAuth,
+			CapabilityActionApproveAuthWithinBounds,
+			CapabilityActionMarkInProgress,
+			CapabilityActionMarkComplete,
+			CapabilityActionResolveAttention,
+			CapabilityActionArchiveOrCleanup,
+		}
+	case CapabilityRoleBuilder:
+		return []CapabilityAction{
+			CapabilityActionRead,
+			CapabilityActionComment,
+			CapabilityActionCreateChild,
+			CapabilityActionEditNode,
+			CapabilityActionRequestAuth,
+			CapabilityActionMarkInProgress,
+			CapabilityActionMarkComplete,
+			CapabilityActionAttachEvidence,
+		}
+	case CapabilityRoleQA:
+		return []CapabilityAction{
+			CapabilityActionRead,
+			CapabilityActionComment,
+			CapabilityActionRequestAuth,
+			CapabilityActionMarkInProgress,
+			CapabilityActionMarkComplete,
+			CapabilityActionReopen,
+			CapabilityActionAttachEvidence,
+			CapabilityActionSignoff,
+			CapabilityActionResolveAttention,
+		}
+	case CapabilityRoleSystem:
+		return append([]CapabilityAction(nil), validCapabilityActions...)
+	default:
+		return nil
+	}
+}
+
+// CanPerform reports whether one role includes the requested default policy action.
+func (r CapabilityRole) CanPerform(action CapabilityAction) bool {
+	action = NormalizeCapabilityAction(action)
+	if !IsValidCapabilityAction(action) {
+		return false
+	}
+	return slices.Contains(DefaultCapabilityActions(r), action)
+}
+
+// CanTargetBroaderThanProject reports whether a role may target broader-than-project paths.
+func (r CapabilityRole) CanTargetBroaderThanProject() bool {
+	switch NormalizeCapabilityRole(r) {
+	case CapabilityRoleOrchestrator, CapabilityRoleSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanDelegateTo reports whether one role may mint a child role.
+func (r CapabilityRole) CanDelegateTo(child CapabilityRole) bool {
+	switch NormalizeCapabilityRole(r) {
+	case CapabilityRoleOrchestrator:
+		switch NormalizeCapabilityRole(child) {
+		case CapabilityRoleBuilder, CapabilityRoleQA:
+			return true
+		default:
+			return false
+		}
+	case CapabilityRoleSystem:
+		return IsValidCapabilityRole(child)
+	default:
+		return false
+	}
+}
+
+// IsInternalOnly reports whether a role is reserved for internal-only flows.
+func (r CapabilityRole) IsInternalOnly() bool {
+	return NormalizeCapabilityRole(r) == CapabilityRoleSystem
 }
 
 // IsValidCapabilityScopeType reports whether a scope value is supported.

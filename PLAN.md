@@ -72,14 +72,14 @@ This run is successful only if:
 30. Deny UX must be note-first and explicit: the user picks `deny`, writes an optional explanation for the requester, then confirms or cancels.
 31. Approve UX must be explicit and visible: the user picks `approve`, optionally narrows `path` and `ttl`, optionally edits the approval note, then confirms or cancels.
 32. After approval, the requesting MCP client must have a supported continuation path to resume without manual shell inspection/copying as the primary flow.
-33. Orchestrator and subagent auth must follow the same request/approval model with scoped path and lifecycle constraints; subagents should not depend on raw operator-issued sessions as the steady-state workflow.
+33. Orchestrator and builder/qa auth must follow the same request/approval model with scoped path and lifecycle constraints; builder/qa agents should not depend on raw operator-issued sessions as the steady-state workflow.
 34. Approval, denial, and operator notes must be fully operable from both the CLI and the TUI.
 35. Operators must be able to view waiting approvals and resolved auth-request inventory from both CLI and TUI surfaces.
 36. Approved scope remains path-first:
    - project-only,
    - project/branch,
    - project/branch/nested phase lineage.
-37. Subagents may only request one single-project rooted path at a time.
+37. Builder/qa agents may only request one single-project rooted path at a time.
 38. Orchestrators may request either:
    - one single-project rooted path,
    - a multi-project scope,
@@ -225,11 +225,11 @@ Known caveat:
    - the requester must be able to discover approval completion,
    - the requester must be able to retrieve or resume with the approved session through a supported MCP/operator flow,
    - shell inspection may remain as a fallback, but not as the primary expected dogfood workflow.
-17. Orchestrator/subagent auth choreography is part of the next implementation scope:
+17. Orchestrator/builder/qa auth choreography is part of the next implementation scope:
    - orchestrator requests its own scoped session through MCP,
    - user approves or denies in TUI,
    - orchestrator resumes through the supported continuation path,
-   - orchestrator can then request narrower subagent scopes through the same model rather than bypassing it with raw session issuance.
+   - orchestrator can then request narrower builder/qa scopes through the same model rather than bypassing it with raw session issuance.
 18. Approval and denial notes are part of the primary lifecycle contract in both CLI and TUI:
    - approve must support an optional operator note,
    - deny must support an optional explanation for the requester,
@@ -325,11 +325,11 @@ The dogfood auth UX and operator/help surfaces must satisfy the matrix below bef
 | AU-15 | a user opens auth review in the TUI | review modal shows visible approve vs deny controls instead of relying on hidden decision hotkeys | PASS | `internal/tui/model_test.go:7520`; collaborative finding fixed 2026-03-21 |
 | AU-16 | a user denies an auth request in the TUI | deny path becomes note-first with explicit confirm/cancel, and does not expose irrelevant approve-only fields | PASS | `internal/tui/model_test.go:7331`; collaborative finding fixed 2026-03-21 |
 | AU-17 | an orchestrator requests access through MCP and the user approves it in the TUI | orchestrator can resume through a supported continuation/poll path without shell-only glue as the primary workflow | PASS | `internal/adapters/server/mcpapi/handler_test.go:1234`; `internal/app/auth_requests_test.go:147`; `internal/adapters/server/common/app_service_adapter_auth_requests_test.go:146` |
-| AU-18 | an orchestrator needs to provision scoped subagent access | subagent auth requests follow the same request/approval model with narrower path/lifecycle scopes instead of bypassing through raw operator-issued sessions | PASS | `internal/app/auth_requests_test.go:255`; `internal/adapters/server/common/app_service_adapter_auth_requests_test.go:143`; `internal/adapters/server/mcpapi/handler_test.go:1194` |
+| AU-18 | an orchestrator needs to provision scoped builder/qa access | builder/qa auth requests follow the same request/approval model with narrower path/lifecycle scopes instead of bypassing through raw operator-issued sessions | PASS | `internal/app/auth_requests_test.go:255`; `internal/adapters/server/common/app_service_adapter_auth_requests_test.go:143`; `internal/adapters/server/mcpapi/handler_test.go:1194` |
 | AU-19 | an operator needs to review pending approvals from the shell | CLI can list pending auth requests clearly enough to approve, deny, or inspect them without guesswork | PASS | `cmd/till/main_test.go:627`; collaborative shell retest 2026-03-21 |
 | AU-20 | an operator needs to review approved/denied/canceled inventory from the shell | CLI list/show surfaces preserve path, state, and resolution-note context | PASS | `cmd/till/main_test.go:648`; `cmd/till/main_test.go:769`; collaborative shell retest 2026-03-21 |
 | AU-21 | a user approves or denies from the shell | CLI approve/deny both support notes and preserve path-aware output/audit fields | PASS | `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; collaborative shell retest 2026-03-21 |
-| AU-22 | a subagent requests access | requested scope is limited to one single-project rooted path with optional branch/nested phases | PASS | `internal/domain/auth_request_test.go:390`; `internal/app/auth_requests_test.go:255` |
+| AU-22 | a builder or qa agent requests access | requested scope is limited to one single-project rooted path with optional branch/nested phases | PASS | `internal/domain/auth_request_test.go:390`; `internal/app/auth_requests_test.go:255` |
 | AU-23 | an orchestrator requests access across multiple projects or generally | only orchestrator-shaped requests may carry multi-project or general/global scope, and those scopes remain explicit in review/audit surfaces | PASS | `internal/adapters/auth/autentauth/service_test.go:560`; `internal/adapters/auth/autentauth/service_test.go:577`; `internal/adapters/auth/autentauth/service_app_sessions_test.go:108`; `cmd/till/main_test.go:437` |
 
 ### 6.1 Latest Checkpoint Evidence
@@ -525,7 +525,7 @@ Checkpoint summary:
    - `internal/tui`: 70.3%
 8. Collaborative retest is still not complete for true dogfood readiness because the remaining validation scope is:
    - end-to-end user+agent retest of the refreshed `till paths` / runtime-root contract,
-   - orchestrator/subagent scoped auth choreography,
+   - orchestrator/builder/qa scoped auth choreography,
    - explicit orchestrator-only multi-project/general scope enforcement,
    - user retest of the new MCP claim/resume path and authenticated mutation flow.
 
@@ -606,7 +606,7 @@ Acceptance:
 13. deny review collapses to note + confirm/cancel once deny is selected
 14. approve review keeps visible constrained path/ttl/note editing only when approve is selected
 15. CLI request/session inventory clearly supports pending-approval review, decision notes, and path-aware audit inspection
-16. scope rules distinguish orchestrator-only multi-project/general approvals from subagent single-project approvals
+16. scope rules distinguish orchestrator-only multi-project/general approvals from builder/qa single-project approvals
 
 Primary likely files:
 1. `cmd/till/main.go`
@@ -621,14 +621,14 @@ Primary likely files:
 ### 7.5 WS-Auth-Continuation
 
 Objective:
-Replace manual shell glue in the MCP/orchestrator approval loop with one supported continuation path that works for orchestrators and future subagent delegation.
+Replace manual shell glue in the MCP/orchestrator approval loop with one supported continuation path that works for orchestrators and future builder/qa delegation.
 
 Acceptance:
 1. an MCP/orchestrator caller can create an auth request through MCP and later determine whether it was approved, denied, canceled, or expired without shell-only inspection as the primary workflow
 2. after approval, the orchestrator has one supported path to resume with the approved session/continuation data
-3. orchestrator-side follow-up flow is explicit enough to support requesting narrower subagent access through the same auth model
+3. orchestrator-side follow-up flow is explicit enough to support requesting narrower builder/qa access through the same auth model
 4. continuation semantics are documented and test-covered across MCP and CLI/operator fallback surfaces
-5. orchestrator continuation/handoff is explicit enough to support later subagent request fan-out without shell-only glue
+5. orchestrator continuation/handoff is explicit enough to support later builder/qa request fan-out without shell-only glue
 6. path/scope information remains visible and final in continuation results so the requester knows the exact granted scope
 
 Primary likely files:
@@ -705,7 +705,7 @@ Before implementation in any lane, inspect and account for:
    - explicit confirm/cancel after the decision is visible.
 8. Land MCP/orchestrator continuation flow so approval can resume without shell-only glue.
 9. Tighten CLI/TUI approval inventory so waiting approvals, resolution notes, and final approved paths are explicit and easy to review.
-10. Define and implement the first orchestrator/subagent scoped-auth choreography on top of that continuation path.
+10. Define and implement the first orchestrator/builder/qa scoped-auth choreography on top of that continuation path.
 11. Enforce scope-policy boundaries:
    - subagents single-project only,
    - orchestrators may be single-project, multi-project, or general/global.
@@ -1354,13 +1354,127 @@ Current status:
    - `just check`,
    - `just ci`.
 3. Final narrow QA re-review was requested after the remediation pass, but the explorer tool stalled instead of returning a clean or failing sign-off; no additional findings surfaced before the gate run completed.
-4. Commit is still pending for this slice.
+4. Slice 1 commit landed as `955083d feat(handoff): add durable coordination substrate`.
 5. No user-run manual test is needed yet; this slice is backend substrate only.
 
 Next step:
-1. commit slice 1 with the green gate evidence above,
-2. start slice 2 from the node-template / truthful-completion track,
+1. start slice 2 from the agent-policy / bounded-delegation track,
 3. ask the user for manual testing only once the first TUI/CLI-facing slice lands.
+
+### 2026-03-21: P5 Slice 2 Agent Policy And Bounded Delegation
+
+Objective:
+- land the first builder/qa-aware agent-policy slice without drifting the active auth/runtime ledger.
+- move role policy from vocabulary-only to real enforcement by validating issuance scope tuples, bounded delegation rules, and mutation action classes.
+
+Files edited in this slice and why:
+1. `cmd/till/main.go`
+   - switch auth help/examples to `orchestrator|builder|qa`.
+2. `cmd/till/main_test.go`
+   - update CLI request/session lifecycle expectations to `builder`.
+3. `internal/adapters/server/common/app_service_adapter_auth_requests_test.go`
+   - align transport-level auth request expectations with `builder`.
+4. `internal/adapters/server/mcpapi/handler.go`
+   - update MCP auth-request tool enums/descriptions to `orchestrator|builder|qa`.
+5. `internal/adapters/server/mcpapi/handler_test.go`
+   - align MCP auth-request test fixtures with `builder`.
+6. `internal/adapters/server/mcpapi/extended_tools.go`
+   - update capability-lease role enum to the public `orchestrator|builder|qa` surface.
+7. `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - align expanded MCP tool tests with the new role vocabulary.
+8. `internal/domain/capability.go`
+   - add the action vocabulary/default role policy helpers and normalize project-scope lease ids.
+9. `internal/domain/auth_request.go`
+   - default agent auth requests to `builder`, keep legacy alias normalization, and admit explicit `qa`.
+10. `internal/domain/errors.go`
+    - add `ErrInvalidCapabilityAction` for fail-closed action checks.
+11. `internal/domain/kind_capability_test.go`
+    - cover role/action helpers plus project-scope lease normalization.
+12. `internal/domain/auth_request_test.go`
+    - cover builder defaulting, explicit qa role, and legacy alias normalization.
+13. `internal/app/mutation_scope.go`
+    - add lease-scope lineage resolution for bounded delegation checks.
+14. `internal/app/kind_capability.go`
+    - validate all lease scope tuples on issuance, reject public `system` lease issuance, enforce parent-bounded delegation, and apply action checks during mutation guard evaluation.
+15. `internal/app/service.go`
+    - thread explicit capability actions through project/task/comment mutations.
+16. `internal/app/handoffs.go`
+    - classify handoff mutations under comment-style capability actions.
+17. `internal/app/attention_capture.go`
+    - classify attention create/resolve under comment/resolve-attention actions.
+18. `internal/app/kind_capability_test.go`
+    - cover bounded delegation, invalid issuance scopes, project-scope normalization, qa action denials, and system-role rejection.
+19. `internal/app/service_test.go`
+    - align guarded task-scope tests with `builder`.
+20. `internal/app/handoffs_test.go`
+    - align guarded handoff tests with `builder`.
+21. `internal/app/auth_requests_test.go`
+    - align requester-override auth lifecycle coverage with `builder`.
+22. `README.md`
+    - sync public status wording with builder/qa scoped auth and action-enforced leases.
+23. `PLAN.md`
+    - sync active run wording and record Slice 2 evidence.
+
+Parallel lane notes:
+1. Builder lane `B1` handled the CLI/MCP role-surface rename and committed it as `11ecca9 feat(auth): update builder and qa role surfaces`.
+2. Two QA lanes reviewed the core uncommitted domain/app policy work and surfaced the final remediation list:
+   - project-scope lease normalization and top-level issuance validation,
+   - real mutation action enforcement for builder vs qa,
+   - equal-scope delegation must come from parent/project policy,
+   - `system` must remain internal-only at the service issuance boundary.
+3. One additional QA re-review lane was requested after remediation, but it stalled without returning before the final gate pass.
+
+Commands run and outcomes:
+1. `mcp__context7_mcp__query_docs(/mark3labs/mcp-go, tool string enums/descriptions/argument binding)` -> PASS; used before the CLI/MCP surface patch.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./internal/app` -> PASS.
+4. `just fmt` -> PASS.
+5. `just test-pkg ./cmd/till` -> PASS.
+6. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+7. `just test-pkg ./internal/adapters/server/common` -> PASS.
+8. `just check` -> PASS.
+9. `just ci` -> PASS.
+10. QA remediation loop:
+    - normalize project-scope lease ids at construction,
+    - validate all lease scope tuples on issuance,
+    - enforce capability actions in mutation guard paths,
+    - add qa-vs-builder negative coverage,
+    - remove child-request self-authorization for equal-scope delegation,
+    - reject public `system` lease issuance.
+11. `just fmt` -> PASS after remediation.
+12. `just test-pkg ./internal/domain` -> PASS after remediation.
+13. `just test-pkg ./internal/app` -> PASS after remediation.
+14. `just test-pkg ./internal/adapters/server/common` -> PASS after remediation.
+15. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS after remediation.
+16. `just test-pkg ./cmd/till` -> PASS after remediation.
+17. `just check` -> PASS after remediation.
+18. `just ci` -> PASS after remediation.
+
+Failures and remediations:
+1. QA gap: project-scoped parent leases with empty `ScopeID` could not delegate correctly.
+   - remediation: project-scope leases now normalize `ScopeID` to `ProjectID` at construction and tests cover the normalized shape.
+2. QA gap: role/action policy existed only as helper vocabulary and did not affect real mutations.
+   - remediation: service mutation guards now require an explicit capability action and fail closed with `ErrInvalidCapabilityAction` when the lease role does not allow it.
+3. QA gap: top-level lease issuance skipped scope validation unless a parent lease was involved.
+   - remediation: `IssueCapabilityLease` now validates and normalizes all scope tuples up front.
+4. QA gap: equal-scope delegation was self-authorizable by the child request.
+   - remediation: equal-scope delegation now depends only on parent/project policy, not the child request input.
+5. QA gap: `system` remained publicly issuable even though the role is internal-only.
+   - remediation: service issuance now rejects `system`, and the public MCP role enum no longer advertises it.
+
+Current status:
+1. Builder/qa vocabulary is active in the CLI and MCP auth/capability surfaces.
+2. Capability leases now validate scope tuples on issuance and enforce action-aware mutation policy in app/service write paths.
+3. Repo-wide gates are green:
+   - `just check`,
+   - `just ci`.
+4. Slice 2 follow-up commit is still pending; the CLI/MCP surface lane is already recorded as `11ecca9`.
+5. No user-run manual test is needed yet; this slice is still backend/transport policy work.
+
+Next step:
+1. commit the Slice 2 domain/app follow-up with the green gate evidence above,
+2. move to the next slice that exposes more of this contract in TUI/CLI workflows,
+3. ask the user for manual testing once the next user-facing slice lands.
 
 ### 2026-03-17: STDIO MCP Runtime Findings
 

@@ -2775,7 +2775,7 @@ func TestCreateTaskMutationGuardRequiredForAgent(t *testing.T) {
 	lease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "agent-1",
 		AgentInstanceID: "agent-1",
 	})
@@ -2877,7 +2877,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeBranch,
 		ScopeID:         branch.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "branch-agent",
 		AgentInstanceID: "branch-agent",
 	})
@@ -2904,7 +2904,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopePhase,
 		ScopeID:         phase.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "phase-agent",
 		AgentInstanceID: "phase-agent",
 	})
@@ -2935,7 +2935,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeTask,
 		ScopeID:         task.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "task-agent",
 		AgentInstanceID: "task-agent",
 	})
@@ -3038,7 +3038,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopePhase,
 		ScopeID:         phaseA.ID,
-		Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "phase-a-agent",
 		AgentInstanceID: "phase-a-agent",
 	})

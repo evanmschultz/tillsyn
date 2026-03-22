@@ -104,12 +104,12 @@ type HandoffUpdateInput struct {
 
 // HandoffListFilter holds scoped query values for listing handoffs.
 type HandoffListFilter struct {
-	ProjectID   string
-	BranchID    string
-	ScopeType   ScopeLevel
-	ScopeID     string
-	Statuses    []HandoffStatus
-	Limit       int
+	ProjectID string
+	BranchID  string
+	ScopeType ScopeLevel
+	ScopeID   string
+	Statuses  []HandoffStatus
+	Limit     int
 }
 
 // NewHandoff validates and constructs one durable handoff record.
