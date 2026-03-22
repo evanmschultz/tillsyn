@@ -146,11 +146,11 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		Path:              "project/p1",
 		PrincipalID:       "resume-agent",
 		PrincipalType:     "agent",
-		PrincipalRole:     "subagent",
+		PrincipalRole:     "builder",
 		RequestedByActor:  "orchestrator-1",
 		RequestedByType:   "agent",
 		RequesterClientID: "orchestrator-client",
-		ClientID:          "subagent-client",
+		ClientID:          "builder-client",
 		ClientType:        "mcp-stdio",
 		RequestedTTL:      "4h",
 		Reason:            "continuation claim",
@@ -197,8 +197,8 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	if !claimed.Request.HasContinuation {
 		t.Fatal("ClaimAuthRequest() has_continuation = false, want true")
 	}
-	if got := claimed.Request.PrincipalRole; got != "subagent" {
-		t.Fatalf("ClaimAuthRequest() principal_role = %q, want subagent", got)
+	if got := claimed.Request.PrincipalRole; got != "builder" {
+		t.Fatalf("ClaimAuthRequest() principal_role = %q, want builder", got)
 	}
 	if got := claimed.Request.RequestedByActor; got != "orchestrator-1" {
 		t.Fatalf("ClaimAuthRequest() requested_by_actor = %q, want orchestrator-1", got)

@@ -300,7 +300,7 @@ Request paths may be:
 Only orchestrators may request projects/... or global scope.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role subagent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
 			"  till auth request create --path projects/p1,p2 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
 			"  till auth request list --project-id p1 --state pending",
 			"  till auth request list --state approved",
@@ -347,7 +347,7 @@ canceled, or times out. Supported --path forms are:
 - global
 
 Optional --principal-role distinguishes agent-shaped requests:
-- subagent is the default agent role,
+- builder is the default agent role,
 - orchestrator must be set explicitly when broader orchestration access is requested.
 
 Optional --continuation-json stores client resume metadata so the requesting
@@ -359,12 +359,13 @@ request list --state pending to inspect the stored request, then resolve it with
 approve, deny, or cancel.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role subagent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/p1 --principal-id qa-agent --principal-type agent --principal-role qa --client-id till-mcp-stdio --client-type mcp-stdio --reason \"qa review\"",
 			"  till auth request create --path project/p1 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"orchestrator review\"",
 			"  till auth request create --path projects/p1,p2 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
 			"  till auth request create --path global --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"general orchestration\"",
 			"  till auth request create --path project/p1/branch/branch-1/phase/phase-a --principal-id review-user --principal-type user --client-id till-tui --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role subagent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"resume-123\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/p1\"}'",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"resume-123\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/p1\"}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -374,7 +375,7 @@ approve, deny, or cancel.
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalID, "principal-id", "", "Principal identifier")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalType, "principal-type", requestCreateOpts.principalType, "Principal type (user|agent|service)")
-	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalRole, "principal-role", "", "Optional agent role (orchestrator|subagent)")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalRole, "principal-role", "", "Optional agent role (orchestrator|builder|qa)")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalName, "principal-name", "", "Optional principal display name")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientID, "client-id", requestCreateOpts.clientID, "Client identifier")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientType, "client-type", requestCreateOpts.clientType, "Client type")

@@ -67,11 +67,11 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.create_auth_request",
-			mcp.WithDescription("Create one persisted pre-session auth request for MCP or local dogfooding. Include continuation_json with a requester-owned resume_token when the requester plans to resume through till.claim_auth_request after human approval. Set requested_by_actor/requested_by_type/requester_client_id when the requester differs from the requested principal/client, such as orchestrator-on-behalf-of-subagent flows."),
+			mcp.WithDescription("Create one persisted pre-session auth request for MCP or local dogfooding. Include continuation_json with a requester-owned resume_token when the requester plans to resume through till.claim_auth_request after human approval. Set requested_by_actor/requested_by_type/requester_client_id when the requester differs from the requested principal/client, such as orchestrator-on-behalf-of-builder or qa flows."),
 			mcp.WithString("path", mcp.Required(), mcp.Description("Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")),
 			mcp.WithString("principal_id", mcp.Required(), mcp.Description("Requested principal identifier")),
 			mcp.WithString("principal_type", mcp.Description("Requested principal type"), mcp.Enum("user", "agent", "service")),
-			mcp.WithString("principal_role", mcp.Description("Optional requested agent role"), mcp.Enum("orchestrator", "subagent")),
+			mcp.WithString("principal_role", mcp.Description("Optional requested agent role"), mcp.Enum("orchestrator", "builder", "qa")),
 			mcp.WithString("principal_name", mcp.Description("Optional principal display name")),
 			mcp.WithString("requested_by_actor", mcp.Description("Optional requester actor identifier when one orchestrator requests auth on behalf of another principal")),
 			mcp.WithString("requested_by_type", mcp.Description("Optional requester actor type"), mcp.Enum("user", "agent", "system")),

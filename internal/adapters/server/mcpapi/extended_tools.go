@@ -1138,7 +1138,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
-			mcp.WithString("role", mcp.Required(), mcp.Description("orchestrator|worker|system"), mcp.Enum("orchestrator", "worker", "system")),
+			mcp.WithString("role", mcp.Required(), mcp.Description("orchestrator|builder|qa"), mcp.Enum("orchestrator", "builder", "qa")),
 			mcp.WithString("agent_name", mcp.Required(), mcp.Description("Agent display/name identifier")),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional stable agent instance id")),
 			mcp.WithString("parent_instance_id", mcp.Description("Optional parent lease instance id")),

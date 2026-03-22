@@ -600,7 +600,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--path", "project/p1",
 		"--principal-id", "review-agent",
 		"--principal-type", "agent",
-		"--principal-role", "subagent",
+		"--principal-role", "builder",
 		"--client-id", "till-mcp-stdio",
 		"--client-type", "mcp-stdio",
 		"--reason", "manual MCP review",
@@ -622,8 +622,8 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if got := created.Path; got != "project/p1" {
 		t.Fatalf("create path = %q, want project/p1", got)
 	}
-	if got := created.PrincipalRole; got != "subagent" {
-		t.Fatalf("create principal_role = %q, want subagent", got)
+	if got := created.PrincipalRole; got != "builder" {
+		t.Fatalf("create principal_role = %q, want builder", got)
 	}
 	if !created.HasContinuation {
 		t.Fatal("create has_continuation = false, want true")
@@ -746,8 +746,8 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if got := validated.PrincipalID; got != "review-agent" {
 		t.Fatalf("validate principal_id = %q, want review-agent", got)
 	}
-	if got := validated.PrincipalRole; got != "subagent" {
-		t.Fatalf("validate principal_role = %q, want subagent", got)
+	if got := validated.PrincipalRole; got != "builder" {
+		t.Fatalf("validate principal_role = %q, want builder", got)
 	}
 	if got := validated.State; got != "active" {
 		t.Fatalf("validate state = %q, want active", got)
@@ -789,8 +789,8 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if got := sessions[0].ApprovedPath; got != "project/p1/branch/review-branch" {
 		t.Fatalf("session list approved_path = %q, want project/p1/branch/review-branch", got)
 	}
-	if got := sessions[0].PrincipalRole; got != "subagent" {
-		t.Fatalf("session list principal_role = %q, want subagent", got)
+	if got := sessions[0].PrincipalRole; got != "builder" {
+		t.Fatalf("session list principal_role = %q, want builder", got)
 	}
 
 	if err := run(context.Background(), []string{
