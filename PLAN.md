@@ -1269,6 +1269,99 @@ Current next action lock:
 
 ## 8) Lightweight Execution Log
 
+### 2026-03-21: P5 Slice 1 Durable Handoff Substrate
+
+Objective:
+- land the first durable handoff slice under the post-dogfood roadmap without drifting the active source-of-truth ledger.
+- cover domain/app/sqlite/snapshot substrate first so later node-template, agent-policy, TUI, and CLI work can build on persisted handoff state.
+
+Files edited in this slice and why:
+1. `internal/domain/errors.go`
+   - add explicit handoff validation and transition errors.
+2. `internal/domain/handoff.go`
+   - add durable handoff domain model, validation, normalization, update transitions, and list-filter support.
+3. `internal/domain/handoff_test.go`
+   - cover create/update/list-filter normalization and terminal transition rules.
+4. `internal/app/ports.go`
+   - expose optional `HandoffRepository` service dependency.
+5. `internal/app/service.go`
+   - wire the optional handoff repository into the service.
+6. `internal/app/service_test.go`
+   - extend `fakeRepo` with durable handoff storage and deterministic list/update behavior.
+7. `internal/app/handoffs.go`
+   - add create/get/list/update service APIs, source-scope validation, mutation-actor handling, and clearable optional field behavior.
+8. `internal/app/handoffs_test.go`
+   - cover lifecycle, guarded context-derived attribution, missing-scope list rejection, and clear-field update behavior.
+9. `internal/app/snapshot.go`
+   - export/import/validate/sort durable handoffs and reject orphan source/target scope references.
+10. `internal/app/snapshot_test.go`
+   - cover handoff snapshot export/import plus orphan-scope validation.
+11. `internal/adapters/storage/sqlite/repo.go`
+   - add `handoffs` schema and supporting indexes, including updated-at-aligned status ordering.
+12. `internal/adapters/storage/sqlite/handoff.go`
+   - add durable handoff persistence with fail-closed actor-type validation and role normalization.
+13. `internal/adapters/storage/sqlite/handoff_test.go`
+   - cover schema, round-trip, validation, filtering, ordering, and normalized-role behavior.
+
+Parallel lane notes:
+1. Two builder lanes were used for the substrate split:
+   - app/domain/snapshot lane,
+   - sqlite lane.
+2. Two independent QA lanes per builder reviewed the initial slice and fed back the current remediation list.
+3. Final integrated re-review lanes are running now:
+   - `P5-S1-QA-A` for domain/app/snapshot,
+   - `P5-S1-QA-B` for sqlite/migration.
+
+Commands run and outcomes:
+1. `sed -n '1,240p' Justfile` -> PASS; confirmed `just` recipes remain the local source of truth.
+2. `just fmt` -> PASS.
+3. `just test-pkg ./internal/domain` -> PASS.
+4. `just test-pkg ./internal/app` -> FAIL; first pass exposed:
+   - context-derived mutation actor was not overriding explicit handoff attribution when authenticated context was present,
+   - snapshot test expected newest-first handoff ordering, but snapshot sort is deterministic lexical ordering.
+5. `just test-pkg ./internal/adapters/storage/sqlite` -> FAIL; first pass exposed one test mismatch because target roles are intentionally cleared when no target scope is present.
+6. `mcp__context7_mcp__query_docs(/websites/pkg_go_dev_go1_25_3, database/sql QueryRow/Scan + context guidance)` -> PASS; used before and after failed test loops per repo policy.
+7. Remediation pass:
+   - prefer context actor identity for handoff create/update attribution when authenticated mutation context is present,
+   - keep guard enforcement intact so agent attribution still requires a valid mutation lease,
+   - fix snapshot test to match deterministic sort behavior,
+   - fix sqlite role test to use a real target tuple,
+   - align handoff status index with `updated_at DESC, id DESC`.
+8. `just fmt` -> PASS after remediation.
+9. `just test-pkg ./internal/domain` -> PASS after remediation.
+10. `just test-pkg ./internal/app` -> PASS after remediation.
+11. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS after remediation.
+12. `mcp__gopls__go_diagnostics` -> PASS; no diagnostics.
+13. `just check` -> PASS.
+14. `just ci` -> PASS.
+
+Failures and remediations:
+1. App test failure: handoff create persisted explicit actor input instead of authenticated context actor.
+   - remediation: handoff service now prefers authenticated context actor metadata for persisted handoff attribution while preserving lease enforcement for agent callers.
+2. Snapshot test failure: assertion assumed newest-first ordering.
+   - remediation: test now matches the deterministic lexical snapshot sort contract.
+3. SQLite test failure: target role assertion ignored the invariant that target role clears when the target tuple is absent.
+   - remediation: test now uses a real target tuple and the adapter keeps the existing invariant.
+4. QA review gap: status list query sorted by `updated_at` while the status index was still keyed on `created_at`.
+   - remediation: migration now drops the old status index name and creates the `updated_at`-aligned replacement index.
+
+Current status:
+1. Slice 1 package gates are green for:
+   - `./internal/domain`,
+   - `./internal/app`,
+   - `./internal/adapters/storage/sqlite`.
+2. Repo-wide gates are green:
+   - `just check`,
+   - `just ci`.
+3. Final narrow QA re-review was requested after the remediation pass, but the explorer tool stalled instead of returning a clean or failing sign-off; no additional findings surfaced before the gate run completed.
+4. Commit is still pending for this slice.
+5. No user-run manual test is needed yet; this slice is backend substrate only.
+
+Next step:
+1. commit slice 1 with the green gate evidence above,
+2. start slice 2 from the node-template / truthful-completion track,
+3. ask the user for manual testing only once the first TUI/CLI-facing slice lands.
+
 ### 2026-03-17: STDIO MCP Runtime Findings
 
 Objective:

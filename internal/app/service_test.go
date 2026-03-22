@@ -21,6 +21,7 @@ type fakeRepo struct {
 	comments            map[string][]domain.Comment
 	attentionItems      map[string]domain.AttentionItem
 	authRequests        map[string]domain.AuthRequest
+	handoffs            map[string]domain.Handoff
 	changeEvents        map[string][]domain.ChangeEvent
 	kindDefs            map[domain.KindID]domain.KindDefinition
 	projectAllowedKinds map[string][]domain.KindID
@@ -41,6 +42,7 @@ func newFakeRepo() *fakeRepo {
 		comments:            map[string][]domain.Comment{},
 		attentionItems:      map[string]domain.AttentionItem{},
 		authRequests:        map[string]domain.AuthRequest{},
+		handoffs:            map[string]domain.Handoff{},
 		changeEvents:        map[string][]domain.ChangeEvent{},
 		kindDefs:            map[domain.KindID]domain.KindDefinition{},
 		projectAllowedKinds: map[string][]domain.KindID{},
@@ -441,6 +443,80 @@ func (f *fakeRepo) UpdateAuthRequest(_ context.Context, request domain.AuthReque
 		return ErrNotFound
 	}
 	f.authRequests[request.ID] = request
+	return nil
+}
+
+// CreateHandoff stores one durable handoff row.
+func (f *fakeRepo) CreateHandoff(_ context.Context, handoff domain.Handoff) error {
+	f.handoffs[handoff.ID] = handoff
+	return nil
+}
+
+// GetHandoff returns one durable handoff row by id.
+func (f *fakeRepo) GetHandoff(_ context.Context, handoffID string) (domain.Handoff, error) {
+	handoff, ok := f.handoffs[handoffID]
+	if !ok {
+		return domain.Handoff{}, ErrNotFound
+	}
+	return handoff, nil
+}
+
+// ListHandoffs lists durable handoffs with deterministic filtering and ordering.
+func (f *fakeRepo) ListHandoffs(_ context.Context, filter domain.HandoffListFilter) ([]domain.Handoff, error) {
+	filter, err := domain.NormalizeHandoffListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	matchesStatus := func(handoff domain.Handoff) bool {
+		if len(filter.Statuses) == 0 {
+			return true
+		}
+		for _, status := range filter.Statuses {
+			if handoff.Status == status {
+				return true
+			}
+		}
+		return false
+	}
+
+	out := make([]domain.Handoff, 0, len(f.handoffs))
+	for _, handoff := range f.handoffs {
+		if handoff.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.BranchID != "" && handoff.BranchID != filter.BranchID {
+			continue
+		}
+		if filter.ScopeType != "" && handoff.ScopeType != filter.ScopeType {
+			continue
+		}
+		if filter.ScopeID != "" && handoff.ScopeID != filter.ScopeID {
+			continue
+		}
+		if !matchesStatus(handoff) {
+			continue
+		}
+		out = append(out, handoff)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// UpdateHandoff stores one durable handoff update.
+func (f *fakeRepo) UpdateHandoff(_ context.Context, handoff domain.Handoff) error {
+	if _, ok := f.handoffs[handoff.ID]; !ok {
+		return ErrNotFound
+	}
+	f.handoffs[handoff.ID] = handoff
 	return nil
 }
 

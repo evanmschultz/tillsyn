@@ -98,6 +98,7 @@ type Service struct {
 	defaultLeaseTTL    time.Duration
 	requireAgentLease  bool
 	authRequests       AuthRequestGateway
+	handoffRepo        HandoffRepository
 	schemaCache        map[string]schemaCacheEntry
 	schemaCacheMu      sync.RWMutex
 	kindBootstrap      kindBootstrapState
@@ -137,6 +138,7 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 			searchIndex = idx
 		}
 	}
+	handoffRepo, _ := repo.(HandoffRepository)
 	lexicalWeight, semanticWeight := normalizeSearchWeights(cfg.SearchLexicalWeight, cfg.SearchSemanticWeight)
 	semanticCandidates := cfg.SearchSemanticCandidates
 	if semanticCandidates <= 0 {
@@ -153,6 +155,7 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		defaultLeaseTTL:    cfg.CapabilityLeaseTTL,
 		requireAgentLease:  requireAgentLease,
 		authRequests:       cfg.AuthRequests,
+		handoffRepo:        handoffRepo,
 		schemaCache:        map[string]schemaCacheEntry{},
 		embeddingGenerator: cfg.EmbeddingGenerator,
 		searchIndex:        searchIndex,

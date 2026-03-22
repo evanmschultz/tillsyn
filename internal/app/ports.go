@@ -49,3 +49,11 @@ type Repository interface {
 	ListCapabilityLeasesByScope(context.Context, string, domain.CapabilityScopeType, string) ([]domain.CapabilityLease, error)
 	RevokeCapabilityLeasesByScope(context.Context, string, domain.CapabilityScopeType, string, time.Time, string) error
 }
+
+// HandoffRepository represents optional durable handoff storage used by this package.
+type HandoffRepository interface {
+	CreateHandoff(context.Context, domain.Handoff) error
+	GetHandoff(context.Context, string) (domain.Handoff, error)
+	ListHandoffs(context.Context, domain.HandoffListFilter) ([]domain.Handoff, error)
+	UpdateHandoff(context.Context, domain.Handoff) error
+}

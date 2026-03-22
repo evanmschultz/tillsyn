@@ -74,6 +74,40 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 		t.Fatalf("NewCapabilityLease() error = %v", err)
 	}
 	repo.capabilityLeases[lease.InstanceID] = lease
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:              "handoff-1",
+		ProjectID:       p1.ID,
+		ScopeType:       domain.ScopeLevelTask,
+		ScopeID:         t1.ID,
+		SourceRole:      "builder",
+		TargetRole:      "qa",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "Wait for QA",
+		NextAction:      "QA reviews work",
+		MissingEvidence: []string{"manual qa"},
+		CreatedByActor:  "tester",
+		CreatedByType:   domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+	repo.handoffs[handoff.ID] = handoff
+	archivedHandoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:             "handoff-2",
+		ProjectID:      p2.ID,
+		ScopeType:      domain.ScopeLevelTask,
+		ScopeID:        t2.ID,
+		SourceRole:     "builder",
+		TargetRole:     "qa",
+		Status:         domain.HandoffStatusWaiting,
+		Summary:        "Wait for archived QA",
+		CreatedByActor: "tester",
+		CreatedByType:  domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff(archived) error = %v", err)
+	}
+	repo.handoffs[archivedHandoff.ID] = archivedHandoff
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(3 * time.Minute) }, ServiceConfig{})
 
@@ -92,6 +126,9 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	}
 	if len(snapActive.Tasks) != 1 || snapActive.Tasks[0].ID != t1.ID {
 		t.Fatalf("unexpected active tasks %#v", snapActive.Tasks)
+	}
+	if len(snapActive.Handoffs) != 1 || snapActive.Handoffs[0].ID != handoff.ID {
+		t.Fatalf("expected only active-scope handoff in active snapshot, got %#v", snapActive.Handoffs)
 	}
 
 	snapAll, err := svc.ExportSnapshot(context.Background(), true)
@@ -115,6 +152,12 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	}
 	if len(snapAll.CapabilityLeases) != 1 || snapAll.CapabilityLeases[0].InstanceID != "lease-1" {
 		t.Fatalf("expected capability lease closure in snapshot, got %#v", snapAll.CapabilityLeases)
+	}
+	if len(snapAll.Handoffs) != 2 {
+		t.Fatalf("expected archived-scope handoff in full snapshot, got %#v", snapAll.Handoffs)
+	}
+	if snapAll.Handoffs[0].ID != "handoff-1" || snapAll.Handoffs[1].ID != "handoff-2" {
+		t.Fatalf("expected deterministic lexical handoff order in snapshot, got %#v", snapAll.Handoffs)
 	}
 	foundMeta := false
 	for _, sp := range snapAll.Projects {
@@ -198,6 +241,25 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 				HeartbeatAt: now.Add(2 * time.Minute),
 			},
 		},
+		Handoffs: []SnapshotHandoff{
+			{
+				ID:             "handoff-1",
+				ProjectID:      "p1",
+				ScopeType:      domain.ScopeLevelTask,
+				ScopeID:        "t1",
+				SourceRole:     "builder",
+				TargetRole:     "qa",
+				Status:         domain.HandoffStatusWaiting,
+				Summary:        "Imported handoff",
+				NextAction:     "Wait for QA",
+				CreatedByActor: "importer",
+				CreatedByType:  domain.ActorTypeUser,
+				CreatedAt:      now,
+				UpdatedByActor: "importer",
+				UpdatedByType:  domain.ActorTypeUser,
+				UpdatedAt:      now.Add(time.Minute),
+			},
+		},
 	}
 
 	if err := svc.ImportSnapshot(context.Background(), snap); err != nil {
@@ -244,6 +306,9 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	}
 	if _, ok := repo.capabilityLeases["lease-1"]; !ok {
 		t.Fatal("expected imported capability lease lease-1")
+	}
+	if _, ok := repo.handoffs["handoff-1"]; !ok {
+		t.Fatal("expected imported handoff handoff-1")
 	}
 }
 
@@ -304,6 +369,40 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 	}
 	if err := svc.ImportSnapshot(context.Background(), validNestedPhase); err != nil {
 		t.Fatalf("expected valid nested phase lineage to import, got %v", err)
+	}
+
+	orphanHandoff := Snapshot{
+		Version: SnapshotVersion,
+		Projects: []SnapshotProject{
+			{ID: "p3", Name: "C", Slug: "c", CreatedAt: now, UpdatedAt: now},
+		},
+		Columns: []SnapshotColumn{
+			{ID: "c3", ProjectID: "p3", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
+		},
+		Tasks: []SnapshotTask{
+			{ID: "t3", ProjectID: "p3", ColumnID: "c3", Position: 0, Title: "Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+		},
+		Handoffs: []SnapshotHandoff{
+			{
+				ID:             "handoff-missing",
+				ProjectID:      "p3",
+				ScopeType:      domain.ScopeLevelTask,
+				ScopeID:        "missing-task",
+				SourceRole:     "builder",
+				TargetRole:     "qa",
+				Status:         domain.HandoffStatusWaiting,
+				Summary:        "Broken handoff",
+				CreatedByActor: "importer",
+				CreatedByType:  domain.ActorTypeUser,
+				CreatedAt:      now,
+				UpdatedByActor: "importer",
+				UpdatedByType:  domain.ActorTypeUser,
+				UpdatedAt:      now,
+			},
+		},
+	}
+	if err := svc.ImportSnapshot(context.Background(), orphanHandoff); err == nil || !strings.Contains(err.Error(), "unknown source scope") {
+		t.Fatalf("expected orphan handoff validation error, got %v", err)
 	}
 }
 

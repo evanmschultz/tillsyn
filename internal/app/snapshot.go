@@ -13,7 +13,7 @@ import (
 )
 
 // SnapshotVersion defines the canonical snapshot schema version.
-const SnapshotVersion = "tillsyn.snapshot.v2"
+const SnapshotVersion = "tillsyn.snapshot.v3"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
@@ -26,6 +26,7 @@ type Snapshot struct {
 	ProjectAllowedKinds []SnapshotProjectAllowedKinds `json:"project_allowed_kinds,omitempty"`
 	Comments            []SnapshotComment             `json:"comments,omitempty"`
 	CapabilityLeases    []SnapshotCapabilityLease     `json:"capability_leases,omitempty"`
+	Handoffs            []SnapshotHandoff             `json:"handoffs,omitempty"`
 }
 
 // SnapshotProject represents snapshot project data used by this package.
@@ -135,6 +136,35 @@ type SnapshotCapabilityLease struct {
 	RevokedReason             string                     `json:"revoked_reason,omitempty"`
 }
 
+// SnapshotHandoff represents one durable handoff row in a snapshot.
+type SnapshotHandoff struct {
+	ID              string               `json:"id"`
+	ProjectID       string               `json:"project_id"`
+	BranchID        string               `json:"branch_id,omitempty"`
+	ScopeType       domain.ScopeLevel    `json:"scope_type"`
+	ScopeID         string               `json:"scope_id"`
+	SourceRole      string               `json:"source_role,omitempty"`
+	TargetBranchID  string               `json:"target_branch_id,omitempty"`
+	TargetScopeType domain.ScopeLevel    `json:"target_scope_type,omitempty"`
+	TargetScopeID   string               `json:"target_scope_id,omitempty"`
+	TargetRole      string               `json:"target_role,omitempty"`
+	Status          domain.HandoffStatus `json:"status"`
+	Summary         string               `json:"summary"`
+	NextAction      string               `json:"next_action,omitempty"`
+	MissingEvidence []string             `json:"missing_evidence,omitempty"`
+	RelatedRefs     []string             `json:"related_refs,omitempty"`
+	CreatedByActor  string               `json:"created_by_actor"`
+	CreatedByType   domain.ActorType     `json:"created_by_type"`
+	CreatedAt       time.Time            `json:"created_at"`
+	UpdatedByActor  string               `json:"updated_by_actor"`
+	UpdatedByType   domain.ActorType     `json:"updated_by_type"`
+	UpdatedAt       time.Time            `json:"updated_at"`
+	ResolvedByActor string               `json:"resolved_by_actor,omitempty"`
+	ResolvedByType  domain.ActorType     `json:"resolved_by_type,omitempty"`
+	ResolvedAt      *time.Time           `json:"resolved_at,omitempty"`
+	ResolutionNote  string               `json:"resolution_note,omitempty"`
+}
+
 // ExportSnapshot handles export snapshot.
 func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Snapshot, error) {
 	kindDefinitions, err := s.repo.ListKindDefinitions(ctx, includeArchived)
@@ -157,6 +187,7 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 		ProjectAllowedKinds: make([]SnapshotProjectAllowedKinds, 0, len(projects)),
 		Comments:            make([]SnapshotComment, 0),
 		CapabilityLeases:    make([]SnapshotCapabilityLease, 0),
+		Handoffs:            make([]SnapshotHandoff, 0),
 	}
 	for _, kind := range kindDefinitions {
 		snap.KindDefinitions = append(snap.KindDefinitions, snapshotKindDefinitionFromDomain(kind))
@@ -202,6 +233,12 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 			return Snapshot{}, listErr
 		}
 		snap.CapabilityLeases = append(snap.CapabilityLeases, leases...)
+
+		handoffs, listErr := s.handoffsForProjectSnapshot(ctx, project.ID, tasks)
+		if listErr != nil {
+			return Snapshot{}, listErr
+		}
+		snap.Handoffs = append(snap.Handoffs, handoffs...)
 	}
 
 	snap.sort()
@@ -277,6 +314,9 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 		return err
 	}
 	if err := s.importSnapshotCapabilityLeases(ctx, snap.CapabilityLeases); err != nil {
+		return err
+	}
+	if err := s.importSnapshotHandoffs(ctx, snap.Handoffs); err != nil {
 		return err
 	}
 
@@ -570,6 +610,106 @@ func (s *Snapshot) Validate() error {
 		leaseIDs[instanceID] = struct{}{}
 	}
 
+	availableHandoffScopes := snapshotAvailableHandoffScopes(s.Projects, s.Tasks)
+	handoffIDs := map[string]struct{}{}
+	for i, handoff := range s.Handoffs {
+		handoffID := strings.TrimSpace(handoff.ID)
+		if handoffID == "" {
+			return fmt.Errorf("handoffs[%d].id is required", i)
+		}
+		if _, exists := handoffIDs[handoffID]; exists {
+			return fmt.Errorf("duplicate handoff id: %q", handoffID)
+		}
+		source, err := domain.NewLevelTuple(domain.LevelTupleInput{
+			ProjectID: handoff.ProjectID,
+			BranchID:  handoff.BranchID,
+			ScopeType: handoff.ScopeType,
+			ScopeID:   handoff.ScopeID,
+		})
+		if err != nil {
+			return fmt.Errorf("handoffs[%d] source invalid: %w", i, err)
+		}
+		if _, ok := projectIDs[source.ProjectID]; !ok {
+			return fmt.Errorf("handoffs[%d] references unknown project_id %q", i, source.ProjectID)
+		}
+		if _, ok := availableHandoffScopes[snapshotHandoffScopeKey(source.ProjectID, source.ScopeType, source.ScopeID)]; !ok {
+			return fmt.Errorf("handoffs[%d] references unknown source scope %q:%q", i, source.ScopeType, source.ScopeID)
+		}
+		if strings.TrimSpace(handoff.Summary) == "" {
+			return fmt.Errorf("handoffs[%d].summary is required", i)
+		}
+		status := domain.NormalizeHandoffStatus(handoff.Status)
+		if !domain.IsValidHandoffStatus(status) {
+			return fmt.Errorf("handoffs[%d].status invalid: %q", i, handoff.Status)
+		}
+		if handoff.CreatedAt.IsZero() || handoff.UpdatedAt.IsZero() {
+			return fmt.Errorf("handoffs[%d] timestamps are required", i)
+		}
+		createdByType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(handoff.CreatedByType))))
+		if createdByType == "" {
+			createdByType = domain.ActorTypeUser
+		}
+		if !isSupportedActorType(createdByType) {
+			return fmt.Errorf("handoffs[%d].created_by_type invalid: %q", i, handoff.CreatedByType)
+		}
+		updatedByType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(handoff.UpdatedByType))))
+		if updatedByType == "" {
+			updatedByType = createdByType
+		}
+		if !isSupportedActorType(updatedByType) {
+			return fmt.Errorf("handoffs[%d].updated_by_type invalid: %q", i, handoff.UpdatedByType)
+		}
+		if domain.IsTerminalHandoffStatus(status) {
+			if handoff.ResolvedAt == nil || handoff.ResolvedAt.IsZero() {
+				return fmt.Errorf("handoffs[%d].resolved_at is required for terminal status", i)
+			}
+			if strings.TrimSpace(handoff.ResolvedByActor) == "" {
+				return fmt.Errorf("handoffs[%d].resolved_by_actor is required for terminal status", i)
+			}
+			resolvedByType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(handoff.ResolvedByType))))
+			if resolvedByType == "" {
+				resolvedByType = updatedByType
+			}
+			if !isSupportedActorType(resolvedByType) {
+				return fmt.Errorf("handoffs[%d].resolved_by_type invalid: %q", i, handoff.ResolvedByType)
+			}
+			s.Handoffs[i].ResolvedByType = resolvedByType
+		} else if handoff.ResolvedAt != nil {
+			return fmt.Errorf("handoffs[%d].resolved_at must be empty for non-terminal status", i)
+		}
+		target, err := normalizeHandoffSnapshotTarget(source.ProjectID, handoff)
+		if err != nil {
+			return fmt.Errorf("handoffs[%d] target invalid: %w", i, err)
+		}
+		if target.ScopeType != "" {
+			if _, ok := availableHandoffScopes[snapshotHandoffScopeKey(target.ProjectID, target.ScopeType, target.ScopeID)]; !ok {
+				return fmt.Errorf("handoffs[%d] references unknown target scope %q:%q", i, target.ScopeType, target.ScopeID)
+			}
+		}
+		s.Handoffs[i].ID = handoffID
+		s.Handoffs[i].ProjectID = source.ProjectID
+		s.Handoffs[i].BranchID = source.BranchID
+		s.Handoffs[i].ScopeType = source.ScopeType
+		s.Handoffs[i].ScopeID = source.ScopeID
+		s.Handoffs[i].SourceRole = normalizeHandoffRole(handoff.SourceRole)
+		s.Handoffs[i].TargetBranchID = strings.TrimSpace(handoff.TargetBranchID)
+		s.Handoffs[i].TargetScopeType = domain.NormalizeScopeLevel(handoff.TargetScopeType)
+		s.Handoffs[i].TargetScopeID = strings.TrimSpace(handoff.TargetScopeID)
+		s.Handoffs[i].TargetRole = normalizeHandoffRole(handoff.TargetRole)
+		s.Handoffs[i].Status = status
+		s.Handoffs[i].Summary = strings.TrimSpace(handoff.Summary)
+		s.Handoffs[i].NextAction = strings.TrimSpace(handoff.NextAction)
+		s.Handoffs[i].CreatedByActor = chooseActorID(handoff.CreatedByActor)
+		s.Handoffs[i].CreatedByType = createdByType
+		s.Handoffs[i].UpdatedByActor = chooseActorID(handoff.UpdatedByActor, handoff.CreatedByActor)
+		s.Handoffs[i].UpdatedByType = updatedByType
+		s.Handoffs[i].MissingEvidence = normalizeHandoffList(handoff.MissingEvidence)
+		s.Handoffs[i].RelatedRefs = normalizeHandoffList(handoff.RelatedRefs)
+		s.Handoffs[i].ResolvedByActor = strings.TrimSpace(handoff.ResolvedByActor)
+		s.Handoffs[i].ResolutionNote = strings.TrimSpace(handoff.ResolutionNote)
+		handoffIDs[handoffID] = struct{}{}
+	}
+
 	return nil
 }
 
@@ -622,6 +762,33 @@ func (s *Service) commentsForProjectSnapshot(ctx context.Context, project domain
 		for _, comment := range comments {
 			out = append(out, snapshotCommentFromDomain(comment))
 		}
+	}
+	return out, nil
+}
+
+// handoffsForProjectSnapshot collects durable handoffs for snapshot export.
+func (s *Service) handoffsForProjectSnapshot(ctx context.Context, projectID string, tasks []domain.Task) ([]SnapshotHandoff, error) {
+	if s.handoffRepo == nil {
+		return nil, nil
+	}
+	availableScopes := snapshotAvailableDomainHandoffScopes(projectID, tasks)
+	handoffs, err := s.handoffRepo.ListHandoffs(ctx, domain.HandoffListFilter{
+		ProjectID: projectID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SnapshotHandoff, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		if _, ok := availableScopes[snapshotHandoffScopeKey(handoff.ProjectID, handoff.ScopeType, handoff.ScopeID)]; !ok {
+			continue
+		}
+		if handoff.TargetScopeType != "" {
+			if _, ok := availableScopes[snapshotHandoffScopeKey(handoff.ProjectID, handoff.TargetScopeType, handoff.TargetScopeID)]; !ok {
+				continue
+			}
+		}
+		out = append(out, snapshotHandoffFromDomain(handoff))
 	}
 	return out, nil
 }
@@ -710,6 +877,28 @@ func (s *Service) importSnapshotCapabilityLeases(ctx context.Context, leases []S
 			return err
 		}
 		if err := s.repo.CreateCapabilityLease(ctx, lease); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// importSnapshotHandoffs upserts snapshot handoffs by deterministic handoff identity.
+func (s *Service) importSnapshotHandoffs(ctx context.Context, handoffs []SnapshotHandoff) error {
+	if s.handoffRepo == nil {
+		return nil
+	}
+	for _, snapshotHandoff := range handoffs {
+		handoff := snapshotHandoff.toDomain()
+		if _, err := s.handoffRepo.GetHandoff(ctx, handoff.ID); err == nil {
+			if err := s.handoffRepo.UpdateHandoff(ctx, handoff); err != nil {
+				return err
+			}
+			continue
+		} else if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if err := s.handoffRepo.CreateHandoff(ctx, handoff); err != nil {
 			return err
 		}
 	}
@@ -842,6 +1031,26 @@ func (s *Snapshot) sort() {
 		}
 		return a.ProjectID < b.ProjectID
 	})
+	sort.Slice(s.Handoffs, func(i, j int) bool {
+		a := s.Handoffs[i]
+		b := s.Handoffs[j]
+		if a.ProjectID == b.ProjectID {
+			if a.BranchID == b.BranchID {
+				if a.ScopeType == b.ScopeType {
+					if a.ScopeID == b.ScopeID {
+						if a.CreatedAt.Equal(b.CreatedAt) {
+							return a.ID < b.ID
+						}
+						return a.CreatedAt.Before(b.CreatedAt)
+					}
+					return a.ScopeID < b.ScopeID
+				}
+				return a.ScopeType < b.ScopeType
+			}
+			return a.BranchID < b.BranchID
+		}
+		return a.ProjectID < b.ProjectID
+	})
 }
 
 // snapshotProjectFromDomain handles snapshot project from domain.
@@ -955,6 +1164,100 @@ func snapshotCapabilityLeaseFromDomain(lease domain.CapabilityLease) SnapshotCap
 		RevokedAt:                 copyTimePtr(lease.RevokedAt),
 		RevokedReason:             lease.RevokedReason,
 	}
+}
+
+// snapshotHandoffFromDomain converts one handoff to snapshot payload form.
+func snapshotHandoffFromDomain(handoff domain.Handoff) SnapshotHandoff {
+	return SnapshotHandoff{
+		ID:              handoff.ID,
+		ProjectID:       handoff.ProjectID,
+		BranchID:        handoff.BranchID,
+		ScopeType:       handoff.ScopeType,
+		ScopeID:         handoff.ScopeID,
+		SourceRole:      handoff.SourceRole,
+		TargetBranchID:  handoff.TargetBranchID,
+		TargetScopeType: handoff.TargetScopeType,
+		TargetScopeID:   handoff.TargetScopeID,
+		TargetRole:      handoff.TargetRole,
+		Status:          handoff.Status,
+		Summary:         handoff.Summary,
+		NextAction:      handoff.NextAction,
+		MissingEvidence: append([]string(nil), handoff.MissingEvidence...),
+		RelatedRefs:     append([]string(nil), handoff.RelatedRefs...),
+		CreatedByActor:  handoff.CreatedByActor,
+		CreatedByType:   handoff.CreatedByType,
+		CreatedAt:       handoff.CreatedAt.UTC(),
+		UpdatedByActor:  handoff.UpdatedByActor,
+		UpdatedByType:   handoff.UpdatedByType,
+		UpdatedAt:       handoff.UpdatedAt.UTC(),
+		ResolvedByActor: handoff.ResolvedByActor,
+		ResolvedByType:  handoff.ResolvedByType,
+		ResolvedAt:      copyTimePtr(handoff.ResolvedAt),
+		ResolutionNote:  handoff.ResolutionNote,
+	}
+}
+
+// normalizeHandoffSnapshotTarget validates one optional handoff target tuple.
+func normalizeHandoffSnapshotTarget(projectID string, handoff SnapshotHandoff) (domain.LevelTuple, error) {
+	if strings.TrimSpace(handoff.TargetBranchID) == "" && strings.TrimSpace(string(handoff.TargetScopeType)) == "" && strings.TrimSpace(handoff.TargetScopeID) == "" {
+		return domain.LevelTuple{}, nil
+	}
+	return domain.NewLevelTuple(domain.LevelTupleInput{
+		ProjectID: projectID,
+		BranchID:  handoff.TargetBranchID,
+		ScopeType: handoff.TargetScopeType,
+		ScopeID:   handoff.TargetScopeID,
+	})
+}
+
+// snapshotAvailableHandoffScopes builds the set of valid source/target scopes present in one snapshot payload.
+func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []SnapshotTask) map[string]struct{} {
+	out := make(map[string]struct{}, len(projects)+len(tasks))
+	for _, project := range projects {
+		projectID := strings.TrimSpace(project.ID)
+		if projectID == "" {
+			continue
+		}
+		out[snapshotHandoffScopeKey(projectID, domain.ScopeLevelProject, projectID)] = struct{}{}
+	}
+	for _, task := range tasks {
+		projectID := strings.TrimSpace(task.ProjectID)
+		scopeID := strings.TrimSpace(task.ID)
+		if projectID == "" || scopeID == "" {
+			continue
+		}
+		scopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+		if scopeType == "" {
+			scopeType = domain.ScopeLevelTask
+		}
+		out[snapshotHandoffScopeKey(projectID, scopeType, scopeID)] = struct{}{}
+	}
+	return out
+}
+
+// snapshotAvailableDomainHandoffScopes builds the set of valid source/target scopes for export.
+func snapshotAvailableDomainHandoffScopes(projectID string, tasks []domain.Task) map[string]struct{} {
+	projectID = strings.TrimSpace(projectID)
+	out := map[string]struct{}{
+		snapshotHandoffScopeKey(projectID, domain.ScopeLevelProject, projectID): {},
+	}
+	for _, task := range tasks {
+		scopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+		if scopeType == "" {
+			scopeType = domain.ScopeLevelTask
+		}
+		out[snapshotHandoffScopeKey(projectID, scopeType, task.ID)] = struct{}{}
+	}
+	return out
+}
+
+// snapshotHandoffScopeKey returns a stable key for one handoff scope reference.
+func snapshotHandoffScopeKey(projectID string, scopeType domain.ScopeLevel, scopeID string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(projectID),
+		string(domain.NormalizeScopeLevel(scopeType)),
+		strings.TrimSpace(scopeID),
+	}, "|")
 }
 
 // toDomain converts domain.
@@ -1127,6 +1430,37 @@ func (l SnapshotCapabilityLease) toDomain() domain.CapabilityLease {
 		HeartbeatAt:               l.HeartbeatAt.UTC(),
 		RevokedAt:                 copyTimePtr(l.RevokedAt),
 		RevokedReason:             strings.TrimSpace(l.RevokedReason),
+	}
+}
+
+// toDomain converts one snapshot handoff row to domain form.
+func (h SnapshotHandoff) toDomain() domain.Handoff {
+	return domain.Handoff{
+		ID:              strings.TrimSpace(h.ID),
+		ProjectID:       strings.TrimSpace(h.ProjectID),
+		BranchID:        strings.TrimSpace(h.BranchID),
+		ScopeType:       domain.NormalizeScopeLevel(h.ScopeType),
+		ScopeID:         strings.TrimSpace(h.ScopeID),
+		SourceRole:      strings.TrimSpace(h.SourceRole),
+		TargetBranchID:  strings.TrimSpace(h.TargetBranchID),
+		TargetScopeType: domain.NormalizeScopeLevel(h.TargetScopeType),
+		TargetScopeID:   strings.TrimSpace(h.TargetScopeID),
+		TargetRole:      strings.TrimSpace(h.TargetRole),
+		Status:          domain.NormalizeHandoffStatus(h.Status),
+		Summary:         strings.TrimSpace(h.Summary),
+		NextAction:      strings.TrimSpace(h.NextAction),
+		MissingEvidence: append([]string(nil), h.MissingEvidence...),
+		RelatedRefs:     append([]string(nil), h.RelatedRefs...),
+		CreatedByActor:  strings.TrimSpace(h.CreatedByActor),
+		CreatedByType:   normalizeActorTypeInput(h.CreatedByType),
+		CreatedAt:       h.CreatedAt.UTC(),
+		UpdatedByActor:  strings.TrimSpace(h.UpdatedByActor),
+		UpdatedByType:   normalizeActorTypeInput(h.UpdatedByType),
+		UpdatedAt:       h.UpdatedAt.UTC(),
+		ResolvedByActor: strings.TrimSpace(h.ResolvedByActor),
+		ResolvedByType:  normalizeActorTypeInput(h.ResolvedByType),
+		ResolvedAt:      copyTimePtr(h.ResolvedAt),
+		ResolutionNote:  strings.TrimSpace(h.ResolutionNote),
 	}
 }
 

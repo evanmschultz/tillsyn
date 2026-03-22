@@ -29,6 +29,8 @@ var (
 	ErrInvalidActorType         = errors.New("invalid actor type")
 	ErrInvalidAttentionState    = errors.New("invalid attention state")
 	ErrInvalidAttentionKind     = errors.New("invalid attention kind")
+	ErrInvalidHandoffStatus     = errors.New("invalid handoff status")
+	ErrInvalidHandoffTransition = errors.New("invalid handoff transition")
 	ErrInvalidAuthRequestPath   = errors.New("invalid auth request path")
 	ErrInvalidAuthRequestState  = errors.New("invalid auth request state")
 	ErrInvalidAuthRequestTTL    = errors.New("invalid auth request ttl")
