@@ -52,7 +52,7 @@ Implemented now:
 - `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
-- Kind template system actions can auto-append checklist items and auto-create child work items during task creation.
+- Kind template system actions can auto-append checklist items and auto-create child work items during task creation; the broader post-dogfood hierarchy-wide template/agent/communication direction is tracked in `TEMPLATE_AGENT_CONSENSUS.md`.
 - Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
@@ -107,7 +107,10 @@ Instruction-tool usage guidance:
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
 - remote/team auth-tenancy expansion and additional security hardening,
-- dynamic tool-surface policy and broader template-library expansion.
+- hierarchy-wide node-type templates, agent-type policy, truthful completion enforcement, first-class handoffs, durable wait/recovery coordination, and broader template-library expansion.
+
+Current post-dogfood consensus note:
+- the detailed working consensus for that template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.
 
 Dangerous limitation note (pre-hardening, design warning):
 - In future policy-controlled override flows, orchestrator calls may receive override-token material.

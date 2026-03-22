@@ -1235,16 +1235,22 @@ Objective:
 
 Tasks:
 1. `P5-T01` Advanced import/export divergence reconciliation tooling.
-2. `P5-T02` Broader policy-driven tool-surface controls and template expansion.
-3. `P5-T03` Multi-user/team auth-tenancy and security hardening.
+2. `P5-T02` Hierarchy-wide node-type templates, reseeding UX, and truthful completion-contract enforcement.
+3. `P5-T03` Agent-type policy, bounded delegation, first-class handoffs, and durable wait/recovery coordination.
+4. `P5-T04` Multi-user/team auth-tenancy and security hardening.
+
+Reference note:
+1. The current detailed consensus for the post-dogfood template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.
 
 Parallel lane split:
 1. `P5-LA` (import/export research lane).
-2. `P5-LB` (policy/template lane).
-3. `P5-LC` (security/tenancy lane).
+2. `P5-LB` (node-template/honesty lane).
+3. `P5-LC` (agent-policy/handoff/recovery lane).
+4. `P5-LD` (security/tenancy lane).
 
 Exit criteria:
 1. Roadmap items are explicitly scoped and non-blocking for current finish target.
+2. `PLAN.md` and `README.md` no longer rely on vague “template expansion” wording for this scope.
 
 ## 6) Immediate Next Action Lock
 
