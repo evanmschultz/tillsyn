@@ -2,7 +2,7 @@
 
 Created: 2026-03-21
 Updated: 2026-03-21
-Status: Implemented locally; local gates green with broader orchestrator scope support, pending commit/push/remote CI watch
+Status: Implemented locally; local gates green with the refreshed `till paths` runtime-root/database/log contract, pending commit/push/remote CI watch
 
 ## Purpose
 
@@ -244,3 +244,60 @@ Outcome: pass; no remaining blocker found for non-requester claim/adoption, broa
 Remaining gaps before full dogfood closeout:
 1. end-to-end collaborative dogfood worksheet and live retest evidence
 2. final remote CI watch after push
+
+## Paths Contract Follow-Up (2026-03-21)
+
+What changed:
+1. `till paths` now reports the active runtime root instead of only the platform default root when `database.path` or `--db` changes the effective DB location.
+2. The plain `paths` output order is now locked exactly as:
+   - `app`
+   - `root`
+   - `config`
+   - `database`
+   - `logs`
+   - `dev_mode`
+3. Default runtime file logs continue to resolve under `<root>/logs`, matching the active runtime root used by the logger.
+4. `Justfile` `clean-dev` remains aligned with the `root:` label.
+
+Commands run and outcomes:
+1. `just test-pkg ./cmd/till`
+Outcome: pass after adding ordered-output coverage plus `--db` and config-file `database.path` regression coverage for `root` and `logs`.
+2. `just test-pkg ./internal/platform`
+Outcome: pass.
+3. `just check`
+Outcome: pass.
+4. `just ci`
+Outcome: pass.
+
+## Collaborative E2E Worksheet Seed
+
+Run these sections in order after the path/log contract push is green:
+1. Runtime contract
+   - `./till paths` shows `app`, `root`, `config`, `database`, `logs`, `dev_mode` in that order.
+   - `./till mcp` and `./till serve` report the same default runtime root when no overrides are used.
+   - `./till mcp` exits cleanly on one `Ctrl-C`.
+2. Auth request lifecycle
+   - create one project-scoped auth request from native MCP,
+   - review it in the TUI,
+   - approve or deny it,
+   - claim it back through native MCP,
+   - verify requester-bound claim semantics.
+3. Auth inventory and revoke
+   - verify CLI and TUI surfaces for pending requests, resolved requests, and active sessions,
+   - revoke one active session from the user-facing surface,
+   - confirm session validation fails afterward.
+4. Authenticated mutation
+   - use the approved session on one write-capable MCP tool,
+   - verify the mutation succeeds while the session is active,
+   - verify the same mutation fails closed after revoke.
+5. Orchestrator/subagent gatekeeping
+   - verify subagent requests remain single-project rooted,
+   - verify broader `projects/...` or `global` requests require an orchestrator role,
+   - verify non-requester claim/adoption attempts fail.
+
+## Remaining Dogfood-First MVP Gaps
+
+1. Run and record the full collaborative E2E worksheet above.
+2. Verify the native MCP pending/waiting experience feels acceptable in live orchestrator use.
+3. Verify orchestrator/subagent scope and anti-adoption behavior in a real multi-agent dogfood pass.
+4. Confirm the project/global auth inventory and revoke UX feel clear enough without additional UX cleanup.

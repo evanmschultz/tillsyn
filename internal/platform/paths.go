@@ -13,6 +13,7 @@ type Paths struct {
 	ConfigPath string
 	DataDir    string
 	DBPath     string
+	LogsDir    string
 }
 
 // Options defines optional settings for configuration.
@@ -104,5 +105,6 @@ func PathsFor(goos string, env map[string]string, userConfigDir, userDataDir, ap
 		ConfigPath: filepath.Join(appConfigDir, "config.toml"),
 		DataDir:    appDataDir,
 		DBPath:     filepath.Join(appDataDir, dbName),
+		LogsDir:    filepath.Join(appDataDir, "logs"),
 	}, nil
 }

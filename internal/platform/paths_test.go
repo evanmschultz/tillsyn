@@ -16,11 +16,15 @@ func TestPathsForLinuxWithXDG(t *testing.T) {
 	}
 	wantConfig := filepath.Join("/xdg/config", "tillsyn", "config.toml")
 	wantDB := filepath.Join("/xdg/data", "tillsyn", "tillsyn.db")
+	wantLogs := filepath.Join("/xdg/data", "tillsyn", "logs")
 	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
 	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
+	}
+	if p.LogsDir != wantLogs {
+		t.Fatalf("unexpected logs dir %q", p.LogsDir)
 	}
 }
 
@@ -36,11 +40,15 @@ func TestPathsForWindowsUsesAppData(t *testing.T) {
 
 	wantConfig := filepath.Join(`C:\Users\me\AppData\Roaming`, "tillsyn", "config.toml")
 	wantDB := filepath.Join(`C:\Users\me\AppData\Local`, "tillsyn", "tillsyn.db")
+	wantLogs := filepath.Join(`C:\Users\me\AppData\Local`, "tillsyn", "logs")
 	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
 	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
+	}
+	if p.LogsDir != wantLogs {
+		t.Fatalf("unexpected logs dir %q", p.LogsDir)
 	}
 }
 
@@ -63,11 +71,15 @@ func TestPathsForDarwinFallback(t *testing.T) {
 	}
 	wantConfig := filepath.Join("/Users/me/Library/Application Support", "tillsyn", "config.toml")
 	wantDB := filepath.Join("/Users/me/Library/Application Support", "tillsyn", "tillsyn.db")
+	wantLogs := filepath.Join("/Users/me/Library/Application Support", "tillsyn", "logs")
 	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
 	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
+	}
+	if p.LogsDir != wantLogs {
+		t.Fatalf("unexpected logs dir %q", p.LogsDir)
 	}
 }
 
@@ -79,11 +91,15 @@ func TestPathsForUnknownFallback(t *testing.T) {
 	}
 	wantConfig := filepath.Join("/cfg", "tillsyn", "config.toml")
 	wantData := filepath.Join("/data", "tillsyn")
+	wantLogs := filepath.Join("/data", "tillsyn", "logs")
 	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
 	if p.DataDir != wantData {
 		t.Fatalf("unexpected data dir %q", p.DataDir)
+	}
+	if p.LogsDir != wantLogs {
+		t.Fatalf("unexpected logs dir %q", p.LogsDir)
 	}
 }
 
@@ -95,11 +111,15 @@ func TestPathsForLinuxFallbackWithoutXDG(t *testing.T) {
 	}
 	wantConfig := filepath.Join("/home/me/.config", "tillsyn", "config.toml")
 	wantDB := filepath.Join("/home/me/.local/share", "tillsyn", "tillsyn.db")
+	wantLogs := filepath.Join("/home/me/.local/share", "tillsyn", "logs")
 	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
 	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
+	}
+	if p.LogsDir != wantLogs {
+		t.Fatalf("unexpected logs dir %q", p.LogsDir)
 	}
 }
 
@@ -109,7 +129,7 @@ func TestDefaultPathsSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultPaths() error = %v", err)
 	}
-	if p.ConfigPath == "" || p.DBPath == "" || p.DataDir == "" {
+	if p.ConfigPath == "" || p.DBPath == "" || p.DataDir == "" || p.LogsDir == "" {
 		t.Fatalf("expected non-empty paths, got %#v", p)
 	}
 }

@@ -219,6 +219,11 @@ func Default(dbPath string) Config {
 	}
 }
 
+// DefaultDevLogDir returns the default logging.dev_file.dir sentinel used by config defaults.
+func DefaultDevLogDir() string {
+	return defaultDevLogDir
+}
+
 // Load loads required data for the current operation.
 func Load(path string, defaults Config) (Config, error) {
 	cfg := defaults

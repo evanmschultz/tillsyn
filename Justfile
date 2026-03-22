@@ -64,15 +64,15 @@ run:
 init-dev-config:
   @./till --dev init-dev-config
 
-# Delete the resolved --dev data directory (db/config/logs under that root).
+# Delete the resolved --dev runtime root (db/config/logs under that root).
 clean-dev:
-  @data_dir="$(./till --dev paths | awk -F': ' '/^data_dir:/{print $2}')"; \
-  if [ -z "$data_dir" ]; then \
-    echo "could not resolve dev data directory"; \
+  @root_dir="$(./till --dev paths | awk -F': ' '/^root:/{print $2}')"; \
+  if [ -z "$root_dir" ]; then \
+    echo "could not resolve dev runtime root"; \
     exit 1; \
   fi; \
-  rm -rf "$data_dir"; \
-  echo "removed dev data directory: $data_dir"
+  rm -rf "$root_dir"; \
+  echo "removed dev runtime root: $root_dir"
 
 # Run VHS for a single tape or all tapes under vhs/.
 vhs tape="":

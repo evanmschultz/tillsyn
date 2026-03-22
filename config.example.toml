@@ -83,7 +83,8 @@ level = "info"
 [logging.dev_file]
 # When true in --dev mode, runtime logs are also written to a local file sink.
 enabled = true
-# Relative paths are resolved from the current workspace directory.
+# The default sentinel resolves to the shared runtime root logs directory.
+# Explicit relative overrides are resolved from the current workspace directory.
 dir = ".tillsyn/log"
 
 [project_roots]

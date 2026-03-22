@@ -1721,6 +1721,7 @@ display_name = "Lane User"
 
 // TestRunPathsCommand verifies behavior for the covered scenario.
 func TestRunPathsCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	var out strings.Builder
 	err := run(context.Background(), []string{"--app", "tillsynx", "--dev", "paths"}, &out, io.Discard)
 	if err != nil {
@@ -1730,8 +1731,68 @@ func TestRunPathsCommand(t *testing.T) {
 	if !strings.Contains(output, "app: tillsynx") {
 		t.Fatalf("expected app name in paths output, got %q", output)
 	}
+	if !strings.Contains(output, "root:") {
+		t.Fatalf("expected root in paths output, got %q", output)
+	}
+	if !strings.Contains(output, "database:") {
+		t.Fatalf("expected database in paths output, got %q", output)
+	}
+	if !strings.Contains(output, "logs:") {
+		t.Fatalf("expected logs in paths output, got %q", output)
+	}
 	if !strings.Contains(output, "dev_mode: true") {
 		t.Fatalf("expected dev mode in paths output, got %q", output)
+	}
+}
+
+// TestRunPathsCommandUsesActiveRuntimeRootForDBOverride verifies `paths` follows the effective DB-selected runtime root.
+func TestRunPathsCommandUsesActiveRuntimeRootForDBOverride(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "runtime.db")
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--db", dbPath, "paths"}, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("run(paths with db override) error = %v", err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"root: " + root,
+		"database: " + dbPath,
+		"logs: " + filepath.Join(root, "logs"),
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in paths output, got %q", want, output)
+		}
+	}
+}
+
+// TestRunPathsCommandUsesConfigDatabasePathForRootAndLogs verifies config-driven database paths reshape the reported runtime root.
+func TestRunPathsCommandUsesConfigDatabasePathForRootAndLogs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "runtime.db")
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	cfgContent := fmt.Sprintf("[database]\npath = %q\n", dbPath)
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--config", cfgPath, "paths"}, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("run(paths with config database path) error = %v", err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"root: " + root,
+		"database: " + dbPath,
+		"logs: " + filepath.Join(root, "logs"),
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in paths output, got %q", want, output)
+		}
 	}
 }
 
@@ -1750,25 +1811,24 @@ func TestWritePathsOutputPlain(t *testing.T) {
 	err := writePathsOutput(&out, rootCommandOptions{
 		appName: "tillsynx",
 		devMode: true,
-	}, platform.Paths{
+	}, resolvedRuntimePaths{
 		ConfigPath: "/tmp/tillsynx/config.toml",
-		DataDir:    "/tmp/tillsynx",
 		DBPath:     "/tmp/tillsynx/tillsynx.db",
-	})
+	}, "/tmp/tillsynx", "/tmp/tillsynx/logs")
 	if err != nil {
 		t.Fatalf("writePathsOutput() error = %v", err)
 	}
-	got := out.String()
-	for _, want := range []string{
+	want := strings.Join([]string{
 		"app: tillsynx",
-		"dev_mode: true",
+		"root: /tmp/tillsynx",
 		"config: /tmp/tillsynx/config.toml",
-		"data_dir: /tmp/tillsynx",
-		"db: /tmp/tillsynx/tillsynx.db",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected %q in plain output, got %q", want, got)
-		}
+		"database: /tmp/tillsynx/tillsynx.db",
+		"logs: /tmp/tillsynx/logs",
+		"dev_mode: true",
+		"",
+	}, "\n")
+	if got := out.String(); got != want {
+		t.Fatalf("writePathsOutput() = %q, want %q", got, want)
 	}
 }
 
@@ -1782,11 +1842,10 @@ func TestWritePathsOutputStyled(t *testing.T) {
 	err := writePathsOutput(&out, rootCommandOptions{
 		appName: "tillsynx",
 		devMode: false,
-	}, platform.Paths{
+	}, resolvedRuntimePaths{
 		ConfigPath: "/tmp/tillsynx/config.toml",
-		DataDir:    "/tmp/tillsynx",
 		DBPath:     "/tmp/tillsynx/tillsynx.db",
-	})
+	}, "/tmp/tillsynx", "/tmp/tillsynx/logs")
 	if err != nil {
 		t.Fatalf("writePathsOutput(styled) error = %v", err)
 	}
@@ -1865,13 +1924,15 @@ func TestSanitizeBootstrapActorType(t *testing.T) {
 	}
 }
 
-// TestRunDevModeCreatesWorkspaceLogFile verifies behavior for the covered scenario.
-func TestRunDevModeCreatesWorkspaceLogFile(t *testing.T) {
+// TestRunDevModeCreatesRuntimeRootLogFile verifies dev runtime logs go under the shared runtime root logs dir.
+func TestRunDevModeCreatesRuntimeRootLogFile(t *testing.T) {
 	origFactory := programFactory
 	t.Cleanup(func() { programFactory = origFactory })
 	programFactory = func(_ tea.Model) program { return fakeProgram{} }
 
 	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Chdir(workspace)
 
 	dbPath := filepath.Join(workspace, "tillsyn.db")
@@ -1881,7 +1942,7 @@ func TestRunDevModeCreatesWorkspaceLogFile(t *testing.T) {
 		t.Fatalf("run() error = %v", err)
 	}
 
-	logDir := filepath.Join(workspace, ".tillsyn", "log")
+	logDir := filepath.Join(workspace, "logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		t.Fatalf("ReadDir() error = %v", err)
@@ -1901,13 +1962,15 @@ func TestRunDevModeCreatesWorkspaceLogFile(t *testing.T) {
 	}
 }
 
-// TestRunTUIModeWritesRuntimeLogsToFileOnly verifies TUI runtime logs stay out of stderr and persist to the dev log file.
+// TestRunTUIModeWritesRuntimeLogsToFileOnly verifies TUI runtime logs stay out of stderr and persist to the runtime log file.
 func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
 	origFactory := programFactory
 	t.Cleanup(func() { programFactory = origFactory })
 	programFactory = func(_ tea.Model) program { return fakeProgram{} }
 
 	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Chdir(workspace)
 
 	dbPath := filepath.Join(workspace, "tillsyn.db")
@@ -1922,7 +1985,7 @@ func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
 		t.Fatalf("expected no runtime stderr output in TUI mode, got %q", got)
 	}
 
-	logDir := filepath.Join(workspace, ".tillsyn", "log")
+	logDir := filepath.Join(workspace, "logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		t.Fatalf("ReadDir() error = %v", err)
@@ -1966,7 +2029,7 @@ func TestWorkspaceRootFromUsesNearestMarker(t *testing.T) {
 	}
 }
 
-// TestDevLogFilePathResolvesAgainstWorkspaceRoot verifies relative log dirs anchor at workspace root.
+// TestDevLogFilePathResolvesAgainstWorkspaceRoot verifies explicit relative overrides still anchor at workspace root.
 func TestDevLogFilePathResolvesAgainstWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
@@ -1986,16 +2049,27 @@ func TestDevLogFilePathResolvesAgainstWorkspaceRoot(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Chdir(prev)
 	})
-	got, err := devLogFilePath(".tillsyn/log", "tillsyn", time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC))
+	got, err := devLogFilePath("./tmp/logs", "/ignored/default/logs", "tillsyn", time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("devLogFilePath() error = %v", err)
 	}
-	wantPrefix := filepath.Join(root, ".tillsyn", "log")
+	wantPrefix := filepath.Join(root, "tmp", "logs")
 	normalize := func(p string) string {
 		return strings.TrimPrefix(filepath.Clean(p), "/private")
 	}
 	if !strings.HasPrefix(normalize(got), normalize(wantPrefix)) {
 		t.Fatalf("expected log path under %q, got %q", wantPrefix, got)
+	}
+}
+
+// TestResolveRuntimeLogDirUsesSharedRootForDefaultSentinel verifies the default dev log dir resolves under the runtime root.
+func TestResolveRuntimeLogDirUsesSharedRootForDefaultSentinel(t *testing.T) {
+	got, err := resolveRuntimeLogDir(config.DefaultDevLogDir(), "/tmp/tillsyn/logs")
+	if err != nil {
+		t.Fatalf("resolveRuntimeLogDir() error = %v", err)
+	}
+	if got != "/tmp/tillsyn/logs" {
+		t.Fatalf("resolveRuntimeLogDir() = %q, want %q", got, "/tmp/tillsyn/logs")
 	}
 }
 
@@ -2292,7 +2366,7 @@ func TestRuntimeLoggerCanMuteConsoleSink(t *testing.T) {
 	var console bytes.Buffer
 	cfg := config.Default("/tmp/tillsyn.db").Logging
 
-	logger, err := newRuntimeLogger(&console, "till", false, cfg, func() time.Time {
+	logger, err := newRuntimeLogger(&console, "till", false, cfg, "/tmp/tillsyn/logs", func() time.Time {
 		return time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
 	})
 	if err != nil {
@@ -2324,7 +2398,7 @@ func TestRuntimeLoggerInstallAsDefaultRoutesPackageLogsToFile(t *testing.T) {
 	cfg.DevFile.Enabled = true
 	cfg.DevFile.Dir = t.TempDir()
 
-	logger, err := newRuntimeLogger(&console, "till", true, cfg, func() time.Time {
+	logger, err := newRuntimeLogger(&console, "till", true, cfg, "/tmp/tillsyn/logs", func() time.Time {
 		return time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC)
 	})
 	if err != nil {

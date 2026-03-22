@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-21
-Status: In progress; the auth gatekeeping remediation wave is green in local gates, including the simplified TUI auth review flow, human-readable scope labels, project/global auth inventory, session revoke UX, broader orchestrator-only scope handling, and native MCP claim/resume. The remaining closeout step after remote CI is the full collaborative E2E dogfood worksheet/run.
+Status: In progress; the auth gatekeeping remediation wave is green in local gates, including the simplified TUI auth review flow, human-readable scope labels, project/global auth inventory, session revoke UX, native MCP claim/resume, and the `till paths` runtime-root/config/database/log output contract cleanup. The remaining closeout step after remote CI is the full collaborative E2E dogfood worksheet/run.
 
 ## 1) Active Run Source Of Truth
 
@@ -491,6 +491,14 @@ Outcome:
    - auth review titles and default approve/deny notes now use human-readable project/task hierarchy names where available while preserving the raw scoped path as the actual editable approval value,
    - updated `PLAN.md` to lock the anti-adoption requirement for existing auth contexts,
    - reran `just test-pkg ./internal/tui`, `just check`, and `just ci` -> pass.
+34. focused path/log contract remediation after collaborative `till paths` review on 2026-03-21
+Outcome:
+   - `till paths` now prints `app`, `root`, `config`, `database`, `logs`, and `dev_mode` in that order,
+   - `root` now represents the active runtime root for the current invocation, while `database` reflects the effective sqlite path after CLI/env/config resolution,
+   - default runtime file logs now resolve under `<root>/logs`, preserving explicit relative log-dir overrides as workspace-rooted opt-outs,
+   - updated `Justfile` dev cleanup parsing to consume the new `root:` output label,
+   - added direct regression coverage for both `--db` and config-file `database.path` override cases affecting `root` and `logs`,
+   - reran `just test-pkg ./cmd/till`, `just test-pkg ./internal/platform`, `just check`, and `just ci` -> pass.
 
 Checkpoint summary:
 1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.
@@ -509,10 +517,11 @@ Checkpoint summary:
    - `internal/adapters/auth/autentauth`: 74.1%
    - `internal/adapters/server/common`: 78.2%
    - `internal/tui`: 70.3%
-8. Collaborative retest is still not complete for true dogfood readiness because the next UX/continuation scope remains open:
+8. Collaborative retest is still not complete for true dogfood readiness because the remaining validation scope is:
+   - end-to-end user+agent retest of the refreshed `till paths` / runtime-root contract,
    - orchestrator/subagent scoped auth choreography,
    - explicit orchestrator-only multi-project/general scope enforcement,
-   - user retest of the new MCP claim/resume path.
+   - user retest of the new MCP claim/resume path and authenticated mutation flow.
 
 ## 7) Workstreams
 

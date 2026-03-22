@@ -664,7 +664,7 @@ as a positional argument.
 
 	pathsCmd := &cobra.Command{
 		Use:   "paths",
-		Short: "Print resolved config/data/db paths",
+		Short: "Print resolved runtime root/config/database/log paths",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if rootOpts.showVersion {
@@ -677,7 +677,26 @@ as a positional argument.
 			if err != nil {
 				return err
 			}
-			return writePathsOutput(stdout, rootOpts, paths)
+			resolvedPaths, err := resolveRuntimePaths("paths", rootOpts, paths)
+			if err != nil {
+				return err
+			}
+			defaultCfg := config.Default(resolvedPaths.DBPath)
+			cfg, err := config.Load(resolvedPaths.ConfigPath, defaultCfg)
+			if err != nil {
+				return fmt.Errorf("load config %q: %w", resolvedPaths.ConfigPath, err)
+			}
+			if resolvedPaths.DBOverridden {
+				cfg.Database.Path = resolvedPaths.DBPath
+			} else {
+				resolvedPaths.DBPath = cfg.Database.Path
+			}
+			rootDir := runtimeRootDir(paths, resolvedPaths.DBPath)
+			logDir, err := resolveRuntimeLogDir(cfg.Logging.DevFile.Dir, filepath.Join(rootDir, "logs"))
+			if err != nil {
+				return fmt.Errorf("resolve log dir: %w", err)
+			}
+			return writePathsOutput(stdout, rootOpts, resolvedPaths, rootDir, logDir)
 		},
 	}
 
@@ -716,9 +735,9 @@ func writeVersion(stdout io.Writer) error {
 }
 
 // writePathsOutput renders resolved paths using Fang-aligned styling.
-func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.Paths) error {
+func writePathsOutput(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
 	if !supportsStyledOutputFunc(stdout) {
-		return writePathsPlain(stdout, opts, paths)
+		return writePathsPlain(stdout, opts, resolvedPaths, rootDir, logDir)
 	}
 
 	isDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
@@ -732,16 +751,7 @@ func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.
 	valueStyle := lipgloss.NewStyle().
 		Foreground(colors.Description)
 
-	rows := []struct {
-		key   string
-		value string
-	}{
-		{key: "app", value: opts.appName},
-		{key: "dev_mode", value: fmt.Sprintf("%t", opts.devMode)},
-		{key: "config", value: paths.ConfigPath},
-		{key: "data_dir", value: paths.DataDir},
-		{key: "db", value: paths.DBPath},
-	}
+	rows := buildPathsRows(opts, resolvedPaths, rootDir, logDir)
 
 	maxKeyWidth := 0
 	for _, row := range rows {
@@ -768,22 +778,30 @@ func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.
 	return nil
 }
 
+// buildPathsRows returns the stable key/value rows used by both plain and styled output.
+func buildPathsRows(opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) []struct {
+	key   string
+	value string
+} {
+	return []struct {
+		key   string
+		value string
+	}{
+		{key: "app", value: opts.appName},
+		{key: "root", value: rootDir},
+		{key: "config", value: resolvedPaths.ConfigPath},
+		{key: "database", value: resolvedPaths.DBPath},
+		{key: "logs", value: logDir},
+		{key: "dev_mode", value: fmt.Sprintf("%t", opts.devMode)},
+	}
+}
+
 // writePathsPlain renders resolved paths in stable key/value text for scripts.
-func writePathsPlain(stdout io.Writer, opts rootCommandOptions, paths platform.Paths) error {
-	if _, err := fmt.Fprintf(stdout, "app: %s\n", opts.appName); err != nil {
-		return fmt.Errorf("write paths app output: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "dev_mode: %t\n", opts.devMode); err != nil {
-		return fmt.Errorf("write paths dev output: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "config: %s\n", paths.ConfigPath); err != nil {
-		return fmt.Errorf("write paths config output: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "data_dir: %s\n", paths.DataDir); err != nil {
-		return fmt.Errorf("write paths data output: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "db: %s\n", paths.DBPath); err != nil {
-		return fmt.Errorf("write paths db output: %w", err)
+func writePathsPlain(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
+	for _, row := range buildPathsRows(opts, resolvedPaths, rootDir, logDir) {
+		if _, err := fmt.Fprintf(stdout, "%s: %s\n", row.key, row.value); err != nil {
+			return fmt.Errorf("write paths %s output: %w", row.key, err)
+		}
 	}
 	return nil
 }
@@ -835,6 +853,15 @@ func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error 
 	_ = command
 	_ = paths
 	return nil
+}
+
+// runtimeRootDir resolves the effective runtime root for the active database path.
+func runtimeRootDir(defaultPaths platform.Paths, dbPath string) string {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return defaultPaths.DataDir
+	}
+	return filepath.Dir(dbPath)
 }
 
 // runInitDevConfig creates the dev config file and enforces debug logging level.
@@ -1079,6 +1106,8 @@ func executeCommandFlow(
 	}
 	if dbOverridden {
 		cfg.Database.Path = dbPath
+	} else {
+		dbPath = cfg.Database.Path
 	}
 	if command == "" {
 		if err := ensureStartupIdentityActorID(configPath, &cfg); err != nil {
@@ -1086,8 +1115,13 @@ func executeCommandFlow(
 		}
 	}
 	bootstrapRequired := startupBootstrapRequired(cfg)
+	rootDir := runtimeRootDir(paths, dbPath)
 
-	logger, err := newRuntimeLogger(stderr, rootOpts.appName, rootOpts.devMode, cfg.Logging, time.Now)
+	logDir, err := resolveRuntimeLogDir(cfg.Logging.DevFile.Dir, filepath.Join(rootDir, "logs"))
+	if err != nil {
+		return fmt.Errorf("resolve runtime log dir: %w", err)
+	}
+	logger, err := newRuntimeLogger(stderr, rootOpts.appName, rootOpts.devMode, cfg.Logging, logDir, time.Now)
 	if err != nil {
 		return fmt.Errorf("configure runtime logger: %w", err)
 	}
@@ -1105,7 +1139,7 @@ func executeCommandFlow(
 	defer logger.RestoreDefault()
 
 	logger.Info("startup configuration resolved", "app", rootOpts.appName, "dev_mode", rootOpts.devMode, "command", command, "bootstrap_required", bootstrapRequired)
-	logger.Debug("runtime paths resolved", "config_path", configPath, "data_dir", paths.DataDir, "db_path", dbPath)
+	logger.Debug("runtime paths resolved", "config_path", configPath, "root", rootDir, "db_path", dbPath, "logs_dir", logDir)
 	logger.Info("configuration loaded", "config_path", configPath, "db_path", cfg.Database.Path, "log_level", cfg.Logging.Level)
 	if devPath := logger.DevLogPath(); devPath != "" {
 		logger.Info("dev file logging enabled", "path", devPath)
@@ -2082,7 +2116,7 @@ type runtimeLogger struct {
 }
 
 // newRuntimeLogger configures runtime log sinks from CLI/config state.
-func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config.LoggingConfig, now func() time.Time) (*runtimeLogger, error) {
+func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config.LoggingConfig, defaultLogDir string, now func() time.Time) (*runtimeLogger, error) {
 	level, err := charmLog.ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, fmt.Errorf("parse logging level %q: %w", cfg.Level, err)
@@ -2114,7 +2148,7 @@ func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config
 		return logger, nil
 	}
 
-	devLogPath, err := devLogFilePath(cfg.DevFile.Dir, appName, now().UTC())
+	devLogPath, err := devLogFilePath(cfg.DevFile.Dir, defaultLogDir, appName, now().UTC())
 	if err != nil {
 		return nil, fmt.Errorf("resolve dev log file path: %w", err)
 	}
@@ -2299,11 +2333,14 @@ func (l *runtimeLogger) Error(msg string, keyvals ...any) {
 	}
 }
 
-// devLogFilePath resolves a workspace-local dev log file path for the current run day.
-func devLogFilePath(configDir, appName string, now time.Time) (string, error) {
+// resolveRuntimeLogDir resolves the configured log directory against the shared runtime root.
+func resolveRuntimeLogDir(configDir, defaultDir string) (string, error) {
 	baseDir := strings.TrimSpace(configDir)
+	if baseDir == "" || filepath.Clean(baseDir) == filepath.Clean(config.DefaultDevLogDir()) {
+		baseDir = strings.TrimSpace(defaultDir)
+	}
 	if baseDir == "" {
-		baseDir = ".tillsyn/log"
+		return "", fmt.Errorf("empty runtime log dir")
 	}
 	if !filepath.IsAbs(baseDir) {
 		cwd, err := os.Getwd()
@@ -2312,9 +2349,18 @@ func devLogFilePath(configDir, appName string, now time.Time) (string, error) {
 		}
 		baseDir = filepath.Join(workspaceRootFrom(cwd), baseDir)
 	}
+	return filepath.Clean(baseDir), nil
+}
+
+// devLogFilePath resolves the runtime log file path for the current run day.
+func devLogFilePath(configDir, defaultDir, appName string, now time.Time) (string, error) {
+	baseDir, err := resolveRuntimeLogDir(configDir, defaultDir)
+	if err != nil {
+		return "", err
+	}
 	fileStem := sanitizeLogFileStem(appName)
 	fileName := fmt.Sprintf("%s-%s.log", fileStem, now.Format("20060102"))
-	return filepath.Join(filepath.Clean(baseDir), fileName), nil
+	return filepath.Join(baseDir, fileName), nil
 }
 
 // workspaceRootFrom resolves the nearest ancestor workspace marker for stable local log placement.

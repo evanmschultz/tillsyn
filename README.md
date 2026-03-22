@@ -208,12 +208,15 @@ Path resolution controls:
 - `--app` / `TILL_APP_NAME` to namespace paths (default `tillsyn`)
 - `--dev` / `TILL_DEV_MODE` to explicitly use `<app>-dev` path roots
 - `./till`, `./till mcp`, and `./till serve` all use the same default platform runtime when `--dev` is not enabled
-- `till paths` prints the resolved config/data/db paths for the current environment
+- `till paths` prints `app`, `root`, `config`, `database`, `logs`, and `dev_mode` in that order
+  - `root` is the active runtime root
+  - `database` is the effective sqlite path after CLI/env/config resolution
+  - `logs` follows the active runtime root by default and lands under `<root>/logs`
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
 - task resource attachments require a configured per-project root mapping (`project_roots`)
-- dev mode logging writes to workspace-local `.tillsyn/log/` when `logging.dev_file.enabled = true`
-  - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
+- dev mode logging writes to the shared runtime `logs/` directory under the resolved app root when `logging.dev_file.enabled = true`
+  - explicit relative dev log dir overrides are still anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
 
 Example:
@@ -251,6 +254,8 @@ level = "info"
 
 [logging.dev_file]
 enabled = true
+# Default sentinel resolves to the shared runtime root logs directory.
+# Explicit relative overrides are still workspace-root-relative.
 dir = ".tillsyn/log"
 ```
 
