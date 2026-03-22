@@ -543,6 +543,34 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 }
 
+// TestRepository_ListProjectsExcludesGlobalAuthSentinel verifies the hidden global auth-routing project does not leak into user-facing project inventory.
+func TestRepository_ListProjectsExcludesGlobalAuthSentinel(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(filepath.Join(t.TempDir(), "auth-global.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	var sentinelCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id = ?`, domain.AuthRequestGlobalProjectID).Scan(&sentinelCount); err != nil {
+		t.Fatalf("query sentinel project count error = %v", err)
+	}
+	if sentinelCount != 1 {
+		t.Fatalf("sentinel project count = %d, want 1", sentinelCount)
+	}
+
+	projects, err := repo.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("ListProjects(includeArchived) error = %v", err)
+	}
+	if len(projects) != 0 {
+		t.Fatalf("ListProjects(includeArchived) = %#v, want hidden sentinel excluded", projects)
+	}
+}
+
 // TestRepository_DeleteProjectCascades verifies project hard-delete cascades to child rows.
 func TestRepository_DeleteProjectCascades(t *testing.T) {
 	ctx := context.Background()

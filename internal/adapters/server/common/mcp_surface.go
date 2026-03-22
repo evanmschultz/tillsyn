@@ -205,17 +205,21 @@ type CreateCommentRequest struct {
 
 // CreateAuthRequestRequest stores transport input for pre-session auth request creation.
 type CreateAuthRequestRequest struct {
-	Path             string
-	PrincipalID      string
-	PrincipalType    string
-	PrincipalName    string
-	ClientID         string
-	ClientType       string
-	ClientName       string
-	RequestedTTL     string
-	Timeout          string
-	Reason           string
-	ContinuationJSON string
+	Path              string
+	PrincipalID       string
+	PrincipalType     string
+	PrincipalRole     string
+	PrincipalName     string
+	RequestedByActor  string
+	RequestedByType   string
+	RequesterClientID string
+	ClientID          string
+	ClientType        string
+	ClientName        string
+	RequestedTTL      string
+	Timeout           string
+	Reason            string
+	ContinuationJSON  string
 }
 
 // ListAuthRequestsRequest stores transport input for auth request inventory.
@@ -225,47 +229,54 @@ type ListAuthRequestsRequest struct {
 	Limit     int
 }
 
-// ClaimAuthRequestRequest stores transport input for continuation-based auth-request resume.
+// ClaimAuthRequestRequest stores transport input for continuation-based auth-request resume and requester-bound waiting.
 type ClaimAuthRequestRequest struct {
 	RequestID   string
 	ResumeToken string
+	PrincipalID string
+	ClientID    string
+	WaitTimeout string
 }
 
 // AuthRequestRecord stores one transport-facing auth request row.
 type AuthRequestRecord struct {
-	ID                     string         `json:"id"`
-	State                  string         `json:"state"`
-	Path                   string         `json:"path"`
-	ProjectID              string         `json:"project_id"`
-	BranchID               string         `json:"branch_id,omitempty"`
-	PhaseIDs               []string       `json:"phase_ids,omitempty"`
-	ScopeType              string         `json:"scope_type"`
-	ScopeID                string         `json:"scope_id"`
-	PrincipalID            string         `json:"principal_id"`
-	PrincipalType          string         `json:"principal_type"`
-	PrincipalName          string         `json:"principal_name,omitempty"`
-	ClientID               string         `json:"client_id"`
-	ClientType             string         `json:"client_type"`
-	ClientName             string         `json:"client_name,omitempty"`
-	RequestedSessionTTL    string         `json:"requested_session_ttl"`
-	Reason                 string         `json:"reason,omitempty"`
-	Continuation           map[string]any `json:"continuation,omitempty"`
-	RequestedByActor       string         `json:"requested_by_actor"`
-	RequestedByType        string         `json:"requested_by_type"`
-	CreatedAt              time.Time      `json:"created_at"`
-	ExpiresAt              time.Time      `json:"expires_at"`
-	ResolvedByActor        string         `json:"resolved_by_actor,omitempty"`
-	ResolvedByType         string         `json:"resolved_by_type,omitempty"`
-	ResolvedAt             *time.Time     `json:"resolved_at,omitempty"`
-	ResolutionNote         string         `json:"resolution_note,omitempty"`
-	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
-	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
+	ID                     string     `json:"id"`
+	State                  string     `json:"state"`
+	Path                   string     `json:"path"`
+	ApprovedPath           string     `json:"approved_path,omitempty"`
+	ProjectID              string     `json:"project_id"`
+	BranchID               string     `json:"branch_id,omitempty"`
+	PhaseIDs               []string   `json:"phase_ids,omitempty"`
+	ScopeType              string     `json:"scope_type"`
+	ScopeID                string     `json:"scope_id"`
+	PrincipalID            string     `json:"principal_id"`
+	PrincipalType          string     `json:"principal_type"`
+	PrincipalRole          string     `json:"principal_role,omitempty"`
+	PrincipalName          string     `json:"principal_name,omitempty"`
+	ClientID               string     `json:"client_id"`
+	ClientType             string     `json:"client_type"`
+	ClientName             string     `json:"client_name,omitempty"`
+	RequestedSessionTTL    string     `json:"requested_session_ttl"`
+	ApprovedSessionTTL     string     `json:"approved_session_ttl,omitempty"`
+	Reason                 string     `json:"reason,omitempty"`
+	HasContinuation        bool       `json:"has_continuation,omitempty"`
+	RequestedByActor       string     `json:"requested_by_actor"`
+	RequestedByType        string     `json:"requested_by_type"`
+	CreatedAt              time.Time  `json:"created_at"`
+	ExpiresAt              time.Time  `json:"expires_at"`
+	ResolvedByActor        string     `json:"resolved_by_actor,omitempty"`
+	ResolvedByType         string     `json:"resolved_by_type,omitempty"`
+	ResolvedAt             *time.Time `json:"resolved_at,omitempty"`
+	ResolutionNote         string     `json:"resolution_note,omitempty"`
+	IssuedSessionID        string     `json:"issued_session_id,omitempty"`
+	IssuedSessionExpiresAt *time.Time `json:"issued_session_expires_at,omitempty"`
 }
 
 // AuthRequestClaimResult stores one requester-visible auth request state plus approved session secret material.
 type AuthRequestClaimResult struct {
 	Request       AuthRequestRecord `json:"request"`
 	SessionSecret string            `json:"session_secret,omitempty"`
+	Waiting       bool              `json:"waiting,omitempty"`
 }
 
 // ListCommentsByTargetRequest stores transport input for comment list queries.

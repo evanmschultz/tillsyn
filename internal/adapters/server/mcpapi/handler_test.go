@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1131,10 +1132,14 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			ScopeID:             "p1",
 			PrincipalID:         "review-agent",
 			PrincipalType:       "agent",
+			PrincipalRole:       "orchestrator",
 			ClientID:            "till-mcp-stdio",
 			ClientType:          "mcp-stdio",
 			RequestedSessionTTL: "2h0m0s",
+			HasContinuation:     true,
 			Reason:              "manual MCP review",
+			RequestedByActor:    "orchestrator-1",
+			RequestedByType:     "agent",
 			CreatedAt:           now,
 			ExpiresAt:           now.Add(30 * time.Minute),
 		},
@@ -1148,10 +1153,14 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 				ScopeID:             "p1",
 				PrincipalID:         "review-agent",
 				PrincipalType:       "agent",
+				PrincipalRole:       "orchestrator",
 				ClientID:            "till-mcp-stdio",
 				ClientType:          "mcp-stdio",
 				RequestedSessionTTL: "2h0m0s",
+				HasContinuation:     true,
 				Reason:              "manual MCP review",
+				RequestedByActor:    "orchestrator-1",
+				RequestedByType:     "agent",
 				CreatedAt:           now,
 				ExpiresAt:           now.Add(30 * time.Minute),
 			},
@@ -1165,10 +1174,14 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			ScopeID:             "p1",
 			PrincipalID:         "review-agent",
 			PrincipalType:       "agent",
+			PrincipalRole:       "orchestrator",
 			ClientID:            "till-mcp-stdio",
 			ClientType:          "mcp-stdio",
 			RequestedSessionTTL: "2h0m0s",
+			HasContinuation:     true,
 			Reason:              "manual MCP review",
+			RequestedByActor:    "orchestrator-1",
+			RequestedByType:     "agent",
 			CreatedAt:           now,
 			ExpiresAt:           now.Add(30 * time.Minute),
 		},
@@ -1177,15 +1190,21 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 				ID:                     "req-1",
 				State:                  "approved",
 				Path:                   "project/p1",
+				ApprovedPath:           "project/p1/branch/review",
 				ProjectID:              "p1",
 				ScopeType:              common.ScopeTypeProject,
 				ScopeID:                "p1",
 				PrincipalID:            "review-agent",
 				PrincipalType:          "agent",
+				PrincipalRole:          "subagent",
 				ClientID:               "till-mcp-stdio",
 				ClientType:             "mcp-stdio",
 				RequestedSessionTTL:    "2h0m0s",
+				HasContinuation:        true,
+				ApprovedSessionTTL:     "2h0m0s",
 				Reason:                 "manual MCP review",
+				RequestedByActor:       "orchestrator-1",
+				RequestedByType:        "agent",
 				CreatedAt:              now,
 				ExpiresAt:              now.Add(30 * time.Minute),
 				IssuedSessionID:        "sess-1",
@@ -1205,22 +1224,47 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.create_auth_request", map[string]any{
-		"path":              "project/p1",
-		"principal_id":      "review-agent",
-		"principal_type":    "agent",
-		"client_id":         "till-mcp-stdio",
-		"client_type":       "mcp-stdio",
-		"requested_ttl":     "2h",
-		"timeout":           "30m",
-		"reason":            "manual MCP review",
-		"continuation_json": `{"resume_tool":"till.create_task"}`,
+		"path":                "project/p1",
+		"principal_id":        "review-agent",
+		"principal_type":      "agent",
+		"principal_role":      "orchestrator",
+		"requested_by_actor":  "orchestrator-1",
+		"requested_by_type":   "agent",
+		"requester_client_id": "orchestrator-client",
+		"client_id":           "till-mcp-stdio",
+		"client_type":         "mcp-stdio",
+		"requested_ttl":       "2h",
+		"timeout":             "30m",
+		"reason":              "manual MCP review",
+		"continuation_json":   `{"resume_tool":"till.create_task"}`,
 	}))
 	createStructured := toolResultStructured(t, createResp.Result)
 	if got := createStructured["id"].(string); got != "req-1" {
 		t.Fatalf("create auth request id = %q, want req-1", got)
 	}
+	if got := createStructured["principal_role"].(string); got != "orchestrator" {
+		t.Fatalf("create auth request principal_role = %q, want orchestrator", got)
+	}
+	if got := createStructured["requested_by_actor"].(string); got != "orchestrator-1" {
+		t.Fatalf("create auth request requested_by_actor = %q, want orchestrator-1", got)
+	}
+	if got := createStructured["has_continuation"].(bool); !got {
+		t.Fatal("create auth request has_continuation = false, want true")
+	}
+	if _, ok := createStructured["continuation"]; ok {
+		t.Fatalf("create auth request leaked continuation = %#v, want omitted", createStructured["continuation"])
+	}
 	if got := capture.lastCreate.Path; got != "project/p1" {
 		t.Fatalf("CreateAuthRequest() path = %q, want project/p1", got)
+	}
+	if got := capture.lastCreate.PrincipalRole; got != "orchestrator" {
+		t.Fatalf("CreateAuthRequest() principal_role = %q, want orchestrator", got)
+	}
+	if got := capture.lastCreate.RequestedByActor; got != "orchestrator-1" {
+		t.Fatalf("CreateAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
+	}
+	if got := capture.lastCreate.RequesterClientID; got != "orchestrator-client" {
+		t.Fatalf("CreateAuthRequest() requester_client_id = %q, want orchestrator-client", got)
 	}
 	if got := capture.lastCreate.ContinuationJSON; !strings.Contains(got, "resume_tool") {
 		t.Fatalf("CreateAuthRequest() continuation_json = %q, want resume payload", got)
@@ -1253,10 +1297,19 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	if got := capture.lastGetID; got != "req-1" {
 		t.Fatalf("GetAuthRequest() request_id = %q, want req-1", got)
 	}
+	if got := getStructured["has_continuation"].(bool); !got {
+		t.Fatal("get auth request has_continuation = false, want true")
+	}
+	if _, ok := getStructured["continuation"]; ok {
+		t.Fatalf("get auth request leaked continuation = %#v, want omitted", getStructured["continuation"])
+	}
 
 	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(5, "till.claim_auth_request", map[string]any{
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+		"wait_timeout": "30s",
 	}))
 	claimStructured := toolResultStructured(t, claimResp.Result)
 	requestRecord, ok := claimStructured["request"].(map[string]any)
@@ -1266,6 +1319,18 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	if got := requestRecord["state"].(string); got != "approved" {
 		t.Fatalf("claim auth request state = %q, want approved", got)
 	}
+	if got := requestRecord["approved_path"].(string); got != "project/p1/branch/review" {
+		t.Fatalf("claim auth request approved_path = %q, want project/p1/branch/review", got)
+	}
+	if got := requestRecord["approved_session_ttl"].(string); got != "2h0m0s" {
+		t.Fatalf("claim auth request approved_session_ttl = %q, want 2h0m0s", got)
+	}
+	if got := requestRecord["has_continuation"].(bool); !got {
+		t.Fatal("claim auth request has_continuation = false, want true")
+	}
+	if _, ok := requestRecord["continuation"]; ok {
+		t.Fatalf("claim auth request leaked continuation = %#v, want omitted", requestRecord["continuation"])
+	}
 	if got := claimStructured["session_secret"].(string); got != "secret-1" {
 		t.Fatalf("claim auth request session_secret = %q, want secret-1", got)
 	}
@@ -1274,6 +1339,72 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	}
 	if got := capture.lastClaim.ResumeToken; got != "resume-1" {
 		t.Fatalf("ClaimAuthRequest() resume_token = %q, want resume-1", got)
+	}
+	if got := capture.lastClaim.PrincipalID; got != "review-agent" {
+		t.Fatalf("ClaimAuthRequest() principal_id = %q, want review-agent", got)
+	}
+	if got := capture.lastClaim.ClientID; got != "till-mcp-stdio" {
+		t.Fatalf("ClaimAuthRequest() client_id = %q, want till-mcp-stdio", got)
+	}
+	if got := capture.lastClaim.WaitTimeout; got != "30s" {
+		t.Fatalf("ClaimAuthRequest() wait_timeout = %q, want 30s", got)
+	}
+}
+
+// TestHandlerClaimAuthRequestWaitingPayload verifies waiting claims return a pending request plus waiting=true without secrets.
+func TestHandlerClaimAuthRequestWaitingPayload(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		claimResult: common.AuthRequestClaimResult{
+			Request: common.AuthRequestRecord{
+				ID:                  "req-2",
+				State:               "pending",
+				Path:                "project/p1",
+				ProjectID:           "p1",
+				ScopeType:           common.ScopeTypeProject,
+				ScopeID:             "p1",
+				PrincipalID:         "review-agent",
+				PrincipalType:       "agent",
+				PrincipalRole:       "subagent",
+				ClientID:            "till-mcp-stdio",
+				ClientType:          "mcp-stdio",
+				RequestedSessionTTL: "2h0m0s",
+			},
+			Waiting: true,
+		},
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-2",
+		"resume_token": "resume-2",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+		"wait_timeout": "5s",
+	}))
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	if got, _ := claimStructured["waiting"].(bool); !got {
+		t.Fatalf("claim waiting = %v, want true", claimStructured["waiting"])
+	}
+	if _, ok := claimStructured["session_secret"]; ok {
+		t.Fatalf("claim session_secret = %#v, want omitted while waiting", claimStructured["session_secret"])
+	}
+	requestRecord, ok := claimStructured["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("claim waiting payload = %#v, want nested request record", claimStructured)
+	}
+	if got := requestRecord["state"].(string); got != "pending" {
+		t.Fatalf("claim waiting state = %q, want pending", got)
 	}
 }
 
@@ -1298,12 +1429,165 @@ func TestHandlerClaimAuthRequestErrorMapping(t *testing.T) {
 	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
 		"request_id":   "req-1",
 		"resume_token": "wrong-token",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
 	}))
 	if isError, _ := claimResp.Result["isError"].(bool); !isError {
 		t.Fatalf("claim_auth_request isError = %v, want true", claimResp.Result["isError"])
 	}
 	if got := toolResultText(t, claimResp.Result); !strings.HasPrefix(got, "invalid_request:") {
 		t.Fatalf("claim_auth_request error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestHandlerClaimAuthRequestRejectsNegativeWaitTimeout verifies invalid wait_timeout values fail as invalid_request tool errors.
+func TestHandlerClaimAuthRequestRejectsNegativeWaitTimeout(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+		"wait_timeout": "-1s",
+	}))
+	if len(claimResp.Error) > 0 {
+		if got := fmt.Sprint(claimResp.Error["message"]); !strings.Contains(strings.ToLower(got), "invalid") {
+			t.Fatalf("claim_auth_request negative wait rpc error = %#v, want invalid params style failure", claimResp.Error)
+		}
+		return
+	}
+	if got := toolResultText(t, claimResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+		t.Fatalf("claim_auth_request negative wait error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestHandlerClaimAuthRequestRejectsRequesterMismatch verifies mismatched requester claims fail as invalid_request tool errors.
+func TestHandlerClaimAuthRequestRejectsRequesterMismatch(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		claimErr: errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(8, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+		"principal_id": "other-agent",
+		"client_id":    "other-client",
+	}))
+	if isError, _ := claimResp.Result["isError"].(bool); !isError {
+		t.Fatalf("claim_auth_request isError = %v, want true", claimResp.Result["isError"])
+	}
+	if got := toolResultText(t, claimResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+		t.Fatalf("claim_auth_request mismatch error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestHandlerClaimAuthRequestRequesterMismatchMapping verifies adoption attempts fail as invalid_request tool errors.
+func TestHandlerClaimAuthRequestRequesterMismatchMapping(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		claimErr: errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+		"principal_id": "other-agent",
+		"client_id":    "other-client",
+	}))
+	if isError, _ := claimResp.Result["isError"].(bool); !isError {
+		t.Fatalf("claim_auth_request isError = %v, want true", claimResp.Result["isError"])
+	}
+	if got := toolResultText(t, claimResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+		t.Fatalf("claim_auth_request mismatch error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestHandlerClaimAuthRequestWaitingResult verifies pending auth claims can return a waiting marker without leaking a secret.
+func TestHandlerClaimAuthRequestWaitingResult(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		claimResult: common.AuthRequestClaimResult{
+			Request: common.AuthRequestRecord{
+				ID:                  "req-1",
+				State:               "pending",
+				Path:                "project/p1",
+				ProjectID:           "p1",
+				ScopeType:           common.ScopeTypeProject,
+				ScopeID:             "p1",
+				PrincipalID:         "review-agent",
+				PrincipalType:       "agent",
+				PrincipalRole:       "subagent",
+				ClientID:            "till-mcp-stdio",
+				ClientType:          "mcp-stdio",
+				RequestedSessionTTL: "8h0m0s",
+				CreatedAt:           time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC),
+				ExpiresAt:           time.Date(2026, 3, 20, 12, 30, 0, 0, time.UTC),
+			},
+			Waiting: true,
+		},
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+		"wait_timeout": "10ms",
+	}))
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	if waiting, ok := claimStructured["waiting"].(bool); !ok || !waiting {
+		t.Fatalf("claim_auth_request waiting = %#v, want true", claimStructured["waiting"])
+	}
+	if _, ok := claimStructured["session_secret"]; ok {
+		t.Fatalf("claim_auth_request session_secret present while waiting: %#v", claimStructured)
 	}
 }
 

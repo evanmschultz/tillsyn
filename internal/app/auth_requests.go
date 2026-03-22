@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,7 +15,10 @@ import (
 const (
 	defaultAuthRequestTimeout    = 30 * time.Minute
 	defaultRequestedSessionTTL   = 8 * time.Hour
+	claimAuthRequestPollInterval = 100 * time.Millisecond
 	authRequestNotificationLabel = "auth request"
+	// AuthRequestContinuationRequesterClientIDKey stores one requester-bound claim client identifier inside private continuation metadata.
+	AuthRequestContinuationRequesterClientIDKey = "_tillsyn_requester_client_id"
 )
 
 // AuthBackend defines caller-safe session inventory and lifecycle operations.
@@ -39,6 +43,7 @@ type AuthSessionIssueInput struct {
 // AuthSessionFilter captures deterministic auth-session list filters.
 type AuthSessionFilter struct {
 	SessionID   string
+	ProjectID   string
 	PrincipalID string
 	ClientID    string
 	State       string
@@ -48,8 +53,12 @@ type AuthSessionFilter struct {
 // AuthSession stores one caller-safe auth-session record.
 type AuthSession struct {
 	SessionID        string
+	ProjectID        string
+	AuthRequestID    string
+	ApprovedPath     string
 	PrincipalID      string
 	PrincipalType    string
+	PrincipalRole    string
 	PrincipalName    string
 	ClientID         string
 	ClientType       string
@@ -82,6 +91,7 @@ type ApprovedAuthRequestResult struct {
 type ClaimedAuthRequestResult struct {
 	Request       domain.AuthRequest
 	SessionSecret string
+	Waiting       bool
 }
 
 // ApproveAuthRequestInput captures fields for approving one auth request.
@@ -99,10 +109,12 @@ type CreateAuthRequestInput struct {
 	Path                string
 	PrincipalID         string
 	PrincipalType       string
+	PrincipalRole       string
 	PrincipalName       string
 	ClientID            string
 	ClientType          string
 	ClientName          string
+	RequesterClientID   string
 	RequestedSessionTTL time.Duration
 	Reason              string
 	Continuation        map[string]any
@@ -131,6 +143,9 @@ type CancelAuthRequestInput struct {
 type ClaimAuthRequestInput struct {
 	RequestID   string
 	ResumeToken string
+	PrincipalID string
+	ClientID    string
+	WaitTimeout time.Duration
 }
 
 // AuthRequestGateway defines the auth-request lifecycle needed by the app service.
@@ -139,7 +154,7 @@ type AuthRequestGateway interface {
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, ApproveAuthRequestGatewayInput) (ApprovedAuthRequestResult, error)
-	ClaimAuthRequest(context.Context, string, string) (ClaimedAuthRequestResult, error)
+	ClaimAuthRequest(context.Context, ClaimAuthRequestInput) (ClaimedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, string, string, domain.ActorType, string) (domain.AuthRequest, error)
 	CancelAuthRequest(context.Context, string, string, domain.ActorType, string) (domain.AuthRequest, error)
 }
@@ -178,13 +193,14 @@ func (s *Service) CreateAuthRequest(ctx context.Context, in CreateAuthRequestInp
 		Path:                path,
 		PrincipalID:         strings.TrimSpace(in.PrincipalID),
 		PrincipalType:       strings.TrimSpace(in.PrincipalType),
+		PrincipalRole:       strings.TrimSpace(in.PrincipalRole),
 		PrincipalName:       strings.TrimSpace(in.PrincipalName),
 		ClientID:            strings.TrimSpace(in.ClientID),
 		ClientType:          strings.TrimSpace(in.ClientType),
 		ClientName:          strings.TrimSpace(in.ClientName),
 		RequestedSessionTTL: sessionTTL,
 		Reason:              strings.TrimSpace(in.Reason),
-		Continuation:        cloneAuthRequestContinuation(in.Continuation),
+		Continuation:        authRequestContinuationForCreate(in.Continuation, in.RequesterClientID),
 		RequestedByActor:    requestedBy,
 		RequestedByType:     requestedType,
 		Timeout:             timeout,
@@ -196,12 +212,14 @@ func (s *Service) CreateAuthRequest(ctx context.Context, in CreateAuthRequestInp
 	if err != nil {
 		return domain.AuthRequest{}, err
 	}
-	attention, err := authRequestAttentionItem(req, s.clock())
+	attentionItems, err := authRequestAttentionItems(req, s.clock())
 	if err != nil {
 		return domain.AuthRequest{}, err
 	}
-	if err := s.repo.CreateAttentionItem(ctx, attention); err != nil {
-		return domain.AuthRequest{}, err
+	for _, attention := range attentionItems {
+		if err := s.repo.CreateAttentionItem(ctx, attention); err != nil {
+			return domain.AuthRequest{}, err
+		}
 	}
 	return req, nil
 }
@@ -226,16 +244,26 @@ func (s *Service) ListAuthRequests(ctx context.Context, filter domain.AuthReques
 	if s.authRequests == nil {
 		return nil, fmt.Errorf("auth requests are not configured")
 	}
-	requests, err := s.authRequests.ListAuthRequests(ctx, filter)
+	projectID := strings.TrimSpace(filter.ProjectID)
+	repoFilter := filter
+	if projectID != "" {
+		repoFilter.ProjectID = ""
+	}
+	requests, err := s.authRequests.ListAuthRequests(ctx, repoFilter)
 	if err != nil {
 		return nil, err
 	}
+	out := make([]domain.AuthRequest, 0, len(requests))
 	for _, request := range requests {
 		if err := s.syncExpiredAuthRequestAttention(ctx, request); err != nil {
 			return nil, err
 		}
+		if projectID != "" && !authRequestMatchesProject(request, projectID) {
+			continue
+		}
+		out = append(out, request)
 	}
-	return requests, nil
+	return out, nil
 }
 
 // ApproveAuthRequest approves one pending request and resolves its notification row.
@@ -264,7 +292,7 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestI
 	if err != nil {
 		return ApprovedAuthRequestResult{}, err
 	}
-	if _, err := s.repo.ResolveAttentionItem(ctx, out.Request.ID, resolvedBy, resolvedType, s.clock().UTC()); err != nil {
+	if err := s.resolveAuthRequestAttention(ctx, out.Request, resolvedBy, resolvedType); err != nil {
 		return ApprovedAuthRequestResult{}, err
 	}
 	return out, nil
@@ -275,14 +303,63 @@ func (s *Service) ClaimAuthRequest(ctx context.Context, in ClaimAuthRequestInput
 	if s.authRequests == nil {
 		return ClaimedAuthRequestResult{}, fmt.Errorf("auth requests are not configured")
 	}
-	result, err := s.authRequests.ClaimAuthRequest(ctx, strings.TrimSpace(in.RequestID), strings.TrimSpace(in.ResumeToken))
-	if err != nil {
-		return ClaimedAuthRequestResult{}, err
+	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return ClaimedAuthRequestResult{}, fmt.Errorf("auth request id is required")
 	}
-	if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
-		return ClaimedAuthRequestResult{}, err
+	waitTimeout := in.WaitTimeout
+	if waitTimeout < 0 {
+		return ClaimedAuthRequestResult{}, fmt.Errorf("wait timeout must be >= 0")
 	}
-	return result, nil
+	if waitTimeout <= 0 {
+		result, err := s.authRequests.ClaimAuthRequest(ctx, ClaimAuthRequestInput{
+			RequestID:   requestID,
+			ResumeToken: strings.TrimSpace(in.ResumeToken),
+			PrincipalID: strings.TrimSpace(in.PrincipalID),
+			ClientID:    strings.TrimSpace(in.ClientID),
+		})
+		if err != nil {
+			return ClaimedAuthRequestResult{}, err
+		}
+		if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
+			return ClaimedAuthRequestResult{}, err
+		}
+		return result, nil
+	}
+	deadline := time.Now().UTC().Add(waitTimeout)
+	for {
+		result, err := s.authRequests.ClaimAuthRequest(ctx, ClaimAuthRequestInput{
+			RequestID:   requestID,
+			ResumeToken: strings.TrimSpace(in.ResumeToken),
+			PrincipalID: strings.TrimSpace(in.PrincipalID),
+			ClientID:    strings.TrimSpace(in.ClientID),
+		})
+		if err != nil {
+			return ClaimedAuthRequestResult{}, err
+		}
+		if domain.NormalizeAuthRequestState(result.Request.State) != domain.AuthRequestStatePending {
+			if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
+				return ClaimedAuthRequestResult{}, err
+			}
+			return result, nil
+		}
+		if !time.Now().UTC().Before(deadline) {
+			result.Waiting = true
+			if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
+				return ClaimedAuthRequestResult{}, err
+			}
+			return result, nil
+		}
+		timer := time.NewTimer(claimAuthRequestPollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ClaimedAuthRequestResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // DenyAuthRequest denies one pending request and resolves its notification row.
@@ -296,7 +373,7 @@ func (s *Service) DenyAuthRequest(ctx context.Context, in DenyAuthRequestInput) 
 	if err != nil {
 		return domain.AuthRequest{}, err
 	}
-	if _, err := s.repo.ResolveAttentionItem(ctx, req.ID, resolvedBy, resolvedType, s.clock().UTC()); err != nil {
+	if err := s.resolveAuthRequestAttention(ctx, req, resolvedBy, resolvedType); err != nil {
 		return domain.AuthRequest{}, err
 	}
 	return req, nil
@@ -313,7 +390,7 @@ func (s *Service) CancelAuthRequest(ctx context.Context, in CancelAuthRequestInp
 	if err != nil {
 		return domain.AuthRequest{}, err
 	}
-	if _, err := s.repo.ResolveAttentionItem(ctx, req.ID, resolvedBy, resolvedType, s.clock().UTC()); err != nil {
+	if err := s.resolveAuthRequestAttention(ctx, req, resolvedBy, resolvedType); err != nil {
 		return domain.AuthRequest{}, err
 	}
 	return req, nil
@@ -324,7 +401,25 @@ func (s *Service) ListAuthSessions(ctx context.Context, filter AuthSessionFilter
 	if s.authBackend == nil {
 		return nil, fmt.Errorf("auth backend is not configured")
 	}
-	return s.authBackend.ListAuthSessions(ctx, filter)
+	projectID := strings.TrimSpace(filter.ProjectID)
+	backendFilter := filter
+	if projectID != "" {
+		backendFilter.ProjectID = ""
+	}
+	sessions, err := s.authBackend.ListAuthSessions(ctx, backendFilter)
+	if err != nil {
+		return nil, err
+	}
+	if projectID == "" {
+		return sessions, nil
+	}
+	out := make([]AuthSession, 0, len(sessions))
+	for _, session := range sessions {
+		if authSessionMatchesProject(session, projectID) {
+			out = append(out, session)
+		}
+	}
+	return out, nil
 }
 
 // ValidateAuthSession validates one session/secret pair through the configured backend.
@@ -343,25 +438,29 @@ func (s *Service) RevokeAuthSession(ctx context.Context, sessionID, reason strin
 	return s.authBackend.RevokeAuthSession(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(reason))
 }
 
-// authRequestAttentionItem builds the mirrored user-action notification for one pending auth request.
-func authRequestAttentionItem(req domain.AuthRequest, now time.Time) (domain.AttentionItem, error) {
-	item, err := domain.NewAttentionItem(domain.AttentionItemInput{
-		ID:                 req.ID,
-		ProjectID:          req.ProjectID,
-		BranchID:           req.BranchID,
-		ScopeType:          req.ScopeType,
-		ScopeID:            req.ScopeID,
-		Kind:               domain.AttentionKindApprovalRequired,
-		Summary:            fmt.Sprintf("%s: %s wants %s", authRequestNotificationLabel, firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID), req.Path),
-		BodyMarkdown:       authRequestThreadBody(req),
-		RequiresUserAction: true,
-		CreatedByActor:     req.RequestedByActor,
-		CreatedByType:      req.RequestedByType,
-	}, now.UTC())
-	if err != nil {
-		return domain.AttentionItem{}, err
+// authRequestAttentionItems builds mirrored user-action notifications for one pending auth request.
+func authRequestAttentionItems(req domain.AuthRequest, now time.Time) ([]domain.AttentionItem, error) {
+	attentionIDs, projectIDs := authRequestAttentionTargets(req)
+	items := make([]domain.AttentionItem, 0, len(attentionIDs))
+	for idx := range attentionIDs {
+		item, err := domain.NewAttentionItem(domain.AttentionItemInput{
+			ID:                 attentionIDs[idx],
+			ProjectID:          projectIDs[idx],
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            projectIDs[idx],
+			Kind:               domain.AttentionKindApprovalRequired,
+			Summary:            fmt.Sprintf("%s: %s wants %s", authRequestNotificationLabel, firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID), req.Path),
+			BodyMarkdown:       authRequestThreadBody(req),
+			RequiresUserAction: true,
+			CreatedByActor:     req.RequestedByActor,
+			CreatedByType:      req.RequestedByType,
+		}, now.UTC())
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
 	}
-	return item, nil
+	return items, nil
 }
 
 // authRequestThreadBody renders one markdown-rich review summary for auth-request notifications.
@@ -412,10 +511,84 @@ func (s *Service) syncExpiredAuthRequestAttention(ctx context.Context, req domai
 	if domain.NormalizeAuthRequestState(req.State) != domain.AuthRequestStateExpired {
 		return nil
 	}
-	if _, err := s.repo.ResolveAttentionItem(ctx, req.ID, "tillsyn-system", domain.ActorTypeSystem, s.clock().UTC()); err != nil {
+	if err := s.resolveAuthRequestAttention(ctx, req, "tillsyn-system", domain.ActorTypeSystem); err != nil {
 		return err
 	}
 	return nil
+}
+
+// resolveAuthRequestAttention resolves every mirrored attention row for one auth request.
+func (s *Service) resolveAuthRequestAttention(ctx context.Context, req domain.AuthRequest, resolvedBy string, resolvedType domain.ActorType) error {
+	for _, attentionID := range authRequestAttentionIDs(req) {
+		if _, err := s.repo.ResolveAttentionItem(ctx, attentionID, resolvedBy, resolvedType, s.clock().UTC()); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+// authRequestAttentionIDs returns every mirrored attention id for one auth request.
+func authRequestAttentionIDs(req domain.AuthRequest) []string {
+	ids, _ := authRequestAttentionTargets(req)
+	return ids
+}
+
+// authRequestAttentionTargets returns mirrored attention ids plus the routed project id for each row.
+func authRequestAttentionTargets(req domain.AuthRequest) ([]string, []string) {
+	path, err := domain.ParseAuthRequestPath(req.Path)
+	if err != nil {
+		projectID := firstNonEmptyTrimmed(req.ProjectID, domain.AuthRequestGlobalProjectID)
+		return []string{req.ID}, []string{projectID}
+	}
+	switch path.Kind {
+	case domain.AuthRequestPathKindProjects:
+		ids := make([]string, 0, len(path.ProjectIDs))
+		projectIDs := make([]string, 0, len(path.ProjectIDs))
+		for _, projectID := range path.ProjectIDs {
+			ids = append(ids, authRequestProjectAttentionID(req.ID, projectID))
+			projectIDs = append(projectIDs, projectID)
+		}
+		return ids, projectIDs
+	case domain.AuthRequestPathKindGlobal:
+		return []string{authRequestGlobalAttentionID(req.ID)}, []string{domain.AuthRequestGlobalProjectID}
+	default:
+		return []string{req.ID}, []string{path.ProjectID}
+	}
+}
+
+// AuthRequestIDFromAttentionID resolves one mirrored attention id back to the stored auth request id.
+func AuthRequestIDFromAttentionID(attentionID string) string {
+	attentionID = strings.TrimSpace(attentionID)
+	if base, _, ok := strings.Cut(attentionID, "::"); ok && strings.TrimSpace(base) != "" {
+		return strings.TrimSpace(base)
+	}
+	return attentionID
+}
+
+func authRequestProjectAttentionID(requestID, projectID string) string {
+	return strings.TrimSpace(requestID) + "::project::" + strings.TrimSpace(projectID)
+}
+
+func authRequestGlobalAttentionID(requestID string) string {
+	return strings.TrimSpace(requestID) + "::global"
+}
+
+// authRequestMatchesProject reports whether one request applies to the requested project filter.
+func authRequestMatchesProject(req domain.AuthRequest, projectID string) bool {
+	path, err := domain.ParseAuthRequestPath(firstNonEmptyTrimmed(req.ApprovedPath, req.Path))
+	if err != nil {
+		return strings.TrimSpace(req.ProjectID) == strings.TrimSpace(projectID)
+	}
+	return path.MatchesProject(projectID)
+}
+
+// authSessionMatchesProject reports whether one session applies to the requested project filter.
+func authSessionMatchesProject(session AuthSession, projectID string) bool {
+	path, err := domain.ParseAuthRequestPath(strings.TrimSpace(session.ApprovedPath))
+	if err != nil {
+		return strings.TrimSpace(session.ProjectID) == strings.TrimSpace(projectID)
+	}
+	return path.MatchesProject(projectID)
 }
 
 // cloneAuthRequestContinuation deep-copies request continuation metadata.
@@ -435,6 +608,30 @@ func cloneAuthRequestContinuation(in map[string]any) map[string]any {
 		return nil
 	}
 	return out
+}
+
+// authRequestContinuationForCreate clones continuation metadata and injects one requester-bound claim client id when provided.
+func authRequestContinuationForCreate(in map[string]any, requesterClientID string) map[string]any {
+	out := cloneAuthRequestContinuation(in)
+	if trimmed := strings.TrimSpace(requesterClientID); trimmed != "" {
+		if out == nil {
+			out = make(map[string]any, 1)
+		}
+		out[AuthRequestContinuationRequesterClientIDKey] = trimmed
+	}
+	return out
+}
+
+// AuthRequestClaimClientIDFromContinuation resolves the requester-bound claim client identifier from private continuation metadata.
+func AuthRequestClaimClientIDFromContinuation(continuation map[string]any, fallback string) string {
+	if continuation != nil {
+		if raw, ok := continuation[AuthRequestContinuationRequesterClientIDKey].(string); ok {
+			if trimmed := strings.TrimSpace(raw); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 // cloneAuthRequestContinuationValue deep-copies one JSON-compatible continuation value.

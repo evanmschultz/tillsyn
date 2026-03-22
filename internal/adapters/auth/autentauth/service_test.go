@@ -556,6 +556,40 @@ func TestAuthorizeApprovedPathRejectsDifferentPhaseMutation(t *testing.T) {
 	}
 }
 
+// TestAuthorizeApprovedPathAllowsMultiProjectOrchestratorScope verifies multi-project approvals authorize matching projects without pretending to be project-rooted paths.
+func TestAuthorizeApprovedPathAllowsMultiProjectOrchestratorScope(t *testing.T) {
+	t.Parallel()
+
+	err := authorizeApprovedPath(
+		map[string]string{"approved_path": "projects/p1,p2"},
+		map[string]string{
+			"project_id": "p2",
+			"scope_type": string(domain.ScopeLevelProject),
+			"scope_id":   "p2",
+		},
+	)
+	if err != nil {
+		t.Fatalf("authorizeApprovedPath() error = %v, want nil", err)
+	}
+}
+
+// TestAuthorizeApprovedPathAllowsGlobalScope verifies global approvals authorize work across projects.
+func TestAuthorizeApprovedPathAllowsGlobalScope(t *testing.T) {
+	t.Parallel()
+
+	err := authorizeApprovedPath(
+		map[string]string{"approved_path": "global"},
+		map[string]string{
+			"project_id": "p9",
+			"scope_type": string(domain.ScopeLevelProject),
+			"scope_id":   "p9",
+		},
+	)
+	if err != nil {
+		t.Fatalf("authorizeApprovedPath() error = %v, want nil", err)
+	}
+}
+
 // TestAuthContextPathBuildsTaskScopePath verifies task/subtask contexts must carry lineage to satisfy narrowed approvals.
 func TestAuthContextPathBuildsTaskScopePath(t *testing.T) {
 	t.Parallel()
@@ -680,16 +714,27 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 	if approved.Request.State != domain.AuthRequestStateApproved {
 		t.Fatalf("ApproveAuthRequest() state = %q, want approved", approved.Request.State)
 	}
-	if approved.Request.Path != "project/p1/branch/b1/phase/ph1/phase/ph2" {
-		t.Fatalf("ApproveAuthRequest() path = %q, want project/p1/branch/b1/phase/ph1/phase/ph2", approved.Request.Path)
+	if approved.Request.Path != "project/p1/branch/b1/phase/ph1" {
+		t.Fatalf("ApproveAuthRequest() requested path = %q, want project/p1/branch/b1/phase/ph1", approved.Request.Path)
 	}
-	if approved.Request.RequestedSessionTTL != time.Hour {
-		t.Fatalf("ApproveAuthRequest() ttl = %s, want 1h", approved.Request.RequestedSessionTTL)
+	if approved.Request.ApprovedPath != "project/p1/branch/b1/phase/ph1/phase/ph2" {
+		t.Fatalf("ApproveAuthRequest() approved_path = %q, want project/p1/branch/b1/phase/ph1/phase/ph2", approved.Request.ApprovedPath)
+	}
+	if approved.Request.RequestedSessionTTL != 2*time.Hour {
+		t.Fatalf("ApproveAuthRequest() requested ttl = %s, want 2h", approved.Request.RequestedSessionTTL)
+	}
+	if approved.Request.ApprovedSessionTTL != time.Hour {
+		t.Fatalf("ApproveAuthRequest() approved ttl = %s, want 1h", approved.Request.ApprovedSessionTTL)
 	}
 	if approved.SessionSecret == "" {
 		t.Fatal("ApproveAuthRequest() returned empty session secret")
 	}
-	claimed, err := auth.ClaimAuthRequest(ctx, request.ID, "resume-123")
+	claimed, err := auth.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-123",
+		PrincipalID: "lane-user",
+		ClientID:    "till-mcp-stdio",
+	})
 	if err != nil {
 		t.Fatalf("ClaimAuthRequest() error = %v", err)
 	}
@@ -924,6 +969,82 @@ func TestServiceListSessionsRejectsUnsupportedState(t *testing.T) {
 	}
 	if _, err := auth.ListSessions(context.Background(), SessionListFilter{State: "weird"}); !errors.Is(err, domain.ErrInvalidAuthRequestState) {
 		t.Fatalf("ListSessions() error = %v, want ErrInvalidAuthRequestState", err)
+	}
+}
+
+// TestServiceListSessionsFiltersByProject verifies approved sessions can be narrowed by project id.
+func TestServiceListSessionsFiltersByProject(t *testing.T) {
+	t.Parallel()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	auth, err := NewSharedDB(Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+	issuedA, err := auth.IssueSession(context.Background(), IssueSessionInput{
+		PrincipalID:   "agent-a",
+		PrincipalType: "agent",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		Metadata: map[string]string{
+			"project_id":      "p1",
+			"approved_path":   "project/p1",
+			"auth_request_id": "req-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(project p1) error = %v", err)
+	}
+	issuedB, err := auth.IssueSession(context.Background(), IssueSessionInput{
+		PrincipalID:   "agent-b",
+		PrincipalType: "agent",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		Metadata: map[string]string{
+			"project_id":      "p2",
+			"approved_path":   "project/p2",
+			"auth_request_id": "req-b",
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(project p2) error = %v", err)
+	}
+
+	filtered, err := auth.ListSessions(context.Background(), SessionListFilter{
+		ProjectID: "p1",
+		State:     string(autent.SessionStateActive),
+	})
+	if err != nil {
+		t.Fatalf("ListSessions(project) error = %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != issuedA.Session.ID {
+		t.Fatalf("ListSessions(project) = %#v, want only project p1 session %q", filtered, issuedA.Session.ID)
+	}
+	if got := filtered[0].Metadata["approved_path"]; got != "project/p1" {
+		t.Fatalf("ListSessions(project) approved_path = %q, want project/p1", got)
+	}
+
+	unfiltered, err := auth.ListSessions(context.Background(), SessionListFilter{
+		State: string(autent.SessionStateActive),
+	})
+	if err != nil {
+		t.Fatalf("ListSessions(global) error = %v", err)
+	}
+	if len(unfiltered) < 2 {
+		t.Fatalf("ListSessions(global) = %#v, want at least two active sessions", unfiltered)
+	}
+	if issuedB.Session.ID == "" {
+		t.Fatal("expected second session to be issued")
 	}
 }
 

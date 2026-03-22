@@ -434,27 +434,32 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "auth",
 			args: []string{"auth", "--help"},
-			want: []string{"till auth", "request", "session", "issue-session", "session revoke --session-id"},
+			want: []string{"till auth", "request", "session", "issue-session", "session revoke --session-id", "projects/<project-id>,<project-id>...", "global"},
 		},
 		{
 			name: "auth request",
 			args: []string{"auth", "request", "--help"},
-			want: []string{"till auth request", "create", "approve", "project/<project-id>"},
+			want: []string{"till auth request", "create", "approve", "project/<project-id>", "projects/<project-id>,<project-id>...", "global"},
 		},
 		{
 			name: "auth request create",
 			args: []string{"auth", "request", "create", "--help"},
-			want: []string{"till auth request create", "--path", "--principal-id", "--continuation-json", "next step"},
+			want: []string{"till auth request create", "--path", "--principal-id", "--principal-role", "--continuation-json", "resume_token", "projects/p1,p2", "global", "next step"},
 		},
 		{
 			name: "auth request approve",
 			args: []string{"auth", "request", "approve", "--help"},
-			want: []string{"till auth request approve", "--path", "--ttl", "session_secret", "resume"},
+			want: []string{"till auth request approve", "--path", "--ttl", "claim_auth_request", "resume_token", "projects/...", "global", "approved record"},
 		},
 		{
 			name: "auth session",
 			args: []string{"auth", "session", "--help"},
 			want: []string{"till auth session", "list", "validate", "revoke"},
+		},
+		{
+			name: "auth session list",
+			args: []string{"auth", "session", "list", "--help"},
+			want: []string{"till auth session list", "--project-id", "--principal-id", "--client-id", "approved project identifier"},
 		},
 		{
 			name: "auth session revoke",
@@ -595,6 +600,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--path", "project/p1",
 		"--principal-id", "review-agent",
 		"--principal-type", "agent",
+		"--principal-role", "subagent",
 		"--client-id", "till-mcp-stdio",
 		"--client-type", "mcp-stdio",
 		"--reason", "manual MCP review",
@@ -607,21 +613,20 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(createdOut.String()), &created); err != nil {
 		t.Fatalf("Unmarshal(create) error = %v", err)
 	}
+	if strings.Contains(createdOut.String(), "resume_tool") || strings.Contains(createdOut.String(), "resume_path") {
+		t.Fatalf("create output leaked continuation metadata: %s", createdOut.String())
+	}
 	if got := created.State; got != "pending" {
 		t.Fatalf("create state = %q, want pending", got)
 	}
 	if got := created.Path; got != "project/p1" {
 		t.Fatalf("create path = %q, want project/p1", got)
 	}
-	if got, _ := created.Continuation["resume_tool"].(string); got != "till.raise_attention_item" {
-		t.Fatalf("create continuation resume_tool = %q, want till.raise_attention_item", got)
+	if got := created.PrincipalRole; got != "subagent" {
+		t.Fatalf("create principal_role = %q, want subagent", got)
 	}
-	resume, ok := created.Continuation["resume"].(map[string]any)
-	if !ok {
-		t.Fatalf("create continuation resume = %#v, want object", created.Continuation["resume"])
-	}
-	if got, _ := resume["path"].(string); got != "project/p1" {
-		t.Fatalf("create continuation resume.path = %q, want project/p1", got)
+	if !created.HasContinuation {
+		t.Fatal("create has_continuation = false, want true")
 	}
 
 	var shownOut strings.Builder
@@ -638,8 +643,17 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(shownOut.String()), &shown); err != nil {
 		t.Fatalf("Unmarshal(show) error = %v", err)
 	}
+	if strings.Contains(shownOut.String(), "resume_tool") || strings.Contains(shownOut.String(), "resume_path") {
+		t.Fatalf("show output leaked continuation metadata: %s", shownOut.String())
+	}
 	if shown.ID != created.ID {
 		t.Fatalf("show id = %q, want %q", shown.ID, created.ID)
+	}
+	if !shown.HasContinuation {
+		t.Fatal("show has_continuation = false, want true")
+	}
+	if shown.IssuedSessionSecret != "" {
+		t.Fatalf("show issued_session_secret = %q, want empty before approval", shown.IssuedSessionSecret)
 	}
 
 	var approvedOut strings.Builder
@@ -659,20 +673,59 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(approvedOut.String()), &approved); err != nil {
 		t.Fatalf("Unmarshal(approve) error = %v", err)
 	}
+	if strings.Contains(approvedOut.String(), "resume_tool") || strings.Contains(approvedOut.String(), "resume_path") {
+		t.Fatalf("approve output leaked continuation metadata: %s", approvedOut.String())
+	}
 	if got := approved.State; got != "approved" {
 		t.Fatalf("approve state = %q, want approved", got)
 	}
-	if got := approved.Path; got != "project/p1/branch/review-branch" {
-		t.Fatalf("approve path = %q, want project/p1/branch/review-branch", got)
+	if got := approved.Path; got != "project/p1" {
+		t.Fatalf("approve requested path = %q, want project/p1", got)
 	}
-	if got := approved.RequestedSessionTTL; got != "2h0m0s" {
-		t.Fatalf("approve requested_session_ttl = %q, want 2h0m0s", got)
+	if got := approved.ProjectID; got != "p1" {
+		t.Fatalf("approve project_id = %q, want p1", got)
 	}
-	if got, _ := approved.Continuation["resume_path"].(string); got != "project/p1" {
-		t.Fatalf("approve continuation resume_path = %q, want project/p1", got)
+	if got := approved.ApprovedPath; got != "project/p1/branch/review-branch" {
+		t.Fatalf("approve approved_path = %q, want project/p1/branch/review-branch", got)
+	}
+	if got := approved.RequestedSessionTTL; got != "8h0m0s" {
+		t.Fatalf("approve requested_session_ttl = %q, want 8h0m0s", got)
+	}
+	if got := approved.ApprovedSessionTTL; got != "2h0m0s" {
+		t.Fatalf("approve approved_session_ttl = %q, want 2h0m0s", got)
+	}
+	if !approved.HasContinuation {
+		t.Fatal("approve has_continuation = false, want true")
 	}
 	if approved.IssuedSessionID == "" || approved.IssuedSessionSecret == "" {
 		t.Fatalf("approve output missing issued credentials: %q", approvedOut.String())
+	}
+
+	var approvedShowOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "show",
+		"--request-id", created.ID,
+	}, &approvedShowOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request show approved) error = %v", err)
+	}
+
+	var approvedShown authRequestPayloadJSON
+	if err := json.Unmarshal([]byte(approvedShowOut.String()), &approvedShown); err != nil {
+		t.Fatalf("Unmarshal(show approved) error = %v", err)
+	}
+	if strings.Contains(approvedShowOut.String(), "resume_tool") || strings.Contains(approvedShowOut.String(), "resume_path") {
+		t.Fatalf("approved show output leaked continuation metadata: %s", approvedShowOut.String())
+	}
+	if got := approvedShown.IssuedSessionID; got != approved.IssuedSessionID {
+		t.Fatalf("approved show issued_session_id = %q, want %q", got, approved.IssuedSessionID)
+	}
+	if !approvedShown.HasContinuation {
+		t.Fatal("approved show has_continuation = false, want true")
+	}
+	if approvedShown.IssuedSessionSecret != "" {
+		t.Fatalf("approved show issued_session_secret = %q, want empty", approvedShown.IssuedSessionSecret)
 	}
 
 	var validatedOut strings.Builder
@@ -693,8 +746,20 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	if got := validated.PrincipalID; got != "review-agent" {
 		t.Fatalf("validate principal_id = %q, want review-agent", got)
 	}
+	if got := validated.PrincipalRole; got != "subagent" {
+		t.Fatalf("validate principal_role = %q, want subagent", got)
+	}
 	if got := validated.State; got != "active" {
 		t.Fatalf("validate state = %q, want active", got)
+	}
+	if got := validated.ProjectID; got != "p1" {
+		t.Fatalf("validate project_id = %q, want p1", got)
+	}
+	if got := validated.AuthRequestID; got != created.ID {
+		t.Fatalf("validate auth_request_id = %q, want %q", got, created.ID)
+	}
+	if got := validated.ApprovedPath; got != "project/p1/branch/review-branch" {
+		t.Fatalf("validate approved_path = %q, want project/p1/branch/review-branch", got)
 	}
 
 	var sessionListOut strings.Builder
@@ -702,6 +767,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "session", "list",
+		"--project-id", "p1",
 		"--principal-id", "review-agent",
 	}, &sessionListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth session list) error = %v", err)
@@ -713,6 +779,18 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}
 	if len(sessions) != 1 || sessions[0].SessionID != approved.IssuedSessionID {
 		t.Fatalf("expected active session inventory for approved request, got %#v", sessions)
+	}
+	if got := sessions[0].ProjectID; got != "p1" {
+		t.Fatalf("session list project_id = %q, want p1", got)
+	}
+	if got := sessions[0].AuthRequestID; got != created.ID {
+		t.Fatalf("session list auth_request_id = %q, want %q", got, created.ID)
+	}
+	if got := sessions[0].ApprovedPath; got != "project/p1/branch/review-branch" {
+		t.Fatalf("session list approved_path = %q, want project/p1/branch/review-branch", got)
+	}
+	if got := sessions[0].PrincipalRole; got != "subagent" {
+		t.Fatalf("session list principal_role = %q, want subagent", got)
 	}
 
 	if err := run(context.Background(), []string{

@@ -44,6 +44,18 @@ func TestParseAuthRequestPath(t *testing.T) {
 			wantScope:   ScopeLevelPhase,
 			wantScopeID: "ph2",
 		},
+		{
+			name:        "multi project scope",
+			raw:         "projects/p1,p2",
+			wantScope:   ScopeLevelProject,
+			wantScopeID: "p1",
+		},
+		{
+			name:        "global scope",
+			raw:         "global",
+			wantScope:   ScopeLevelProject,
+			wantScopeID: AuthRequestGlobalProjectID,
+		},
 		{name: "missing project prefix", raw: "branch/b1", wantErr: true},
 		{name: "phase before branch", raw: "project/p1/phase/ph1", wantErr: true},
 		{name: "dangling segment", raw: "project/p1/branch", wantErr: true},
@@ -78,6 +90,17 @@ func TestParseAuthRequestPath(t *testing.T) {
 			}
 			if len(got.PhaseIDs) != len(tc.wantPhases) {
 				t.Fatalf("PhaseIDs len = %d, want %d", len(got.PhaseIDs), len(tc.wantPhases))
+			}
+			if tc.name == "multi project scope" {
+				if got.Kind != AuthRequestPathKindProjects {
+					t.Fatalf("Kind = %q, want projects", got.Kind)
+				}
+				if len(got.ProjectIDs) != 2 || got.ProjectIDs[0] != "p1" || got.ProjectIDs[1] != "p2" {
+					t.Fatalf("ProjectIDs = %#v, want [p1 p2]", got.ProjectIDs)
+				}
+			}
+			if tc.name == "global scope" && got.Kind != AuthRequestPathKindGlobal {
+				t.Fatalf("Kind = %q, want global", got.Kind)
 			}
 			for idx, phaseID := range tc.wantPhases {
 				if got.PhaseIDs[idx] != phaseID {
@@ -118,6 +141,15 @@ func TestAuthRequestNormalizationHelpers(t *testing.T) {
 	if _, err := normalizeAuthRequestPrincipalType("robot"); !errors.Is(err, ErrInvalidActorType) {
 		t.Fatalf("normalizeAuthRequestPrincipalType(robot) error = %v, want ErrInvalidActorType", err)
 	}
+	if got := NormalizeAuthRequestRole(" Orchestrator "); got != AuthRequestRoleOrchestrator {
+		t.Fatalf("NormalizeAuthRequestRole() = %q, want orchestrator", got)
+	}
+	if !IsValidAuthRequestRole(AuthRequestRoleSubagent) {
+		t.Fatal("IsValidAuthRequestRole(subagent) = false, want true")
+	}
+	if IsValidAuthRequestRole(AuthRequestRole("global")) {
+		t.Fatal("IsValidAuthRequestRole(global) = true, want false")
+	}
 
 	ids := normalizeAuthRequestIDs([]string{" a ", "", "b", " ", "c"})
 	if got, want := len(ids), 3; got != want {
@@ -157,6 +189,26 @@ func TestAuthRequestPathRoundTripAndLevelTuple(t *testing.T) {
 	}
 	if normalized.ScopeType != ScopeLevelBranch || normalized.ScopeID != "b1" {
 		t.Fatalf("Normalize() = %#v, want branch scope", normalized)
+	}
+	multi, err := ParseAuthRequestPath("projects/p1,p2")
+	if err != nil {
+		t.Fatalf("ParseAuthRequestPath(multi) error = %v", err)
+	}
+	if got := multi.String(); got != "projects/p1,p2" {
+		t.Fatalf("multi String() = %q, want projects/p1,p2", got)
+	}
+	if !multi.MatchesProject("p2") || multi.MatchesProject("p9") {
+		t.Fatalf("multi MatchesProject() produced unexpected results for %#v", multi)
+	}
+	global, err := ParseAuthRequestPath("global")
+	if err != nil {
+		t.Fatalf("ParseAuthRequestPath(global) error = %v", err)
+	}
+	if got := global.String(); got != "global" {
+		t.Fatalf("global String() = %q, want global", got)
+	}
+	if !global.MatchesProject("p1") {
+		t.Fatal("global MatchesProject(p1) = false, want true")
 	}
 }
 
@@ -263,6 +315,98 @@ func TestAuthRequestLifecycleTransitions(t *testing.T) {
 	}
 	if expiredReq.State != AuthRequestStateExpired || expiredReq.ResolutionNote != "timed_out" {
 		t.Fatalf("Expire() = %#v, want expired timed_out", expiredReq)
+	}
+}
+
+// TestNewAuthRequestAgentRoleDefaultsAndValidation verifies agent requests default to subagent while invalid role combinations fail closed.
+func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	req, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-1",
+		Path:                AuthRequestPath{ProjectID: "p1"},
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "needs review",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(agent default role) error = %v", err)
+	}
+	if req.PrincipalRole != string(AuthRequestRoleSubagent) {
+		t.Fatalf("NewAuthRequest(agent default role) principal_role = %q, want subagent", req.PrincipalRole)
+	}
+
+	req, err = NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-2",
+		Path:                AuthRequestPath{ProjectID: "p1"},
+		PrincipalID:         "agent-2",
+		PrincipalType:       "agent",
+		PrincipalRole:       "orchestrator",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "needs orchestration review",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(orchestrator role) error = %v", err)
+	}
+	if req.PrincipalRole != string(AuthRequestRoleOrchestrator) {
+		t.Fatalf("NewAuthRequest(orchestrator role) principal_role = %q, want orchestrator", req.PrincipalRole)
+	}
+
+	if _, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-3",
+		Path:                AuthRequestPath{ProjectID: "p1"},
+		PrincipalID:         "user-1",
+		PrincipalType:       "user",
+		PrincipalRole:       "subagent",
+		ClientID:            "till-tui",
+		ClientType:          "tui",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "invalid role pairing",
+		Timeout:             30 * time.Minute,
+	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
+		t.Fatalf("NewAuthRequest(non-agent role) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+
+	if _, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-4",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindProjects, ProjectIDs: []string{"p1", "p2"}},
+		PrincipalID:         "subagent-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "subagent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "invalid broader subagent scope",
+		Timeout:             30 * time.Minute,
+	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
+		t.Fatalf("NewAuthRequest(subagent broader scope) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+
+	req, err = NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-5",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
+		PrincipalID:         "orchestrator-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "orchestrator",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "global orchestration review",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(global orchestrator) error = %v", err)
+	}
+	if got := req.Path; got != "global" {
+		t.Fatalf("NewAuthRequest(global orchestrator) path = %q, want global", got)
 	}
 }
 

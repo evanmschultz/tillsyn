@@ -28,13 +28,42 @@ var validAuthRequestStates = []AuthRequestState{
 	AuthRequestStateExpired,
 }
 
-// AuthRequestPath stores one canonical project-rooted auth-request path.
+// AuthRequestPath stores one canonical auth-request scope path.
 type AuthRequestPath struct {
-	ProjectID string
-	BranchID  string
-	PhaseIDs  []string
-	ScopeType ScopeLevel
-	ScopeID   string
+	Kind       AuthRequestPathKind
+	ProjectID  string
+	ProjectIDs []string
+	BranchID   string
+	PhaseIDs   []string
+	ScopeType  ScopeLevel
+	ScopeID    string
+}
+
+// AuthRequestPathKind identifies the canonical auth-scope shape.
+type AuthRequestPathKind string
+
+// Auth request path kinds.
+const (
+	AuthRequestPathKindProject  AuthRequestPathKind = "project"
+	AuthRequestPathKindProjects AuthRequestPathKind = "projects"
+	AuthRequestPathKindGlobal   AuthRequestPathKind = "global"
+)
+
+// AuthRequestGlobalProjectID is the internal sentinel project id used for global auth-request routing.
+const AuthRequestGlobalProjectID = "__global__"
+
+// AuthRequestRole identifies one auth-request agent role for gatekeeping policy.
+type AuthRequestRole string
+
+// Auth request role values.
+const (
+	AuthRequestRoleOrchestrator AuthRequestRole = "orchestrator"
+	AuthRequestRoleSubagent     AuthRequestRole = "subagent"
+)
+
+var validAuthRequestRoles = []AuthRequestRole{
+	AuthRequestRoleOrchestrator,
+	AuthRequestRoleSubagent,
 }
 
 // AuthRequest stores one persisted auth request and its approval outcome.
@@ -48,11 +77,14 @@ type AuthRequest struct {
 	ScopeID                string
 	PrincipalID            string
 	PrincipalType          string
+	PrincipalRole          string
 	PrincipalName          string
 	ClientID               string
 	ClientType             string
 	ClientName             string
 	RequestedSessionTTL    time.Duration
+	ApprovedPath           string
+	ApprovedSessionTTL     time.Duration
 	Reason                 string
 	Continuation           map[string]any
 	State                  AuthRequestState
@@ -75,6 +107,7 @@ type AuthRequestInput struct {
 	Path                AuthRequestPath
 	PrincipalID         string
 	PrincipalType       string
+	PrincipalRole       string
 	PrincipalName       string
 	ClientID            string
 	ClientType          string
@@ -94,12 +127,22 @@ type AuthRequestListFilter struct {
 	Limit     int
 }
 
-// ParseAuthRequestPath validates and canonicalizes one project-rooted auth-request path.
+// ParseAuthRequestPath validates and canonicalizes one auth-request scope path.
 func ParseAuthRequestPath(raw string) (AuthRequestPath, error) {
 	raw = strings.TrimSpace(raw)
 	raw = strings.Trim(raw, "/")
 	if raw == "" {
 		return AuthRequestPath{}, ErrInvalidAuthRequestPath
+	}
+	if strings.EqualFold(raw, string(AuthRequestPathKindGlobal)) {
+		return AuthRequestPath{Kind: AuthRequestPathKindGlobal}.Normalize()
+	}
+	if rest, ok := strings.CutPrefix(raw, "projects/"); ok {
+		parts := strings.Split(rest, ",")
+		return AuthRequestPath{
+			Kind:       AuthRequestPathKindProjects,
+			ProjectIDs: normalizeAuthRequestIDs(parts),
+		}.Normalize()
 	}
 	parts := strings.Split(raw, "/")
 	if len(parts) < 2 || len(parts)%2 != 0 {
@@ -108,7 +151,7 @@ func ParseAuthRequestPath(raw string) (AuthRequestPath, error) {
 	if parts[0] != "project" || strings.TrimSpace(parts[1]) == "" {
 		return AuthRequestPath{}, ErrInvalidAuthRequestPath
 	}
-	path := AuthRequestPath{ProjectID: strings.TrimSpace(parts[1])}
+	path := AuthRequestPath{Kind: AuthRequestPathKindProject, ProjectID: strings.TrimSpace(parts[1])}
 	seenBranch := false
 	for idx := 2; idx < len(parts); idx += 2 {
 		segment := strings.TrimSpace(strings.ToLower(parts[idx]))
@@ -135,11 +178,61 @@ func ParseAuthRequestPath(raw string) (AuthRequestPath, error) {
 	return path.Normalize()
 }
 
+// NormalizeAuthRequestRole canonicalizes one auth-request role value.
+func NormalizeAuthRequestRole(role AuthRequestRole) AuthRequestRole {
+	return AuthRequestRole(strings.TrimSpace(strings.ToLower(string(role))))
+}
+
+// IsValidAuthRequestRole reports whether one auth-request role is supported.
+func IsValidAuthRequestRole(role AuthRequestRole) bool {
+	return slices.Contains(validAuthRequestRoles, NormalizeAuthRequestRole(role))
+}
+
 // Normalize validates and canonicalizes one auth-request path value.
 func (p AuthRequestPath) Normalize() (AuthRequestPath, error) {
+	p.Kind = AuthRequestPathKind(strings.TrimSpace(strings.ToLower(string(p.Kind))))
 	p.ProjectID = strings.TrimSpace(p.ProjectID)
+	p.ProjectIDs = normalizeAuthRequestIDs(p.ProjectIDs)
 	p.BranchID = strings.TrimSpace(p.BranchID)
 	p.PhaseIDs = normalizeAuthRequestIDs(p.PhaseIDs)
+	if p.Kind == "" {
+		switch {
+		case len(p.ProjectIDs) > 0:
+			p.Kind = AuthRequestPathKindProjects
+		case p.ProjectID != "":
+			p.Kind = AuthRequestPathKindProject
+		default:
+			p.Kind = AuthRequestPathKindGlobal
+		}
+	}
+	switch p.Kind {
+	case AuthRequestPathKindGlobal:
+		if p.ProjectID != "" || len(p.ProjectIDs) > 0 || p.BranchID != "" || len(p.PhaseIDs) > 0 {
+			return AuthRequestPath{}, ErrInvalidAuthRequestPath
+		}
+		p.ScopeType = ScopeLevelProject
+		p.ScopeID = AuthRequestGlobalProjectID
+		return p, nil
+	case AuthRequestPathKindProjects:
+		if p.ProjectID != "" || p.BranchID != "" || len(p.PhaseIDs) > 0 {
+			return AuthRequestPath{}, ErrInvalidAuthRequestPath
+		}
+		if len(p.ProjectIDs) == 0 {
+			return AuthRequestPath{}, ErrInvalidAuthRequestPath
+		}
+		if len(p.ProjectIDs) == 1 {
+			return AuthRequestPath{
+				Kind:      AuthRequestPathKindProject,
+				ProjectID: p.ProjectIDs[0],
+			}.Normalize()
+		}
+		p.ScopeType = ScopeLevelProject
+		p.ScopeID = p.ProjectIDs[0]
+		return p, nil
+	case AuthRequestPathKindProject:
+	default:
+		return AuthRequestPath{}, ErrInvalidAuthRequestPath
+	}
 	if p.ProjectID == "" {
 		return AuthRequestPath{}, ErrInvalidAuthRequestPath
 	}
@@ -168,6 +261,12 @@ func (p AuthRequestPath) String() string {
 	if err != nil {
 		return ""
 	}
+	switch p.Kind {
+	case AuthRequestPathKindGlobal:
+		return string(AuthRequestPathKindGlobal)
+	case AuthRequestPathKindProjects:
+		return "projects/" + strings.Join(p.ProjectIDs, ",")
+	}
 	parts := []string{"project", p.ProjectID}
 	if p.BranchID != "" {
 		parts = append(parts, "branch", p.BranchID)
@@ -183,6 +282,9 @@ func (p AuthRequestPath) LevelTuple() (LevelTuple, error) {
 	p, err := p.Normalize()
 	if err != nil {
 		return LevelTuple{}, err
+	}
+	if p.Kind != AuthRequestPathKindProject {
+		return LevelTuple{}, ErrInvalidAuthRequestPath
 	}
 	switch {
 	case len(p.PhaseIDs) > 0:
@@ -208,6 +310,45 @@ func (p AuthRequestPath) LevelTuple() (LevelTuple, error) {
 	}
 }
 
+// PrimaryProjectID returns the primary project identifier used for routing and indexing.
+func (p AuthRequestPath) PrimaryProjectID() string {
+	p, err := p.Normalize()
+	if err != nil {
+		return ""
+	}
+	switch p.Kind {
+	case AuthRequestPathKindProject:
+		return p.ProjectID
+	case AuthRequestPathKindProjects:
+		if len(p.ProjectIDs) > 0 {
+			return p.ProjectIDs[0]
+		}
+	case AuthRequestPathKindGlobal:
+		return AuthRequestGlobalProjectID
+	}
+	return ""
+}
+
+// MatchesProject reports whether the canonical auth scope applies to one project id.
+func (p AuthRequestPath) MatchesProject(projectID string) bool {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return false
+	}
+	p, err := p.Normalize()
+	if err != nil {
+		return false
+	}
+	switch p.Kind {
+	case AuthRequestPathKindGlobal:
+		return true
+	case AuthRequestPathKindProjects:
+		return slices.Contains(p.ProjectIDs, projectID)
+	default:
+		return p.ProjectID == projectID
+	}
+}
+
 // NewAuthRequest validates and constructs one persisted auth request.
 func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 	in.ID = strings.TrimSpace(in.ID)
@@ -215,10 +356,6 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 		return AuthRequest{}, ErrInvalidID
 	}
 	path, err := in.Path.Normalize()
-	if err != nil {
-		return AuthRequest{}, err
-	}
-	level, err := path.LevelTuple()
 	if err != nil {
 		return AuthRequest{}, err
 	}
@@ -234,6 +371,25 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 	if err != nil {
 		return AuthRequest{}, err
 	}
+	principalRole := strings.TrimSpace(string(NormalizeAuthRequestRole(AuthRequestRole(in.PrincipalRole))))
+	if principalType == "agent" {
+		if principalRole == "" {
+			principalRole = string(AuthRequestRoleSubagent)
+		}
+		if !IsValidAuthRequestRole(AuthRequestRole(principalRole)) {
+			return AuthRequest{}, ErrInvalidAuthRequestRole
+		}
+		if path.Kind != AuthRequestPathKindProject && principalRole != string(AuthRequestRoleOrchestrator) {
+			return AuthRequest{}, ErrInvalidAuthRequestRole
+		}
+	} else if principalRole != "" {
+		return AuthRequest{}, ErrInvalidAuthRequestRole
+	}
+	scopeType := path.ScopeType
+	scopeID := path.ScopeID
+	if path.Kind == AuthRequestPathKindGlobal {
+		scopeType = ScopeLevelProject
+	}
 	requestedByActor := strings.TrimSpace(in.RequestedByActor)
 	if requestedByActor == "" {
 		requestedByActor = "tillsyn-user"
@@ -248,14 +404,15 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 	ts := now.UTC()
 	return AuthRequest{
 		ID:                  in.ID,
-		ProjectID:           path.ProjectID,
+		ProjectID:           path.PrimaryProjectID(),
 		BranchID:            path.BranchID,
 		PhaseIDs:            append([]string(nil), path.PhaseIDs...),
 		Path:                path.String(),
-		ScopeType:           level.ScopeType,
-		ScopeID:             level.ScopeID,
+		ScopeType:           scopeType,
+		ScopeID:             scopeID,
 		PrincipalID:         principalID,
 		PrincipalType:       principalType,
+		PrincipalRole:       principalRole,
 		PrincipalName:       strings.TrimSpace(in.PrincipalName),
 		ClientID:            clientID,
 		ClientType:          strings.TrimSpace(in.ClientType),

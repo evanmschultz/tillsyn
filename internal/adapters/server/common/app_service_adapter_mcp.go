@@ -75,15 +75,17 @@ func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuth
 		Path:                strings.TrimSpace(in.Path),
 		PrincipalID:         strings.TrimSpace(in.PrincipalID),
 		PrincipalType:       strings.TrimSpace(in.PrincipalType),
+		PrincipalRole:       strings.TrimSpace(in.PrincipalRole),
 		PrincipalName:       strings.TrimSpace(in.PrincipalName),
 		ClientID:            strings.TrimSpace(in.ClientID),
 		ClientType:          strings.TrimSpace(in.ClientType),
 		ClientName:          strings.TrimSpace(in.ClientName),
+		RequesterClientID:   requesterClientID(in),
 		RequestedSessionTTL: requestedTTL,
 		Reason:              strings.TrimSpace(in.Reason),
 		Continuation:        continuation,
-		RequestedBy:         strings.TrimSpace(in.PrincipalID),
-		RequestedType:       requestedActorTypeFromPrincipalType(in.PrincipalType),
+		RequestedBy:         firstNonEmptyRequestedBy(in.RequestedByActor, in.PrincipalID),
+		RequestedType:       requestedActorType(in.RequestedByType, in.PrincipalType),
 		Timeout:             timeout,
 	})
 	if err != nil {
@@ -137,9 +139,16 @@ func (a *AppServiceAdapter) ClaimAuthRequest(ctx context.Context, in ClaimAuthRe
 	if requestID == "" {
 		return AuthRequestClaimResult{}, fmt.Errorf("request_id is required: %w", ErrInvalidCaptureStateRequest)
 	}
+	waitTimeout, err := parseOptionalDurationString(in.WaitTimeout, "wait_timeout")
+	if err != nil {
+		return AuthRequestClaimResult{}, err
+	}
 	result, err := a.service.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
 		RequestID:   requestID,
 		ResumeToken: strings.TrimSpace(in.ResumeToken),
+		PrincipalID: strings.TrimSpace(in.PrincipalID),
+		ClientID:    strings.TrimSpace(in.ClientID),
+		WaitTimeout: waitTimeout,
 	})
 	if err != nil {
 		return AuthRequestClaimResult{}, mapAppError("claim auth request", err)
@@ -147,6 +156,7 @@ func (a *AppServiceAdapter) ClaimAuthRequest(ctx context.Context, in ClaimAuthRe
 	return AuthRequestClaimResult{
 		Request:       mapAuthRequestRecord(result.Request),
 		SessionSecret: result.SessionSecret,
+		Waiting:       result.Waiting,
 	}, nil
 }
 
@@ -472,6 +482,9 @@ func parseOptionalDurationString(raw, field string) (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%s %q is invalid: %w", field, raw, ErrInvalidCaptureStateRequest)
 	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s %q is invalid: %w", field, raw, ErrInvalidCaptureStateRequest)
+	}
 	return value, nil
 }
 
@@ -488,9 +501,17 @@ func parseContinuationJSON(raw string) (map[string]any, error) {
 	return cloneJSONObject(continuation), nil
 }
 
-// requestedActorTypeFromPrincipalType maps one auth request principal type into local actor attribution.
-func requestedActorTypeFromPrincipalType(raw string) domain.ActorType {
-	switch strings.TrimSpace(strings.ToLower(raw)) {
+// requestedActorType resolves explicit requester attribution and falls back to requested principal type.
+func requestedActorType(requestedByType, principalType string) domain.ActorType {
+	switch strings.TrimSpace(strings.ToLower(requestedByType)) {
+	case string(domain.ActorTypeAgent):
+		return domain.ActorTypeAgent
+	case string(domain.ActorTypeSystem):
+		return domain.ActorTypeSystem
+	case string(domain.ActorTypeUser):
+		return domain.ActorTypeUser
+	}
+	switch strings.TrimSpace(strings.ToLower(principalType)) {
 	case "agent", "service", "system":
 		return domain.ActorTypeAgent
 	default:
@@ -498,12 +519,35 @@ func requestedActorTypeFromPrincipalType(raw string) domain.ActorType {
 	}
 }
 
+// firstNonEmptyRequestedBy returns the first non-empty trimmed requester identifier.
+func firstNonEmptyRequestedBy(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// requesterClientID resolves one requester-bound claim client identifier with fallback to the requested client.
+func requesterClientID(in CreateAuthRequestRequest) string {
+	if trimmed := strings.TrimSpace(in.RequesterClientID); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(in.ClientID)
+}
+
 // mapAuthRequestRecord converts one domain auth request into one transport-facing record.
 func mapAuthRequestRecord(request domain.AuthRequest) AuthRequestRecord {
+	approvedSessionTTL := ""
+	if request.ApprovedSessionTTL > 0 {
+		approvedSessionTTL = request.ApprovedSessionTTL.String()
+	}
 	return AuthRequestRecord{
 		ID:                     request.ID,
 		State:                  string(request.State),
 		Path:                   request.Path,
+		ApprovedPath:           request.ApprovedPath,
 		ProjectID:              request.ProjectID,
 		BranchID:               request.BranchID,
 		PhaseIDs:               append([]string(nil), request.PhaseIDs...),
@@ -511,13 +555,15 @@ func mapAuthRequestRecord(request domain.AuthRequest) AuthRequestRecord {
 		ScopeID:                request.ScopeID,
 		PrincipalID:            request.PrincipalID,
 		PrincipalType:          request.PrincipalType,
+		PrincipalRole:          request.PrincipalRole,
 		PrincipalName:          request.PrincipalName,
 		ClientID:               request.ClientID,
 		ClientType:             request.ClientType,
 		ClientName:             request.ClientName,
 		RequestedSessionTTL:    request.RequestedSessionTTL.String(),
+		ApprovedSessionTTL:     approvedSessionTTL,
 		Reason:                 request.Reason,
-		Continuation:           cloneJSONObject(request.Continuation),
+		HasContinuation:        len(request.Continuation) > 0,
 		RequestedByActor:       request.RequestedByActor,
 		RequestedByType:        string(request.RequestedByType),
 		CreatedAt:              request.CreatedAt.UTC(),

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,8 +33,13 @@ type fakeService struct {
 	comments                map[string][]domain.Comment
 	lastCreateComment       app.CreateCommentInput
 	authRequests            map[string]domain.AuthRequest
+	authSessions            []app.AuthSession
+	lastAuthRequestFilter   domain.AuthRequestListFilter
+	lastAuthSessionFilter   app.AuthSessionFilter
 	lastApproveAuthRequest  app.ApproveAuthRequestInput
 	lastDenyAuthRequest     app.DenyAuthRequestInput
+	lastRevokeAuthSessionID string
+	lastRevokeAuthReason    string
 	err                     error
 	rollups                 map[string]domain.DependencyRollup
 	changeEvents            map[string][]domain.ChangeEvent
@@ -61,6 +67,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		tasks:                   taskByProject,
 		comments:                map[string][]domain.Comment{},
 		authRequests:            map[string]domain.AuthRequest{},
+		authSessions:            []app.AuthSession{},
 		rollups:                 map[string]domain.DependencyRollup{},
 		changeEvents:            map[string][]domain.ChangeEvent{},
 		attentionErrByProject:   map[string]error{},
@@ -212,6 +219,37 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 	return out, nil
 }
 
+// ListAuthRequests returns fake auth requests filtered by project/state in stable creation order.
+func (f *fakeService) ListAuthRequests(_ context.Context, filter domain.AuthRequestListFilter) ([]domain.AuthRequest, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.lastAuthRequestFilter = filter
+	out := make([]domain.AuthRequest, 0, len(f.authRequests))
+	for _, request := range f.authRequests {
+		if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" && strings.TrimSpace(request.ProjectID) != projectID {
+			continue
+		}
+		if state := domain.NormalizeAuthRequestState(filter.State); state != "" && domain.NormalizeAuthRequestState(request.State) != state {
+			continue
+		}
+		out = append(out, request)
+	}
+	slices.SortFunc(out, func(a, b domain.AuthRequest) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			if a.CreatedAt.Before(b.CreatedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
 // GetAuthRequest returns one auth request by id.
 func (f *fakeService) GetAuthRequest(_ context.Context, requestID string) (domain.AuthRequest, error) {
 	request, ok := f.authRequests[strings.TrimSpace(requestID)]
@@ -234,6 +272,24 @@ func (f *fakeService) ApproveAuthRequest(_ context.Context, in app.ApproveAuthRe
 	request.ResolvedByType = in.ResolvedType
 	request.ResolutionNote = strings.TrimSpace(in.ResolutionNote)
 	f.authRequests[requestID] = request
+	sessionTTL := in.SessionTTL
+	if sessionTTL <= 0 {
+		sessionTTL = time.Hour
+	}
+	f.authSessions = append(f.authSessions, app.AuthSession{
+		SessionID:     "session-" + requestID,
+		ProjectID:     request.ProjectID,
+		AuthRequestID: request.ID,
+		ApprovedPath:  firstNonEmptyTrimmed(strings.TrimSpace(in.Path), request.Path),
+		PrincipalID:   request.PrincipalID,
+		PrincipalType: request.PrincipalType,
+		PrincipalName: firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID),
+		ClientID:      request.ClientID,
+		ClientType:    request.ClientType,
+		ClientName:    firstNonEmptyTrimmed(request.ClientName, request.ClientID),
+		IssuedAt:      time.Now().UTC(),
+		ExpiresAt:     time.Now().UTC().Add(sessionTTL),
+	})
 	return app.ApprovedAuthRequestResult{
 		Request:       request,
 		SessionSecret: "session-secret",
@@ -254,6 +310,78 @@ func (f *fakeService) DenyAuthRequest(_ context.Context, in app.DenyAuthRequestI
 	request.ResolutionNote = strings.TrimSpace(in.ResolutionNote)
 	f.authRequests[requestID] = request
 	return request, nil
+}
+
+// ListAuthSessions returns fake session inventory filtered by project/client/principal/state.
+func (f *fakeService) ListAuthSessions(_ context.Context, filter app.AuthSessionFilter) ([]app.AuthSession, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.lastAuthSessionFilter = filter
+	now := time.Now().UTC()
+	out := make([]app.AuthSession, 0, len(f.authSessions))
+	for _, session := range f.authSessions {
+		if sessionID := strings.TrimSpace(filter.SessionID); sessionID != "" && strings.TrimSpace(session.SessionID) != sessionID {
+			continue
+		}
+		if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" && strings.TrimSpace(session.ProjectID) != projectID {
+			continue
+		}
+		if principalID := strings.TrimSpace(filter.PrincipalID); principalID != "" && strings.TrimSpace(session.PrincipalID) != principalID {
+			continue
+		}
+		if clientID := strings.TrimSpace(filter.ClientID); clientID != "" && strings.TrimSpace(session.ClientID) != clientID {
+			continue
+		}
+		switch strings.TrimSpace(strings.ToLower(filter.State)) {
+		case "", "all":
+		case "active":
+			if session.RevokedAt != nil || !session.ExpiresAt.After(now) {
+				continue
+			}
+		case "revoked":
+			if session.RevokedAt == nil {
+				continue
+			}
+		case "expired":
+			if session.RevokedAt != nil || session.ExpiresAt.After(now) {
+				continue
+			}
+		default:
+			continue
+		}
+		out = append(out, session)
+	}
+	slices.SortFunc(out, func(a, b app.AuthSession) int {
+		if !a.ExpiresAt.Equal(b.ExpiresAt) {
+			if a.ExpiresAt.Before(b.ExpiresAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.SessionID, b.SessionID)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// RevokeAuthSession marks one fake session revoked with a stable reason.
+func (f *fakeService) RevokeAuthSession(_ context.Context, sessionID string, reason string) (app.AuthSession, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	for idx := range f.authSessions {
+		if strings.TrimSpace(f.authSessions[idx].SessionID) != sessionID {
+			continue
+		}
+		now := time.Now().UTC()
+		f.authSessions[idx].RevokedAt = &now
+		f.authSessions[idx].RevocationReason = strings.TrimSpace(reason)
+		f.lastRevokeAuthSessionID = sessionID
+		f.lastRevokeAuthReason = strings.TrimSpace(reason)
+		return f.authSessions[idx], nil
+	}
+	return app.AuthSession{}, domain.ErrInvalidID
 }
 
 // GetProjectDependencyRollup returns project dependency rollup totals.
@@ -1956,6 +2084,29 @@ func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	}
 }
 
+// TestCommandPaletteInitialismScoringPrefersExpectedAbbreviations verifies command initialisms rank intended matches above unrelated commands.
+func TestCommandPaletteInitialismScoringPrefersExpectedAbbreviations(t *testing.T) {
+	if got := commandPaletteInitialism("new-subtask"); got != "ns" {
+		t.Fatalf("commandPaletteInitialism(new-subtask) = %q, want ns", got)
+	}
+	subtaskScore, ok := scoreCommandPaletteItem("ns", commandPaletteItem{
+		Command:     "new-subtask",
+		Aliases:     []string{"task-subtask", "ns"},
+		Description: "create subtask for selected item",
+	})
+	if !ok {
+		t.Fatal("scoreCommandPaletteItem(new-subtask) = no match, want match")
+	}
+	authScore, ok := scoreCommandPaletteItem("ns", commandPaletteItem{
+		Command:     "auth-access",
+		Aliases:     []string{"auths"},
+		Description: "review access requests; list active sessions",
+	})
+	if ok && authScore >= subtaskScore {
+		t.Fatalf("expected new-subtask score %d to outrank auth-access score %d for ns", subtaskScore, authScore)
+	}
+}
+
 // TestModelCommandPaletteHighlightColorApplies verifies highlight-color command updates focused-row styling.
 func TestModelCommandPaletteHighlightColorApplies(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
@@ -3466,7 +3617,20 @@ func TestModelQuickActionsDisabledOrderingAndBlocking(t *testing.T) {
 		t.Fatalf("expected enabled action before disabled entries, got %q", out)
 	}
 
-	m = applyMsg(t, m, keyRune('j')) // move from enabled Activity Log to first disabled row
+	actions := m.quickActions()
+	disabledIdx = -1
+	for idx, action := range actions {
+		if !action.Enabled {
+			disabledIdx = idx
+			break
+		}
+	}
+	if disabledIdx < 0 {
+		t.Fatal("expected at least one disabled quick action")
+	}
+	for m.quickActionIndex < disabledIdx {
+		m = applyMsg(t, m, keyRune('j'))
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeQuickActions {
 		t.Fatalf("expected disabled quick action to stay in quick-actions mode, got %v", m.mode)
@@ -7001,8 +7165,8 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected enter to open auth review modal, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected enter to open auth review surface, got %v", m.mode)
 	}
 	if m.pendingConfirm.Kind != "approve-auth-request" {
 		t.Fatalf("expected approve review kind, got %q", m.pendingConfirm.Kind)
@@ -7013,20 +7177,20 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestPathLabel); got != "Inbox" {
 		t.Fatalf("pendingConfirm.AuthRequestPathLabel = %q, want Inbox", got)
 	}
-	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "approved via TUI notifications") {
+	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "approved in Tillsyn") {
 		t.Fatalf("expected deterministic approval note, got %q", m.pendingConfirm.AuthRequestNote)
 	}
 	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "at Inbox") {
 		t.Fatalf("expected approval note to use project label, got %q", m.pendingConfirm.AuthRequestNote)
 	}
-	m = applyMsg(t, m, keyRune('y'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeNone {
-		t.Fatalf("expected confirm to close modal, got %v", m.mode)
+		t.Fatalf("expected approve action to close review, got %v", m.mode)
 	}
 	if got := strings.TrimSpace(svc.lastApproveAuthRequest.RequestID); got != authRequest.ID {
 		t.Fatalf("expected approve request id %q, got %q", authRequest.ID, got)
 	}
-	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); !strings.Contains(got, "approved via TUI notifications") || !strings.Contains(got, "at Inbox") {
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); !strings.Contains(got, "approved in Tillsyn") || !strings.Contains(got, "at Inbox") {
 		t.Fatalf("expected approval note to be forwarded with project label, got %q", got)
 	}
 	if len(m.attentionItems) != 0 {
@@ -7092,13 +7256,25 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	now := time.Date(2026, 3, 2, 9, 14, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "t1",
+	requested, _ := domain.NewTask(domain.TaskInput{
+		ID:        "requested",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "Requested Branch",
 		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	narrowed, _ := domain.NewTask(domain.TaskInput{
+		ID:        "narrowed",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Narrowed Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
 		ID:                  "req-approve-constraints",
@@ -7116,7 +7292,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{requested, narrowed})
 	svc.authRequests[authRequest.ID] = authRequest
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 authRequest.ID,
@@ -7136,13 +7312,29 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('a'))
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected confirm mode, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected auth review mode, got %v", m.mode)
 	}
-	m.confirmAuthPathInput.SetValue("project/p1/branch/narrowed")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('s'))
+	if m.mode != modeAuthScopePicker {
+		t.Fatalf("expected auth scope picker mode, got %v", m.mode)
+	}
+	m.authReviewScopePickerIndex = 2
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected return to auth review after scope pick, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestPath); got != "project/p1/branch/narrowed" {
+		t.Fatalf("pendingConfirm.AuthRequestPath = %q, want project/p1/branch/narrowed", got)
+	}
+	m = applyMsg(t, m, keyRune('t'))
+	if m.authReviewStage != authReviewStageEditTTL {
+		t.Fatalf("expected edit ttl stage, got %d", m.authReviewStage)
+	}
 	m.confirmAuthTTLInput.SetValue("2h")
-	m.confirmFocus = confirmFocusButtons
-	m = applyMsg(t, m, keyRune('y'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := strings.TrimSpace(svc.lastApproveAuthRequest.Path); got != "project/p1/branch/narrowed" {
 		t.Fatalf("ApproveAuthRequest() path = %q, want project/p1/branch/narrowed", got)
 	}
@@ -7208,7 +7400,7 @@ func TestModelAutoRefreshLoadsExternalAuthRequest(t *testing.T) {
 	}
 }
 
-// TestModelAuthRequestApproveRejectsInvalidTTL verifies invalid approval TTL input stays in the confirm modal.
+// TestModelAuthRequestApproveRejectsInvalidTTL verifies invalid approval TTL input keeps the auth review editor open.
 func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 17, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -7257,15 +7449,17 @@ func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('a'))
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected confirm mode, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected auth review mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('t'))
+	if m.authReviewStage != authReviewStageEditTTL {
+		t.Fatalf("expected edit ttl stage, got %d", m.authReviewStage)
 	}
 	m.confirmAuthTTLInput.SetValue("definitely-not-a-duration")
-	m.confirmFocus = confirmFocusButtons
-	m.confirmChoice = 0
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected invalid ttl to keep confirm mode, got %v", m.mode)
+	if m.mode != modeAuthReview || m.authReviewStage != authReviewStageEditTTL {
+		t.Fatalf("expected invalid ttl to keep auth review ttl editor, got mode=%v stage=%d", m.mode, m.authReviewStage)
 	}
 	if svc.lastApproveAuthRequest.RequestID != "" {
 		t.Fatalf("ApproveAuthRequest() should not have been called, got %#v", svc.lastApproveAuthRequest)
@@ -7311,8 +7505,8 @@ func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.
 	if ok || cmd != nil {
 		t.Fatalf("beginSelectedAuthRequestDecision() = ok=%t cmd=%v, want false nil", ok, cmd)
 	}
-	if got := next.(Model).mode; got == modeConfirmAction {
-		t.Fatalf("beginSelectedAuthRequestDecision() opened confirm mode unexpectedly: %v", got)
+	if got := next.(Model).mode; got == modeAuthReview {
+		t.Fatalf("beginSelectedAuthRequestDecision() opened auth review unexpectedly: %v", got)
 	}
 }
 
@@ -7365,11 +7559,11 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('d'))
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected confirm mode, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected auth review mode, got %v", m.mode)
 	}
-	if m.confirmFocus != confirmFocusAuthDecision {
-		t.Fatalf("confirmFocus = %d, want decision focus", m.confirmFocus)
+	if m.authReviewStage != authReviewStageDeny {
+		t.Fatalf("authReviewStage = %d, want deny stage", m.authReviewStage)
 	}
 	if !m.authConfirmFieldsActive() {
 		t.Fatal("authConfirmFieldsActive() = false for deny flow, want true")
@@ -7377,11 +7571,8 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	if m.authConfirmScopeFieldsActive() {
 		t.Fatal("authConfirmScopeFieldsActive() = true for deny flow, want false")
 	}
-	if m.confirmAuthNoteInput.Focused() {
-		t.Fatal("expected deny flow to start on the visible decision selector, not the note input")
-	}
-	if got := confirmActionHints(m.authConfirmFieldsActive(), m.authConfirmScopeFieldsActive()); !strings.Contains(got, "left/right choose decision") {
-		t.Fatalf("confirmActionHints() = %q, want visible decision guidance", got)
+	if !m.confirmAuthNoteInput.Focused() {
+		t.Fatal("expected deny flow to start in the note input")
 	}
 }
 
@@ -7442,13 +7633,13 @@ func TestAuthRequestResolutionHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	if got := authRequestResolutionNote(req, "deny"); !strings.Contains(got, "denied via TUI notifications") || !strings.Contains(got, "agent-1") {
+	if got := authRequestResolutionNote(req, "deny"); !strings.Contains(got, "denied in Tillsyn") || !strings.Contains(got, "agent-1") {
 		t.Fatalf("authRequestResolutionNote(deny) = %q, want denied note with principal fallback", got)
 	}
-	if got := authRequestResolutionNote(req, ""); !strings.Contains(got, "resolved via TUI notifications") {
+	if got := authRequestResolutionNote(req, ""); !strings.Contains(got, "resolved in Tillsyn") {
 		t.Fatalf("authRequestResolutionNote(default) = %q, want resolved note", got)
 	}
-	if got := authRequestResolutionNoteWithPathLabel(req, "approve", "Inbox -> branch:b1"); !strings.Contains(got, "approved via TUI notifications") || !strings.Contains(got, "Inbox -> branch:b1") {
+	if got := authRequestResolutionNoteWithPathLabel(req, "approve", "Inbox -> branch:b1"); !strings.Contains(got, "approved in Tillsyn") || !strings.Contains(got, "Inbox -> branch:b1") {
 		t.Fatalf("authRequestResolutionNoteWithPathLabel() = %q, want user-facing scope label", got)
 	}
 	if got := firstNonEmptyTrimmed("", "  ", "value", "fallback"); got != "value" {
@@ -7492,14 +7683,14 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	if got := confirmActionHints(true, true); !strings.Contains(got, "tab move fields") {
 		t.Fatalf("confirmActionHints(true) = %q, want auth field guidance", got)
 	}
-	if got := confirmActionHints(true, true); !strings.Contains(got, "left/right choose decision") {
-		t.Fatalf("confirmActionHints(true, true) = %q, want visible decision guidance", got)
+	if got := confirmActionHints(true, true); strings.Contains(got, "left/right choose decision") || strings.Contains(got, "h/l") {
+		t.Fatalf("confirmActionHints(true, true) = %q, want auth review typing-safe guidance", got)
 	}
 	if got := confirmActionHints(false, false); strings.Contains(got, "a approve") {
 		t.Fatalf("confirmActionHints(false, false) = %q, want generic confirm guidance", got)
 	}
-	if got := confirmActionHints(true, false); strings.Contains(got, "a approve") {
-		t.Fatalf("confirmActionHints(true, false) = %q, want visible decision guidance without hotkey reliance", got)
+	if got := confirmActionHints(true, false); strings.Contains(got, "a approve") || strings.Contains(got, "h/l") {
+		t.Fatalf("confirmActionHints(true, false) = %q, want auth review guidance without confirm hotkeys", got)
 	}
 	if got := confirmActionHints(true, false); !strings.Contains(got, "tab move fields") {
 		t.Fatalf("confirmActionHints(true, false) = %q, want note-field navigation guidance", got)
@@ -7530,6 +7721,7 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 30, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	branch, _ := domain.NewTask(domain.TaskInput{
 		ID:        "b1",
@@ -7541,15 +7733,21 @@ func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{branch})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{branch})))
 
 	if got := strings.TrimSpace(m.authRequestPathDisplay("project/p1/branch/b1")); got != "Inbox -> Planning Branch" {
 		t.Fatalf("authRequestPathDisplay() = %q, want Inbox -> Planning Branch", got)
 	}
+	if got := strings.TrimSpace(m.authRequestPathDisplay("projects/p1,p2")); got != "Inbox, Roadmap" {
+		t.Fatalf("authRequestPathDisplay(multi) = %q, want Inbox, Roadmap", got)
+	}
+	if got := strings.TrimSpace(m.authRequestPathDisplay("global")); got != "All Projects" {
+		t.Fatalf("authRequestPathDisplay(global) = %q, want All Projects", got)
+	}
 }
 
-// TestModelViewRendersAuthConfirmDetails verifies the confirm modal renders auth-request subject, constraints, and note text.
-func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
+// TestModelViewRendersAuthReviewDetails verifies the dedicated auth review renders subject, scope, and actions.
+func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 19, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -7564,7 +7762,8 @@ func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
 	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
 
 	m := loadReadyModel(t, NewModel(svc))
-	m.mode = modeConfirmAction
+	m.mode = modeAuthReview
+	m.authReviewStage = authReviewStageSummary
 	m.pendingConfirm = confirmAction{
 		Kind:                 "approve-auth-request",
 		Label:                "approve auth request",
@@ -7574,27 +7773,29 @@ func TestModelViewRendersAuthConfirmDetails(t *testing.T) {
 		AuthRequestPathLabel: "Inbox -> branch:b1",
 		AuthRequestTTL:       "2h",
 		AuthRequestDecision:  "approve",
-		AuthRequestNote:      "approved via TUI notifications for Review Agent at Inbox -> branch:b1",
+		AuthRequestNote:      "approved in Tillsyn for Review Agent at Inbox -> branch:b1",
 	}
-	m.confirmChoice = 0
 	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
 	m.confirmAuthTTLInput.SetValue("2h")
-	m.confirmAuthNoteInput.SetValue("approved via TUI notifications for Review Agent at Inbox -> branch:b1")
+	m.confirmAuthNoteInput.SetValue("approved in Tillsyn for Review Agent at Inbox -> branch:b1")
 
 	rendered := fmt.Sprint(m.View())
 	for _, want := range []string{
-		"Confirm Action",
-		"Review Agent request @ Inbox -> branch:b1",
-		"decision: approve",
-		"[approve]",
-		"[deny]",
-		"approve with scoped constraints",
+		"Access Request Review",
+		"principal: Review Agent",
+		"requested scope: Inbox -> branch:b1",
+		"approve now",
+		"default decision: approve",
+		"[enter] approve and confirm",
+		"[s] pick approved scope",
+		"path: project/p1/branch/b1",
+		"session ttl: 2h",
+		"[d] deny with note",
 		"project/p1/branch/b1",
-		"2h",
-		"note: approved via TUI notifications for Review Agent at Inbox -> branch:b1",
+		"approved in Tillsyn for Review Agent at Inbox -> branch:b1",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("View() missing %q in confirm modal:\n%s", want, rendered)
+			t.Fatalf("View() missing %q in auth review:\n%s", want, rendered)
 		}
 	}
 }
@@ -7628,6 +7829,542 @@ func TestModelViewRendersGenericConfirmHints(t *testing.T) {
 	}
 	if strings.Contains(rendered, "a approve") || strings.Contains(rendered, "d deny") {
 		t.Fatalf("View() unexpectedly rendered auth review hints for generic confirm modal:\n%s", rendered)
+	}
+}
+
+// TestModelAuthInventoryLoadsProjectScope verifies the auth inventory opens in current-project scope and can enter auth review.
+func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 20, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-auth-inventory",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		PrincipalName:       "Review Agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "inventory review",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[request.ID] = request
+	svc.authRequests["req-other"] = domain.AuthRequest{
+		ID:                  "req-other",
+		ProjectID:           other.ID,
+		Path:                "project/" + other.ID,
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             other.ID,
+		PrincipalID:         "other-agent",
+		ClientID:            "other-client",
+		State:               domain.AuthRequestStatePending,
+		RequestedSessionTTL: time.Hour,
+		CreatedAt:           now.Add(time.Minute),
+		ExpiresAt:           now.Add(2 * time.Hour),
+	}
+	svc.authSessions = append(svc.authSessions,
+		app.AuthSession{
+			SessionID:     "session-project",
+			ProjectID:     project.ID,
+			ApprovedPath:  "project/" + project.ID,
+			PrincipalID:   "review-agent",
+			PrincipalType: "agent",
+			PrincipalName: "Review Agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			ClientName:    "Till MCP STDIO",
+			ExpiresAt:     time.Now().UTC().Add(2 * time.Hour),
+		},
+		app.AuthSession{
+			SessionID:     "session-other",
+			ProjectID:     other.ID,
+			ApprovedPath:  "project/" + other.ID,
+			PrincipalID:   "other-agent",
+			PrincipalType: "agent",
+			PrincipalName: "Other Agent",
+			ClientID:      "other-client",
+			ClientType:    "mcp-stdio",
+			ClientName:    "Other Client",
+			ExpiresAt:     time.Now().UTC().Add(3 * time.Hour),
+		},
+	)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected auth inventory mode, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastAuthRequestFilter.ProjectID); got != project.ID {
+		t.Fatalf("ListAuthRequests() project filter = %q, want %q", got, project.ID)
+	}
+	if got := strings.TrimSpace(svc.lastAuthSessionFilter.ProjectID); got != project.ID {
+		t.Fatalf("ListAuthSessions() project filter = %q, want %q", got, project.ID)
+	}
+	if got := len(m.authInventoryRequests); got != 1 {
+		t.Fatalf("authInventoryRequests = %d, want 1", got)
+	}
+	if got := len(m.authInventorySessions); got != 1 {
+		t.Fatalf("authInventorySessions = %d, want 1", got)
+	}
+
+	rendered := stripANSI(fmt.Sprint(m.View()))
+	for _, want := range []string{"Auth Inventory", "Inbox", "pending requests", "resolved requests", "active sessions", "[pending] Review Agent", "[active] Review Agent"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("View() missing %q in auth inventory:\n%s", want, rendered)
+		}
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected enter to open auth review, got %v", m.mode)
+	}
+	if !m.pendingConfirm.ReturnToAuthAccess {
+		t.Fatal("expected auth review opened from inventory to return to auth inventory")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected escape to return to auth inventory, got %v", m.mode)
+	}
+}
+
+// TestModelAuthInventorySplitsPendingAndResolvedRequests verifies the inventory keeps pending requests selectable while still rendering resolved history.
+func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 20, 30, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	pending, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-pending",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "pending-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "pending review",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(pending) error = %v", err)
+	}
+	approved, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-approved",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "approved-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "approved review",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("NewAuthRequest(approved) error = %v", err)
+	}
+	if err := approved.Approve("approver-1", domain.ActorTypeUser, "approved", "sess-1", "secret-1", now.Add(2*time.Hour), now.Add(time.Minute)); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[pending.ID] = pending
+	svc.authRequests[approved.ID] = approved
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	if got := domain.NormalizeAuthRequestState(svc.lastAuthRequestFilter.State); got != "" {
+		t.Fatalf("ListAuthRequests() state filter = %q, want empty for full inventory", got)
+	}
+	if got := len(m.authInventoryRequests); got != 1 {
+		t.Fatalf("authInventoryRequests = %d, want 1 pending request", got)
+	}
+	if got := m.authInventoryRequests[0].ID; got != pending.ID {
+		t.Fatalf("authInventoryRequests[0].ID = %q, want %q", got, pending.ID)
+	}
+	if got := len(m.authInventoryResolvedRequests); got != 1 {
+		t.Fatalf("authInventoryResolvedRequests = %d, want 1 resolved request", got)
+	}
+	if got := m.authInventoryResolvedRequests[0].ID; got != approved.ID {
+		t.Fatalf("authInventoryResolvedRequests[0].ID = %q, want %q", got, approved.ID)
+	}
+	m.authInventoryMoveSelection(1)
+	rendered := stripANSI(fmt.Sprint(m.View()))
+	for _, want := range []string{"selected resolved request", "approved-agent", "note:", "approved"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("View() missing %q for selected resolved request:\n%s", want, rendered)
+		}
+	}
+}
+
+// TestModelAuthInventoryApproveReturnsToInventory verifies project-scope review can approve and reopen the inventory list.
+func TestModelAuthInventoryApproveReturnsToInventory(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 20, 45, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-approve-return",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		PrincipalName:       "Review Agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "approve from inventory",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[request.ID] = request
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected enter to open auth review, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected approve to return to auth inventory, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.RequestID); got != request.ID {
+		t.Fatalf("ApproveAuthRequest() request id = %q, want %q", got, request.ID)
+	}
+	if got := len(m.authInventoryRequests); got != 0 {
+		t.Fatalf("authInventoryRequests after approve = %d, want 0", got)
+	}
+}
+
+// TestModelAuthInventoryDenyReturnsToInventory verifies deny-with-note returns to the inventory after applying the decision.
+func TestModelAuthInventoryDenyReturnsToInventory(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 20, 50, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-deny-return",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		PrincipalName:       "Review Agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "deny from inventory",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[request.ID] = request
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected enter to open auth review, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('d'))
+	m.confirmAuthNoteInput.SetValue("denied from inventory review")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected deny to return to auth inventory, got mode=%v stage=%d status=%q", m.mode, m.authReviewStage, m.status)
+	}
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != request.ID {
+		t.Fatalf("DenyAuthRequest() request id = %q, want %q", got, request.ID)
+	}
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); got != "denied from inventory review" {
+		t.Fatalf("DenyAuthRequest() note = %q, want denial note", got)
+	}
+	if got := len(m.authInventoryRequests); got != 0 {
+		t.Fatalf("authInventoryRequests after deny = %d, want 0", got)
+	}
+}
+
+// TestModelAuthReviewDenyUsesSingleConfirm verifies the deny review step keeps
+// note entry simple and confirms on a single explicit enter action.
+func TestModelAuthReviewDenyUsesSingleConfirm(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 20, 55, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-deny-confirm",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		PrincipalName:       "Review Agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "deny confirmation review",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[request.ID] = request
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected enter to open auth review, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('d'))
+	m.confirmAuthNoteInput.SetValue("needs more scope review")
+	rendered := fmt.Sprint(m.View())
+	if !strings.Contains(rendered, "[confirm deny: enter]  [cancel: esc]") {
+		t.Fatalf("View() missing deny confirm prompt:\n%s", rendered)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected deny to return to auth inventory, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != request.ID {
+		t.Fatalf("DenyAuthRequest() request id = %q, want %q", got, request.ID)
+	}
+	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); got != "needs more scope review" {
+		t.Fatalf("DenyAuthRequest() note = %q, want denial note", got)
+	}
+}
+
+// TestModelAuthInventoryCanToggleGlobalAndRevokeSession verifies project/global inventory toggling and TUI revocation.
+func TestModelAuthInventoryCanToggleGlobalAndRevokeSession(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 21, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{task})
+	svc.authSessions = append(svc.authSessions,
+		app.AuthSession{
+			SessionID:     "session-project",
+			ProjectID:     project.ID,
+			ApprovedPath:  "project/" + project.ID,
+			PrincipalID:   "review-agent",
+			PrincipalType: "agent",
+			PrincipalName: "Review Agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			ClientName:    "Till MCP STDIO",
+			ExpiresAt:     time.Now().UTC().Add(2 * time.Hour),
+		},
+		app.AuthSession{
+			SessionID:     "session-other",
+			ProjectID:     other.ID,
+			ApprovedPath:  "project/" + other.ID,
+			PrincipalID:   "roadmap-agent",
+			PrincipalType: "agent",
+			PrincipalName: "Roadmap Agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			ClientName:    "Till MCP STDIO",
+			ExpiresAt:     time.Now().UTC().Add(3 * time.Hour),
+		},
+	)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	if got := len(m.authInventorySessions); got != 1 {
+		t.Fatalf("project authInventorySessions = %d, want 1", got)
+	}
+
+	m = applyMsg(t, m, keyRune('g'))
+	if !m.authInventoryGlobal {
+		t.Fatal("expected auth inventory to toggle to global scope")
+	}
+	if got := strings.TrimSpace(svc.lastAuthSessionFilter.ProjectID); got != "" {
+		t.Fatalf("global ListAuthSessions() project filter = %q, want empty", got)
+	}
+	if got := len(m.authInventorySessions); got != 2 {
+		t.Fatalf("global authInventorySessions = %d, want 2", got)
+	}
+
+	m.authInventoryIndex = 0
+	m = applyMsg(t, m, keyRune('r'))
+	if m.mode != modeAuthSessionRevoke {
+		t.Fatalf("expected revoke action to open dedicated revoke review, got %v", m.mode)
+	}
+	if !m.pendingConfirm.ReturnToAuthAccess {
+		t.Fatal("expected revoke confirm to return to auth inventory")
+	}
+	rendered := fmt.Sprint(m.View())
+	for _, want := range []string{"Revoke Active Session", "principal: Review Agent", "[enter] revoke and confirm", "[esc] cancel"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("View() missing %q in revoke review:\n%s", want, rendered)
+		}
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected confirmed revoke to return to auth inventory, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastRevokeAuthSessionID); got != "session-project" {
+		t.Fatalf("RevokeAuthSession() session id = %q, want session-project", got)
+	}
+	if got := strings.TrimSpace(svc.lastRevokeAuthReason); got != "revoked via TUI auth inventory" {
+		t.Fatalf("RevokeAuthSession() reason = %q, want TUI auth inventory reason", got)
+	}
+	if got := len(m.authInventorySessions); got != 1 {
+		t.Fatalf("authInventorySessions after revoke = %d, want 1 active session remaining", got)
+	}
+}
+
+// TestModelAuthInventoryEscapeReloadsBoard verifies exiting auth inventory can flush deferred board reloads after auth mutations.
+func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 22, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	initial, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Initial",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	external, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "External",
+		Priority:  domain.PriorityMedium,
+	}, now.Add(time.Minute))
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{initial})
+	m := loadReadyModel(t, NewModel(svc))
+	m.mode = modeAuthInventory
+	m.authInventoryNeedsReload = true
+	svc.tasks[project.ID] = append(svc.tasks[project.ID], external)
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to leave auth inventory, got %v", m.mode)
+	}
+	if m.authInventoryNeedsReload {
+		t.Fatal("expected deferred auth inventory reload flag to clear on escape")
+	}
+	if got := len(m.tasks); got != 2 {
+		t.Fatalf("expected board reload to pick up external task, got %d tasks", got)
+	}
+}
+
+// TestModelActionMsgOpenAuthAccessReloadsInventory verifies auth-access action messages reopen and reload the auth inventory screen.
+func TestModelActionMsgOpenAuthAccessReloadsInventory(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 23, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-open-auth-access",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "reload inventory",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[request.ID] = request
+
+	m := loadReadyModel(t, NewModel(svc))
+	updated, cmd := m.Update(actionMsg{status: "auth changed", reload: true, openAuthAccess: true})
+	m = applyCmd(t, mustModelValue(t, updated), cmd)
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected actionMsg to reopen auth inventory, got %v", m.mode)
+	}
+	if !m.authInventoryNeedsReload {
+		t.Fatal("expected auth inventory to mark deferred board reload after auth change")
+	}
+	if got := len(m.authInventoryRequests); got != 1 {
+		t.Fatalf("authInventoryRequests = %d, want 1", got)
 	}
 }
 
@@ -7834,7 +8571,7 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 	}
 }
 
-// TestModelAuthReviewCanSwitchDecisionBeforeApply verifies review modals can switch from approve to deny before confirmation.
+// TestModelAuthReviewCanSwitchDecisionBeforeApply verifies review can branch from approve-default into deny flow.
 func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 29, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -7884,17 +8621,17 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected confirm mode, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected auth review mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, keyRune('d'))
-	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestDecision); got != "deny" {
-		t.Fatalf("pendingConfirm.AuthRequestDecision = %q, want deny", got)
+	if got := m.authReviewStage; got != authReviewStageDeny {
+		t.Fatalf("authReviewStage = %d, want deny stage", got)
 	}
 	m.confirmAuthNoteInput.SetValue("switched to deny after review")
-	m = applyMsg(t, m, keyRune('y'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
-		t.Fatalf("expected deny request id %q, got %q", authRequest.ID, got)
+		t.Fatalf("expected deny request id %q, got %q (mode=%v stage=%d status=%q approveID=%q)", authRequest.ID, got, m.mode, m.authReviewStage, m.status, strings.TrimSpace(svc.lastApproveAuthRequest.RequestID))
 	}
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); got != "switched to deny after review" {
 		t.Fatalf("expected switched denial note, got %q", got)
@@ -7904,7 +8641,7 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	}
 }
 
-// TestModelGlobalNotificationsAuthRequestDenyShortcut verifies global auth-request rows reuse the confirm modal for denials.
+// TestModelGlobalNotificationsAuthRequestDenyShortcut verifies global auth-request rows open the deny-note review stage.
 func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -7967,8 +8704,8 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 		t.Fatalf("expected global notifications focus, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
 	}
 	m = applyMsg(t, m, keyRune('d'))
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected deny shortcut to open confirm modal, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected deny shortcut to open auth review, got %v", m.mode)
 	}
 	if m.pendingConfirm.Kind != "deny-auth-request" {
 		t.Fatalf("expected deny confirm kind, got %q", m.pendingConfirm.Kind)
@@ -7976,17 +8713,20 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	if m.pendingConfirm.AuthRequestID != authRequest.ID {
 		t.Fatalf("expected confirm auth request id %q, got %q", authRequest.ID, m.pendingConfirm.AuthRequestID)
 	}
+	if got := m.authReviewStage; got != authReviewStageDeny {
+		t.Fatalf("authReviewStage = %d, want deny stage", got)
+	}
 	m.confirmAuthNoteInput.SetValue("denied in global panel for missing scope")
-	m = applyMsg(t, m, keyRune('y'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
-		t.Fatalf("expected deny request id %q, got %q", authRequest.ID, got)
+		t.Fatalf("expected deny request id %q, got %q (mode=%v stage=%d status=%q)", authRequest.ID, got, m.mode, m.authReviewStage, m.status)
 	}
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.ResolutionNote); got != "denied in global panel for missing scope" {
 		t.Fatalf("expected edited denial note to be forwarded, got %q", got)
 	}
 }
 
-// TestModelGlobalNotificationsEnterOpensAuthReview verifies enter on a global auth-request row opens the auth review modal.
+// TestModelGlobalNotificationsEnterOpensAuthReview verifies enter on a global auth-request row opens the auth review surface.
 func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 25, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -8047,8 +8787,8 @@ func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 		t.Fatalf("expected global notifications focus, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeConfirmAction {
-		t.Fatalf("expected enter to open auth review modal, got %v", m.mode)
+	if m.mode != modeAuthReview {
+		t.Fatalf("expected enter to open auth review surface, got %v", m.mode)
 	}
 	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestID); got != authRequest.ID {
 		t.Fatalf("pendingConfirm.AuthRequestID = %q, want %q", got, authRequest.ID)

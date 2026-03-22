@@ -163,6 +163,8 @@ func TestServiceClaimAuthRequestReturnsApprovedSecret(t *testing.T) {
 		RequestedSessionTTL: 2 * time.Hour,
 		Reason:              "resume after approval",
 		Continuation:        map[string]any{"resume_token": "resume-123", "resume_tool": "till.raise_attention_item"},
+		RequestedBy:         "review-agent",
+		RequesterClientID:   "till-mcp-stdio",
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
@@ -180,6 +182,8 @@ func TestServiceClaimAuthRequestReturnsApprovedSecret(t *testing.T) {
 	claimed, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
 		RequestID:   request.ID,
 		ResumeToken: "resume-123",
+		PrincipalID: "review-agent",
+		ClientID:    "till-mcp-stdio",
 	})
 	if err != nil {
 		t.Fatalf("ClaimAuthRequest() error = %v", err)
@@ -200,11 +204,13 @@ func TestServiceClaimAuthRequestRejectsWrongResumeToken(t *testing.T) {
 	fixture := newAuthRequestServiceFixture(t)
 
 	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
-		Path:         "project/" + fixture.project.ID,
-		PrincipalID:  "review-agent",
-		ClientID:     "till-mcp-stdio",
-		Reason:       "resume after approval",
-		Continuation: map[string]any{"resume_token": "resume-123"},
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "review-agent",
+		ClientID:          "till-mcp-stdio",
+		Reason:            "resume after approval",
+		Continuation:      map[string]any{"resume_token": "resume-123"},
+		RequestedBy:       "review-agent",
+		RequesterClientID: "till-mcp-stdio",
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
@@ -212,8 +218,151 @@ func TestServiceClaimAuthRequestRejectsWrongResumeToken(t *testing.T) {
 	if _, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
 		RequestID:   request.ID,
 		ResumeToken: "wrong-token",
+		PrincipalID: "review-agent",
+		ClientID:    "till-mcp-stdio",
 	}); err == nil || err != domain.ErrInvalidAuthContinuation {
 		t.Fatalf("ClaimAuthRequest() error = %v, want ErrInvalidAuthContinuation", err)
+	}
+}
+
+// TestServiceClaimAuthRequestRejectsMismatchedRequesterIdentity verifies continuation claims fail closed when the requester identity does not match the request.
+func TestServiceClaimAuthRequestRejectsMismatchedRequesterIdentity(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "review-agent",
+		ClientID:          "till-mcp-stdio",
+		Reason:            "resume after approval",
+		Continuation:      map[string]any{"resume_token": "resume-123"},
+		RequestedBy:       "review-agent",
+		RequesterClientID: "till-mcp-stdio",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if _, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-123",
+		PrincipalID: "other-agent",
+		ClientID:    "other-client",
+	}); err == nil || err != domain.ErrAuthRequestClaimMismatch {
+		t.Fatalf("ClaimAuthRequest() error = %v, want ErrAuthRequestClaimMismatch", err)
+	}
+}
+
+// TestServiceClaimAuthRequestAllowsRequesterOverride verifies one requester can claim an approved request on behalf of a different requested principal.
+func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "subagent-1",
+		PrincipalType:     "agent",
+		PrincipalRole:     "subagent",
+		ClientID:          "subagent-client",
+		ClientType:        "mcp-stdio",
+		Reason:            "orchestrator requests subagent scope",
+		Continuation:      map[string]any{"resume_token": "resume-456"},
+		RequestedBy:       "orchestrator-1",
+		RequestedType:     domain.ActorTypeAgent,
+		RequesterClientID: "orchestrator-client",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for subagent handoff",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	claimed, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-456",
+		PrincipalID: "orchestrator-1",
+		ClientID:    "orchestrator-client",
+	})
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	}
+	if got := claimed.Request.RequestedByActor; got != "orchestrator-1" {
+		t.Fatalf("ClaimAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
+	}
+	if got := claimed.Request.PrincipalID; got != "subagent-1" {
+		t.Fatalf("ClaimAuthRequest() principal_id = %q, want subagent-1", got)
+	}
+	if got := claimed.SessionSecret; got != approved.SessionSecret {
+		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)
+	}
+}
+
+// TestServiceClaimAuthRequestWaitsForPendingResolution verifies continuation claims can hold the channel open and return a pending waiting state when unresolved.
+func TestServiceClaimAuthRequestWaitsForPendingResolution(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "review-agent",
+		ClientID:          "till-mcp-stdio",
+		Reason:            "resume after approval",
+		Continuation:      map[string]any{"resume_token": "resume-123"},
+		RequestedBy:       "review-agent",
+		RequesterClientID: "till-mcp-stdio",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	claimed, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-123",
+		PrincipalID: "review-agent",
+		ClientID:    "till-mcp-stdio",
+		WaitTimeout: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	}
+	if got := claimed.Request.State; got != domain.AuthRequestStatePending {
+		t.Fatalf("ClaimAuthRequest() state = %q, want pending", got)
+	}
+	if !claimed.Waiting {
+		t.Fatal("ClaimAuthRequest() waiting = false, want true")
+	}
+	if got := claimed.SessionSecret; got != "" {
+		t.Fatalf("ClaimAuthRequest() session_secret = %q, want empty while pending", got)
+	}
+}
+
+// TestServiceClaimAuthRequestRejectsNegativeWaitTimeout verifies the app-facing wait contract fails closed on negative durations.
+func TestServiceClaimAuthRequestRejectsNegativeWaitTimeout(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "review-agent",
+		ClientID:          "till-mcp-stdio",
+		Reason:            "resume after approval",
+		Continuation:      map[string]any{"resume_token": "resume-123"},
+		RequestedBy:       "review-agent",
+		RequesterClientID: "till-mcp-stdio",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	if _, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-123",
+		PrincipalID: "review-agent",
+		ClientID:    "till-mcp-stdio",
+		WaitTimeout: -time.Second,
+	}); err == nil || err.Error() != "wait timeout must be >= 0" {
+		t.Fatalf("ClaimAuthRequest() error = %v, want negative wait timeout validation", err)
 	}
 }
 

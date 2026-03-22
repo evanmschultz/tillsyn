@@ -78,6 +78,7 @@ type IssueSessionInput struct {
 // SessionListFilter narrows session inventory queries.
 type SessionListFilter struct {
 	SessionID   string
+	ProjectID   string
 	PrincipalID string
 	ClientID    string
 	State       string
@@ -219,21 +220,39 @@ func (s *Service) ListSessions(ctx context.Context, filter SessionListFilter) ([
 	if s == nil || s.service == nil {
 		return nil, fmt.Errorf("autent service is not configured: %w", autentdomain.ErrInvalidConfig)
 	}
+	projectID := strings.TrimSpace(filter.ProjectID)
 	state, err := normalizeSessionStateFilter(filter.State)
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := s.service.ListSessions(ctx, autent.SessionFilter{
+	sessionFilter := autent.SessionFilter{
 		SessionID:   strings.TrimSpace(filter.SessionID),
 		PrincipalID: strings.TrimSpace(filter.PrincipalID),
 		ClientID:    strings.TrimSpace(filter.ClientID),
 		State:       state,
 		Limit:       filter.Limit,
-	})
+	}
+	if projectID != "" {
+		sessionFilter.Limit = 0
+	}
+	sessions, err := s.service.ListSessions(ctx, sessionFilter)
 	if err != nil {
 		return nil, fmt.Errorf("list autent sessions: %w", err)
 	}
-	return sessions, nil
+	if projectID == "" {
+		return sessions, nil
+	}
+	filtered := make([]autent.SessionView, 0, len(sessions))
+	for _, session := range sessions {
+		if sessionProjectID(session) != projectID {
+			continue
+		}
+		filtered = append(filtered, session)
+		if filter.Limit > 0 && len(filtered) >= filter.Limit {
+			break
+		}
+	}
+	return filtered, nil
 }
 
 // ValidateSession returns validated principal/client/session details for one presented session.
@@ -268,14 +287,14 @@ func (s *Service) CreateAuthRequest(ctx context.Context, req domain.AuthRequest)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO auth_requests(
 			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
-			principal_id, principal_type, principal_name,
+			principal_id, principal_type, principal_role, principal_name,
 			client_id, client_type, client_name,
-			requested_session_ttl_seconds, reason, continuation_json,
+			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json,
 			state, requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
 			issued_session_id, issued_session_secret, issued_session_expires_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		req.ID,
 		req.ProjectID,
@@ -286,11 +305,14 @@ func (s *Service) CreateAuthRequest(ctx context.Context, req domain.AuthRequest)
 		req.ScopeID,
 		req.PrincipalID,
 		req.PrincipalType,
+		req.PrincipalRole,
 		req.PrincipalName,
 		req.ClientID,
 		req.ClientType,
 		req.ClientName,
 		int64(req.RequestedSessionTTL/time.Second),
+		strings.TrimSpace(req.ApprovedPath),
+		int64(req.ApprovedSessionTTL/time.Second),
 		req.Reason,
 		string(continuationJSON),
 		string(req.State),
@@ -336,9 +358,9 @@ func (s *Service) ListAuthRequests(ctx context.Context, filter domain.AuthReques
 	query := `
 		SELECT
 			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
-			principal_id, principal_type, principal_name,
+			principal_id, principal_type, principal_role, principal_name,
 			client_id, client_type, client_name,
-			requested_session_ttl_seconds, reason, continuation_json,
+			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json,
 			state, requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
 			issued_session_id, issued_session_secret, issued_session_expires_at
@@ -407,8 +429,17 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in app.ApproveAuthRequ
 		return app.ApprovedAuthRequestResult{}, err
 	}
 	sessionMetadata := map[string]string{
-		"auth_request_id": req.ID,
-		"approved_path":   approvedPath.String(),
+		"auth_request_id":        req.ID,
+		"approved_path":          approvedPath.String(),
+		"project_id":             approvedPath.ProjectID,
+		"branch_id":              approvedPath.BranchID,
+		"scope_type":             string(approvedPath.ScopeType),
+		"scope_id":               approvedPath.ScopeID,
+		"requested_principal_id": req.PrincipalID,
+		"requested_client_id":    req.ClientID,
+	}
+	if principalRole := strings.TrimSpace(req.PrincipalRole); principalRole != "" {
+		sessionMetadata["principal_role"] = principalRole
 	}
 	issued, err := s.IssueSession(ctx, IssueSessionInput{
 		PrincipalID:   req.PrincipalID,
@@ -423,13 +454,8 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in app.ApproveAuthRequ
 	if err != nil {
 		return app.ApprovedAuthRequestResult{}, err
 	}
-	req.ProjectID = approvedPath.ProjectID
-	req.BranchID = approvedPath.BranchID
-	req.PhaseIDs = append([]string(nil), approvedPath.PhaseIDs...)
-	req.Path = approvedPath.String()
-	req.ScopeType = approvedPath.ScopeType
-	req.ScopeID = approvedPath.ScopeID
-	req.RequestedSessionTTL = approvedTTL
+	req.ApprovedPath = approvedPath.String()
+	req.ApprovedSessionTTL = approvedTTL
 	if err := req.Approve(strings.TrimSpace(in.ResolvedBy), in.ResolvedType, in.ResolutionNote, issued.Session.ID, issued.Secret, issued.Session.ExpiresAt, s.clock()); err != nil {
 		return app.ApprovedAuthRequestResult{}, err
 	}
@@ -443,15 +469,22 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in app.ApproveAuthRequ
 }
 
 // ClaimAuthRequest returns requester-visible request state and approved session secret when the continuation token matches.
-func (s *Service) ClaimAuthRequest(ctx context.Context, requestID, resumeToken string) (app.ClaimedAuthRequestResult, error) {
+func (s *Service) ClaimAuthRequest(ctx context.Context, in app.ClaimAuthRequestInput) (app.ClaimedAuthRequestResult, error) {
 	if s == nil || s.db == nil {
 		return app.ClaimedAuthRequestResult{}, fmt.Errorf("autent service is not configured: %w", autentdomain.ErrInvalidConfig)
+	}
+	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return app.ClaimedAuthRequestResult{}, fmt.Errorf("auth request id is required: %w", autentdomain.ErrInvalidID)
 	}
 	req, err := s.GetAuthRequest(ctx, requestID)
 	if err != nil {
 		return app.ClaimedAuthRequestResult{}, err
 	}
-	if !authRequestResumeTokenMatches(req.Continuation, resumeToken) {
+	if err := authRequestClaimIdentityMatches(req, strings.TrimSpace(in.PrincipalID), strings.TrimSpace(in.ClientID)); err != nil {
+		return app.ClaimedAuthRequestResult{}, err
+	}
+	if !authRequestResumeTokenMatches(req.Continuation, strings.TrimSpace(in.ResumeToken)) {
 		return app.ClaimedAuthRequestResult{}, domain.ErrInvalidAuthContinuation
 	}
 	result := app.ClaimedAuthRequestResult{Request: req}
@@ -527,6 +560,9 @@ func (s *Service) ListAuthSessions(ctx context.Context, filter app.AuthSessionFi
 		State:       state,
 		Limit:       filter.Limit,
 	}
+	if strings.TrimSpace(filter.ProjectID) != "" {
+		sessionFilter.Limit = 0
+	}
 	rows, err := s.service.ListSessions(ctx, sessionFilter)
 	if err != nil {
 		return nil, fmt.Errorf("list autent sessions: %w", err)
@@ -549,6 +585,9 @@ func (s *Service) ListAuthSessions(ctx context.Context, filter app.AuthSessionFi
 	}
 	out := make([]app.AuthSession, 0, len(rows))
 	for _, row := range rows {
+		if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" && !sessionMatchesProject(row, projectID) {
+			continue
+		}
 		principal := principalByID[row.PrincipalID]
 		client := clientByID[row.ClientID]
 		out = append(out, mapSessionView(
@@ -558,6 +597,9 @@ func (s *Service) ListAuthSessions(ctx context.Context, filter app.AuthSessionFi
 			client.Type,
 			client.DisplayName,
 		))
+		if filter.ProjectID != "" && filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
 	}
 	return out, nil
 }
@@ -740,24 +782,27 @@ func cloneContext(in map[string]string) map[string]string {
 // ensureAuthRequestSchema creates the local auth-request table used by tillsyn's pre-session approvals.
 func ensureAuthRequestSchema(db *sql.DB) error {
 	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS auth_requests (
-			id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			branch_id TEXT NOT NULL DEFAULT '',
-			phase_ids_json TEXT NOT NULL DEFAULT '[]',
-			path TEXT NOT NULL,
-			scope_type TEXT NOT NULL,
-			scope_id TEXT NOT NULL,
-			principal_id TEXT NOT NULL,
-			principal_type TEXT NOT NULL,
-			principal_name TEXT NOT NULL DEFAULT '',
-			client_id TEXT NOT NULL,
-			client_type TEXT NOT NULL,
-			client_name TEXT NOT NULL DEFAULT '',
-			requested_session_ttl_seconds INTEGER NOT NULL,
-			reason TEXT NOT NULL DEFAULT '',
-			continuation_json TEXT NOT NULL DEFAULT '{}',
-			state TEXT NOT NULL,
+	CREATE TABLE IF NOT EXISTS auth_requests (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		branch_id TEXT NOT NULL DEFAULT '',
+		phase_ids_json TEXT NOT NULL DEFAULT '[]',
+		path TEXT NOT NULL,
+		scope_type TEXT NOT NULL,
+		scope_id TEXT NOT NULL,
+		principal_id TEXT NOT NULL,
+		principal_type TEXT NOT NULL,
+		principal_role TEXT NOT NULL DEFAULT '',
+		principal_name TEXT NOT NULL DEFAULT '',
+		client_id TEXT NOT NULL,
+		client_type TEXT NOT NULL,
+		client_name TEXT NOT NULL DEFAULT '',
+		requested_session_ttl_seconds INTEGER NOT NULL,
+		approved_path TEXT NOT NULL DEFAULT '',
+		approved_session_ttl_seconds INTEGER NOT NULL DEFAULT 0,
+		reason TEXT NOT NULL DEFAULT '',
+		continuation_json TEXT NOT NULL DEFAULT '{}',
+		state TEXT NOT NULL,
 			requested_by_actor TEXT NOT NULL DEFAULT '',
 			requested_by_type TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL,
@@ -775,7 +820,25 @@ func ensureAuthRequestSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	alterStatements := []string{
+		`ALTER TABLE auth_requests ADD COLUMN principal_role TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_requests ADD COLUMN approved_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_requests ADD COLUMN approved_session_ttl_seconds INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, stmt := range alterStatements {
+		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumnErr(err) {
+			return err
+		}
+	}
 	return nil
+}
+
+// isDuplicateColumnErr reports whether SQLite rejected an ALTER TABLE because the column already exists.
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 // getAuthRequest loads one raw auth request row without lazy expiration.
@@ -783,9 +846,9 @@ func (s *Service) getAuthRequest(ctx context.Context, requestID string) (domain.
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
-			principal_id, principal_type, principal_name,
+			principal_id, principal_type, principal_role, principal_name,
 			client_id, client_type, client_name,
-			requested_session_ttl_seconds, reason, continuation_json,
+			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json,
 			state, requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
 			issued_session_id, issued_session_secret, issued_session_expires_at
@@ -829,9 +892,9 @@ func (s *Service) updateAuthRequest(ctx context.Context, req domain.AuthRequest)
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE auth_requests
 		SET project_id = ?, branch_id = ?, phase_ids_json = ?, path = ?, scope_type = ?, scope_id = ?,
-			principal_id = ?, principal_type = ?, principal_name = ?,
+			principal_id = ?, principal_type = ?, principal_role = ?, principal_name = ?,
 			client_id = ?, client_type = ?, client_name = ?,
-			requested_session_ttl_seconds = ?, reason = ?, continuation_json = ?,
+			requested_session_ttl_seconds = ?, approved_path = ?, approved_session_ttl_seconds = ?, reason = ?, continuation_json = ?,
 			state = ?, requested_by_actor = ?, requested_by_type = ?, created_at = ?, expires_at = ?,
 			resolved_by_actor = ?, resolved_by_type = ?, resolved_at = ?, resolution_note = ?,
 			issued_session_id = ?, issued_session_secret = ?, issued_session_expires_at = ?
@@ -845,11 +908,14 @@ func (s *Service) updateAuthRequest(ctx context.Context, req domain.AuthRequest)
 		req.ScopeID,
 		req.PrincipalID,
 		req.PrincipalType,
+		req.PrincipalRole,
 		req.PrincipalName,
 		req.ClientID,
 		req.ClientType,
 		req.ClientName,
 		int64(req.RequestedSessionTTL/time.Second),
+		strings.TrimSpace(req.ApprovedPath),
+		int64(req.ApprovedSessionTTL/time.Second),
 		req.Reason,
 		string(continuationJSON),
 		string(req.State),
@@ -883,6 +949,7 @@ func scanAuthRequest(scanner interface{ Scan(...any) error }) (domain.AuthReques
 		phaseIDsJSON         string
 		continuationJSON     string
 		requestedTTLSeconds  int64
+		approvedTTLSeconds   int64
 		resolvedAt           sql.NullTime
 		issuedSessionExpires sql.NullTime
 	)
@@ -896,11 +963,14 @@ func scanAuthRequest(scanner interface{ Scan(...any) error }) (domain.AuthReques
 		&req.ScopeID,
 		&req.PrincipalID,
 		&req.PrincipalType,
+		&req.PrincipalRole,
 		&req.PrincipalName,
 		&req.ClientID,
 		&req.ClientType,
 		&req.ClientName,
 		&requestedTTLSeconds,
+		&req.ApprovedPath,
+		&approvedTTLSeconds,
 		&req.Reason,
 		&continuationJSON,
 		&req.State,
@@ -919,6 +989,7 @@ func scanAuthRequest(scanner interface{ Scan(...any) error }) (domain.AuthReques
 		return domain.AuthRequest{}, err
 	}
 	req.RequestedSessionTTL = time.Duration(requestedTTLSeconds) * time.Second
+	req.ApprovedSessionTTL = time.Duration(approvedTTLSeconds) * time.Second
 	if phaseIDsJSON != "" {
 		if err := json.Unmarshal([]byte(phaseIDsJSON), &req.PhaseIDs); err != nil {
 			return domain.AuthRequest{}, fmt.Errorf("decode auth request phase ids: %w", err)
@@ -936,6 +1007,12 @@ func scanAuthRequest(scanner interface{ Scan(...any) error }) (domain.AuthReques
 	if issuedSessionExpires.Valid {
 		ts := issuedSessionExpires.Time.UTC()
 		req.IssuedSessionExpiresAt = &ts
+	}
+	if strings.TrimSpace(req.ApprovedPath) == "" && domain.NormalizeAuthRequestState(req.State) == domain.AuthRequestStateApproved {
+		req.ApprovedPath = req.Path
+	}
+	if req.ApprovedSessionTTL <= 0 && domain.NormalizeAuthRequestState(req.State) == domain.AuthRequestStateApproved {
+		req.ApprovedSessionTTL = req.RequestedSessionTTL
 	}
 	return cloneAuthRequest(req), nil
 }
@@ -976,6 +1053,27 @@ func authRequestPathWithin(requested, candidate domain.AuthRequestPath) bool {
 	if err != nil {
 		return false
 	}
+	switch requested.Kind {
+	case domain.AuthRequestPathKindGlobal:
+		return true
+	case domain.AuthRequestPathKindProjects:
+		switch candidate.Kind {
+		case domain.AuthRequestPathKindGlobal:
+			return false
+		case domain.AuthRequestPathKindProjects:
+			for _, projectID := range candidate.ProjectIDs {
+				if !requested.MatchesProject(projectID) {
+					return false
+				}
+			}
+			return len(candidate.ProjectIDs) > 0
+		default:
+			return requested.MatchesProject(candidate.ProjectID)
+		}
+	case domain.AuthRequestPathKindProject:
+	default:
+		return false
+	}
 	if requested.ProjectID != candidate.ProjectID {
 		return false
 	}
@@ -1007,6 +1105,55 @@ func authRequestResumeTokenMatches(continuation map[string]any, want string) boo
 	}
 	got, _ := continuation["resume_token"].(string)
 	return strings.TrimSpace(got) == want
+}
+
+// authRequestClaimIdentityMatches reports whether one claim request matches the original requester identity.
+func authRequestClaimIdentityMatches(req domain.AuthRequest, principalID, clientID string) error {
+	principalID = strings.TrimSpace(principalID)
+	clientID = strings.TrimSpace(clientID)
+	if principalID == "" || clientID == "" {
+		return domain.ErrAuthRequestClaimMismatch
+	}
+	if req.RequestedByActor != principalID || app.AuthRequestClaimClientIDFromContinuation(req.Continuation, req.ClientID) != clientID {
+		return domain.ErrAuthRequestClaimMismatch
+	}
+	return nil
+}
+
+// sessionProjectID returns the project id that one session metadata payload is scoped to.
+func sessionProjectID(view autent.SessionView) string {
+	if projectID := strings.TrimSpace(view.Metadata["project_id"]); projectID != "" {
+		if projectID == domain.AuthRequestGlobalProjectID {
+			return ""
+		}
+		return projectID
+	}
+	approvedPath := strings.TrimSpace(view.Metadata["approved_path"])
+	if approvedPath == "" {
+		return ""
+	}
+	path, err := domain.ParseAuthRequestPath(approvedPath)
+	if err != nil {
+		return ""
+	}
+	return path.ProjectID
+}
+
+// sessionMatchesProject reports whether one session metadata payload applies to the requested project id.
+func sessionMatchesProject(view autent.SessionView, projectID string) bool {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return true
+	}
+	approvedPath := strings.TrimSpace(view.Metadata["approved_path"])
+	if approvedPath == "" {
+		return sessionProjectID(view) == projectID
+	}
+	path, err := domain.ParseAuthRequestPath(approvedPath)
+	if err != nil {
+		return sessionProjectID(view) == projectID
+	}
+	return path.MatchesProject(projectID)
 }
 
 // authorizeApprovedPath enforces approved request path limits carried on session metadata.
@@ -1157,8 +1304,12 @@ func mapSessionView(view autent.SessionView, principalType, principalName, clien
 	lastSeen := view.LastSeenAt.UTC()
 	session := app.AuthSession{
 		SessionID:        strings.TrimSpace(view.ID),
+		ProjectID:        sessionProjectID(view),
+		AuthRequestID:    strings.TrimSpace(view.Metadata["auth_request_id"]),
+		ApprovedPath:     strings.TrimSpace(view.Metadata["approved_path"]),
 		PrincipalID:      strings.TrimSpace(view.PrincipalID),
 		PrincipalType:    strings.TrimSpace(principalType),
+		PrincipalRole:    strings.TrimSpace(view.Metadata["principal_role"]),
 		PrincipalName:    strings.TrimSpace(principalName),
 		ClientID:         strings.TrimSpace(view.ClientID),
 		ClientType:       strings.TrimSpace(clientType),

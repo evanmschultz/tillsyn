@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -64,14 +65,17 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		Path:             "project/p1",
 		PrincipalID:      "review-agent",
 		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
 		PrincipalName:    "Review Agent",
+		RequestedByActor: "orchestrator-1",
+		RequestedByType:  "agent",
 		ClientID:         "till-mcp-stdio",
 		ClientType:       "mcp-stdio",
 		ClientName:       "Till MCP STDIO",
 		RequestedTTL:     "2h",
 		Timeout:          "30m",
 		Reason:           "manual MCP review",
-		ContinuationJSON: `{"resume_tool":"till.create_task","resume":{"path":"project/p1","attempt":1}}`,
+		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.create_task","resume":{"path":"project/p1","attempt":1}}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
@@ -79,18 +83,14 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	if got := created.State; got != "pending" {
 		t.Fatalf("CreateAuthRequest() state = %q, want pending", got)
 	}
-	if got := created.RequestedByActor; got != "review-agent" {
-		t.Fatalf("CreateAuthRequest() requested_by_actor = %q, want review-agent", got)
+	if got := created.RequestedByActor; got != "orchestrator-1" {
+		t.Fatalf("CreateAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
 	}
-	if got, _ := created.Continuation["resume_tool"].(string); got != "till.create_task" {
-		t.Fatalf("CreateAuthRequest() continuation resume_tool = %q, want till.create_task", got)
+	if got := created.HasContinuation; !got {
+		t.Fatal("CreateAuthRequest() has_continuation = false, want true")
 	}
-	resume, ok := created.Continuation["resume"].(map[string]any)
-	if !ok {
-		t.Fatalf("CreateAuthRequest() continuation resume = %#v, want object", created.Continuation["resume"])
-	}
-	if got, _ := resume["path"].(string); got != "project/p1" {
-		t.Fatalf("CreateAuthRequest() continuation resume.path = %q, want project/p1", got)
+	if got := created.PrincipalRole; got != "orchestrator" {
+		t.Fatalf("CreateAuthRequest() principal_role = %q, want orchestrator", got)
 	}
 
 	listed, err := adapter.ListAuthRequests(context.Background(), ListAuthRequestsRequest{
@@ -115,6 +115,9 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	if got.Path != "project/p1" {
 		t.Fatalf("GetAuthRequest() path = %q, want project/p1", got.Path)
 	}
+	if got.HasContinuation != true {
+		t.Fatal("GetAuthRequest() has_continuation = false, want true")
+	}
 
 	approved, err := adapter.service.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
 		RequestID:      created.ID,
@@ -132,19 +135,26 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	claimed, err := adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
 		RequestID:   created.ID,
 		ResumeToken: "",
+		PrincipalID: "review-agent",
+		ClientID:    "till-mcp-stdio",
 	})
 	if err == nil {
 		t.Fatal("ClaimAuthRequest() error = nil, want invalid continuation")
 	}
 
 	adapterCreated, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
-		Path:             "project/p1",
-		PrincipalID:      "resume-agent",
-		PrincipalType:    "agent",
-		ClientID:         "till-mcp-stdio",
-		ClientType:       "mcp-stdio",
-		Reason:           "continuation claim",
-		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.create_task"}`,
+		Path:              "project/p1",
+		PrincipalID:       "resume-agent",
+		PrincipalType:     "agent",
+		PrincipalRole:     "subagent",
+		RequestedByActor:  "orchestrator-1",
+		RequestedByType:   "agent",
+		RequesterClientID: "orchestrator-client",
+		ClientID:          "subagent-client",
+		ClientType:        "mcp-stdio",
+		RequestedTTL:      "4h",
+		Reason:            "continuation claim",
+		ContinuationJSON:  `{"resume_token":"resume-123","resume_tool":"till.create_task"}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest(continuation) error = %v", err)
@@ -153,6 +163,8 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		RequestID:      adapterCreated.ID,
 		ResolvedBy:     "operator-1",
 		ResolvedType:   domain.ActorTypeUser,
+		Path:           "project/p1/branch/branch-1",
+		SessionTTL:     2 * time.Hour,
 		ResolutionNote: "approved for continuation",
 	})
 	if err != nil {
@@ -161,12 +173,35 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	claimed, err = adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
 		RequestID:   adapterCreated.ID,
 		ResumeToken: "resume-123",
+		PrincipalID: "orchestrator-1",
+		ClientID:    "orchestrator-client",
 	})
 	if err != nil {
 		t.Fatalf("ClaimAuthRequest() error = %v", err)
 	}
 	if got := claimed.Request.State; got != "approved" {
 		t.Fatalf("ClaimAuthRequest() state = %q, want approved", got)
+	}
+	if got := claimed.Request.Path; got != "project/p1" {
+		t.Fatalf("ClaimAuthRequest() requested path = %q, want project/p1", got)
+	}
+	if got := claimed.Request.ApprovedPath; got != "project/p1/branch/branch-1" {
+		t.Fatalf("ClaimAuthRequest() approved_path = %q, want project/p1/branch/branch-1", got)
+	}
+	if got := claimed.Request.RequestedSessionTTL; got != "4h0m0s" {
+		t.Fatalf("ClaimAuthRequest() requested_session_ttl = %q, want 4h0m0s", got)
+	}
+	if got := claimed.Request.ApprovedSessionTTL; got != "2h0m0s" {
+		t.Fatalf("ClaimAuthRequest() approved_session_ttl = %q, want 2h0m0s", got)
+	}
+	if !claimed.Request.HasContinuation {
+		t.Fatal("ClaimAuthRequest() has_continuation = false, want true")
+	}
+	if got := claimed.Request.PrincipalRole; got != "subagent" {
+		t.Fatalf("ClaimAuthRequest() principal_role = %q, want subagent", got)
+	}
+	if got := claimed.Request.RequestedByActor; got != "orchestrator-1" {
+		t.Fatalf("ClaimAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
 	}
 	if got := claimed.SessionSecret; got != approved.SessionSecret {
 		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)
@@ -186,5 +221,106 @@ func TestAppServiceAdapterCreateAuthRequestRejectsBadContinuationJSON(t *testing
 	})
 	if err == nil || !strings.Contains(err.Error(), "continuation_json") {
 		t.Fatalf("CreateAuthRequest() error = %v, want continuation_json validation", err)
+	}
+}
+
+// TestAppServiceAdapterCreateAuthRequestRejectsInvalidRole verifies unsupported auth-request roles fail as invalid transport input.
+func TestAppServiceAdapterCreateAuthRequestRejectsInvalidRole(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	_, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:          "project/p1",
+		PrincipalID:   "review-agent",
+		PrincipalType: "agent",
+		PrincipalRole: "global",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		Reason:        "manual MCP review",
+	})
+	if err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("CreateAuthRequest() error = %v, want ErrInvalidCaptureStateRequest", err)
+	}
+}
+
+// TestAppServiceAdapterClaimAuthRequestWaitingAndValidation verifies waiting claims and negative wait timeouts map cleanly through transport helpers.
+func TestAppServiceAdapterClaimAuthRequestWaitingAndValidation(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	created, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "pending-agent",
+		PrincipalType:    "agent",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		Reason:           "waiting review",
+		ContinuationJSON: `{"resume_token":"resume-pending"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	claimed, err := adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
+		RequestID:   created.ID,
+		ResumeToken: "resume-pending",
+		PrincipalID: "pending-agent",
+		ClientID:    "till-mcp-stdio",
+		WaitTimeout: "1ms",
+	})
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest(waiting) error = %v", err)
+	}
+	if got := claimed.Request.State; got != "pending" {
+		t.Fatalf("ClaimAuthRequest(waiting) state = %q, want pending", got)
+	}
+	if !claimed.Waiting {
+		t.Fatal("ClaimAuthRequest(waiting) waiting = false, want true")
+	}
+	if claimed.SessionSecret != "" {
+		t.Fatalf("ClaimAuthRequest(waiting) session_secret = %q, want empty", claimed.SessionSecret)
+	}
+
+	if _, err := adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
+		RequestID:   created.ID,
+		ResumeToken: "resume-pending",
+		PrincipalID: "pending-agent",
+		ClientID:    "till-mcp-stdio",
+		WaitTimeout: "-1s",
+	}); err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("ClaimAuthRequest(negative wait timeout) error = %v, want ErrInvalidCaptureStateRequest", err)
+	}
+}
+
+// TestAppServiceAdapterClaimAuthRequestRejectsRequesterMismatch verifies claim transport rejects attempts to adopt another caller's approved auth request.
+func TestAppServiceAdapterClaimAuthRequestRejectsRequesterMismatch(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	request, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "review-agent",
+		PrincipalType:    "agent",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		Reason:           "continuation claim",
+		ContinuationJSON: `{"resume_token":"resume-123"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if _, err := adapter.service.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved",
+	}); err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	if _, err := adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
+		RequestID:   request.ID,
+		ResumeToken: "resume-123",
+		PrincipalID: "other-agent",
+		ClientID:    "other-client",
+	}); err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("ClaimAuthRequest(requester mismatch) error = %v, want ErrInvalidCaptureStateRequest", err)
 	}
 }

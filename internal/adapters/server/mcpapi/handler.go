@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
@@ -66,11 +67,15 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.create_auth_request",
-			mcp.WithDescription("Create one persisted pre-session auth request for MCP or local dogfooding."),
-			mcp.WithString("path", mcp.Required(), mcp.Description("Required project-rooted path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]")),
+			mcp.WithDescription("Create one persisted pre-session auth request for MCP or local dogfooding. Include continuation_json with a requester-owned resume_token when the requester plans to resume through till.claim_auth_request after human approval. Set requested_by_actor/requested_by_type/requester_client_id when the requester differs from the requested principal/client, such as orchestrator-on-behalf-of-subagent flows."),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")),
 			mcp.WithString("principal_id", mcp.Required(), mcp.Description("Requested principal identifier")),
 			mcp.WithString("principal_type", mcp.Description("Requested principal type"), mcp.Enum("user", "agent", "service")),
+			mcp.WithString("principal_role", mcp.Description("Optional requested agent role"), mcp.Enum("orchestrator", "subagent")),
 			mcp.WithString("principal_name", mcp.Description("Optional principal display name")),
+			mcp.WithString("requested_by_actor", mcp.Description("Optional requester actor identifier when one orchestrator requests auth on behalf of another principal")),
+			mcp.WithString("requested_by_type", mcp.Description("Optional requester actor type"), mcp.Enum("user", "agent", "system")),
+			mcp.WithString("requester_client_id", mcp.Description("Optional requester client identifier when the claimant differs from the requested client")),
 			mcp.WithString("client_id", mcp.Required(), mcp.Description("Requesting client identifier")),
 			mcp.WithString("client_type", mcp.Description("Requesting client type")),
 			mcp.WithString("client_name", mcp.Description("Optional client display name")),
@@ -81,17 +86,21 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args struct {
-				Path             string `json:"path"`
-				PrincipalID      string `json:"principal_id"`
-				PrincipalType    string `json:"principal_type"`
-				PrincipalName    string `json:"principal_name"`
-				ClientID         string `json:"client_id"`
-				ClientType       string `json:"client_type"`
-				ClientName       string `json:"client_name"`
-				RequestedTTL     string `json:"requested_ttl"`
-				Timeout          string `json:"timeout"`
-				Reason           string `json:"reason"`
-				ContinuationJSON string `json:"continuation_json"`
+				Path              string `json:"path"`
+				PrincipalID       string `json:"principal_id"`
+				PrincipalType     string `json:"principal_type"`
+				PrincipalRole     string `json:"principal_role"`
+				PrincipalName     string `json:"principal_name"`
+				RequestedByActor  string `json:"requested_by_actor"`
+				RequestedByType   string `json:"requested_by_type"`
+				RequesterClientID string `json:"requester_client_id"`
+				ClientID          string `json:"client_id"`
+				ClientType        string `json:"client_type"`
+				ClientName        string `json:"client_name"`
+				RequestedTTL      string `json:"requested_ttl"`
+				Timeout           string `json:"timeout"`
+				Reason            string `json:"reason"`
+				ContinuationJSON  string `json:"continuation_json"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -109,17 +118,21 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				return mcp.NewToolResultError(`invalid_request: required argument "reason" not found`), nil
 			}
 			record, err := authRequests.CreateAuthRequest(ctx, common.CreateAuthRequestRequest{
-				Path:             args.Path,
-				PrincipalID:      args.PrincipalID,
-				PrincipalType:    args.PrincipalType,
-				PrincipalName:    args.PrincipalName,
-				ClientID:         args.ClientID,
-				ClientType:       args.ClientType,
-				ClientName:       args.ClientName,
-				RequestedTTL:     args.RequestedTTL,
-				Timeout:          args.Timeout,
-				Reason:           args.Reason,
-				ContinuationJSON: args.ContinuationJSON,
+				Path:              args.Path,
+				PrincipalID:       args.PrincipalID,
+				PrincipalType:     args.PrincipalType,
+				PrincipalRole:     args.PrincipalRole,
+				PrincipalName:     args.PrincipalName,
+				RequestedByActor:  args.RequestedByActor,
+				RequestedByType:   args.RequestedByType,
+				RequesterClientID: args.RequesterClientID,
+				ClientID:          args.ClientID,
+				ClientType:        args.ClientType,
+				ClientName:        args.ClientName,
+				RequestedTTL:      args.RequestedTTL,
+				Timeout:           args.Timeout,
+				Reason:            args.Reason,
+				ContinuationJSON:  args.ContinuationJSON,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -135,7 +148,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_auth_requests",
-			mcp.WithDescription("List persisted pre-session auth requests."),
+			mcp.WithDescription("List persisted pre-session auth requests. Inventory is global by default; use project_id to narrow one listing to a single project."),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
 			mcp.WithString("state", mcp.Description("Optional request state filter"), mcp.Enum("pending", "approved", "denied", "canceled", "expired")),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
@@ -184,9 +197,12 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.claim_auth_request",
-			mcp.WithDescription("Claim one auth request continuation result by request id and requester-owned resume token."),
+			mcp.WithDescription("Claim one auth request continuation result by request id, requester identity, and requester-owned resume token. wait_timeout can hold the caller in a human-review waiting state before returning the current request state."),
 			mcp.WithString("request_id", mcp.Required(), mcp.Description("Auth request identifier")),
 			mcp.WithString("resume_token", mcp.Required(), mcp.Description("Opaque requester-owned token stored in continuation_json when the request was created")),
+			mcp.WithString("principal_id", mcp.Required(), mcp.Description("Requester principal identifier")),
+			mcp.WithString("client_id", mcp.Required(), mcp.Description("Requester client identifier")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			requestID, err := req.RequireString("request_id")
@@ -197,9 +213,27 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			principalID, err := req.RequireString("principal_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			clientID, err := req.RequireString("client_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			waitTimeout := req.GetString("wait_timeout", "")
+			if trimmed := strings.TrimSpace(waitTimeout); trimmed != "" {
+				parsed, parseErr := time.ParseDuration(trimmed)
+				if parseErr != nil || parsed < 0 {
+					return invalidRequestToolResult(fmt.Errorf("wait_timeout %q is invalid", trimmed)), nil
+				}
+			}
 			record, err := authRequests.ClaimAuthRequest(ctx, common.ClaimAuthRequestRequest{
 				RequestID:   requestID,
 				ResumeToken: resumeToken,
+				PrincipalID: principalID,
+				ClientID:    clientID,
+				WaitTimeout: waitTimeout,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil

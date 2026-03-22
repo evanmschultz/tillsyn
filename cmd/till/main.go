@@ -119,6 +119,7 @@ type requestCreateCommandOptions struct {
 	path          string
 	principalID   string
 	principalType string
+	principalRole string
 	principalName string
 	clientID      string
 	clientType    string
@@ -152,6 +153,7 @@ type requestResolveCommandOptions struct {
 // sessionListCommandOptions stores auth session list flag values.
 type sessionListCommandOptions struct {
 	sessionID   string
+	projectID   string
 	principalID string
 	clientID    string
 	state       string
@@ -283,17 +285,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Long: strings.TrimSpace(`
 Manage dogfood auth requests and autent-backed sessions.
 
-Use request create to raise one project-rooted approval request, then inspect or
+Use request create to raise one scoped approval request, then inspect or
 resolve it with request list, show, approve, deny, or cancel. Use session list,
 validate, and revoke to inspect or rotate approved caller sessions. The low-level
 issue-session seam remains available for direct local testing, but request/session
 subcommands are the primary operator UX.
+
+Omit --project-id on list commands to inspect global inventory across all
+projects. Add --project-id to narrow requests or sessions to one project.
+Request paths may be:
+- project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
+- projects/<project-id>,<project-id>...
+- global
+Only orchestrators may request projects/... or global scope.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
-			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role subagent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
+			"  till auth request create --path projects/p1,p2 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"  till auth request list --project-id p1 --state pending",
+			"  till auth request list --state approved",
+			"  till auth request approve --request-id req-123 --note \"approved for dogfood\"",
 			"  till auth session list --state active",
-			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
+			"  till auth session revoke --session-id sess-123 --reason operator_revoke",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -302,17 +315,22 @@ subcommands are the primary operator UX.
 		Use:   "request",
 		Short: "Create, inspect, and resolve persisted auth requests",
 		Long: strings.TrimSpace(`
-Create and resolve persisted auth requests tied to one explicit project-rooted
-path. The required --path root is project/<project-id> with optional
-/branch/<branch-id> and repeated /phase/<phase-id> segments.
+Create and resolve persisted auth requests tied to one explicit scope path.
+Supported --path forms are:
+- project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
+- projects/<project-id>,<project-id>...
+- global
+
+Only orchestrators may request projects/... or global scope.
 
 After create, use request show or request list to track the pending request, and
-use approve, deny, or cancel to move it to a terminal state.
+use approve, deny, or cancel to move it to a terminal state. Omit --project-id
+on request list for global inventory, or add it to focus on one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
 			"  till auth request list --project-id p1 --state pending",
-			"  till auth request show --request-id <request-id>",
+			"  till auth request show --request-id req-123",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -322,29 +340,41 @@ use approve, deny, or cancel to move it to a terminal state.
 		Short: "Create one persisted auth request",
 		Long: strings.TrimSpace(`
 Create one persisted auth request for a specific principal, client, and
-project-rooted path. The request remains pending until it is approved, denied,
-canceled, or times out.
+scope path. The request remains pending until it is approved, denied,
+canceled, or times out. Supported --path forms are:
+- project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
+- projects/<project-id>,<project-id>...
+- global
+
+Optional --principal-role distinguishes agent-shaped requests:
+- subagent is the default agent role,
+- orchestrator must be set explicitly when broader orchestration access is requested.
 
 Optional --continuation-json stores client resume metadata so the requesting
-surface can continue cleanly after approval.
+surface can continue cleanly after approval. Include a requester-owned
+resume_token when the requesting MCP client will later claim the result.
 
-Next step: use till auth request show --request-id <request-id> or till auth
+Next step: use till auth request show --request-id req-123 or till auth
 request list --state pending to inspect the stored request, then resolve it with
 approve, deny, or cancel.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role subagent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/p1 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"orchestrator review\"",
+			"  till auth request create --path projects/p1,p2 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"  till auth request create --path global --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"general orchestration\"",
 			"  till auth request create --path project/p1/branch/branch-1/phase/phase-a --principal-id review-user --principal-type user --client-id till-tui --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_tool\":\"till.raise_attention_item\",\"resume_path\":\"project/p1\"}'",
+			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role subagent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"resume-123\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/p1\"}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.request.create", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
-	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required project-rooted path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalID, "principal-id", "", "Principal identifier")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalType, "principal-type", requestCreateOpts.principalType, "Principal type (user|agent|service)")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalRole, "principal-role", "", "Optional agent role (orchestrator|subagent)")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalName, "principal-name", "", "Optional principal display name")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientID, "client-id", requestCreateOpts.clientID, "Client identifier")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientType, "client-type", requestCreateOpts.clientType, "Client type")
@@ -364,8 +394,9 @@ approve, deny, or cancel.
 		Long: strings.TrimSpace(`
 List persisted auth requests in deterministic newest-first order.
 
-Next step: use till auth request show --request-id <request-id> to inspect one
-row in detail, then resolve it with approve, deny, or cancel.
+Next step: use till auth request show --request-id req-123 to inspect one
+row in detail, then resolve it with approve, deny, or cancel. Omit --project-id
+for global inventory or add it to focus on one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth request list",
@@ -386,10 +417,15 @@ row in detail, then resolve it with approve, deny, or cancel.
 		Long: strings.TrimSpace(`
 Show one persisted auth request by id.
 
+Approved requests continue to show issued_session_id for audit, but they do not
+re-print the bearer secret. The requester should resume through the original
+claim/resume flow instead of re-reading the secret from inventory.
+
 Next step: if the request is still pending, resolve it with till auth request
-approve, deny, or cancel.
+approve, deny, or cancel. If it is already approved, validate or revoke the
+issued session through till auth session subcommands.
 `),
-		Example: "  till auth request show --request-id <request-id>",
+		Example: "  till auth request show --request-id req-123",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.request.show", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
@@ -406,16 +442,19 @@ Approve one pending auth request and issue a usable autent session for the
 requested principal, client, path, and lifetime.
 
 Optional --path and --ttl overrides let the operator narrow or adjust the
-approved scope and session lifetime before the session is issued.
+approved scope and session lifetime before the session is issued. --path may
+narrow within the requested scope using the same forms as request create.
 
-Next step: hand off the issued session_id and session_secret to the requesting
-client. If the request stored continuation metadata, resume the requesting
-client workflow with that metadata after handoff. You can also use till auth
-request show --request-id <request-id> to inspect the approved record again.
+Next step: if the requester supplied continuation metadata with a resume_token,
+the requesting MCP client should claim the result through till.claim_auth_request
+using the original request_id and resume_token. Shell handoff of session_id and
+session_secret remains a fallback only. Use till auth request show --request-id
+req-123 to inspect the approved record, including requested vs approved path
+and TTL fields, without re-printing the secret.
 `),
 		Example: strings.Join([]string{
-			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
-			"  till auth request approve --request-id <request-id> --path project/p1/branch/branch-1 --ttl 2h --note \"limited branch review\"",
+			"  till auth request approve --request-id req-123 --note \"approved for dogfood\"",
+			"  till auth request approve --request-id req-123 --path project/p1/branch/branch-1 --ttl 2h --note \"limited branch review\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -423,7 +462,7 @@ request show --request-id <request-id> to inspect the approved record again.
 		},
 	}
 	requestApproveCmd.Flags().StringVar(&requestApproveOpts.requestID, "request-id", "", "Auth request identifier")
-	requestApproveCmd.Flags().StringVar(&requestApproveOpts.path, "path", "", "Optional approved path override rooted at project/<project-id>")
+	requestApproveCmd.Flags().StringVar(&requestApproveOpts.path, "path", "", "Optional approved scope override using project/... | projects/... | global within the requested scope")
 	requestApproveCmd.Flags().DurationVar(&requestApproveOpts.ttl, "ttl", 0, "Optional approved session lifetime override")
 	requestApproveCmd.Flags().StringVar(&requestApproveOpts.note, "note", "", "Optional operator note")
 	mustMarkFlagRequired(requestApproveCmd, "request-id")
@@ -434,10 +473,10 @@ request show --request-id <request-id> to inspect the approved record again.
 		Long: strings.TrimSpace(`
 Deny one pending auth request and record an operator-visible note.
 
-Next step: use till auth request show --request-id <request-id> to verify the
+Next step: use till auth request show --request-id req-123 to verify the
 stored terminal state.
 `),
-		Example: "  till auth request deny --request-id <request-id> --note \"outside current scope\"",
+		Example: "  till auth request deny --request-id req-123 --note \"outside current scope\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.request.deny", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
@@ -453,10 +492,10 @@ stored terminal state.
 		Long: strings.TrimSpace(`
 Cancel one pending auth request before it is approved or denied.
 
-Next step: use till auth request show --request-id <request-id> to verify the
+Next step: use till auth request show --request-id req-123 to verify the
 stored terminal state.
 `),
-		Example: "  till auth request cancel --request-id <request-id> --note \"superseded by a new request\"",
+		Example: "  till auth request cancel --request-id req-123 --note \"superseded by a new request\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.request.cancel", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
@@ -472,12 +511,13 @@ stored terminal state.
 		Short: "Inspect and manage autent-backed sessions",
 		Long: strings.TrimSpace(`
 Inspect caller-safe autent-backed sessions that were issued through auth request
-approval or the low-level issue-session seam.
+approval or the low-level issue-session seam. Omit --project-id on session list
+for global inventory, or add it to narrow active auth to one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth session list --state active",
-			"  till auth session validate --session-id <session-id> --session-secret <session-secret>",
-			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
+			"  till auth session validate --session-id sess-123 --session-secret secret-abc",
+			"  till auth session revoke --session-id sess-123 --reason operator_revoke",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -488,11 +528,15 @@ approval or the low-level issue-session seam.
 		Long: strings.TrimSpace(`
 List caller-safe autent session state without exposing bearer secrets.
 
+Use --project-id to narrow inventory to sessions approved for one project. Use
+--state, --principal-id, or --client-id for additional deterministic filters.
+
 Next step: use till auth session validate with --session-id and --session-secret
 to verify one specific credential pair, or use revoke to rotate it.
 `),
 		Example: strings.Join([]string{
 			"  till auth session list",
+			"  till auth session list --project-id p1 --state active",
 			"  till auth session list --state active --principal-id review-agent",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -501,6 +545,7 @@ to verify one specific credential pair, or use revoke to rotate it.
 		},
 	}
 	sessionListCmd.Flags().StringVar(&sessionListOpts.sessionID, "session-id", "", "Optional session identifier filter")
+	sessionListCmd.Flags().StringVar(&sessionListOpts.projectID, "project-id", "", "Optional approved project identifier filter")
 	sessionListCmd.Flags().StringVar(&sessionListOpts.principalID, "principal-id", "", "Optional principal identifier filter")
 	sessionListCmd.Flags().StringVar(&sessionListOpts.clientID, "client-id", "", "Optional client identifier filter")
 	sessionListCmd.Flags().StringVar(&sessionListOpts.state, "state", sessionListOpts.state, "Session state filter (active|revoked|expired)")
@@ -514,9 +559,9 @@ Validate one session_id and session_secret pair and return caller-safe identity
 details for the credential.
 
 Next step: if the session is valid, use it with MCP mutation calls. If it is no
-longer needed, revoke it with till auth session revoke --session-id <session-id>.
+longer needed, revoke it with till auth session revoke --session-id sess-123.
 `),
-		Example: "  till auth session validate --session-id <session-id> --session-secret <session-secret>",
+		Example: "  till auth session validate --session-id sess-123 --session-secret secret-abc",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.session.validate", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
@@ -536,7 +581,7 @@ Revoke one autent-backed session.
 This command requires the --session-id flag; it does not accept the session id
 as a positional argument.
 `),
-		Example: "  till auth session revoke --session-id <session-id> --reason operator_revoke",
+		Example: "  till auth session revoke --session-id sess-123 --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.session.revoke", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
@@ -585,7 +630,7 @@ till auth session revoke for the primary session lifecycle UX.
 This command requires the --session-id flag; it does not accept the session id
 as a positional argument.
 `),
-		Example: "  till auth revoke-session --session-id <session-id> --reason operator_revoke",
+		Example: "  till auth revoke-session --session-id sess-123 --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeCommandFlow(cmd.Context(), "auth.revoke-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
@@ -1455,6 +1500,7 @@ func runAuthRequestCreate(ctx context.Context, svc *app.Service, cfg config.Conf
 		Path:                strings.TrimSpace(opts.path),
 		PrincipalID:         strings.TrimSpace(opts.principalID),
 		PrincipalType:       strings.TrimSpace(opts.principalType),
+		PrincipalRole:       strings.TrimSpace(opts.principalRole),
 		PrincipalName:       strings.TrimSpace(opts.principalName),
 		ClientID:            strings.TrimSpace(opts.clientID),
 		ClientType:          strings.TrimSpace(opts.clientType),
@@ -1583,6 +1629,7 @@ func runAuthSessionList(ctx context.Context, svc *app.Service, opts sessionListC
 	}
 	sessions, err := svc.ListAuthSessions(ctx, app.AuthSessionFilter{
 		SessionID:   strings.TrimSpace(opts.sessionID),
+		ProjectID:   strings.TrimSpace(opts.projectID),
 		PrincipalID: strings.TrimSpace(opts.principalID),
 		ClientID:    strings.TrimSpace(opts.clientID),
 		State:       strings.TrimSpace(opts.state),
@@ -1799,42 +1846,49 @@ func persistIdentity(configPath, actorID, displayName, defaultActorType string) 
 
 // authRequestPayloadJSON stores JSON-friendly auth-request output fields.
 type authRequestPayloadJSON struct {
-	ID                     string         `json:"id"`
-	State                  string         `json:"state"`
-	Path                   string         `json:"path"`
-	ProjectID              string         `json:"project_id"`
-	BranchID               string         `json:"branch_id,omitempty"`
-	PhaseIDs               []string       `json:"phase_ids,omitempty"`
-	ScopeType              string         `json:"scope_type"`
-	ScopeID                string         `json:"scope_id"`
-	PrincipalID            string         `json:"principal_id"`
-	PrincipalType          string         `json:"principal_type"`
-	PrincipalName          string         `json:"principal_name,omitempty"`
-	ClientID               string         `json:"client_id"`
-	ClientType             string         `json:"client_type"`
-	ClientName             string         `json:"client_name,omitempty"`
-	RequestedSessionTTL    string         `json:"requested_session_ttl"`
-	Reason                 string         `json:"reason,omitempty"`
-	Continuation           map[string]any `json:"continuation,omitempty"`
-	RequestedByActor       string         `json:"requested_by_actor"`
-	RequestedByType        string         `json:"requested_by_type"`
-	CreatedAt              time.Time      `json:"created_at"`
-	ExpiresAt              time.Time      `json:"expires_at"`
-	ResolvedByActor        string         `json:"resolved_by_actor,omitempty"`
-	ResolvedByType         string         `json:"resolved_by_type,omitempty"`
-	ResolvedAt             *time.Time     `json:"resolved_at,omitempty"`
-	ResolutionNote         string         `json:"resolution_note,omitempty"`
-	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
-	IssuedSessionSecret    string         `json:"issued_session_secret,omitempty"`
-	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
+	ID                     string     `json:"id"`
+	State                  string     `json:"state"`
+	Path                   string     `json:"path"`
+	ApprovedPath           string     `json:"approved_path,omitempty"`
+	ProjectID              string     `json:"project_id"`
+	BranchID               string     `json:"branch_id,omitempty"`
+	PhaseIDs               []string   `json:"phase_ids,omitempty"`
+	ScopeType              string     `json:"scope_type"`
+	ScopeID                string     `json:"scope_id"`
+	PrincipalID            string     `json:"principal_id"`
+	PrincipalType          string     `json:"principal_type"`
+	PrincipalRole          string     `json:"principal_role,omitempty"`
+	PrincipalName          string     `json:"principal_name,omitempty"`
+	ClientID               string     `json:"client_id"`
+	ClientType             string     `json:"client_type"`
+	ClientName             string     `json:"client_name,omitempty"`
+	RequestedSessionTTL    string     `json:"requested_session_ttl"`
+	ApprovedSessionTTL     string     `json:"approved_session_ttl,omitempty"`
+	Reason                 string     `json:"reason,omitempty"`
+	HasContinuation        bool       `json:"has_continuation,omitempty"`
+	RequestedByActor       string     `json:"requested_by_actor"`
+	RequestedByType        string     `json:"requested_by_type"`
+	CreatedAt              time.Time  `json:"created_at"`
+	ExpiresAt              time.Time  `json:"expires_at"`
+	ResolvedByActor        string     `json:"resolved_by_actor,omitempty"`
+	ResolvedByType         string     `json:"resolved_by_type,omitempty"`
+	ResolvedAt             *time.Time `json:"resolved_at,omitempty"`
+	ResolutionNote         string     `json:"resolution_note,omitempty"`
+	IssuedSessionID        string     `json:"issued_session_id,omitempty"`
+	IssuedSessionSecret    string     `json:"issued_session_secret,omitempty"`
+	IssuedSessionExpiresAt *time.Time `json:"issued_session_expires_at,omitempty"`
 }
 
 // authSessionPayloadJSON stores JSON-friendly auth-session output fields.
 type authSessionPayloadJSON struct {
 	SessionID        string     `json:"session_id"`
 	State            string     `json:"state"`
+	ProjectID        string     `json:"project_id,omitempty"`
+	AuthRequestID    string     `json:"auth_request_id,omitempty"`
+	ApprovedPath     string     `json:"approved_path,omitempty"`
 	PrincipalID      string     `json:"principal_id"`
 	PrincipalType    string     `json:"principal_type,omitempty"`
+	PrincipalRole    string     `json:"principal_role,omitempty"`
 	PrincipalName    string     `json:"principal_name,omitempty"`
 	ClientID         string     `json:"client_id"`
 	ClientType       string     `json:"client_type,omitempty"`
@@ -1874,13 +1928,16 @@ func cliMutationActor(cfg config.Config) (string, domain.ActorType) {
 // authRequestPayload maps one domain auth-request row into stable CLI JSON output.
 func authRequestPayload(request domain.AuthRequest, sessionSecret string) authRequestPayloadJSON {
 	sessionSecret = strings.TrimSpace(sessionSecret)
-	if sessionSecret == "" {
-		sessionSecret = strings.TrimSpace(request.IssuedSessionSecret)
+	approvedPath := strings.TrimSpace(request.ApprovedPath)
+	approvedSessionTTL := ""
+	if request.ApprovedSessionTTL > 0 {
+		approvedSessionTTL = request.ApprovedSessionTTL.String()
 	}
 	return authRequestPayloadJSON{
 		ID:                     request.ID,
 		State:                  string(request.State),
 		Path:                   request.Path,
+		ApprovedPath:           approvedPath,
 		ProjectID:              request.ProjectID,
 		BranchID:               request.BranchID,
 		PhaseIDs:               append([]string(nil), request.PhaseIDs...),
@@ -1888,13 +1945,15 @@ func authRequestPayload(request domain.AuthRequest, sessionSecret string) authRe
 		ScopeID:                request.ScopeID,
 		PrincipalID:            request.PrincipalID,
 		PrincipalType:          request.PrincipalType,
+		PrincipalRole:          request.PrincipalRole,
 		PrincipalName:          request.PrincipalName,
 		ClientID:               request.ClientID,
 		ClientType:             request.ClientType,
 		ClientName:             request.ClientName,
 		RequestedSessionTTL:    request.RequestedSessionTTL.String(),
+		ApprovedSessionTTL:     approvedSessionTTL,
 		Reason:                 request.Reason,
-		Continuation:           cloneCLIObjectMap(request.Continuation),
+		HasContinuation:        len(request.Continuation) > 0,
 		RequestedByActor:       request.RequestedByActor,
 		RequestedByType:        string(request.RequestedByType),
 		CreatedAt:              request.CreatedAt.UTC(),
@@ -1914,8 +1973,12 @@ func authSessionPayload(session app.AuthSession) authSessionPayloadJSON {
 	return authSessionPayloadJSON{
 		SessionID:        session.SessionID,
 		State:            authSessionState(session, time.Now().UTC()),
+		ProjectID:        session.ProjectID,
+		AuthRequestID:    session.AuthRequestID,
+		ApprovedPath:     session.ApprovedPath,
 		PrincipalID:      session.PrincipalID,
 		PrincipalType:    session.PrincipalType,
+		PrincipalRole:    session.PrincipalRole,
 		PrincipalName:    session.PrincipalName,
 		ClientID:         session.ClientID,
 		ClientType:       session.ClientType,

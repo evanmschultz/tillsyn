@@ -27,6 +27,15 @@ import (
 const driverName = "sqlite3"
 const defaultEmbeddingSearchLimit = 200
 
+const (
+	// globalAuthProjectSlug stores the internal hidden slug that backs global auth routing.
+	globalAuthProjectSlug = "all-projects-internal"
+	// globalAuthProjectName stores the internal hidden project name that backs global auth routing.
+	globalAuthProjectName = "All Projects (Internal)"
+	// globalAuthProjectCreatedAt stores a deterministic timestamp for the hidden auth-routing project row.
+	globalAuthProjectCreatedAt = "1970-01-01T00:00:00Z"
+)
+
 // errSQLiteVecUnavailable reports that sqlite-vec functions are unavailable in the active runtime.
 var errSQLiteVecUnavailable = errors.New("sqlite vec capability unavailable")
 
@@ -290,11 +299,14 @@ func (r *Repository) migrate(ctx context.Context) error {
 			scope_id TEXT NOT NULL,
 			principal_id TEXT NOT NULL,
 			principal_type TEXT NOT NULL,
+			principal_role TEXT NOT NULL DEFAULT '',
 			principal_name TEXT NOT NULL DEFAULT '',
 			client_id TEXT NOT NULL,
 			client_type TEXT NOT NULL DEFAULT '',
 			client_name TEXT NOT NULL DEFAULT '',
 			requested_session_ttl_seconds INTEGER NOT NULL,
+			approved_path TEXT NOT NULL DEFAULT '',
+			approved_session_ttl_seconds INTEGER NOT NULL DEFAULT 0,
 			reason TEXT NOT NULL DEFAULT '',
 			continuation_json TEXT NOT NULL DEFAULT '{}',
 			state TEXT NOT NULL,
@@ -387,6 +399,16 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.migrateChangeEventsActorName(ctx); err != nil {
 		return err
 	}
+	authRequestAlterStatements := []string{
+		`ALTER TABLE auth_requests ADD COLUMN principal_role TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_requests ADD COLUMN approved_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_requests ADD COLUMN approved_session_ttl_seconds INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, stmt := range authRequestAlterStatements {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("migrate sqlite auth_requests: %w", err)
+		}
+	}
 	if err := r.migrateTaskActorNames(ctx); err != nil {
 		return err
 	}
@@ -403,6 +425,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := r.seedDefaultKindCatalog(ctx); err != nil {
+		return err
+	}
+	if err := r.ensureGlobalAuthProject(ctx); err != nil {
 		return err
 	}
 	if err := r.probeVecCapability(ctx); err != nil {
@@ -972,11 +997,13 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 		FROM projects
 	`
 	if !includeArchived {
-		query += ` WHERE archived_at IS NULL`
+		query += ` WHERE id != ? AND archived_at IS NULL`
+	} else {
+		query += ` WHERE id != ?`
 	}
 	query += ` ORDER BY created_at ASC`
 
-	rows, err := r.db.QueryContext(ctx, query)
+	rows, err := r.db.QueryContext(ctx, query, domain.AuthRequestGlobalProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,6 +1038,26 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ensureGlobalAuthProject creates the hidden project row that backs global auth requests and notifications.
+func (r *Repository) ensureGlobalAuthProject(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO projects(id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, '', ?, '{}', ?, ?, NULL)
+		ON CONFLICT(id) DO NOTHING
+	`,
+		domain.AuthRequestGlobalProjectID,
+		globalAuthProjectSlug,
+		globalAuthProjectName,
+		string(domain.DefaultProjectKind),
+		globalAuthProjectCreatedAt,
+		globalAuthProjectCreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("ensure global auth project: %w", err)
+	}
+	return nil
 }
 
 // SetProjectAllowedKinds replaces one project's kind allowlist.
@@ -1978,13 +2025,13 @@ func (r *Repository) CreateAuthRequest(ctx context.Context, request domain.AuthR
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO auth_requests(
 			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
-			principal_id, principal_type, principal_name, client_id, client_type, client_name,
-			requested_session_ttl_seconds, reason, continuation_json, state,
+			principal_id, principal_type, principal_role, principal_name, client_id, client_type, client_name,
+			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json, state,
 			requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
 			issued_session_id, issued_session_secret, issued_session_expires_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		strings.TrimSpace(request.ID),
 		strings.TrimSpace(request.ProjectID),
@@ -1995,11 +2042,14 @@ func (r *Repository) CreateAuthRequest(ctx context.Context, request domain.AuthR
 		strings.TrimSpace(request.ScopeID),
 		strings.TrimSpace(request.PrincipalID),
 		strings.TrimSpace(request.PrincipalType),
+		strings.TrimSpace(request.PrincipalRole),
 		strings.TrimSpace(request.PrincipalName),
 		strings.TrimSpace(request.ClientID),
 		strings.TrimSpace(request.ClientType),
 		strings.TrimSpace(request.ClientName),
 		int(request.RequestedSessionTTL.Seconds()),
+		strings.TrimSpace(request.ApprovedPath),
+		int(request.ApprovedSessionTTL.Seconds()),
 		strings.TrimSpace(request.Reason),
 		string(continuationJSON),
 		string(domain.NormalizeAuthRequestState(request.State)),
@@ -2026,8 +2076,8 @@ func (r *Repository) GetAuthRequest(ctx context.Context, requestID string) (doma
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
-			principal_id, principal_type, principal_name, client_id, client_type, client_name,
-			requested_session_ttl_seconds, reason, continuation_json, state,
+			principal_id, principal_type, principal_role, principal_name, client_id, client_type, client_name,
+			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json, state,
 			requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
 			issued_session_id, issued_session_secret, issued_session_expires_at
@@ -2046,8 +2096,8 @@ func (r *Repository) ListAuthRequests(ctx context.Context, filter domain.AuthReq
 	query := `
 		SELECT
 			id, project_id, branch_id, phase_ids_json, path, scope_type, scope_id,
-			principal_id, principal_type, principal_name, client_id, client_type, client_name,
-			requested_session_ttl_seconds, reason, continuation_json, state,
+			principal_id, principal_type, principal_role, principal_name, client_id, client_type, client_name,
+			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json, state,
 			requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
 			issued_session_id, issued_session_secret, issued_session_expires_at
@@ -2098,8 +2148,8 @@ func (r *Repository) UpdateAuthRequest(ctx context.Context, request domain.AuthR
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE auth_requests
 		SET project_id = ?, branch_id = ?, phase_ids_json = ?, path = ?, scope_type = ?, scope_id = ?,
-			principal_id = ?, principal_type = ?, principal_name = ?, client_id = ?, client_type = ?, client_name = ?,
-			requested_session_ttl_seconds = ?, reason = ?, continuation_json = ?, state = ?,
+			principal_id = ?, principal_type = ?, principal_role = ?, principal_name = ?, client_id = ?, client_type = ?, client_name = ?,
+			requested_session_ttl_seconds = ?, approved_path = ?, approved_session_ttl_seconds = ?, reason = ?, continuation_json = ?, state = ?,
 			requested_by_actor = ?, requested_by_type = ?, created_at = ?, expires_at = ?,
 			resolved_by_actor = ?, resolved_by_type = ?, resolved_at = ?, resolution_note = ?,
 			issued_session_id = ?, issued_session_secret = ?, issued_session_expires_at = ?
@@ -2113,11 +2163,14 @@ func (r *Repository) UpdateAuthRequest(ctx context.Context, request domain.AuthR
 		strings.TrimSpace(request.ScopeID),
 		strings.TrimSpace(request.PrincipalID),
 		strings.TrimSpace(request.PrincipalType),
+		strings.TrimSpace(request.PrincipalRole),
 		strings.TrimSpace(request.PrincipalName),
 		strings.TrimSpace(request.ClientID),
 		strings.TrimSpace(request.ClientType),
 		strings.TrimSpace(request.ClientName),
 		int(request.RequestedSessionTTL.Seconds()),
+		strings.TrimSpace(request.ApprovedPath),
+		int(request.ApprovedSessionTTL.Seconds()),
 		strings.TrimSpace(request.Reason),
 		string(continuationJSON),
 		string(domain.NormalizeAuthRequestState(request.State)),
@@ -2875,6 +2928,7 @@ func scanAuthRequest(s scanner) (domain.AuthRequest, error) {
 		phaseIDsRaw               string
 		scopeTypeRaw              string
 		requestedSessionTTL       int
+		approvedSessionTTL        int
 		continuationRaw           string
 		stateRaw                  string
 		requestedByTypeRaw        string
@@ -2894,11 +2948,14 @@ func scanAuthRequest(s scanner) (domain.AuthRequest, error) {
 		&request.ScopeID,
 		&request.PrincipalID,
 		&request.PrincipalType,
+		&request.PrincipalRole,
 		&request.PrincipalName,
 		&request.ClientID,
 		&request.ClientType,
 		&request.ClientName,
 		&requestedSessionTTL,
+		&request.ApprovedPath,
+		&approvedSessionTTL,
 		&request.Reason,
 		&continuationRaw,
 		&stateRaw,
@@ -2933,6 +2990,7 @@ func scanAuthRequest(s scanner) (domain.AuthRequest, error) {
 	}
 	request.ScopeType = domain.NormalizeScopeLevel(domain.ScopeLevel(scopeTypeRaw))
 	request.RequestedSessionTTL = time.Duration(requestedSessionTTL) * time.Second
+	request.ApprovedSessionTTL = time.Duration(approvedSessionTTL) * time.Second
 	request.State = domain.NormalizeAuthRequestState(domain.AuthRequestState(stateRaw))
 	request.RequestedByType = normalizeActorType(domain.ActorType(requestedByTypeRaw))
 	request.CreatedAt = parseTS(createdRaw)
@@ -2940,6 +2998,14 @@ func scanAuthRequest(s scanner) (domain.AuthRequest, error) {
 	request.ResolvedByType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(resolvedByTypeRaw)))
 	request.ResolvedAt = parseNullTS(resolvedAtRaw)
 	request.IssuedSessionExpiresAt = parseNullTS(issuedSessionExpiresAtRaw)
+	if request.State == domain.AuthRequestStateApproved {
+		if strings.TrimSpace(request.ApprovedPath) == "" {
+			request.ApprovedPath = request.Path
+		}
+		if request.ApprovedSessionTTL <= 0 {
+			request.ApprovedSessionTTL = request.RequestedSessionTTL
+		}
+	}
 	return request, nil
 }
 

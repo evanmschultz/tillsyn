@@ -9,10 +9,11 @@ import (
 
 	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
-// openSharedDBService constructs one deterministic shared-DB auth service for app-facing session tests.
-func openSharedDBService(t *testing.T, now time.Time) *Service {
+// openSharedDBService constructs one deterministic shared-DB auth service plus its shared repository for app-facing session tests.
+func openSharedDBService(t *testing.T, now time.Time) (*Service, *sqlite.Repository) {
 	t.Helper()
 	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
 	if err != nil {
@@ -37,14 +38,14 @@ func openSharedDBService(t *testing.T, now time.Time) *Service {
 	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
 		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
 	}
-	return auth
+	return auth, repo
 }
 
 // TestServiceAppFacingSessionLifecycle verifies app-facing session wrappers preserve identity decoration and fail closed on invalid state filters.
 func TestServiceAppFacingSessionLifecycle(t *testing.T) {
 	t.Parallel()
 
-	auth := openSharedDBService(t, time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC))
+	auth, _ := openSharedDBService(t, time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC))
 
 	issued, err := auth.IssueAuthSession(context.Background(), app.AuthSessionIssueInput{
 		PrincipalID:   "agent-1",
@@ -63,6 +64,7 @@ func TestServiceAppFacingSessionLifecycle(t *testing.T) {
 	}
 
 	listed, err := auth.ListAuthSessions(context.Background(), app.AuthSessionFilter{
+		ProjectID:   "",
 		PrincipalID: "agent-1",
 		State:       "active",
 		Limit:       10,
@@ -72,6 +74,9 @@ func TestServiceAppFacingSessionLifecycle(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].SessionID != issued.Session.SessionID {
 		t.Fatalf("ListAuthSessions(active) = %#v, want issued session", listed)
+	}
+	if got := listed[0].ProjectID; got != "" {
+		t.Fatalf("ListAuthSessions(active) project_id = %q, want empty for direct session", got)
 	}
 
 	validated, err := auth.ValidateAuthSession(context.Background(), issued.Session.SessionID, issued.Secret)
@@ -96,5 +101,107 @@ func TestServiceAppFacingSessionLifecycle(t *testing.T) {
 		Limit:       10,
 	}); err == nil {
 		t.Fatal("ListAuthSessions(bad-state) error = nil, want validation failure")
+	}
+}
+
+// TestServiceAppFacingSessionListMatchesProjectForBroaderScopes verifies project-filtered inventory includes broader approved scopes that still apply to the project.
+func TestServiceAppFacingSessionListMatchesProjectForBroaderScopes(t *testing.T) {
+	t.Parallel()
+
+	auth, repo := openSharedDBService(t, time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	for _, project := range []struct {
+		id   string
+		name string
+	}{
+		{id: "p1", name: "Project One"},
+		{id: "p2", name: "Project Two"},
+	} {
+		row, err := domain.NewProject(project.id, project.name, "", now)
+		if err != nil {
+			t.Fatalf("NewProject(%q) error = %v", project.id, err)
+		}
+		if err := repo.CreateProject(ctx, row); err != nil {
+			t.Fatalf("CreateProject(%q) error = %v", project.id, err)
+		}
+	}
+
+	multi, err := auth.CreateAuthRequest(ctx, domain.AuthRequest{
+		ID:                  "req-multi",
+		ProjectID:           "p1",
+		Path:                "projects/p1,p2",
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             "p1",
+		PrincipalID:         "orch-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "orchestrator",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		State:               domain.AuthRequestStatePending,
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		CreatedAt:           time.Now().UTC(),
+		ExpiresAt:           time.Now().UTC().Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(multi) error = %v", err)
+	}
+	approvedMulti, err := auth.ApproveAuthRequest(ctx, app.ApproveAuthRequestGatewayInput{
+		RequestID:    multi.ID,
+		ResolvedBy:   "approver-1",
+		ResolvedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(multi) error = %v", err)
+	}
+
+	global, err := auth.CreateAuthRequest(ctx, domain.AuthRequest{
+		ID:                  "req-global",
+		ProjectID:           domain.AuthRequestGlobalProjectID,
+		Path:                "global",
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             domain.AuthRequestGlobalProjectID,
+		PrincipalID:         "orch-2",
+		PrincipalType:       "agent",
+		PrincipalRole:       "orchestrator",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		State:               domain.AuthRequestStatePending,
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		CreatedAt:           time.Now().UTC(),
+		ExpiresAt:           time.Now().UTC().Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(global) error = %v", err)
+	}
+	approvedGlobal, err := auth.ApproveAuthRequest(ctx, app.ApproveAuthRequestGatewayInput{
+		RequestID:    global.ID,
+		ResolvedBy:   "approver-1",
+		ResolvedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(global) error = %v", err)
+	}
+
+	listed, err := auth.ListAuthSessions(ctx, app.AuthSessionFilter{
+		ProjectID: "p2",
+		State:     "active",
+	})
+	if err != nil {
+		t.Fatalf("ListAuthSessions(project filtered) error = %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("ListAuthSessions(project filtered) len = %d, want 2", len(listed))
+	}
+	if listed[0].SessionID != approvedGlobal.Request.IssuedSessionID && listed[1].SessionID != approvedGlobal.Request.IssuedSessionID {
+		t.Fatalf("project filtered sessions missing global session: %#v", listed)
+	}
+	if listed[0].SessionID != approvedMulti.Request.IssuedSessionID && listed[1].SessionID != approvedMulti.Request.IssuedSessionID {
+		t.Fatalf("project filtered sessions missing multi-project session: %#v", listed)
 	}
 }

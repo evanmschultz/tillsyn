@@ -36,9 +36,12 @@ type Service interface {
 	ListCommentsByTarget(context.Context, app.ListCommentsByTargetInput) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
+	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
+	ListAuthSessions(context.Context, app.AuthSessionFilter) ([]app.AuthSession, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
+	RevokeAuthSession(context.Context, string, string) (app.AuthSession, error)
 	GetProjectDependencyRollup(context.Context, string) (domain.DependencyRollup, error)
 	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
@@ -93,6 +96,10 @@ const (
 	modeCommandPalette
 	modeQuickActions
 	modeConfirmAction
+	modeAuthReview
+	modeAuthScopePicker
+	modeAuthInventory
+	modeAuthSessionRevoke
 	modeWarning
 	modeActivityLog
 	modeActivityEventInfo
@@ -271,6 +278,7 @@ var quickActionSpecs = []quickActionSpec{
 	{ID: "bulk-hard-delete", Label: "Bulk Hard Delete"},
 	{ID: "undo", Label: "Undo"},
 	{ID: "redo", Label: "Redo"},
+	{ID: "auth-access", Label: "Auth Inventory"},
 	{ID: "activity-log", Label: "Activity Log"},
 }
 
@@ -340,21 +348,43 @@ type dependencyCandidate struct {
 
 // confirmAction describes a pending confirmation action.
 type confirmAction struct {
-	Kind                 string
-	Task                 domain.Task
-	Project              domain.Project
-	TaskIDs              []string
-	Mode                 app.DeleteMode
-	Label                string
-	AuthRequestID        string
-	AuthRequestAttention string
-	AuthRequestPrincipal string
-	AuthRequestClient    string
-	AuthRequestPath      string
-	AuthRequestPathLabel string
-	AuthRequestTTL       string
-	AuthRequestDecision  string
-	AuthRequestNote      string
+	Kind                          string
+	Task                          domain.Task
+	Project                       domain.Project
+	TaskIDs                       []string
+	Mode                          app.DeleteMode
+	Label                         string
+	AuthRequestID                 string
+	AuthRequestAttention          string
+	AuthRequestPrincipal          string
+	AuthRequestClient             string
+	AuthRequestRequestedPath      string
+	AuthRequestRequestedPathLabel string
+	AuthRequestPath               string
+	AuthRequestPathLabel          string
+	AuthRequestTTL                string
+	AuthRequestDecision           string
+	AuthRequestNote               string
+	AuthSessionID                 string
+	AuthSessionPrincipal          string
+	AuthSessionPathLabel          string
+	ReturnToAuthAccess            bool
+}
+
+// authScopePickerItem describes one user-facing auth scope option in the TUI picker.
+type authScopePickerItem struct {
+	Path        string
+	Label       string
+	Description string
+}
+
+// authInventoryItem describes one selectable request/session row in the auth inventory screen.
+type authInventoryItem struct {
+	Request         *domain.AuthRequest
+	ResolvedRequest *domain.AuthRequest
+	Session         *app.AuthSession
+	Label           string
+	Detail          string
 }
 
 // activityEntry describes one recorded user action for the in-app activity log.
@@ -389,6 +419,14 @@ const (
 	confirmFocusAuthTTL
 	confirmFocusAuthNote
 	confirmFocusButtons
+)
+
+// auth review stages used by the dedicated full-screen review surface.
+const (
+	authReviewStageSummary = iota
+	authReviewStageEditTTL
+	authReviewStageEditApproveNote
+	authReviewStageDeny
 )
 
 // noticesPanelItem describes one selectable row in a notices-panel section.
@@ -510,49 +548,60 @@ type Model struct {
 	showArchivedProjects  bool
 	searchIncludeArchived bool
 
-	searchInput                 textinput.Model
-	commandInput                textinput.Model
-	bootstrapDisplayInput       textinput.Model
-	pathsRootInput              textinput.Model
-	highlightColorInput         textinput.Model
-	dependencyInput             textinput.Model
-	confirmAuthPathInput        textinput.Model
-	confirmAuthTTLInput         textinput.Model
-	confirmAuthNoteInput        textinput.Model
-	threadInput                 textarea.Model
-	threadDetailsInput          textarea.Model
-	descriptionEditorInput      textarea.Model
-	searchFocus                 int
-	searchStateCursor           int
-	searchLevelCursor           int
-	searchCrossProject          bool
-	searchDefaultCrossProject   bool
-	searchDefaultIncludeArchive bool
-	searchStates                []string
-	searchDefaultStates         []string
-	searchLevels                []string
-	searchDefaultLevels         []string
-	searchKinds                 []string
-	searchLabelsAny             []string
-	searchLabelsAll             []string
-	searchMatches               []app.TaskMatch
-	searchResultIndex           int
-	quickActionIndex            int
-	quickActionBackMode         inputMode
-	commandMatches              []commandPaletteItem
-	commandIndex                int
-	bootstrapFocus              int
-	bootstrapActorIndex         int
-	bootstrapRoots              []string
-	bootstrapRootIndex          int
-	bootstrapMandatory          bool
-	dependencyFocus             int
-	dependencyStateCursor       int
-	dependencyCrossProject      bool
-	dependencyIncludeArchived   bool
-	dependencyStates            []string
-	dependencyMatches           []dependencyCandidate
-	dependencyIndex             int
+	searchInput                   textinput.Model
+	commandInput                  textinput.Model
+	bootstrapDisplayInput         textinput.Model
+	pathsRootInput                textinput.Model
+	highlightColorInput           textinput.Model
+	dependencyInput               textinput.Model
+	confirmAuthPathInput          textinput.Model
+	confirmAuthTTLInput           textinput.Model
+	confirmAuthNoteInput          textinput.Model
+	authReviewStage               int
+	authReviewScopePickerIndex    int
+	authReviewScopePickerItems    []authScopePickerItem
+	authReviewReturnStage         int
+	authReviewReturnMode          inputMode
+	authInventoryGlobal           bool
+	authInventoryIndex            int
+	authInventoryRequests         []domain.AuthRequest
+	authInventoryResolvedRequests []domain.AuthRequest
+	authInventorySessions         []app.AuthSession
+	authInventoryNeedsReload      bool
+	threadInput                   textarea.Model
+	threadDetailsInput            textarea.Model
+	descriptionEditorInput        textarea.Model
+	searchFocus                   int
+	searchStateCursor             int
+	searchLevelCursor             int
+	searchCrossProject            bool
+	searchDefaultCrossProject     bool
+	searchDefaultIncludeArchive   bool
+	searchStates                  []string
+	searchDefaultStates           []string
+	searchLevels                  []string
+	searchDefaultLevels           []string
+	searchKinds                   []string
+	searchLabelsAny               []string
+	searchLabelsAll               []string
+	searchMatches                 []app.TaskMatch
+	searchResultIndex             int
+	quickActionIndex              int
+	quickActionBackMode           inputMode
+	commandMatches                []commandPaletteItem
+	commandIndex                  int
+	bootstrapFocus                int
+	bootstrapActorIndex           int
+	bootstrapRoots                []string
+	bootstrapRootIndex            int
+	bootstrapMandatory            bool
+	dependencyFocus               int
+	dependencyStateCursor         int
+	dependencyCrossProject        bool
+	dependencyIncludeArchived     bool
+	dependencyStates              []string
+	dependencyMatches             []dependencyCandidate
+	dependencyIndex               int
 
 	formInputs           []textinput.Model
 	formFocus            int
@@ -748,6 +797,7 @@ type actionMsg struct {
 	err             error
 	status          string
 	reload          bool
+	openAuthAccess  bool
 	projectID       string
 	projectRootSlug string
 	projectRootPath string
@@ -758,6 +808,15 @@ type actionMsg struct {
 	historyUndo     *historyActionSet
 	historyRedo     *historyActionSet
 	activityItem    *activityEntry
+}
+
+// authInventoryLoadedMsg carries request/session inventory for the auth inventory screen.
+type authInventoryLoadedMsg struct {
+	projectScoped bool
+	projectID     string
+	requests      []domain.AuthRequest
+	sessions      []app.AuthSession
+	err           error
 }
 
 // modeKey returns a stable short string for one input mode in traces.
@@ -1403,9 +1462,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.activityItem != nil {
 			m.appendActivity(*msg.activityItem)
 		}
+		if msg.openAuthAccess {
+			m.mode = modeAuthInventory
+			if msg.reload {
+				m.authInventoryNeedsReload = true
+				return m, m.loadAuthInventoryCmd()
+			}
+			return m, nil
+		}
+		if m.mode == modeAuthInventory && msg.reload {
+			m.authInventoryNeedsReload = true
+			return m, m.loadAuthInventoryCmd()
+		}
 		if msg.reload {
 			return m, m.loadData
 		}
+		return m, nil
+
+	case authInventoryLoadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
+		m.authInventoryRequests = m.authInventoryRequests[:0]
+		m.authInventoryResolvedRequests = m.authInventoryResolvedRequests[:0]
+		for _, request := range msg.requests {
+			if domain.NormalizeAuthRequestState(request.State) == domain.AuthRequestStatePending {
+				m.authInventoryRequests = append(m.authInventoryRequests, request)
+				continue
+			}
+			m.authInventoryResolvedRequests = append(m.authInventoryResolvedRequests, request)
+		}
+		m.authInventorySessions = append([]app.AuthSession(nil), msg.sessions...)
+		m.clampAuthInventoryIndex()
+		scopeText := strings.TrimSpace(m.authInventoryScopeLabel())
+		if scopeText == "" {
+			scopeText = "all projects"
+		}
+		m.status = "auth inventory: " + scopeText
 		return m, nil
 
 	case searchResultsMsg:
@@ -1569,6 +1664,18 @@ func (m Model) View() tea.View {
 	}
 	if m.mode == modeThread {
 		return m.renderThreadModeView()
+	}
+	if m.mode == modeAuthReview {
+		return m.renderAuthReviewModeView()
+	}
+	if m.mode == modeAuthScopePicker {
+		return m.renderAuthScopePickerModeView()
+	}
+	if m.mode == modeAuthInventory {
+		return m.renderAuthInventoryModeView()
+	}
+	if m.mode == modeAuthSessionRevoke {
+		return m.renderAuthSessionRevokeModeView()
 	}
 	if isFullPageNodeMode(m.mode) {
 		return m.renderFullPageNodeModeView()
@@ -2087,6 +2194,23 @@ func (m Model) loadData() tea.Msg {
 			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttention(project, item))
 		}
 	}
+	globalAttention, globalAttentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: domain.AuthRequestGlobalProjectID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   domain.AuthRequestGlobalProjectID,
+		},
+		UnresolvedOnly: true,
+		Limit:          256,
+	})
+	if globalAttentionErr == nil {
+		for _, item := range globalAttention {
+			if !item.RequiresUserAction {
+				continue
+			}
+			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttentionLabel(domain.AuthRequestGlobalProjectID, "All Projects", item))
+		}
+	}
 	m.traceLoadDataStage(
 		"attention_loop",
 		attentionStartedAt,
@@ -2415,25 +2539,35 @@ func (m Model) prepareConfirmAction() (confirmAction, error) {
 // confirmActionHints returns modal help copy for the current confirmation surface.
 func confirmActionHints(authMode, scopeEditable bool) string {
 	if authMode && scopeEditable {
-		return "left/right choose decision • tab move fields • enter next/apply • esc cancel • h/l switch confirm buttons • y confirm • n cancel"
+		return "tab move fields • enter next/apply • esc cancel"
 	}
 	if authMode {
-		return "left/right choose decision • tab move fields • enter next/apply • esc cancel • h/l switch confirm buttons • y confirm • n cancel"
+		return "tab move fields • enter next/apply • esc cancel"
 	}
 	return "enter apply • esc cancel • h/l switch • y confirm • n cancel"
 }
 
 // authRequestReviewNoteDefault returns deterministic default note text for one auth-request decision.
 func authRequestReviewNoteDefault(confirm confirmAction, decision string) string {
-	req := domain.AuthRequest{
-		ID:            strings.TrimSpace(confirm.AuthRequestID),
-		Path:          strings.TrimSpace(confirm.AuthRequestPath),
-		PrincipalID:   strings.TrimSpace(confirm.AuthRequestPrincipal),
-		PrincipalName: strings.TrimSpace(confirm.AuthRequestPrincipal),
-		ClientID:      strings.TrimSpace(confirm.AuthRequestClient),
-		ClientName:    strings.TrimSpace(confirm.AuthRequestClient),
+	principal := firstNonEmptyTrimmed(confirm.AuthRequestPrincipal, confirm.AuthRequestID)
+	requestedLabel := firstNonEmptyTrimmed(
+		confirm.AuthRequestRequestedPathLabel,
+		confirm.AuthRequestRequestedPath,
+		confirm.AuthRequestPathLabel,
+		confirm.AuthRequestPath,
+	)
+	approvedLabel := firstNonEmptyTrimmed(confirm.AuthRequestPathLabel, confirm.AuthRequestPath, requestedLabel)
+	switch strings.TrimSpace(strings.ToLower(decision)) {
+	case "approve":
+		if requestedLabel != "" && approvedLabel != "" && requestedLabel != approvedLabel {
+			return fmt.Sprintf("approved in Tillsyn for %s; requested scope %s; approved scope %s", principal, requestedLabel, approvedLabel)
+		}
+		return fmt.Sprintf("approved in Tillsyn for %s at %s", principal, approvedLabel)
+	case "deny":
+		return fmt.Sprintf("denied in Tillsyn for %s at %s", principal, requestedLabel)
+	default:
+		return fmt.Sprintf("resolved in Tillsyn for %s at %s", principal, approvedLabel)
 	}
-	return authRequestResolutionNoteWithPathLabel(req, decision, confirm.AuthRequestPathLabel)
 }
 
 // setPendingAuthRequestDecision switches the active auth-request decision without leaving the review modal.
@@ -2458,6 +2592,279 @@ func (m *Model) setPendingAuthRequestDecision(decision string) tea.Cmd {
 	m.pendingConfirm.AuthRequestDecision = decision
 	m.pendingConfirm.AuthRequestNote = currentNote
 	return nil
+}
+
+// authReviewResetInputFocus clears auth-review editor focus and exits any inline editor.
+func (m *Model) authReviewResetInputFocus() {
+	if m == nil {
+		return
+	}
+	m.confirmAuthTTLInput.Blur()
+	m.confirmAuthNoteInput.Blur()
+}
+
+// authReviewOpenTTLStage focuses the session-ttl editor for the current auth review.
+func (m *Model) authReviewOpenTTLStage() tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.authReviewStage = authReviewStageEditTTL
+	m.confirmAuthNoteInput.Blur()
+	return m.confirmAuthTTLInput.Focus()
+}
+
+// authReviewOpenNoteStage focuses the approval or denial note editor for the current auth review.
+func (m *Model) authReviewOpenNoteStage(stage int) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.authReviewStage = stage
+	m.confirmAuthTTLInput.Blur()
+	return m.confirmAuthNoteInput.Focus()
+}
+
+// authReviewReturnToSummary restores the summary-stage auth review screen after editing a sub-step.
+func (m *Model) authReviewReturnToSummary() {
+	if m == nil {
+		return
+	}
+	m.authReviewStage = authReviewStageSummary
+	m.authReviewResetInputFocus()
+}
+
+// closeAuthReview exits the auth-review surface and optionally returns to the auth inventory view.
+func (m *Model) closeAuthReview(status string, reload bool) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.pendingConfirm = confirmAction{}
+	m.authReviewResetInputFocus()
+	m.authReviewScopePickerItems = nil
+	m.authReviewScopePickerIndex = 0
+	returnMode := m.authReviewReturnMode
+	m.authReviewReturnMode = modeNone
+	m.authReviewStage = authReviewStageSummary
+	if strings.TrimSpace(status) != "" {
+		m.status = status
+	}
+	if returnMode == modeAuthInventory {
+		m.mode = modeAuthInventory
+		if reload {
+			return m.loadAuthInventoryCmd()
+		}
+		return nil
+	}
+	m.mode = modeNone
+	if reload {
+		return m.loadData
+	}
+	return nil
+}
+
+// authReviewApplyEditedTTL validates and stores the session-ttl override typed in the auth review.
+func (m *Model) authReviewApplyEditedTTL() error {
+	if m == nil {
+		return nil
+	}
+	ttlRaw := strings.TrimSpace(m.confirmAuthTTLInput.Value())
+	if ttlRaw == "" {
+		ttlRaw = strings.TrimSpace(m.pendingConfirm.AuthRequestTTL)
+	}
+	if ttlRaw == "" {
+		return fmt.Errorf("missing auth approval ttl")
+	}
+	if _, err := time.ParseDuration(ttlRaw); err != nil {
+		return fmt.Errorf("invalid auth approval ttl %q: %w", ttlRaw, err)
+	}
+	m.pendingConfirm.AuthRequestTTL = ttlRaw
+	m.confirmAuthTTLInput.SetValue(ttlRaw)
+	m.confirmAuthTTLInput.CursorEnd()
+	m.authReviewReturnToSummary()
+	return nil
+}
+
+// authReviewApplyEditedNote stores the current note editor value and returns to the summary stage.
+func (m *Model) authReviewApplyEditedNote(decision string) {
+	if m == nil {
+		return
+	}
+	note := strings.TrimSpace(m.confirmAuthNoteInput.Value())
+	if note == "" {
+		note = authRequestReviewNoteDefault(m.pendingConfirm, decision)
+		m.confirmAuthNoteInput.SetValue(note)
+		m.confirmAuthNoteInput.CursorEnd()
+	}
+	m.pendingConfirm.AuthRequestNote = note
+	m.pendingConfirm.AuthRequestDecision = decision
+	m.pendingConfirm.Kind = decision + "-auth-request"
+	m.pendingConfirm.Label = decision + " auth request"
+	m.authReviewReturnToSummary()
+}
+
+// startAuthInventory opens the dedicated auth inventory screen and loads request/session state.
+func (m *Model) startAuthInventory(global bool) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.authInventoryGlobal = global
+	m.authInventoryIndex = 0
+	m.mode = modeAuthInventory
+	m.status = "loading auth inventory"
+	return m.loadAuthInventoryCmd()
+}
+
+// authInventoryProjectScope resolves the current auth inventory scope into project id and display label.
+func (m Model) authInventoryProjectScope() (string, bool, string) {
+	if m.authInventoryGlobal {
+		return "", false, "all projects"
+	}
+	project, ok := m.currentProject()
+	if !ok {
+		return "", false, "all projects"
+	}
+	return strings.TrimSpace(project.ID), true, firstNonEmptyTrimmed(projectDisplayName(project), project.ID)
+}
+
+// loadAuthInventoryCmd loads request and active-session inventory for the current auth inventory scope.
+func (m Model) loadAuthInventoryCmd() tea.Cmd {
+	projectID, projectScoped, _ := m.authInventoryProjectScope()
+	return func() tea.Msg {
+		requests, err := m.svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
+			ProjectID: projectID,
+			Limit:     0,
+		})
+		if err != nil {
+			return authInventoryLoadedMsg{err: err}
+		}
+		sessions, err := m.svc.ListAuthSessions(context.Background(), app.AuthSessionFilter{
+			ProjectID: projectID,
+			State:     "active",
+			Limit:     0,
+		})
+		if err != nil {
+			return authInventoryLoadedMsg{err: err}
+		}
+		return authInventoryLoadedMsg{
+			projectScoped: projectScoped,
+			projectID:     projectID,
+			requests:      requests,
+			sessions:      sessions,
+		}
+	}
+}
+
+// authInventoryItems flattens request and session inventory into one selectable list.
+func (m Model) authInventoryItems() []authInventoryItem {
+	items := make([]authInventoryItem, 0, len(m.authInventoryRequests)+len(m.authInventoryResolvedRequests)+len(m.authInventorySessions))
+	for idx := range m.authInventoryRequests {
+		req := m.authInventoryRequests[idx]
+		scopeLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
+		label := fmt.Sprintf("[%s] %s", strings.TrimSpace(string(req.State)), firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID))
+		detail := fmt.Sprintf("scope: %s • client: %s", firstNonEmptyTrimmed(scopeLabel, "-"), firstNonEmptyTrimmed(req.ClientName, req.ClientID))
+		if reason := strings.TrimSpace(req.Reason); reason != "" {
+			detail += " • reason: " + truncate(reason, 40)
+		}
+		items = append(items, authInventoryItem{
+			Request: &m.authInventoryRequests[idx],
+			Label:   label,
+			Detail:  detail,
+		})
+	}
+	for idx := range m.authInventoryResolvedRequests {
+		req := m.authInventoryResolvedRequests[idx]
+		requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
+		detail := fmt.Sprintf("requested: %s • client: %s", firstNonEmptyTrimmed(requestedLabel, "-"), firstNonEmptyTrimmed(req.ClientName, req.ClientID))
+		if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.ApprovedPath), req.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
+			detail += " • approved: " + approvedLabel
+		}
+		if note := strings.TrimSpace(req.ResolutionNote); note != "" {
+			detail += " • note: " + truncate(note, 40)
+		}
+		items = append(items, authInventoryItem{
+			ResolvedRequest: &m.authInventoryResolvedRequests[idx],
+			Label:           fmt.Sprintf("[%s] %s", strings.TrimSpace(string(req.State)), firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)),
+			Detail:          detail,
+		})
+	}
+	for idx := range m.authInventorySessions {
+		session := m.authInventorySessions[idx]
+		scopePath := strings.TrimSpace(session.ApprovedPath)
+		if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
+			scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+		}
+		scopeLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath)
+		label := fmt.Sprintf("[active] %s", firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID))
+		detail := fmt.Sprintf("scope: %s • client: %s • expires: %s", firstNonEmptyTrimmed(scopeLabel, "-"), firstNonEmptyTrimmed(session.ClientName, session.ClientID), session.ExpiresAt.In(time.Local).Format(time.RFC3339))
+		items = append(items, authInventoryItem{
+			Session: &m.authInventorySessions[idx],
+			Label:   label,
+			Detail:  detail,
+		})
+	}
+	return items
+}
+
+// clampAuthInventoryIndex keeps the selected auth inventory row in range.
+func (m *Model) clampAuthInventoryIndex() {
+	if m == nil {
+		return
+	}
+	items := m.authInventoryItems()
+	m.authInventoryIndex = clamp(m.authInventoryIndex, 0, len(items)-1)
+}
+
+// selectedAuthInventoryItem returns the currently highlighted auth inventory row.
+func (m Model) selectedAuthInventoryItem() (authInventoryItem, bool) {
+	items := m.authInventoryItems()
+	if len(items) == 0 {
+		return authInventoryItem{}, false
+	}
+	idx := clamp(m.authInventoryIndex, 0, len(items)-1)
+	return items[idx], true
+}
+
+// authInventoryScopeLabel renders the current auth inventory scope label.
+func (m Model) authInventoryScopeLabel() string {
+	_, _, label := m.authInventoryProjectScope()
+	return label
+}
+
+// authInventoryMoveSelection moves the auth inventory cursor across selectable request/session rows.
+func (m *Model) authInventoryMoveSelection(delta int) {
+	if m == nil {
+		return
+	}
+	items := m.authInventoryItems()
+	if len(items) == 0 || delta == 0 {
+		return
+	}
+	m.authInventoryIndex = wrapIndex(m.authInventoryIndex, delta, len(items))
+}
+
+// beginSelectedAuthSessionRevoke opens the dedicated full-screen revoke surface
+// for the currently selected active session.
+func (m Model) beginSelectedAuthSessionRevoke() (tea.Model, tea.Cmd, bool) {
+	item, ok := m.selectedAuthInventoryItem()
+	if !ok || item.Session == nil {
+		m.status = "select an active session to revoke"
+		return m, nil, false
+	}
+	scopePath := strings.TrimSpace(item.Session.ApprovedPath)
+	if scopePath == "" && strings.TrimSpace(item.Session.ProjectID) != "" {
+		scopePath = "project/" + strings.TrimSpace(item.Session.ProjectID)
+	}
+	scopeLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath)
+	m.mode = modeAuthSessionRevoke
+	m.pendingConfirm = confirmAction{
+		Kind:                 "revoke-auth-session",
+		Label:                "revoke auth session",
+		AuthSessionID:        strings.TrimSpace(item.Session.SessionID),
+		AuthSessionPrincipal: firstNonEmptyTrimmed(item.Session.PrincipalName, item.Session.PrincipalID),
+		AuthSessionPathLabel: scopeLabel,
+		ReturnToAuthAccess:   true,
+	}
+	m.status = "review session revoke"
+	return m, nil, true
 }
 
 // configureTextInputClipboardBindings adds platform-friendly clipboard paste bindings for text inputs.
@@ -4664,7 +5071,7 @@ func (m Model) saveProjectRootCmd(projectSlug, rootPath string) tea.Cmd {
 func commandPaletteItems() []commandPaletteItem {
 	return []commandPaletteItem{
 		{Command: "new-task", Aliases: []string{"task-new"}, Description: "create a new task"},
-		{Command: "new-subtask", Aliases: []string{"task-subtask"}, Description: "create subtask for selected item"},
+		{Command: "new-subtask", Aliases: []string{"task-subtask", "ns"}, Description: "create subtask for selected item"},
 		{Command: "new-branch", Aliases: []string{"branch-new"}, Description: "create a new branch"},
 		{Command: "new-phase", Aliases: []string{"phase-new"}, Description: "create a new phase"},
 		{Command: "edit-branch", Aliases: []string{"branch-edit"}, Description: "edit selected branch"},
@@ -4699,6 +5106,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "reload-config", Aliases: []string{"config-reload", "reload"}, Description: "reload runtime config from disk"},
 		{Command: "paths-roots", Aliases: []string{"roots", "project-root"}, Description: "edit current project root mapping"},
 		{Command: "bootstrap-settings", Aliases: []string{"setup", "identity-roots"}, Description: "edit identity defaults + default path"},
+		{Command: "auth-access", Aliases: []string{"auths"}, Description: "review access requests; list active sessions"},
 		{Command: "labels-config", Aliases: []string{"labels", "edit-labels"}, Description: "edit global/project/branch/phase labels"},
 		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
@@ -4743,6 +5151,12 @@ func (m Model) filteredCommandItems(raw string) []commandPaletteItem {
 func scoreCommandPaletteItem(query string, item commandPaletteItem) (int, bool) {
 	score := -1
 	ok := false
+	if initialism := commandPaletteInitialism(item.Command); initialism != "" {
+		if strings.HasPrefix(initialism, query) {
+			score = max(score, 4200-len(item.Command))
+			ok = true
+		}
+	}
 	if v, match := bestFuzzyScore(query, item.Command); match {
 		score = max(score, v+200)
 		ok = true
@@ -4758,6 +5172,34 @@ func scoreCommandPaletteItem(query string, item commandPaletteItem) (int, bool) 
 		ok = true
 	}
 	return score, ok
+}
+
+// commandPaletteInitialism derives a stable abbreviation from dash/space/underscore-separated command words.
+func commandPaletteInitialism(value string) string {
+	value = normalizeCommandPaletteToken(value)
+	if value == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '-' || r == '_' || unicode.IsSpace(r)
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.Grow(len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		r, _ := utf8.DecodeRuneInString(part)
+		if r == utf8.RuneError {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 // normalizeCommandPaletteToken canonicalizes typed command ids so dash, underscore, and space variants match.
@@ -7911,68 +8353,150 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == modeConfirmAction {
-		if m.authConfirmFieldsActive() {
+	if m.mode == modeAuthScopePicker {
+		switch msg.String() {
+		case "esc":
+			m.mode = modeAuthReview
+			m.authReviewStage = authReviewStageSummary
+			m.status = "auth review"
+			return m, nil
+		case "j", "down", "tab":
+			if len(m.authReviewScopePickerItems) > 0 {
+				m.authReviewScopePickerIndex = wrapIndex(m.authReviewScopePickerIndex, 1, len(m.authReviewScopePickerItems))
+			}
+			return m, nil
+		case "k", "up", "shift+tab":
+			if len(m.authReviewScopePickerItems) > 0 {
+				m.authReviewScopePickerIndex = wrapIndex(m.authReviewScopePickerIndex, -1, len(m.authReviewScopePickerItems))
+			}
+			return m, nil
+		case "enter":
+			if len(m.authReviewScopePickerItems) == 0 {
+				m.mode = modeAuthReview
+				m.authReviewStage = authReviewStageSummary
+				m.status = "no scope choices available"
+				return m, nil
+			}
+			m.applySelectedAuthScopePickerItem()
+			m.mode = modeAuthReview
+			m.authReviewStage = authReviewStageSummary
+			m.status = "auth scope updated"
+			return m, nil
+		default:
+			return m, nil
+		}
+	}
+
+	if m.mode == modeAuthInventory {
+		switch msg.String() {
+		case "esc":
+			m.mode = modeNone
+			m.status = "ready"
+			if m.authInventoryNeedsReload {
+				m.authInventoryNeedsReload = false
+				return m, m.loadData
+			}
+			return m, nil
+		case "g":
+			if !m.authInventoryGlobal {
+				if _, ok := m.currentProject(); !ok {
+					m.status = "no project selected"
+					return m, nil
+				}
+			}
+			return m, m.startAuthInventory(!m.authInventoryGlobal)
+		case "j", "down":
+			m.authInventoryMoveSelection(1)
+			return m, nil
+		case "k", "up":
+			m.authInventoryMoveSelection(-1)
+			return m, nil
+		case "r":
+			if next, cmd, ok := m.beginSelectedAuthSessionRevoke(); ok {
+				return next, cmd
+			}
+			m.status = "select an active session to revoke"
+			return m, nil
+		case "a":
+			item, ok := m.selectedAuthInventoryItem()
+			if !ok || item.Request == nil {
+				m.status = "select a request to approve"
+				return m, nil
+			}
+			next, cmd, _ := m.beginAuthRequestDecision(*item.Request, "approve", modeAuthInventory)
+			return next, cmd
+		case "d":
+			item, ok := m.selectedAuthInventoryItem()
+			if !ok || item.Request == nil {
+				m.status = "select a request to deny"
+				return m, nil
+			}
+			next, cmd, _ := m.beginAuthRequestDecision(*item.Request, "deny", modeAuthInventory)
+			return next, cmd
+		case "enter":
+			item, ok := m.selectedAuthInventoryItem()
+			if !ok {
+				m.status = "no auth rows available"
+				return m, nil
+			}
+			if item.Request != nil {
+				next, cmd, _ := m.beginAuthRequestDecision(*item.Request, "approve", modeAuthInventory)
+				return next, cmd
+			}
+			if item.ResolvedRequest != nil {
+				m.status = "resolved request details updated"
+				return m, nil
+			}
+			if next, cmd, ok := m.beginSelectedAuthSessionRevoke(); ok {
+				return next, cmd
+			}
+			return m, nil
+		default:
+			return m, nil
+		}
+	}
+
+	if m.mode == modeAuthSessionRevoke {
+		switch msg.String() {
+		case "esc":
+			m.mode = modeAuthInventory
+			m.pendingConfirm = confirmAction{}
+			m.status = "auth inventory"
+			return m, nil
+		case "enter":
+			action := m.pendingConfirm
+			m.mode = modeNone
+			m.pendingConfirm = confirmAction{}
+			m.status = "applying action..."
+			return m.applyConfirmedAction(action)
+		default:
+			return m, nil
+		}
+	}
+
+	if m.mode == modeAuthReview {
+		switch m.authReviewStage {
+		case authReviewStageSummary:
 			switch msg.String() {
-			case "esc", "n":
-				m.mode = modeNone
-				m.pendingConfirm = confirmAction{}
-				m.confirmAuthPathInput.Blur()
-				m.confirmAuthTTLInput.Blur()
-				m.confirmAuthNoteInput.Blur()
-				m.status = "cancelled"
+			case "esc":
+				return m, m.closeAuthReview("cancelled", false)
+			case "s":
+				m.openAuthScopePicker()
+				m.status = "pick approved scope"
 				return m, nil
-			case "tab", "down":
-				return m, m.setConfirmFocus(m.confirmFocus + 1)
-			case "shift+tab", "up":
-				return m, m.setConfirmFocus(m.confirmFocus - 1)
-			case "a":
-				return m, m.setPendingAuthRequestDecision("approve")
+			case "t":
+				m.status = "edit session ttl"
+				return m, m.authReviewOpenTTLStage()
+			case "n":
+				_ = m.setPendingAuthRequestDecision("approve")
+				m.status = "edit approval note"
+				return m, m.authReviewOpenNoteStage(authReviewStageEditApproveNote)
 			case "d":
-				return m, m.setPendingAuthRequestDecision("deny")
-			case "h", "left", "l", "right":
-				if m.confirmFocus == confirmFocusAuthDecision {
-					if strings.TrimSpace(m.pendingConfirm.AuthRequestDecision) == "approve" {
-						return m, m.setPendingAuthRequestDecision("deny")
-					}
-					return m, m.setPendingAuthRequestDecision("approve")
-				}
-				if m.confirmFocus != confirmFocusButtons {
-					return m, m.setConfirmFocus(confirmFocusButtons)
-				}
-				if m.confirmChoice == 0 {
-					m.confirmChoice = 1
-				} else {
-					m.confirmChoice = 0
-				}
-				return m, nil
-			case "y":
-				m.confirmChoice = 0
-				action, err := m.prepareConfirmAction()
-				if err != nil {
-					m.status = err.Error()
-					return m, nil
-				}
-				m.mode = modeNone
-				m.pendingConfirm = confirmAction{}
-				m.confirmAuthPathInput.Blur()
-				m.confirmAuthTTLInput.Blur()
-				m.confirmAuthNoteInput.Blur()
-				m.status = "applying action..."
-				return m.applyConfirmedAction(action)
+				_ = m.setPendingAuthRequestDecision("deny")
+				m.status = "review denial note"
+				return m, m.authReviewOpenNoteStage(authReviewStageDeny)
 			case "enter":
-				if m.confirmFocus != confirmFocusButtons {
-					return m, m.setConfirmFocus(m.confirmFocus + 1)
-				}
-				if m.confirmChoice == 1 {
-					m.mode = modeNone
-					m.pendingConfirm = confirmAction{}
-					m.confirmAuthPathInput.Blur()
-					m.confirmAuthTTLInput.Blur()
-					m.confirmAuthNoteInput.Blur()
-					m.status = "cancelled"
-					return m, nil
-				}
+				_ = m.setPendingAuthRequestDecision("approve")
 				action, err := m.prepareConfirmAction()
 				if err != nil {
 					m.status = err.Error()
@@ -7980,43 +8504,78 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = modeNone
 				m.pendingConfirm = confirmAction{}
-				m.confirmAuthPathInput.Blur()
-				m.confirmAuthTTLInput.Blur()
-				m.confirmAuthNoteInput.Blur()
+				m.authReviewResetInputFocus()
+				m.authReviewReturnMode = modeNone
 				m.status = "applying action..."
 				return m.applyConfirmedAction(action)
 			default:
-				switch m.confirmFocus {
-				case confirmFocusAuthDecision:
-					if msg.Code == tea.KeyEnter || msg.String() == "enter" {
-						if m.authConfirmScopeFieldsActive() {
-							return m, m.setConfirmFocus(confirmFocusAuthPath)
-						}
-						return m, m.setConfirmFocus(confirmFocusAuthNote)
-					}
-					return m, nil
-				case confirmFocusAuthPath:
-					var cmd tea.Cmd
-					m.confirmAuthPathInput, cmd = m.confirmAuthPathInput.Update(msg)
-					_ = scrubTextInputTerminalArtifacts(&m.confirmAuthPathInput)
-					return m, cmd
-				case confirmFocusAuthTTL:
-					var cmd tea.Cmd
-					m.confirmAuthTTLInput, cmd = m.confirmAuthTTLInput.Update(msg)
-					_ = scrubTextInputTerminalArtifacts(&m.confirmAuthTTLInput)
-					return m, cmd
-				case confirmFocusAuthNote:
-					var cmd tea.Cmd
-					m.confirmAuthNoteInput, cmd = m.confirmAuthNoteInput.Update(msg)
-					_ = scrubTextInputTerminalArtifacts(&m.confirmAuthNoteInput)
-					m.pendingConfirm.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
-					return m, cmd
-				}
+				return m, nil
 			}
+		case authReviewStageEditTTL:
+			switch {
+			case msg.String() == "esc":
+				m.authReviewReturnToSummary()
+				m.status = "auth review"
+				return m, nil
+			case msg.Code == tea.KeyEnter || msg.String() == "enter":
+				if err := m.authReviewApplyEditedTTL(); err != nil {
+					m.status = err.Error()
+					return m, nil
+				}
+				m.status = "auth review"
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.confirmAuthTTLInput, cmd = m.confirmAuthTTLInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.confirmAuthTTLInput)
+				return m, cmd
+			}
+		case authReviewStageEditApproveNote, authReviewStageDeny:
+			switch {
+			case msg.String() == "esc":
+				m.authReviewReturnToSummary()
+				m.status = "auth review"
+				return m, nil
+			case msg.Code == tea.KeyEnter || msg.String() == "enter":
+				if m.authReviewStage == authReviewStageDeny {
+					_ = m.setPendingAuthRequestDecision("deny")
+					m.pendingConfirm.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
+					action, err := m.prepareConfirmAction()
+					if err != nil {
+						m.status = err.Error()
+						return m, nil
+					}
+					m.mode = modeNone
+					m.pendingConfirm = confirmAction{}
+					m.authReviewResetInputFocus()
+					m.authReviewReturnMode = modeNone
+					m.status = "applying action..."
+					return m.applyConfirmedAction(action)
+				}
+				m.authReviewApplyEditedNote("approve")
+				m.status = "auth review"
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.confirmAuthNoteInput, cmd = m.confirmAuthNoteInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.confirmAuthNoteInput)
+				m.pendingConfirm.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
+				return m, cmd
+			}
+		default:
+			m.authReviewStage = authReviewStageSummary
+			return m, nil
 		}
+	}
+
+	if m.mode == modeConfirmAction {
 		switch msg.String() {
 		case "esc", "n":
-			m.mode = modeNone
+			if m.pendingConfirm.ReturnToAuthAccess {
+				m.mode = modeAuthInventory
+			} else {
+				m.mode = modeNone
+			}
 			m.pendingConfirm = confirmAction{}
 			m.status = "cancelled"
 			return m, nil
@@ -8036,7 +8595,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.applyConfirmedAction(action)
 		case "enter":
 			if m.confirmChoice == 1 {
-				m.mode = modeNone
+				if m.pendingConfirm.ReturnToAuthAccess {
+					m.mode = modeAuthInventory
+				} else {
+					m.mode = modeNone
+				}
 				m.pendingConfirm = confirmAction{}
 				m.status = "cancelled"
 				return m, nil
@@ -9325,6 +9888,8 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		return m, m.startBootstrapSettingsMode(false)
 	case "labels-config", "labels", "edit-labels":
 		return m, m.startLabelsConfigForm()
+	case "auth-access", "auths", "access-review":
+		return m, m.startAuthInventory(false)
 	case "highlight-color", "set-highlight", "focus-color":
 		return m, m.startHighlightColorMode()
 	case "activity-log", "log":
@@ -9567,7 +10132,7 @@ func (m Model) quickActionAvailability(actionID string, hasTask bool, hasSelecti
 			return false, "nothing to redo"
 		}
 		return true, ""
-	case "activity-log":
+	case "auth-access", "activity-log":
 		return true, ""
 	default:
 		return false, "unknown action"
@@ -9722,6 +10287,8 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 	case "redo":
 		m.mode = modeNone
 		return m.redoLastMutation()
+	case "auth-access":
+		return m, m.startAuthInventory(false)
 	case "activity-log":
 		m.mode = modeNone
 		return m, m.openActivityLog()
@@ -10245,9 +10812,10 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 				return actionMsg{err: err}
 			}
 			return actionMsg{
-				status:    "auth request approved",
-				reload:    true,
-				projectID: result.Request.ProjectID,
+				status:         "auth request approved",
+				reload:         true,
+				openAuthAccess: action.ReturnToAuthAccess,
+				projectID:      result.Request.ProjectID,
 			}
 		}
 	case "deny-auth-request":
@@ -10276,7 +10844,24 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 			}); err != nil {
 				return actionMsg{err: err}
 			}
-			return actionMsg{status: "auth request denied", reload: true}
+			return actionMsg{status: "auth request denied", reload: true, openAuthAccess: action.ReturnToAuthAccess}
+		}
+	case "revoke-auth-session":
+		sessionID := strings.TrimSpace(action.AuthSessionID)
+		if sessionID == "" {
+			m.status = "missing auth session"
+			return m, nil
+		}
+		return m, func() tea.Msg {
+			revoked, err := m.svc.RevokeAuthSession(context.Background(), sessionID, "revoked via TUI auth inventory")
+			if err != nil {
+				return actionMsg{err: err}
+			}
+			status := "auth session revoked"
+			if principal := firstNonEmptyTrimmed(revoked.PrincipalName, revoked.PrincipalID); principal != "" {
+				status = "revoked auth session for " + principal
+			}
+			return actionMsg{status: status, reload: true, openAuthAccess: action.ReturnToAuthAccess}
 		}
 	default:
 		m.status = "unknown confirm action"
@@ -11780,11 +12365,16 @@ func globalNoticesStableKey(projectID, attentionID string, scopeType domain.Scop
 
 // globalNoticesPanelItemFromAttention maps one attention item into a global notifications panel row.
 func globalNoticesPanelItemFromAttention(project domain.Project, item domain.AttentionItem) globalNoticesPanelItem {
+	return globalNoticesPanelItemFromAttentionLabel(strings.TrimSpace(project.ID), projectDisplayName(project), item)
+}
+
+// globalNoticesPanelItemFromAttentionLabel maps one attention item into a global notifications row with an explicit project label.
+func globalNoticesPanelItemFromAttentionLabel(projectID, projectLabel string, item domain.AttentionItem) globalNoticesPanelItem {
 	summary := strings.TrimSpace(item.Summary)
 	if summary == "" {
 		summary = "attention item"
 	}
-	projectID := strings.TrimSpace(project.ID)
+	projectID = strings.TrimSpace(projectID)
 	scopeType := notificationScopeLevel(item.ScopeType)
 	scopeID := strings.TrimSpace(item.ScopeID)
 	if scopeType == domain.ScopeLevelProject && scopeID == "" {
@@ -11795,7 +12385,7 @@ func globalNoticesPanelItemFromAttention(project domain.Project, item domain.Att
 		StableKey:         globalNoticesStableKey(projectID, attentionID, scopeType, scopeID, summary),
 		AttentionID:       attentionID,
 		ProjectID:         projectID,
-		ProjectLabel:      projectDisplayName(project),
+		ProjectLabel:      strings.TrimSpace(projectLabel),
 		ScopeType:         scopeType,
 		ScopeID:           scopeID,
 		Summary:           summary,
@@ -12173,7 +12763,7 @@ func (m Model) selectedAuthRequestForActiveNotice() (domain.AuthRequest, bool) {
 	if attentionID == "" || m.svc == nil {
 		return domain.AuthRequest{}, false
 	}
-	req, err := m.svc.GetAuthRequest(context.Background(), attentionID)
+	req, err := m.svc.GetAuthRequest(context.Background(), app.AuthRequestIDFromAttentionID(attentionID))
 	if err != nil {
 		return domain.AuthRequest{}, false
 	}
@@ -12197,7 +12787,15 @@ func authRequestResolutionNoteWithPathLabel(req domain.AuthRequest, decision, pa
 	}
 	principal := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
 	pathLabel = firstNonEmptyTrimmed(pathLabel, req.Path)
-	return fmt.Sprintf("%s via TUI notifications for %s at %s", action, principal, pathLabel)
+	return fmt.Sprintf("%s in Tillsyn for %s at %s", action, principal, pathLabel)
+}
+
+// authRequestNoteLooksDefault reports whether one note still matches the built-in auth review copy.
+func authRequestNoteLooksDefault(note string) bool {
+	note = strings.ToLower(strings.TrimSpace(note))
+	return strings.HasPrefix(note, "approved in tillsyn for ") ||
+		strings.HasPrefix(note, "denied in tillsyn for ") ||
+		strings.HasPrefix(note, "resolved in tillsyn for ")
 }
 
 // firstNonEmptyTrimmed returns the first non-empty trimmed string in order.
@@ -12216,6 +12814,20 @@ func (m Model) authRequestPathDisplay(rawPath string) string {
 	path, err := domain.ParseAuthRequestPath(rawPath)
 	if err != nil {
 		return strings.TrimSpace(rawPath)
+	}
+	switch path.Kind {
+	case domain.AuthRequestPathKindGlobal:
+		return "All Projects"
+	case domain.AuthRequestPathKindProjects:
+		segments := make([]string, 0, len(path.ProjectIDs))
+		for _, projectID := range path.ProjectIDs {
+			if project, ok := m.projectByID(projectID); ok {
+				segments = append(segments, firstNonEmptyTrimmed(projectDisplayName(project), projectID))
+				continue
+			}
+			segments = append(segments, projectID)
+		}
+		return strings.Join(segments, ", ")
 	}
 	segments := make([]string, 0, 1+len(path.PhaseIDs)+1)
 	if project, ok := m.projectByID(path.ProjectID); ok {
@@ -12248,10 +12860,156 @@ func (m Model) authRequestScopeSegmentDisplay(scopeKind, scopeID string) string 
 	return scopeKind + ":" + scopeID
 }
 
-// beginSelectedAuthRequestDecision opens the existing confirm modal for one auth-request row.
-func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea.Cmd, bool) {
-	req, ok := m.selectedAuthRequestForActiveNotice()
-	if !ok || strings.TrimSpace(req.ID) == "" {
+// projectBranchTasks returns deterministic branch candidates for one project id.
+func (m Model) projectBranchTasks(projectID string) []domain.Task {
+	out := make([]domain.Task, 0)
+	projectID = strings.TrimSpace(projectID)
+	for _, task := range m.tasks {
+		if strings.TrimSpace(task.ProjectID) != projectID {
+			continue
+		}
+		if task.Scope != domain.KindAppliesToBranch && strings.ToLower(strings.TrimSpace(string(task.Kind))) != "branch" {
+			continue
+		}
+		out = append(out, task)
+	}
+	sortTaskSlice(out)
+	return out
+}
+
+// phaseChildrenForParent returns direct phase children for one branch/phase parent task.
+func (m Model) phaseChildrenForParent(parentID string) []domain.Task {
+	out := make([]domain.Task, 0)
+	parentID = strings.TrimSpace(parentID)
+	for _, task := range m.tasks {
+		if strings.TrimSpace(task.ParentID) != parentID {
+			continue
+		}
+		if task.Scope != domain.KindAppliesToPhase && strings.ToLower(strings.TrimSpace(string(task.Kind))) != "phase" {
+			continue
+		}
+		out = append(out, task)
+	}
+	sortTaskSlice(out)
+	return out
+}
+
+// buildAuthScopePickerItems resolves all project-rooted auth scopes visible in the TUI for one request.
+func (m Model) buildAuthScopePickerItems(rawPath string) []authScopePickerItem {
+	path, err := domain.ParseAuthRequestPath(rawPath)
+	if err != nil {
+		return nil
+	}
+	items := make([]authScopePickerItem, 0, 8)
+	seen := map[string]struct{}{}
+	addItem := func(pathValue, label, description string) {
+		pathValue = strings.TrimSpace(pathValue)
+		if pathValue == "" {
+			return
+		}
+		if _, ok := seen[pathValue]; ok {
+			return
+		}
+		seen[pathValue] = struct{}{}
+		items = append(items, authScopePickerItem{
+			Path:        pathValue,
+			Label:       strings.TrimSpace(label),
+			Description: strings.TrimSpace(description),
+		})
+	}
+
+	var visitPhases func(branch domain.Task, phasePrefix []string, parentID string)
+	visitPhases = func(branch domain.Task, phasePrefix []string, parentID string) {
+		for _, phase := range m.phaseChildrenForParent(parentID) {
+			nextPrefix := append(append([]string(nil), phasePrefix...), phase.ID)
+			scopePath := domain.AuthRequestPath{
+				ProjectID: path.ProjectID,
+				BranchID:  branch.ID,
+				PhaseIDs:  nextPrefix,
+			}.String()
+			addItem(scopePath, m.authRequestPathDisplay(scopePath), "phase scope")
+			visitPhases(branch, nextPrefix, phase.ID)
+		}
+	}
+
+	addProjectScopes := func(projectID string) {
+		projectPath := domain.AuthRequestPath{ProjectID: projectID}.String()
+		addItem(projectPath, m.authRequestPathDisplay(projectPath), "project scope")
+		for _, branch := range m.projectBranchTasks(projectID) {
+			scopePath := domain.AuthRequestPath{
+				ProjectID: projectID,
+				BranchID:  branch.ID,
+			}.String()
+			addItem(scopePath, m.authRequestPathDisplay(scopePath), "branch scope")
+			visitPhases(branch, nil, branch.ID)
+		}
+	}
+
+	switch path.Kind {
+	case domain.AuthRequestPathKindGlobal:
+		addItem(path.String(), m.authRequestPathDisplay(path.String()), "general orchestration scope")
+		for _, project := range m.projects {
+			addProjectScopes(project.ID)
+		}
+		return items
+	case domain.AuthRequestPathKindProjects:
+		addItem(path.String(), m.authRequestPathDisplay(path.String()), "multi-project orchestration scope")
+		for _, projectID := range path.ProjectIDs {
+			addProjectScopes(projectID)
+		}
+		return items
+	default:
+		addProjectScopes(path.ProjectID)
+	}
+	if currentLabel := m.authRequestPathDisplay(rawPath); strings.TrimSpace(currentLabel) != "" {
+		addItem(rawPath, currentLabel, "current requested scope")
+	}
+	return items
+}
+
+// openAuthScopePicker opens the dedicated scope picker for the current auth review.
+func (m *Model) openAuthScopePicker() {
+	if m == nil {
+		return
+	}
+	items := m.buildAuthScopePickerItems(m.pendingConfirm.AuthRequestPath)
+	m.authReviewScopePickerItems = items
+	m.authReviewScopePickerIndex = 0
+	currentPath := strings.TrimSpace(m.pendingConfirm.AuthRequestPath)
+	for idx, item := range items {
+		if strings.TrimSpace(item.Path) == currentPath {
+			m.authReviewScopePickerIndex = idx
+			break
+		}
+	}
+	m.authReviewReturnStage = m.authReviewStage
+	m.authReviewResetInputFocus()
+	m.mode = modeAuthScopePicker
+}
+
+// applySelectedAuthScopePickerItem stores the chosen scope path and refreshes the user-facing approval note when needed.
+func (m *Model) applySelectedAuthScopePickerItem() {
+	if m == nil || len(m.authReviewScopePickerItems) == 0 {
+		return
+	}
+	idx := clamp(m.authReviewScopePickerIndex, 0, len(m.authReviewScopePickerItems)-1)
+	item := m.authReviewScopePickerItems[idx]
+	m.pendingConfirm.AuthRequestPath = strings.TrimSpace(item.Path)
+	m.pendingConfirm.AuthRequestPathLabel = firstNonEmptyTrimmed(item.Label, item.Path)
+	m.confirmAuthPathInput.SetValue(m.pendingConfirm.AuthRequestPath)
+	m.confirmAuthPathInput.CursorEnd()
+	currentNote := strings.TrimSpace(m.confirmAuthNoteInput.Value())
+	if currentNote == "" || authRequestNoteLooksDefault(currentNote) {
+		currentNote = authRequestReviewNoteDefault(m.pendingConfirm, m.pendingConfirm.AuthRequestDecision)
+		m.confirmAuthNoteInput.SetValue(currentNote)
+		m.confirmAuthNoteInput.CursorEnd()
+	}
+	m.pendingConfirm.AuthRequestNote = currentNote
+}
+
+// beginAuthRequestDecision opens the dedicated auth-review surface for one concrete auth request.
+func (m Model) beginAuthRequestDecision(req domain.AuthRequest, decision string, returnMode inputMode) (tea.Model, tea.Cmd, bool) {
+	if strings.TrimSpace(req.ID) == "" {
 		return m, nil, false
 	}
 	decision = strings.TrimSpace(strings.ToLower(decision))
@@ -12261,30 +13019,51 @@ func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea
 	principal := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
 	client := firstNonEmptyTrimmed(req.ClientName, req.ClientID)
 	pathLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
-	m.mode = modeConfirmAction
+	m.mode = modeAuthReview
 	m.pendingConfirm = confirmAction{
-		Kind:                 decision + "-auth-request",
-		Label:                decision + " auth request",
-		AuthRequestID:        req.ID,
-		AuthRequestAttention: req.ID,
-		AuthRequestPrincipal: principal,
-		AuthRequestClient:    client,
-		AuthRequestPath:      req.Path,
-		AuthRequestPathLabel: pathLabel,
-		AuthRequestTTL:       req.RequestedSessionTTL.String(),
-		AuthRequestDecision:  decision,
-		AuthRequestNote:      authRequestResolutionNoteWithPathLabel(req, decision, pathLabel),
+		Kind:                          decision + "-auth-request",
+		Label:                         decision + " auth request",
+		AuthRequestID:                 req.ID,
+		AuthRequestAttention:          req.ID,
+		AuthRequestPrincipal:          principal,
+		AuthRequestClient:             client,
+		AuthRequestRequestedPath:      req.Path,
+		AuthRequestRequestedPathLabel: pathLabel,
+		AuthRequestPath:               req.Path,
+		AuthRequestPathLabel:          pathLabel,
+		AuthRequestTTL:                req.RequestedSessionTTL.String(),
+		AuthRequestDecision:           decision,
+		AuthRequestNote:               authRequestResolutionNoteWithPathLabel(req, decision, pathLabel),
+		ReturnToAuthAccess:            returnMode == modeAuthInventory,
 	}
-	m.confirmChoice = 1
-	m.status = "confirm action"
-	m.confirmAuthPathInput.SetValue(req.Path)
-	m.confirmAuthPathInput.CursorEnd()
+	m.status = "auth review"
+	m.authReviewStage = authReviewStageSummary
+	m.authReviewScopePickerItems = nil
+	m.authReviewScopePickerIndex = 0
+	m.authReviewReturnStage = authReviewStageSummary
+	m.authReviewReturnMode = returnMode
+	m.authReviewResetInputFocus()
 	m.confirmAuthTTLInput.SetValue(req.RequestedSessionTTL.String())
 	m.confirmAuthTTLInput.CursorEnd()
+	m.confirmAuthPathInput.SetValue(req.Path)
+	m.confirmAuthPathInput.CursorEnd()
 	m.confirmAuthNoteInput.SetValue(m.pendingConfirm.AuthRequestNote)
 	m.confirmAuthNoteInput.CursorEnd()
-	_ = m.setPendingAuthRequestDecision(decision)
-	return m, m.setConfirmFocus(confirmFocusAuthDecision), true
+	if decision == "deny" {
+		_ = m.setPendingAuthRequestDecision("deny")
+		return m, m.authReviewOpenNoteStage(authReviewStageDeny), true
+	}
+	_ = m.setPendingAuthRequestDecision("approve")
+	return m, nil, true
+}
+
+// beginSelectedAuthRequestDecision opens the dedicated auth-review surface for the currently selected notice row.
+func (m Model) beginSelectedAuthRequestDecision(decision string) (tea.Model, tea.Cmd, bool) {
+	req, ok := m.selectedAuthRequestForActiveNotice()
+	if !ok {
+		return m, nil, false
+	}
+	return m.beginAuthRequestDecision(req, decision, modeNone)
 }
 
 // moveNoticesSelection moves section/item focus inside the notices panel.
@@ -14815,6 +15594,40 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("?", "help"),
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeAuthReview:
+		short := []key.Binding{
+			helpBinding("enter", "approve/save"),
+			helpBinding("d", "deny"),
+			helpBinding("s/t/n", "edit"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeAuthScopePicker:
+		short := []key.Binding{
+			helpBinding("enter", "select"),
+			helpBinding("↑/↓", "move"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeAuthInventory:
+		short := []key.Binding{
+			helpBinding("enter", "review/revoke"),
+			helpBinding("↑/↓", "move"),
+			helpBinding("g", "scope"),
+			helpBinding("r", "revoke"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeAuthSessionRevoke:
+		short := []key.Binding{
+			helpBinding("enter", "revoke"),
+			helpBinding("esc", "cancel"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	case modeThread:
 		if m.threadComposerActive {
 			short := []key.Binding{
@@ -14997,6 +15810,285 @@ func (m Model) renderFullPageNodeModeView() tea.View {
 	default:
 		return tea.NewView("")
 	}
+}
+
+// authReviewStageStatus renders compact stage text for the full-screen auth review surface.
+func (m Model) authReviewStageStatus() string {
+	switch m.authReviewStage {
+	case authReviewStageEditTTL:
+		return "edit session ttl"
+	case authReviewStageEditApproveNote:
+		return "edit approval note"
+	case authReviewStageDeny:
+		return "deny request"
+	default:
+		return "review pending access request"
+	}
+}
+
+// authReviewSummaryBody renders the main full-screen auth review body content.
+func (m Model) authReviewSummaryBody(contentWidth int, hintStyle, accentStyle lipgloss.Style) string {
+	reqPath := firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPathLabel, m.pendingConfirm.AuthRequestPath)
+	note := strings.TrimSpace(m.confirmAuthNoteInput.Value())
+	if note == "" {
+		note = "-"
+	}
+	lines := []string{
+		accentStyle.Render("requested access"),
+		fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPrincipal, m.pendingConfirm.AuthRequestID)),
+		fmt.Sprintf("client: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestClient, "-")),
+		fmt.Sprintf("requested scope: %s", reqPath),
+		fmt.Sprintf("raw path: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPath, "-")),
+		fmt.Sprintf("requested session ttl: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestTTL, "-")),
+		"",
+		accentStyle.Render("approve now"),
+		"default decision: approve",
+		"[enter] approve and confirm",
+		"[d] deny with note",
+		"[esc] cancel review",
+		"",
+		accentStyle.Render("optional approval changes"),
+		fmt.Sprintf("approved scope: %s", reqPath),
+		fmt.Sprintf("path: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPath, "-")),
+		fmt.Sprintf("session ttl: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestTTL, "-")),
+		fmt.Sprintf("note: %s", truncate(note, max(24, contentWidth-8))),
+		"",
+		"[s] pick approved scope",
+		"[t] change session ttl",
+		"[n] edit approval note",
+	}
+	lines = append(lines, "", hintStyle.Render("approve is the default. scope edits open a separate picker with human-readable names."))
+	return strings.Join(lines, "\n")
+}
+
+// authReviewInputBody renders one auth review editor sub-step body.
+func (m Model) authReviewInputBody(contentWidth int, hintStyle, accentStyle lipgloss.Style) string {
+	lines := []string{
+		accentStyle.Render("request"),
+		fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPrincipal, m.pendingConfirm.AuthRequestID)),
+		fmt.Sprintf("scope: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPathLabel, m.pendingConfirm.AuthRequestPath)),
+	}
+	switch m.authReviewStage {
+	case authReviewStageEditTTL:
+		ttlInput := m.confirmAuthTTLInput
+		ttlInput.SetWidth(max(12, contentWidth-12))
+		lines = append(lines, "", accentStyle.Render("session ttl"), ttlInput.View())
+		lines = append(lines, hintStyle.Render("[save: enter]  [cancel: esc]"))
+	case authReviewStageEditApproveNote:
+		noteInput := m.confirmAuthNoteInput
+		noteInput.SetWidth(max(24, contentWidth-12))
+		lines = append(lines, "", accentStyle.Render("approval note"), noteInput.View())
+		lines = append(lines, hintStyle.Render("[save: enter]  [cancel: esc]"))
+	case authReviewStageDeny:
+		noteInput := m.confirmAuthNoteInput
+		noteInput.SetWidth(max(24, contentWidth-12))
+		lines = append(lines, "", accentStyle.Render("denial note"), noteInput.View())
+		lines = append(lines, hintStyle.Render("[confirm deny: enter]  [cancel: esc]"))
+	}
+	lines = append(lines, "", hintStyle.Render("type directly in the active field. press enter to apply or esc to return to review."))
+	return strings.Join(lines, "\n")
+}
+
+// renderAuthReviewModeView renders the dedicated full-screen auth review surface.
+func (m Model) renderAuthReviewModeView() tea.View {
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Access Request Review", m.authReviewStageStatus(), "")
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	body := m.authReviewSummaryBody(metrics.contentWidth, hintStyle, accentStyle)
+	if m.authReviewStage != authReviewStageSummary {
+		body = m.authReviewInputBody(metrics.contentWidth, hintStyle, accentStyle)
+	}
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Access Request Review", m.authReviewStageStatus(), "", body)
+	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
+}
+
+// renderAuthSessionRevokeModeView renders the dedicated full-screen session
+// revoke review surface from auth inventory.
+func (m Model) renderAuthSessionRevokeModeView() tea.View {
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Revoke Active Session", "review session revoke", "")
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	lines := []string{
+		accentStyle.Render("active session"),
+		fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthSessionPrincipal, m.pendingConfirm.AuthSessionID)),
+		fmt.Sprintf("approved scope: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthSessionPathLabel, "-")),
+		fmt.Sprintf("session id: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthSessionID, "-")),
+		"",
+		accentStyle.Render("revoke now"),
+		"[enter] revoke and confirm",
+		"[esc] cancel",
+		"",
+		hintStyle.Render("revoking ends this session immediately and returns to auth inventory."),
+	}
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Revoke Active Session", "review session revoke", "", strings.Join(lines, "\n"))
+	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
+}
+
+// renderAuthScopePickerModeView renders the dedicated full-screen auth scope picker.
+func (m Model) renderAuthScopePickerModeView() tea.View {
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Pick Approved Scope", "select the scope to approve", "")
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	lines := []string{}
+	if len(m.authReviewScopePickerItems) == 0 {
+		lines = append(lines, hintStyle.Render("no selectable scopes are visible in the current project context"))
+	} else {
+		for idx, item := range m.authReviewScopePickerItems {
+			prefix := "  "
+			label := item.Label
+			if idx == clamp(m.authReviewScopePickerIndex, 0, len(m.authReviewScopePickerItems)-1) {
+				prefix = "> "
+				label = accentStyle.Render(label)
+			}
+			lines = append(lines, prefix+label)
+			lines = append(lines, hintStyle.Render("    "+firstNonEmptyTrimmed(item.Description, item.Path)))
+			lines = append(lines, hintStyle.Render("    path: "+item.Path))
+		}
+	}
+	lines = append(lines, "", hintStyle.Render("enter selects the highlighted scope. esc returns to review."))
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Pick Approved Scope", "names are primary labels; raw paths stay visible underneath", "", strings.Join(lines, "\n"))
+	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
+}
+
+// renderAuthInventoryModeView renders the dedicated full-screen auth inventory surface.
+func (m Model) renderAuthInventoryModeView() tea.View {
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	scopeLabel := firstNonEmptyTrimmed(m.authInventoryScopeLabel(), "all projects")
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Auth Inventory", scopeLabel, "")
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	lines := []string{
+		accentStyle.Render("scope"),
+		fmt.Sprintf("view: %s", scopeLabel),
+		fmt.Sprintf("pending requests: %d", len(m.authInventoryRequests)),
+		fmt.Sprintf("resolved requests: %d", len(m.authInventoryResolvedRequests)),
+		fmt.Sprintf("active sessions: %d", len(m.authInventorySessions)),
+		"",
+	}
+	if len(m.authInventoryRequests) == 0 && len(m.authInventoryResolvedRequests) == 0 && len(m.authInventorySessions) == 0 {
+		lines = append(lines, hintStyle.Render("no auth requests or active sessions in this scope"))
+	} else {
+		lines = append(lines, accentStyle.Render("pending requests"))
+		displayIndex := 0
+		if len(m.authInventoryRequests) == 0 {
+			lines = append(lines, hintStyle.Render("  none"))
+		}
+		for idx := range m.authInventoryRequests {
+			roleLabel := strings.TrimSpace(m.authInventoryRequests[idx].PrincipalRole)
+			if roleLabel != "" {
+				roleLabel = " • role: " + roleLabel
+			}
+			item := authInventoryItem{
+				Request: &m.authInventoryRequests[idx],
+				Label:   fmt.Sprintf("[pending] %s", firstNonEmptyTrimmed(m.authInventoryRequests[idx].PrincipalName, m.authInventoryRequests[idx].PrincipalID)),
+				Detail:  fmt.Sprintf("scope: %s • client: %s%s", firstNonEmptyTrimmed(m.authRequestPathDisplay(m.authInventoryRequests[idx].Path), m.authInventoryRequests[idx].Path), firstNonEmptyTrimmed(m.authInventoryRequests[idx].ClientName, m.authInventoryRequests[idx].ClientID), roleLabel),
+			}
+			cursor := "  "
+			label := item.Label
+			if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+				cursor = "> "
+				label = accentStyle.Render(label)
+			}
+			lines = append(lines, cursor+label)
+			lines = append(lines, hintStyle.Render("    "+item.Detail))
+			displayIndex++
+		}
+		lines = append(lines, "", accentStyle.Render("resolved requests"))
+		if len(m.authInventoryResolvedRequests) == 0 {
+			lines = append(lines, hintStyle.Render("  none"))
+		}
+		for idx := range m.authInventoryResolvedRequests {
+			request := m.authInventoryResolvedRequests[idx]
+			stateLabel := strings.TrimSpace(string(request.State))
+			label := fmt.Sprintf("[%s] %s", stateLabel, firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID))
+			requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)
+			detail := fmt.Sprintf("requested: %s • client: %s", requestedLabel, firstNonEmptyTrimmed(request.ClientName, request.ClientID))
+			if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
+				detail += " • approved: " + approvedLabel
+			}
+			if note := strings.TrimSpace(request.ResolutionNote); note != "" {
+				detail += " • note: " + truncate(note, max(24, metrics.contentWidth-18))
+			}
+			cursor := "  "
+			renderedLabel := hintStyle.Render(label)
+			if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+				cursor = "> "
+				renderedLabel = accentStyle.Render(label)
+			}
+			lines = append(lines, cursor+renderedLabel)
+			lines = append(lines, hintStyle.Render("    "+detail))
+			displayIndex++
+		}
+		lines = append(lines, "", accentStyle.Render("active sessions"))
+		if len(m.authInventorySessions) == 0 {
+			lines = append(lines, hintStyle.Render("  none"))
+		}
+		for idx := range m.authInventorySessions {
+			session := m.authInventorySessions[idx]
+			scopePath := strings.TrimSpace(session.ApprovedPath)
+			if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
+				scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+			}
+			roleLabel := strings.TrimSpace(session.PrincipalRole)
+			if roleLabel != "" {
+				roleLabel = " • role: " + roleLabel
+			}
+			item := authInventoryItem{
+				Session: &m.authInventorySessions[idx],
+				Label:   fmt.Sprintf("[active] %s", firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)),
+				Detail:  fmt.Sprintf("scope: %s • client: %s%s • expires: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath), firstNonEmptyTrimmed(session.ClientName, session.ClientID), roleLabel, session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
+			}
+			cursor := "  "
+			label := item.Label
+			if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+				cursor = "> "
+				label = accentStyle.Render(label)
+			}
+			lines = append(lines, cursor+label)
+			lines = append(lines, hintStyle.Render("    "+item.Detail))
+			displayIndex++
+		}
+	}
+	if selected, ok := m.selectedAuthInventoryItem(); ok && selected.ResolvedRequest != nil {
+		request := selected.ResolvedRequest
+		lines = append(lines, "", accentStyle.Render("selected resolved request"))
+		lines = append(lines, fmt.Sprintf("state: %s", strings.TrimSpace(string(request.State))))
+		lines = append(lines, fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)))
+		lines = append(lines, fmt.Sprintf("client: %s", firstNonEmptyTrimmed(request.ClientName, request.ClientID)))
+		lines = append(lines, fmt.Sprintf("requested scope: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)))
+		if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" {
+			lines = append(lines, fmt.Sprintf("approved scope: %s", approvedLabel))
+		}
+		if note := strings.TrimSpace(request.ResolutionNote); note != "" {
+			lines = append(lines, "note:", note)
+		}
+	}
+	lines = append(lines, "", hintStyle.Render("enter reviews the selected pending request or opens revoke for the selected active session • resolved rows show full details below • g toggles project/global • r opens revoke for the selected active session • esc exits"))
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Auth Inventory", scopeLabel, "", strings.Join(lines, "\n"))
+	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }
 
 // renderModeOverlay renders output for the current model state.
@@ -15582,6 +16674,12 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 			targetTitle = "project " + targetTitle
 		}
+		if strings.TrimSpace(m.pendingConfirm.AuthSessionID) != "" {
+			targetTitle = firstNonEmptyTrimmed(m.pendingConfirm.AuthSessionPrincipal, m.pendingConfirm.AuthSessionID)
+			if scopeLabel := strings.TrimSpace(m.pendingConfirm.AuthSessionPathLabel); scopeLabel != "" {
+				targetTitle += " @ " + scopeLabel
+			}
+		}
 		if targetTitle == "" {
 			targetTitle = "(unknown target)"
 		}
@@ -16030,6 +17128,14 @@ func (m Model) modeLabel() string {
 		return "activity-event"
 	case modeConfirmAction:
 		return "confirm"
+	case modeAuthReview:
+		return "auth-review"
+	case modeAuthScopePicker:
+		return "auth-scope-picker"
+	case modeAuthInventory:
+		return "auth-access"
+	case modeAuthSessionRevoke:
+		return "auth-session-revoke"
 	case modeWarning:
 		return "warning"
 	case modeResourcePicker:
@@ -16088,6 +17194,14 @@ func (m Model) modePrompt() string {
 		return "activity event: enter/g go to node, esc back"
 	case modeConfirmAction:
 		return "confirm action: enter confirm, esc cancel"
+	case modeAuthReview:
+		return "auth review: enter approves, d starts deny, s picks scope, t edits ttl, n edits note, esc cancels"
+	case modeAuthScopePicker:
+		return "auth scope picker: up/down selects named scopes, enter chooses one, esc returns to review"
+	case modeAuthInventory:
+		return "auth inventory: up/down select, enter review request or open revoke, g toggle project/global, r open revoke for selected session, esc close"
+	case modeAuthSessionRevoke:
+		return "revoke active session: enter revoke, esc cancel"
 	case modeWarning:
 		return "warning: enter close, esc close"
 	case modeResourcePicker:

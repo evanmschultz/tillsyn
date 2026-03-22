@@ -47,11 +47,14 @@ func TestMCPHelperParsing(t *testing.T) {
 func TestMCPHelperIdentityMapping(t *testing.T) {
 	t.Parallel()
 
-	if got := requestedActorTypeFromPrincipalType("service"); got != domain.ActorTypeAgent {
-		t.Fatalf("requestedActorTypeFromPrincipalType(service) = %q, want agent", got)
+	if got := requestedActorType("", "service"); got != domain.ActorTypeAgent {
+		t.Fatalf("requestedActorType(service fallback) = %q, want agent", got)
 	}
-	if got := requestedActorTypeFromPrincipalType("user"); got != domain.ActorTypeUser {
-		t.Fatalf("requestedActorTypeFromPrincipalType(user) = %q, want user", got)
+	if got := requestedActorType("system", "user"); got != domain.ActorTypeSystem {
+		t.Fatalf("requestedActorType(explicit system) = %q, want system", got)
+	}
+	if got := requestedActorType("", "user"); got != domain.ActorTypeUser {
+		t.Fatalf("requestedActorType(user fallback) = %q, want user", got)
 	}
 
 	actorID, actorName := deriveMutationActorIdentity(ActorLeaseTuple{
@@ -114,7 +117,7 @@ func TestMapAuthRequestAndCommentRecords(t *testing.T) {
 		IssuedSessionSecret:    "secret-1",
 		IssuedSessionExpiresAt: &expiresAt,
 	})
-	if got, _ := record.Continuation["resume_tool"].(string); record.ID != "req-1" || record.IssuedSessionID != "sess-1" || got != "till.capture_state" {
+	if record.ID != "req-1" || record.IssuedSessionID != "sess-1" || !record.HasContinuation {
 		t.Fatalf("mapAuthRequestRecord() = %#v, want persisted auth request fields", record)
 	}
 
