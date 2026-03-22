@@ -38,6 +38,8 @@ type Service interface {
 	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ListAuthSessions(context.Context, app.AuthSessionFilter) ([]app.AuthSession, error)
+	ListCapabilityLeases(context.Context, app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error)
+	ListHandoffs(context.Context, app.ListHandoffsInput) ([]domain.Handoff, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
@@ -278,7 +280,7 @@ var quickActionSpecs = []quickActionSpec{
 	{ID: "bulk-hard-delete", Label: "Bulk Hard Delete"},
 	{ID: "undo", Label: "Undo"},
 	{ID: "redo", Label: "Redo"},
-	{ID: "auth-access", Label: "Auth Inventory"},
+	{ID: "auth-access", Label: "Coordination"},
 	{ID: "activity-log", Label: "Activity Log"},
 }
 
@@ -378,11 +380,13 @@ type authScopePickerItem struct {
 	Description string
 }
 
-// authInventoryItem describes one selectable request/session row in the auth inventory screen.
+// authInventoryItem describes one selectable coordination row in the recovery screen.
 type authInventoryItem struct {
 	Request         *domain.AuthRequest
 	ResolvedRequest *domain.AuthRequest
 	Session         *app.AuthSession
+	Lease           *domain.CapabilityLease
+	Handoff         *domain.Handoff
 	Label           string
 	Detail          string
 }
@@ -567,6 +571,8 @@ type Model struct {
 	authInventoryRequests         []domain.AuthRequest
 	authInventoryResolvedRequests []domain.AuthRequest
 	authInventorySessions         []app.AuthSession
+	authInventoryLeases           []domain.CapabilityLease
+	authInventoryHandoffs         []domain.Handoff
 	authInventoryNeedsReload      bool
 	threadInput                   textarea.Model
 	threadDetailsInput            textarea.Model
@@ -810,12 +816,14 @@ type actionMsg struct {
 	activityItem    *activityEntry
 }
 
-// authInventoryLoadedMsg carries request/session inventory for the auth inventory screen.
+// authInventoryLoadedMsg carries coordination inventory for the recovery screen.
 type authInventoryLoadedMsg struct {
 	projectScoped bool
 	projectID     string
 	requests      []domain.AuthRequest
 	sessions      []app.AuthSession
+	leases        []domain.CapabilityLease
+	handoffs      []domain.Handoff
 	err           error
 }
 
@@ -1495,12 +1503,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.authInventoryResolvedRequests = append(m.authInventoryResolvedRequests, request)
 		}
 		m.authInventorySessions = append([]app.AuthSession(nil), msg.sessions...)
+		m.authInventoryLeases = append([]domain.CapabilityLease(nil), msg.leases...)
+		m.authInventoryHandoffs = append([]domain.Handoff(nil), msg.handoffs...)
 		m.clampAuthInventoryIndex()
 		scopeText := strings.TrimSpace(m.authInventoryScopeLabel())
 		if scopeText == "" {
 			scopeText = "all projects"
 		}
-		m.status = "auth inventory: " + scopeText
+		if coordinationProjectID, coordinationProjectLabel, ok := m.authInventoryCoordinationProject(); ok && coordinationProjectID != "" {
+			m.status = "coordination: " + scopeText + " • project: " + coordinationProjectLabel
+		} else {
+			m.status = "coordination: " + scopeText
+		}
 		return m, nil
 
 	case searchResultsMsg:
@@ -2632,7 +2646,7 @@ func (m *Model) authReviewReturnToSummary() {
 	m.authReviewResetInputFocus()
 }
 
-// closeAuthReview exits the auth-review surface and optionally returns to the auth inventory view.
+// closeAuthReview exits the auth-review surface and optionally returns to the coordination view.
 func (m *Model) closeAuthReview(status string, reload bool) tea.Cmd {
 	if m == nil {
 		return nil
@@ -2701,7 +2715,7 @@ func (m *Model) authReviewApplyEditedNote(decision string) {
 	m.authReviewReturnToSummary()
 }
 
-// startAuthInventory opens the dedicated auth inventory screen and loads request/session state.
+// startAuthInventory opens the dedicated coordination surface and loads request/session/lease/handoff state.
 func (m *Model) startAuthInventory(global bool) tea.Cmd {
 	if m == nil {
 		return nil
@@ -2709,11 +2723,20 @@ func (m *Model) startAuthInventory(global bool) tea.Cmd {
 	m.authInventoryGlobal = global
 	m.authInventoryIndex = 0
 	m.mode = modeAuthInventory
-	m.status = "loading auth inventory"
+	m.status = "loading coordination surface"
 	return m.loadAuthInventoryCmd()
 }
 
-// authInventoryProjectScope resolves the current auth inventory scope into project id and display label.
+// authInventoryCoordinationProject resolves the current project label used for project-scoped coordination rows.
+func (m Model) authInventoryCoordinationProject() (string, string, bool) {
+	project, ok := m.currentProject()
+	if !ok {
+		return "", "no project selected", false
+	}
+	return strings.TrimSpace(project.ID), firstNonEmptyTrimmed(projectDisplayName(project), project.ID), true
+}
+
+// authInventoryProjectScope resolves the current request/session scope into project id and display label.
 func (m Model) authInventoryProjectScope() (string, bool, string) {
 	if m.authInventoryGlobal {
 		return "", false, "all projects"
@@ -2725,9 +2748,10 @@ func (m Model) authInventoryProjectScope() (string, bool, string) {
 	return strings.TrimSpace(project.ID), true, firstNonEmptyTrimmed(projectDisplayName(project), project.ID)
 }
 
-// loadAuthInventoryCmd loads request and active-session inventory for the current auth inventory scope.
+// loadAuthInventoryCmd loads coordination inventory for the current request/session scope.
 func (m Model) loadAuthInventoryCmd() tea.Cmd {
 	projectID, projectScoped, _ := m.authInventoryProjectScope()
+	coordinationProjectID, _, hasCoordinationProject := m.authInventoryCoordinationProject()
 	return func() tea.Msg {
 		requests, err := m.svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
 			ProjectID: projectID,
@@ -2744,18 +2768,42 @@ func (m Model) loadAuthInventoryCmd() tea.Cmd {
 		if err != nil {
 			return authInventoryLoadedMsg{err: err}
 		}
+		leases := make([]domain.CapabilityLease, 0)
+		handoffs := make([]domain.Handoff, 0)
+		if hasCoordinationProject {
+			leases, err = m.svc.ListCapabilityLeases(context.Background(), app.ListCapabilityLeasesInput{
+				ProjectID:      coordinationProjectID,
+				ScopeType:      domain.CapabilityScopeProject,
+				IncludeRevoked: true,
+			})
+			if err != nil {
+				return authInventoryLoadedMsg{err: err}
+			}
+			handoffs, err = m.svc.ListHandoffs(context.Background(), app.ListHandoffsInput{
+				Level: domain.LevelTupleInput{
+					ProjectID: coordinationProjectID,
+					ScopeType: domain.ScopeLevelProject,
+				},
+				Limit: 0,
+			})
+			if err != nil {
+				return authInventoryLoadedMsg{err: err}
+			}
+		}
 		return authInventoryLoadedMsg{
 			projectScoped: projectScoped,
 			projectID:     projectID,
 			requests:      requests,
 			sessions:      sessions,
+			leases:        leases,
+			handoffs:      handoffs,
 		}
 	}
 }
 
-// authInventoryItems flattens request and session inventory into one selectable list.
+// authInventoryItems flattens coordination inventory into one selectable list.
 func (m Model) authInventoryItems() []authInventoryItem {
-	items := make([]authInventoryItem, 0, len(m.authInventoryRequests)+len(m.authInventoryResolvedRequests)+len(m.authInventorySessions))
+	items := make([]authInventoryItem, 0, len(m.authInventoryRequests)+len(m.authInventoryResolvedRequests)+len(m.authInventorySessions)+len(m.authInventoryLeases)+len(m.authInventoryHandoffs))
 	for idx := range m.authInventoryRequests {
 		req := m.authInventoryRequests[idx]
 		scopeLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
@@ -2801,10 +2849,48 @@ func (m Model) authInventoryItems() []authInventoryItem {
 			Detail:  detail,
 		})
 	}
+	for idx := range m.authInventoryLeases {
+		lease := m.authInventoryLeases[idx]
+		scopeLabel := m.authInventoryLeaseScopeLabel(lease)
+		label := fmt.Sprintf("[%s] %s", m.authInventoryLeaseStatusLabel(lease), firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID))
+		detail := fmt.Sprintf("scope: %s • role: %s • expires: %s", firstNonEmptyTrimmed(scopeLabel, "-"), strings.TrimSpace(string(lease.Role)), lease.ExpiresAt.In(time.Local).Format(time.RFC3339))
+		if !lease.HeartbeatAt.IsZero() {
+			detail += " • heartbeat: " + lease.HeartbeatAt.In(time.Local).Format(time.RFC3339)
+		}
+		if lease.IsRevoked() {
+			detail += " • revoked: " + truncate(strings.TrimSpace(lease.RevokedReason), 40)
+		}
+		items = append(items, authInventoryItem{
+			Lease:  &m.authInventoryLeases[idx],
+			Label:  label,
+			Detail: detail,
+		})
+	}
+	for idx := range m.authInventoryHandoffs {
+		handoff := m.authInventoryHandoffs[idx]
+		label := fmt.Sprintf("[%s] %s", strings.TrimSpace(string(handoff.Status)), firstNonEmptyTrimmed(handoff.SourceRole, handoff.ID))
+		scopeLabel := m.authInventoryHandoffScopeLabel(handoff)
+		targetLabel := m.authInventoryHandoffTargetLabel(handoff)
+		detail := fmt.Sprintf("scope: %s • target: %s", firstNonEmptyTrimmed(scopeLabel, "-"), firstNonEmptyTrimmed(targetLabel, "-"))
+		if nextAction := strings.TrimSpace(handoff.NextAction); nextAction != "" {
+			detail += " • next: " + truncate(nextAction, 40)
+		}
+		if len(handoff.MissingEvidence) > 0 {
+			detail += " • missing: " + truncate(strings.Join(handoff.MissingEvidence, ", "), 40)
+		}
+		if note := strings.TrimSpace(handoff.ResolutionNote); note != "" {
+			detail += " • note: " + truncate(note, 40)
+		}
+		items = append(items, authInventoryItem{
+			Handoff: &m.authInventoryHandoffs[idx],
+			Label:   label,
+			Detail:  detail,
+		})
+	}
 	return items
 }
 
-// clampAuthInventoryIndex keeps the selected auth inventory row in range.
+// clampAuthInventoryIndex keeps the selected coordination row in range.
 func (m *Model) clampAuthInventoryIndex() {
 	if m == nil {
 		return
@@ -2813,7 +2899,7 @@ func (m *Model) clampAuthInventoryIndex() {
 	m.authInventoryIndex = clamp(m.authInventoryIndex, 0, len(items)-1)
 }
 
-// selectedAuthInventoryItem returns the currently highlighted auth inventory row.
+// selectedAuthInventoryItem returns the currently highlighted coordination row.
 func (m Model) selectedAuthInventoryItem() (authInventoryItem, bool) {
 	items := m.authInventoryItems()
 	if len(items) == 0 {
@@ -2823,13 +2909,70 @@ func (m Model) selectedAuthInventoryItem() (authInventoryItem, bool) {
 	return items[idx], true
 }
 
-// authInventoryScopeLabel renders the current auth inventory scope label.
+// authInventoryLeaseStatusLabel renders one capability lease status for coordination visibility.
+func (m Model) authInventoryLeaseStatusLabel(lease domain.CapabilityLease) string {
+	now := time.Now().UTC()
+	switch {
+	case lease.IsRevoked():
+		return "revoked"
+	case lease.IsExpired(now):
+		return "expired"
+	default:
+		return "active"
+	}
+}
+
+// authInventoryLeaseScopeLabel renders one capability lease scope label.
+func (m Model) authInventoryLeaseScopeLabel(lease domain.CapabilityLease) string {
+	scopeType := strings.TrimSpace(string(lease.ScopeType))
+	scopeID := strings.TrimSpace(lease.ScopeID)
+	switch {
+	case scopeType == "":
+		return firstNonEmptyTrimmed(lease.ProjectID, "-")
+	case scopeID == "":
+		return scopeType
+	default:
+		return scopeType + "/" + scopeID
+	}
+}
+
+// authInventoryHandoffScopeLabel renders one handoff scope label.
+func (m Model) authInventoryHandoffScopeLabel(handoff domain.Handoff) string {
+	scopeType := strings.TrimSpace(string(handoff.ScopeType))
+	scopeID := strings.TrimSpace(handoff.ScopeID)
+	switch {
+	case scopeType == "":
+		return firstNonEmptyTrimmed(handoff.ProjectID, "-")
+	case scopeID == "":
+		return scopeType
+	default:
+		return scopeType + "/" + scopeID
+	}
+}
+
+// authInventoryHandoffTargetLabel renders one handoff target label.
+func (m Model) authInventoryHandoffTargetLabel(handoff domain.Handoff) string {
+	targetType := strings.TrimSpace(string(handoff.TargetScopeType))
+	targetID := strings.TrimSpace(handoff.TargetScopeID)
+	switch {
+	case strings.TrimSpace(handoff.TargetBranchID) != "" && targetType != "" && targetID != "":
+		return strings.TrimSpace(handoff.TargetBranchID) + " • " + targetType + "/" + targetID
+	case strings.TrimSpace(handoff.TargetBranchID) != "":
+		return strings.TrimSpace(handoff.TargetBranchID)
+	case targetType != "" && targetID != "":
+		return targetType + "/" + targetID
+	default:
+		return ""
+	}
+}
+
+// authInventoryScopeLabel renders the current request/session scope label.
 func (m Model) authInventoryScopeLabel() string {
 	_, _, label := m.authInventoryProjectScope()
 	return label
 }
 
-// authInventoryMoveSelection moves the auth inventory cursor across selectable request/session rows.
+// authInventoryMoveSelection moves the coordination cursor across selectable rows.
 func (m *Model) authInventoryMoveSelection(delta int) {
 	if m == nil {
 		return
@@ -5106,7 +5249,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "reload-config", Aliases: []string{"config-reload", "reload"}, Description: "reload runtime config from disk"},
 		{Command: "paths-roots", Aliases: []string{"roots", "project-root"}, Description: "edit current project root mapping"},
 		{Command: "bootstrap-settings", Aliases: []string{"setup", "identity-roots"}, Description: "edit identity defaults + default path"},
-		{Command: "auth-access", Aliases: []string{"auths"}, Description: "review access requests; list active sessions"},
+		{Command: "auth-access", Aliases: []string{"auths", "coordination", "recovery", "access-review"}, Description: "review coordination state; list requests, sessions, leases, and handoffs"},
 		{Command: "labels-config", Aliases: []string{"labels", "edit-labels"}, Description: "edit global/project/branch/phase labels"},
 		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
@@ -8447,6 +8590,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.status = "resolved request details updated"
 				return m, nil
 			}
+			if item.Lease != nil || item.Handoff != nil {
+				m.status = strings.TrimSpace(item.Detail)
+				return m, nil
+			}
 			if next, cmd, ok := m.beginSelectedAuthSessionRevoke(); ok {
 				return next, cmd
 			}
@@ -8461,7 +8608,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.mode = modeAuthInventory
 			m.pendingConfirm = confirmAction{}
-			m.status = "auth inventory"
+			m.status = "coordination"
 			return m, nil
 		case "enter":
 			action := m.pendingConfirm
@@ -9888,7 +10035,7 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		return m, m.startBootstrapSettingsMode(false)
 	case "labels-config", "labels", "edit-labels":
 		return m, m.startLabelsConfigForm()
-	case "auth-access", "auths", "access-review":
+	case "auth-access", "auths", "access-review", "coordination", "recovery":
 		return m, m.startAuthInventory(false)
 	case "highlight-color", "set-highlight", "focus-color":
 		return m, m.startHighlightColorMode()
@@ -10853,7 +11000,7 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, func() tea.Msg {
-			revoked, err := m.svc.RevokeAuthSession(context.Background(), sessionID, "revoked via TUI auth inventory")
+			revoked, err := m.svc.RevokeAuthSession(context.Background(), sessionID, "revoked via TUI coordination")
 			if err != nil {
 				return actionMsg{err: err}
 			}
@@ -15613,7 +15760,7 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	case modeAuthInventory:
 		short := []key.Binding{
-			helpBinding("enter", "review/revoke"),
+			helpBinding("enter", "review/revoke/details"),
 			helpBinding("↑/↓", "move"),
 			helpBinding("g", "scope"),
 			helpBinding("r", "revoke"),
@@ -15909,7 +16056,7 @@ func (m Model) renderAuthReviewModeView() tea.View {
 }
 
 // renderAuthSessionRevokeModeView renders the dedicated full-screen session
-// revoke review surface from auth inventory.
+// revoke review surface from coordination.
 func (m Model) renderAuthSessionRevokeModeView() tea.View {
 	accent := lipgloss.Color("62")
 	if project, ok := m.currentProject(); ok {
@@ -15930,7 +16077,7 @@ func (m Model) renderAuthSessionRevokeModeView() tea.View {
 		"[enter] revoke and confirm",
 		"[esc] cancel",
 		"",
-		hintStyle.Render("revoking ends this session immediately and returns to auth inventory."),
+		hintStyle.Render("revoking ends this session immediately and returns to coordination."),
 	}
 	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Revoke Active Session", "review session revoke", "", strings.Join(lines, "\n"))
 	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
@@ -15968,7 +16115,7 @@ func (m Model) renderAuthScopePickerModeView() tea.View {
 	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }
 
-// renderAuthInventoryModeView renders the dedicated full-screen auth inventory surface.
+// renderAuthInventoryModeView renders the dedicated full-screen coordination surface.
 func (m Model) renderAuthInventoryModeView() tea.View {
 	accent := lipgloss.Color("62")
 	if project, ok := m.currentProject(); ok {
@@ -15977,99 +16124,158 @@ func (m Model) renderAuthInventoryModeView() tea.View {
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
 	scopeLabel := firstNonEmptyTrimmed(m.authInventoryScopeLabel(), "all projects")
-	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Auth Inventory", scopeLabel, "")
+	coordinationScopeLabel := "no project selected"
+	if project, ok := m.currentProject(); ok {
+		coordinationScopeLabel = firstNonEmptyTrimmed(projectDisplayName(project), project.ID)
+	}
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Coordination", scopeLabel, "")
 	hintStyle := lipgloss.NewStyle().Foreground(muted)
 	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 	lines := []string{
-		accentStyle.Render("scope"),
-		fmt.Sprintf("view: %s", scopeLabel),
+		accentStyle.Render("coordination"),
+		fmt.Sprintf("requests/sessions: %s", scopeLabel),
+		fmt.Sprintf("leases/handoffs: %s", coordinationScopeLabel),
 		fmt.Sprintf("pending requests: %d", len(m.authInventoryRequests)),
 		fmt.Sprintf("resolved requests: %d", len(m.authInventoryResolvedRequests)),
 		fmt.Sprintf("active sessions: %d", len(m.authInventorySessions)),
+		fmt.Sprintf("capability leases: %d", len(m.authInventoryLeases)),
+		fmt.Sprintf("handoffs: %d", len(m.authInventoryHandoffs)),
 		"",
 	}
-	if len(m.authInventoryRequests) == 0 && len(m.authInventoryResolvedRequests) == 0 && len(m.authInventorySessions) == 0 {
-		lines = append(lines, hintStyle.Render("no auth requests or active sessions in this scope"))
+	if len(m.authInventoryRequests) == 0 && len(m.authInventoryResolvedRequests) == 0 && len(m.authInventorySessions) == 0 && len(m.authInventoryLeases) == 0 && len(m.authInventoryHandoffs) == 0 {
+		lines = append(lines, hintStyle.Render("no coordination state is visible in this scope"))
 	} else {
-		lines = append(lines, accentStyle.Render("pending requests"))
 		displayIndex := 0
-		if len(m.authInventoryRequests) == 0 {
-			lines = append(lines, hintStyle.Render("  none"))
+		if len(m.authInventoryRequests) > 0 {
+			lines = append(lines, accentStyle.Render("pending requests"))
+			for idx := range m.authInventoryRequests {
+				roleLabel := strings.TrimSpace(m.authInventoryRequests[idx].PrincipalRole)
+				if roleLabel != "" {
+					roleLabel = " • role: " + roleLabel
+				}
+				item := authInventoryItem{
+					Request: &m.authInventoryRequests[idx],
+					Label:   fmt.Sprintf("[pending] %s", firstNonEmptyTrimmed(m.authInventoryRequests[idx].PrincipalName, m.authInventoryRequests[idx].PrincipalID)),
+					Detail:  fmt.Sprintf("scope: %s • client: %s%s", firstNonEmptyTrimmed(m.authRequestPathDisplay(m.authInventoryRequests[idx].Path), m.authInventoryRequests[idx].Path), firstNonEmptyTrimmed(m.authInventoryRequests[idx].ClientName, m.authInventoryRequests[idx].ClientID), roleLabel),
+				}
+				cursor := "  "
+				label := item.Label
+				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+					cursor = "> "
+					label = accentStyle.Render(label)
+				}
+				lines = append(lines, cursor+label)
+				lines = append(lines, hintStyle.Render("    "+item.Detail))
+				displayIndex++
+			}
 		}
-		for idx := range m.authInventoryRequests {
-			roleLabel := strings.TrimSpace(m.authInventoryRequests[idx].PrincipalRole)
-			if roleLabel != "" {
-				roleLabel = " • role: " + roleLabel
+		if len(m.authInventoryResolvedRequests) > 0 {
+			lines = append(lines, "", accentStyle.Render("resolved requests"))
+			for idx := range m.authInventoryResolvedRequests {
+				request := m.authInventoryResolvedRequests[idx]
+				stateLabel := strings.TrimSpace(string(request.State))
+				label := fmt.Sprintf("[%s] %s", stateLabel, firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID))
+				requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)
+				detail := fmt.Sprintf("requested: %s • client: %s", requestedLabel, firstNonEmptyTrimmed(request.ClientName, request.ClientID))
+				if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
+					detail += " • approved: " + approvedLabel
+				}
+				if note := strings.TrimSpace(request.ResolutionNote); note != "" {
+					detail += " • note: " + truncate(note, max(24, metrics.contentWidth-18))
+				}
+				cursor := "  "
+				renderedLabel := hintStyle.Render(label)
+				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+					cursor = "> "
+					renderedLabel = accentStyle.Render(label)
+				}
+				lines = append(lines, cursor+renderedLabel)
+				lines = append(lines, hintStyle.Render("    "+detail))
+				displayIndex++
 			}
-			item := authInventoryItem{
-				Request: &m.authInventoryRequests[idx],
-				Label:   fmt.Sprintf("[pending] %s", firstNonEmptyTrimmed(m.authInventoryRequests[idx].PrincipalName, m.authInventoryRequests[idx].PrincipalID)),
-				Detail:  fmt.Sprintf("scope: %s • client: %s%s", firstNonEmptyTrimmed(m.authRequestPathDisplay(m.authInventoryRequests[idx].Path), m.authInventoryRequests[idx].Path), firstNonEmptyTrimmed(m.authInventoryRequests[idx].ClientName, m.authInventoryRequests[idx].ClientID), roleLabel),
-			}
-			cursor := "  "
-			label := item.Label
-			if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-				cursor = "> "
-				label = accentStyle.Render(label)
-			}
-			lines = append(lines, cursor+label)
-			lines = append(lines, hintStyle.Render("    "+item.Detail))
-			displayIndex++
 		}
-		lines = append(lines, "", accentStyle.Render("resolved requests"))
-		if len(m.authInventoryResolvedRequests) == 0 {
-			lines = append(lines, hintStyle.Render("  none"))
+		if len(m.authInventorySessions) > 0 {
+			lines = append(lines, "", accentStyle.Render("active sessions"))
+			for idx := range m.authInventorySessions {
+				session := m.authInventorySessions[idx]
+				scopePath := strings.TrimSpace(session.ApprovedPath)
+				if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
+					scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+				}
+				roleLabel := strings.TrimSpace(session.PrincipalRole)
+				if roleLabel != "" {
+					roleLabel = " • role: " + roleLabel
+				}
+				item := authInventoryItem{
+					Session: &m.authInventorySessions[idx],
+					Label:   fmt.Sprintf("[active] %s", firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)),
+					Detail:  fmt.Sprintf("scope: %s • client: %s%s • expires: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath), firstNonEmptyTrimmed(session.ClientName, session.ClientID), roleLabel, session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
+				}
+				cursor := "  "
+				label := item.Label
+				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+					cursor = "> "
+					label = accentStyle.Render(label)
+				}
+				lines = append(lines, cursor+label)
+				lines = append(lines, hintStyle.Render("    "+item.Detail))
+				displayIndex++
+			}
 		}
-		for idx := range m.authInventoryResolvedRequests {
-			request := m.authInventoryResolvedRequests[idx]
-			stateLabel := strings.TrimSpace(string(request.State))
-			label := fmt.Sprintf("[%s] %s", stateLabel, firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID))
-			requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)
-			detail := fmt.Sprintf("requested: %s • client: %s", requestedLabel, firstNonEmptyTrimmed(request.ClientName, request.ClientID))
-			if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
-				detail += " • approved: " + approvedLabel
+		if len(m.authInventoryLeases) > 0 {
+			lines = append(lines, "", accentStyle.Render("capability leases"))
+			for idx := range m.authInventoryLeases {
+				lease := m.authInventoryLeases[idx]
+				item := authInventoryItem{
+					Lease:  &m.authInventoryLeases[idx],
+					Label:  fmt.Sprintf("[%s] %s", m.authInventoryLeaseStatusLabel(lease), firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID)),
+					Detail: fmt.Sprintf("scope: %s • role: %s • expires: %s", firstNonEmptyTrimmed(m.authInventoryLeaseScopeLabel(lease), "-"), strings.TrimSpace(string(lease.Role)), lease.ExpiresAt.In(time.Local).Format(time.RFC3339)),
+				}
+				if !lease.HeartbeatAt.IsZero() {
+					item.Detail += " • heartbeat: " + lease.HeartbeatAt.In(time.Local).Format(time.RFC3339)
+				}
+				if lease.IsRevoked() {
+					item.Detail += " • revoked: " + truncate(strings.TrimSpace(lease.RevokedReason), 40)
+				}
+				cursor := "  "
+				label := item.Label
+				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+					cursor = "> "
+					label = accentStyle.Render(label)
+				}
+				lines = append(lines, cursor+label)
+				lines = append(lines, hintStyle.Render("    "+item.Detail))
+				displayIndex++
 			}
-			if note := strings.TrimSpace(request.ResolutionNote); note != "" {
-				detail += " • note: " + truncate(note, max(24, metrics.contentWidth-18))
-			}
-			cursor := "  "
-			renderedLabel := hintStyle.Render(label)
-			if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-				cursor = "> "
-				renderedLabel = accentStyle.Render(label)
-			}
-			lines = append(lines, cursor+renderedLabel)
-			lines = append(lines, hintStyle.Render("    "+detail))
-			displayIndex++
 		}
-		lines = append(lines, "", accentStyle.Render("active sessions"))
-		if len(m.authInventorySessions) == 0 {
-			lines = append(lines, hintStyle.Render("  none"))
-		}
-		for idx := range m.authInventorySessions {
-			session := m.authInventorySessions[idx]
-			scopePath := strings.TrimSpace(session.ApprovedPath)
-			if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
-				scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+		if len(m.authInventoryHandoffs) > 0 {
+			lines = append(lines, "", accentStyle.Render("handoffs"))
+			for idx := range m.authInventoryHandoffs {
+				handoff := m.authInventoryHandoffs[idx]
+				item := authInventoryItem{
+					Handoff: &m.authInventoryHandoffs[idx],
+					Label:   fmt.Sprintf("[%s] %s", strings.TrimSpace(string(handoff.Status)), firstNonEmptyTrimmed(handoff.SourceRole, handoff.ID)),
+					Detail:  fmt.Sprintf("scope: %s • target: %s", firstNonEmptyTrimmed(m.authInventoryHandoffScopeLabel(handoff), "-"), firstNonEmptyTrimmed(m.authInventoryHandoffTargetLabel(handoff), "-")),
+				}
+				if nextAction := strings.TrimSpace(handoff.NextAction); nextAction != "" {
+					item.Detail += " • next: " + truncate(nextAction, 40)
+				}
+				if len(handoff.MissingEvidence) > 0 {
+					item.Detail += " • missing: " + truncate(strings.Join(handoff.MissingEvidence, ", "), 40)
+				}
+				if note := strings.TrimSpace(handoff.ResolutionNote); note != "" {
+					item.Detail += " • note: " + truncate(note, 40)
+				}
+				cursor := "  "
+				label := item.Label
+				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
+					cursor = "> "
+					label = accentStyle.Render(label)
+				}
+				lines = append(lines, cursor+label)
+				lines = append(lines, hintStyle.Render("    "+item.Detail))
+				displayIndex++
 			}
-			roleLabel := strings.TrimSpace(session.PrincipalRole)
-			if roleLabel != "" {
-				roleLabel = " • role: " + roleLabel
-			}
-			item := authInventoryItem{
-				Session: &m.authInventorySessions[idx],
-				Label:   fmt.Sprintf("[active] %s", firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)),
-				Detail:  fmt.Sprintf("scope: %s • client: %s%s • expires: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath), firstNonEmptyTrimmed(session.ClientName, session.ClientID), roleLabel, session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
-			}
-			cursor := "  "
-			label := item.Label
-			if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-				cursor = "> "
-				label = accentStyle.Render(label)
-			}
-			lines = append(lines, cursor+label)
-			lines = append(lines, hintStyle.Render("    "+item.Detail))
-			displayIndex++
 		}
 	}
 	if selected, ok := m.selectedAuthInventoryItem(); ok && selected.ResolvedRequest != nil {
@@ -16086,8 +16292,8 @@ func (m Model) renderAuthInventoryModeView() tea.View {
 			lines = append(lines, "note:", note)
 		}
 	}
-	lines = append(lines, "", hintStyle.Render("enter reviews the selected pending request or opens revoke for the selected active session • resolved rows show full details below • g toggles project/global • r opens revoke for the selected active session • esc exits"))
-	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Auth Inventory", scopeLabel, "", strings.Join(lines, "\n"))
+	lines = append(lines, "", hintStyle.Render("enter reviews a pending request, revokes an active session, or inspects a selected lease/handoff row • g toggles request/session scope • r opens revoke for a selected active session • esc exits"))
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Coordination", scopeLabel, "", strings.Join(lines, "\n"))
 	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }
 
@@ -17133,7 +17339,7 @@ func (m Model) modeLabel() string {
 	case modeAuthScopePicker:
 		return "auth-scope-picker"
 	case modeAuthInventory:
-		return "auth-access"
+		return "coordination"
 	case modeAuthSessionRevoke:
 		return "auth-session-revoke"
 	case modeWarning:
@@ -17199,7 +17405,7 @@ func (m Model) modePrompt() string {
 	case modeAuthScopePicker:
 		return "auth scope picker: up/down selects named scopes, enter chooses one, esc returns to review"
 	case modeAuthInventory:
-		return "auth inventory: up/down select, enter review request or open revoke, g toggle project/global, r open revoke for selected session, esc close"
+		return "coordination: up/down select, enter review request/session revoke or inspect lease/handoff details, g toggle project/global requests, r open revoke for selected session, esc close"
 	case modeAuthSessionRevoke:
 		return "revoke active session: enter revoke, esc cancel"
 	case modeWarning:

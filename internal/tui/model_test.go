@@ -34,8 +34,12 @@ type fakeService struct {
 	lastCreateComment       app.CreateCommentInput
 	authRequests            map[string]domain.AuthRequest
 	authSessions            []app.AuthSession
+	capabilityLeases        []domain.CapabilityLease
+	handoffs                []domain.Handoff
 	lastAuthRequestFilter   domain.AuthRequestListFilter
 	lastAuthSessionFilter   app.AuthSessionFilter
+	lastCapabilityLeases    app.ListCapabilityLeasesInput
+	lastHandoffs            app.ListHandoffsInput
 	lastApproveAuthRequest  app.ApproveAuthRequestInput
 	lastDenyAuthRequest     app.DenyAuthRequestInput
 	lastRevokeAuthSessionID string
@@ -360,6 +364,104 @@ func (f *fakeService) ListAuthSessions(_ context.Context, filter app.AuthSession
 			return 1
 		}
 		return strings.Compare(a.SessionID, b.SessionID)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// ListCapabilityLeases returns fake capability-lease inventory filtered by project/scope.
+func (f *fakeService) ListCapabilityLeases(_ context.Context, in app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.lastCapabilityLeases = in
+	scopeType := domain.NormalizeCapabilityScopeType(in.ScopeType)
+	if scopeType == "" {
+		scopeType = domain.CapabilityScopeProject
+	}
+	out := make([]domain.CapabilityLease, 0, len(f.capabilityLeases))
+	for _, lease := range f.capabilityLeases {
+		if projectID := strings.TrimSpace(in.ProjectID); projectID != "" && strings.TrimSpace(lease.ProjectID) != projectID {
+			continue
+		}
+		if lease.ScopeType != scopeType {
+			continue
+		}
+		if scopeID := strings.TrimSpace(in.ScopeID); scopeID != "" && strings.TrimSpace(lease.ScopeID) != scopeID {
+			continue
+		}
+		if lease.RevokedAt != nil && !in.IncludeRevoked {
+			continue
+		}
+		out = append(out, lease)
+	}
+	slices.SortFunc(out, func(a, b domain.CapabilityLease) int {
+		if !a.IssuedAt.Equal(b.IssuedAt) {
+			if a.IssuedAt.Before(b.IssuedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.InstanceID, b.InstanceID)
+	})
+	return out, nil
+}
+
+// ListHandoffs returns fake handoff inventory filtered by project/scope/status.
+func (f *fakeService) ListHandoffs(_ context.Context, in app.ListHandoffsInput) ([]domain.Handoff, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.lastHandoffs = in
+	filter, err := domain.NormalizeHandoffListFilter(domain.HandoffListFilter{
+		ProjectID: in.Level.ProjectID,
+		BranchID:  in.Level.BranchID,
+		ScopeType: in.Level.ScopeType,
+		ScopeID:   in.Level.ScopeID,
+		Statuses:  in.Statuses,
+		Limit:     in.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Handoff, 0, len(f.handoffs))
+	for _, handoff := range f.handoffs {
+		if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" && strings.TrimSpace(handoff.ProjectID) != projectID {
+			continue
+		}
+		if branchID := strings.TrimSpace(filter.BranchID); branchID != "" && strings.TrimSpace(handoff.BranchID) != branchID {
+			continue
+		}
+		if scopeType := domain.NormalizeScopeLevel(filter.ScopeType); scopeType != "" && handoff.ScopeType != scopeType {
+			continue
+		}
+		if scopeID := strings.TrimSpace(filter.ScopeID); scopeID != "" && strings.TrimSpace(handoff.ScopeID) != scopeID {
+			continue
+		}
+		if len(filter.Statuses) > 0 {
+			match := false
+			for _, status := range filter.Statuses {
+				if domain.NormalizeHandoffStatus(handoff.Status) == status {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		out = append(out, handoff)
+	}
+	slices.SortFunc(out, func(a, b domain.Handoff) int {
+		if !a.UpdatedAt.Equal(b.UpdatedAt) {
+			if a.UpdatedAt.Before(b.UpdatedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
 	})
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
@@ -7905,11 +8007,40 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 			ExpiresAt:     time.Now().UTC().Add(3 * time.Hour),
 		},
 	)
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-project",
+		LeaseToken: "token-project",
+		AgentName:  "Orchestrator",
+		ProjectID:  project.ID,
+		ScopeType:  domain.CapabilityScopeProject,
+		Role:       domain.CapabilityRoleOrchestrator,
+		ExpiresAt:  time.Now().UTC().Add(24 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+	svc.capabilityLeases = append(svc.capabilityLeases, lease)
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:             "handoff-project",
+		ProjectID:      project.ID,
+		ScopeType:      domain.ScopeLevelProject,
+		SourceRole:     "builder",
+		TargetRole:     "qa",
+		Status:         domain.HandoffStatusWaiting,
+		Summary:        "builder to qa handoff",
+		NextAction:     "qa verifies the run",
+		CreatedByActor: "lane-user",
+		CreatedByType:  domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+	svc.handoffs = append(svc.handoffs, handoff)
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyCmd(t, m, m.startAuthInventory(false))
 	if m.mode != modeAuthInventory {
-		t.Fatalf("expected auth inventory mode, got %v", m.mode)
+		t.Fatalf("expected coordination mode, got %v", m.mode)
 	}
 	if got := strings.TrimSpace(svc.lastAuthRequestFilter.ProjectID); got != project.ID {
 		t.Fatalf("ListAuthRequests() project filter = %q, want %q", got, project.ID)
@@ -7923,11 +8054,17 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	if got := len(m.authInventorySessions); got != 1 {
 		t.Fatalf("authInventorySessions = %d, want 1", got)
 	}
+	if got := len(m.authInventoryLeases); got != 1 {
+		t.Fatalf("authInventoryLeases = %d, want 1", got)
+	}
+	if got := len(m.authInventoryHandoffs); got != 1 {
+		t.Fatalf("authInventoryHandoffs = %d, want 1", got)
+	}
 
 	rendered := stripANSI(fmt.Sprint(m.View()))
-	for _, want := range []string{"Auth Inventory", "Inbox", "pending requests", "resolved requests", "active sessions", "[pending] Review Agent", "[active] Review Agent"} {
+	for _, want := range []string{"Coordination", "Inbox", "pending requests", "resolved requests", "active sessions", "capability leases", "handoffs", "[pending] Review Agent", "[active] Review Agent", "[active] Orchestrator", "[waiting] builder"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("View() missing %q in auth inventory:\n%s", want, rendered)
+			t.Fatalf("View() missing %q in coordination surface:\n%s", want, rendered)
 		}
 	}
 
@@ -7936,11 +8073,11 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 		t.Fatalf("expected enter to open auth review, got %v", m.mode)
 	}
 	if !m.pendingConfirm.ReturnToAuthAccess {
-		t.Fatal("expected auth review opened from inventory to return to auth inventory")
+		t.Fatal("expected auth review opened from coordination to return to coordination")
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeAuthInventory {
-		t.Fatalf("expected escape to return to auth inventory, got %v", m.mode)
+		t.Fatalf("expected escape to return to coordination, got %v", m.mode)
 	}
 }
 
@@ -8275,8 +8412,8 @@ func TestModelAuthInventoryCanToggleGlobalAndRevokeSession(t *testing.T) {
 	if got := strings.TrimSpace(svc.lastRevokeAuthSessionID); got != "session-project" {
 		t.Fatalf("RevokeAuthSession() session id = %q, want session-project", got)
 	}
-	if got := strings.TrimSpace(svc.lastRevokeAuthReason); got != "revoked via TUI auth inventory" {
-		t.Fatalf("RevokeAuthSession() reason = %q, want TUI auth inventory reason", got)
+	if got := strings.TrimSpace(svc.lastRevokeAuthReason); got != "revoked via TUI coordination" {
+		t.Fatalf("RevokeAuthSession() reason = %q, want TUI coordination reason", got)
 	}
 	if got := len(m.authInventorySessions); got != 1 {
 		t.Fatalf("authInventorySessions after revoke = %d, want 1 active session remaining", got)
