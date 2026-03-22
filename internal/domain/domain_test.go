@@ -377,7 +377,7 @@ func TestMergeProjectMetadataDefaults(t *testing.T) {
 		Owner:       "Existing owner",
 		Homepage:    "https://example.com/existing",
 		Tags:        []string{"alpha", "shared"},
-		KindPayload: jsonRaw(`{"existing":true}`),
+		KindPayload: jsonRaw(`{"shared":{"caller":"keep"},"existing":true}`),
 		CapabilityPolicy: ProjectCapabilityPolicy{
 			AllowEqualScopeDelegation: true,
 		},
@@ -387,7 +387,7 @@ func TestMergeProjectMetadataDefaults(t *testing.T) {
 		Color:             "62",
 		Tags:              []string{"shared", "beta"},
 		StandardsMarkdown: "default standards",
-		KindPayload:       jsonRaw(`{"default":true}`),
+		KindPayload:       jsonRaw(`{"shared":{"template":"fill"},"default":true}`),
 		CapabilityPolicy: ProjectCapabilityPolicy{
 			AllowOrchestratorOverride: true,
 		},
@@ -410,14 +410,14 @@ func TestMergeProjectMetadataDefaults(t *testing.T) {
 	if merged.StandardsMarkdown != "default standards" {
 		t.Fatalf("StandardsMarkdown = %q, want default standards", merged.StandardsMarkdown)
 	}
-	if !bytes.Equal(merged.KindPayload, jsonRaw(`{"existing":true}`)) {
-		t.Fatalf("KindPayload = %s, want existing payload", string(merged.KindPayload))
-	}
-	if !merged.CapabilityPolicy.AllowOrchestratorOverride {
-		t.Fatal("expected orchestrator override policy to be merged")
+	if !bytes.Equal(merged.KindPayload, jsonRaw(`{"default":true,"existing":true,"shared":{"caller":"keep","template":"fill"}}`)) {
+		t.Fatalf("KindPayload = %s, want merged payload", string(merged.KindPayload))
 	}
 	if !merged.CapabilityPolicy.AllowEqualScopeDelegation {
 		t.Fatal("expected existing equal-scope delegation to remain true")
+	}
+	if merged.CapabilityPolicy.AllowOrchestratorOverride {
+		t.Fatal("expected capability policy defaults to stay explicit-only")
 	}
 	if merged.CapabilityPolicy.OrchestratorOverrideToken != "" {
 		t.Fatalf("unexpected override token %q", merged.CapabilityPolicy.OrchestratorOverrideToken)
@@ -433,6 +433,7 @@ func TestMergeTaskMetadataDefaults(t *testing.T) {
 		Objective:       "Existing objective",
 		CommandSnippets: []string{"make test"},
 		DecisionLog:     []string{"decision-a"},
+		KindPayload:     jsonRaw(`{"shared":{"caller":"keep"},"existing":true}`),
 		CompletionContract: CompletionContract{
 			CompletionChecklist: []ChecklistItem{{ID: "ck-existing", Text: "existing check", Done: false}},
 		},
@@ -457,6 +458,7 @@ func TestMergeTaskMetadataDefaults(t *testing.T) {
 		ResourceRefs: []ResourceRef{
 			{ID: "doc-1", ResourceType: ResourceTypeDoc, Location: "docs/spec.md"},
 		},
+		KindPayload: jsonRaw(`{"shared":{"template":"fill"},"default":true}`),
 		CompletionContract: CompletionContract{
 			StartCriteria:       []ChecklistItem{{Text: "ready"}},
 			CompletionCriteria:  []ChecklistItem{{ID: "ck-default", Text: "default check"}},
@@ -492,6 +494,9 @@ func TestMergeTaskMetadataDefaults(t *testing.T) {
 	}
 	if len(merged.ResourceRefs) != 1 || merged.ResourceRefs[0].Location != "docs/spec.md" {
 		t.Fatalf("unexpected resource refs %#v", merged.ResourceRefs)
+	}
+	if !bytes.Equal(merged.KindPayload, jsonRaw(`{"default":true,"existing":true,"shared":{"caller":"keep","template":"fill"}}`)) {
+		t.Fatalf("KindPayload = %s, want merged payload", string(merged.KindPayload))
 	}
 	if len(merged.CompletionContract.StartCriteria) != 1 || merged.CompletionContract.StartCriteria[0].Text != "ready" {
 		t.Fatalf("unexpected start criteria %#v", merged.CompletionContract.StartCriteria)

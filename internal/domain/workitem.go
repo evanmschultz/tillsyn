@@ -345,9 +345,11 @@ func MergeTaskMetadata(base TaskMetadata, defaults *TaskMetadata) (TaskMetadata,
 	merged.BlockedBy = mergeStringLists(merged.BlockedBy, normalizedDefaults.BlockedBy)
 	merged.ContextBlocks = mergeContextBlocks(merged.ContextBlocks, normalizedDefaults.ContextBlocks)
 	merged.ResourceRefs = mergeResourceRefs(merged.ResourceRefs, normalizedDefaults.ResourceRefs)
-	if len(merged.KindPayload) == 0 {
-		merged.KindPayload = normalizedDefaults.KindPayload
+	mergedPayload, err := mergeKindPayloadDefaults(merged.KindPayload, normalizedDefaults.KindPayload)
+	if err != nil {
+		return TaskMetadata{}, err
 	}
+	merged.KindPayload = mergedPayload
 	merged.CompletionContract, err = MergeCompletionContract(merged.CompletionContract, &normalizedDefaults.CompletionContract)
 	if err != nil {
 		return TaskMetadata{}, err
@@ -458,6 +460,58 @@ func mergeChecklistItems(base, defaults []ChecklistItem) []ChecklistItem {
 // mergeStringLists merges normalized string slices while preserving the base order.
 func mergeStringLists(base, defaults []string) []string {
 	return normalizeStringList(append(append([]string(nil), base...), defaults...))
+}
+
+// mergeKindPayloadDefaults deep-merges object-shaped defaults into a caller payload.
+func mergeKindPayloadDefaults(base, defaults json.RawMessage) (json.RawMessage, error) {
+	base = bytes.TrimSpace(base)
+	defaults = bytes.TrimSpace(defaults)
+	if len(defaults) == 0 {
+		return append(json.RawMessage(nil), base...), nil
+	}
+	if len(base) == 0 {
+		return append(json.RawMessage(nil), defaults...), nil
+	}
+	var baseValue any
+	if err := json.Unmarshal(base, &baseValue); err != nil {
+		return nil, ErrInvalidKindPayload
+	}
+	var defaultValue any
+	if err := json.Unmarshal(defaults, &defaultValue); err != nil {
+		return nil, ErrInvalidKindPayload
+	}
+	merged, ok := mergeKindPayloadValue(baseValue, defaultValue)
+	if !ok {
+		return append(json.RawMessage(nil), base...), nil
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return nil, ErrInvalidKindPayload
+	}
+	return bytes.TrimSpace(encoded), nil
+}
+
+// mergeKindPayloadValue recursively fills missing object fields from defaults.
+func mergeKindPayloadValue(base, defaults any) (any, bool) {
+	baseObject, baseOK := base.(map[string]any)
+	defaultObject, defaultOK := defaults.(map[string]any)
+	if !baseOK || !defaultOK {
+		return base, false
+	}
+	merged := make(map[string]any, len(defaultObject)+len(baseObject))
+	for key, value := range defaultObject {
+		merged[key] = value
+	}
+	for key, value := range baseObject {
+		if currentDefault, ok := merged[key]; ok {
+			if nested, nestedOK := mergeKindPayloadValue(value, currentDefault); nestedOK {
+				merged[key] = nested
+				continue
+			}
+		}
+		merged[key] = value
+	}
+	return merged, true
 }
 
 // mergeContextBlocks merges context blocks by normalized identity while preserving the base order.

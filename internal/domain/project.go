@@ -137,10 +137,15 @@ func MergeProjectMetadata(base ProjectMetadata, defaults *ProjectMetadata) (Proj
 	if len(merged.StandardsMarkdown) == 0 {
 		merged.StandardsMarkdown = normalizedDefaults.StandardsMarkdown
 	}
-	if len(merged.KindPayload) == 0 {
-		merged.KindPayload = normalizedDefaults.KindPayload
+	mergedPayload, err := mergeKindPayloadDefaults(merged.KindPayload, normalizedDefaults.KindPayload)
+	if err != nil {
+		return ProjectMetadata{}, err
 	}
-	merged.CapabilityPolicy = mergeProjectCapabilityPolicy(merged.CapabilityPolicy, normalizedDefaults.CapabilityPolicy)
+	merged.KindPayload = mergedPayload
+	// Capability-policy defaults are intentionally not auto-merged here.
+	// The current bool-only shape cannot distinguish omitted vs explicit false,
+	// so automatically widening override/delegation policy would violate the
+	// "explicit user values win" rule until later tri-state policy surfaces land.
 
 	return normalizeProjectMetadata(merged)
 }
@@ -200,19 +205,4 @@ func normalizeProjectMetadata(meta ProjectMetadata) (ProjectMetadata, error) {
 	}
 	meta.CapabilityPolicy.OrchestratorOverrideToken = strings.TrimSpace(meta.CapabilityPolicy.OrchestratorOverrideToken)
 	return meta, nil
-}
-
-// mergeProjectCapabilityPolicy applies only monotonic policy defaults.
-func mergeProjectCapabilityPolicy(base, defaults ProjectCapabilityPolicy) ProjectCapabilityPolicy {
-	merged := base
-	if merged.OrchestratorOverrideToken == "" {
-		merged.OrchestratorOverrideToken = defaults.OrchestratorOverrideToken
-	}
-	if defaults.AllowOrchestratorOverride {
-		merged.AllowOrchestratorOverride = true
-	}
-	if defaults.AllowEqualScopeDelegation {
-		merged.AllowEqualScopeDelegation = true
-	}
-	return merged
 }

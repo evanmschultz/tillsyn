@@ -117,6 +117,21 @@ func MutationGuardRequired(ctx context.Context) bool {
 // mutationGuardRequiredContextKey stores context keys for strict-guard enforcement flags.
 type mutationGuardRequiredContextKey struct{}
 
+// withInternalTemplateMutation marks one context as an internal template-expansion path.
+func withInternalTemplateMutation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalTemplateMutationContextKey{}, true)
+}
+
+// internalTemplateMutationAllowed reports whether the current call is an internal template-expansion path.
+func internalTemplateMutationAllowed(ctx context.Context) bool {
+	raw := ctx.Value(internalTemplateMutationContextKey{})
+	allowed, ok := raw.(bool)
+	return ok && allowed
+}
+
+// internalTemplateMutationContextKey stores context keys for internal template-expansion calls.
+type internalTemplateMutationContextKey struct{}
+
 // normalizeMutationGuard trims and canonicalizes guard fields.
 func normalizeMutationGuard(guard MutationGuard) MutationGuard {
 	guard.AgentName = strings.TrimSpace(guard.AgentName)

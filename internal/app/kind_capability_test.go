@@ -484,6 +484,252 @@ func TestCreateTaskAppliesKindTemplateActions(t *testing.T) {
 	}
 }
 
+// TestCreateProjectAppliesKindTemplateDefaultsAndChildren verifies project kinds seed metadata and root work.
+func TestCreateProjectAppliesKindTemplateDefaultsAndChildren(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 11, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{
+		DefaultDeleteMode:        DeleteModeArchive,
+		AutoCreateProjectColumns: false,
+	})
+
+	if _, err := svc.ListKindDefinitions(context.Background(), false); err != nil {
+		t.Fatalf("ListKindDefinitions(bootstrap) error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
+		ID:          "go-service",
+		DisplayName: "Go Service",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
+		Template: domain.KindTemplate{
+			ProjectMetadataDefaults: &domain.ProjectMetadata{
+				Owner:             "platform",
+				Tags:              []string{"go", "service"},
+				StandardsMarkdown: "follow go test and qa defaults",
+			},
+			AutoCreateChildren: []domain.KindTemplateChildSpec{{
+				Title:       "Main Branch",
+				Description: "default implementation branch",
+				Kind:        domain.KindID("branch"),
+				AppliesTo:   domain.KindAppliesToBranch,
+				Labels:      []string{"templated"},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(go-service) error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name: "Go API",
+		Kind: "go-service",
+		Metadata: domain.ProjectMetadata{
+			Tags: []string{"api"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	if project.Metadata.Owner != "platform" {
+		t.Fatalf("project owner = %q, want platform", project.Metadata.Owner)
+	}
+	if len(project.Metadata.Tags) != 3 || project.Metadata.Tags[0] != "api" || project.Metadata.Tags[1] != "go" || project.Metadata.Tags[2] != "service" {
+		t.Fatalf("unexpected project tags %#v", project.Metadata.Tags)
+	}
+	columns, err := svc.ListColumns(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) == 0 {
+		t.Fatal("expected template root column creation")
+	}
+	tasks, err := svc.ListTasks(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one template-created root task, got %d", len(tasks))
+	}
+	if tasks[0].Kind != domain.WorkKind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
+		t.Fatalf("unexpected root task kind/scope %#v", tasks[0])
+	}
+}
+
+// TestCreateTaskCascadesChildKindTemplateDefaults verifies child auto-create goes back through create-time defaults.
+func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 11, 30, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	if _, err := svc.ListKindDefinitions(context.Background(), false); err != nil {
+		t.Fatalf("ListKindDefinitions(bootstrap) error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
+		ID:          "qa-check",
+		DisplayName: "QA Check",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToSubtask},
+		Template: domain.KindTemplate{
+			TaskMetadataDefaults: &domain.TaskMetadata{
+				AcceptanceCriteria: "qa verifies the change",
+				CompletionContract: domain.CompletionContract{
+					CompletionChecklist: []domain.ChecklistItem{{ID: "qa-green", Text: "qa evidence attached"}},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(qa-check) error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
+		ID:          "implementation",
+		DisplayName: "Implementation",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		Template: domain.KindTemplate{
+			TaskMetadataDefaults: &domain.TaskMetadata{
+				ValidationPlan: "run package tests before handoff",
+				CompletionContract: domain.CompletionContract{
+					Policy: domain.CompletionPolicy{RequireChildrenDone: true},
+				},
+			},
+			AutoCreateChildren: []domain.KindTemplateChildSpec{{
+				Title:       "QA Check",
+				Description: "verify implementation",
+				Kind:        "qa-check",
+				AppliesTo:   domain.KindAppliesToSubtask,
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(implementation) error = %v", err)
+	}
+
+	project, err := svc.CreateProject(context.Background(), "Cascade", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	parent, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "Implement auth flow",
+		Kind:      "implementation",
+		Scope:     domain.KindAppliesToTask,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(implementation) error = %v", err)
+	}
+	storedParent, err := repo.GetTask(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("GetTask(parent) error = %v", err)
+	}
+	if storedParent.Metadata.ValidationPlan != "run package tests before handoff" {
+		t.Fatalf("ValidationPlan = %q, want template default", storedParent.Metadata.ValidationPlan)
+	}
+	if !storedParent.Metadata.CompletionContract.Policy.RequireChildrenDone {
+		t.Fatal("expected require_children_done default on parent")
+	}
+
+	tasks, err := svc.ListTasks(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	var child *domain.Task
+	for i := range tasks {
+		if tasks[i].ParentID == parent.ID {
+			child = &tasks[i]
+			break
+		}
+	}
+	if child == nil {
+		t.Fatal("expected auto-created child task")
+	}
+	if child.Kind != domain.WorkKind("qa-check") {
+		t.Fatalf("child kind = %q, want qa-check", child.Kind)
+	}
+	if child.Metadata.AcceptanceCriteria != "qa verifies the change" {
+		t.Fatalf("AcceptanceCriteria = %q, want cascaded child default", child.Metadata.AcceptanceCriteria)
+	}
+	if len(child.Metadata.CompletionContract.CompletionChecklist) != 1 {
+		t.Fatalf("unexpected child completion checklist %#v", child.Metadata.CompletionContract.CompletionChecklist)
+	}
+}
+
+// TestCreateTaskRejectsExternalSystemBypass verifies public callers cannot fake the internal template path.
+func TestCreateTaskRejectsExternalSystemBypass(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{
+		DefaultDeleteMode: DeleteModeArchive,
+		RequireAgentLease: boolPtr(true),
+	})
+
+	project, err := svc.CreateProject(context.Background(), "Guarded", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID:     project.ID,
+		ColumnID:      column.ID,
+		Title:         "Illicit system create",
+		UpdatedByType: domain.ActorTypeSystem,
+	}); !errors.Is(err, domain.ErrMutationLeaseRequired) {
+		t.Fatalf("CreateTask(system without internal marker) error = %v, want ErrMutationLeaseRequired", err)
+	}
+}
+
+// TestCreateTaskRejectsRecursiveTemplateBeforePersistence verifies recursive templates fail closed.
+func TestCreateTaskRejectsRecursiveTemplateBeforePersistence(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 12, 10, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	if _, err := svc.ListKindDefinitions(context.Background(), false); err != nil {
+		t.Fatalf("ListKindDefinitions(bootstrap) error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
+		ID:          "loop",
+		DisplayName: "Loop",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask},
+		Template: domain.KindTemplate{
+			AutoCreateChildren: []domain.KindTemplateChildSpec{{
+				Title:     "Loop Child",
+				Kind:      "loop",
+				AppliesTo: domain.KindAppliesToSubtask,
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(loop) error = %v", err)
+	}
+
+	project, err := svc.CreateProject(context.Background(), "Loop Project", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "Root",
+		Kind:      "loop",
+		Scope:     domain.KindAppliesToTask,
+	}); !errors.Is(err, domain.ErrInvalidKindTemplate) {
+		t.Fatalf("CreateTask(loop) error = %v, want ErrInvalidKindTemplate", err)
+	}
+	tasks, err := svc.ListTasks(context.Background(), project.ID, true)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no persisted tasks on recursive template failure, got %d", len(tasks))
+	}
+}
+
 // TestIssueCapabilityLeaseParentDelegationPolicy verifies bounded parent-child delegation by role and scope.
 func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	repo := newFakeRepo()

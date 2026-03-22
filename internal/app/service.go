@@ -235,10 +235,21 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := project.SetKind(kindID, now); err != nil {
 		return domain.Project{}, err
 	}
-	if err := project.UpdateDetails(project.Name, project.Description, in.Metadata, now); err != nil {
+	kindDef, err := s.resolveProjectKindDefinition(ctx, "", project.Kind)
+	if err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.validateProjectKind(ctx, "", project.Kind, project.Metadata.KindPayload); err != nil {
+	mergedMetadata, err := domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if err := project.UpdateDetails(project.Name, project.Description, mergedMetadata, now); err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.validateKindPayload(kindDef, project.Metadata.KindPayload); err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToTask, 1); err != nil {
 		return domain.Project{}, err
 	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
@@ -251,6 +262,9 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 		if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
 			return domain.Project{}, err
 		}
+	}
+	if err := s.applyProjectKindTemplateSystemActions(ctx, project, kindDef, 1); err != nil {
+		return domain.Project{}, err
 	}
 	return project, nil
 }
@@ -450,6 +464,11 @@ type TaskMatch struct {
 
 // CreateTask creates task.
 func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Task, error) {
+	return s.createTaskWithTemplates(ctx, in, 1)
+}
+
+// createTaskWithTemplates creates one task and recursively applies kind-template children.
+func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInput, depth int) (domain.Task, error) {
 	actorType := in.UpdatedByType
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
@@ -478,13 +497,28 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 			return domain.Task{}, err
 		}
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, in.ProjectID, actorType, guardScopes, domain.CapabilityActionCreateChild); err != nil {
-		return domain.Task{}, err
+	if !(actorType == domain.ActorTypeSystem && internalTemplateMutationAllowed(ctx)) {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, in.ProjectID, actorType, guardScopes, domain.CapabilityActionCreateChild); err != nil {
+			return domain.Task{}, err
+		}
 	}
 
 	scope := normalizeTaskScopeForKind(domain.KindID(in.Kind), in.Scope, parent)
-	kindDef, err := s.validateTaskKind(ctx, in.ProjectID, domain.KindID(in.Kind), scope, parent, in.Metadata.KindPayload)
+	kindDef, err := s.resolveTaskKindDefinition(ctx, in.ProjectID, domain.KindID(in.Kind), scope, parent)
 	if err != nil {
+		return domain.Task{}, err
+	}
+	mergedMetadata, err := mergeTaskMetadataWithKindTemplate(in.Metadata, kindDef)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.validateKindPayload(kindDef, mergedMetadata.KindPayload); err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.validateKindTemplateExpansion(ctx, in.ProjectID, kindDef, &domain.Task{
+		ProjectID: in.ProjectID,
+		Scope:     scope,
+	}, domain.KindAppliesToSubtask, depth); err != nil {
 		return domain.Task{}, err
 	}
 	tasks, err := s.repo.ListTasks(ctx, in.ProjectID, false)
@@ -520,7 +554,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		Priority:       in.Priority,
 		DueAt:          in.DueAt,
 		Labels:         in.Labels,
-		Metadata:       in.Metadata,
+		Metadata:       mergedMetadata,
 		CreatedByActor: firstNonEmptyTrimmed(in.CreatedByActor, resolvedActor.ActorID),
 		CreatedByName:  firstNonEmptyTrimmed(in.CreatedByName, resolvedActor.ActorName, in.CreatedByActor, resolvedActor.ActorID),
 		UpdatedByActor: firstNonEmptyTrimmed(in.UpdatedByActor, resolvedActor.ActorID, in.CreatedByActor),
@@ -535,7 +569,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		return domain.Task{}, err
 	}
 	s.refreshTaskEmbedding(ctx, task)
-	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef); err != nil {
+	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
 		return domain.Task{}, err
 	}
 	return task, nil

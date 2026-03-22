@@ -1269,6 +1269,96 @@ Current next action lock:
 
 ## 8) Lightweight Execution Log
 
+### 2026-03-21: P5 Slice 3 Template Application Beyond Today's Task-Centric Path
+
+Objective:
+- expand kind-template application beyond the current checklist-plus-child task path into richer project/work-item default seeding and later reseed-ready merge contracts.
+- keep Slice 4's TUI/CLI work grounded in reusable backend behavior instead of thin surface-only controls.
+
+Planned focus for this slice:
+1. richer template defaults for project metadata and task metadata/completion contracts.
+2. project-level template actions alongside current work-item template actions.
+3. reusable merge/apply helpers that can later support explicit reseed/apply-scope flows.
+4. package-scoped tests first, then repo gates after integration.
+
+Files edited in this slice and why:
+1. `internal/domain/kind.go`
+   - extend kind templates with project/task metadata defaults.
+2. `internal/domain/project.go`
+   - add conservative project metadata merge behavior and keep capability-policy widening explicit-only.
+3. `internal/domain/workitem.go`
+   - add task/completion merge helpers plus object-shaped kind-payload default merging.
+4. `internal/domain/domain_test.go`
+   - cover project/task metadata merge behavior, including partial kind-payload defaults.
+5. `internal/domain/kind_capability_test.go`
+   - cover normalized template default fields on kind definitions.
+6. `internal/app/service.go`
+   - move template defaulting onto create-time project/task flows and preflight nested template expansion before persistence.
+7. `internal/app/kind_capability.go`
+   - add project root child creation, recursive child-template application, internal-only template mutation context use, and preflight template-expansion validation.
+8. `internal/app/mutation_guard.go`
+   - add an internal-only template-expansion context marker so system-created template children cannot be faked by public callers.
+9. `internal/app/kind_capability_test.go`
+   - cover project template defaults/root children, recursive child-kind defaults, external system-bypass rejection, and recursive-template fail-closed behavior.
+10. `README.md`
+   - update current feature status so templates are no longer described as task-only checklist/child actions.
+
+Parallel lane notes:
+1. Domain-contract builder lane landed as `09c2e2e feat(domain): add metadata template merge helpers`.
+2. Two independent QA lanes reviewed the integrated slice before closeout:
+   - `P5-S3-QA-A` for create-path recursion/guard behavior,
+   - `P5-S3-QA-B` for merge semantics and policy-default behavior.
+
+Commands run and outcomes:
+1. `sed -n '1,220p' Justfile` -> PASS; reconfirmed `just` recipes as the source of truth.
+2. `mcp__context7_mcp__query_docs(/charmbracelet/bubbletea, reusable child models/update routing)` -> PASS before slice edits per repo policy.
+3. `just fmt` -> PASS.
+4. `just test-pkg ./internal/app` -> FAIL on first pass; template-created child tasks were hitting the public lease guard as `system`.
+5. `mcp__context7_mcp__query_docs(/charmbracelet/bubbletea, follow-up check after failing test run)` -> PASS per repo policy before the next edit.
+6. `just fmt` -> PASS after the first remediation.
+7. `just test-pkg ./internal/app` -> PASS after moving the internal template path off the public fake-`system` bypass.
+8. `just test-pkg ./internal/domain` -> PASS.
+9. `just check` -> PASS.
+10. Integrated QA findings led to one more remediation wave:
+    - replace the broad `system` actor bypass with an internal-only template-expansion context marker,
+    - preflight nested template expansion before any persistence so recursive/cyclic templates fail closed,
+    - deep-merge object-shaped `kind_payload` defaults instead of only copying them when empty,
+    - stop auto-merging project capability-policy booleans until explicit tri-state policy controls exist.
+11. `just fmt` -> PASS after QA remediation.
+12. `just test-pkg ./internal/domain` -> PASS after QA remediation.
+13. `just test-pkg ./internal/app` -> PASS after QA remediation.
+14. `just check` -> PASS after QA remediation.
+15. `just ci` -> PASS after QA remediation.
+
+Failures and remediations:
+1. First app failure: template-created child tasks were treated as ordinary public `system` callers and blocked for missing leases.
+   - remediation: internal template expansion now uses an internal-only context marker; public callers cannot bypass lease checks by claiming `system`.
+2. QA high finding: recursive/self-referential templates could partially persist before failing on depth.
+   - remediation: nested template expansion is now preflight-validated before project/task persistence so recursive/cyclic templates fail closed with no partial tree written.
+3. QA medium/high finding: `kind_payload` defaults did not fill blanks once the caller supplied any partial payload.
+   - remediation: object-shaped payload defaults are now deep-merged so caller-provided fields win while missing keys still inherit defaults.
+4. QA high finding: project capability-policy defaults could widen delegation/override rules with no user opt-out at create time.
+   - remediation: automatic capability-policy default merging is intentionally disabled for now; that widening remains explicit-only until later policy-edit surfaces can represent omitted vs explicit false cleanly.
+
+Current status:
+1. Slice 3 backend create-time template behavior is now broader than the previous task-only checklist/child model:
+   - project metadata defaults,
+   - task metadata/completion-contract defaults,
+   - project root child creation,
+   - recursive child-kind defaulting.
+2. Recursive template failures now fail closed before persistence for template-structure errors.
+3. Package gates are green for:
+   - `./internal/domain`,
+   - `./internal/app`.
+4. Repo-wide gates are green:
+   - `just check`,
+   - `just ci`.
+5. No user manual test is needed yet; this slice remains backend and documentation-facing only.
+
+Next step:
+1. start Slice 4 for TUI/CLI product surfaces on top of the validated Slice 3 backend,
+2. keep the TUI side DRY/reusable and ensure the CLI exposes the same full template/policy/recovery capability.
+
 ### 2026-03-21: P5 Slice 1 Durable Handoff Substrate
 
 Objective:

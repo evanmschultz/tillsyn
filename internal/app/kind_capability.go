@@ -90,6 +90,7 @@ type kindBootstrapState struct {
 
 // defaultCapabilityLeaseTTL defines default lease expiration behavior.
 const defaultCapabilityLeaseTTL = 24 * time.Hour
+const maxKindTemplateApplyDepth = 8
 
 // ListKindDefinitions lists catalog entries with deterministic ordering.
 func (s *Service) ListKindDefinitions(ctx context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
@@ -573,10 +574,10 @@ func (s *Service) ensureKindCatalogBootstrapped(ctx context.Context) error {
 	return s.kindBootstrap.err
 }
 
-// validateProjectKind validates project kind and metadata payload constraints.
-func (s *Service) validateProjectKind(ctx context.Context, projectID string, kindID domain.KindID, payload json.RawMessage) error {
+// resolveProjectKindDefinition resolves one project kind definition and allowlist constraints.
+func (s *Service) resolveProjectKindDefinition(ctx context.Context, projectID string, kindID domain.KindID) (domain.KindDefinition, error) {
 	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return err
+		return domain.KindDefinition{}, err
 	}
 	kindID = domain.NormalizeKindID(kindID)
 	if kindID == "" {
@@ -585,21 +586,30 @@ func (s *Service) validateProjectKind(ctx context.Context, projectID string, kin
 	kind, err := s.repo.GetKindDefinition(ctx, kindID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("%w: %q", domain.ErrKindNotFound, kindID)
+			return domain.KindDefinition{}, fmt.Errorf("%w: %q", domain.ErrKindNotFound, kindID)
 		}
-		return err
+		return domain.KindDefinition{}, err
 	}
 	if !kind.AppliesToScope(domain.KindAppliesToProject) {
-		return fmt.Errorf("%w: %q does not apply to project", domain.ErrKindNotAllowed, kind.ID)
+		return domain.KindDefinition{}, fmt.Errorf("%w: %q does not apply to project", domain.ErrKindNotAllowed, kind.ID)
 	}
 	if strings.TrimSpace(projectID) != "" {
 		allowed, allowErr := s.resolveProjectAllowedKinds(ctx, projectID)
 		if allowErr != nil {
-			return allowErr
+			return domain.KindDefinition{}, allowErr
 		}
 		if _, ok := allowed[kind.ID]; !ok {
-			return fmt.Errorf("%w: %q", domain.ErrKindNotAllowed, kind.ID)
+			return domain.KindDefinition{}, fmt.Errorf("%w: %q", domain.ErrKindNotAllowed, kind.ID)
 		}
+	}
+	return kind, nil
+}
+
+// validateProjectKind validates project kind and metadata payload constraints.
+func (s *Service) validateProjectKind(ctx context.Context, projectID string, kindID domain.KindID, payload json.RawMessage) error {
+	kind, err := s.resolveProjectKindDefinition(ctx, projectID, kindID)
+	if err != nil {
+		return err
 	}
 	if err := s.validateKindPayload(kind, payload); err != nil {
 		return err
@@ -607,8 +617,8 @@ func (s *Service) validateProjectKind(ctx context.Context, projectID string, kin
 	return nil
 }
 
-// validateTaskKind validates project allowlist, applies_to rules, parent constraints, and schema payload.
-func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task, payload json.RawMessage) (domain.KindDefinition, error) {
+// resolveTaskKindDefinition resolves one work-item kind definition and scope constraints.
+func (s *Service) resolveTaskKindDefinition(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task) (domain.KindDefinition, error) {
 	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
 		return domain.KindDefinition{}, err
 	}
@@ -642,6 +652,15 @@ func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID
 	}
 	if _, ok := allowed[kind.ID]; !ok {
 		return domain.KindDefinition{}, fmt.Errorf("%w: %q", domain.ErrKindNotAllowed, kind.ID)
+	}
+	return kind, nil
+}
+
+// validateTaskKind validates project allowlist, applies_to rules, parent constraints, and schema payload.
+func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task, payload json.RawMessage) (domain.KindDefinition, error) {
+	kind, err := s.resolveTaskKindDefinition(ctx, projectID, kindID, scope, parent)
+	if err != nil {
+		return domain.KindDefinition{}, err
 	}
 	if err := s.validateKindPayload(kind, payload); err != nil {
 		return domain.KindDefinition{}, err
@@ -805,37 +824,32 @@ func defaultKindDefinitionInputs() []domain.KindDefinitionInput {
 	}
 }
 
-// applyKindTemplateSystemActions applies template checklist/child auto-actions after task creation.
-func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent domain.Task, kind domain.KindDefinition) error {
-	if len(kind.Template.CompletionChecklist) == 0 && len(kind.Template.AutoCreateChildren) == 0 {
-		return nil
+// mergeTaskMetadataWithKindTemplate applies task-template defaults for one kind at create time.
+func mergeTaskMetadataWithKindTemplate(base domain.TaskMetadata, kind domain.KindDefinition) (domain.TaskMetadata, error) {
+	merged, err := domain.MergeTaskMetadata(base, kind.Template.TaskMetadataDefaults)
+	if err != nil {
+		return domain.TaskMetadata{}, err
 	}
-
-	if len(kind.Template.CompletionChecklist) > 0 {
-		merged := mergeChecklistItems(parent.Metadata.CompletionContract.CompletionChecklist, kind.Template.CompletionChecklist)
-		if len(merged) != len(parent.Metadata.CompletionContract.CompletionChecklist) {
-			updated := parent
-			updated.Metadata.CompletionContract.CompletionChecklist = merged
-			updated.UpdatedAt = s.clock().UTC()
-			updated.UpdatedByType = domain.ActorTypeSystem
-			updated.UpdatedByActor = "tillsyn-system-template"
-			updated.UpdatedByName = "Tillsyn System Template"
-			if err := s.repo.UpdateTask(ctx, updated); err != nil {
-				return err
-			}
-		}
+	if len(kind.Template.CompletionChecklist) == 0 {
+		return merged, nil
 	}
+	contract, err := domain.MergeCompletionContract(merged.CompletionContract, &domain.CompletionContract{
+		CompletionChecklist: kind.Template.CompletionChecklist,
+	})
+	if err != nil {
+		return domain.TaskMetadata{}, err
+	}
+	merged.CompletionContract = contract
+	return merged, nil
+}
 
+// applyKindTemplateSystemActions auto-creates child work for one newly created task.
+func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent domain.Task, kind domain.KindDefinition, depth int) error {
 	if len(kind.Template.AutoCreateChildren) == 0 {
 		return nil
 	}
-	columns, err := s.repo.ListColumns(ctx, parent.ProjectID, true)
-	if err != nil {
-		return err
-	}
-	lifecycleState := lifecycleStateForColumnID(columns, parent.ColumnID)
-	if lifecycleState == "" {
-		lifecycleState = domain.StateTodo
+	if depth > maxKindTemplateApplyDepth {
+		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidKindTemplate)
 	}
 
 	for _, childSpec := range kind.Template.AutoCreateChildren {
@@ -847,22 +861,12 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 		if buildErr != nil {
 			return buildErr
 		}
-		if _, validateErr := s.validateTaskKind(ctx, parent.ProjectID, childSpec.Kind, childScope, &parent, childMetadata.KindPayload); validateErr != nil {
-			return validateErr
-		}
-		position, posErr := s.nextTaskPosition(ctx, parent.ProjectID, parent.ColumnID)
-		if posErr != nil {
-			return posErr
-		}
-		child, childErr := domain.NewTask(domain.TaskInput{
-			ID:             s.idGen(),
+		if _, childErr := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
 			ProjectID:      parent.ProjectID,
 			ParentID:       parent.ID,
 			Kind:           domain.WorkKind(childSpec.Kind),
 			Scope:          childScope,
-			LifecycleState: lifecycleState,
 			ColumnID:       parent.ColumnID,
-			Position:       position,
 			Title:          childSpec.Title,
 			Description:    childSpec.Description,
 			Priority:       domain.PriorityMedium,
@@ -873,15 +877,114 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 			UpdatedByActor: "tillsyn-system-template",
 			UpdatedByName:  "Tillsyn System Template",
 			UpdatedByType:  domain.ActorTypeSystem,
-		}, s.clock())
-		if childErr != nil {
+		}, depth); childErr != nil {
 			return childErr
 		}
-		if err := s.repo.CreateTask(ctx, child); err != nil {
+	}
+	return nil
+}
+
+// applyProjectKindTemplateSystemActions auto-creates root work from one project kind template.
+func (s *Service) applyProjectKindTemplateSystemActions(ctx context.Context, project domain.Project, kind domain.KindDefinition, depth int) error {
+	if len(kind.Template.AutoCreateChildren) == 0 {
+		return nil
+	}
+	columnID, err := s.ensureTemplateRootColumn(ctx, project.ID, s.clock())
+	if err != nil {
+		return err
+	}
+	for _, childSpec := range kind.Template.AutoCreateChildren {
+		childScope := childSpec.AppliesTo
+		if childScope == "" {
+			childScope = domain.KindAppliesToTask
+		}
+		childMetadata, buildErr := normalizeTaskMetadataFromKindPayload(childSpec.MetadataPayload)
+		if buildErr != nil {
+			return buildErr
+		}
+		if _, childErr := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
+			ProjectID:      project.ID,
+			Kind:           domain.WorkKind(childSpec.Kind),
+			Scope:          childScope,
+			ColumnID:       columnID,
+			Title:          childSpec.Title,
+			Description:    childSpec.Description,
+			Priority:       domain.PriorityMedium,
+			Labels:         childSpec.Labels,
+			Metadata:       childMetadata,
+			CreatedByActor: "tillsyn-system-template",
+			CreatedByName:  "Tillsyn System Template",
+			UpdatedByActor: "tillsyn-system-template",
+			UpdatedByName:  "Tillsyn System Template",
+			UpdatedByType:  domain.ActorTypeSystem,
+		}, depth); childErr != nil {
+			return childErr
+		}
+	}
+	return nil
+}
+
+// validateKindTemplateExpansion preflights nested template children before persistence.
+func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.Task, defaultChildScope domain.KindAppliesTo, depth int) error {
+	if depth > maxKindTemplateApplyDepth {
+		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidKindTemplate)
+	}
+	for _, childSpec := range kind.Template.AutoCreateChildren {
+		childScope := childSpec.AppliesTo
+		if childScope == "" {
+			childScope = defaultChildScope
+		}
+		childMetadata, err := normalizeTaskMetadataFromKindPayload(childSpec.MetadataPayload)
+		if err != nil {
+			return err
+		}
+		childKind, err := s.resolveTaskKindDefinition(ctx, projectID, childSpec.Kind, childScope, parent)
+		if err != nil {
+			return err
+		}
+		mergedMetadata, err := mergeTaskMetadataWithKindTemplate(childMetadata, childKind)
+		if err != nil {
+			return err
+		}
+		if err := s.validateKindPayload(childKind, mergedMetadata.KindPayload); err != nil {
+			return err
+		}
+		childParent := &domain.Task{
+			ProjectID: projectID,
+			Scope:     childScope,
+		}
+		if err := s.validateKindTemplateExpansion(ctx, projectID, childKind, childParent, domain.KindAppliesToSubtask, depth+1); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// ensureTemplateRootColumn returns one usable root column for project-template children.
+func (s *Service) ensureTemplateRootColumn(ctx context.Context, projectID string, now time.Time) (string, error) {
+	columns, err := s.repo.ListColumns(ctx, projectID, false)
+	if err != nil {
+		return "", err
+	}
+	if len(columns) == 0 {
+		if err := s.createDefaultColumns(ctx, projectID, now); err != nil {
+			return "", err
+		}
+		columns, err = s.repo.ListColumns(ctx, projectID, false)
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(columns) == 0 {
+		return "", fmt.Errorf("template root column is required")
+	}
+	sort.SliceStable(columns, func(i, j int) bool {
+		if columns[i].Position == columns[j].Position {
+			return columns[i].ID < columns[j].ID
+		}
+		return columns[i].Position < columns[j].Position
+	})
+	return columns[0].ID, nil
 }
 
 // nextTaskPosition calculates the next append position for a project column.
