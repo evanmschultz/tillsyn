@@ -2,7 +2,7 @@
 
 Created: 2026-03-21
 Updated: 2026-03-21
-Status: Active implementation wave contract
+Status: Implemented locally; local gates green with broader orchestrator scope support, pending commit/push/remote CI watch
 
 ## Purpose
 
@@ -14,33 +14,36 @@ This file exists because the user explicitly requested one separate markdown fil
 ## Locked User Findings
 
 1. Auth approval should move away from the current cramped confirm-modal interaction and become a more intuitive review surface.
-2. The happy path should be simple:
+2. Auth approval should use one dedicated full-screen review surface rather than feeling like a confirm modal with extra fields bolted on.
+3. The happy path should be simple:
    - default decision is `approve`,
    - approve should mostly be `approve -> confirm`,
    - cancel should always remain obvious.
-3. Deny should branch cleanly:
+4. Deny should branch cleanly:
    - choose `deny`,
    - write an optional explanation,
    - confirm or cancel.
-4. Auth review should not depend on `h/l`-style confirm switching or other vim-style bindings that conflict with typing.
-5. Human-readable names must be used in auth review and path editing flows:
+5. Auth review should not depend on `h/l`-style confirm switching or other vim-style bindings that conflict with typing.
+6. Once deny is selected, the flow should center the note editor first and only then move to explicit confirm/cancel.
+7. Human-readable names must be used in auth review and path editing flows:
    - project names,
    - branch names,
    - phase names,
    - never raw ids as the primary human review label.
-6. Path editing should not be free-text in the auth review surface.
-7. Scope editing should happen in a dedicated picker flow that displays names while preserving the raw approved path underneath.
-8. If the approved scope/path is narrowed or changed, that change must be visible in the requester-facing MCP response and audit/note trail.
-9. MCP requesters need a real waiting state while human review is pending; the agent should not be left in a blind poll/hope loop.
-10. Claiming or attaching to an existing approved auth/session context must not be a bypass:
+8. Path editing should not be free-text in the auth review surface.
+9. Scope editing should happen in a dedicated picker flow that displays names while preserving the raw approved path underneath.
+10. If the approved scope/path is narrowed or changed, that change must be visible in the requester-facing MCP response and audit/note trail.
+11. MCP requesters need a real waiting state while human review is pending; the agent should not be left in a blind poll/hope loop.
+12. Claiming or attaching to an existing approved auth/session context must not be a bypass:
    - requester-bound proof is required,
    - a different client/principal cannot silently adopt existing approval,
    - reuse/attachment must itself be explicitly user-approved if supported later.
-11. Users need clear auth inventory and revocation surfaces:
+13. Users need clear auth inventory and revocation surfaces:
    - list auth requests by project and globally,
    - list active auth sessions by project and globally,
    - revoke clearly and easily from CLI and TUI.
-12. Orchestrator/subagent auth remains constrained:
+14. CLI and TUI must both support approval, denial, note capture, request/session listing, and revoke without forcing the user into another surface.
+15. Orchestrator/subagent auth remains constrained:
    - subagents are single-project rooted only,
    - orchestrators may be single-project, multi-project, or general/global,
    - only orchestrators may receive multi-project or general/global scope.
@@ -83,10 +86,14 @@ Out of scope:
 12. CLI can list sessions by project and globally.
 13. CLI can revoke sessions clearly and deterministically.
 14. TUI exposes pending auth work clearly enough to review and revoke where appropriate.
-15. Orchestrator/subagent scope rules are enforced and test-covered for the implemented surfaces.
-16. `just check` passes.
-17. `just ci` passes.
-18. Final push is watched with `gh run watch --exit-status`.
+15. CLI and TUI both preserve the difference between requested scope and approved scope whenever approval narrows access.
+16. Auth review defaults to approve without making the operator traverse a hidden decision menu.
+17. Auth review and scope-picker labels use human-readable names as the primary surface, with raw paths available underneath for auditability.
+18. Existing approved auth contexts cannot be adopted by a different requester without explicit gatekeeping.
+19. Orchestrator/subagent scope rules are enforced and test-covered for the implemented surfaces.
+20. `just check` passes.
+21. `just ci` passes.
+22. Final push is watched with `gh run watch --exit-status`.
 
 ## Lane Plan
 
@@ -187,3 +194,53 @@ After this wave is green locally and in GitHub Actions, create and execute one f
 6. revoke/fail-closed retest
 7. orchestrator/subagent scoped auth
 8. anti-adoption/bypass checks
+
+## Implementation Checkpoint (2026-03-21)
+
+Implemented in this wave:
+1. TUI auth review now uses a dedicated full-screen review surface with visible decision controls instead of a generic confirm-modal fallback.
+2. Approve is the default TUI review path, while deny stays note-first with explicit confirm/cancel.
+3. Auth review no longer relies on auth-specific `h/l` confirm switching that interferes with typing.
+4. Human-facing auth review and summary labels prefer human-readable scope names while preserving the raw path as the actual contract.
+5. TUI auth inventory now distinguishes pending requests, resolved requests, and active approved sessions, and exposes session revoke directly from the inventory surface.
+6. MCP claim/resume remains requester-bound and returns pending vs approved vs denied results cleanly.
+7. The native MCP claim path rejects requester mismatch/adoption attempts instead of letting a different requester silently claim an approved context.
+8. Auth scope paths now support `project/...`, `projects/...`, and `global`, with broader scopes reserved for orchestrators.
+9. SQLite now provisions one hidden global auth backing project so global auth requests and global notifications can persist without leaking a fake project into normal project inventory.
+10. CLI auth help/examples now document project, multi-project, and global scope paths explicitly.
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/adapters/auth/autentauth`
+Outcome: pass after seeding broader-scope project fixtures and adding hidden global auth backing support.
+2. `just test-pkg ./internal/adapters/storage/sqlite`
+Outcome: pass with hidden global auth project coverage.
+3. `just test-pkg ./internal/app`
+Outcome: pass.
+4. `just test-pkg ./internal/tui`
+Outcome: pass.
+5. `just test-pkg ./cmd/till`
+Outcome: pass after auth help/examples were expanded for `projects/...` and `global`.
+6. `just test-pkg ./internal/domain`
+Outcome: pass.
+7. `just test-pkg ./internal/adapters/server/common`
+Outcome: pass.
+8. `just test-pkg ./internal/adapters/server/mcpapi`
+Outcome: pass.
+9. `just check`
+Outcome: pass.
+10. `just ci`
+Outcome: pass; `internal/tui` coverage remained above the floor at 70.2%.
+
+QA outcomes:
+1. `QA-UX-1`
+Outcome: pass after focused re-check cleared the stale multi-project/global label blocker.
+2. `QA-UX-2`
+Outcome: pass with residual risk on resolved-row detail ergonomics.
+3. `QA-POLICY-1`
+Outcome: pass after focused re-check cleared the stale broader-scope policy blocker.
+4. `QA-POLICY-2`
+Outcome: pass; no remaining blocker found for non-requester claim/adoption, broader-scope policy enforcement, CLI project/global inventory+revoke, or hidden global backing-project handling.
+
+Remaining gaps before full dogfood closeout:
+1. end-to-end collaborative dogfood worksheet and live retest evidence
+2. final remote CI watch after push

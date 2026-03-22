@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-21
-Status: In progress; the auth UX implementation wave is green in local gates, the TUI review modal now has visible decision controls and human-readable scope labels, and MCP request continuation now has a supported native claim/resume path. The remaining dogfood blockers are first-class orchestrator/subagent scoped-auth choreography, explicit anti-adoption gatekeeping for existing auth contexts, and one full collaborative E2E dogfood worksheet/run.
+Status: In progress; the auth gatekeeping remediation wave is green in local gates, including the simplified TUI auth review flow, human-readable scope labels, project/global auth inventory, session revoke UX, broader orchestrator-only scope handling, and native MCP claim/resume. The remaining closeout step after remote CI is the full collaborative E2E dogfood worksheet/run.
 
 ## 1) Active Run Source Of Truth
 
@@ -50,11 +50,17 @@ This run is successful only if:
    - deterministic machine-friendly output,
    - persisted request/approval/audit state rather than ad-hoc shell-local side effects.
 18. `tillsyn` should not copy `blick`'s access-profile abstraction directly; `tillsyn` auth/grant scope must stay project-path-centered.
-19. `tillsyn` should not copy `blick`'s generic `requested-scope key=value` bag directly; `tillsyn` should use one explicit project-rooted `--path`.
+19. `tillsyn` should not copy `blick`'s generic `requested-scope key=value` bag directly; `tillsyn` should use one explicit auth scope `--path`:
+   - `project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]`,
+   - `projects/<project-id>,<project-id>...`,
+   - or `global`.
 20. Auth requests must surface in the TUI notifications model:
    - when the request targets the currently focused project, show it in that project's notifications panel,
    - when the request targets a different project or no project is currently focused, show it in global notifications until the matching project is focused.
-21. Session or grant requests must carry one explicit scope path argument rooted at a project, with optional branch and nested phase lineage.
+21. Session or grant requests must carry one explicit scope path argument:
+   - project-rooted with optional branch and nested phase lineage,
+   - multi-project,
+   - or general/global for orchestrators.
 22. Any command that requires follow-up user action must say so directly in its help output.
 23. `till auth --help` and subcommand help must enumerate required flags, path semantics, lifecycle controls, and concrete examples.
 24. External MCP-originated changes should refresh the current TUI project without requiring a project-switch workaround.
@@ -83,6 +89,18 @@ This run is successful only if:
 41. User-facing auth review surfaces must prefer human-meaningful project and hierarchy names over opaque ids wherever the corresponding names are already available locally.
 42. The raw scoped path must remain visible and editable as the actual approval contract even when the user-facing review label uses human-readable names.
 43. Claiming, attaching to, or reusing an existing approved auth/session context must require explicit user-approved lifecycle handling; an agent must not be able to hop onto an existing approved auth context and bypass gatekeeping.
+44. The TUI auth review experience should be a dedicated full-screen review surface, not a cramped confirm modal with extra auth controls layered on top.
+45. The default review path is approve:
+   - approve should be one obvious confirm path,
+   - cancel should always remain obvious,
+   - deny should branch into a note-first flow and then explicit confirm/cancel.
+46. Auth review must not depend on `h/l`-style auth-specific confirm switching or other bindings that interfere with typing in note fields.
+47. Scope editing in auth review must use a dedicated picker that shows human-readable names first and the raw path underneath.
+48. CLI and TUI must both provide clear project-scoped and global auth inventory for:
+   - pending requests,
+   - resolved requests,
+   - active sessions,
+   - revoke operations.
 
 ## 4) Scope And Non-Goals
 
@@ -307,17 +325,17 @@ The dogfood auth UX and operator/help surfaces must satisfy the matrix below bef
 | AU-15 | a user opens auth review in the TUI | review modal shows visible approve vs deny controls instead of relying on hidden decision hotkeys | PASS | `internal/tui/model_test.go:7520`; collaborative finding fixed 2026-03-21 |
 | AU-16 | a user denies an auth request in the TUI | deny path becomes note-first with explicit confirm/cancel, and does not expose irrelevant approve-only fields | PASS | `internal/tui/model_test.go:7331`; collaborative finding fixed 2026-03-21 |
 | AU-17 | an orchestrator requests access through MCP and the user approves it in the TUI | orchestrator can resume through a supported continuation/poll path without shell-only glue as the primary workflow | PASS | `internal/adapters/server/mcpapi/handler_test.go:1234`; `internal/app/auth_requests_test.go:147`; `internal/adapters/server/common/app_service_adapter_auth_requests_test.go:146` |
-| AU-18 | an orchestrator needs to provision scoped subagent access | subagent auth requests follow the same request/approval model with narrower path/lifecycle scopes instead of bypassing through raw operator-issued sessions | PENDING | missing orchestrator/subagent auth choreography; plan expansion 2026-03-21 |
+| AU-18 | an orchestrator needs to provision scoped subagent access | subagent auth requests follow the same request/approval model with narrower path/lifecycle scopes instead of bypassing through raw operator-issued sessions | PASS | `internal/app/auth_requests_test.go:255`; `internal/adapters/server/common/app_service_adapter_auth_requests_test.go:143`; `internal/adapters/server/mcpapi/handler_test.go:1194` |
 | AU-19 | an operator needs to review pending approvals from the shell | CLI can list pending auth requests clearly enough to approve, deny, or inspect them without guesswork | PASS | `cmd/till/main_test.go:627`; collaborative shell retest 2026-03-21 |
 | AU-20 | an operator needs to review approved/denied/canceled inventory from the shell | CLI list/show surfaces preserve path, state, and resolution-note context | PASS | `cmd/till/main_test.go:648`; `cmd/till/main_test.go:769`; collaborative shell retest 2026-03-21 |
 | AU-21 | a user approves or denies from the shell | CLI approve/deny both support notes and preserve path-aware output/audit fields | PASS | `cmd/till/main_test.go:750`; `cmd/till/main_test.go:769`; collaborative shell retest 2026-03-21 |
-| AU-22 | a subagent requests access | requested scope is limited to one single-project rooted path with optional branch/nested phases | PENDING | scope-policy addition from 2026-03-21; not implemented yet |
-| AU-23 | an orchestrator requests access across multiple projects or generally | only orchestrator-shaped requests may carry multi-project or general/global scope, and those scopes remain explicit in review/audit surfaces | PENDING | scope-policy addition from 2026-03-21; not implemented yet |
+| AU-22 | a subagent requests access | requested scope is limited to one single-project rooted path with optional branch/nested phases | PASS | `internal/domain/auth_request_test.go:390`; `internal/app/auth_requests_test.go:255` |
+| AU-23 | an orchestrator requests access across multiple projects or generally | only orchestrator-shaped requests may carry multi-project or general/global scope, and those scopes remain explicit in review/audit surfaces | PASS | `internal/adapters/auth/autentauth/service_test.go:560`; `internal/adapters/auth/autentauth/service_test.go:577`; `internal/adapters/auth/autentauth/service_app_sessions_test.go:108`; `cmd/till/main_test.go:437` |
 
 ### 6.1 Latest Checkpoint Evidence
 
 Timestamp:
-1. 2026-03-20 local implementation checkpoint after the auth UX dogfood wave landed and the coverage floor was restored.
+1. 2026-03-21 local implementation checkpoint after the auth gatekeeping remediation wave landed, the broader orchestrator scope model was wired through storage/auth/TUI/CLI, and both repo-wide gates passed again.
 
 Files changed in this checkpoint:
 1. `cmd/till/main.go`
@@ -344,8 +362,35 @@ Files changed in this checkpoint:
 22. `internal/domain/auth_request_test.go`
 23. `internal/tui/model.go`
 24. `internal/tui/model_test.go`
+25. `worklogs/AUTH_GATEKEEPING_DOGFOOD_FIX_WAVE_2026-03-21.md`
 
 Commands run:
+1. `just test-pkg ./internal/adapters/auth/autentauth`
+Outcome: pass after seeding broader-scope project fixtures and adding the hidden global auth backing project.
+2. `just test-pkg ./internal/adapters/storage/sqlite`
+Outcome: pass with hidden global auth project coverage.
+3. `just test-pkg ./internal/app`
+Outcome: pass.
+4. `just test-pkg ./internal/tui`
+Outcome: pass.
+5. `just test-pkg ./cmd/till`
+Outcome: pass after help-text sync for `projects/...` and `global`.
+6. `just test-pkg ./internal/domain`
+Outcome: pass.
+7. `just test-pkg ./internal/adapters/server/common`
+Outcome: pass.
+8. `just test-pkg ./internal/adapters/server/mcpapi`
+Outcome: pass.
+9. `just check`
+Outcome: pass.
+10. `just ci`
+Outcome: pass.
+
+QA evidence:
+1. `QA-UX-1` pass after focused re-check cleared the earlier stale broader-scope label concern.
+2. `QA-UX-2` pass with residual risk on resolved-row `enter` detail ergonomics.
+3. `QA-POLICY-1` pass after focused re-check cleared the earlier stale broader-scope policy concern.
+4. `QA-POLICY-2` pass with residual risk limited to historical ambiguity in older `PLAN.md` checkpoint text and the still-pending collaborative E2E run.
 1. `just fmt`
 Outcome: pass after auth UX implementation and follow-up coverage fixes.
 2. `just test-pkg ./internal/adapters/server/common`
@@ -367,6 +412,12 @@ Outcome: pass.
 Outcome: pass after the QA remediation patch.
 10. `just ci`
 Outcome: pass after the QA remediation patch.
+11. `just test-pkg ./internal/tui`
+Outcome: pass after adding focused deny-confirm branch coverage for the auth review flow.
+12. `just ci`
+Outcome: pass; `internal/tui` coverage restored to 70.0%.
+13. `just check`
+Outcome: pass on the final pre-commit tree.
 11. post-commit `just fmt`
 Outcome: pass; reconciled two lingering gofmt-only test files (`internal/adapters/server/common/capture_test.go`, `internal/app/auth_requests_test.go`).
 12. post-format `just check` and `just ci`

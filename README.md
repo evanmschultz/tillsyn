@@ -58,6 +58,7 @@ Implemented now:
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - orchestrator/subagent scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement
+- explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
@@ -85,8 +86,15 @@ Current MCP/runtime direction:
 Current auth note:
 - Normal TUI users should not need to manually issue themselves auth sessions for routine TUI use.
 - `till auth request create|list|show|approve|deny|cancel` and `till auth session list|validate|revoke` are now active for dogfood/operator use.
+- Auth request scopes now support:
+  - `project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]`,
+  - `projects/<project-id>,<project-id>...`,
+  - `global`;
+  with multi-project/general scope reserved for orchestrators.
 - TUI auth-request notifications route to focused-project vs global panels, and `enter` opens auth review directly instead of a generic thread fallback.
-- TUI auth review now renders visible `[approve] [deny]` decision controls, and deny remains note-first with explicit confirm/cancel.
+- TUI auth review now uses a dedicated full-screen review surface with visible decision controls, human-readable scope labels, and a simpler default approve flow; deny remains note-first with explicit confirm/cancel.
+- TUI auth inventory distinguishes pending requests, resolved requests, and active approved sessions, and supports direct revoke for active sessions.
+- CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 
