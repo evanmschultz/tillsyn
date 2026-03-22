@@ -499,6 +499,12 @@ Outcome:
    - updated `Justfile` dev cleanup parsing to consume the new `root:` output label,
    - added direct regression coverage for both `--db` and config-file `database.path` override cases affecting `root` and `logs`,
    - reran `just test-pkg ./cmd/till`, `just test-pkg ./internal/platform`, `just check`, and `just ci` -> pass.
+35. windows-only follow-up after pushing the `till paths` contract cleanup
+Outcome:
+   - remote CI failed in `check (windows-latest)` because `TestResolveRuntimeLogDirUsesSharedRootForDefaultSentinel` still hard-coded a Unix `/tmp/...` expectation,
+   - fixed the test to use one OS-correct absolute temp path so the shared-root sentinel assertion stays cross-platform,
+   - reran `just test-pkg ./cmd/till`, `just check`, and `just ci` -> pass locally before re-push,
+   - remote CI rerun is required before this remediation slice can be considered closed.
 
 Checkpoint summary:
 1. `till auth` now exposes request and session lifecycle commands with example-driven help coverage.

@@ -2064,12 +2064,13 @@ func TestDevLogFilePathResolvesAgainstWorkspaceRoot(t *testing.T) {
 
 // TestResolveRuntimeLogDirUsesSharedRootForDefaultSentinel verifies the default dev log dir resolves under the runtime root.
 func TestResolveRuntimeLogDirUsesSharedRootForDefaultSentinel(t *testing.T) {
-	got, err := resolveRuntimeLogDir(config.DefaultDevLogDir(), "/tmp/tillsyn/logs")
+	want := filepath.Join(t.TempDir(), "logs")
+	got, err := resolveRuntimeLogDir(config.DefaultDevLogDir(), want)
 	if err != nil {
 		t.Fatalf("resolveRuntimeLogDir() error = %v", err)
 	}
-	if got != "/tmp/tillsyn/logs" {
-		t.Fatalf("resolveRuntimeLogDir() = %q, want %q", got, "/tmp/tillsyn/logs")
+	if got != filepath.Clean(want) {
+		t.Fatalf("resolveRuntimeLogDir() = %q, want %q", got, filepath.Clean(want))
 	}
 }
 
