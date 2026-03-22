@@ -22,6 +22,19 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 				Kind:      "task",
 				AppliesTo: KindAppliesToSubtask,
 			}},
+			ProjectMetadataDefaults: &ProjectMetadata{
+				Owner:    "  Team A ",
+				Tags:     []string{"Alpha", "alpha"},
+				Homepage: " https://example.com ",
+			},
+			TaskMetadataDefaults: &TaskMetadata{
+				Objective:       "  default objective  ",
+				CommandSnippets: []string{"make test", "make test"},
+				CompletionContract: CompletionContract{
+					CompletionChecklist: []ChecklistItem{{Text: "default check"}},
+					Policy:              CompletionPolicy{RequireChildrenDone: true},
+				},
+			},
 		},
 	}, now)
 	if err != nil {
@@ -38,6 +51,27 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 	}
 	if len(kind.Template.AutoCreateChildren) != 1 {
 		t.Fatalf("expected one child template, got %d", len(kind.Template.AutoCreateChildren))
+	}
+	if kind.Template.ProjectMetadataDefaults == nil {
+		t.Fatal("expected normalized project metadata defaults")
+	}
+	if kind.Template.ProjectMetadataDefaults.Owner != "Team A" {
+		t.Fatalf("unexpected project default owner %q", kind.Template.ProjectMetadataDefaults.Owner)
+	}
+	if len(kind.Template.ProjectMetadataDefaults.Tags) != 1 || kind.Template.ProjectMetadataDefaults.Tags[0] != "alpha" {
+		t.Fatalf("unexpected project default tags %#v", kind.Template.ProjectMetadataDefaults.Tags)
+	}
+	if kind.Template.TaskMetadataDefaults == nil {
+		t.Fatal("expected normalized task metadata defaults")
+	}
+	if kind.Template.TaskMetadataDefaults.Objective != "default objective" {
+		t.Fatalf("unexpected task default objective %q", kind.Template.TaskMetadataDefaults.Objective)
+	}
+	if len(kind.Template.TaskMetadataDefaults.CommandSnippets) != 1 || kind.Template.TaskMetadataDefaults.CommandSnippets[0] != "make test" {
+		t.Fatalf("unexpected task default command snippets %#v", kind.Template.TaskMetadataDefaults.CommandSnippets)
+	}
+	if !kind.Template.TaskMetadataDefaults.CompletionContract.Policy.RequireChildrenDone {
+		t.Fatal("expected normalized task default completion policy")
 	}
 	if !kind.CreatedAt.Equal(now.UTC()) || !kind.UpdatedAt.Equal(now.UTC()) {
 		t.Fatalf("expected UTC timestamps, got created=%s updated=%s", kind.CreatedAt, kind.UpdatedAt)

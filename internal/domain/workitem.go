@@ -208,19 +208,8 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 	if len(meta.KindPayload) > 0 && !json.Valid(meta.KindPayload) {
 		return TaskMetadata{}, ErrInvalidKindPayload
 	}
-	meta.CompletionContract.CompletionEvidence = normalizeStringList(meta.CompletionContract.CompletionEvidence)
-	meta.CompletionContract.CompletionNotes = strings.TrimSpace(meta.CompletionContract.CompletionNotes)
-
 	var err error
-	meta.CompletionContract.StartCriteria, err = normalizeChecklist(meta.CompletionContract.StartCriteria)
-	if err != nil {
-		return TaskMetadata{}, err
-	}
-	meta.CompletionContract.CompletionCriteria, err = normalizeChecklist(meta.CompletionContract.CompletionCriteria)
-	if err != nil {
-		return TaskMetadata{}, err
-	}
-	meta.CompletionContract.CompletionChecklist, err = normalizeChecklist(meta.CompletionContract.CompletionChecklist)
+	meta.CompletionContract, err = normalizeCompletionContract(meta.CompletionContract)
 	if err != nil {
 		return TaskMetadata{}, err
 	}
@@ -305,6 +294,100 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 	return meta, nil
 }
 
+// MergeTaskMetadata applies optional defaults to task metadata without weakening explicit values.
+func MergeTaskMetadata(base TaskMetadata, defaults *TaskMetadata) (TaskMetadata, error) {
+	normalizedBase, err := normalizeTaskMetadata(base)
+	if err != nil {
+		return TaskMetadata{}, err
+	}
+	if defaults == nil {
+		return normalizedBase, nil
+	}
+
+	normalizedDefaults, err := normalizeTaskMetadata(*defaults)
+	if err != nil {
+		return TaskMetadata{}, err
+	}
+
+	merged := normalizedBase
+	if merged.Objective == "" {
+		merged.Objective = normalizedDefaults.Objective
+	}
+	if merged.ImplementationNotesUser == "" {
+		merged.ImplementationNotesUser = normalizedDefaults.ImplementationNotesUser
+	}
+	if merged.ImplementationNotesAgent == "" {
+		merged.ImplementationNotesAgent = normalizedDefaults.ImplementationNotesAgent
+	}
+	if merged.AcceptanceCriteria == "" {
+		merged.AcceptanceCriteria = normalizedDefaults.AcceptanceCriteria
+	}
+	if merged.DefinitionOfDone == "" {
+		merged.DefinitionOfDone = normalizedDefaults.DefinitionOfDone
+	}
+	if merged.ValidationPlan == "" {
+		merged.ValidationPlan = normalizedDefaults.ValidationPlan
+	}
+	if merged.BlockedReason == "" {
+		merged.BlockedReason = normalizedDefaults.BlockedReason
+	}
+	if merged.RiskNotes == "" {
+		merged.RiskNotes = normalizedDefaults.RiskNotes
+	}
+	merged.CommandSnippets = mergeStringLists(merged.CommandSnippets, normalizedDefaults.CommandSnippets)
+	merged.ExpectedOutputs = mergeStringLists(merged.ExpectedOutputs, normalizedDefaults.ExpectedOutputs)
+	merged.DecisionLog = mergeStringLists(merged.DecisionLog, normalizedDefaults.DecisionLog)
+	merged.RelatedItems = mergeStringLists(merged.RelatedItems, normalizedDefaults.RelatedItems)
+	if merged.TransitionNotes == "" {
+		merged.TransitionNotes = normalizedDefaults.TransitionNotes
+	}
+	merged.DependsOn = mergeStringLists(merged.DependsOn, normalizedDefaults.DependsOn)
+	merged.BlockedBy = mergeStringLists(merged.BlockedBy, normalizedDefaults.BlockedBy)
+	merged.ContextBlocks = mergeContextBlocks(merged.ContextBlocks, normalizedDefaults.ContextBlocks)
+	merged.ResourceRefs = mergeResourceRefs(merged.ResourceRefs, normalizedDefaults.ResourceRefs)
+	if len(merged.KindPayload) == 0 {
+		merged.KindPayload = normalizedDefaults.KindPayload
+	}
+	merged.CompletionContract, err = MergeCompletionContract(merged.CompletionContract, &normalizedDefaults.CompletionContract)
+	if err != nil {
+		return TaskMetadata{}, err
+	}
+
+	return normalizeTaskMetadata(merged)
+}
+
+// MergeCompletionContract applies optional defaults to a completion contract without weakening explicit values.
+func MergeCompletionContract(base CompletionContract, defaults *CompletionContract) (CompletionContract, error) {
+	normalizedBase, err := normalizeCompletionContract(base)
+	if err != nil {
+		return CompletionContract{}, err
+	}
+	if defaults == nil {
+		return normalizedBase, nil
+	}
+
+	normalizedDefaults, err := normalizeCompletionContract(*defaults)
+	if err != nil {
+		return CompletionContract{}, err
+	}
+
+	merged := CompletionContract{
+		StartCriteria:       mergeChecklistItems(normalizedBase.StartCriteria, normalizedDefaults.StartCriteria),
+		CompletionCriteria:  mergeChecklistItems(normalizedBase.CompletionCriteria, normalizedDefaults.CompletionCriteria),
+		CompletionChecklist: mergeChecklistItems(normalizedBase.CompletionChecklist, normalizedDefaults.CompletionChecklist),
+		CompletionEvidence:  mergeStringLists(normalizedBase.CompletionEvidence, normalizedDefaults.CompletionEvidence),
+		CompletionNotes:     normalizedBase.CompletionNotes,
+		Policy: CompletionPolicy{
+			RequireChildrenDone: normalizedBase.Policy.RequireChildrenDone || normalizedDefaults.Policy.RequireChildrenDone,
+		},
+	}
+	if merged.CompletionNotes == "" {
+		merged.CompletionNotes = normalizedDefaults.CompletionNotes
+	}
+
+	return normalizeCompletionContract(merged)
+}
+
 // normalizeChecklist trims checklist ids/text and removes empty rows.
 func normalizeChecklist(in []ChecklistItem) ([]ChecklistItem, error) {
 	out := make([]ChecklistItem, 0, len(in))
@@ -325,6 +408,144 @@ func normalizeChecklist(in []ChecklistItem) ([]ChecklistItem, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// normalizeCompletionContract trims and validates completion-contract fields.
+func normalizeCompletionContract(contract CompletionContract) (CompletionContract, error) {
+	contract.CompletionEvidence = normalizeStringList(contract.CompletionEvidence)
+	contract.CompletionNotes = strings.TrimSpace(contract.CompletionNotes)
+
+	var err error
+	contract.StartCriteria, err = normalizeChecklist(contract.StartCriteria)
+	if err != nil {
+		return CompletionContract{}, err
+	}
+	contract.CompletionCriteria, err = normalizeChecklist(contract.CompletionCriteria)
+	if err != nil {
+		return CompletionContract{}, err
+	}
+	contract.CompletionChecklist, err = normalizeChecklist(contract.CompletionChecklist)
+	if err != nil {
+		return CompletionContract{}, err
+	}
+	return contract, nil
+}
+
+// mergeChecklistItems merges checklist rows by ID while preserving the base order.
+func mergeChecklistItems(base, defaults []ChecklistItem) []ChecklistItem {
+	out := make([]ChecklistItem, 0, len(base)+len(defaults))
+	seen := map[string]struct{}{}
+	appendItem := func(item ChecklistItem) {
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" {
+			return
+		}
+		if _, ok := seen[item.ID]; ok {
+			return
+		}
+		seen[item.ID] = struct{}{}
+		out = append(out, item)
+	}
+	for _, item := range base {
+		appendItem(item)
+	}
+	for _, item := range defaults {
+		appendItem(item)
+	}
+	return out
+}
+
+// mergeStringLists merges normalized string slices while preserving the base order.
+func mergeStringLists(base, defaults []string) []string {
+	return normalizeStringList(append(append([]string(nil), base...), defaults...))
+}
+
+// mergeContextBlocks merges context blocks by normalized identity while preserving the base order.
+func mergeContextBlocks(base, defaults []ContextBlock) []ContextBlock {
+	out := make([]ContextBlock, 0, len(base)+len(defaults))
+	seen := map[string]struct{}{}
+	appendBlock := func(block ContextBlock) {
+		block.Title = strings.TrimSpace(block.Title)
+		block.Body = strings.TrimSpace(block.Body)
+		block.Type = ContextType(strings.TrimSpace(strings.ToLower(string(block.Type))))
+		if block.Type == "" {
+			block.Type = ContextTypeNote
+		}
+		block.Importance = ContextImportance(strings.TrimSpace(strings.ToLower(string(block.Importance))))
+		if block.Importance == "" {
+			block.Importance = ContextImportanceNormal
+		}
+		if block.Body == "" {
+			return
+		}
+		key := strings.Join([]string{
+			string(block.Type),
+			string(block.Importance),
+			block.Title,
+			block.Body,
+		}, "\x1f")
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, block)
+	}
+	for _, block := range base {
+		appendBlock(block)
+	}
+	for _, block := range defaults {
+		appendBlock(block)
+	}
+	return out
+}
+
+// mergeResourceRefs merges resource refs by normalized identity while preserving the base order.
+func mergeResourceRefs(base, defaults []ResourceRef) []ResourceRef {
+	out := make([]ResourceRef, 0, len(base)+len(defaults))
+	seen := map[string]struct{}{}
+	appendRef := func(ref ResourceRef) {
+		ref.ID = strings.TrimSpace(ref.ID)
+		ref.ResourceType = ResourceType(strings.TrimSpace(strings.ToLower(string(ref.ResourceType))))
+		if ref.ResourceType == "" {
+			ref.ResourceType = ResourceTypeDoc
+		}
+		ref.Location = strings.TrimSpace(ref.Location)
+		ref.PathMode = PathMode(strings.TrimSpace(strings.ToLower(string(ref.PathMode))))
+		if ref.PathMode == "" {
+			ref.PathMode = PathModeRelative
+		}
+		ref.BaseAlias = strings.TrimSpace(ref.BaseAlias)
+		ref.Title = strings.TrimSpace(ref.Title)
+		ref.Notes = strings.TrimSpace(ref.Notes)
+		ref.Tags = normalizeLabels(ref.Tags)
+		if ref.Location == "" {
+			return
+		}
+		key := ref.ID
+		if key == "" {
+			key = strings.Join([]string{
+				string(ref.ResourceType),
+				ref.Location,
+				string(ref.PathMode),
+				ref.BaseAlias,
+				ref.Title,
+				ref.Notes,
+				strings.Join(ref.Tags, "\x1f"),
+			}, "\x1f")
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, ref)
+	}
+	for _, ref := range base {
+		appendRef(ref)
+	}
+	for _, ref := range defaults {
+		appendRef(ref)
+	}
+	return out
 }
 
 // normalizeStringList trims and deduplicates string slices.

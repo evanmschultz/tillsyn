@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -368,4 +369,151 @@ func TestNewTaskRejectsInvalidMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid context type error")
 	}
+}
+
+// TestMergeProjectMetadataDefaults verifies conservative project metadata defaulting.
+func TestMergeProjectMetadataDefaults(t *testing.T) {
+	merged, err := MergeProjectMetadata(ProjectMetadata{
+		Owner:       "Existing owner",
+		Homepage:    "https://example.com/existing",
+		Tags:        []string{"alpha", "shared"},
+		KindPayload: jsonRaw(`{"existing":true}`),
+		CapabilityPolicy: ProjectCapabilityPolicy{
+			AllowEqualScopeDelegation: true,
+		},
+	}, &ProjectMetadata{
+		Owner:             "Default owner",
+		Icon:              ":rocket:",
+		Color:             "62",
+		Tags:              []string{"shared", "beta"},
+		StandardsMarkdown: "default standards",
+		KindPayload:       jsonRaw(`{"default":true}`),
+		CapabilityPolicy: ProjectCapabilityPolicy{
+			AllowOrchestratorOverride: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("MergeProjectMetadata() error = %v", err)
+	}
+	if merged.Owner != "Existing owner" {
+		t.Fatalf("Owner = %q, want Existing owner", merged.Owner)
+	}
+	if merged.Icon != ":rocket:" {
+		t.Fatalf("Icon = %q, want :rocket:", merged.Icon)
+	}
+	if merged.Color != "62" {
+		t.Fatalf("Color = %q, want 62", merged.Color)
+	}
+	if merged.Homepage != "https://example.com/existing" {
+		t.Fatalf("Homepage = %q, want existing", merged.Homepage)
+	}
+	if merged.StandardsMarkdown != "default standards" {
+		t.Fatalf("StandardsMarkdown = %q, want default standards", merged.StandardsMarkdown)
+	}
+	if !bytes.Equal(merged.KindPayload, jsonRaw(`{"existing":true}`)) {
+		t.Fatalf("KindPayload = %s, want existing payload", string(merged.KindPayload))
+	}
+	if !merged.CapabilityPolicy.AllowOrchestratorOverride {
+		t.Fatal("expected orchestrator override policy to be merged")
+	}
+	if !merged.CapabilityPolicy.AllowEqualScopeDelegation {
+		t.Fatal("expected existing equal-scope delegation to remain true")
+	}
+	if merged.CapabilityPolicy.OrchestratorOverrideToken != "" {
+		t.Fatalf("unexpected override token %q", merged.CapabilityPolicy.OrchestratorOverrideToken)
+	}
+	if len(merged.Tags) != 3 || merged.Tags[0] != "alpha" || merged.Tags[1] != "beta" || merged.Tags[2] != "shared" {
+		t.Fatalf("unexpected merged tags %#v", merged.Tags)
+	}
+}
+
+// TestMergeTaskMetadataDefaults verifies conservative task metadata defaulting.
+func TestMergeTaskMetadataDefaults(t *testing.T) {
+	merged, err := MergeTaskMetadata(TaskMetadata{
+		Objective:       "Existing objective",
+		CommandSnippets: []string{"make test"},
+		DecisionLog:     []string{"decision-a"},
+		CompletionContract: CompletionContract{
+			CompletionChecklist: []ChecklistItem{{ID: "ck-existing", Text: "existing check", Done: false}},
+		},
+	}, &TaskMetadata{
+		ImplementationNotesUser:  "default user notes",
+		ImplementationNotesAgent: "default agent notes",
+		AcceptanceCriteria:       "default acceptance",
+		DefinitionOfDone:         "default done",
+		ValidationPlan:           "default validation",
+		BlockedReason:            "default blocked",
+		RiskNotes:                "default risk",
+		CommandSnippets:          []string{"make test", "make fmt"},
+		ExpectedOutputs:          []string{"output-a"},
+		DecisionLog:              []string{"decision-b"},
+		RelatedItems:             []string{"issue-1"},
+		TransitionNotes:          "default transition",
+		DependsOn:                []string{"dep-1"},
+		BlockedBy:                []string{"block-1"},
+		ContextBlocks: []ContextBlock{
+			{Title: "runbook", Body: "always test", Type: ContextTypeRunbook, Importance: ContextImportanceHigh},
+		},
+		ResourceRefs: []ResourceRef{
+			{ID: "doc-1", ResourceType: ResourceTypeDoc, Location: "docs/spec.md"},
+		},
+		CompletionContract: CompletionContract{
+			StartCriteria:       []ChecklistItem{{Text: "ready"}},
+			CompletionCriteria:  []ChecklistItem{{ID: "ck-default", Text: "default check"}},
+			CompletionChecklist: []ChecklistItem{{ID: "ck-default-2", Text: "default checklist"}},
+			CompletionEvidence:  []string{"evidence-a"},
+			CompletionNotes:     "default notes",
+			Policy:              CompletionPolicy{RequireChildrenDone: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("MergeTaskMetadata() error = %v", err)
+	}
+	if merged.Objective != "Existing objective" {
+		t.Fatalf("Objective = %q, want existing", merged.Objective)
+	}
+	if merged.ImplementationNotesUser != "default user notes" {
+		t.Fatalf("ImplementationNotesUser = %q, want default user notes", merged.ImplementationNotesUser)
+	}
+	if merged.ImplementationNotesAgent != "default agent notes" {
+		t.Fatalf("ImplementationNotesAgent = %q, want default agent notes", merged.ImplementationNotesAgent)
+	}
+	if merged.ValidationPlan != "default validation" {
+		t.Fatalf("ValidationPlan = %q, want default validation", merged.ValidationPlan)
+	}
+	if len(merged.CommandSnippets) != 2 || merged.CommandSnippets[0] != "make test" || merged.CommandSnippets[1] != "make fmt" {
+		t.Fatalf("unexpected command snippets %#v", merged.CommandSnippets)
+	}
+	if len(merged.DecisionLog) != 2 || merged.DecisionLog[0] != "decision-a" || merged.DecisionLog[1] != "decision-b" {
+		t.Fatalf("unexpected decision log %#v", merged.DecisionLog)
+	}
+	if len(merged.ContextBlocks) != 1 || merged.ContextBlocks[0].Type != ContextTypeRunbook {
+		t.Fatalf("unexpected context blocks %#v", merged.ContextBlocks)
+	}
+	if len(merged.ResourceRefs) != 1 || merged.ResourceRefs[0].Location != "docs/spec.md" {
+		t.Fatalf("unexpected resource refs %#v", merged.ResourceRefs)
+	}
+	if len(merged.CompletionContract.StartCriteria) != 1 || merged.CompletionContract.StartCriteria[0].Text != "ready" {
+		t.Fatalf("unexpected start criteria %#v", merged.CompletionContract.StartCriteria)
+	}
+	if len(merged.CompletionContract.CompletionCriteria) != 1 || merged.CompletionContract.CompletionCriteria[0].ID != "ck-default" {
+		t.Fatalf("unexpected completion criteria %#v", merged.CompletionContract.CompletionCriteria)
+	}
+	if len(merged.CompletionContract.CompletionChecklist) != 2 {
+		t.Fatalf("unexpected completion checklist %#v", merged.CompletionContract.CompletionChecklist)
+	}
+	if len(merged.CompletionContract.CompletionEvidence) != 1 || merged.CompletionContract.CompletionEvidence[0] != "evidence-a" {
+		t.Fatalf("unexpected completion evidence %#v", merged.CompletionContract.CompletionEvidence)
+	}
+	if merged.CompletionContract.CompletionNotes != "default notes" {
+		t.Fatalf("CompletionNotes = %q, want default notes", merged.CompletionContract.CompletionNotes)
+	}
+	if !merged.CompletionContract.Policy.RequireChildrenDone {
+		t.Fatal("expected require_children_done to be tightened by defaults")
+	}
+}
+
+// jsonRaw returns one trimmed JSON payload for merge assertions.
+func jsonRaw(raw string) []byte {
+	return []byte(raw)
 }

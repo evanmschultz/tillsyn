@@ -105,6 +105,46 @@ func (p *Project) UpdateDetails(name, description string, metadata ProjectMetada
 	return nil
 }
 
+// MergeProjectMetadata applies optional defaults to project metadata without weakening explicit values.
+func MergeProjectMetadata(base ProjectMetadata, defaults *ProjectMetadata) (ProjectMetadata, error) {
+	normalizedBase, err := normalizeProjectMetadata(base)
+	if err != nil {
+		return ProjectMetadata{}, err
+	}
+	if defaults == nil {
+		return normalizedBase, nil
+	}
+
+	normalizedDefaults, err := normalizeProjectMetadata(*defaults)
+	if err != nil {
+		return ProjectMetadata{}, err
+	}
+
+	merged := normalizedBase
+	if merged.Owner == "" {
+		merged.Owner = normalizedDefaults.Owner
+	}
+	if merged.Icon == "" {
+		merged.Icon = normalizedDefaults.Icon
+	}
+	if merged.Color == "" {
+		merged.Color = normalizedDefaults.Color
+	}
+	if merged.Homepage == "" {
+		merged.Homepage = normalizedDefaults.Homepage
+	}
+	merged.Tags = mergeStringLists(merged.Tags, normalizedDefaults.Tags)
+	if len(merged.StandardsMarkdown) == 0 {
+		merged.StandardsMarkdown = normalizedDefaults.StandardsMarkdown
+	}
+	if len(merged.KindPayload) == 0 {
+		merged.KindPayload = normalizedDefaults.KindPayload
+	}
+	merged.CapabilityPolicy = mergeProjectCapabilityPolicy(merged.CapabilityPolicy, normalizedDefaults.CapabilityPolicy)
+
+	return normalizeProjectMetadata(merged)
+}
+
 // Archive archives the requested operation.
 func (p *Project) Archive(now time.Time) {
 	ts := now.UTC()
@@ -160,4 +200,19 @@ func normalizeProjectMetadata(meta ProjectMetadata) (ProjectMetadata, error) {
 	}
 	meta.CapabilityPolicy.OrchestratorOverrideToken = strings.TrimSpace(meta.CapabilityPolicy.OrchestratorOverrideToken)
 	return meta, nil
+}
+
+// mergeProjectCapabilityPolicy applies only monotonic policy defaults.
+func mergeProjectCapabilityPolicy(base, defaults ProjectCapabilityPolicy) ProjectCapabilityPolicy {
+	merged := base
+	if merged.OrchestratorOverrideToken == "" {
+		merged.OrchestratorOverrideToken = defaults.OrchestratorOverrideToken
+	}
+	if defaults.AllowOrchestratorOverride {
+		merged.AllowOrchestratorOverride = true
+	}
+	if defaults.AllowEqualScopeDelegation {
+		merged.AllowEqualScopeDelegation = true
+	}
+	return merged
 }

@@ -62,12 +62,14 @@ type KindTemplateChildSpec struct {
 	MetadataPayload json.RawMessage `json:"metadata_payload,omitempty"`
 }
 
-// KindTemplate stores template-driven system actions for a kind definition.
+// KindTemplate stores template-driven system actions and default metadata for a kind definition.
 type KindTemplate struct {
-	AutoCreateChildren  []KindTemplateChildSpec   `json:"auto_create_children"`
-	CompletionChecklist []ChecklistItem           `json:"completion_checklist"`
-	AgentsFileSections  []KindTemplateFileSection `json:"agents_file_sections"`
-	ClaudeFileSections  []KindTemplateFileSection `json:"claude_file_sections"`
+	AutoCreateChildren      []KindTemplateChildSpec   `json:"auto_create_children"`
+	CompletionChecklist     []ChecklistItem           `json:"completion_checklist"`
+	AgentsFileSections      []KindTemplateFileSection `json:"agents_file_sections"`
+	ClaudeFileSections      []KindTemplateFileSection `json:"claude_file_sections"`
+	ProjectMetadataDefaults *ProjectMetadata          `json:"project_metadata_defaults,omitempty"`
+	TaskMetadataDefaults    *TaskMetadata             `json:"task_metadata_defaults,omitempty"`
 }
 
 // KindDefinition stores one reusable kind definition.
@@ -271,12 +273,30 @@ func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
 
 	agentsSections := normalizeKindTemplateSections(in.AgentsFileSections)
 	claudeSections := normalizeKindTemplateSections(in.ClaudeFileSections)
+	var projectDefaults *ProjectMetadata
+	if in.ProjectMetadataDefaults != nil {
+		normalized, err := normalizeProjectMetadata(*in.ProjectMetadataDefaults)
+		if err != nil {
+			return KindTemplate{}, fmt.Errorf("%w: project metadata defaults: %v", ErrInvalidKindTemplate, err)
+		}
+		projectDefaults = &normalized
+	}
+	var taskDefaults *TaskMetadata
+	if in.TaskMetadataDefaults != nil {
+		normalized, err := normalizeTaskMetadata(*in.TaskMetadataDefaults)
+		if err != nil {
+			return KindTemplate{}, fmt.Errorf("%w: task metadata defaults: %v", ErrInvalidKindTemplate, err)
+		}
+		taskDefaults = &normalized
+	}
 
 	return KindTemplate{
-		AutoCreateChildren:  children,
-		CompletionChecklist: checklist,
-		AgentsFileSections:  agentsSections,
-		ClaudeFileSections:  claudeSections,
+		AutoCreateChildren:      children,
+		CompletionChecklist:     checklist,
+		AgentsFileSections:      agentsSections,
+		ClaudeFileSections:      claudeSections,
+		ProjectMetadataDefaults: projectDefaults,
+		TaskMetadataDefaults:    taskDefaults,
 	}, nil
 }
 
