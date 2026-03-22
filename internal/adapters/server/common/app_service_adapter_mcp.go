@@ -593,6 +593,23 @@ func (a *AppServiceAdapter) ListProjectAllowedKinds(ctx context.Context, project
 	return out, nil
 }
 
+// ListCapabilityLeases lists scoped capability leases.
+func (a *AppServiceAdapter) ListCapabilityLeases(ctx context.Context, in ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error) {
+	if a == nil || a.service == nil {
+		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	leases, err := a.service.ListCapabilityLeases(ctx, app.ListCapabilityLeasesInput{
+		ProjectID:      strings.TrimSpace(in.ProjectID),
+		ScopeType:      domain.CapabilityScopeType(strings.TrimSpace(in.ScopeType)),
+		ScopeID:        strings.TrimSpace(in.ScopeID),
+		IncludeRevoked: in.IncludeRevoked,
+	})
+	if err != nil {
+		return nil, mapAppError("list capability leases", err)
+	}
+	return leases, nil
+}
+
 // IssueCapabilityLease issues one scope-bound capability lease.
 func (a *AppServiceAdapter) IssueCapabilityLease(ctx context.Context, in IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
 	if a == nil || a.service == nil {
@@ -746,6 +763,113 @@ func mapDomainCommentRecord(comment domain.Comment) CommentRecord {
 	}
 }
 
+// CreateHandoff creates one durable handoff record.
+func (a *AppServiceAdapter) CreateHandoff(ctx context.Context, in CreateHandoffRequest) (domain.Handoff, error) {
+	if a == nil || a.service == nil {
+		return domain.Handoff{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	summary := strings.TrimSpace(in.Summary)
+	if summary == "" {
+		return domain.Handoff{}, fmt.Errorf("summary is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
+	if err != nil {
+		return domain.Handoff{}, err
+	}
+	actorID, _ := deriveMutationActorIdentity(in.Actor)
+	handoff, err := a.service.CreateHandoff(ctx, app.CreateHandoffInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: strings.TrimSpace(in.ProjectID),
+			BranchID:  strings.TrimSpace(in.BranchID),
+			ScopeType: domain.ScopeLevel(strings.TrimSpace(in.ScopeType)),
+			ScopeID:   strings.TrimSpace(in.ScopeID),
+		},
+		SourceRole:      strings.TrimSpace(in.SourceRole),
+		TargetBranchID:  strings.TrimSpace(in.TargetBranchID),
+		TargetScopeType: domain.ScopeLevel(strings.TrimSpace(in.TargetScopeType)),
+		TargetScopeID:   strings.TrimSpace(in.TargetScopeID),
+		TargetRole:      strings.TrimSpace(in.TargetRole),
+		Status:          domain.HandoffStatus(strings.TrimSpace(in.Status)),
+		Summary:         summary,
+		NextAction:      strings.TrimSpace(in.NextAction),
+		MissingEvidence: append([]string(nil), in.MissingEvidence...),
+		RelatedRefs:     append([]string(nil), in.RelatedRefs...),
+		CreatedBy:       actorID,
+		CreatedType:     actorType,
+	})
+	if err != nil {
+		return domain.Handoff{}, mapAppError("create handoff", err)
+	}
+	return handoff, nil
+}
+
+// GetHandoff returns one durable handoff by id.
+func (a *AppServiceAdapter) GetHandoff(ctx context.Context, handoffID string) (domain.Handoff, error) {
+	if a == nil || a.service == nil {
+		return domain.Handoff{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	handoff, err := a.service.GetHandoff(ctx, strings.TrimSpace(handoffID))
+	if err != nil {
+		return domain.Handoff{}, mapAppError("get handoff", err)
+	}
+	return handoff, nil
+}
+
+// ListHandoffs lists durable handoffs for one scope tuple.
+func (a *AppServiceAdapter) ListHandoffs(ctx context.Context, in ListHandoffsRequest) ([]domain.Handoff, error) {
+	if a == nil || a.service == nil {
+		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	handoffs, err := a.service.ListHandoffs(ctx, app.ListHandoffsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: strings.TrimSpace(in.ProjectID),
+			BranchID:  strings.TrimSpace(in.BranchID),
+			ScopeType: domain.ScopeLevel(strings.TrimSpace(in.ScopeType)),
+			ScopeID:   strings.TrimSpace(in.ScopeID),
+		},
+		Statuses: toHandoffStatusList(in.Statuses),
+		Limit:    in.Limit,
+	})
+	if err != nil {
+		return nil, mapAppError("list handoffs", err)
+	}
+	return handoffs, nil
+}
+
+// UpdateHandoff updates one durable handoff.
+func (a *AppServiceAdapter) UpdateHandoff(ctx context.Context, in UpdateHandoffRequest) (domain.Handoff, error) {
+	if a == nil || a.service == nil {
+		return domain.Handoff{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
+	if err != nil {
+		return domain.Handoff{}, err
+	}
+	actorID, _ := deriveMutationActorIdentity(in.Actor)
+	handoff, err := a.service.UpdateHandoff(ctx, app.UpdateHandoffInput{
+		HandoffID:       strings.TrimSpace(in.HandoffID),
+		Status:          domain.HandoffStatus(strings.TrimSpace(in.Status)),
+		SourceRole:      strings.TrimSpace(in.SourceRole),
+		TargetBranchID:  strings.TrimSpace(in.TargetBranchID),
+		TargetScopeType: domain.ScopeLevel(strings.TrimSpace(in.TargetScopeType)),
+		TargetScopeID:   strings.TrimSpace(in.TargetScopeID),
+		TargetRole:      strings.TrimSpace(in.TargetRole),
+		Summary:         strings.TrimSpace(in.Summary),
+		NextAction:      strings.TrimSpace(in.NextAction),
+		MissingEvidence: append([]string(nil), in.MissingEvidence...),
+		RelatedRefs:     append([]string(nil), in.RelatedRefs...),
+		UpdatedBy:       actorID,
+		UpdatedType:     actorType,
+		ResolvedBy:      actorID,
+		ResolvedType:    actorType,
+		ResolutionNote:  strings.TrimSpace(in.ResolutionNote),
+	})
+	if err != nil {
+		return domain.Handoff{}, mapAppError("update handoff", err)
+	}
+	return handoff, nil
+}
+
 // commentSummaryFromMarkdown extracts one deterministic summary line from markdown text.
 func commentSummaryFromMarkdown(markdown string) string {
 	lines := strings.Split(strings.TrimSpace(markdown), "\n")
@@ -758,6 +882,19 @@ func commentSummaryFromMarkdown(markdown string) string {
 		}
 	}
 	return ""
+}
+
+// toHandoffStatusList normalizes transport handoff status values.
+func toHandoffStatusList(values []string) []domain.HandoffStatus {
+	out := make([]domain.HandoffStatus, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, domain.HandoffStatus(trimmed))
+	}
+	return out
 }
 
 // buildCommentBodyMarkdown combines summary and optional markdown details into one comment body.

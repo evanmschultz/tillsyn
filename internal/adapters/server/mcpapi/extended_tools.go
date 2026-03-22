@@ -1133,6 +1133,37 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
+			"till.list_capability_leases",
+			mcp.WithDescription("List active or historical capability leases for one project scope."),
+			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+			mcp.WithString("scope_type", mcp.Description("Optional scope level filter"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_id", mcp.Description("Optional scope identifier; defaults to the project id for project scope")),
+			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			projectID, err := req.RequireString("project_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			leasesRows, err := leases.ListCapabilityLeases(ctx, common.ListCapabilityLeasesRequest{
+				ProjectID:      projectID,
+				ScopeType:      req.GetString("scope_type", ""),
+				ScopeID:        req.GetString("scope_id", ""),
+				IncludeRevoked: req.GetBool("include_revoked", false),
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(map[string]any{"leases": leasesRows})
+			if err != nil {
+				return nil, fmt.Errorf("encode list_capability_leases result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
 			"till.issue_capability_lease",
 			mcp.WithDescription("Issue one capability lease."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),

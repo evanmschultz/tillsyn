@@ -21,12 +21,17 @@ type stubExpandedService struct {
 	lastCreateTaskReq        common.CreateTaskRequest
 	lastUpdateTaskReq        common.UpdateTaskRequest
 	lastRestoreTaskReq       common.RestoreTaskRequest
+	lastListLeaseReq         common.ListCapabilityLeasesRequest
 	lastCreateCommentReq     common.CreateCommentRequest
 	lastListCommentReq       common.ListCommentsByTargetRequest
+	lastCreateHandoffReq     common.CreateHandoffRequest
+	lastUpdateHandoffReq     common.UpdateHandoffRequest
+	lastListHandoffsReq      common.ListHandoffsRequest
 	lastSearchTasksReq       common.SearchTasksRequest
 	lastCreateAuthRequestReq common.CreateAuthRequestRequest
 	lastListAuthRequestsReq  common.ListAuthRequestsRequest
 	lastGetAuthRequestID     string
+	lastGetHandoffID         string
 	lastClaimAuthRequestReq  common.ClaimAuthRequestRequest
 }
 
@@ -411,6 +416,22 @@ func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, _ common.I
 	}, nil
 }
 
+// ListCapabilityLeases returns one deterministic lease inventory row.
+func (s *stubExpandedService) ListCapabilityLeases(_ context.Context, in common.ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error) {
+	s.lastListLeaseReq = in
+	lease, _ := s.IssueCapabilityLease(context.Background(), common.IssueCapabilityLeaseRequest{})
+	if in.IncludeRevoked {
+		revokedAt := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
+		revoked := lease
+		revoked.InstanceID = "inst-2"
+		revoked.LeaseToken = "tok-2"
+		revoked.RevokedAt = &revokedAt
+		revoked.RevokedReason = "manual cleanup"
+		return []domain.CapabilityLease{lease, revoked}, nil
+	}
+	return []domain.CapabilityLease{lease}, nil
+}
+
 // HeartbeatCapabilityLease returns one deterministic lease row.
 func (s *stubExpandedService) HeartbeatCapabilityLease(_ context.Context, _ common.HeartbeatCapabilityLeaseRequest) (domain.CapabilityLease, error) {
 	return s.IssueCapabilityLease(context.Background(), common.IssueCapabilityLeaseRequest{})
@@ -469,6 +490,95 @@ func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, in common.
 		BodyMarkdown: "Thread summary\n\nDetails",
 	})
 	return []common.CommentRecord{comment}, nil
+}
+
+// CreateHandoff returns one deterministic handoff row.
+func (s *stubExpandedService) CreateHandoff(_ context.Context, in common.CreateHandoffRequest) (domain.Handoff, error) {
+	s.lastCreateHandoffReq = in
+	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	return domain.Handoff{
+		ID:              "handoff-1",
+		ProjectID:       strings.TrimSpace(in.ProjectID),
+		BranchID:        strings.TrimSpace(in.BranchID),
+		ScopeType:       domain.ScopeLevelTask,
+		ScopeID:         firstNonEmptyString(strings.TrimSpace(in.ScopeID), "task-1"),
+		SourceRole:      strings.TrimSpace(in.SourceRole),
+		TargetBranchID:  strings.TrimSpace(in.TargetBranchID),
+		TargetScopeType: domain.ScopeLevelTask,
+		TargetScopeID:   firstNonEmptyString(strings.TrimSpace(in.TargetScopeID), "task-qa-1"),
+		TargetRole:      strings.TrimSpace(in.TargetRole),
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         strings.TrimSpace(in.Summary),
+		NextAction:      strings.TrimSpace(in.NextAction),
+		MissingEvidence: append([]string(nil), in.MissingEvidence...),
+		RelatedRefs:     append([]string(nil), in.RelatedRefs...),
+		CreatedByActor:  "agent-session-1",
+		CreatedByType:   domain.ActorTypeAgent,
+		CreatedAt:       now,
+		UpdatedByActor:  "agent-session-1",
+		UpdatedByType:   domain.ActorTypeAgent,
+		UpdatedAt:       now,
+	}, nil
+}
+
+// GetHandoff returns one deterministic handoff row by id.
+func (s *stubExpandedService) GetHandoff(_ context.Context, handoffID string) (domain.Handoff, error) {
+	s.lastGetHandoffID = handoffID
+	return s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
+		ProjectID: "p1",
+		BranchID:  "branch-1",
+		ScopeType: "task",
+		ScopeID:   "task-1",
+		Summary:   strings.TrimSpace(handoffID),
+	})
+}
+
+// ListHandoffs returns one deterministic handoff inventory row.
+func (s *stubExpandedService) ListHandoffs(_ context.Context, in common.ListHandoffsRequest) ([]domain.Handoff, error) {
+	s.lastListHandoffsReq = in
+	handoff, _ := s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
+		ProjectID:       strings.TrimSpace(in.ProjectID),
+		BranchID:        strings.TrimSpace(in.BranchID),
+		ScopeType:       strings.TrimSpace(in.ScopeType),
+		ScopeID:         strings.TrimSpace(in.ScopeID),
+		SourceRole:      "builder",
+		TargetBranchID:  "branch-1",
+		TargetScopeType: "task",
+		TargetScopeID:   "task-qa-1",
+		TargetRole:      "qa",
+		Summary:         "handoff summary",
+		NextAction:      "run qa",
+	})
+	if len(in.Statuses) > 0 {
+		handoff.Status = domain.HandoffStatus(strings.TrimSpace(in.Statuses[0]))
+	}
+	return []domain.Handoff{handoff}, nil
+}
+
+// UpdateHandoff returns one deterministic updated handoff row.
+func (s *stubExpandedService) UpdateHandoff(_ context.Context, in common.UpdateHandoffRequest) (domain.Handoff, error) {
+	s.lastUpdateHandoffReq = in
+	handoff, _ := s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
+		ProjectID:       "p1",
+		BranchID:        "branch-1",
+		ScopeType:       "task",
+		ScopeID:         "task-1",
+		SourceRole:      in.SourceRole,
+		TargetBranchID:  in.TargetBranchID,
+		TargetScopeType: in.TargetScopeType,
+		TargetScopeID:   in.TargetScopeID,
+		TargetRole:      in.TargetRole,
+		Summary:         in.Summary,
+		NextAction:      in.NextAction,
+		MissingEvidence: in.MissingEvidence,
+		RelatedRefs:     in.RelatedRefs,
+	})
+	handoff.ID = strings.TrimSpace(in.HandoffID)
+	if trimmed := strings.TrimSpace(in.Status); trimmed != "" {
+		handoff.Status = domain.HandoffStatus(trimmed)
+	}
+	handoff.ResolutionNote = strings.TrimSpace(in.ResolutionNote)
+	return handoff, nil
 }
 
 // findToolSchemaByName returns one tool schema map from tools/list payload rows.
@@ -619,6 +729,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
 		"till.list_project_allowed_kinds",
+		"till.list_capability_leases",
 		"till.issue_capability_lease",
 		"till.heartbeat_capability_lease",
 		"till.renew_capability_lease",
@@ -626,6 +737,10 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.revoke_all_capability_leases",
 		"till.create_comment",
 		"till.list_comments_by_target",
+		"till.create_handoff",
+		"till.get_handoff",
+		"till.list_handoffs",
+		"till.update_handoff",
 	}
 	for _, toolName := range requiredTools {
 		found := false
@@ -716,6 +831,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.upsert_kind_definition", args: mergeArgs(validSessionArgs(), map[string]any{"id": "phase", "applies_to": []any{"phase"}})},
 		{name: "till.set_project_allowed_kinds", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}})},
 		{name: "till.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
+		{name: "till.list_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project", "include_revoked": true}},
 		{name: "till.issue_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
 		{name: "till.heartbeat_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"})},
 		{name: "till.renew_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
@@ -731,6 +847,42 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
+		{name: "till.create_handoff", args: mergeArgs(validSessionArgs(), map[string]any{
+			"project_id":        "p1",
+			"branch_id":         "branch-1",
+			"scope_type":        "task",
+			"scope_id":          "task-1",
+			"source_role":       "builder",
+			"target_branch_id":  "branch-1",
+			"target_scope_type": "task",
+			"target_scope_id":   "task-qa-1",
+			"target_role":       "qa",
+			"status":            "waiting",
+			"summary":           "handoff summary",
+			"next_action":       "run qa",
+			"missing_evidence":  []any{"qa note"},
+			"related_refs":      []any{"comment:c1"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})},
+		{name: "till.get_handoff", args: map[string]any{"handoff_id": "handoff-1"}},
+		{name: "till.list_handoffs", args: map[string]any{"project_id": "p1", "branch_id": "branch-1", "scope_type": "task", "scope_id": "task-1", "statuses": []any{"waiting"}, "limit": 10}},
+		{name: "till.update_handoff", args: mergeArgs(validSessionArgs(), map[string]any{
+			"handoff_id":        "handoff-1",
+			"status":            "resolved",
+			"source_role":       "builder",
+			"target_branch_id":  "branch-1",
+			"target_scope_type": "task",
+			"target_scope_id":   "task-qa-1",
+			"target_role":       "qa",
+			"summary":           "handoff summary",
+			"next_action":       "none",
+			"missing_evidence":  []any{},
+			"related_refs":      []any{"comment:c1"},
+			"resolution_note":   "qa passed",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})},
 	}
 	for idx, tc := range calls {
 		resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(100+idx, tc.name, tc.args))
@@ -1046,6 +1198,85 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	}
 }
 
+// TestHandlerExpandedRecoveryToolsForwardScopeFilters verifies lease/handoff discovery tools forward scope and status filters.
+func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, leaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(620, "till.list_capability_leases", map[string]any{
+		"project_id":      "p1",
+		"scope_type":      "task",
+		"scope_id":        "task-1",
+		"include_revoked": true,
+	}))
+	if isError, _ := leaseResp.Result["isError"].(bool); isError {
+		t.Fatalf("list_capability_leases returned isError=true: %#v", leaseResp.Result)
+	}
+	if got := service.lastListLeaseReq.ProjectID; got != "p1" {
+		t.Fatalf("list_capability_leases project_id = %q, want p1", got)
+	}
+	if got := service.lastListLeaseReq.ScopeType; got != "task" {
+		t.Fatalf("list_capability_leases scope_type = %q, want task", got)
+	}
+	if got := service.lastListLeaseReq.ScopeID; got != "task-1" {
+		t.Fatalf("list_capability_leases scope_id = %q, want task-1", got)
+	}
+	if !service.lastListLeaseReq.IncludeRevoked {
+		t.Fatal("list_capability_leases include_revoked = false, want true")
+	}
+
+	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(621, "till.get_handoff", map[string]any{
+		"handoff_id": "handoff-1",
+	}))
+	if isError, _ := getResp.Result["isError"].(bool); isError {
+		t.Fatalf("get_handoff returned isError=true: %#v", getResp.Result)
+	}
+	if got := service.lastGetHandoffID; got != "handoff-1" {
+		t.Fatalf("get_handoff handoff_id = %q, want handoff-1", got)
+	}
+
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(622, "till.list_handoffs", map[string]any{
+		"project_id": "p1",
+		"branch_id":  "branch-1",
+		"scope_type": "task",
+		"scope_id":   "task-1",
+		"statuses":   []any{"waiting", "blocked"},
+		"limit":      25,
+	}))
+	if isError, _ := listResp.Result["isError"].(bool); isError {
+		t.Fatalf("list_handoffs returned isError=true: %#v", listResp.Result)
+	}
+	if got := service.lastListHandoffsReq.ProjectID; got != "p1" {
+		t.Fatalf("list_handoffs project_id = %q, want p1", got)
+	}
+	if got := service.lastListHandoffsReq.BranchID; got != "branch-1" {
+		t.Fatalf("list_handoffs branch_id = %q, want branch-1", got)
+	}
+	if got := service.lastListHandoffsReq.ScopeType; got != "task" {
+		t.Fatalf("list_handoffs scope_type = %q, want task", got)
+	}
+	if got := service.lastListHandoffsReq.ScopeID; got != "task-1" {
+		t.Fatalf("list_handoffs scope_id = %q, want task-1", got)
+	}
+	if got := service.lastListHandoffsReq.Statuses; !slices.Equal(got, []string{"waiting", "blocked"}) {
+		t.Fatalf("list_handoffs statuses = %#v, want [waiting blocked]", got)
+	}
+	if got := service.lastListHandoffsReq.Limit; got != 25 {
+		t.Fatalf("list_handoffs limit = %d, want 25", got)
+	}
+}
+
 // TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession verifies mutation identity comes from auth, not caller-supplied actor fields.
 func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.T) {
 	service := &stubExpandedService{
@@ -1135,6 +1366,61 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	}
 	if got := service.lastCreateCommentReq.Summary; got != "Thread summary" {
 		t.Fatalf("create_comment summary = %q, want Thread summary", got)
+	}
+
+	_, createHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3012, "till.create_handoff", mergeArgs(validSessionArgs(), map[string]any{
+		"project_id":        "p1",
+		"branch_id":         "branch-1",
+		"scope_type":        "task",
+		"scope_id":          "task-1",
+		"source_role":       "builder",
+		"target_branch_id":  "branch-1",
+		"target_scope_type": "task",
+		"target_scope_id":   "task-qa-1",
+		"target_role":       "qa",
+		"summary":           "handoff summary",
+		"next_action":       "run qa",
+		"agent_instance_id": "inst-handoff",
+		"lease_token":       "lease-handoff",
+	})))
+	if isError, _ := createHandoffResp.Result["isError"].(bool); isError {
+		t.Fatalf("create_handoff returned isError=true: %#v", createHandoffResp.Result)
+	}
+	if got := service.lastCreateHandoffReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("create_handoff actor_type = %q, want agent", got)
+	}
+	if got := service.lastCreateHandoffReq.Actor.ActorID; got != "agent-session-1" {
+		t.Fatalf("create_handoff actor_id = %q, want agent-session-1", got)
+	}
+	if got := service.lastCreateHandoffReq.Actor.ActorName; got != "Agent Session One" {
+		t.Fatalf("create_handoff actor_name = %q, want Agent Session One", got)
+	}
+
+	_, updateHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3013, "till.update_handoff", mergeArgs(validSessionArgs(), map[string]any{
+		"handoff_id":        "handoff-1",
+		"status":            "resolved",
+		"source_role":       "builder",
+		"target_branch_id":  "branch-1",
+		"target_scope_type": "task",
+		"target_scope_id":   "task-qa-1",
+		"target_role":       "qa",
+		"summary":           "handoff summary",
+		"next_action":       "none",
+		"resolution_note":   "qa passed",
+		"agent_instance_id": "inst-handoff",
+		"lease_token":       "lease-handoff",
+	})))
+	if isError, _ := updateHandoffResp.Result["isError"].(bool); isError {
+		t.Fatalf("update_handoff returned isError=true: %#v", updateHandoffResp.Result)
+	}
+	if got := service.lastUpdateHandoffReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("update_handoff actor_type = %q, want agent", got)
+	}
+	if got := service.lastUpdateHandoffReq.Actor.ActorID; got != "agent-session-1" {
+		t.Fatalf("update_handoff actor_id = %q, want agent-session-1", got)
+	}
+	if got := service.lastUpdateHandoffReq.Actor.ActorName; got != "Agent Session One" {
+		t.Fatalf("update_handoff actor_name = %q, want Agent Session One", got)
 	}
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", mergeArgs(validSessionArgs(), map[string]any{

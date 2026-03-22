@@ -56,6 +56,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention))
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
+	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention))
 	return mcpSrv, cfg, nil
 }
 
@@ -728,6 +729,17 @@ func pickCommentService(captureState common.CaptureStateReader, attention common
 		return svc
 	}
 	if svc, ok := attention.(common.CommentService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickHandoffService resolves one handoff-service provider from available services.
+func pickHandoffService(captureState common.CaptureStateReader, attention common.AttentionService) common.HandoffService {
+	if svc, ok := captureState.(common.HandoffService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.HandoffService); ok {
 		return svc
 	}
 	return nil

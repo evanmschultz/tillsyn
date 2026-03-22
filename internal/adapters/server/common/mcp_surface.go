@@ -193,6 +193,14 @@ type RevokeAllCapabilityLeasesRequest struct {
 	Reason    string
 }
 
+// ListCapabilityLeasesRequest stores transport input for scoped lease inventory.
+type ListCapabilityLeasesRequest struct {
+	ProjectID      string
+	ScopeType      string
+	ScopeID        string
+	IncludeRevoked bool
+}
+
 // CreateCommentRequest stores transport input for comment creation.
 type CreateCommentRequest struct {
 	ProjectID    string
@@ -201,6 +209,52 @@ type CreateCommentRequest struct {
 	Summary      string
 	BodyMarkdown string
 	Actor        ActorLeaseTuple
+}
+
+// CreateHandoffRequest stores transport input for durable handoff creation.
+type CreateHandoffRequest struct {
+	ProjectID       string
+	BranchID        string
+	ScopeType       string
+	ScopeID         string
+	SourceRole      string
+	TargetBranchID  string
+	TargetScopeType string
+	TargetScopeID   string
+	TargetRole      string
+	Status          string
+	Summary         string
+	NextAction      string
+	MissingEvidence []string
+	RelatedRefs     []string
+	Actor           ActorLeaseTuple
+}
+
+// UpdateHandoffRequest stores transport input for durable handoff updates.
+type UpdateHandoffRequest struct {
+	HandoffID       string
+	Status          string
+	SourceRole      string
+	TargetBranchID  string
+	TargetScopeType string
+	TargetScopeID   string
+	TargetRole      string
+	Summary         string
+	NextAction      string
+	MissingEvidence []string
+	RelatedRefs     []string
+	ResolutionNote  string
+	Actor           ActorLeaseTuple
+}
+
+// ListHandoffsRequest stores transport input for scoped handoff inventory.
+type ListHandoffsRequest struct {
+	ProjectID string
+	BranchID  string
+	ScopeType string
+	ScopeID   string
+	Statuses  []string
+	Limit     int
 }
 
 // CreateAuthRequestRequest stores transport input for pre-session auth request creation.
@@ -346,6 +400,7 @@ type KindCatalogService interface {
 
 // CapabilityLeaseService exposes lease issuance and lifecycle operations.
 type CapabilityLeaseService interface {
+	ListCapabilityLeases(context.Context, ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error)
 	IssueCapabilityLease(context.Context, IssueCapabilityLeaseRequest) (domain.CapabilityLease, error)
 	HeartbeatCapabilityLease(context.Context, HeartbeatCapabilityLeaseRequest) (domain.CapabilityLease, error)
 	RenewCapabilityLease(context.Context, RenewCapabilityLeaseRequest) (domain.CapabilityLease, error)
@@ -357,6 +412,14 @@ type CapabilityLeaseService interface {
 type CommentService interface {
 	CreateComment(context.Context, CreateCommentRequest) (CommentRecord, error)
 	ListCommentsByTarget(context.Context, ListCommentsByTargetRequest) ([]CommentRecord, error)
+}
+
+// HandoffService exposes durable handoff create/read/update/list operations.
+type HandoffService interface {
+	CreateHandoff(context.Context, CreateHandoffRequest) (domain.Handoff, error)
+	GetHandoff(context.Context, string) (domain.Handoff, error)
+	ListHandoffs(context.Context, ListHandoffsRequest) ([]domain.Handoff, error)
+	UpdateHandoff(context.Context, UpdateHandoffRequest) (domain.Handoff, error)
 }
 
 // AuthRequestService exposes pre-session auth request creation and inventory operations.

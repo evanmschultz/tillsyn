@@ -1269,6 +1269,77 @@ Current next action lock:
 
 ## 8) Lightweight Execution Log
 
+### 2026-03-22: P5 Slice 4 TUI And CLI Product Surfaces
+
+Objective:
+- expose the new template/policy/handoff/recovery capability through logical, reusable TUI and full-capability CLI surfaces.
+- land the shared recovery/governance seam first so CLI, MCP, and TUI all sit on the same truthful coordination state instead of inventing parallel one-off views.
+
+Planned focus for this slice:
+1. add the missing scope-local capability-lease inventory seam in app/common transport.
+2. add first-class handoff transport surfaces for MCP and CLI.
+3. add CLI governance/recovery commands for capture state, kind/allowlist policy, leases, and handoffs.
+4. add one reusable TUI coordination screen for waiting/handoffs/lease visibility using the current shared full-page surface pattern.
+5. validate package scopes first, then repo gates after integration.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS; confirmed clean workspace at Slice 3 checkpoint.
+2. `sed -n '1270,1365p' PLAN.md` -> PASS; confirmed Slice 3 completed clean and Slice 4 is the next active wave.
+3. `sed -n '466,520p' TEMPLATE_AGENT_CONSENSUS.md` -> PASS; reconfirmed Slice 4 goals/focus.
+4. `mcp__context7_mcp__resolve_library_id(mcp-go)` -> PASS.
+5. `mcp__context7_mcp__resolve_library_id(cobra)` -> PASS.
+6. `mcp__context7_mcp__resolve_library_id(bubbletea)` -> PASS.
+7. `mcp__context7_mcp__query_docs(/mark3labs/mcp-go, tool registration and handler structure)` -> PASS.
+8. `mcp__context7_mcp__query_docs(/websites/pkg_go_dev_github_com_spf13_cobra, nested command/help/flag structure)` -> PASS.
+9. `mcp__context7_mcp__query_docs(/charmbracelet/bubbletea, reusable full-screen surfaces and mode routing)` -> PASS.
+10. targeted `rg`/`sed` inspection across:
+    - `internal/adapters/server/common/**`
+    - `internal/adapters/server/mcpapi/**`
+    - `cmd/till/main.go`
+    - `cmd/till/main_test.go`
+    - `internal/tui/model.go`
+    - `internal/tui/model_test.go`
+    -> PASS; identified exact transport/CLI/TUI seams for Slice 4.
+11. parallel worker lanes launched:
+    - `B1` CLI governance/recovery surfaces (`cmd/till/main.go`, `cmd/till/main_test.go`)
+    - `B2` reusable TUI coordination surface (`internal/tui/model.go`, `internal/tui/model_test.go`, `internal/tui/full_page_surface.go`)
+    -> PASS; non-overlapping ownership with `PLAN.md` reserved for orchestrator updates only.
+12. local MCP transport integration:
+    - added `till.list_capability_leases`
+    - added first-class handoff MCP tooling (`till.create_handoff`, `till.get_handoff`, `till.list_handoffs`, `till.update_handoff`)
+    - extended MCP pickers/registration and success/forwarding tests
+    -> PASS.
+13. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+14. `just test-pkg ./internal/app` -> PASS.
+15. `just test-pkg ./internal/adapters/server/common` -> PASS.
+16. builder lane `B1` completed as `90bb7d4 feat(cli): add governance and recovery command surface` with:
+    - `just test-pkg ./cmd/till` -> PASS
+    - `just check` -> PASS
+    - `just ci` -> PASS
+17. builder lane `B2` completed as `2da9427 feat(tui): add coordination recovery surface` with:
+    - `just test-pkg ./internal/tui` -> PASS
+18. orchestrator review on builder commits -> PASS; no blocking regressions found in local review of CLI/TUI wiring and tests.
+19. QA lane note:
+    - attempted the requested two-QA-per-builder review pattern
+    - multiple QA subagents failed due host file-descriptor exhaustion / upstream stream disconnects before producing useful findings
+    - fallback was orchestrator local review plus repo gates on the combined workspace
+    -> PASS with residual process risk only; no product defects identified from the failed QA attempts themselves.
+20. combined workspace gates after integrating local MCP/app/common transport work:
+    - `just check` -> PASS
+    - `just ci` -> PASS
+
+Current status:
+1. Slice 4 scope is active and implementation is starting from a clean `ec580ab` Slice 3 checkpoint.
+2. Shared design direction is locked:
+   - add app/common lease inventory and handoff transport first,
+   - wire CLI governance/recovery commands on top,
+   - then add one reusable TUI coordination surface using existing full-page/auth-inventory patterns.
+3. Local MCP/app/common transport work is implemented and green alongside the committed CLI/TUI slices.
+4. Slice 4 is ready for one transport commit and then user manual validation of:
+   - CLI governance/recovery commands
+   - TUI coordination surface
+   - MCP handoff + lease inventory surfaces in a real dogfood loop
+
 ### 2026-03-21: P5 Slice 3 Template Application Beyond Today's Task-Centric Path
 
 Objective:
