@@ -103,6 +103,134 @@ type mcpCommandOptions struct{}
 // authCommandOptions stores auth subcommand option values.
 type authCommandOptions struct{}
 
+// captureStateCommandOptions stores capture-state flag values.
+type captureStateCommandOptions struct {
+	projectID string
+	scopeType string
+	scopeID   string
+	view      string
+}
+
+// kindListCommandOptions stores kind list flag values.
+type kindListCommandOptions struct {
+	includeArchived bool
+}
+
+// kindUpsertCommandOptions stores kind upsert flag values.
+type kindUpsertCommandOptions struct {
+	id                  string
+	displayName         string
+	descriptionMarkdown string
+	appliesTo           []string
+	allowedParentScopes []string
+	payloadSchemaJSON   string
+	templateJSON        string
+}
+
+// kindAllowlistCommandOptions stores project allowlist flag values.
+type kindAllowlistCommandOptions struct {
+	projectID string
+	kindIDs   []string
+}
+
+// leaseListCommandOptions stores capability lease list flag values.
+type leaseListCommandOptions struct {
+	projectID      string
+	scopeType      string
+	scopeID        string
+	includeRevoked bool
+}
+
+// leaseIssueCommandOptions stores capability lease issue flag values.
+type leaseIssueCommandOptions struct {
+	projectID                 string
+	scopeType                 string
+	scopeID                   string
+	role                      string
+	agentName                 string
+	agentInstanceID           string
+	parentInstanceID          string
+	allowEqualScopeDelegation bool
+	requestedTTL              time.Duration
+	overrideToken             string
+}
+
+// leaseHeartbeatCommandOptions stores capability lease heartbeat flag values.
+type leaseHeartbeatCommandOptions struct {
+	agentInstanceID string
+	leaseToken      string
+}
+
+// leaseRenewCommandOptions stores capability lease renewal flag values.
+type leaseRenewCommandOptions struct {
+	agentInstanceID string
+	leaseToken      string
+	ttl             time.Duration
+}
+
+// leaseRevokeCommandOptions stores capability lease revoke flag values.
+type leaseRevokeCommandOptions struct {
+	agentInstanceID string
+	reason          string
+}
+
+// leaseRevokeAllCommandOptions stores capability lease revoke-all flag values.
+type leaseRevokeAllCommandOptions struct {
+	projectID string
+	scopeType string
+	scopeID   string
+	reason    string
+}
+
+// handoffCreateCommandOptions stores handoff creation flag values.
+type handoffCreateCommandOptions struct {
+	projectID       string
+	branchID        string
+	scopeType       string
+	scopeID         string
+	sourceRole      string
+	targetBranchID  string
+	targetScopeType string
+	targetScopeID   string
+	targetRole      string
+	status          string
+	summary         string
+	nextAction      string
+	missingEvidence []string
+	relatedRefs     []string
+}
+
+// handoffGetCommandOptions stores handoff lookup flag values.
+type handoffGetCommandOptions struct {
+	handoffID string
+}
+
+// handoffListCommandOptions stores handoff list flag values.
+type handoffListCommandOptions struct {
+	projectID string
+	branchID  string
+	scopeType string
+	scopeID   string
+	statuses  []string
+	limit     int
+}
+
+// handoffUpdateCommandOptions stores handoff update flag values.
+type handoffUpdateCommandOptions struct {
+	handoffID       string
+	status          string
+	sourceRole      string
+	targetBranchID  string
+	targetScopeType string
+	targetScopeID   string
+	targetRole      string
+	summary         string
+	nextAction      string
+	missingEvidence []string
+	relatedRefs     []string
+	resolutionNote  string
+}
+
 // issueSessionCommandOptions stores issue-session flag values.
 type issueSessionCommandOptions struct {
 	principalID   string
@@ -238,6 +366,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		includeArchived: true,
 	}
 	importOpts := importCommandOptions{}
+	captureStateOpts := captureStateCommandOptions{view: string(app.CaptureStateViewSummary)}
+	kindListOpts := kindListCommandOptions{}
+	kindUpsertOpts := kindUpsertCommandOptions{}
+	kindAllowlistOpts := kindAllowlistCommandOptions{}
+	leaseListOpts := leaseListCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
+	leaseIssueOpts := leaseIssueCommandOptions{scopeType: string(domain.CapabilityScopeProject), role: string(domain.CapabilityRoleBuilder), requestedTTL: 8 * time.Hour}
+	leaseHeartbeatOpts := leaseHeartbeatCommandOptions{}
+	leaseRenewOpts := leaseRenewCommandOptions{}
+	leaseRevokeOpts := leaseRevokeCommandOptions{}
+	leaseRevokeAllOpts := leaseRevokeAllCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
+	handoffCreateOpts := handoffCreateCommandOptions{scopeType: string(domain.ScopeLevelProject)}
+	handoffGetOpts := handoffGetCommandOptions{}
+	handoffListOpts := handoffListCommandOptions{scopeType: string(domain.ScopeLevelProject), limit: 50}
+	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	rootCmd := &cobra.Command{
 		Use:           "till",
@@ -245,7 +387,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	rootCmd.SetOut(stdout)
@@ -263,7 +405,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Start HTTP API and streamable HTTP MCP endpoints",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	serveCmd.Flags().StringVar(&serveOpts.httpBind, "http", serveOpts.httpBind, "HTTP listen address")
@@ -275,7 +417,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Short: "Start raw MCP over stdio for local integrations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "mcp", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 
@@ -310,6 +452,272 @@ Only orchestrators may request projects/... or global scope.
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
+
+	captureStateCmd := &cobra.Command{
+		Use:   "capture-state",
+		Short: "Capture one summary-first recovery snapshot",
+		Long: strings.TrimSpace(`
+Capture a deterministic, summary-first recovery snapshot for one project or
+scope. The result is the same capture_state bundle exposed through MCP and HTTP.
+
+Next step: inspect the returned JSON for the scope path, state hash, work
+overview, attention overview, and follow-up pointers.
+`),
+		Example: strings.Join([]string{
+			"  till capture-state --project-id p1",
+			"  till capture-state --project-id p1 --scope-type branch --scope-id branch-1 --view full",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "capture-state", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	captureStateCmd.Flags().StringVar(&captureStateOpts.projectID, "project-id", "", "Project identifier")
+	captureStateCmd.Flags().StringVar(&captureStateOpts.scopeType, "scope-type", captureStateOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	captureStateCmd.Flags().StringVar(&captureStateOpts.scopeID, "scope-id", "", "Optional scope identifier")
+	captureStateCmd.Flags().StringVar(&captureStateOpts.view, "view", captureStateOpts.view, "Capture state view (summary|full)")
+	mustMarkFlagRequired(captureStateCmd, "project-id")
+
+	kindCmd := &cobra.Command{
+		Use:   "kind",
+		Short: "Inspect and update kind templates and allowlists",
+		Long: strings.TrimSpace(`
+Inspect kind definitions and project allowlists, or upsert kind templates and
+default metadata for project, branch, phase, task, and subtask types.
+`),
+		Args: cobra.NoArgs,
+	}
+	kindListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List kind definitions",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "kind.list", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	kindListCmd.Flags().BoolVar(&kindListOpts.includeArchived, "include-archived", false, "Include archived kind definitions")
+	kindUpsertCmd := &cobra.Command{
+		Use:   "upsert",
+		Short: "Create or update one kind definition",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "kind.upsert", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.id, "id", "", "Kind identifier")
+	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.displayName, "display-name", "", "Display name")
+	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.descriptionMarkdown, "description-markdown", "", "Description markdown")
+	kindUpsertCmd.Flags().StringSliceVar(&kindUpsertOpts.appliesTo, "applies-to", nil, "Allowed applies-to values")
+	kindUpsertCmd.Flags().StringSliceVar(&kindUpsertOpts.allowedParentScopes, "allowed-parent-scopes", nil, "Allowed parent scopes")
+	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.payloadSchemaJSON, "payload-schema-json", "", "Optional payload schema JSON")
+	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.templateJSON, "template-json", "", "Optional kind template JSON")
+	mustMarkFlagRequired(kindUpsertCmd, "id")
+	mustMarkFlagRequired(kindUpsertCmd, "display-name")
+	mustMarkFlagRequired(kindUpsertCmd, "applies-to")
+	kindAllowlistCmd := &cobra.Command{
+		Use:   "allowlist",
+		Short: "Inspect and update a project's explicit kind allowlist",
+		Args:  cobra.NoArgs,
+	}
+	kindAllowlistListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List one project's allowed kind ids",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "kind.allowlist.list", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	kindAllowlistListCmd.Flags().StringVar(&kindAllowlistOpts.projectID, "project-id", "", "Project identifier")
+	mustMarkFlagRequired(kindAllowlistListCmd, "project-id")
+	kindAllowlistSetCmd := &cobra.Command{
+		Use:   "set",
+		Short: "Replace one project's allowed kind ids",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "kind.allowlist.set", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	kindAllowlistSetCmd.Flags().StringVar(&kindAllowlistOpts.projectID, "project-id", "", "Project identifier")
+	kindAllowlistSetCmd.Flags().StringSliceVar(&kindAllowlistOpts.kindIDs, "kind-id", nil, "Allowed kind identifier")
+	mustMarkFlagRequired(kindAllowlistSetCmd, "project-id")
+	mustMarkFlagRequired(kindAllowlistSetCmd, "kind-id")
+	kindAllowlistCmd.AddCommand(kindAllowlistListCmd, kindAllowlistSetCmd)
+	kindCmd.AddCommand(kindListCmd, kindUpsertCmd, kindAllowlistCmd)
+
+	leaseCmd := &cobra.Command{
+		Use:   "lease",
+		Short: "Inspect and manage capability leases",
+		Long: strings.TrimSpace(`
+Inspect scoped capability leases, issue new ones, and rotate or revoke them.
+This is the CLI surface for orchestrator and agent recovery state.
+`),
+		Args: cobra.NoArgs,
+	}
+	leaseListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List capability leases for one project scope",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "lease.list", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	leaseListCmd.Flags().StringVar(&leaseListOpts.projectID, "project-id", "", "Project identifier")
+	leaseListCmd.Flags().StringVar(&leaseListOpts.scopeType, "scope-type", leaseListOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	leaseListCmd.Flags().StringVar(&leaseListOpts.scopeID, "scope-id", "", "Optional scope identifier")
+	leaseListCmd.Flags().BoolVar(&leaseListOpts.includeRevoked, "include-revoked", false, "Include revoked leases")
+	mustMarkFlagRequired(leaseListCmd, "project-id")
+	leaseIssueCmd := &cobra.Command{
+		Use:   "issue",
+		Short: "Issue one capability lease",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "lease.issue", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.projectID, "project-id", "", "Project identifier")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.scopeType, "scope-type", leaseIssueOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.scopeID, "scope-id", "", "Optional scope identifier")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.role, "role", leaseIssueOpts.role, "Lease role (orchestrator|builder|qa)")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.agentName, "agent-name", "", "Agent display name")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.agentInstanceID, "agent-instance-id", "", "Optional agent instance identifier")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.parentInstanceID, "parent-instance-id", "", "Optional parent lease instance identifier")
+	leaseIssueCmd.Flags().BoolVar(&leaseIssueOpts.allowEqualScopeDelegation, "allow-equal-scope-delegation", false, "Allow equal-scope delegation")
+	leaseIssueCmd.Flags().DurationVar(&leaseIssueOpts.requestedTTL, "requested-ttl", leaseIssueOpts.requestedTTL, "Requested lease TTL")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.overrideToken, "override-token", "", "Optional override token")
+	mustMarkFlagRequired(leaseIssueCmd, "project-id")
+	mustMarkFlagRequired(leaseIssueCmd, "agent-name")
+	leaseHeartbeatCmd := &cobra.Command{
+		Use:   "heartbeat",
+		Short: "Refresh one capability lease heartbeat",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "lease.heartbeat", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	leaseHeartbeatCmd.Flags().StringVar(&leaseHeartbeatOpts.agentInstanceID, "agent-instance-id", "", "Agent instance identifier")
+	leaseHeartbeatCmd.Flags().StringVar(&leaseHeartbeatOpts.leaseToken, "lease-token", "", "Lease token")
+	mustMarkFlagRequired(leaseHeartbeatCmd, "agent-instance-id")
+	mustMarkFlagRequired(leaseHeartbeatCmd, "lease-token")
+	leaseRenewCmd := &cobra.Command{
+		Use:   "renew",
+		Short: "Renew one capability lease",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "lease.renew", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	leaseRenewCmd.Flags().StringVar(&leaseRenewOpts.agentInstanceID, "agent-instance-id", "", "Agent instance identifier")
+	leaseRenewCmd.Flags().StringVar(&leaseRenewOpts.leaseToken, "lease-token", "", "Lease token")
+	leaseRenewCmd.Flags().DurationVar(&leaseRenewOpts.ttl, "ttl", 0, "Renewal TTL")
+	mustMarkFlagRequired(leaseRenewCmd, "agent-instance-id")
+	mustMarkFlagRequired(leaseRenewCmd, "lease-token")
+	leaseRevokeCmd := &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke one capability lease",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "lease.revoke", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	leaseRevokeCmd.Flags().StringVar(&leaseRevokeOpts.agentInstanceID, "agent-instance-id", "", "Agent instance identifier")
+	leaseRevokeCmd.Flags().StringVar(&leaseRevokeOpts.reason, "reason", "", "Revocation reason")
+	mustMarkFlagRequired(leaseRevokeCmd, "agent-instance-id")
+	leaseRevokeAllCmd := &cobra.Command{
+		Use:   "revoke-all",
+		Short: "Revoke every lease in one project scope",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "lease.revoke-all", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.projectID, "project-id", "", "Project identifier")
+	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.scopeType, "scope-type", leaseRevokeAllOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.scopeID, "scope-id", "", "Optional scope identifier")
+	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.reason, "reason", "", "Revocation reason")
+	mustMarkFlagRequired(leaseRevokeAllCmd, "project-id")
+	leaseCmd.AddCommand(leaseListCmd, leaseIssueCmd, leaseHeartbeatCmd, leaseRenewCmd, leaseRevokeCmd, leaseRevokeAllCmd)
+
+	handoffCmd := &cobra.Command{
+		Use:   "handoff",
+		Short: "Inspect and manage durable agent handoffs",
+		Long: strings.TrimSpace(`
+Inspect and manage durable, structured handoffs that keep humans and agents
+aligned across planning, execution, and recovery.
+`),
+		Args: cobra.NoArgs,
+	}
+	handoffCreateCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create one durable handoff",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "handoff.create", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.projectID, "project-id", "", "Project identifier")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.branchID, "branch-id", "", "Optional branch identifier")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.scopeType, "scope-type", handoffCreateOpts.scopeType, "Source scope type (project|branch|phase|task|subtask)")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.scopeID, "scope-id", "", "Optional source scope identifier")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.sourceRole, "source-role", "", "Optional source role")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.targetBranchID, "target-branch-id", "", "Optional target branch identifier")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.targetScopeType, "target-scope-type", "", "Optional target scope type")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.targetScopeID, "target-scope-id", "", "Optional target scope identifier")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.targetRole, "target-role", "", "Optional target role")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.status, "status", "", "Optional handoff status")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.summary, "summary", "", "Handoff summary")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.nextAction, "next-action", "", "Optional next action")
+	handoffCreateCmd.Flags().StringSliceVar(&handoffCreateOpts.missingEvidence, "missing-evidence", nil, "Missing evidence item")
+	handoffCreateCmd.Flags().StringSliceVar(&handoffCreateOpts.relatedRefs, "related-ref", nil, "Related reference")
+	mustMarkFlagRequired(handoffCreateCmd, "project-id")
+	mustMarkFlagRequired(handoffCreateCmd, "summary")
+	handoffGetCmd := &cobra.Command{
+		Use:   "get",
+		Short: "Show one durable handoff",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "handoff.get", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	handoffGetCmd.Flags().StringVar(&handoffGetOpts.handoffID, "handoff-id", "", "Handoff identifier")
+	mustMarkFlagRequired(handoffGetCmd, "handoff-id")
+	handoffListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List durable handoffs for one scope",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "handoff.list", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	handoffListCmd.Flags().StringVar(&handoffListOpts.projectID, "project-id", "", "Project identifier")
+	handoffListCmd.Flags().StringVar(&handoffListOpts.branchID, "branch-id", "", "Optional branch identifier")
+	handoffListCmd.Flags().StringVar(&handoffListOpts.scopeType, "scope-type", handoffListOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	handoffListCmd.Flags().StringVar(&handoffListOpts.scopeID, "scope-id", "", "Optional scope identifier")
+	handoffListCmd.Flags().StringSliceVar(&handoffListOpts.statuses, "status", nil, "Optional handoff status filter")
+	handoffListCmd.Flags().IntVar(&handoffListOpts.limit, "limit", handoffListOpts.limit, "Maximum rows to return")
+	mustMarkFlagRequired(handoffListCmd, "project-id")
+	handoffUpdateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update one durable handoff",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "handoff.update", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.handoffID, "handoff-id", "", "Handoff identifier")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.status, "status", "", "Optional handoff status")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.sourceRole, "source-role", "", "Optional source role")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.targetBranchID, "target-branch-id", "", "Optional target branch identifier")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.targetScopeType, "target-scope-type", "", "Optional target scope type")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.targetScopeID, "target-scope-id", "", "Optional target scope identifier")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.targetRole, "target-role", "", "Optional target role")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.summary, "summary", "", "Handoff summary")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.nextAction, "next-action", "", "Optional next action")
+	handoffUpdateCmd.Flags().StringSliceVar(&handoffUpdateOpts.missingEvidence, "missing-evidence", nil, "Missing evidence item")
+	handoffUpdateCmd.Flags().StringSliceVar(&handoffUpdateOpts.relatedRefs, "related-ref", nil, "Related reference")
+	handoffUpdateCmd.Flags().StringVar(&handoffUpdateOpts.resolutionNote, "resolution-note", "", "Optional resolution note")
+	mustMarkFlagRequired(handoffUpdateCmd, "handoff-id")
+	mustMarkFlagRequired(handoffUpdateCmd, "summary")
+	handoffCmd.AddCommand(handoffCreateCmd, handoffGetCmd, handoffListCmd, handoffUpdateCmd)
 
 	requestCmd := &cobra.Command{
 		Use:   "request",
@@ -369,7 +777,7 @@ approve, deny, or cancel.
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.request.create", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.request.create", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")
@@ -405,7 +813,7 @@ for global inventory or add it to focus on one project.
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.request.list", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.request.list", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	requestListCmd.Flags().StringVar(&requestListOpts.projectID, "project-id", "", "Optional project identifier filter")
@@ -429,7 +837,7 @@ issued session through till auth session subcommands.
 		Example: "  till auth request show --request-id req-123",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.request.show", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.request.show", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	requestShowCmd.Flags().StringVar(&requestShowOpts.requestID, "request-id", "", "Auth request identifier")
@@ -459,7 +867,7 @@ and TTL fields, without re-printing the secret.
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.request.approve", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.request.approve", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	requestApproveCmd.Flags().StringVar(&requestApproveOpts.requestID, "request-id", "", "Auth request identifier")
@@ -480,7 +888,7 @@ stored terminal state.
 		Example: "  till auth request deny --request-id req-123 --note \"outside current scope\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.request.deny", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.request.deny", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	requestDenyCmd.Flags().StringVar(&requestDenyOpts.requestID, "request-id", "", "Auth request identifier")
@@ -499,7 +907,7 @@ stored terminal state.
 		Example: "  till auth request cancel --request-id req-123 --note \"superseded by a new request\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.request.cancel", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.request.cancel", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	requestCancelCmd.Flags().StringVar(&requestCancelOpts.requestID, "request-id", "", "Auth request identifier")
@@ -542,7 +950,7 @@ to verify one specific credential pair, or use revoke to rotate it.
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.session.list", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.session.list", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	sessionListCmd.Flags().StringVar(&sessionListOpts.sessionID, "session-id", "", "Optional session identifier filter")
@@ -565,7 +973,7 @@ longer needed, revoke it with till auth session revoke --session-id sess-123.
 		Example: "  till auth session validate --session-id sess-123 --session-secret secret-abc",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.session.validate", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.session.validate", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	sessionValidateCmd.Flags().StringVar(&sessionValidateOpts.sessionID, "session-id", "", "Session identifier")
@@ -585,7 +993,7 @@ as a positional argument.
 		Example: "  till auth session revoke --session-id sess-123 --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.session.revoke", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.session.revoke", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	sessionRevokeCmd.Flags().StringVar(&revokeSessionOpts.sessionID, "session-id", "", "Session identifier")
@@ -609,7 +1017,7 @@ client, or validate the pair with till auth session validate.
 		Example: "  till auth issue-session --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.issue-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.issue-session", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalID, "principal-id", "", "Principal identifier")
@@ -634,7 +1042,7 @@ as a positional argument.
 		Example: "  till auth revoke-session --session-id sess-123 --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "auth.revoke-session", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "auth.revoke-session", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	revokeSessionCmd.Flags().StringVar(&revokeSessionOpts.sessionID, "session-id", "", "Session identifier")
@@ -647,7 +1055,7 @@ as a positional argument.
 		Short: "Export a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	exportCmd.Flags().StringVar(&exportOpts.outPath, "out", exportOpts.outPath, "Output file path ('-' for stdout)")
@@ -658,7 +1066,7 @@ as a positional argument.
 		Short: "Import a snapshot JSON payload",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, authOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, mcpOpts, authOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 		},
 	}
 	importCmd.Flags().StringVar(&importOpts.inPath, "in", "", "Input snapshot JSON file")
@@ -710,7 +1118,7 @@ as a positional argument.
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -1059,6 +1467,20 @@ func executeCommandFlow(
 	serveOpts serveCommandOptions,
 	_ mcpCommandOptions,
 	_ authCommandOptions,
+	captureStateOpts captureStateCommandOptions,
+	kindListOpts kindListCommandOptions,
+	kindUpsertOpts kindUpsertCommandOptions,
+	kindAllowlistOpts kindAllowlistCommandOptions,
+	leaseListOpts leaseListCommandOptions,
+	leaseIssueOpts leaseIssueCommandOptions,
+	leaseHeartbeatOpts leaseHeartbeatCommandOptions,
+	leaseRenewOpts leaseRenewCommandOptions,
+	leaseRevokeOpts leaseRevokeCommandOptions,
+	leaseRevokeAllOpts leaseRevokeAllCommandOptions,
+	handoffCreateOpts handoffCreateCommandOptions,
+	handoffGetOpts handoffGetCommandOptions,
+	handoffListOpts handoffListCommandOptions,
+	handoffUpdateOpts handoffUpdateCommandOptions,
 	issueSessionOpts issueSessionCommandOptions,
 	requestCreateOpts requestCreateCommandOptions,
 	requestListOpts requestListCommandOptions,
@@ -1326,6 +1748,126 @@ func executeCommandFlow(
 		}
 		logger.Info("command flow complete", "command", "auth.revoke-session")
 		return nil
+	case "capture-state":
+		logger.Info("command flow start", "command", "capture-state")
+		if err := runCaptureState(ctx, svc, authSvc, captureStateOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "capture-state", "err", err)
+			return fmt.Errorf("run capture-state command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "capture-state")
+		return nil
+	case "kind.list":
+		logger.Info("command flow start", "command", "kind.list")
+		if err := runKindList(ctx, svc, kindListOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "kind.list", "err", err)
+			return fmt.Errorf("run kind list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "kind.list")
+		return nil
+	case "kind.upsert":
+		logger.Info("command flow start", "command", "kind.upsert")
+		if err := runKindUpsert(ctx, svc, cfg, kindUpsertOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "kind.upsert", "err", err)
+			return fmt.Errorf("run kind upsert command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "kind.upsert")
+		return nil
+	case "kind.allowlist.list":
+		logger.Info("command flow start", "command", "kind.allowlist.list")
+		if err := runKindAllowlistList(ctx, svc, kindAllowlistOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "kind.allowlist.list", "err", err)
+			return fmt.Errorf("run kind allowlist list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "kind.allowlist.list")
+		return nil
+	case "kind.allowlist.set":
+		logger.Info("command flow start", "command", "kind.allowlist.set")
+		if err := runKindAllowlistSet(ctx, svc, cfg, kindAllowlistOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "kind.allowlist.set", "err", err)
+			return fmt.Errorf("run kind allowlist set command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "kind.allowlist.set")
+		return nil
+	case "lease.list":
+		logger.Info("command flow start", "command", "lease.list")
+		if err := runLeaseList(ctx, svc, leaseListOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "lease.list", "err", err)
+			return fmt.Errorf("run lease list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "lease.list")
+		return nil
+	case "lease.issue":
+		logger.Info("command flow start", "command", "lease.issue")
+		if err := runLeaseIssue(ctx, svc, cfg, leaseIssueOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "lease.issue", "err", err)
+			return fmt.Errorf("run lease issue command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "lease.issue")
+		return nil
+	case "lease.heartbeat":
+		logger.Info("command flow start", "command", "lease.heartbeat")
+		if err := runLeaseHeartbeat(ctx, svc, cfg, leaseHeartbeatOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "lease.heartbeat", "err", err)
+			return fmt.Errorf("run lease heartbeat command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "lease.heartbeat")
+		return nil
+	case "lease.renew":
+		logger.Info("command flow start", "command", "lease.renew")
+		if err := runLeaseRenew(ctx, svc, cfg, leaseRenewOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "lease.renew", "err", err)
+			return fmt.Errorf("run lease renew command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "lease.renew")
+		return nil
+	case "lease.revoke":
+		logger.Info("command flow start", "command", "lease.revoke")
+		if err := runLeaseRevoke(ctx, svc, cfg, leaseRevokeOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "lease.revoke", "err", err)
+			return fmt.Errorf("run lease revoke command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "lease.revoke")
+		return nil
+	case "lease.revoke-all":
+		logger.Info("command flow start", "command", "lease.revoke-all")
+		if err := runLeaseRevokeAll(ctx, svc, cfg, leaseRevokeAllOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "lease.revoke-all", "err", err)
+			return fmt.Errorf("run lease revoke-all command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "lease.revoke-all")
+		return nil
+	case "handoff.create":
+		logger.Info("command flow start", "command", "handoff.create")
+		if err := runHandoffCreate(ctx, svc, cfg, handoffCreateOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "handoff.create", "err", err)
+			return fmt.Errorf("run handoff create command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "handoff.create")
+		return nil
+	case "handoff.get":
+		logger.Info("command flow start", "command", "handoff.get")
+		if err := runHandoffGet(ctx, svc, handoffGetOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "handoff.get", "err", err)
+			return fmt.Errorf("run handoff get command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "handoff.get")
+		return nil
+	case "handoff.list":
+		logger.Info("command flow start", "command", "handoff.list")
+		if err := runHandoffList(ctx, svc, handoffListOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "handoff.list", "err", err)
+			return fmt.Errorf("run handoff list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "handoff.list")
+		return nil
+	case "handoff.update":
+		logger.Info("command flow start", "command", "handoff.update")
+		if err := runHandoffUpdate(ctx, svc, cfg, handoffUpdateOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "handoff.update", "err", err)
+			return fmt.Errorf("run handoff update command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "handoff.update")
+		return nil
 	case "export":
 		logger.Info("command flow start", "command", "export")
 		if err := runExport(ctx, svc, exportOpts, stdout); err != nil {
@@ -1521,6 +2063,319 @@ func runAuthRevokeSession(ctx context.Context, auth *autentauth.Service, opts re
 	return nil
 }
 
+// runCaptureState captures one summary-first recovery snapshot and writes it as stable JSON.
+func runCaptureState(ctx context.Context, svc *app.Service, authSvc *autentauth.Service, opts captureStateCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	adapter := servercommon.NewAppServiceAdapter(svc, authSvc)
+	capture, err := adapter.CaptureState(ctx, servercommon.CaptureStateRequest{
+		ProjectID: strings.TrimSpace(opts.projectID),
+		ScopeType: strings.TrimSpace(opts.scopeType),
+		ScopeID:   strings.TrimSpace(opts.scopeID),
+		View:      strings.TrimSpace(opts.view),
+	})
+	if err != nil {
+		return fmt.Errorf("capture state: %w", err)
+	}
+	return writeJSON(stdout, capture)
+}
+
+// runKindList lists kind definitions and writes them as stable JSON.
+func runKindList(ctx context.Context, svc *app.Service, opts kindListCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	kinds, err := svc.ListKindDefinitions(ctx, opts.includeArchived)
+	if err != nil {
+		return fmt.Errorf("list kind definitions: %w", err)
+	}
+	payload := make([]kindDefinitionPayloadJSON, 0, len(kinds))
+	for _, kind := range kinds {
+		payload = append(payload, kindDefinitionPayload(kind))
+	}
+	return writeJSON(stdout, payload)
+}
+
+// runKindUpsert creates or updates one kind definition and writes it as stable JSON.
+func runKindUpsert(ctx context.Context, svc *app.Service, cfg config.Config, opts kindUpsertCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	template, err := parseOptionalKindTemplateJSON(opts.templateJSON)
+	if err != nil {
+		return err
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	kind, err := svc.UpsertKindDefinition(ctx, app.CreateKindDefinitionInput{
+		ID:                  domain.KindID(strings.TrimSpace(opts.id)),
+		DisplayName:         strings.TrimSpace(opts.displayName),
+		DescriptionMarkdown: strings.TrimSpace(opts.descriptionMarkdown),
+		AppliesTo:           toKindAppliesToList(opts.appliesTo),
+		AllowedParentScopes: toKindAppliesToList(opts.allowedParentScopes),
+		PayloadSchemaJSON:   strings.TrimSpace(opts.payloadSchemaJSON),
+		Template:            template,
+	})
+	if err != nil {
+		return fmt.Errorf("upsert kind definition: %w", err)
+	}
+	return writeJSON(stdout, kindDefinitionPayload(kind))
+}
+
+// runKindAllowlistList lists one project's explicit kind allowlist and writes it as stable JSON.
+func runKindAllowlistList(ctx context.Context, svc *app.Service, opts kindAllowlistCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	projectID := strings.TrimSpace(opts.projectID)
+	kindIDs, err := svc.ListProjectAllowedKinds(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("list project allowed kinds: %w", err)
+	}
+	return writeJSON(stdout, kindAllowlistPayloadJSON{
+		ProjectID: projectID,
+		KindIDs:   toStrings(kindIDs),
+	})
+}
+
+// runKindAllowlistSet replaces one project's explicit kind allowlist and writes it as stable JSON.
+func runKindAllowlistSet(ctx context.Context, svc *app.Service, cfg config.Config, opts kindAllowlistCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	projectID := strings.TrimSpace(opts.projectID)
+	if err := svc.SetProjectAllowedKinds(ctx, app.SetProjectAllowedKindsInput{
+		ProjectID: projectID,
+		KindIDs:   toKindIDList(opts.kindIDs),
+	}); err != nil {
+		return fmt.Errorf("set project allowed kinds: %w", err)
+	}
+	kindIDs, err := svc.ListProjectAllowedKinds(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("list project allowed kinds: %w", err)
+	}
+	return writeJSON(stdout, kindAllowlistPayloadJSON{
+		ProjectID: projectID,
+		KindIDs:   toStrings(kindIDs),
+	})
+}
+
+// runLeaseList lists capability leases and writes them as stable JSON.
+func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	leases, err := svc.ListCapabilityLeases(ctx, app.ListCapabilityLeasesInput{
+		ProjectID:      strings.TrimSpace(opts.projectID),
+		ScopeType:      domain.CapabilityScopeType(strings.TrimSpace(opts.scopeType)),
+		ScopeID:        strings.TrimSpace(opts.scopeID),
+		IncludeRevoked: opts.includeRevoked,
+	})
+	if err != nil {
+		return fmt.Errorf("list capability leases: %w", err)
+	}
+	payload := make([]capabilityLeasePayloadJSON, 0, len(leases))
+	for _, lease := range leases {
+		payload = append(payload, capabilityLeasePayload(lease))
+	}
+	return writeJSON(stdout, payload)
+}
+
+// runLeaseIssue issues one capability lease and writes it as stable JSON.
+func runLeaseIssue(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseIssueCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	lease, err := svc.IssueCapabilityLease(ctx, app.IssueCapabilityLeaseInput{
+		ProjectID:                 strings.TrimSpace(opts.projectID),
+		ScopeType:                 domain.CapabilityScopeType(strings.TrimSpace(opts.scopeType)),
+		ScopeID:                   strings.TrimSpace(opts.scopeID),
+		Role:                      domain.CapabilityRole(strings.TrimSpace(opts.role)),
+		AgentName:                 strings.TrimSpace(opts.agentName),
+		AgentInstanceID:           strings.TrimSpace(opts.agentInstanceID),
+		ParentInstanceID:          strings.TrimSpace(opts.parentInstanceID),
+		AllowEqualScopeDelegation: opts.allowEqualScopeDelegation,
+		RequestedTTL:              opts.requestedTTL,
+		OverrideToken:             strings.TrimSpace(opts.overrideToken),
+	})
+	if err != nil {
+		return fmt.Errorf("issue capability lease: %w", err)
+	}
+	return writeJSON(stdout, capabilityLeasePayload(lease))
+}
+
+// runLeaseHeartbeat refreshes one capability lease heartbeat and writes it as stable JSON.
+func runLeaseHeartbeat(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseHeartbeatCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	lease, err := svc.HeartbeatCapabilityLease(ctx, app.HeartbeatCapabilityLeaseInput{
+		AgentInstanceID: strings.TrimSpace(opts.agentInstanceID),
+		LeaseToken:      strings.TrimSpace(opts.leaseToken),
+	})
+	if err != nil {
+		return fmt.Errorf("heartbeat capability lease: %w", err)
+	}
+	return writeJSON(stdout, capabilityLeasePayload(lease))
+}
+
+// runLeaseRenew renews one capability lease and writes it as stable JSON.
+func runLeaseRenew(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRenewCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	lease, err := svc.RenewCapabilityLease(ctx, app.RenewCapabilityLeaseInput{
+		AgentInstanceID: strings.TrimSpace(opts.agentInstanceID),
+		LeaseToken:      strings.TrimSpace(opts.leaseToken),
+		TTL:             opts.ttl,
+	})
+	if err != nil {
+		return fmt.Errorf("renew capability lease: %w", err)
+	}
+	return writeJSON(stdout, capabilityLeasePayload(lease))
+}
+
+// runLeaseRevoke revokes one capability lease and writes it as stable JSON.
+func runLeaseRevoke(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRevokeCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	lease, err := svc.RevokeCapabilityLease(ctx, app.RevokeCapabilityLeaseInput{
+		AgentInstanceID: strings.TrimSpace(opts.agentInstanceID),
+		Reason:          strings.TrimSpace(opts.reason),
+	})
+	if err != nil {
+		return fmt.Errorf("revoke capability lease: %w", err)
+	}
+	return writeJSON(stdout, capabilityLeasePayload(lease))
+}
+
+// runLeaseRevokeAll revokes every capability lease within one scope and writes a JSON summary.
+func runLeaseRevokeAll(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRevokeAllCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	if err := svc.RevokeAllCapabilityLeases(ctx, app.RevokeAllCapabilityLeasesInput{
+		ProjectID: strings.TrimSpace(opts.projectID),
+		ScopeType: domain.CapabilityScopeType(strings.TrimSpace(opts.scopeType)),
+		ScopeID:   strings.TrimSpace(opts.scopeID),
+		Reason:    strings.TrimSpace(opts.reason),
+	}); err != nil {
+		return fmt.Errorf("revoke all capability leases: %w", err)
+	}
+	return writeJSON(stdout, leaseRevokeAllPayloadJSON{
+		ProjectID: strings.TrimSpace(opts.projectID),
+		ScopeType: strings.TrimSpace(opts.scopeType),
+		ScopeID:   strings.TrimSpace(opts.scopeID),
+		Reason:    strings.TrimSpace(opts.reason),
+	})
+}
+
+// runHandoffCreate creates one durable handoff and writes it as stable JSON.
+func runHandoffCreate(ctx context.Context, svc *app.Service, cfg config.Config, opts handoffCreateCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	handoff, err := svc.CreateHandoff(ctx, app.CreateHandoffInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: strings.TrimSpace(opts.projectID),
+			BranchID:  strings.TrimSpace(opts.branchID),
+			ScopeType: domain.ScopeLevel(strings.TrimSpace(opts.scopeType)),
+			ScopeID:   strings.TrimSpace(opts.scopeID),
+		},
+		SourceRole:      strings.TrimSpace(opts.sourceRole),
+		TargetBranchID:  strings.TrimSpace(opts.targetBranchID),
+		TargetScopeType: domain.ScopeLevel(strings.TrimSpace(opts.targetScopeType)),
+		TargetScopeID:   strings.TrimSpace(opts.targetScopeID),
+		TargetRole:      strings.TrimSpace(opts.targetRole),
+		Status:          domain.HandoffStatus(strings.TrimSpace(opts.status)),
+		Summary:         strings.TrimSpace(opts.summary),
+		NextAction:      strings.TrimSpace(opts.nextAction),
+		MissingEvidence: append([]string(nil), opts.missingEvidence...),
+		RelatedRefs:     append([]string(nil), opts.relatedRefs...),
+		CreatedBy:       cliMutationActorID(cfg),
+		CreatedType:     cliMutationActorType(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("create handoff: %w", err)
+	}
+	return writeJSON(stdout, handoffPayload(handoff))
+}
+
+// runHandoffGet returns one durable handoff and writes it as stable JSON.
+func runHandoffGet(ctx context.Context, svc *app.Service, opts handoffGetCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	handoff, err := svc.GetHandoff(ctx, strings.TrimSpace(opts.handoffID))
+	if err != nil {
+		return fmt.Errorf("get handoff: %w", err)
+	}
+	return writeJSON(stdout, handoffPayload(handoff))
+}
+
+// runHandoffList lists durable handoffs and writes them as stable JSON.
+func runHandoffList(ctx context.Context, svc *app.Service, opts handoffListCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	handoffs, err := svc.ListHandoffs(ctx, app.ListHandoffsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: strings.TrimSpace(opts.projectID),
+			BranchID:  strings.TrimSpace(opts.branchID),
+			ScopeType: domain.ScopeLevel(strings.TrimSpace(opts.scopeType)),
+			ScopeID:   strings.TrimSpace(opts.scopeID),
+		},
+		Statuses: toHandoffStatusList(opts.statuses),
+		Limit:    opts.limit,
+	})
+	if err != nil {
+		return fmt.Errorf("list handoffs: %w", err)
+	}
+	payload := make([]handoffPayloadJSON, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		payload = append(payload, handoffPayload(handoff))
+	}
+	return writeJSON(stdout, payload)
+}
+
+// runHandoffUpdate updates one durable handoff and writes it as stable JSON.
+func runHandoffUpdate(ctx context.Context, svc *app.Service, cfg config.Config, opts handoffUpdateCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	handoff, err := svc.UpdateHandoff(ctx, app.UpdateHandoffInput{
+		HandoffID:       strings.TrimSpace(opts.handoffID),
+		Status:          domain.HandoffStatus(strings.TrimSpace(opts.status)),
+		SourceRole:      strings.TrimSpace(opts.sourceRole),
+		TargetBranchID:  strings.TrimSpace(opts.targetBranchID),
+		TargetScopeType: domain.ScopeLevel(strings.TrimSpace(opts.targetScopeType)),
+		TargetScopeID:   strings.TrimSpace(opts.targetScopeID),
+		TargetRole:      strings.TrimSpace(opts.targetRole),
+		Summary:         strings.TrimSpace(opts.summary),
+		NextAction:      strings.TrimSpace(opts.nextAction),
+		MissingEvidence: append([]string(nil), opts.missingEvidence...),
+		RelatedRefs:     append([]string(nil), opts.relatedRefs...),
+		ResolutionNote:  strings.TrimSpace(opts.resolutionNote),
+		UpdatedBy:       cliMutationActorID(cfg),
+		UpdatedType:     cliMutationActorType(cfg),
+		ResolvedBy:      cliMutationActorID(cfg),
+		ResolvedType:    cliMutationActorType(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("update handoff: %w", err)
+	}
+	return writeJSON(stdout, handoffPayload(handoff))
+}
+
 // runAuthRequestCreate creates one persisted auth request and mirrors it into notifications.
 func runAuthRequestCreate(ctx context.Context, svc *app.Service, cfg config.Config, opts requestCreateCommandOptions, stdout io.Writer) error {
 	if svc == nil {
@@ -1567,6 +2422,89 @@ func parseCLIContinuationJSON(raw string) (map[string]any, error) {
 		return nil, fmt.Errorf("parse --continuation-json: continuation metadata must be a non-empty JSON object")
 	}
 	return out, nil
+}
+
+// parseOptionalKindTemplateJSON parses one optional kind template JSON document.
+func parseOptionalKindTemplateJSON(raw string) (domain.KindTemplate, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return domain.KindTemplate{}, nil
+	}
+	var template domain.KindTemplate
+	if err := json.Unmarshal([]byte(raw), &template); err != nil {
+		return domain.KindTemplate{}, fmt.Errorf("parse --template-json: %w", err)
+	}
+	return template, nil
+}
+
+// cliMutationContext attaches a deterministic CLI mutation actor to context.
+func cliMutationContext(ctx context.Context, cfg config.Config) context.Context {
+	actorID, actorType := cliMutationActor(cfg)
+	return app.WithMutationActor(ctx, app.MutationActor{
+		ActorID:   actorID,
+		ActorName: strings.TrimSpace(cfg.Identity.DisplayName),
+		ActorType: actorType,
+	})
+}
+
+// cliMutationActorID returns the resolved CLI mutation actor id.
+func cliMutationActorID(cfg config.Config) string {
+	actorID, _ := cliMutationActor(cfg)
+	return actorID
+}
+
+// cliMutationActorType returns the resolved CLI mutation actor type.
+func cliMutationActorType(cfg config.Config) domain.ActorType {
+	_, actorType := cliMutationActor(cfg)
+	return actorType
+}
+
+// toKindAppliesToList converts CLI string values into canonical kind applies-to values.
+func toKindAppliesToList(values []string) []domain.KindAppliesTo {
+	out := make([]domain.KindAppliesTo, 0, len(values))
+	for _, value := range values {
+		scope := domain.KindAppliesTo(strings.TrimSpace(strings.ToLower(value)))
+		if scope == "" {
+			continue
+		}
+		out = append(out, scope)
+	}
+	return out
+}
+
+// toKindIDList converts CLI string values into canonical kind identifiers.
+func toKindIDList(values []string) []domain.KindID {
+	out := make([]domain.KindID, 0, len(values))
+	for _, value := range values {
+		kindID := domain.KindID(strings.TrimSpace(value))
+		if kindID == "" {
+			continue
+		}
+		out = append(out, kindID)
+	}
+	return out
+}
+
+// toStrings converts one typed slice into its string representation.
+func toStrings[T ~string](values []T) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, string(value))
+	}
+	return out
+}
+
+// toHandoffStatusList converts CLI string values into canonical handoff statuses.
+func toHandoffStatusList(values []string) []domain.HandoffStatus {
+	out := make([]domain.HandoffStatus, 0, len(values))
+	for _, value := range values {
+		status := domain.NormalizeHandoffStatus(domain.HandoffStatus(strings.TrimSpace(value)))
+		if status == "" {
+			continue
+		}
+		out = append(out, status)
+	}
+	return out
 }
 
 // runAuthRequestList lists persisted auth requests in deterministic order.
@@ -1879,6 +2817,81 @@ func persistIdentity(configPath, actorID, displayName, defaultActorType string) 
 	return nil
 }
 
+// kindDefinitionPayloadJSON stores JSON-friendly kind-definition output fields.
+type kindDefinitionPayloadJSON struct {
+	ID                  string              `json:"id"`
+	DisplayName         string              `json:"display_name"`
+	DescriptionMarkdown string              `json:"description_markdown,omitempty"`
+	AppliesTo           []string            `json:"applies_to"`
+	AllowedParentScopes []string            `json:"allowed_parent_scopes,omitempty"`
+	PayloadSchemaJSON   string              `json:"payload_schema_json,omitempty"`
+	Template            domain.KindTemplate `json:"template"`
+	CreatedAt           time.Time           `json:"created_at"`
+	UpdatedAt           time.Time           `json:"updated_at"`
+	ArchivedAt          *time.Time          `json:"archived_at,omitempty"`
+}
+
+// kindAllowlistPayloadJSON stores JSON-friendly project allowlist fields.
+type kindAllowlistPayloadJSON struct {
+	ProjectID string   `json:"project_id"`
+	KindIDs   []string `json:"kind_ids"`
+}
+
+// capabilityLeasePayloadJSON stores JSON-friendly capability lease output fields.
+type capabilityLeasePayloadJSON struct {
+	InstanceID                string     `json:"instance_id"`
+	LeaseToken                string     `json:"lease_token,omitempty"`
+	AgentName                 string     `json:"agent_name"`
+	ProjectID                 string     `json:"project_id"`
+	ScopeType                 string     `json:"scope_type"`
+	ScopeID                   string     `json:"scope_id"`
+	Role                      string     `json:"role"`
+	ParentInstanceID          string     `json:"parent_instance_id,omitempty"`
+	AllowEqualScopeDelegation bool       `json:"allow_equal_scope_delegation,omitempty"`
+	IssuedAt                  time.Time  `json:"issued_at"`
+	ExpiresAt                 time.Time  `json:"expires_at"`
+	HeartbeatAt               time.Time  `json:"heartbeat_at"`
+	RevokedAt                 *time.Time `json:"revoked_at,omitempty"`
+	RevokedReason             string     `json:"revoked_reason,omitempty"`
+}
+
+// leaseRevokeAllPayloadJSON stores JSON-friendly revoke-all output fields.
+type leaseRevokeAllPayloadJSON struct {
+	ProjectID string `json:"project_id"`
+	ScopeType string `json:"scope_type"`
+	ScopeID   string `json:"scope_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// handoffPayloadJSON stores JSON-friendly handoff output fields.
+type handoffPayloadJSON struct {
+	ID              string     `json:"id"`
+	ProjectID       string     `json:"project_id"`
+	BranchID        string     `json:"branch_id,omitempty"`
+	ScopeType       string     `json:"scope_type"`
+	ScopeID         string     `json:"scope_id"`
+	SourceRole      string     `json:"source_role,omitempty"`
+	TargetBranchID  string     `json:"target_branch_id,omitempty"`
+	TargetScopeType string     `json:"target_scope_type,omitempty"`
+	TargetScopeID   string     `json:"target_scope_id,omitempty"`
+	TargetRole      string     `json:"target_role,omitempty"`
+	Status          string     `json:"status"`
+	Summary         string     `json:"summary"`
+	NextAction      string     `json:"next_action,omitempty"`
+	MissingEvidence []string   `json:"missing_evidence,omitempty"`
+	RelatedRefs     []string   `json:"related_refs,omitempty"`
+	CreatedByActor  string     `json:"created_by_actor"`
+	CreatedByType   string     `json:"created_by_type"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedByActor  string     `json:"updated_by_actor"`
+	UpdatedByType   string     `json:"updated_by_type"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	ResolvedByActor string     `json:"resolved_by_actor,omitempty"`
+	ResolvedByType  string     `json:"resolved_by_type,omitempty"`
+	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
+	ResolutionNote  string     `json:"resolution_note,omitempty"`
+}
+
 // authRequestPayloadJSON stores JSON-friendly auth-request output fields.
 type authRequestPayloadJSON struct {
 	ID                     string     `json:"id"`
@@ -2033,6 +3046,73 @@ func authSessionState(session app.AuthSession, now time.Time) string {
 		return "expired"
 	}
 	return "active"
+}
+
+// kindDefinitionPayload maps one domain kind definition into stable CLI JSON output.
+func kindDefinitionPayload(kind domain.KindDefinition) kindDefinitionPayloadJSON {
+	return kindDefinitionPayloadJSON{
+		ID:                  string(kind.ID),
+		DisplayName:         kind.DisplayName,
+		DescriptionMarkdown: kind.DescriptionMarkdown,
+		AppliesTo:           toStrings(kind.AppliesTo),
+		AllowedParentScopes: toStrings(kind.AllowedParentScopes),
+		PayloadSchemaJSON:   kind.PayloadSchemaJSON,
+		Template:            kind.Template,
+		CreatedAt:           kind.CreatedAt.UTC(),
+		UpdatedAt:           kind.UpdatedAt.UTC(),
+		ArchivedAt:          kind.ArchivedAt,
+	}
+}
+
+// capabilityLeasePayload maps one capability lease into stable CLI JSON output.
+func capabilityLeasePayload(lease domain.CapabilityLease) capabilityLeasePayloadJSON {
+	return capabilityLeasePayloadJSON{
+		InstanceID:                lease.InstanceID,
+		LeaseToken:                lease.LeaseToken,
+		AgentName:                 lease.AgentName,
+		ProjectID:                 lease.ProjectID,
+		ScopeType:                 string(lease.ScopeType),
+		ScopeID:                   lease.ScopeID,
+		Role:                      string(lease.Role),
+		ParentInstanceID:          lease.ParentInstanceID,
+		AllowEqualScopeDelegation: lease.AllowEqualScopeDelegation,
+		IssuedAt:                  lease.IssuedAt.UTC(),
+		ExpiresAt:                 lease.ExpiresAt.UTC(),
+		HeartbeatAt:               lease.HeartbeatAt.UTC(),
+		RevokedAt:                 lease.RevokedAt,
+		RevokedReason:             lease.RevokedReason,
+	}
+}
+
+// handoffPayload maps one durable handoff into stable CLI JSON output.
+func handoffPayload(handoff domain.Handoff) handoffPayloadJSON {
+	return handoffPayloadJSON{
+		ID:              handoff.ID,
+		ProjectID:       handoff.ProjectID,
+		BranchID:        handoff.BranchID,
+		ScopeType:       string(handoff.ScopeType),
+		ScopeID:         handoff.ScopeID,
+		SourceRole:      handoff.SourceRole,
+		TargetBranchID:  handoff.TargetBranchID,
+		TargetScopeType: string(handoff.TargetScopeType),
+		TargetScopeID:   handoff.TargetScopeID,
+		TargetRole:      handoff.TargetRole,
+		Status:          string(handoff.Status),
+		Summary:         handoff.Summary,
+		NextAction:      handoff.NextAction,
+		MissingEvidence: append([]string(nil), handoff.MissingEvidence...),
+		RelatedRefs:     append([]string(nil), handoff.RelatedRefs...),
+		CreatedByActor:  handoff.CreatedByActor,
+		CreatedByType:   string(handoff.CreatedByType),
+		CreatedAt:       handoff.CreatedAt.UTC(),
+		UpdatedByActor:  handoff.UpdatedByActor,
+		UpdatedByType:   string(handoff.UpdatedByType),
+		UpdatedAt:       handoff.UpdatedAt.UTC(),
+		ResolvedByActor: handoff.ResolvedByActor,
+		ResolvedByType:  string(handoff.ResolvedByType),
+		ResolvedAt:      handoff.ResolvedAt,
+		ResolutionNote:  handoff.ResolutionNote,
+	}
 }
 
 // cloneCLIObjectMap deep-copies optional CLI JSON metadata maps.

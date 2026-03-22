@@ -400,7 +400,7 @@ func TestRunRootHelp(t *testing.T) {
 	if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 		t.Fatalf("expected root usage output, got %q", out.String())
 	}
-	for _, want := range []string{"serve", "mcp", "auth", "export", "import", "paths", "init-dev-config"} {
+	for _, want := range []string{"serve", "mcp", "auth", "capture-state", "kind", "lease", "handoff", "export", "import", "paths", "init-dev-config"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q command in root help, got %q", want, out.String())
 		}
@@ -475,6 +475,46 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "auth revoke-session",
 			args: []string{"auth", "revoke-session", "--help"},
 			want: []string{"till auth revoke-session", "--session-id", "--reason"},
+		},
+		{
+			name: "capture-state",
+			args: []string{"capture-state", "--help"},
+			want: []string{"till capture-state", "--project-id", "--scope-type", "capture state"},
+		},
+		{
+			name: "kind",
+			args: []string{"kind", "--help"},
+			want: []string{"till kind", "list", "upsert", "allowlist"},
+		},
+		{
+			name: "kind upsert",
+			args: []string{"kind", "upsert", "--help"},
+			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--template-json"},
+		},
+		{
+			name: "kind allowlist",
+			args: []string{"kind", "allowlist", "--help"},
+			want: []string{"till kind allowlist", "list", "set"},
+		},
+		{
+			name: "lease",
+			args: []string{"lease", "--help"},
+			want: []string{"till lease", "list", "issue", "heartbeat", "renew", "revoke", "revoke-all"},
+		},
+		{
+			name: "lease issue",
+			args: []string{"lease", "issue", "--help"},
+			want: []string{"till lease issue", "--project-id", "--agent-name", "--role", "--requested-ttl"},
+		},
+		{
+			name: "handoff",
+			args: []string{"handoff", "--help"},
+			want: []string{"till handoff", "create", "get", "list", "update"},
+		},
+		{
+			name: "handoff create",
+			args: []string{"handoff", "create", "--help"},
+			want: []string{"till handoff create", "--project-id", "--summary", "--source-role", "--target-role"},
 		},
 		{
 			name: "export",
@@ -1112,6 +1152,350 @@ func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
 	})
 	if !errors.Is(err, servercommon.ErrGrantRequired) {
 		t.Fatalf("AuthorizeMutation() error = %v, want ErrGrantRequired", err)
+	}
+}
+
+// TestRunCaptureStateCommand verifies the new capture-state CLI surface returns stable recovery JSON.
+func TestRunCaptureStateCommand(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "capture-state", "--project-id", "p1"}, &out, io.Discard); err != nil {
+		t.Fatalf("run(capture-state) error = %v", err)
+	}
+
+	var got struct {
+		RequestedView      string `json:"requested_view"`
+		RequestedScopeType string `json:"requested_scope_type"`
+		StateHash          string `json:"state_hash"`
+		GoalOverview       struct {
+			ProjectID string `json:"project_id"`
+		} `json:"goal_overview"`
+		ScopePath []struct {
+			ScopeType string `json:"scope_type"`
+			ScopeID   string `json:"scope_id"`
+		} `json:"scope_path"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("Unmarshal(capture-state) error = %v", err)
+	}
+	if got.RequestedView != "summary" {
+		t.Fatalf("requested_view = %q, want summary", got.RequestedView)
+	}
+	if got.RequestedScopeType != "project" {
+		t.Fatalf("requested_scope_type = %q, want project", got.RequestedScopeType)
+	}
+	if got.GoalOverview.ProjectID != "p1" {
+		t.Fatalf("goal_overview.project_id = %q, want p1", got.GoalOverview.ProjectID)
+	}
+	if got.StateHash == "" {
+		t.Fatal("expected state hash in capture-state output")
+	}
+	if len(got.ScopePath) == 0 || got.ScopePath[0].ScopeType != "project" || got.ScopePath[0].ScopeID != "p1" {
+		t.Fatalf("scope_path = %#v, want project:p1", got.ScopePath)
+	}
+}
+
+// TestRunKindAndAllowlistCommands verifies kind upsert/list and project allowlist updates.
+func TestRunKindAndAllowlistCommands(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var upsertOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"kind", "upsert",
+		"--id", "qa-check",
+		"--display-name", "QA Check",
+		"--applies-to", "task",
+		"--template-json", "{}",
+	}, &upsertOut, io.Discard); err != nil {
+		t.Fatalf("run(kind upsert) error = %v", err)
+	}
+	var kind struct {
+		ID          string   `json:"id"`
+		DisplayName string   `json:"display_name"`
+		AppliesTo   []string `json:"applies_to"`
+	}
+	if err := json.Unmarshal([]byte(upsertOut.String()), &kind); err != nil {
+		t.Fatalf("Unmarshal(kind upsert) error = %v", err)
+	}
+	if kind.ID != "qa-check" || kind.DisplayName != "QA Check" {
+		t.Fatalf("kind upsert output = %#v, want qa-check/QA Check", kind)
+	}
+
+	var listOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "kind", "list"}, &listOut, io.Discard); err != nil {
+		t.Fatalf("run(kind list) error = %v", err)
+	}
+	var kinds []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(listOut.String()), &kinds); err != nil {
+		t.Fatalf("Unmarshal(kind list) error = %v", err)
+	}
+	foundKind := false
+	for _, item := range kinds {
+		if item.ID == "qa-check" {
+			foundKind = true
+			break
+		}
+	}
+	if !foundKind {
+		t.Fatalf("expected kind list to include qa-check, got %#v", kinds)
+	}
+
+	var allowSetOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"kind", "allowlist", "set",
+		"--project-id", "p1",
+		"--kind-id", "qa-check",
+	}, &allowSetOut, io.Discard); err != nil {
+		t.Fatalf("run(kind allowlist set) error = %v", err)
+	}
+	var allowSet struct {
+		ProjectID string   `json:"project_id"`
+		KindIDs   []string `json:"kind_ids"`
+	}
+	if err := json.Unmarshal([]byte(allowSetOut.String()), &allowSet); err != nil {
+		t.Fatalf("Unmarshal(kind allowlist set) error = %v", err)
+	}
+	if allowSet.ProjectID != "p1" || len(allowSet.KindIDs) != 1 || allowSet.KindIDs[0] != "qa-check" {
+		t.Fatalf("allowlist set output = %#v, want p1/qa-check", allowSet)
+	}
+
+	var allowListOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "kind", "allowlist", "list", "--project-id", "p1"}, &allowListOut, io.Discard); err != nil {
+		t.Fatalf("run(kind allowlist list) error = %v", err)
+	}
+	var allowList struct {
+		ProjectID string   `json:"project_id"`
+		KindIDs   []string `json:"kind_ids"`
+	}
+	if err := json.Unmarshal([]byte(allowListOut.String()), &allowList); err != nil {
+		t.Fatalf("Unmarshal(kind allowlist list) error = %v", err)
+	}
+	if allowList.ProjectID != "p1" || len(allowList.KindIDs) != 1 || allowList.KindIDs[0] != "qa-check" {
+		t.Fatalf("allowlist list output = %#v, want p1/qa-check", allowList)
+	}
+}
+
+// TestRunCapabilityLeaseCommands verifies issue/list/revoke lease flows on the new CLI surface.
+func TestRunCapabilityLeaseCommands(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var issueOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"lease", "issue",
+		"--project-id", "p1",
+		"--agent-name", "lane-a",
+		"--role", "builder",
+	}, &issueOut, io.Discard); err != nil {
+		t.Fatalf("run(lease issue) error = %v", err)
+	}
+	var issued struct {
+		InstanceID string `json:"instance_id"`
+		ProjectID  string `json:"project_id"`
+		ScopeType  string `json:"scope_type"`
+		Role       string `json:"role"`
+	}
+	if err := json.Unmarshal([]byte(issueOut.String()), &issued); err != nil {
+		t.Fatalf("Unmarshal(lease issue) error = %v", err)
+	}
+	if issued.ProjectID != "p1" || issued.ScopeType != "project" || issued.Role != "builder" || issued.InstanceID == "" {
+		t.Fatalf("lease issue output = %#v, want p1/project/builder with instance id", issued)
+	}
+
+	var listOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
+		t.Fatalf("run(lease list) error = %v", err)
+	}
+	var leases []struct {
+		InstanceID string `json:"instance_id"`
+		ProjectID  string `json:"project_id"`
+	}
+	if err := json.Unmarshal([]byte(listOut.String()), &leases); err != nil {
+		t.Fatalf("Unmarshal(lease list) error = %v", err)
+	}
+	foundLease := false
+	for _, lease := range leases {
+		if lease.InstanceID == issued.InstanceID && lease.ProjectID == "p1" {
+			foundLease = true
+			break
+		}
+	}
+	if !foundLease {
+		t.Fatalf("expected lease list to include issued lease %q, got %#v", issued.InstanceID, leases)
+	}
+
+	var revokeOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"lease", "revoke",
+		"--agent-instance-id", issued.InstanceID,
+	}, &revokeOut, io.Discard); err != nil {
+		t.Fatalf("run(lease revoke) error = %v", err)
+	}
+	var revoked struct {
+		InstanceID string     `json:"instance_id"`
+		RevokedAt  *time.Time `json:"revoked_at"`
+	}
+	if err := json.Unmarshal([]byte(revokeOut.String()), &revoked); err != nil {
+		t.Fatalf("Unmarshal(lease revoke) error = %v", err)
+	}
+	if revoked.InstanceID != issued.InstanceID || revoked.RevokedAt == nil {
+		t.Fatalf("lease revoke output = %#v, want revoked lease with timestamp", revoked)
+	}
+
+	var revokedListOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1", "--include-revoked"}, &revokedListOut, io.Discard); err != nil {
+		t.Fatalf("run(lease list include revoked) error = %v", err)
+	}
+	var revokedLeases []struct {
+		InstanceID string     `json:"instance_id"`
+		RevokedAt  *time.Time `json:"revoked_at"`
+	}
+	if err := json.Unmarshal([]byte(revokedListOut.String()), &revokedLeases); err != nil {
+		t.Fatalf("Unmarshal(lease list include revoked) error = %v", err)
+	}
+	foundRevoked := false
+	for _, lease := range revokedLeases {
+		if lease.InstanceID == issued.InstanceID && lease.RevokedAt != nil {
+			foundRevoked = true
+			break
+		}
+	}
+	if !foundRevoked {
+		t.Fatalf("expected revoked lease to remain visible with --include-revoked, got %#v", revokedLeases)
+	}
+}
+
+// TestRunHandoffCommands verifies create/list/get/update flows on the new CLI surface.
+func TestRunHandoffCommands(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var createOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"handoff", "create",
+		"--project-id", "p1",
+		"--summary", "qa handoff",
+		"--source-role", "builder",
+		"--target-role", "qa",
+	}, &createOut, io.Discard); err != nil {
+		t.Fatalf("run(handoff create) error = %v", err)
+	}
+	var created struct {
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(createOut.String()), &created); err != nil {
+		t.Fatalf("Unmarshal(handoff create) error = %v", err)
+	}
+	if created.ID == "" || created.Status != "waiting" || created.Summary != "qa handoff" {
+		t.Fatalf("handoff create output = %#v, want waiting qa handoff", created)
+	}
+
+	var listOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
+		t.Fatalf("run(handoff list) error = %v", err)
+	}
+	var handoffs []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(listOut.String()), &handoffs); err != nil {
+		t.Fatalf("Unmarshal(handoff list) error = %v", err)
+	}
+	foundHandoff := false
+	for _, handoff := range handoffs {
+		if handoff.ID == created.ID {
+			foundHandoff = true
+			break
+		}
+	}
+	if !foundHandoff {
+		t.Fatalf("expected handoff list to include %q, got %#v", created.ID, handoffs)
+	}
+
+	var getOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "get", "--handoff-id", created.ID}, &getOut, io.Discard); err != nil {
+		t.Fatalf("run(handoff get) error = %v", err)
+	}
+	var got struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(getOut.String()), &got); err != nil {
+		t.Fatalf("Unmarshal(handoff get) error = %v", err)
+	}
+	if got.ID != created.ID {
+		t.Fatalf("handoff get output = %#v, want %q", got, created.ID)
+	}
+
+	var updateOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"handoff", "update",
+		"--handoff-id", created.ID,
+		"--summary", "qa handoff",
+		"--status", "resolved",
+		"--resolution-note", "complete",
+	}, &updateOut, io.Discard); err != nil {
+		t.Fatalf("run(handoff update) error = %v", err)
+	}
+	var updated struct {
+		ID         string     `json:"id"`
+		Status     string     `json:"status"`
+		ResolvedAt *time.Time `json:"resolved_at"`
+	}
+	if err := json.Unmarshal([]byte(updateOut.String()), &updated); err != nil {
+		t.Fatalf("Unmarshal(handoff update) error = %v", err)
+	}
+	if updated.ID != created.ID || updated.Status != "resolved" || updated.ResolvedAt == nil {
+		t.Fatalf("handoff update output = %#v, want resolved with timestamp", updated)
 	}
 }
 
