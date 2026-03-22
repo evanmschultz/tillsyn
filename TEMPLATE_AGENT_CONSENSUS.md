@@ -34,6 +34,12 @@ Core framing:
 - completion contracts enforce truth
 - MCP long-lived coordination provides the live wait/resume/notify channel, while persisted Tillsyn state remains the durable record
 
+UX/Surface framing:
+- the TUI should stay logical, styled, and user-friendly for the workflows it exposes
+- the TUI should prefer reusable shared surfaces/components instead of bespoke duplicated behavior
+- the CLI should expose full capability even when the interaction style differs from the TUI
+- the product should avoid a split where important power or recovery actions exist only in one surface
+
 ## Type Systems
 
 There are two distinct type systems.
@@ -426,3 +432,66 @@ Current MVP bootstrap direction:
 - day-one use should work with strong defaults and no mandatory advanced setup
 - a user should be able to start `till` and get immediate value
 - a Codex-oriented or similar agent workflow should be supported through a discoverable preset or clear default behavior, not a heavy configuration burden
+
+## Implementation Slices
+
+Execution direction:
+- this scope should be delivered in small validated slices
+- each implementation slice should favor one clear primary outcome
+- test and commit after meaningful validated slices
+- when implementation work is parallelized, use one builder lane plus two independent QA/review lanes for each builder lane
+
+### Slice 1: Shared Contracts And Durable State
+
+Goal:
+- establish the missing domain/app contract for hierarchy-wide templates, structured handoffs, and durable wait/recovery state without overextending the UI yet
+
+Focus:
+- node-template contract expansion
+- handoff object contract
+- persisted waiting/recovery/discovery contract
+- policy action vocabulary
+
+### Slice 2: Agent Policy And Bounded Delegation
+
+Goal:
+- land MVP agent-type policy with simple default roles and bounded orchestrator delegation/recovery behavior
+
+Focus:
+- default MVP roles (`orchestrator`, `builder`, `qa`)
+- action-category evaluation
+- bounded subagent auth/delegation rules
+- stale authority vs durable work-state handling
+
+### Slice 3: Template Application Beyond Today’s Task-Centric Path
+
+Goal:
+- extend template behavior beyond the current task-only action path into the intended hierarchy-aware node flow
+
+Focus:
+- hierarchy-wide template application model
+- inheritance/override primitives
+- reseeding/apply-scope behavior
+- truthful completion-contract seeding across levels
+
+### Slice 4: TUI And CLI Product Surfaces
+
+Goal:
+- expose the new template/policy/handoff/recovery capability through logical, reusable TUI and full-capability CLI surfaces
+
+Focus:
+- shared TUI form/screen components for new template/policy workflows
+- clear blocked-state and recovery-state UX
+- first-class handoff and waiting visibility
+- full CLI capability for inspection, apply, recovery, cleanup, and policy/template operations
+
+### Slice 5: Bootstrap, Discovery, And Dogfood Validation
+
+Goal:
+- make the system understandable and usable with strong defaults, good bootstrap/discovery guidance, and real collaborative validation
+
+Focus:
+- bootstrap defaults and presets
+- README / TUI / MCP discovery surfaces
+- “learn Tillsyn” / helper-tool direction
+- collaborative E2E dogfood validation for real human+agent workflows
