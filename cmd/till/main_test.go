@@ -476,7 +476,12 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "project show",
 			args: []string{"project", "show", "--help"},
-			want: []string{"till project show", "--project-id", "project list", "discover"},
+			want: []string{"till project show", "--project-id", "project list", "project discover"},
+		},
+		{
+			name: "project discover",
+			args: []string{"project", "discover", "--help"},
+			want: []string{"till project discover", "--project-id", "collaboration-readiness bridge", "auth", "session", "lease", "handoff"},
 		},
 		{
 			name: "auth request",
@@ -1272,6 +1277,10 @@ func TestRunProjectScopeGuidance(t *testing.T) {
 			args: []string{"--db", dbPath, "--config", cfgPath, "project", "show"},
 		},
 		{
+			name: "project discover",
+			args: []string{"--db", dbPath, "--config", cfgPath, "project", "discover"},
+		},
+		{
 			name: "kind allowlist list",
 			args: []string{"--db", dbPath, "--config", cfgPath, "kind", "allowlist", "list"},
 		},
@@ -1358,6 +1367,33 @@ func TestRunProjectCommands(t *testing.T) {
 	if got := showOut.String(); !strings.Contains(got, "PROJECT") || !strings.Contains(got, "name") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "id") || !strings.Contains(got, "p1") {
 		t.Fatalf("unexpected project show output: %q", got)
 	}
+
+	var requestOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "create",
+		"--path", "project/p1",
+		"--principal-id", "review-agent",
+		"--principal-type", "agent",
+		"--principal-role", "builder",
+		"--client-id", "till-mcp-stdio",
+		"--client-type", "mcp-stdio",
+		"--reason", "collaboration setup",
+	}, &requestOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request create) error = %v", err)
+	}
+
+	var discoverOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "discover", "--project-id", "p1"}, &discoverOut, io.Discard); err != nil {
+		t.Fatalf("run(project discover) error = %v", err)
+	}
+	gotDiscover := discoverOut.String()
+	for _, want := range []string{"PROJECT COLLABORATION READINESS", "COORDINATION INVENTORY", "pending_auth_requests", "till auth request show --request-id"} {
+		if !strings.Contains(gotDiscover, want) {
+			t.Fatalf("expected %q in project discover output, got %q", want, gotDiscover)
+		}
+	}
 }
 
 // TestRunProjectListArchivedOnlyGuidance points operators toward archived discovery before duplicate creation.
@@ -1405,6 +1441,30 @@ func TestRunProjectShowArchivedGuidance(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--include-archived") {
 		t.Fatalf("expected archived project guidance, got %v", err)
+	}
+}
+
+// TestRunProjectDiscoverArchivedGuidance points operators toward include-archived when discover targets a hidden archived project.
+func TestRunProjectDiscoverArchivedGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+	archiveProjectForCLITest(t, dbPath, "p1")
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "discover", "--project-id", "p1"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("expected archived project discover error")
+	}
+	if !strings.Contains(err.Error(), "--include-archived") {
+		t.Fatalf("expected archived project discover guidance, got %v", err)
 	}
 }
 

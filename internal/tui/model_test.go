@@ -7867,34 +7867,51 @@ func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 	m.mode = modeAuthReview
 	m.authReviewStage = authReviewStageSummary
 	m.pendingConfirm = confirmAction{
-		Kind:                 "approve-auth-request",
-		Label:                "approve auth request",
-		AuthRequestID:        "req-1",
-		AuthRequestPrincipal: "Review Agent",
-		AuthRequestPath:      "project/p1/branch/b1",
-		AuthRequestPathLabel: "Inbox -> branch:b1",
-		AuthRequestTTL:       "2h",
-		AuthRequestDecision:  "approve",
-		AuthRequestNote:      "approved in Tillsyn for Review Agent at Inbox -> branch:b1",
+		Kind:                          "approve-auth-request",
+		Label:                         "approve auth request",
+		AuthRequestID:                 "req-1",
+		AuthRequestPrincipal:          "Review Agent",
+		AuthRequestPrincipalRole:      "builder",
+		AuthRequestClient:             "Till MCP STDIO",
+		AuthRequestReason:             "inventory review",
+		AuthRequestRequestedBy:        "lane-user (user)",
+		AuthRequestResumeClient:       "till-mcp-stdio",
+		AuthRequestTimeout:            "30m",
+		AuthRequestRequestedPath:      "project/p1/branch/b1",
+		AuthRequestRequestedPathLabel: "Inbox -> branch:b1",
+		AuthRequestRequestedTTL:       "8h",
+		AuthRequestPath:               "project/p1/branch/narrowed",
+		AuthRequestPathLabel:          "Inbox -> branch:narrowed",
+		AuthRequestTTL:                "2h",
+		AuthRequestDecision:           "approve",
+		AuthRequestNote:               "approved in Tillsyn for Review Agent at Inbox -> branch:narrowed",
 	}
-	m.confirmAuthPathInput.SetValue("project/p1/branch/b1")
+	m.confirmAuthPathInput.SetValue("project/p1/branch/narrowed")
 	m.confirmAuthTTLInput.SetValue("2h")
-	m.confirmAuthNoteInput.SetValue("approved in Tillsyn for Review Agent at Inbox -> branch:b1")
+	m.confirmAuthNoteInput.SetValue("approved in Tillsyn for Review Agent at Inbox -> branch:narrowed")
 
 	rendered := fmt.Sprint(m.View())
 	for _, want := range []string{
 		"Access Request Review",
 		"principal: Review Agent",
+		"role: builder",
+		"requested by: lane-user (user)",
+		"reason: inventory review",
+		"resume client: till-mcp-stdio",
+		"request timeout: 30m",
 		"requested scope: Inbox -> branch:b1",
+		"requested raw path: project/p1/branch/b1",
+		"requested session ttl: 8h",
 		"approve now",
 		"default decision: approve",
 		"[enter] approve and confirm",
 		"[s] pick approved scope",
-		"path: project/p1/branch/b1",
+		"approved scope: Inbox -> branch:narrowed",
+		"path: project/p1/branch/narrowed",
 		"session ttl: 2h",
 		"[d] deny with note",
-		"project/p1/branch/b1",
-		"approved in Tillsyn for Review Agent at Inbox -> branch:b1",
+		"project/p1/branch/narrowed",
+		"approved in Tillsyn for Review Agent at Inbox -> branch:narrowed",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in auth review:\n%s", want, rendered)
@@ -7953,6 +7970,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 		Path:                domain.AuthRequestPath{ProjectID: project.ID},
 		PrincipalID:         "review-agent",
 		PrincipalType:       "agent",
+		PrincipalRole:       string(domain.AuthRequestRoleBuilder),
 		PrincipalName:       "Review Agent",
 		ClientID:            "till-mcp-stdio",
 		ClientType:          "mcp-stdio",
@@ -7987,6 +8005,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 			ProjectID:     project.ID,
 			ApprovedPath:  "project/" + project.ID,
 			PrincipalID:   "review-agent",
+			PrincipalRole: string(domain.AuthRequestRoleBuilder),
 			PrincipalType: "agent",
 			PrincipalName: "Review Agent",
 			ClientID:      "till-mcp-stdio",
@@ -7999,6 +8018,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 			ProjectID:     other.ID,
 			ApprovedPath:  "project/" + other.ID,
 			PrincipalID:   "other-agent",
+			PrincipalRole: string(domain.AuthRequestRoleQA),
 			PrincipalType: "agent",
 			PrincipalName: "Other Agent",
 			ClientID:      "other-client",
@@ -8021,16 +8041,19 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	}
 	svc.capabilityLeases = append(svc.capabilityLeases, lease)
 	handoff, err := domain.NewHandoff(domain.HandoffInput{
-		ID:             "handoff-project",
-		ProjectID:      project.ID,
-		ScopeType:      domain.ScopeLevelProject,
-		SourceRole:     "builder",
-		TargetRole:     "qa",
-		Status:         domain.HandoffStatusWaiting,
-		Summary:        "builder to qa handoff",
-		NextAction:     "qa verifies the run",
-		CreatedByActor: "lane-user",
-		CreatedByType:  domain.ActorTypeUser,
+		ID:              "handoff-project",
+		ProjectID:       project.ID,
+		ScopeType:       domain.ScopeLevelProject,
+		SourceRole:      "builder",
+		TargetBranchID:  task.ID,
+		TargetScopeType: domain.ScopeLevelProject,
+		TargetScopeID:   project.ID,
+		TargetRole:      "qa",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "builder to qa handoff",
+		NextAction:      "qa verifies the run",
+		CreatedByActor:  "lane-user",
+		CreatedByType:   domain.ActorTypeUser,
 	}, now)
 	if err != nil {
 		t.Fatalf("NewHandoff() error = %v", err)
@@ -8061,8 +8084,8 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 		t.Fatalf("authInventoryHandoffs = %d, want 1", got)
 	}
 
-	rendered := stripANSI(fmt.Sprint(m.View()))
-	for _, want := range []string{"Coordination", "Inbox", "pending requests", "resolved requests", "active sessions", "capability leases", "handoffs", "[pending] Review Agent", "[active] Review Agent", "[active] Orchestrator", "[waiting] builder"} {
+	rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
+	for _, want := range []string{"Coordination", "project scope (Inbox)", "project-local (Inbox)", "pending requests", "resolved requests", "active sessions", "capability leases", "handoffs", "[pending] Review Agent • builder", "[active] Review Agent • builder", "[active] Orchestrator", "[waiting] builder -> qa", "requested by: lane-user (user)", "reason: inventory review", "resume:", "till-mcp-stdio", "timeout: 30m"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in coordination surface:\n%s", want, rendered)
 		}

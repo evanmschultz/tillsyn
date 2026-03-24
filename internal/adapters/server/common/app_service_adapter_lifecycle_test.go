@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,6 +216,40 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	}
 	if guide.WhatTillsynIs == "" || len(guide.Recommended) == 0 {
 		t.Fatalf("GetBootstrapGuide() = %#v, want populated guidance", guide)
+	}
+	if guide.Summary == "" || !strings.Contains(guide.Summary, "approved session") || !strings.Contains(guide.Summary, "auth request") {
+		t.Fatalf("GetBootstrapGuide() summary = %q, want auth-aware bootstrap guidance", guide.Summary)
+	}
+	if len(guide.NextSteps) != 4 {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want 4 operational steps", guide.NextSteps)
+	}
+	if got := guide.NextSteps[0]; !strings.Contains(got, "approved") || !strings.Contains(got, "create a project") {
+		t.Fatalf("GetBootstrapGuide() next_steps[0] = %q, want approved-session project guidance", got)
+	}
+	if got := guide.NextSteps[1]; !strings.Contains(got, "till.create_auth_request") {
+		t.Fatalf("GetBootstrapGuide() next_steps[1] = %q, want auth-request guidance", got)
+	}
+	if got := guide.NextSteps[1]; !strings.Contains(got, "resume_token") || !strings.Contains(got, "continuation_json") {
+		t.Fatalf("GetBootstrapGuide() next_steps[1] = %q, want continuation_json + resume_token guidance", got)
+	}
+	if got := guide.NextSteps[2]; !strings.Contains(got, "till.claim_auth_request") || !strings.Contains(got, "till.create_project") || !strings.Contains(got, "till.create_task") {
+		t.Fatalf("GetBootstrapGuide() next_steps[2] = %q, want claim -> create_project -> create_task guidance", got)
+	}
+	if got := guide.NextSteps[3]; !strings.Contains(got, "till.capture_state") {
+		t.Fatalf("GetBootstrapGuide() next_steps[3] = %q, want capture-state guidance", got)
+	}
+	for _, tool := range []string{
+		"till.create_auth_request",
+		"till.list_auth_requests",
+		"till.get_auth_request",
+		"till.claim_auth_request",
+		"till.create_project",
+		"till.create_task",
+		"till.capture_state",
+	} {
+		if !slices.Contains(guide.Recommended, tool) {
+			t.Fatalf("GetBootstrapGuide() recommended = %#v, want %q", guide.Recommended, tool)
+		}
 	}
 
 	attentionItem, err := fixture.adapter.RaiseAttentionItem(ctx, RaiseAttentionItemRequest{

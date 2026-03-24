@@ -14,7 +14,7 @@ var ErrBootstrapRequired = errors.New("bootstrap is required")
 // ErrGuardrailViolation reports fail-closed lease/scope/completion guardrail failures.
 var ErrGuardrailViolation = errors.New("guardrail violation")
 
-// BootstrapGuide stores summary-first onboarding guidance for empty-instance flows.
+// BootstrapGuide stores summary-first onboarding guidance for empty-instance and pre-approval flows.
 type BootstrapGuide struct {
 	Mode          string   `json:"mode"`
 	Summary       string   `json:"summary"`
@@ -355,7 +355,7 @@ type CommentRecord struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// BootstrapGuideReader resolves onboarding guidance for empty-instance flows.
+// BootstrapGuideReader resolves onboarding guidance for empty-instance and pre-approval flows.
 type BootstrapGuideReader interface {
 	GetBootstrapGuide(context.Context) (BootstrapGuide, error)
 }

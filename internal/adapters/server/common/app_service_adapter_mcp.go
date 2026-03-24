@@ -11,29 +11,35 @@ import (
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
-// GetBootstrapGuide returns summary-first onboarding guidance for empty-instance flows.
+// GetBootstrapGuide returns summary-first onboarding guidance for empty-instance and pre-approval flows.
 func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide, error) {
 	if a == nil || a.service == nil {
 		return BootstrapGuide{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
-		Summary:       "No project context exists yet. Start by creating your first project and then capture state.",
-		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, and summary-first recovery context.",
+		Summary:       "No project context exists yet. If you already have an approved session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token stored in continuation_json before continuing.",
+		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, pre-session auth requests, and summary-first recovery context.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
 			"Task graph operations across branch/phase/task/subtask scopes",
 			"Attention/blocker signaling with user-action visibility",
 			"Kind catalog and template-driven child/checklist auto-actions",
+			"Pre-session auth requests, approval, and continuation claims",
 			"Capability lease issuance and guardrailed non-user mutations",
 		},
 		NextSteps: []string{
-			"Create a project with till.create_project",
-			"Create level-scoped work items with till.create_task",
+			"If this session is already approved, create a project with till.create_project",
+			"If it is not approved yet, create an auth request with till.create_auth_request and put the requester-owned resume_token in continuation_json",
+			"After approval, claim the request with till.claim_auth_request, then create the project with till.create_project before creating level-scoped work with till.create_task",
 			"Call till.capture_state to reorient and continue safely",
 		},
 		Recommended: []string{
 			"till.list_projects",
+			"till.create_auth_request",
+			"till.list_auth_requests",
+			"till.get_auth_request",
+			"till.claim_auth_request",
 			"till.create_project",
 			"till.create_task",
 			"till.capture_state",

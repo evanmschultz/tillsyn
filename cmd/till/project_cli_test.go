@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
@@ -86,6 +87,50 @@ func TestWriteProjectDetail(t *testing.T) {
 	}
 }
 
+// TestWriteProjectReadiness renders the collaboration bridge and next-step guidance.
+func TestWriteProjectReadiness(t *testing.T) {
+	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("p1", "Alpha", "First project", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	project.Metadata.Owner = "team-a"
+	sessions := []app.AuthSession{
+		{SessionID: "s-user", PrincipalType: "user"},
+		{SessionID: "s-builder", PrincipalType: "agent", PrincipalRole: "builder"},
+		{SessionID: "s-orchestrator", PrincipalType: "agent", PrincipalRole: "orchestrator"},
+	}
+	handoffs := []domain.Handoff{
+		{ID: "h-open", Status: domain.HandoffStatusWaiting},
+		{ID: "h-done", Status: domain.HandoffStatusResolved},
+	}
+
+	var out strings.Builder
+	if err := writeProjectReadiness(&out, project, nil, sessions, nil, handoffs); err != nil {
+		t.Fatalf("writeProjectReadiness() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"PROJECT COLLABORATION READINESS",
+		"COORDINATION INVENTORY",
+		"active_auth_sessions",
+		"3",
+		"active_agent_sessions",
+		"2",
+		"active_orchestrator_sessions",
+		"1",
+		"open_project_handoffs",
+		"1",
+		"NEXT STEP",
+		"till lease issue --project-id p1 --role builder --agent-name <agent-name>",
+		"An active orchestrator session is visible",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in project readiness output, got %q", want, got)
+		}
+	}
+}
+
 // TestRequireProjectIDGuidesDiscovery points operators toward discovery before scoped commands run.
 func TestRequireProjectIDGuidesDiscovery(t *testing.T) {
 	err := requireProjectID("till capture-state", "")
@@ -93,10 +138,132 @@ func TestRequireProjectIDGuidesDiscovery(t *testing.T) {
 		t.Fatal("expected missing project id error")
 	}
 	got := err.Error()
-	for _, want := range []string{"--project-id is required", "till project list", "till project create --name"} {
+	for _, want := range []string{"--project-id is required", "till project list", "till project discover --project-id", "till project create --name"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project-id guidance, got %q", want, got)
 		}
+	}
+}
+
+// TestProjectReadinessNextStep selects the right collaboration bridge from inventory counts.
+func TestProjectReadinessNextStep(t *testing.T) {
+	cases := []struct {
+		name               string
+		pendingRequests    []domain.AuthRequest
+		activeOrchestrator int
+		leases             int
+		openHandoffs       int
+		wantCommandParts   []string
+		wantReason         string
+	}{
+		{
+			name: "single pending auth request first",
+			pendingRequests: []domain.AuthRequest{
+				{ID: "req-1"},
+			},
+			activeOrchestrator: 1,
+			leases:             1,
+			openHandoffs:       1,
+			wantCommandParts:   []string{"till auth request show", "--request-id req-1"},
+			wantReason:         "Inspect the pending auth request",
+		},
+		{
+			name: "multiple pending auth requests list view",
+			pendingRequests: []domain.AuthRequest{
+				{ID: "req-1"},
+				{ID: "req-2"},
+			},
+			activeOrchestrator: 1,
+			leases:             1,
+			openHandoffs:       1,
+			wantCommandParts:   []string{"till auth request list", "--project-id p1", "--state pending"},
+			wantReason:         "Multiple pending auth requests",
+		},
+		{
+			name:             "request agent session next when none are active",
+			wantCommandParts: []string{"till auth request create", "--path project/p1", "--principal-id <agent-id>", "--principal-type agent", "--principal-role orchestrator", "--client-id <client-id>", "--client-type mcp-stdio"},
+			wantReason:       "No active orchestrator session is visible",
+		},
+		{
+			name:               "request orchestrator when only non-orchestrator agent sessions exist",
+			wantCommandParts:   []string{"till auth request create", "--principal-role orchestrator"},
+			wantReason:         "No active orchestrator session is visible",
+			activeOrchestrator: 0,
+		},
+		{
+			name:               "lease after orchestrator session",
+			activeOrchestrator: 1,
+			wantCommandParts:   []string{"till lease issue", "--project-id p1", "--role builder", "--agent-name <agent-name>"},
+			wantReason:         "issue the project lease",
+		},
+		{
+			name:               "handoff after lease",
+			activeOrchestrator: 1,
+			leases:             1,
+			wantCommandParts:   []string{"till handoff create", "--project-id p1", "--summary \"project collaboration handoff\"", "--source-role builder", "--target-role qa"},
+			wantReason:         "first handoff",
+		},
+		{
+			name:               "inspect handoffs once the bridge is populated",
+			activeOrchestrator: 1,
+			leases:             1,
+			openHandoffs:       1,
+			wantCommandParts:   []string{"till handoff list", "--project-id p1"},
+			wantReason:         "Collaboration surfaces are populated",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotCommand, gotReason := projectReadinessNextStep("p1", tc.pendingRequests, tc.activeOrchestrator, tc.leases, tc.openHandoffs)
+			for _, want := range tc.wantCommandParts {
+				if !strings.Contains(gotCommand, want) {
+					t.Fatalf("command = %q, want to contain %q", gotCommand, want)
+				}
+			}
+			if !strings.Contains(gotReason, tc.wantReason) {
+				t.Fatalf("reason = %q, want to contain %q", gotReason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestCountActiveAgentSessions counts only agent-owned sessions for readiness guidance.
+func TestCountActiveAgentSessions(t *testing.T) {
+	sessions := []app.AuthSession{
+		{SessionID: "user", PrincipalType: "user"},
+		{SessionID: "agent-a", PrincipalType: "agent"},
+		{SessionID: "agent-b", PrincipalType: "AGENT"},
+	}
+	if got := countActiveAgentSessions(sessions); got != 2 {
+		t.Fatalf("countActiveAgentSessions() = %d, want 2", got)
+	}
+}
+
+// TestCountActiveAgentRoleSessions counts only agent sessions matching the requested role.
+func TestCountActiveAgentRoleSessions(t *testing.T) {
+	sessions := []app.AuthSession{
+		{SessionID: "user", PrincipalType: "user", PrincipalRole: "orchestrator"},
+		{SessionID: "builder", PrincipalType: "agent", PrincipalRole: "builder"},
+		{SessionID: "orchestrator-a", PrincipalType: "agent", PrincipalRole: "orchestrator"},
+		{SessionID: "orchestrator-b", PrincipalType: "agent", PrincipalRole: "ORCHESTRATOR"},
+	}
+	if got := countActiveAgentRoleSessions(sessions, "orchestrator"); got != 2 {
+		t.Fatalf("countActiveAgentRoleSessions() = %d, want 2", got)
+	}
+}
+
+// TestCountOpenHandoffs excludes terminal handoff states from readiness guidance.
+func TestCountOpenHandoffs(t *testing.T) {
+	handoffs := []domain.Handoff{
+		{ID: "open-1", Status: domain.HandoffStatusReady},
+		{ID: "open-2", Status: domain.HandoffStatusWaiting},
+		{ID: "failed", Status: domain.HandoffStatusFailed},
+		{ID: "resolved", Status: domain.HandoffStatusResolved},
+		{ID: "superseded", Status: domain.HandoffStatusSuperseded},
+	}
+	if got := countOpenHandoffs(handoffs); got != 3 {
+		t.Fatalf("countOpenHandoffs() = %d, want 3", got)
 	}
 }
 

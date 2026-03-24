@@ -1,8 +1,8 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-21
-Status: In progress; the auth gatekeeping remediation wave is green in local gates, including the simplified TUI auth review flow, human-readable scope labels, project/global auth inventory, session revoke UX, native MCP claim/resume, and the `till paths` runtime-root/config/database/log output contract cleanup. The remaining closeout step after remote CI is the full collaborative E2E dogfood worksheet/run.
+Updated: 2026-03-23
+Status: In progress; Slice 6 is green in local gates, including the collaboration-readiness bridge, richer auth review context, and safer requested-vs-approved review state. Slice 7 is the active next wave, and the full collaborative E2E dogfood run is locked to happen immediately after Slice 7 is green.
 
 ## 1) Active Run Source Of Truth
 
@@ -1553,7 +1553,130 @@ Slice acceptance criteria:
 7. `just check` passes.
 8. `just ci` passes.
 
-Full collaborative E2E run required immediately after Slice 6 is green:
+Commands run and outcomes:
+1. `just test-pkg ./internal/adapters/server/common` -> PASS.
+2. `just test-pkg ./internal/tui` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just fmt` -> PASS.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+
+QA findings and resolutions:
+1. `QA-FINAL-1` found one real CLI readiness blocker:
+   - the collaboration-readiness bridge treated any active agent session as sufficient.
+   - resolved by counting active orchestrator sessions separately, surfacing that count in the readiness inventory, and keying the next-step bridge off orchestrator readiness rather than generic agent presence.
+2. `QA-FINAL-2` found one real auth-review blocker:
+   - requested scope context still drifted after approval-path edits even though requested TTL was preserved.
+   - resolved by rendering the requested scope/raw-path block from immutable requested-path fields while leaving the mutable approval scope/path in the approval section, and by tightening the auth-review regression test to cover requested-vs-approved scope and TTL.
+3. remaining non-blocking risk:
+   - coordination handoff rows can still become ambiguous when multiple items share the same role pair and similar titles.
+   - this is intentionally carried into the next slice because the current product now meets the safe name-first baseline for the collaborative run, but broader disambiguation polish is still desirable.
+
+Outcome:
+1. Slice 6 is green locally and no longer blocks the collaborative dogfood path.
+2. By explicit user decision, the full collaborative E2E run is deferred one more slice so the remaining human/operator list and identity surfaces can be tightened first.
+
+### 2026-03-23: P5 Slice 7 Operator Inventory And Name-First Collaboration Polish
+
+Objective:
+- close the last high-value pre-collab operator gaps so the first full user+agent E2E run starts from clean product surfaces instead of insider memory,
+- make names primary and ids secondary on the exact CLI/TUI inventory paths the collaborative run depends on,
+- and keep the current richer guided project-create/discovery flow out of scope until after the first real collaborative pass.
+
+Why this is the next slice:
+1. Slice 6 made auth review and coordination safer, but the upcoming E2E still depends on human-scannable operator surfaces beyond `project discover`.
+2. The next collaborative run must validate:
+   - project creation and listing,
+   - fresh orchestrator auth from a new Codex instance,
+   - subagent/auth/lease/handoff monitoring,
+   - and name-first visibility across humans, orchestrators, builders, and QA lanes.
+3. The remaining highest-value pre-collab gap is not protocol behavior; it is operator clarity on the surfaces used to inspect and act on collaboration state.
+
+Locked slice scope:
+1. tighten CLI human-readable inventory output for the collaboration-critical operator commands:
+   - `till auth request list`
+   - `till auth session list`
+   - `till lease list`
+   - `till handoff list`
+   - and any directly adjacent show/list surface required to keep the collaborative run coherent.
+2. keep output deterministic while making names primary and ids clearly available but secondary:
+   - table-style output where appropriate,
+   - stable ordering,
+   - readable summaries with enough identifying detail for debugging.
+3. tighten visible principal/project/path labels on the TUI coordination/auth path where ids or ambiguous labels still leak into the collaboration flow:
+   - prefer display names first,
+   - keep ids/path/contracts visible where they are operationally required,
+   - avoid collapsing distinct rows into identical-looking labels where a cheap secondary disambiguator can fix it.
+4. validate the creation/start path used by the collaborative run:
+   - project create/list/show/discover,
+   - auth request inventory,
+   - session inventory,
+   - lease inventory,
+   - handoff inventory.
+5. keep the scope focused:
+   - do not implement the later Huh-style guided picker/create flow yet,
+   - do not open broad branch/phase/task list/show/search expansion beyond what the immediate collaborative run needs,
+   - do not broaden into template/policy roadmap work.
+
+Explicitly deferred from this slice:
+1. Huh-style/Bubble Tea guided CLI create-discovery wizard work.
+2. broad hierarchy list/show/table work for every node type.
+3. deeper TUI redesign beyond the direct auth/coordination/operator clarity path.
+4. broader post-MVP template, policy, and truthful-completion work.
+
+Parallel lane plan:
+1. `B1` CLI auth/session inventory lane
+   - lock scope:
+     - `cmd/till/auth_inventory_cli.go`
+     - `cmd/till/auth_inventory_cli_test.go`
+   - ownership:
+     - human-readable `auth request list` and `auth session list` operator output
+     - names first, ids/path/state still visible
+     - deterministic ordering and guidance where needed
+2. `B2` CLI lease/handoff inventory lane
+   - lock scope:
+     - `cmd/till/coordination_inventory_cli.go`
+     - `cmd/till/coordination_inventory_cli_test.go`
+   - ownership:
+     - human-readable `lease list` and `handoff list` output
+     - operator clarity for source/target/status/scope
+     - stable ordering and name/id balance
+3. `B3` TUI name-first coordination polish lane
+   - lock scope:
+     - `internal/tui/model.go`
+     - `internal/tui/model_test.go`
+   - ownership:
+     - cheap disambiguation improvements on coordination/auth rows
+     - display-name-first visibility for principals/projects where current labels remain too opaque
+     - no full redesign
+4. orchestrator/integrator ownership:
+   - `PLAN.md`
+   - `cmd/till/main.go`
+   - `cmd/till/main_test.go`
+   - cross-lane integration review
+   - repo-wide gates
+   - final collaborative E2E worksheet wording
+
+Required QA chain for this slice:
+1. two QA reviewers for `B1` before integration.
+2. two QA reviewers for `B2` before integration.
+3. two QA reviewers for `B3` before integration.
+4. after all builders are integrated, run two final QA reviewers across the combined slice for:
+   - completeness,
+   - operator clarity,
+   - and regression risk on the upcoming collaborative run.
+5. fallback rule:
+   - if QA subagent infrastructure degrades again, record the failure here and replace that pass with explicit orchestrator local review plus green package/repo gates.
+
+Slice acceptance criteria:
+1. the collaboration-critical CLI inventory/list surfaces are human-scannable without losing deterministic output.
+2. names are primary labels and ids remain visible but secondary on the direct collaboration path.
+3. the TUI coordination/auth path no longer has obvious id-first or ambiguous-label blockers for the collaborative run.
+4. package tests for touched packages pass.
+5. `just check` passes.
+6. `just ci` passes.
+
+Full collaborative E2E run required immediately after Slice 7 is green:
 1. runtime + entrypoint preflight
    - `./till`
    - `./till mcp`
@@ -1564,12 +1687,19 @@ Full collaborative E2E run required immediately after Slice 6 is green:
    - `./till project list`
    - `./till project create ...`
    - `./till project show --project-id ...`
+   - `./till project discover --project-id ...`
+   - `./till auth request list ...`
+   - `./till auth session list ...`
+   - `./till lease list ...`
+   - `./till handoff list ...`
    - `./till capture-state --project-id ...`
    - verify name + id clarity and non-dead-end help/guidance.
+   - verify human-readable table/list output instead of raw JSON-only operator ergonomics on the collaboration path.
 3. TUI human path
    - project picker and project creation
    - visible human-readable project names
-   - no confusing id-primary labels where names should lead.
+   - no confusing id-primary labels where names should lead
+   - and no obviously ambiguous auth/coordination rows where a human needs to distinguish actors or targets quickly.
 4. fresh orchestrator auth path from a new Codex instance
    - request auth through MCP
    - user approves in TUI
@@ -1577,9 +1707,11 @@ Full collaborative E2E run required immediately after Slice 6 is green:
    - no manual shell glue as the primary path.
 5. orchestrator/subagent collaboration path
    - orchestrator creates or coordinates a subagent flow
+   - use at least one fresh subagent/auth request after the orchestrator session is live
    - scoped auth and lease/gatekeeping behavior is validated
    - anti-adoption / no attaching to unrelated existing auth context
-   - verify no confusing principal-name/display-name collisions in visible UX.
+   - verify no confusing principal-name/display-name collisions in visible UX
+   - and verify the operator can distinguish orchestrator vs builder vs qa clearly in live inventory surfaces.
 6. project creation + coordination path
    - create or inspect a project
    - open TUI coordination surface

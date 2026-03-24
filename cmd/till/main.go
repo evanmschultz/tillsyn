@@ -256,6 +256,12 @@ type projectShowCommandOptions struct {
 	includeArchived bool
 }
 
+// projectReadinessCommandOptions stores project collaboration-readiness flag values.
+type projectReadinessCommandOptions struct {
+	projectID       string
+	includeArchived bool
+}
+
 // issueSessionCommandOptions stores issue-session flag values.
 type issueSessionCommandOptions struct {
 	principalID   string
@@ -366,6 +372,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	projectListOpts := projectListCommandOptions{}
 	projectCreateOpts := projectCreateCommandOptions{}
 	projectShowOpts := projectShowCommandOptions{}
+	projectDiscoverOpts := projectReadinessCommandOptions{}
 	issueSessionOpts := issueSessionCommandOptions{
 		principalType: "user",
 		clientID:      "till-mcp-stdio",
@@ -410,7 +417,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -487,18 +494,21 @@ Only orchestrators may request projects/... or global scope.
 
 	projectCmd := &cobra.Command{
 		Use:   "project",
-		Short: "List, create, and inspect projects",
+		Short: "List, create, inspect, and bridge projects into collaboration readiness",
 		Long: strings.TrimSpace(`
 List projects for discovery, create new projects with reasonable metadata
-defaults, and inspect one project in a human-readable detail view.
+defaults, inspect one project in a human-readable detail view, or bridge one
+project into auth/session/lease/handoff setup with a readiness summary.
 
-Next step: use till project list to find an id, till project create to add one,
-or till project show --project-id p1 to inspect a single record.
+Next step: use till project list to find an id, till project discover
+--project-id <project-id> to see the next collaboration step, or till project
+create to add one.
 `),
 		Example: strings.Join([]string{
 			"  till project list",
 			"  till project create --name Inbox --description \"Local execution inbox\"",
 			"  till project show --project-id p1",
+			"  till project discover --project-id p1",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -509,8 +519,9 @@ or till project show --project-id p1 to inspect a single record.
 List projects in a human-readable table with names first and ids visible for
 copy/paste into scoped commands.
 
-Next step: use till project show --project-id p1 to inspect one project in
-detail, or till project create to add a new one.
+Next step: use till project discover --project-id <project-id> to inspect one
+project and see the collaboration-readiness bridge, or till project create to
+add a new one.
 `),
 		Example: strings.Join([]string{
 			"  till project list",
@@ -530,7 +541,8 @@ Create one project with a name, optional description, optional kind override,
 and optional metadata defaults from flags or --metadata-json.
 
 Next step: use till project list to confirm the new record, or till project
-show --project-id p1 to inspect the stored detail.
+discover --project-id <project-id> to inspect the collaboration-readiness
+bridge after creation.
 `),
 		Example: strings.Join([]string{
 			"  till project create --name Inbox --description \"Local execution inbox\" --owner \"Platform\" --tag dogfood",
@@ -560,8 +572,9 @@ Show one project in a readable detail view.
 
 If you do not know the id yet, run till project list first to discover it.
 
-Next step: after inspecting the project, use the scoped commands that require
-the id, or return to till project list to choose another record.
+Next step: after inspecting the project, use till project discover --project-id
+<project-id> to see the auth/session/lease/handoff bridge, or return to till
+project list to choose another record.
 `),
 		Example: "  till project show --project-id p1",
 		Args:    cobra.NoArgs,
@@ -571,7 +584,25 @@ the id, or return to till project list to choose another record.
 	}
 	projectShowCmd.Flags().StringVar(&projectShowOpts.projectID, "project-id", "", "Project identifier")
 	projectShowCmd.Flags().BoolVar(&projectShowOpts.includeArchived, "include-archived", false, "Include archived projects")
-	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd)
+	projectDiscoverCmd := &cobra.Command{
+		Use:   "discover",
+		Short: "Show one project collaboration-readiness summary",
+		Long: strings.TrimSpace(`
+Show one project with a collaboration-readiness bridge that points the operator
+at the next auth, session, lease, or handoff step.
+
+Next step: after reading the readiness summary, follow the recommended command
+in order rather than relying on remembered setup steps.
+`),
+		Example: "  till project discover --project-id p1",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "project.discover")
+		},
+	}
+	projectDiscoverCmd.Flags().StringVar(&projectDiscoverOpts.projectID, "project-id", "", "Project identifier")
+	projectDiscoverCmd.Flags().BoolVar(&projectDiscoverOpts.includeArchived, "include-archived", false, "Include archived projects")
+	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd, projectDiscoverCmd)
 
 	captureStateCmd := &cobra.Command{
 		Use:   "capture-state",
@@ -1579,6 +1610,7 @@ func executeCommandFlow(
 	projectListOpts projectListCommandOptions,
 	projectCreateOpts projectCreateCommandOptions,
 	projectShowOpts projectShowCommandOptions,
+	projectDiscoverOpts projectReadinessCommandOptions,
 	captureStateOpts captureStateCommandOptions,
 	kindListOpts kindListCommandOptions,
 	kindUpsertOpts kindUpsertCommandOptions,
@@ -1883,6 +1915,14 @@ func executeCommandFlow(
 			return fmt.Errorf("run project show command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "project.show")
+		return nil
+	case "project.discover":
+		logger.Info("command flow start", "command", "project.discover")
+		if err := runProjectDiscover(ctx, svc, projectDiscoverOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "project.discover", "err", err)
+			return fmt.Errorf("run project discover command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "project.discover")
 		return nil
 	case "capture-state":
 		logger.Info("command flow start", "command", "capture-state")
