@@ -1269,6 +1269,337 @@ Current next action lock:
 
 ## 8) Lightweight Execution Log
 
+### 2026-03-23: Pre-Collab Blocker Review And Post-Collab Operator Follow-Up
+
+Objective:
+- confirm the active source-of-truth policy before the next collaborative run,
+- lock what must be tested with the product as it exists today,
+- and separate true pre-collab requirements from the broader CLI/operator improvements that should land immediately after that run.
+
+Source-of-truth confirmation:
+1. `PLAN.md` remains the only active checklist, status ledger, and completion ledger for the current run.
+2. `README.md` is user-facing summary/reference only for this run.
+3. `TEMPLATE_AGENT_CONSENSUS.md` remains reference-only until its remaining scope is fully folded back into the canonical product/docs.
+4. No new split markdown tracker should be created for the upcoming collaborative run unless the user explicitly asks for one.
+
+Commands run and outcomes:
+1. user manual shell check:
+   - `./till capture-state` -> FAIL CLOSED with `Required flag(s) "project-id" not set.`
+   - finding: the CLI requires a project id for scoped commands but does not yet expose a clean project-discovery path first.
+2. user manual shell check:
+   - `./till kind list` -> PASS
+   - finding: command works, but it reinforces that the CLI currently exposes global kind inventory without the corresponding project inventory/discovery ladder.
+3. local repo inspection across `cmd/till/main.go`, `internal/tui/model.go`, `README.md`, and `PLAN.md` -> PASS.
+4. subagent review:
+   - TUI/MCP discovery review -> PASS
+   - finding: TUI project picker and MCP `till.list_projects` are sufficient for discovery; the gap is specifically the human CLI path.
+5. subagent review:
+   - CLI/operator discoverability review -> PASS
+   - finding: missing `project list` is the immediate CLI blocker, and the broader issue is missing CLI hierarchy/bootstrap discovery.
+6. subagent review:
+   - markdown-replacement readiness review -> PASS
+   - finding: Tillsyn is already a credible collaboration substrate, but it is not yet credible as the sole project-management surface replacing markdown for this repo's active development loop.
+
+Current conclusions:
+1. The next collaborative test can proceed with the product as it exists today, but it must be framed as:
+   - TUI + MCP + auth/gatekeeping/orchestrator/subagent collaboration validation,
+   - not as proof that the CLI/operator surface is already complete.
+2. The current CLI/operator gap is real but is not the only remaining issue:
+   - no CLI project inventory/create path,
+   - no clear CLI hierarchy-discovery ladder for branch/phase/task ids,
+   - weak missing-`project-id` guidance,
+   - some user-visible name-vs-id clarity still needs tightening,
+   - operator list output should become clearer and more human-readable.
+3. The current collaborative run should explicitly include:
+   - project creation,
+   - new orchestrator auth creation from a fresh Codex instance,
+   - subagent creation,
+   - auth gatekeeping and anti-conflict checks,
+   - display-name clarity in TUI surfaces,
+   - and validation that ids do not leak where names should be primary labels.
+4. The current collaborative run should not wait for the richer CLI project-create/discovery UX described below.
+
+Locked post-collab implementation follow-up:
+1. Add a real CLI discovery/bootstrap ladder before calling the CLI/operator surface dogfood-ready:
+   - `till project list`
+   - `till project create`
+   - strongly consider `till project show --project-id ...`
+   - strongly consider either `till task list --project-id ...` or `till search --project-id ...`
+2. Improve CLI zero-context failure guidance:
+   - if `--project-id` is missing for a scoped command, the product should point directly to the discovery step instead of failing bluntly.
+3. Upgrade human operator presentation:
+   - list/inventory commands should prefer clean table-style output with name and id together where appropriate,
+   - names should be primary labels across TUI/CLI/operator surfaces,
+   - ids should remain visible but secondary so debugging stays possible without making the product confusing.
+4. Implement a guided CLI project-create/discovery flow after the current collaborative run:
+   - use Bubble Tea/Bubbles/Fang v2-native patterns only,
+   - do not add `huh` v1 as a runtime dependency,
+   - use a Charm `huh`/Charm reference checkout under `.tmp/` only as implementation inspiration after the collaborative run,
+   - aim for a clean picker/input experience that feels like a Huh-style guided operator flow while staying within the repo's v2-only UI direction.
+5. After the current collaborative run, reassess whether additional operator improvements are needed before the next dogfood loop:
+   - better hierarchy discovery,
+   - friendlier current-project/default-project behavior where safe,
+   - clearer CLI logging/noise boundaries for machine-friendly commands,
+   - and stronger visible surfacing of template/autofill value props.
+6. Only after those operator surfaces and the broader template/policy/truthful-completion flows are more fully productized should this repo attempt to move active development management out of markdown and into Tillsyn itself.
+
+### 2026-03-23: P5 Slice 5 CLI Discovery And Operator Bootstrap Baseline
+
+Objective:
+- close the minimum human CLI/operator discovery gap before the next full collaborative run,
+- without blocking on the later richer guided picker/create UX,
+- and make the shell path credible enough that collaborative testing can start from a real operator entry point instead of insider knowledge.
+
+Locked slice scope:
+1. add a real CLI `project` command family as the operator discovery/bootstrap baseline.
+2. cover at least:
+   - `till project list`
+   - `till project create`
+   - `till project show --project-id ...`
+3. improve zero-context scoped-command guidance:
+   - when `project-id` is required, the product should point directly at the discovery step instead of failing with a dead-end message.
+4. make project listings human-scannable:
+   - prefer name + id together,
+   - ids stay visible but secondary,
+   - keep deterministic output and stable tests.
+5. do not implement the later Huh-style guided picker/create flow in this slice:
+   - that remains post-collab work,
+   - and if implemented later it must stay Bubble Tea/Bubbles/Fang v2-native with any `huh` reference checkout living only under `.tmp/`.
+
+Explicitly deferred from this slice:
+1. broader hierarchy discovery (`branch|phase|task|subtask` list/show/search polish) unless required to land the project bootstrap baseline cleanly.
+2. richer CLI tables for every other listing surface in the same wave.
+3. the polished guided create/pick wizard flow.
+4. final auth/orchestrator UX polish and smaller TUI wording/label cleanups that do not block the next collaborative run.
+
+Parallel lane plan:
+1. `B1` CLI project operations implementation
+   - lock scope:
+     - `cmd/till/project_cli.go`
+     - `cmd/till/project_cli_test.go`
+   - ownership:
+     - project payloads/rendering helpers
+     - `runProjectList`
+     - `runProjectCreate`
+     - `runProjectShow`
+     - project listing/name+id presentation contract
+2. `B2` CLI command-tree and guidance wiring
+   - lock scope:
+     - `cmd/till/main.go`
+     - `cmd/till/main_test.go`
+   - ownership:
+     - command structs/flags/help/examples
+     - root help command inventory
+     - command routing through `executeCommandFlow`
+     - missing-`project-id` next-step guidance
+3. orchestrator/integrator ownership:
+   - `PLAN.md`
+   - cross-lane integration review
+   - final gate ownership
+
+Required QA chain for this slice:
+1. two QA reviewers for `B1` before integration.
+2. two QA reviewers for `B2` before integration.
+3. after both lanes are integrated, run two final QA reviewers across the combined slice for:
+   - completeness,
+   - operator UX coherence,
+   - and regression risk.
+4. fallback rule:
+   - if QA subagent infrastructure fails again, record the failure in this file and replace it with explicit orchestrator local review plus green repo gates.
+
+Slice acceptance criteria:
+1. a human can discover existing projects from the shell without knowing ids beforehand.
+2. a human can create a project from the shell without dropping into the TUI.
+3. a human can inspect one project from the shell and see its name and id clearly.
+4. `capture-state` and other scoped CLI flows no longer strand the user with dead-end guidance when `project-id` is missing.
+5. command help clearly points at the project discovery/bootstrap step.
+6. package tests for touched files pass.
+7. `just check` passes.
+8. `just ci` passes.
+
+Implementation and evidence:
+1. landed CLI project discovery/bootstrap baseline:
+   - `till project list`
+   - `till project create`
+   - `till project show --project-id ...`
+2. improved scoped-command discovery guidance so missing `--project-id` errors point directly to:
+   - `till project list`
+   - `till project create --name "Example Project"`
+3. removed process-global mutable project-command state from the CLI command tree so command execution stays deterministic under test.
+4. tightened operator-facing project UX:
+   - stable name-first project sorting,
+   - human-readable project list/detail rendering,
+   - archived-only discovery guidance,
+   - archived-project `show` guidance.
+5. commands run:
+   - `just test-pkg ./cmd/till` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
+
+Outcome:
+1. Slice 5 is green locally.
+2. The full collaborative E2E run is intentionally deferred until Slice 6 lands because auth review and coordination clarity are still the highest-value remaining pre-collab gap.
+
+### 2026-03-23: P5 Slice 6 Collaboration Readiness And Name-First Auth Surfaces
+
+Objective:
+- make the human approval and monitoring path safe enough for the next full collaborative E2E run,
+- remove the remaining high-signal auth/coordination id-noise and scope ambiguity,
+- and add one explicit collaboration-readiness bridge so project discovery leads into real agent setup instead of a memory test.
+
+Why this is the next slice:
+1. subagent review + local inspection agree that the highest remaining pre-collab gap is not generic CLI discovery anymore.
+2. the remaining highest-risk gap is human/operator clarity during:
+   - auth approval,
+   - coordination/recovery monitoring,
+   - and project-to-agent setup.
+3. the next collaborative run must validate:
+   - fresh orchestrator approval from a new Codex instance,
+   - subagent creation,
+   - scope/gatekeeping,
+   - lease/handoff visibility,
+   - and name-first human readability.
+
+Locked slice scope:
+1. improve the dedicated TUI auth review surface so humans can distinguish requests safely:
+   - role,
+   - reason,
+   - requester/subject context,
+   - timeout or expiry context where available,
+   - continuation/resume context where available,
+   - and clearer scope/path framing.
+2. tighten TUI coordination-surface clarity:
+   - make the mixed scope model explicit when requests/sessions are global but leases/handoffs remain project-local,
+   - reduce raw id leakage in lease/handoff labels and detail rows,
+   - keep names primary where available and ids secondary.
+3. add one explicit collaboration-readiness bridge from project discovery into agent setup:
+   - a project-scoped readiness/discovery summary in CLI and/or an equivalent existing surface extension,
+   - must show the human what to do next in order:
+     - auth request status,
+     - approved session presence,
+     - relevant lease state,
+     - handoff visibility,
+     - and recommended next operator action.
+4. fix the most confusing auth/bootstrap wording that would otherwise mislead the collaborative run:
+   - MCP/bootstrap copy,
+   - command help,
+   - or project/readiness guidance as needed.
+5. keep the scope focused:
+   - do not open the later guided Huh-style CLI flow,
+   - do not try to solve all task/thread/id leakage in one wave unless needed to land the auth/coordination path coherently,
+   - do not broaden into post-MVP template/policy roadmap work.
+
+Explicitly deferred from this slice:
+1. Huh-style guided CLI project creation/discovery UX.
+2. full hierarchy list/show/search polish for every node type.
+3. broad task/thread/system-info copy cleanup outside the direct auth/coordination collaborative path.
+4. deeper MCP/session inventory expansion beyond what is required for this collaborative run.
+
+Parallel lane plan:
+1. `B1` auth review decision-context lane
+   - lock scope:
+     - `internal/tui/model.go`
+     - `internal/tui/model_test.go`
+     - any narrowly related TUI helper file needed for auth/path display
+   - ownership:
+     - auth review summary clarity
+     - name-first scope display
+     - role/reason/requester/resume context
+     - visible safe approval context
+2. `B2` coordination name-first clarity lane
+   - lock scope:
+     - `internal/tui/model.go`
+     - `internal/tui/model_test.go`
+     - any narrowly related TUI helper file needed for coordination labels
+   - ownership:
+     - coordination scope explanation
+     - lease/handoff human-readable labels
+     - reduced raw id leakage on the coordination path
+3. `B3` collaboration-readiness bridge lane
+   - lock scope:
+     - `cmd/till/main.go`
+     - `cmd/till/main_test.go`
+     - `cmd/till/project_cli.go`
+     - `cmd/till/project_cli_test.go`
+     - any narrowly required app/common helper if a shared readiness seam is cleaner
+   - ownership:
+     - project-to-agent setup bridge
+     - collaboration-readiness summary output
+     - command/help/bootstrap next-step clarity
+4. orchestrator/integrator ownership:
+   - `PLAN.md`
+   - cross-lane integration review
+   - repo-wide gates
+   - final collaborative worksheet wording
+
+Required QA chain for this slice:
+1. two QA reviewers for `B1` before integration.
+2. two QA reviewers for `B2` before integration.
+3. two QA reviewers for `B3` before integration.
+4. after all builders are integrated, run two final QA reviewers across the combined slice for:
+   - completeness,
+   - operator clarity,
+   - and regression risk.
+5. fallback rule:
+   - if QA subagent infrastructure degrades again, record the failure here and replace that pass with explicit orchestrator local review plus green package/repo gates.
+
+Slice acceptance criteria:
+1. auth review shows enough context that a human can clearly distinguish orchestrator vs builder vs qa approval decisions.
+2. coordination screen copy makes its scope semantics understandable during a live collaborative run.
+3. leases and handoffs render with names/labels first where available instead of reading like internal tuples.
+4. the product exposes one explicit project-to-collaboration readiness bridge so an operator can tell what auth/session/lease/handoff step is next.
+5. any wording that would mislead the upcoming collaborative run about bootstrap/auth/project setup is corrected.
+6. package tests for touched packages pass.
+7. `just check` passes.
+8. `just ci` passes.
+
+Full collaborative E2E run required immediately after Slice 6 is green:
+1. runtime + entrypoint preflight
+   - `./till`
+   - `./till mcp`
+   - `./till serve`
+   - clean `Ctrl-C`
+   - confirm all three point at the same real runtime/db/config/log root.
+2. CLI operator bootstrap path
+   - `./till project list`
+   - `./till project create ...`
+   - `./till project show --project-id ...`
+   - `./till capture-state --project-id ...`
+   - verify name + id clarity and non-dead-end help/guidance.
+3. TUI human path
+   - project picker and project creation
+   - visible human-readable project names
+   - no confusing id-primary labels where names should lead.
+4. fresh orchestrator auth path from a new Codex instance
+   - request auth through MCP
+   - user approves in TUI
+   - requester claims/resumes natively
+   - no manual shell glue as the primary path.
+5. orchestrator/subagent collaboration path
+   - orchestrator creates or coordinates a subagent flow
+   - scoped auth and lease/gatekeeping behavior is validated
+   - anti-adoption / no attaching to unrelated existing auth context
+   - verify no confusing principal-name/display-name collisions in visible UX.
+6. project creation + coordination path
+   - create or inspect a project
+   - open TUI coordination surface
+   - verify pending/resolved requests, sessions, leases, and handoffs render coherently.
+7. handoff + lease recovery path
+   - create handoff
+   - list/get/update handoff
+   - issue/list/revoke lease
+   - confirm state is visible in CLI/TUI/MCP where expected.
+8. display-name clarity pass
+   - names should be primary labels in the TUI where available
+   - ids remain available but secondary
+   - record any visible remaining id-primary confusion as post-run follow-up.
+9. collaboration-readiness bridge
+   - start from project discovery or the readiness surface rather than insider memory
+   - verify the product itself shows the next auth/session/lease/handoff step cleanly enough for a human operator.
+10. final collaborative verdict
+   - record every pass/fail finding here in `PLAN.md`
+   - if defects appear, stop forward progression, fix that scope, rerun the same section, then continue.
+
 ### 2026-03-22: P5 Slice 4 TUI And CLI Product Surfaces
 
 Objective:

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestWriteProjectList(t *testing.T) {
 		},
 	}
 	var out strings.Builder
-	if err := writeProjectList(&out, projects); err != nil {
+	if err := writeProjectList(&out, projects, `Next step: till project create --name "Example Project"`); err != nil {
 		t.Fatalf("writeProjectList() error = %v", err)
 	}
 	got := out.String()
@@ -41,12 +42,24 @@ func TestWriteProjectList(t *testing.T) {
 // TestWriteProjectListEmpty guides operators toward project creation when none exist.
 func TestWriteProjectListEmpty(t *testing.T) {
 	var out strings.Builder
-	if err := writeProjectList(&out, nil); err != nil {
+	if err := writeProjectList(&out, nil, `Next step: till project create --name "Example Project"`); err != nil {
 		t.Fatalf("writeProjectList(nil) error = %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "(none)") || !strings.Contains(got, "NAME") {
+	if !strings.Contains(got, "(none)") || !strings.Contains(got, "NAME") || !strings.Contains(got, "till project create --name") {
 		t.Fatalf("expected empty project table row, got %q", got)
+	}
+}
+
+// TestWriteProjectListEmptyArchivedHint points archived-only operators toward the include-archived path.
+func TestWriteProjectListEmptyArchivedHint(t *testing.T) {
+	var out strings.Builder
+	if err := writeProjectList(&out, nil, "Next step: till project list --include-archived"); err != nil {
+		t.Fatalf("writeProjectList(nil, archived hint) error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "till project list --include-archived") {
+		t.Fatalf("expected archived discovery hint, got %q", got)
 	}
 }
 
@@ -84,5 +97,56 @@ func TestRequireProjectIDGuidesDiscovery(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project-id guidance, got %q", want, got)
 		}
+	}
+}
+
+// TestBuildProjectMetadataPrefersExplicitFlags verifies flag values override JSON defaults.
+func TestBuildProjectMetadataPrefersExplicitFlags(t *testing.T) {
+	metadata, err := buildProjectMetadata(projectCreateCommandOptions{
+		metadataJSON:      `{"owner":"json-owner","tags":["json"],"homepage":"https://json.invalid"}`,
+		owner:             "flag-owner",
+		tags:              []string{"flag"},
+		standardsMarkdown: "flag standards",
+	})
+	if err != nil {
+		t.Fatalf("buildProjectMetadata() error = %v", err)
+	}
+	if metadata.Owner != "flag-owner" {
+		t.Fatalf("metadata.Owner = %q, want flag-owner", metadata.Owner)
+	}
+	if len(metadata.Tags) != 1 || metadata.Tags[0] != "flag" {
+		t.Fatalf("metadata.Tags = %#v, want []string{\"flag\"}", metadata.Tags)
+	}
+	if metadata.Homepage != "https://json.invalid" {
+		t.Fatalf("metadata.Homepage = %q, want https://json.invalid", metadata.Homepage)
+	}
+	if metadata.StandardsMarkdown != "flag standards" {
+		t.Fatalf("metadata.StandardsMarkdown = %q, want flag standards", metadata.StandardsMarkdown)
+	}
+}
+
+// TestBuildProjectMetadataRejectsInvalidJSON verifies metadata-json parse failures stay operator-visible.
+func TestBuildProjectMetadataRejectsInvalidJSON(t *testing.T) {
+	_, err := buildProjectMetadata(projectCreateCommandOptions{metadataJSON: `{"owner":`})
+	if err == nil {
+		t.Fatal("expected invalid metadata json error")
+	}
+	if !strings.Contains(err.Error(), "parse --metadata-json") {
+		t.Fatalf("expected parse error context, got %v", err)
+	}
+}
+
+// TestCompareProjectsForCLI sorts names first and ids second for stable discovery output.
+func TestCompareProjectsForCLI(t *testing.T) {
+	projects := []domain.Project{
+		{ID: "p2", Name: "Beta"},
+		{ID: "p3", Name: "alpha"},
+		{ID: "p1", Name: "Alpha"},
+	}
+	slices.SortFunc(projects, compareProjectsForCLI)
+	got := []string{projects[0].ID, projects[1].ID, projects[2].ID}
+	want := []string{"p1", "p3", "p2"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("sorted ids = %v, want %v", got, want)
 	}
 }

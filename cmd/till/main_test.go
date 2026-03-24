@@ -171,6 +171,28 @@ func seedProjectForAuthCLITest(t *testing.T, dbPath, projectID string) {
 	}
 }
 
+// archiveProjectForCLITest marks one seeded project archived for CLI discovery tests.
+func archiveProjectForCLITest(t *testing.T, dbPath, projectID string) {
+	t.Helper()
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+
+	project, err := repo.GetProject(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("GetProject(%q) error = %v", projectID, err)
+	}
+	project.Archive(time.Date(2026, 3, 23, 12, 30, 0, 0, time.UTC))
+	if err := repo.UpdateProject(context.Background(), project); err != nil {
+		t.Fatalf("UpdateProject(%q) error = %v", projectID, err)
+	}
+}
+
 // TestRunVersion verifies behavior for the covered scenario.
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
@@ -400,7 +422,7 @@ func TestRunRootHelp(t *testing.T) {
 	if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 		t.Fatalf("expected root usage output, got %q", out.String())
 	}
-	for _, want := range []string{"serve", "mcp", "auth", "capture-state", "kind", "lease", "handoff", "export", "import", "paths", "init-dev-config"} {
+	for _, want := range []string{"serve", "mcp", "auth", "project", "capture-state", "kind", "lease", "handoff", "export", "import", "paths", "init-dev-config"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q command in root help, got %q", want, out.String())
 		}
@@ -435,6 +457,26 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "auth",
 			args: []string{"auth", "--help"},
 			want: []string{"till auth", "request", "session", "issue-session", "session revoke --session-id", "projects/<project-id>,<project-id>...", "global"},
+		},
+		{
+			name: "project",
+			args: []string{"project", "--help"},
+			want: []string{"till project", "list", "create", "show", "discover"},
+		},
+		{
+			name: "project list",
+			args: []string{"project", "list", "--help"},
+			want: []string{"till project list", "--include-archived", "names first", "ids visible"},
+		},
+		{
+			name: "project create",
+			args: []string{"project", "create", "--help"},
+			want: []string{"till project create", "--name", "--kind", "--metadata-json"},
+		},
+		{
+			name: "project show",
+			args: []string{"project", "show", "--help"},
+			want: []string{"till project show", "--project-id", "project list", "discover"},
 		},
 		{
 			name: "auth request",
@@ -1202,6 +1244,167 @@ func TestRunCaptureStateCommand(t *testing.T) {
 	}
 	if len(got.ScopePath) == 0 || got.ScopePath[0].ScopeType != "project" || got.ScopePath[0].ScopeID != "p1" {
 		t.Fatalf("scope_path = %#v, want project:p1", got.ScopePath)
+	}
+}
+
+// TestRunProjectScopeGuidance verifies scoped commands point operators to project discovery when the project id is missing.
+func TestRunProjectScopeGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "capture-state",
+			args: []string{"--db", dbPath, "--config", cfgPath, "capture-state"},
+		},
+		{
+			name: "project show",
+			args: []string{"--db", dbPath, "--config", cfgPath, "project", "show"},
+		},
+		{
+			name: "kind allowlist list",
+			args: []string{"--db", dbPath, "--config", cfgPath, "kind", "allowlist", "list"},
+		},
+		{
+			name: "kind allowlist set",
+			args: []string{"--db", dbPath, "--config", cfgPath, "kind", "allowlist", "set"},
+		},
+		{
+			name: "lease list",
+			args: []string{"--db", dbPath, "--config", cfgPath, "lease", "list"},
+		},
+		{
+			name: "lease issue",
+			args: []string{"--db", dbPath, "--config", cfgPath, "lease", "issue"},
+		},
+		{
+			name: "lease revoke-all",
+			args: []string{"--db", dbPath, "--config", cfgPath, "lease", "revoke-all"},
+		},
+		{
+			name: "handoff create",
+			args: []string{"--db", dbPath, "--config", cfgPath, "handoff", "create"},
+		},
+		{
+			name: "handoff list",
+			args: []string{"--db", dbPath, "--config", cfgPath, "handoff", "list"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			err := run(context.Background(), tc.args, &out, io.Discard)
+			if err == nil {
+				t.Fatal("expected missing project-id error")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "project list") {
+				t.Fatalf("expected discoverability hint in error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestRunProjectCommands verifies project discovery, create, and show output.
+func TestRunProjectCommands(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var createOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"project", "create",
+		"--name", "Inbox",
+		"--description", "Local execution inbox",
+		"--metadata-json", `{"owner":"Platform","tags":["dogfood"]}`,
+	}, &createOut, io.Discard); err != nil {
+		t.Fatalf("run(project create) error = %v", err)
+	}
+	if got := createOut.String(); !strings.Contains(got, "CREATED PROJECT") || !strings.Contains(got, "name") || !strings.Contains(got, "Inbox") || !strings.Contains(got, "owner") || !strings.Contains(got, "Platform") {
+		t.Fatalf("unexpected project create output: %q", got)
+	}
+
+	var listOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "list"}, &listOut, io.Discard); err != nil {
+		t.Fatalf("run(project list) error = %v", err)
+	}
+	if got := listOut.String(); !strings.Contains(got, "NAME") || !strings.Contains(got, "ID") || !strings.Contains(got, "OWNER") || !strings.Contains(got, "ARCHIVED") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "Inbox") {
+		t.Fatalf("unexpected project list output: %q", got)
+	}
+
+	var showOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "--project-id", "p1"}, &showOut, io.Discard); err != nil {
+		t.Fatalf("run(project show) error = %v", err)
+	}
+	if got := showOut.String(); !strings.Contains(got, "PROJECT") || !strings.Contains(got, "name") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "id") || !strings.Contains(got, "p1") {
+		t.Fatalf("unexpected project show output: %q", got)
+	}
+}
+
+// TestRunProjectListArchivedOnlyGuidance points operators toward archived discovery before duplicate creation.
+func TestRunProjectListArchivedOnlyGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+	archiveProjectForCLITest(t, dbPath, "p1")
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "list"}, &out, io.Discard); err != nil {
+		t.Fatalf("run(project list archived-only) error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "(none)") || !strings.Contains(got, "till project list --include-archived") {
+		t.Fatalf("expected archived-only guidance, got %q", got)
+	}
+}
+
+// TestRunProjectShowArchivedGuidance points operators toward include-archived when the id exists but is hidden.
+func TestRunProjectShowArchivedGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+	archiveProjectForCLITest(t, dbPath, "p1")
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "--project-id", "p1"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("expected archived project show error")
+	}
+	if !strings.Contains(err.Error(), "--include-archived") {
+		t.Fatalf("expected archived project guidance, got %v", err)
 	}
 }
 
