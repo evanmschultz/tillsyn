@@ -1687,6 +1687,14 @@ Commands run and outcomes:
 8. `just fmt` -> PASS.
 9. `just check` -> PASS.
 10. `just ci` -> PASS.
+11. `git push` -> PASS; pushed Slice 7 as `8a96d5a feat(collab): polish operator inventory and handoff clarity`.
+12. `gh run watch --exit-status 23569112076` -> FAIL; first remote `ci` run failed on `.github#11` / `fmt-check`.
+13. `gh run view 23569112076 --job 68627535138 --log-failed` -> PASS; remote Ubuntu log showed `gofmt required for: cmd/till/coordination_inventory_cli.go cmd/till/coordination_inventory_cli_test.go`.
+14. `gh run view 23569112076 --job 68627535152 --log-failed` -> PASS; remote macOS log matched the same formatting-only failure.
+15. `gh run view 23569112076 --job 68627535132 --log-failed` -> PASS; remote Windows log matched the same formatting-only failure.
+16. `just fmt` -> PASS; reran after the files were tracked and confirmed the two new coordination files were reformatted.
+17. `just check` -> PASS.
+18. `just ci` -> PASS.
 
 QA findings and resolutions:
 1. initial QA round found one auth-inventory clarity blocker:
@@ -1709,7 +1717,8 @@ QA findings and resolutions:
 
 Outcome:
 1. Slice 7 is green locally and no longer blocks the full collaborative E2E dogfood run.
-2. The next required action is to commit/push this slice, wait for GitHub Actions to finish green, and then execute the collaborative E2E checklist immediately below without reopening scope first.
+2. One post-push remote-only formatting miss was found and contained to two newly tracked coordination files; it is now remediated locally with green local gates again.
+3. The next required action is to commit/push the formatting-only follow-up, wait for GitHub Actions to finish green, and then execute the collaborative E2E checklist immediately below without reopening scope first.
 
 Full collaborative E2E run required immediately after Slice 7 is green:
 1. runtime + entrypoint preflight

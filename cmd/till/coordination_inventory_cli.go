@@ -287,7 +287,9 @@ func renderCoordinationStringList(values []string) string {
 		return "-"
 	}
 	ordered := append([]string(nil), values...)
-	slices.SortFunc(ordered, func(a, b string) int { return strings.Compare(strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b))) })
+	slices.SortFunc(ordered, func(a, b string) int {
+		return strings.Compare(strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b)))
+	})
 	parts := make([]string, 0, len(ordered))
 	for _, value := range ordered {
 		value = strings.TrimSpace(value)
