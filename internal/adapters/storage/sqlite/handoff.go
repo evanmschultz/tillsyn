@@ -244,7 +244,6 @@ func normalizeHandoffForWrite(handoff domain.Handoff) (domain.Handoff, error) {
 		handoff.TargetBranchID = ""
 		handoff.TargetScopeType = ""
 		handoff.TargetScopeID = ""
-		handoff.TargetRole = ""
 	}
 
 	if domain.IsTerminalHandoffStatus(handoff.Status) {

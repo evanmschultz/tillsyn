@@ -209,8 +209,8 @@ func TestServiceUpdateHandoffClearsOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateHandoff() error = %v", err)
 	}
-	if updated.TargetScopeID != "" || updated.TargetScopeType != "" || updated.TargetRole != "" {
-		t.Fatalf("expected target fields cleared, got %#v", updated)
+	if updated.TargetScopeID != "task-1" || updated.TargetScopeType != domain.ScopeLevelTask || updated.TargetRole != "builder" {
+		t.Fatalf("expected status-only update to preserve target fields, got %#v", updated)
 	}
 	if updated.NextAction != "" {
 		t.Fatalf("expected next action cleared, got %q", updated.NextAction)

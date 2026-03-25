@@ -725,22 +725,23 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}, &shownOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show) error = %v", err)
 	}
-
-	var shown authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(shownOut.String()), &shown); err != nil {
-		t.Fatalf("Unmarshal(show) error = %v", err)
-	}
 	if strings.Contains(shownOut.String(), "resume_tool") || strings.Contains(shownOut.String(), "resume_path") {
 		t.Fatalf("show output leaked continuation metadata: %s", shownOut.String())
 	}
-	if shown.ID != created.ID {
-		t.Fatalf("show id = %q, want %q", shown.ID, created.ID)
-	}
-	if !shown.HasContinuation {
-		t.Fatal("show has_continuation = false, want true")
-	}
-	if shown.IssuedSessionSecret != "" {
-		t.Fatalf("show issued_session_secret = %q, want empty before approval", shown.IssuedSessionSecret)
+	for _, want := range []string{
+		"AUTH REQUEST",
+		created.ID,
+		"review-agent • builder",
+		"requested path",
+		"project/p1",
+		"requested ttl",
+		"8h",
+		"requested by",
+		"tillsyn-user (user)",
+	} {
+		if !strings.Contains(shownOut.String(), want) {
+			t.Fatalf("expected %q in auth request show output, got %q", want, shownOut.String())
+		}
 	}
 
 	var approvedOut strings.Builder
@@ -797,22 +798,23 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}, &approvedShowOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show approved) error = %v", err)
 	}
-
-	var approvedShown authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(approvedShowOut.String()), &approvedShown); err != nil {
-		t.Fatalf("Unmarshal(show approved) error = %v", err)
-	}
 	if strings.Contains(approvedShowOut.String(), "resume_tool") || strings.Contains(approvedShowOut.String(), "resume_path") {
 		t.Fatalf("approved show output leaked continuation metadata: %s", approvedShowOut.String())
 	}
-	if got := approvedShown.IssuedSessionID; got != approved.IssuedSessionID {
-		t.Fatalf("approved show issued_session_id = %q, want %q", got, approved.IssuedSessionID)
+	for _, want := range []string{
+		"AUTH REQUEST",
+		approved.IssuedSessionID,
+		"approved path",
+		"project/p1/branch/review-branch",
+		"approved ttl",
+		"2h",
+	} {
+		if !strings.Contains(approvedShowOut.String(), want) {
+			t.Fatalf("expected %q in approved auth request show output, got %q", want, approvedShowOut.String())
+		}
 	}
-	if !approvedShown.HasContinuation {
-		t.Fatal("approved show has_continuation = false, want true")
-	}
-	if approvedShown.IssuedSessionSecret != "" {
-		t.Fatalf("approved show issued_session_secret = %q, want empty", approvedShown.IssuedSessionSecret)
+	if strings.Contains(approvedShowOut.String(), approved.IssuedSessionSecret) {
+		t.Fatalf("approved show output leaked issued session secret: %s", approvedShowOut.String())
 	}
 
 	var validatedOut strings.Builder
@@ -859,25 +861,17 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}, &sessionListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth session list) error = %v", err)
 	}
-
-	var sessions []authSessionPayloadJSON
-	if err := json.Unmarshal([]byte(sessionListOut.String()), &sessions); err != nil {
-		t.Fatalf("Unmarshal(session list) error = %v", err)
-	}
-	if len(sessions) != 1 || sessions[0].SessionID != approved.IssuedSessionID {
-		t.Fatalf("expected active session inventory for approved request, got %#v", sessions)
-	}
-	if got := sessions[0].ProjectID; got != "p1" {
-		t.Fatalf("session list project_id = %q, want p1", got)
-	}
-	if got := sessions[0].AuthRequestID; got != created.ID {
-		t.Fatalf("session list auth_request_id = %q, want %q", got, created.ID)
-	}
-	if got := sessions[0].ApprovedPath; got != "project/p1/branch/review-branch" {
-		t.Fatalf("session list approved_path = %q, want project/p1/branch/review-branch", got)
-	}
-	if got := sessions[0].PrincipalRole; got != "builder" {
-		t.Fatalf("session list principal_role = %q, want builder", got)
+	for _, want := range []string{
+		"AUTH SESSIONS",
+		approved.IssuedSessionID,
+		"review-agent • builder",
+		"project/p1/branch/review-branch",
+		"p1",
+		"active",
+	} {
+		if !strings.Contains(sessionListOut.String(), want) {
+			t.Fatalf("expected %q in auth session list output, got %q", want, sessionListOut.String())
+		}
 	}
 
 	if err := run(context.Background(), []string{
@@ -966,12 +960,10 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	}, &deniedListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request list denied) error = %v", err)
 	}
-	var deniedList []authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(deniedListOut.String()), &deniedList); err != nil {
-		t.Fatalf("Unmarshal(denied list) error = %v", err)
-	}
-	if len(deniedList) != 1 || deniedList[0].ID != deniedRequest.ID {
-		t.Fatalf("expected one denied request in filtered list, got %#v", deniedList)
+	for _, want := range []string{"AUTH REQUESTS", deniedRequest.ID, "denied", "user-deny"} {
+		if !strings.Contains(deniedListOut.String(), want) {
+			t.Fatalf("expected %q in denied auth request list output, got %q", want, deniedListOut.String())
+		}
 	}
 
 	var canceledListOut strings.Builder
@@ -983,12 +975,10 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	}, &canceledListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request list canceled) error = %v", err)
 	}
-	var canceledList []authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(canceledListOut.String()), &canceledList); err != nil {
-		t.Fatalf("Unmarshal(canceled list) error = %v", err)
-	}
-	if len(canceledList) != 1 || canceledList[0].ID != canceledRequest.ID {
-		t.Fatalf("expected one canceled request in filtered list, got %#v", canceledList)
+	for _, want := range []string{"AUTH REQUESTS", canceledRequest.ID, "canceled", "user-cancel"} {
+		if !strings.Contains(canceledListOut.String(), want) {
+			t.Fatalf("expected %q in canceled auth request list output, got %q", want, canceledListOut.String())
+		}
 	}
 }
 
@@ -1030,16 +1020,10 @@ func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
 	}, &shownOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show timeout) error = %v", err)
 	}
-
-	var shown authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(shownOut.String()), &shown); err != nil {
-		t.Fatalf("Unmarshal(show timeout) error = %v", err)
-	}
-	if got := shown.State; got != "expired" {
-		t.Fatalf("show state = %q, want expired", got)
-	}
-	if got := shown.ResolutionNote; got != "timed_out" {
-		t.Fatalf("show resolution_note = %q, want timed_out", got)
+	for _, want := range []string{"AUTH REQUEST", "expired", "timed_out", created.ID} {
+		if !strings.Contains(shownOut.String(), want) {
+			t.Fatalf("expected %q in timeout auth request show output, got %q", want, shownOut.String())
+		}
 	}
 }
 
@@ -1604,22 +1588,10 @@ func TestRunCapabilityLeaseCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(lease list) error = %v", err)
 	}
-	var leases []struct {
-		InstanceID string `json:"instance_id"`
-		ProjectID  string `json:"project_id"`
-	}
-	if err := json.Unmarshal([]byte(listOut.String()), &leases); err != nil {
-		t.Fatalf("Unmarshal(lease list) error = %v", err)
-	}
-	foundLease := false
-	for _, lease := range leases {
-		if lease.InstanceID == issued.InstanceID && lease.ProjectID == "p1" {
-			foundLease = true
-			break
+	for _, want := range []string{"CAPABILITY LEASES", "lane-a", issued.InstanceID, "builder", "project/p1", "active"} {
+		if !strings.Contains(listOut.String(), want) {
+			t.Fatalf("expected %q in lease list output, got %q", want, listOut.String())
 		}
-	}
-	if !foundLease {
-		t.Fatalf("expected lease list to include issued lease %q, got %#v", issued.InstanceID, leases)
 	}
 
 	var revokeOut strings.Builder
@@ -1646,22 +1618,10 @@ func TestRunCapabilityLeaseCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1", "--include-revoked"}, &revokedListOut, io.Discard); err != nil {
 		t.Fatalf("run(lease list include revoked) error = %v", err)
 	}
-	var revokedLeases []struct {
-		InstanceID string     `json:"instance_id"`
-		RevokedAt  *time.Time `json:"revoked_at"`
-	}
-	if err := json.Unmarshal([]byte(revokedListOut.String()), &revokedLeases); err != nil {
-		t.Fatalf("Unmarshal(lease list include revoked) error = %v", err)
-	}
-	foundRevoked := false
-	for _, lease := range revokedLeases {
-		if lease.InstanceID == issued.InstanceID && lease.RevokedAt != nil {
-			foundRevoked = true
-			break
+	for _, want := range []string{"CAPABILITY LEASES", issued.InstanceID, "revoked"} {
+		if !strings.Contains(revokedListOut.String(), want) {
+			t.Fatalf("expected %q in revoked lease list output, got %q", want, revokedListOut.String())
 		}
-	}
-	if !foundRevoked {
-		t.Fatalf("expected revoked lease to remain visible with --include-revoked, got %#v", revokedLeases)
 	}
 }
 
@@ -1706,35 +1666,23 @@ func TestRunHandoffCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff list) error = %v", err)
 	}
-	var handoffs []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(listOut.String()), &handoffs); err != nil {
-		t.Fatalf("Unmarshal(handoff list) error = %v", err)
-	}
-	foundHandoff := false
-	for _, handoff := range handoffs {
-		if handoff.ID == created.ID {
-			foundHandoff = true
-			break
+	for _, want := range []string{"HANDOFFS", created.ID, "builder", "waiting", "qa handoff"} {
+		if !strings.Contains(listOut.String(), "role:qa") {
+			t.Fatalf("expected role-only handoff target in handoff list output, got %q", listOut.String())
 		}
-	}
-	if !foundHandoff {
-		t.Fatalf("expected handoff list to include %q, got %#v", created.ID, handoffs)
+		if !strings.Contains(listOut.String(), want) {
+			t.Fatalf("expected %q in handoff list output, got %q", want, listOut.String())
+		}
 	}
 
 	var getOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "get", "--handoff-id", created.ID}, &getOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff get) error = %v", err)
 	}
-	var got struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(getOut.String()), &got); err != nil {
-		t.Fatalf("Unmarshal(handoff get) error = %v", err)
-	}
-	if got.ID != created.ID {
-		t.Fatalf("handoff get output = %#v, want %q", got, created.ID)
+	for _, want := range []string{"HANDOFF", created.ID, "builder -> qa", "role:qa", "qa handoff", "waiting"} {
+		if !strings.Contains(getOut.String(), want) {
+			t.Fatalf("expected %q in handoff get output, got %q", want, getOut.String())
+		}
 	}
 
 	var updateOut strings.Builder

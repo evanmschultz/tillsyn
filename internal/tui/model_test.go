@@ -8104,6 +8104,81 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	}
 }
 
+// TestAuthInventoryLabelsAddSecondaryIdentifiers verifies coordination labels keep ids secondary when names would collide.
+func TestAuthInventoryLabelsAddSecondaryIdentifiers(t *testing.T) {
+	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "QA Check",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	scopeLabel := m.authInventoryScopeEntityLabel(project.ID, domain.ScopeLevelTask, task.ID)
+	if !strings.Contains(scopeLabel, "QA Check") || !strings.Contains(scopeLabel, "task:"+task.ID) {
+		t.Fatalf("scope label = %q, want title plus task secondary id", scopeLabel)
+	}
+
+	targetLabel := m.authInventoryTargetEntityLabel(project.ID, "branch-1", domain.ScopeLevelTask, task.ID)
+	if !strings.Contains(targetLabel, "branch-1") || !strings.Contains(targetLabel, "QA Check") || !strings.Contains(targetLabel, "task:"+task.ID) {
+		t.Fatalf("target label = %q, want branch plus target secondary id", targetLabel)
+	}
+}
+
+// TestAuthInventoryHandoffTargetLabelKeepsRoleOnlyTargets verifies role-only handoffs do not pretend to target the project.
+func TestAuthInventoryHandoffTargetLabelKeepsRoleOnlyTargets(t *testing.T) {
+	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	m := loadReadyModel(t, NewModel(svc))
+
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:            "handoff-1",
+		ProjectID:     project.ID,
+		ScopeType:     domain.ScopeLevelProject,
+		SourceRole:    "builder",
+		TargetRole:    "qa",
+		Summary:       "QA review",
+		CreatedByType: domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+
+	if got := m.authInventoryHandoffTargetLabel(handoff); got != "role:qa" {
+		t.Fatalf("authInventoryHandoffTargetLabel() = %q, want role:qa", got)
+	}
+}
+
+// TestAuthInventoryHandoffTargetLabelHandlesTrulyTargetlessRows verifies empty target metadata renders as a clean dash.
+func TestAuthInventoryHandoffTargetLabelHandlesTrulyTargetlessRows(t *testing.T) {
+	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	m := loadReadyModel(t, NewModel(svc))
+
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:            "handoff-empty",
+		ProjectID:     project.ID,
+		ScopeType:     domain.ScopeLevelProject,
+		Summary:       "No target",
+		CreatedByType: domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+
+	if got := m.authInventoryHandoffTargetLabel(handoff); got != "-" {
+		t.Fatalf("authInventoryHandoffTargetLabel() = %q, want -", got)
+	}
+}
+
 // TestModelAuthInventorySplitsPendingAndResolvedRequests verifies the inventory keeps pending requests selectable while still rendering resolved history.
 func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 30, 0, time.UTC)

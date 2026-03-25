@@ -202,12 +202,12 @@ func NewHandoff(in HandoffInput, now time.Time) (Handoff, error) {
 		UpdatedByActor:  updatedByActor,
 		UpdatedByType:   updatedByType,
 		UpdatedAt:       ts,
+		TargetRole:      in.TargetRole,
 	}
 	if hasTarget {
 		handoff.TargetBranchID = target.BranchID
 		handoff.TargetScopeType = target.ScopeType
 		handoff.TargetScopeID = target.ScopeID
-		handoff.TargetRole = in.TargetRole
 	}
 	return handoff, nil
 }
@@ -276,7 +276,9 @@ func (h *Handoff) Update(in HandoffUpdateInput, now time.Time) error {
 		return ErrInvalidActorType
 	}
 
-	h.SourceRole = in.SourceRole
+	if in.SourceRole != "" {
+		h.SourceRole = in.SourceRole
+	}
 	h.Summary = strings.TrimSpace(in.Summary)
 	h.NextAction = strings.TrimSpace(in.NextAction)
 	h.MissingEvidence = normalizeHandoffList(in.MissingEvidence)
@@ -286,16 +288,19 @@ func (h *Handoff) Update(in HandoffUpdateInput, now time.Time) error {
 	h.UpdatedAt = now.UTC()
 	h.Status = in.Status
 
+	targetTouched := strings.TrimSpace(in.TargetBranchID) != "" || in.TargetScopeType != "" || strings.TrimSpace(in.TargetScopeID) != "" || in.TargetRole != ""
 	if hasTarget {
 		h.TargetBranchID = target.BranchID
 		h.TargetScopeType = target.ScopeType
 		h.TargetScopeID = target.ScopeID
-		h.TargetRole = in.TargetRole
-	} else {
+		if in.TargetRole != "" || h.TargetRole == "" {
+			h.TargetRole = in.TargetRole
+		}
+	} else if targetTouched {
 		h.TargetBranchID = ""
 		h.TargetScopeType = ""
 		h.TargetScopeID = ""
-		h.TargetRole = ""
+		h.TargetRole = in.TargetRole
 	}
 
 	if IsTerminalHandoffStatus(h.Status) {

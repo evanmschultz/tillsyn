@@ -2349,7 +2349,7 @@ func runKindAllowlistSet(ctx context.Context, svc *app.Service, cfg config.Confi
 	})
 }
 
-// runLeaseList lists capability leases and writes them as stable JSON.
+// runLeaseList lists capability leases and writes them in a human-readable operator view.
 func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2366,11 +2366,7 @@ func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOp
 	if err != nil {
 		return fmt.Errorf("list capability leases: %w", err)
 	}
-	payload := make([]capabilityLeasePayloadJSON, 0, len(leases))
-	for _, lease := range leases {
-		payload = append(payload, capabilityLeasePayload(lease))
-	}
-	return writeJSON(stdout, payload)
+	return writeCoordinationLeaseList(stdout, time.Now().UTC(), leases)
 }
 
 // runLeaseIssue issues one capability lease and writes it as stable JSON.
@@ -2515,7 +2511,7 @@ func runHandoffCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	return writeJSON(stdout, handoffPayload(handoff))
 }
 
-// runHandoffGet returns one durable handoff and writes it as stable JSON.
+// runHandoffGet returns one durable handoff in a human-readable operator view.
 func runHandoffGet(ctx context.Context, svc *app.Service, opts handoffGetCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2524,10 +2520,10 @@ func runHandoffGet(ctx context.Context, svc *app.Service, opts handoffGetCommand
 	if err != nil {
 		return fmt.Errorf("get handoff: %w", err)
 	}
-	return writeJSON(stdout, handoffPayload(handoff))
+	return writeCoordinationHandoffDetail(stdout, handoff)
 }
 
-// runHandoffList lists durable handoffs and writes them as stable JSON.
+// runHandoffList lists durable handoffs in a human-readable operator view.
 func runHandoffList(ctx context.Context, svc *app.Service, opts handoffListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2548,11 +2544,7 @@ func runHandoffList(ctx context.Context, svc *app.Service, opts handoffListComma
 	if err != nil {
 		return fmt.Errorf("list handoffs: %w", err)
 	}
-	payload := make([]handoffPayloadJSON, 0, len(handoffs))
-	for _, handoff := range handoffs {
-		payload = append(payload, handoffPayload(handoff))
-	}
-	return writeJSON(stdout, payload)
+	return writeCoordinationHandoffList(stdout, handoffs)
 }
 
 // runHandoffUpdate updates one durable handoff and writes it as stable JSON.
@@ -2716,7 +2708,7 @@ func toHandoffStatusList(values []string) []domain.HandoffStatus {
 	return out
 }
 
-// runAuthRequestList lists persisted auth requests in deterministic order.
+// runAuthRequestList lists persisted auth requests in a human-readable operator view.
 func runAuthRequestList(ctx context.Context, svc *app.Service, opts requestListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2733,10 +2725,10 @@ func runAuthRequestList(ctx context.Context, svc *app.Service, opts requestListC
 	for _, request := range requests {
 		payload = append(payload, authRequestPayload(request, ""))
 	}
-	return writeJSON(stdout, payload)
+	return writeAuthRequestListHuman(stdout, payload)
 }
 
-// runAuthRequestShow returns one auth request by id.
+// runAuthRequestShow returns one auth request by id in a human-readable operator view.
 func runAuthRequestShow(ctx context.Context, svc *app.Service, opts requestShowCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2745,7 +2737,7 @@ func runAuthRequestShow(ctx context.Context, svc *app.Service, opts requestShowC
 	if err != nil {
 		return fmt.Errorf("get auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestDetailHuman(stdout, authRequestPayload(request, ""))
 }
 
 // runAuthRequestApprove approves one pending auth request and issues one usable session.
@@ -2804,7 +2796,7 @@ func runAuthRequestCancel(ctx context.Context, svc *app.Service, cfg config.Conf
 	return writeJSON(stdout, authRequestPayload(request, ""))
 }
 
-// runAuthSessionList returns caller-safe auth-session inventory.
+// runAuthSessionList returns caller-safe auth-session inventory in a human-readable operator view.
 func runAuthSessionList(ctx context.Context, svc *app.Service, opts sessionListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2824,7 +2816,7 @@ func runAuthSessionList(ctx context.Context, svc *app.Service, opts sessionListC
 	for _, session := range sessions {
 		payload = append(payload, authSessionPayload(session))
 	}
-	return writeJSON(stdout, payload)
+	return writeAuthSessionListHuman(stdout, payload)
 }
 
 // runAuthSessionValidate validates one session credential pair.

@@ -87,6 +87,9 @@ func TestHandoffUpdateTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandoff() error = %v", err)
 	}
+	if handoff.SourceRole != "builder" || handoff.TargetRole != "qa" {
+		t.Fatalf("expected role-only handoff to preserve source/target roles, got %#v", handoff)
+	}
 
 	waitingAt := now.Add(5 * time.Minute)
 	if err := handoff.Update(HandoffUpdateInput{
@@ -101,8 +104,27 @@ func TestHandoffUpdateTransitions(t *testing.T) {
 	if handoff.UpdatedByActor != "user-1" {
 		t.Fatalf("UpdatedByActor = %q, want user-1 fallback", handoff.UpdatedByActor)
 	}
+	if handoff.SourceRole != "builder" || handoff.TargetRole != "qa" {
+		t.Fatalf("expected status-only update to preserve handoff roles, got %#v", handoff)
+	}
 	if handoff.ResolvedAt != nil {
 		t.Fatalf("expected unresolved handoff, got resolved_at=%v", handoff.ResolvedAt)
+	}
+
+	retargetedAt := now.Add(7 * time.Minute)
+	if err := handoff.Update(HandoffUpdateInput{
+		Status:          HandoffStatusWaiting,
+		TargetBranchID:  "branch-qa",
+		TargetScopeType: ScopeLevelTask,
+		TargetScopeID:   "task-qa-2",
+		Summary:         "Waiting on QA retarget",
+		UpdatedByActor:  "user-1",
+		UpdatedByType:   ActorTypeUser,
+	}, retargetedAt); err != nil {
+		t.Fatalf("Update(retarget preserve role) error = %v", err)
+	}
+	if handoff.TargetBranchID != "branch-qa" || handoff.TargetScopeID != "task-qa-2" || handoff.TargetRole != "qa" {
+		t.Fatalf("expected retarget update to preserve target role, got %#v", handoff)
 	}
 
 	resolvedAt := now.Add(10 * time.Minute)

@@ -1,8 +1,8 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-23
-Status: In progress; Slice 6 is green in local gates, including the collaboration-readiness bridge, richer auth review context, and safer requested-vs-approved review state. Slice 7 is the active next wave, and the full collaborative E2E dogfood run is locked to happen immediately after Slice 7 is green.
+Updated: 2026-03-24
+Status: In progress; Slice 7 is green in local gates after final operator-inventory and handoff-clarity fixes. The next required step is push + remote GitHub Actions confirmation, then the full collaborative E2E dogfood run proceeds from this file.
 
 ## 1) Active Run Source Of Truth
 
@@ -1675,6 +1675,41 @@ Slice acceptance criteria:
 4. package tests for touched packages pass.
 5. `just check` passes.
 6. `just ci` passes.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS; confirmed the local Slice 7 workspace before finishing the cut.
+2. `git diff --stat` -> PASS; verified Slice 7 stayed scoped to CLI inventory, handoff semantics, and TUI label clarity.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just test-pkg ./internal/domain` -> PASS.
+5. `just test-pkg ./internal/app` -> PASS.
+6. `just test-pkg ./internal/tui` -> PASS.
+7. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+8. `just fmt` -> PASS.
+9. `just check` -> PASS.
+10. `just ci` -> PASS.
+
+QA findings and resolutions:
+1. initial QA round found one auth-inventory clarity blocker:
+   - same-name principals were still ambiguous in the human-readable CLI inventory and optional actor cells could render blank.
+   - resolved by keeping friendly names primary while appending principal ids secondarily, adding explicit `-` fallback for empty actor cells, and tightening CLI tests around collision-safe labels.
+2. initial QA round found one handoff-contract blocker:
+   - role-only handoffs lost their target role in storage/rendering, so CLI inventory degraded them to source-only rows.
+   - resolved by preserving `TargetRole` independently from concrete target tuples, rendering role-only targets explicitly as `role:<target-role>`, and tightening domain, CLI, and app tests around status-only updates and role-only handoffs.
+3. initial QA round found one TUI coordination blocker:
+   - targetless handoffs could render as if they targeted the project.
+   - resolved by making the TUI handoff target label return `-` for truly targetless rows and `role:<target-role>` only when a role-only target is actually present, with dedicated regression coverage.
+4. follow-up QA round found one final edge-case blocker:
+   - truly targetless handoffs could still render a malformed `role:` placeholder after the role-only fix.
+   - resolved by guarding empty target-role fallbacks in both CLI and TUI renderers and by extending regression coverage for truly targetless rows.
+5. QA coverage note:
+   - three initial QA reviewers completed and found the blocking issues above.
+   - one fresh final QA reviewer completed and found the last targetless-edge-case blocker above.
+   - one replacement fresh final QA reviewer completed after the last fix and found no further blockers for the upcoming collaborative E2E run, only low-risk follow-up coverage gaps.
+   - one additional fresh final QA reviewer timed out before returning, so final completeness confidence for Slice 7 is based on the completed QA findings above plus green touched-package tests, `just check`, and `just ci`.
+
+Outcome:
+1. Slice 7 is green locally and no longer blocks the full collaborative E2E dogfood run.
+2. The next required action is to commit/push this slice, wait for GitHub Actions to finish green, and then execute the collaborative E2E checklist immediately below without reopening scope first.
 
 Full collaborative E2E run required immediately after Slice 7 is green:
 1. runtime + entrypoint preflight

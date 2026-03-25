@@ -2969,6 +2969,13 @@ func (m Model) authInventoryHandoffScopeLabel(handoff domain.Handoff) string {
 
 // authInventoryHandoffTargetLabel renders one handoff target label.
 func (m Model) authInventoryHandoffTargetLabel(handoff domain.Handoff) string {
+	if strings.TrimSpace(handoff.TargetBranchID) == "" && handoff.TargetScopeType == "" && strings.TrimSpace(handoff.TargetScopeID) == "" {
+		targetRole := strings.TrimSpace(handoff.TargetRole)
+		if targetRole == "" {
+			return "-"
+		}
+		return "role:" + targetRole
+	}
 	return m.authInventoryTargetEntityLabel(handoff.ProjectID, handoff.TargetBranchID, handoff.TargetScopeType, handoff.TargetScopeID)
 }
 
@@ -2990,6 +2997,29 @@ func (m Model) authInventoryHandoffLabel(handoff domain.Handoff) string {
 	}
 }
 
+// authInventorySecondaryLabel appends one level/id disambiguator when a friendly label would otherwise hide it.
+func authInventorySecondaryLabel(label string, scopeType domain.ScopeLevel, scopeID string) string {
+	label = strings.TrimSpace(label)
+	scopeType = domain.NormalizeScopeLevel(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	secondary := ""
+	switch {
+	case scopeType != "" && scopeID != "":
+		secondary = string(scopeType) + ":" + scopeID
+	case scopeID != "":
+		secondary = scopeID
+	case scopeType != "":
+		secondary = string(scopeType)
+	}
+	if secondary == "" || strings.Contains(label, secondary) {
+		return label
+	}
+	if label == "" {
+		return secondary
+	}
+	return label + " [" + secondary + "]"
+}
+
 // authInventoryScopeEntityLabel renders one project-scoped lease or handoff scope using human names when available.
 func (m Model) authInventoryScopeEntityLabel(projectID string, scopeType domain.ScopeLevel, scopeID string) string {
 	projectLabel := m.authInventoryProjectLabel(projectID)
@@ -3005,12 +3035,12 @@ func (m Model) authInventoryScopeEntityLabel(projectID string, scopeType domain.
 		return strings.TrimSpace(string(scopeType))
 	case projectLabel != "":
 		if task, ok := m.taskByID(scopeID); ok {
-			return projectLabel + " -> " + firstNonEmptyTrimmed(task.Title, scopeID)
+			return projectLabel + " -> " + authInventorySecondaryLabel(firstNonEmptyTrimmed(task.Title, scopeID), scopeType, scopeID)
 		}
 		return projectLabel + " -> " + strings.TrimSpace(string(scopeType)) + ":" + scopeID
 	default:
 		if task, ok := m.taskByID(scopeID); ok {
-			return firstNonEmptyTrimmed(task.Title, scopeID)
+			return authInventorySecondaryLabel(firstNonEmptyTrimmed(task.Title, scopeID), scopeType, scopeID)
 		}
 		return strings.TrimSpace(string(scopeType)) + ":" + scopeID
 	}
@@ -3018,10 +3048,9 @@ func (m Model) authInventoryScopeEntityLabel(projectID string, scopeType domain.
 
 // authInventoryTargetEntityLabel renders one handoff target label with human names when available.
 func (m Model) authInventoryTargetEntityLabel(projectID, branchID string, targetType domain.ScopeLevel, targetID string) string {
-	projectLabel := m.authInventoryProjectLabel(projectID)
 	branchLabel := strings.TrimSpace(branchID)
 	if task, ok := m.taskByID(branchID); ok {
-		branchLabel = firstNonEmptyTrimmed(task.Title, branchID)
+		branchLabel = authInventorySecondaryLabel(firstNonEmptyTrimmed(task.Title, branchID), domain.ScopeLevelBranch, branchID)
 	}
 	targetType = domain.NormalizeScopeLevel(targetType)
 	targetID = strings.TrimSpace(targetID)
@@ -3033,7 +3062,7 @@ func (m Model) authInventoryTargetEntityLabel(projectID, branchID string, target
 		targetLabel = firstNonEmptyTrimmed(m.authInventoryProjectLabel(targetID), targetID)
 	case targetType == "" && targetID != "":
 		if task, ok := m.taskByID(targetID); ok {
-			targetLabel = firstNonEmptyTrimmed(task.Title, targetID)
+			targetLabel = authInventorySecondaryLabel(firstNonEmptyTrimmed(task.Title, targetID), targetType, targetID)
 		} else {
 			targetLabel = targetID
 		}
@@ -3041,13 +3070,13 @@ func (m Model) authInventoryTargetEntityLabel(projectID, branchID string, target
 		targetLabel = string(targetType)
 	default:
 		if task, ok := m.taskByID(targetID); ok {
-			targetLabel = firstNonEmptyTrimmed(task.Title, targetID)
+			targetLabel = authInventorySecondaryLabel(firstNonEmptyTrimmed(task.Title, targetID), targetType, targetID)
 		} else {
 			targetLabel = strings.TrimSpace(string(targetType)) + ":" + targetID
 		}
 	}
 	if branchLabel == "" {
-		return firstNonEmptyTrimmed(targetLabel, projectLabel)
+		return firstNonEmptyTrimmed(targetLabel, "-")
 	}
 	if targetType == domain.ScopeLevelProject {
 		return firstNonEmptyTrimmed(targetLabel, branchLabel)
