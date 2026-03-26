@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 // driverName defines a package constant value.
 const driverName = "sqlite3"
 const defaultEmbeddingSearchLimit = 200
+const defaultBusyTimeout = 60 * time.Second
 
 const (
 	// globalAuthProjectSlug stores the internal hidden slug that backs global auth routing.
@@ -76,10 +78,12 @@ func Open(path string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create sqlite dir: %w", err)
 	}
-	db, err := sql.Open(driverName, path)
+	db, err := sql.Open(driverName, sqliteFileURI(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	repo := &Repository{db: db}
 	if err := repo.migrate(context.Background()); err != nil {
 		_ = db.Close()
@@ -94,6 +98,8 @@ func OpenInMemory() (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite memory: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	repo := &Repository{db: db}
 	if err := repo.migrate(context.Background()); err != nil {
 		_ = db.Close()
@@ -105,6 +111,19 @@ func OpenInMemory() (*Repository, error) {
 // Close closes the requested operation.
 func (r *Repository) Close() error {
 	return r.db.Close()
+}
+
+// sqliteFileURI returns a DSN with the local concurrency pragmas required for multi-process dogfooding.
+func sqliteFileURI(path string) string {
+	query := url.Values{}
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", defaultBusyTimeout/time.Millisecond))
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "foreign_keys(1)")
+	return (&url.URL{
+		Scheme:   "file",
+		Path:     path,
+		RawQuery: query.Encode(),
+	}).String()
 }
 
 // migrate applies schema and data migrations required for compatibility.
@@ -2007,7 +2026,9 @@ func (r *Repository) ResolveAttentionItem(ctx context.Context, attentionID strin
 		return domain.AttentionItem{}, domain.ErrInvalidID
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	// Acquire the write lock up front so the read/modify/write sequence does not
+	// start as a deferred transaction and then fail on lock upgrade under cross-process contention.
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return domain.AttentionItem{}, err
 	}
