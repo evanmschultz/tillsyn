@@ -4091,6 +4091,13 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
+	m.mode = modeNone
+	m.noticesFocused = false
+	m.selectedColumn = 0
+	m.selectedTask = 0
+	if got := len(m.currentColumnTasks()); got != 2 {
+		t.Fatalf("expected two tasks in the active column before wheel input, got %d", got)
+	}
 
 	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if m.selectedTask != 1 {
@@ -8671,10 +8678,9 @@ func TestModelProjectNotificationsEnterRecoversArchivedTask(t *testing.T) {
 	}
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	// Archived-task recovery intentionally reloads data with archived visibility
-	// enabled, which can take slightly longer than the default helper timeout on
-	// slower Windows runners.
-	m = applyCmdWithTimeout(t, mustModelValue(t, updated), cmd, 100*time.Millisecond)
+	// Archived-task recovery intentionally triggers one immediate reload command,
+	// so run it directly instead of relying on the generic timeout-based helper.
+	m = applyImmediateCmd(t, mustModelValue(t, updated), cmd)
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected archived task notice to recover into task info, got %v", m.mode)
 	}
@@ -12648,6 +12654,21 @@ func applyCmdWithTimeout(t *testing.T, m Model, cmd tea.Cmd, timeout time.Durati
 		case <-time.After(timeout):
 			return out
 		}
+		updated, nextCmd := out.Update(msg)
+		out = mustModelValue(t, updated)
+		currentCmd = nextCmd
+	}
+	return out
+}
+
+// applyImmediateCmd applies cmd directly for test paths that are expected to
+// return immediate follow-up messages without timer-driven behavior.
+func applyImmediateCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	out := m
+	currentCmd := cmd
+	for i := 0; i < 6 && currentCmd != nil; i++ {
+		msg := currentCmd()
 		updated, nextCmd := out.Update(msg)
 		out = mustModelValue(t, updated)
 		currentCmd = nextCmd

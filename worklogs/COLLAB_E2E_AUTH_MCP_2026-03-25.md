@@ -48,10 +48,10 @@ Run one dated collaborative end-to-end auth and MCP dogfood pass that:
    - replacement run `23586624405` proved the original Windows SQLite-open failure is resolved,
    - that run then exposed two separate Windows-only test regressions in `internal/adapters/livewait/localipc` and `internal/tui`,
    - the current local follow-up now fixes both:
-     - `newID()` in the local IPC broker no longer relies on wall-clock resolution alone,
-     - the archived-task notice Enter test now targets the attention row directly instead of depending on incidental section-traversal keystrokes,
-     - the global-notices auth-review activation tests now target the selected global row directly instead of depending on incidental focus traversal,
-     - targeted test helpers can now opt into a slightly longer synchronous command wait window on slower runners,
+     - `newID()` in the local IPC broker no longer relies on wall-clock resolution alone and is now proven with a frozen same-tick regression,
+     - stale-subscription cleanup now targets a closed loopback address instead of a hard-coded dead port,
+     - the archived-task notice Enter test now targets the attention row directly and runs the immediate reload command without relying on the generic timeout helper,
+     - the mouse-wheel board-selection regression test now sets its starting board state explicitly before wheel input,
    - local evidence on that follow-up is green:
      - `just fmt`
      - `just test-pkg ./internal/adapters/livewait/localipc`

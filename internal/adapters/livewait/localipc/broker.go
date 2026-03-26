@@ -505,10 +505,15 @@ func sendWake(addr, secret string, event app.LiveWaitEvent) error {
 
 // newID returns one stable-enough identifier for a durable subscription row.
 func newID() string {
+	return newIDAt(time.Now().UTC())
+}
+
+// newIDAt returns one stable-enough identifier for a durable subscription row using the provided timestamp.
+func newIDAt(now time.Time) string {
 	return fmt.Sprintf(
 		"livewait-%d-%d-%d",
 		os.Getpid(),
-		time.Now().UTC().UnixNano(),
+		now.UnixNano(),
 		liveWaitIDCounter.Add(1),
 	)
 }

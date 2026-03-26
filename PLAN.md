@@ -2172,17 +2172,25 @@ Status update:
      - builder lane A: `internal/adapters/livewait/localipc/**`,
      - builder lane B: `internal/tui/model_test.go` and `internal/tui/model.go` only if runtime behavior proves wrong,
    - remediation landed:
-     - `internal/adapters/livewait/localipc/broker.go`: `newID()` now combines process id, wall clock, and an atomic counter so Windows coarse clock resolution cannot collide durable subscription ids in tight loops,
-     - `internal/adapters/livewait/localipc/broker_test.go`: added a tight-loop uniqueness regression for `newID()`,
-     - `internal/tui/model_test.go`: removed incidental notices-panel traversal from `TestModelProjectNotificationsEnterRecoversArchivedTask`,
-     - `internal/tui/model_test.go`: added `applyCmdWithTimeout(...)` so tests that intentionally wait on synchronous follow-up commands can opt into a slightly longer window on slower runners,
-     - `internal/tui/model_test.go`: removed incidental global-notices focus traversal from the auth-review activation tests so they assert the selected row and Enter/deny behavior directly,
+     - `internal/adapters/livewait/localipc/broker.go`: `newID()` now routes through `newIDAt(...)` and combines process id, wall clock, and an atomic counter so Windows coarse clock resolution cannot collide durable subscription ids in tight loops,
+     - `internal/adapters/livewait/localipc/broker_test.go`:
+       - `TestBrokerRemovesDuplicateStaleRows` now uses `closedLoopbackAddr(t)` instead of a hard-coded dead port,
+       - `TestNewIDAtRemainsUniqueWithinSameTick` now proves counter-backed uniqueness with a frozen timestamp instead of a best-effort live-clock loop,
+     - `internal/tui/model_test.go`:
+       - `TestModelProjectNotificationsEnterRecoversArchivedTask` now selects the archived attention row directly and runs the immediate reload command without relying on the generic timeout helper,
+       - `TestModelMouseWheelAndClick` now sets the board-state baseline explicitly before wheel input so the assertion does not depend on incidental initialization state under coverage,
    - revalidation after the Windows-only regression follow-up:
      - `just fmt` -> PASS,
      - `just test-pkg ./internal/adapters/livewait/localipc` -> PASS,
      - `just test-pkg ./internal/tui` -> PASS,
      - `just check` -> PASS,
      - `just ci` -> PASS,
+   - QA evidence for this follow-up:
+     - livewait QA-1 final -> no blocker after the deterministic `newIDAt(sameTick)` and `closedLoopbackAddr(t)` proofs landed,
+     - livewait QA-2 -> no blocker; noted only the pre-existing roadmap gap that local IPC is still TCP loopback rather than Unix socket / named pipe specialization,
+     - TUI QA-1 final -> no blocker after archived-task recovery switched to direct selection plus immediate command execution,
+     - TUI QA-2 -> no blocker; confirmed the immediate-command path keeps the fix scoped instead of weakening the timeout helper globally,
+     - final integrated QA follow-up -> no blocker-level findings; confirmed the deterministic Windows-safe test shapes and doc-state accuracy,
    - next step: commit/push the Windows-only regression follow-up, re-watch GitHub Actions, and only then restart the collaborative E2E worksheet.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix

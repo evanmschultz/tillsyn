@@ -241,7 +241,7 @@ func TestBrokerRemovesDuplicateStaleRows(t *testing.T) {
 	repo := newBrokerDB(t, "stale.db")
 	broker := newTestBroker(t, repo.DB())
 
-	staleAddr := "127.0.0.1:65535"
+	staleAddr := closedLoopbackAddr(t)
 	for i, subscriptionID := range []string{"stale-row-1", "stale-row-2"} {
 		if _, err := repo.DB().ExecContext(context.Background(), `
 			INSERT INTO live_wait_subscriptions(subscription_id, callback_url, event_type, key, created_at, expires_at)
@@ -266,16 +266,30 @@ func TestBrokerRemovesDuplicateStaleRows(t *testing.T) {
 	}
 }
 
-// TestNewIDIsUniqueAcrossTightLoop verifies the local id helper does not collide in tight loops on coarse clock platforms.
-func TestNewIDIsUniqueAcrossTightLoop(t *testing.T) {
-	seen := make(map[string]struct{}, 128)
-	for i := 0; i < 128; i++ {
-		id := newID()
-		if _, ok := seen[id]; ok {
-			t.Fatalf("newID() collision at iteration %d: %q", i, id)
-		}
-		seen[id] = struct{}{}
+// TestNewIDAtRemainsUniqueWithinSameTick verifies the counter suffix keeps ids unique even when the clock does not advance.
+func TestNewIDAtRemainsUniqueWithinSameTick(t *testing.T) {
+	liveWaitIDCounter.Store(0)
+	sameTick := time.Date(2026, 3, 26, 2, 30, 0, 123456789, time.UTC)
+
+	first := newIDAt(sameTick)
+	second := newIDAt(sameTick)
+	if first == second {
+		t.Fatalf("newIDAt() returned duplicate ids for the same timestamp: %q", first)
 	}
+}
+
+// closedLoopbackAddr returns one loopback address that is no longer listening.
+func closedLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen loopback error = %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close loopback listener error = %v", err)
+	}
+	return addr
 }
 
 // waitForSubscription blocks until the expected durable wait registration appears.
