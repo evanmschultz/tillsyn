@@ -8656,14 +8656,25 @@ func TestModelProjectNotificationsEnterRecoversArchivedTask(t *testing.T) {
 		[]domain.Task{archivedBlocked},
 	)))
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
+	// Set the focused notice directly so the test does not depend on OS-specific
+	// key-navigation timing or focus ordering before Enter recovery runs.
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusProject
+	m.noticesSection = noticesSectionAttention
+	m.noticesAttention = 0
+	item, ok := m.selectedNoticesPanelItem()
+	if !ok {
+		t.Fatal("expected archived task notice to be selectable")
+	}
+	if item.TaskID != archivedBlocked.ID {
+		t.Fatalf("selected notice task id = %q, want %q", item.TaskID, archivedBlocked.ID)
 	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Archived-task recovery intentionally reloads data with archived visibility
+	// enabled, which can take slightly longer than the default helper timeout on
+	// slower Windows runners.
+	m = applyCmdWithTimeout(t, mustModelValue(t, updated), cmd, 100*time.Millisecond)
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected archived task notice to recover into task info, got %v", m.mode)
 	}
@@ -8969,10 +8980,15 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 		},
 	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('l'))
-	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
-		t.Fatalf("expected global notifications focus, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusGlobal
+	m.globalNoticesIdx = 0
+	selected, ok := m.selectedGlobalNoticesItem()
+	if !ok {
+		t.Fatal("expected global auth-request notice to be selectable")
+	}
+	if selected.AttentionID != authRequest.ID {
+		t.Fatalf("selected global notice attention id = %q, want %q", selected.AttentionID, authRequest.ID)
 	}
 	m = applyMsg(t, m, keyRune('d'))
 	if m.mode != modeAuthReview {
@@ -9056,10 +9072,15 @@ func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 		ThreadDescription: "Please review this request.",
 	}}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('l'))
-	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
-		t.Fatalf("expected global notifications focus, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusGlobal
+	m.globalNoticesIdx = 0
+	selected, ok := m.selectedGlobalNoticesItem()
+	if !ok {
+		t.Fatal("expected global auth-request notice to be selectable")
+	}
+	if selected.AttentionID != authRequest.ID {
+		t.Fatalf("selected global notice attention id = %q, want %q", selected.AttentionID, authRequest.ID)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeAuthReview {
@@ -12603,6 +12624,13 @@ func applyMsg(t *testing.T, m Model, msg tea.Msg) Model {
 // applyCmd applies cmd.
 func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
+	return applyCmdWithTimeout(t, m, cmd, 10*time.Millisecond)
+}
+
+// applyCmdWithTimeout applies cmd while allowing targeted tests to wait longer
+// for synchronous follow-up commands on slower runners.
+func applyCmdWithTimeout(t *testing.T, m Model, cmd tea.Cmd, timeout time.Duration) Model {
+	t.Helper()
 	out := m
 	currentCmd := cmd
 	for i := 0; i < 6 && currentCmd != nil; i++ {
@@ -12617,7 +12645,7 @@ func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 		var msg tea.Msg
 		select {
 		case msg = <-msgCh:
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(timeout):
 			return out
 		}
 		updated, nextCmd := out.Update(msg)

@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-26
-Status: In progress; the local cross-process auth wait slice, the Windows SQLite-open remediation, and the QA-driven regression-hardening follow-up are green through repo-wide local gates, and the next required step is to commit/push the current follow-up, watch GitHub Actions, and only then execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
+Status: In progress; the local cross-process auth wait slice, the Windows SQLite-open remediation, and the latest Windows-only regression follow-up are green through repo-wide local gates, and the next required step is to commit/push the current follow-up, watch GitHub Actions to green, and only then execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
 
 ## 1) Active Run Source Of Truth
 
@@ -2161,7 +2161,29 @@ Status update:
      - `just test-pkg ./cmd/till` -> PASS,
      - `just check` -> PASS,
      - `just ci` -> PASS,
-   - next step: commit the QA-driven regression-hardening follow-up, push both local SQLite follow-up commits, re-watch GitHub Actions, and only then restart the collaborative E2E worksheet.
+   - committed the QA-driven regression-hardening follow-up as `eb52f64` and pushed it,
+   - watched replacement GitHub Actions run `23586624405`,
+   - ubuntu and macOS passed,
+   - Windows no longer failed on SQLite database open,
+   - new Windows-only failures surfaced instead:
+     - `internal/adapters/livewait/localipc`: `TestBrokerRemovesDuplicateStaleRows` hit `UNIQUE constraint failed: live_wait_subscriptions.subscription_id`,
+     - `internal/tui`: `TestModelProjectNotificationsEnterRecoversArchivedTask` expected `modeTaskInfo` but got `modeNone`,
+   - current remediation split:
+     - builder lane A: `internal/adapters/livewait/localipc/**`,
+     - builder lane B: `internal/tui/model_test.go` and `internal/tui/model.go` only if runtime behavior proves wrong,
+   - remediation landed:
+     - `internal/adapters/livewait/localipc/broker.go`: `newID()` now combines process id, wall clock, and an atomic counter so Windows coarse clock resolution cannot collide durable subscription ids in tight loops,
+     - `internal/adapters/livewait/localipc/broker_test.go`: added a tight-loop uniqueness regression for `newID()`,
+     - `internal/tui/model_test.go`: removed incidental notices-panel traversal from `TestModelProjectNotificationsEnterRecoversArchivedTask`,
+     - `internal/tui/model_test.go`: added `applyCmdWithTimeout(...)` so tests that intentionally wait on synchronous follow-up commands can opt into a slightly longer window on slower runners,
+     - `internal/tui/model_test.go`: removed incidental global-notices focus traversal from the auth-review activation tests so they assert the selected row and Enter/deny behavior directly,
+   - revalidation after the Windows-only regression follow-up:
+     - `just fmt` -> PASS,
+     - `just test-pkg ./internal/adapters/livewait/localipc` -> PASS,
+     - `just test-pkg ./internal/tui` -> PASS,
+     - `just check` -> PASS,
+     - `just ci` -> PASS,
+   - next step: commit/push the Windows-only regression follow-up, re-watch GitHub Actions, and only then restart the collaborative E2E worksheet.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 

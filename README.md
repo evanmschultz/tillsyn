@@ -35,7 +35,7 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-03-25)
+## Active Status (2026-03-26)
 Implemented now:
 - Use `PLAN.md` as the active source of truth for the current dogfood auth/runtime wave.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
@@ -59,6 +59,7 @@ Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - orchestrator/builder/qa scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement and bounded delegation
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
+- final remote-green closeout on the current Windows-only CI follow-up before the next collaborative auth/MCP rerun
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:

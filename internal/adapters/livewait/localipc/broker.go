@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hylla/tillsyn/internal/app"
@@ -26,6 +28,9 @@ const (
 
 // errBrokerClosed reports that the broker has been closed.
 var errBrokerClosed = errors.New("live wait broker is closed")
+
+// liveWaitIDCounter ensures per-process live-wait ids remain unique even when wall-clock resolution is coarse.
+var liveWaitIDCounter atomic.Uint64
 
 // Config configures one local cross-process live-wait broker.
 type Config struct {
@@ -500,5 +505,10 @@ func sendWake(addr, secret string, event app.LiveWaitEvent) error {
 
 // newID returns one stable-enough identifier for a durable subscription row.
 func newID() string {
-	return fmt.Sprintf("livewait-%d", time.Now().UTC().UnixNano())
+	return fmt.Sprintf(
+		"livewait-%d-%d-%d",
+		os.Getpid(),
+		time.Now().UTC().UnixNano(),
+		liveWaitIDCounter.Add(1),
+	)
 }

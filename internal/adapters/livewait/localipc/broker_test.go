@@ -14,6 +14,7 @@ import (
 	"github.com/hylla/tillsyn/internal/app"
 )
 
+// testBrokerSecret authenticates local test wake packets across broker instances.
 const testBrokerSecret = "shared-secret"
 
 // newBrokerDB opens one isolated SQLite database file for broker tests.
@@ -241,12 +242,12 @@ func TestBrokerRemovesDuplicateStaleRows(t *testing.T) {
 	broker := newTestBroker(t, repo.DB())
 
 	staleAddr := "127.0.0.1:65535"
-	for i := 0; i < 2; i++ {
+	for i, subscriptionID := range []string{"stale-row-1", "stale-row-2"} {
 		if _, err := repo.DB().ExecContext(context.Background(), `
 			INSERT INTO live_wait_subscriptions(subscription_id, callback_url, event_type, key, created_at, expires_at)
 			VALUES(?, ?, ?, ?, ?, ?)
-		`, newID(), staleAddr, string(app.LiveWaitEventAuthRequestResolved), "req-7", time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)); err != nil {
-			t.Fatalf("insert stale subscription error = %v", err)
+		`, subscriptionID, staleAddr, string(app.LiveWaitEventAuthRequestResolved), "req-7", time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)); err != nil {
+			t.Fatalf("insert stale subscription %d error = %v", i, err)
 		}
 	}
 
@@ -262,6 +263,18 @@ func TestBrokerRemovesDuplicateStaleRows(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("stale subscription count = %d, want 0 after unreachable cleanup", count)
+	}
+}
+
+// TestNewIDIsUniqueAcrossTightLoop verifies the local id helper does not collide in tight loops on coarse clock platforms.
+func TestNewIDIsUniqueAcrossTightLoop(t *testing.T) {
+	seen := make(map[string]struct{}, 128)
+	for i := 0; i < 128; i++ {
+		id := newID()
+		if _, ok := seen[id]; ok {
+			t.Fatalf("newID() collision at iteration %d: %q", i, id)
+		}
+		seen[id] = struct{}{}
 	}
 }
 
