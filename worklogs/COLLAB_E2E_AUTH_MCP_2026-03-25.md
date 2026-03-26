@@ -1,8 +1,8 @@
 # Collaborative E2E Auth And MCP Worksheet
 
 Created: 2026-03-25
-Updated: 2026-03-25
-Status: Ready for the live joint dogfood run from the current green baseline.
+Updated: 2026-03-26
+Status: Temporarily paused pending the replacement GitHub Actions run after the Windows SQLite raw-path remediation plus QA-driven regression hardening; all local gates are green and the live worksheet should resume once that replacement remote CI run is green again.
 
 ## Purpose
 
@@ -34,6 +34,18 @@ Run one dated collaborative end-to-end auth and MCP dogfood pass that:
 2. GitHub Actions run `23569389061` finished green before this worksheet was prepared.
 3. The active pre-collab checklist already lives in `PLAN.md`.
 4. Historical auth UX worksheets are reference-only inspiration for scope split, not active authority.
+5. Cross-process auth wait remains the intended live path for this worksheet.
+6. The latest pre-rerun blocker was Windows SQLite-open portability under GitHub Actions:
+   - the URI-normalization-only fix was not sufficient on Windows,
+   - the current local follow-up stack now opens SQLite with the raw filesystem path and applies the required PRAGMAs after `sql.Open(...)`,
+   - QA then required tighter proof for that pivot, so the local regression coverage was strengthened to assert the full PRAGMA contract and the real file-backed `Open(temp-path)` path,
+   - local evidence on the tightened follow-up is green:
+     - `just fmt`
+     - `just test-pkg ./internal/adapters/storage/sqlite`
+     - `just test-pkg ./cmd/till`
+     - `just check`
+     - `just ci`
+   - do not resume the live worksheet until the replacement GitHub Actions run for the current raw-path plus QA-hardening follow-up is green.
 
 ## Scope Split
 

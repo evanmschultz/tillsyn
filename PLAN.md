@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-26
-Status: In progress; the local cross-process auth wait slice is green through repo-wide local gates, and the next required step is to push/watch GitHub Actions and then execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
+Status: In progress; the local cross-process auth wait slice, the Windows SQLite-open remediation, and the QA-driven regression-hardening follow-up are green through repo-wide local gates, and the next required step is to commit/push the current follow-up, watch GitHub Actions, and only then execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
 
 ## 1) Active Run Source Of Truth
 
@@ -2150,7 +2150,18 @@ Status update:
      - `just test-pkg ./cmd/till` -> PASS,
      - `just check` -> PASS,
      - `just ci` -> PASS,
-   - next step: commit/push the raw-path PRAGMA follow-up and re-watch GitHub Actions before starting the collaborative E2E worksheet.
+   - committed the raw-path PRAGMA follow-up as `8565a87`,
+   - QA follow-up on the raw-path pivot found the regression proof was still too weak:
+     - the new test only asserted `busy_timeout`,
+     - and it did not exercise the real file-backed `Open(...)` path that failed on Windows CI,
+   - remediation: tightened `internal/adapters/storage/sqlite/repo_test.go` so the helper test also asserts `foreign_keys = ON` and added `TestOpenAppliesSQLiteConnectionPragmasToFileBackedDB` to verify the real file-backed `Open(temp-path)` path sets `busy_timeout`, `journal_mode = WAL`, and `foreign_keys = ON`,
+   - revalidation after the QA-driven test hardening:
+     - `just fmt` -> PASS,
+     - `just test-pkg ./internal/adapters/storage/sqlite` -> PASS,
+     - `just test-pkg ./cmd/till` -> PASS,
+     - `just check` -> PASS,
+     - `just ci` -> PASS,
+   - next step: commit the QA-driven regression-hardening follow-up, push both local SQLite follow-up commits, re-watch GitHub Actions, and only then restart the collaborative E2E worksheet.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 

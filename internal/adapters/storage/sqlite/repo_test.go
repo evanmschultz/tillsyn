@@ -33,6 +33,47 @@ func TestApplySQLiteConnectionPragmas(t *testing.T) {
 	if timeout != int(defaultBusyTimeout/time.Millisecond) {
 		t.Fatalf("busy_timeout = %d, want %d", timeout, defaultBusyTimeout/time.Millisecond)
 	}
+	var foreignKeys int
+	if err := db.QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("query foreign_keys error = %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
+	}
+}
+
+// TestOpenAppliesSQLiteConnectionPragmasToFileBackedDB verifies the file-backed open path initializes the expected local dogfood PRAGMAs.
+func TestOpenAppliesSQLiteConnectionPragmasToFileBackedDB(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	var timeout int
+	if err := repo.DB().QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout error = %v", err)
+	}
+	if timeout != int(defaultBusyTimeout/time.Millisecond) {
+		t.Fatalf("busy_timeout = %d, want %d", timeout, defaultBusyTimeout/time.Millisecond)
+	}
+	var journalMode string
+	if err := repo.DB().QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("query journal_mode error = %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+	var foreignKeys int
+	if err := repo.DB().QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("query foreign_keys error = %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
+	}
 }
 
 // TestRepository_ProjectColumnTaskLifecycle verifies behavior for the covered scenario.
