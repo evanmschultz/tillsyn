@@ -322,11 +322,11 @@ func TestLoadOrCreateRuntimeLiveWaitSecretRepairsInvalidFile(t *testing.T) {
 
 // crossProcessAuthFixture stores one shared runtime for service-level auth wake tests.
 type crossProcessAuthFixture struct {
-	waitRepo      *sqlite.Repository
-	approveRepo   *sqlite.Repository
-	waitService   *app.Service
+	waitRepo       *sqlite.Repository
+	approveRepo    *sqlite.Repository
+	waitService    *app.Service
 	approveService *app.Service
-	project       domain.Project
+	project        domain.Project
 }
 
 // newCrossProcessAuthFixture constructs two service instances backed by the same runtime database.
@@ -396,8 +396,8 @@ func newCrossProcessAuthFixture(t *testing.T) crossProcessAuthFixture {
 	}
 
 	return crossProcessAuthFixture{
-		waitRepo:     waitRepo,
-		approveRepo:  approveRepo,
+		waitRepo:    waitRepo,
+		approveRepo: approveRepo,
 		waitService: app.NewService(waitRepo, func() string { return "wait-id" }, time.Now, app.ServiceConfig{
 			AuthRequests:   waitAuth,
 			AuthBackend:    waitAuth,

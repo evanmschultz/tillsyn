@@ -2132,6 +2132,11 @@ Status update:
 9. Final QA follow-up:
    - final QA reviewer verdict: no blockers,
    - residual risk recorded: the SQLite lock hardening is intentionally narrow to the auth cross-process path, and the broader session-aware stdio/comment-handoff notification layer remains future work already captured in the docs.
+10. Remote CI follow-up:
+   - pushed commit `1cee689` and watched GitHub Actions run `23585340658`,
+   - remote failure found: `just check` failed `fmt-check` because `cmd/till/live_wait_runtime_test.go` still needed `gofmt`,
+   - remediation: ran `just fmt`, then reran `just check` -> PASS and `just ci` -> PASS locally,
+   - next step: push the formatting-only follow-up and re-watch GitHub Actions before starting the collaborative E2E worksheet.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 
