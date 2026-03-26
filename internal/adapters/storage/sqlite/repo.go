@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -78,12 +77,16 @@ func Open(path string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create sqlite dir: %w", err)
 	}
-	db, err := sql.Open(driverName, sqliteFileURI(path))
+	db, err := sql.Open(driverName, path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	if err := applySQLiteConnectionPragmas(context.Background(), db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	repo := &Repository{db: db}
 	if err := repo.migrate(context.Background()); err != nil {
 		_ = db.Close()
@@ -100,6 +103,10 @@ func OpenInMemory() (*Repository, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	if err := applySQLiteConnectionPragmas(context.Background(), db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	repo := &Repository{db: db}
 	if err := repo.migrate(context.Background()); err != nil {
 		_ = db.Close()
@@ -113,43 +120,22 @@ func (r *Repository) Close() error {
 	return r.db.Close()
 }
 
-// sqliteFileURI returns a DSN with the local concurrency pragmas required for multi-process dogfooding.
-func sqliteFileURI(path string) string {
-	query := url.Values{}
-	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", defaultBusyTimeout/time.Millisecond))
-	query.Add("_pragma", "journal_mode(WAL)")
-	query.Add("_pragma", "foreign_keys(1)")
-	return (&url.URL{
-		Scheme:   "file",
-		Path:     sqliteURIPath(path),
-		RawQuery: query.Encode(),
-	}).String()
-}
-
-// sqliteURIPath normalizes local filesystem paths into SQLite-compatible file: URI paths.
-func sqliteURIPath(path string) string {
-	path = filepath.Clean(path)
-	path = strings.ReplaceAll(path, `\`, `/`)
-	switch {
-	case strings.HasPrefix(path, `//`):
-		return path
-	case isWindowsDrivePath(path) && !strings.HasPrefix(path, "/"):
-		return "/" + path
-	default:
-		return path
+// applySQLiteConnectionPragmas configures the one-connection pool with the pragmas required for local dogfooding.
+func applySQLiteConnectionPragmas(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return errors.New("sqlite db is required")
 	}
-}
-
-// isWindowsDrivePath reports whether path starts with a Windows drive-letter prefix like C:/.
-func isWindowsDrivePath(path string) bool {
-	if len(path) < 2 {
-		return false
+	pragmas := []string{
+		fmt.Sprintf("PRAGMA busy_timeout = %d", defaultBusyTimeout/time.Millisecond),
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA foreign_keys = ON",
 	}
-	drive := path[0]
-	if (drive < 'a' || drive > 'z') && (drive < 'A' || drive > 'Z') {
-		return false
+	for _, pragma := range pragmas {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf("apply sqlite pragma %q: %w", pragma, err)
+		}
 	}
-	return path[1] == ':'
+	return nil
 }
 
 // migrate applies schema and data migrations required for compatibility.

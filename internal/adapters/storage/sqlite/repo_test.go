@@ -4,9 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,24 +12,26 @@ import (
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
-// TestSQLiteFileURIWindowsDrivePath verifies Windows drive-letter paths become valid SQLite file URIs.
-func TestSQLiteFileURIWindowsDrivePath(t *testing.T) {
-	uri := sqliteFileURI(`C:\Users\runneradmin\AppData\Local\Temp\tillsyn.db`)
-	if strings.Contains(uri, `\`) {
-		t.Fatalf("sqliteFileURI() = %q, want forward slashes only", uri)
-	}
-	parsed, err := url.Parse(uri)
+// TestApplySQLiteConnectionPragmas configures the live connection without relying on URI-encoded pragmas.
+func TestApplySQLiteConnectionPragmas(t *testing.T) {
+	db, err := sql.Open(driverName, "file::memory:?cache=shared")
 	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
+		t.Fatalf("sql.Open() error = %v", err)
 	}
-	if got := parsed.Scheme; got != "file" {
-		t.Fatalf("scheme = %q, want file", got)
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := applySQLiteConnectionPragmas(context.Background(), db); err != nil {
+		t.Fatalf("applySQLiteConnectionPragmas() error = %v", err)
 	}
-	if got := parsed.Path; got != "/C:/Users/runneradmin/AppData/Local/Temp/tillsyn.db" {
-		t.Fatalf("path = %q, want Windows drive-letter file URI path", got)
+	var timeout int
+	if err := db.QueryRowContext(context.Background(), `PRAGMA busy_timeout`).Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout error = %v", err)
 	}
-	if got := parsed.Query()["_pragma"]; len(got) != 3 {
-		t.Fatalf("_pragma count = %d, want 3", len(got))
+	if timeout != int(defaultBusyTimeout/time.Millisecond) {
+		t.Fatalf("busy_timeout = %d, want %d", timeout, defaultBusyTimeout/time.Millisecond)
 	}
 }
 

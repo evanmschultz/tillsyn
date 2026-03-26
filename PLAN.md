@@ -2139,7 +2139,18 @@ Status update:
    - pushed formatting follow-up commit `34afcb8` and watched replacement run `23585562111`,
    - remote failure then narrowed to Windows only: the SQLite DSN builder produced an invalid `file:` URI for Windows drive-letter paths, so `sqlite.Open(...)` failed with `sqlite3: unable to open database file`,
    - remediation: normalized Windows drive-letter paths in `sqliteFileURI`, added a regression test in `internal/adapters/storage/sqlite/repo_test.go`, reran `just test-pkg ./internal/adapters/storage/sqlite` -> PASS, `just test-pkg ./cmd/till` -> PASS, `just check` -> PASS, and `just ci` -> PASS locally,
-   - next step: commit/push the Windows follow-up and re-watch GitHub Actions before starting the collaborative E2E worksheet.
+   - pushed Windows URI follow-up commit `c03ff6e` and watched replacement run `23586001355`,
+   - remote Windows still failed broadly with `sqlite3: unable to open database file`, which proved the `file:` URI strategy was still too fragile even after drive-letter normalization,
+   - Context7 re-consult for `/ncruces/go-sqlite3` confirmed the driver accepts plain filenames as DSNs and treats busy-timeout/initialization as a post-open connection concern,
+   - remediation pivot: removed the URI-builder path entirely for on-disk databases, reopened with the raw filesystem path, and applied the required PRAGMAs (`busy_timeout`, `journal_mode=WAL`, `foreign_keys=ON`) immediately after `sql.Open(...)`,
+   - added focused regression coverage for the new post-open PRAGMA path in `internal/adapters/storage/sqlite/repo_test.go`,
+   - revalidation after the pivot:
+     - `just fmt` -> PASS,
+     - `just test-pkg ./internal/adapters/storage/sqlite` -> PASS,
+     - `just test-pkg ./cmd/till` -> PASS,
+     - `just check` -> PASS,
+     - `just ci` -> PASS,
+   - next step: commit/push the raw-path PRAGMA follow-up and re-watch GitHub Actions before starting the collaborative E2E worksheet.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 
