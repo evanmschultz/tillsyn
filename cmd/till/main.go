@@ -1756,6 +1756,18 @@ func executeCommandFlow(
 	}()
 	logger.Info("sqlite repository ready", "db_path", cfg.Database.Path, "migrations", "ensured")
 
+	liveWaitBroker, err := newRuntimeLiveWaitBrokerFunc(repo.DB(), rootDir)
+	if err != nil {
+		logger.Error("live wait broker setup failed", "db_path", cfg.Database.Path, "err", err)
+		return fmt.Errorf("configure live wait broker: %w", err)
+	}
+	defer func() {
+		if closeErr := liveWaitBroker.Close(); closeErr != nil {
+			logger.Warn("live wait broker close failed", "db_path", cfg.Database.Path, "err", closeErr)
+		}
+	}()
+	logger.Info("live wait broker ready", "db_path", cfg.Database.Path, "mode", "localipc")
+
 	authSvc, err := autentauth.NewSharedDB(autentauth.Config{
 		DB:          repo.DB(),
 		TablePrefix: autentauth.DefaultTablePrefix,
@@ -1801,6 +1813,7 @@ func executeCommandFlow(
 		AutoCreateProjectColumns: true,
 		AuthRequests:             authSvc,
 		AuthBackend:              authSvc,
+		LiveWaitBroker:           liveWaitBroker,
 		EmbeddingGenerator:       embeddingGenerator,
 		SearchLexicalWeight:      cfg.Embeddings.LexicalWeight,
 		SearchSemanticWeight:     cfg.Embeddings.SemanticWeight,

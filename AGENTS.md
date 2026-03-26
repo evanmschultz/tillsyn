@@ -114,6 +114,12 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Temporary Next-Step Directive (Collaborative Remediation Closeout)
 
+- Temporary detailed reference for the current cross-process wait/auth wave:
+  - [`CROSS_PROCESS_WAIT_IMPLEMENTATION.md`](/Users/evanschultz/Documents/Code/hylla/tillsyn/CROSS_PROCESS_WAIT_IMPLEMENTATION.md)
+  - use it as detailed reference only; `PLAN.md` remains the active source of truth.
+- Cleanup note for this temporary reference:
+  - after this wave is complete and the content is folded back into canonical docs, ask the user whether they want `CROSS_PROCESS_WAIT_IMPLEMENTATION.md` deleted.
+
 - This temporary section is active for the current phase:
   - close remaining collaborative remediation gaps tracked in active collab docs,
   - prioritize dogfooding readiness for real user+agent workflows,

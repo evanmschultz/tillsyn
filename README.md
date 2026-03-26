@@ -97,8 +97,9 @@ Current auth note:
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
-- Current continuation status: `till.claim_auth_request` now uses an in-process live wake path for local same-process dogfood runs, so approve/deny/cancel can wake a waiting requester without polling.
-- Current live-transport caveat: this is still a first-cut auth consumer, not the full session-aware stdio communication layer. Tillsyn does not yet have client/session-aware disconnect cleanup or broader wait/notify consumers for comments/handoffs, and HTTP/continuous-listening support remains roadmap work for a later wave.
+- Current continuation status: `till.claim_auth_request` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling.
+- Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
+- Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
@@ -109,7 +110,7 @@ Instruction-tool usage guidance:
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
 - remote/team auth-tenancy expansion and additional security hardening,
-- template reseeding/apply-scope UX, richer TUI/CLI template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, and HTTP/continuous-listening support for the future reusable MCP wakeup layer.
+- template reseeding/apply-scope UX, richer TUI/CLI template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
 
 Current post-dogfood consensus note:
 - the detailed working consensus for that template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.

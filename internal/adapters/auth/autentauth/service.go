@@ -16,6 +16,7 @@ import (
 	autenttoken "github.com/evanmschultz/autent/token"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
+	sqlite3 "github.com/ncruces/go-sqlite3"
 )
 
 const (
@@ -24,7 +25,9 @@ const (
 	// DogfoodPolicyRuleID identifies the default permissive local-first dogfood rule.
 	DogfoodPolicyRuleID = "tillsyn-dogfood-allow-all"
 	// authRequestsTableName stores local pre-session auth-request state used by tillsyn.
-	authRequestsTableName = "auth_requests"
+	authRequestsTableName      = "auth_requests"
+	authRequestWriteRetryLimit = 5
+	authRequestWriteRetryBase  = 25 * time.Millisecond
 )
 
 // Config configures one shared-database autent integration.
@@ -459,7 +462,7 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in app.ApproveAuthRequ
 	if err := req.Approve(strings.TrimSpace(in.ResolvedBy), in.ResolvedType, in.ResolutionNote, issued.Session.ID, issued.Secret, issued.Session.ExpiresAt, s.clock()); err != nil {
 		return app.ApprovedAuthRequestResult{}, err
 	}
-	if err := s.updateAuthRequest(ctx, req); err != nil {
+	if err := s.retryAuthRequestWrite(ctx, func() error { return s.updateAuthRequest(ctx, req) }); err != nil {
 		return app.ApprovedAuthRequestResult{}, err
 	}
 	return app.ApprovedAuthRequestResult{
@@ -503,7 +506,7 @@ func (s *Service) DenyAuthRequest(ctx context.Context, requestID, resolvedBy str
 	if err := req.Deny(strings.TrimSpace(resolvedBy), resolvedType, note, s.clock()); err != nil {
 		return domain.AuthRequest{}, err
 	}
-	if err := s.updateAuthRequest(ctx, req); err != nil {
+	if err := s.retryAuthRequestWrite(ctx, func() error { return s.updateAuthRequest(ctx, req) }); err != nil {
 		return domain.AuthRequest{}, err
 	}
 	return req, nil
@@ -518,10 +521,51 @@ func (s *Service) CancelAuthRequest(ctx context.Context, requestID, resolvedBy s
 	if err := req.Cancel(strings.TrimSpace(resolvedBy), resolvedType, note, s.clock()); err != nil {
 		return domain.AuthRequest{}, err
 	}
-	if err := s.updateAuthRequest(ctx, req); err != nil {
+	if err := s.retryAuthRequestWrite(ctx, func() error { return s.updateAuthRequest(ctx, req) }); err != nil {
 		return domain.AuthRequest{}, err
 	}
 	return req, nil
+}
+
+// retryAuthRequestWrite retries one transiently locked auth-request write with bounded backoff.
+func (s *Service) retryAuthRequestWrite(ctx context.Context, fn func() error) error {
+	if fn == nil {
+		return nil
+	}
+	var lastErr error
+	for attempt := 0; attempt < authRequestWriteRetryLimit; attempt++ {
+		if err := fn(); err != nil {
+			lastErr = err
+			if !isRetryableSQLiteLock(err) {
+				return err
+			}
+			if attempt == authRequestWriteRetryLimit-1 {
+				break
+			}
+			timer := time.NewTimer(time.Duration(attempt+1) * authRequestWriteRetryBase)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+// isRetryableSQLiteLock reports whether the error is one transient SQLite BUSY or LOCKED failure.
+func isRetryableSQLiteLock(err error) bool {
+	var sqliteErr *sqlite3.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code == sqlite3.BUSY || code == sqlite3.LOCKED
 }
 
 // IssueAuthSession issues one app-facing auth session bundle through autent.

@@ -173,7 +173,7 @@ Steps:
 
 Expected:
 1. Unauthenticated mutation fails closed before any auth exists.
-2. For the current local same-process dogfood path, `till.claim_auth_request(wait_timeout=...)` should now stay open and wake on approve/deny/cancel without app-layer polling.
+2. For the current local cross-process dogfood path, `till.claim_auth_request(wait_timeout=...)` should now stay open and wake on approve/deny/cancel without app-layer polling, even when the waiter and reviewer are in different local processes.
 3. The request is visible in TUI without shell spelunking.
 4. Approval happens in the dedicated TUI flow.
 5. Claim/resume works natively for the same requester.
@@ -190,8 +190,9 @@ Evidence:
 
 Status note before continuing:
 - `C2` should still prove current fail-closed auth, TUI visibility, and native claim/resume behavior.
-- `C2` can now prove the first auth-specific live wake path for the local same-process dogfood run.
+- `C2` can now prove the auth-specific local cross-process wake path for the default human-in-the-loop dogfood flow.
 - `C2` should still not be used to claim that the broader session-aware stdio communication layer or comment/handoff consumers already exist.
+- `C2` should still treat broader MCP notification reuse, disconnect-aware session cleanup, and HTTP/continuous-listening support as follow-on work.
 - Automated evidence before the next live rerun:
   - `just test-pkg ./internal/app` PASS
   - `just check` PASS

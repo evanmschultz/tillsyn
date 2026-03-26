@@ -1,8 +1,8 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-25
-Status: In progress; Slice 7 follow-up is green locally and remotely, and the next required step is to execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
+Updated: 2026-03-26
+Status: In progress; the local cross-process auth wait slice is green through repo-wide local gates, and the next required step is to push/watch GitHub Actions and then execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
 
 ## 1) Active Run Source Of Truth
 
@@ -1935,18 +1935,22 @@ Objective:
 - record the exact gap so we do not keep speaking about the future architecture as if it were already implemented,
 - and lock the next-slice direction before more auth/collab testing proceeds.
 
-Confirmed findings from local code inspection and official MCP/mcp-go docs:
+Historical note:
+1. This subsection is preserved as the original pre-implementation blocker snapshot from 2026-03-25.
+2. The current state for this area is the 2026-03-26 resolved status update later in this section.
+
+Confirmed findings at the time from local code inspection and official MCP/mcp-go docs:
 1. Tillsyn currently has durable coordination state, not a reusable live notify/wakeup transport layer.
    - auth requests, attention items, handoffs, and capability leases are persisted and inspectable,
    - but none of those domain surfaces currently drive an outbound MCP wakeup/notification path.
-2. `till.claim_auth_request` waiting is currently app-layer polling only.
+2. `till.claim_auth_request` waiting was still app-layer polling only at that point.
    - `internal/app/auth_requests.go` loops with `claimAuthRequestPollInterval = 100ms` until timeout,
    - the backend claim path only reads current durable state once and does not push anything to MCP clients.
-3. The current MCP adapters do not add a generic wait broker or notifier.
+3. The current MCP adapters did not yet add a generic wait broker or notifier at that point.
    - stdio is served directly,
    - streamable HTTP is currently configured stateless,
    - no reusable event bus, client-session registry, waiter registry, or outbound notification bridge exists in Tillsyn.
-4. MCP and `mcp-go` can support the direction we want, but Tillsyn has not wired it yet.
+4. MCP and `mcp-go` could support the direction we wanted, but Tillsyn had not wired it yet.
    - MCP transports support requests, responses, and notifications over stdio,
    - Streamable HTTP can also support server-to-client SSE notifications and continuous listening,
    - `mcp-go` documents continuous listening for HTTP/SSE transport,
@@ -1963,26 +1967,37 @@ Consensus after discussion:
 4. Keep durable Tillsyn state as the source of truth.
    - live MCP notifications/wakeups are the transport convenience layer on top,
    - reconnect/restart/discovery must still recover from durable state when the live channel is gone.
+5. Human-in-the-loop is still the default product contract.
+   - the auth/channel design is not just for agent-to-agent convenience,
+   - it must support `./till mcp` waiting in one process while the human reviews and resolves the request in the TUI or CLI from another process,
+   - until that cross-process path exists, the live-wakeup work is not complete enough for the real default dogfood flow.
+6. CLI and TUI are one human review surface split across two presentations.
+   - they should share the same app/service decision logic and event-publish semantics,
+   - differences should be presentation/interaction only, not different resolution rules or lifecycle behavior.
+7. The long-term direction remains broader than auth.
+   - builder/qa/orchestrator coordination should eventually be able to keep one flow open while other agents or humans add comments, mark subtasks/checks, or return handoffs,
+   - templates and policy should define those flows, but the underlying transport/wakeup substrate must stay generic enough to support arbitrary guarded human+agent workflows.
 
 Recommended next slice (stdio-first live coordination substrate):
-1. Add one reusable stdio client-session and waiter registry inside the MCP adapter layer.
+1. Add one local cross-process coordination adapter for the active runtime.
+   - use a runtime-local IPC endpoint suitable for local-only dogfood (Unix domain socket on unix-like systems, named-pipe equivalent on Windows),
+   - all local `./till`, `./till mcp`, and later local CLI review helpers should connect to the same broker for live wakeups.
+2. Keep SQLite/durable Tillsyn state as source of truth and add one durable event/outbox surface.
+   - auth resolution, comments, handoffs, attention changes, and similar coordination events should be written as durable events,
+   - the live broker should fan those events out to connected local processes,
+   - reconnect/restart should recover from durable state and event history instead of losing context.
+3. Add one stdio client-session and waiter registry inside the MCP adapter layer.
    - track active initialized stdio clients,
    - track long-lived wait subscriptions keyed by requester/session and event interest,
    - support cancellation/cleanup on disconnect or explicit cancel.
-2. Add one transport-agnostic internal event surface for domain changes that matter to waiting agents.
-   - auth request resolved,
-   - comment/thread update,
-   - handoff state changed,
-   - attention item raised/resolved,
-   - capability lease changed when relevant.
-3. Bridge those domain events to the stdio MCP layer.
-   - wake the right waiting request when possible,
-   - and/or send a client-visible MCP notification on the same stdio connection for subscribed surfaces.
-4. Keep auth as the first consumer:
-   - `claim_auth_request(wait_timeout=...)` should stop feeling like blind polling,
-   - the requester should visibly remain blocked on that same line of work until resolution or timeout,
-   - approval/denial/cancel should wake the waiter on the same connection if still live.
-5. After auth proves out, extend the same substrate to comments and handoffs.
+4. Bridge TUI and CLI through the same shared review/publish path.
+   - auth approvals/denials/cancels from TUI or CLI should both publish the same resolved event after durable state is written,
+   - the human path should stay DRY even though one surface is full-screen TUI and the other is command-line/operator oriented.
+5. Keep auth as the first consumer, but only call the live-wakeup work complete when it is cross-process.
+   - `claim_auth_request(wait_timeout=...)` should stay open in `./till mcp`,
+   - TUI or CLI approval/deny/cancel in another process should wake that waiting requester immediately,
+   - no manual re-check/poll should be required for the normal dogfood path.
+6. After auth proves out cross-process, extend the same substrate to comments and handoffs.
    - comments: human<->agent and agent<->agent discussion wakeups,
    - handoffs: structured waiting/resume for builder/qa/orchestrator coordination,
    - later: attention and other task-level workflow signals.
@@ -2002,14 +2017,16 @@ Status update after implementation:
    - `claim_auth_request(wait_timeout=...)` now waits on the live broker instead of polling when the broker is available,
    - lost-wakeup replay is covered so late waiter registration still observes an already-published auth resolution event,
    - focused tests now cover wake-on-approve, wake-on-deny, timeout waiting, and broker replay behavior.
-2. Not landed yet:
+2. Not landed yet at that stage:
+   - local cross-process IPC coordination between `./till mcp` and TUI/CLI human review processes,
    - stdio client/session-aware waiter registry in the MCP adapter layer,
    - disconnect-aware cleanup tied to client/session lifecycle,
    - outbound MCP notifications for non-auth waiting surfaces,
    - comment/handoff consumers on top of the same substrate.
 3. Product interpretation:
    - this slice is the first practical auth wakeup implementation for local same-process dogfooding,
-   - it is not yet the full session-aware stdio communication layer originally discussed.
+   - it is not yet sufficient for the default human-in-the-loop cross-process dogfood flow,
+   - and it is not yet the full session-aware stdio communication layer originally discussed.
 4. Validation evidence for this slice:
    - `just test-pkg ./internal/app` -> PASS
    - `just check` -> PASS
@@ -2019,6 +2036,102 @@ Status update after implementation:
      - 1 also flagged that the implementation is a smaller app-layer first cut than the fuller session-aware adapter design discussed in the plan,
      - the race was fixed before the final green gates,
      - the docs were updated to accurately describe the smaller first-cut implementation and the remaining open work.
+5. Follow-on planning notes locked from the current discussion:
+   - orchestrators plus the user should keep the full project/plan current in Tillsyn rather than letting markdown drift:
+     - plans belong in Tillsyn,
+     - when plans change, obsolete work should be archived or updated in Tillsyn instead of silently diverging,
+     - the goal is less forgotten context and less hidden plan drift for both humans and orchestrators.
+   - search remains one necessary follow-on planning area even though it is not the current implementation focus:
+     - human and agent search should eventually support keyword, path/scoped, vector/semantic, and hybrid search,
+     - hybrid results should dedupe shared hits while preserving metadata/provenance about which search modes matched each node,
+     - search should be filterable across rich facets (project/scope/path/state/kind/labels/metadata and similar),
+     - TUI and agent-facing surfaces should both benefit from that search model.
+
+Resolved status update on 2026-03-26:
+1. The default local human-in-the-loop auth wait path is now cross-process, not same-process only.
+   - `./till mcp` can wait in one process,
+   - TUI or CLI review can resolve in another process,
+   - the waiter wakes through the runtime-local broker without app-layer polling.
+2. What remains open is narrower than the original blocker:
+   - broader session-aware stdio notification reuse for non-auth consumers,
+   - disconnect-aware cleanup tied to richer client/session lifecycle tracking,
+   - comment/handoff consumers on top of the same substrate,
+   - HTTP/continuous-listening follow-on support.
+
+### 2026-03-26: Cross-Process Wait Execution Kickoff
+
+Objective:
+1. Land the real local cross-process auth wait path required for default human-in-the-loop dogfooding:
+   - `./till mcp` waits in one process,
+   - TUI or CLI resolves in another process,
+   - the waiting claim returns immediately without manual status re-checking.
+
+Temporary detailed reference:
+1. [`CROSS_PROCESS_WAIT_IMPLEMENTATION.md`](/Users/evanschultz/Documents/Code/hylla/tillsyn/CROSS_PROCESS_WAIT_IMPLEMENTATION.md) now holds the fully detailed implementation/reference material for this wave.
+2. `PLAN.md` remains the active source of truth for status, evidence, and closeout.
+
+Execution shape locked for this slice:
+1. stdio-first, local-only, no HTTP transport work in this slice.
+2. TUI and CLI remain one shared human resolution path with different presentation only.
+3. Auth is the first consumer.
+4. Comments and handoffs remain planned follow-on consumers on the same substrate.
+5. Task/subtask auth-path granularity and richer template-driven workflow orchestration remain roadmap items; they are not blockers for this specific dogfood slice.
+
+Parallel lane plan:
+1. Builder lane A:
+   - implement the cross-process live-wait adapter and its focused tests.
+2. Builder lane B:
+   - integrate auth wait semantics/tests against the cross-process broker seams.
+3. Integrator/orchestrator:
+   - wire runtime construction,
+   - update active docs (`PLAN.md`, `README.md`, collab worksheet, temporary reference as needed),
+   - run repo gates, push, watch GitHub Actions, and then return to the collaborative worksheet.
+
+QA shape locked by user request:
+1. 2 QA reviews per builder lane.
+2. 1 final QA follow-up after integration.
+
+Current implementation status:
+1. Builder lane A added the first `internal/adapters/livewait/localipc` broker package and `just test-pkg ./internal/adapters/livewait/localipc` passed.
+2. Builder lane B has now wired runtime construction in `cmd/till/main.go` and `cmd/till/live_wait_runtime.go` so real runs inject the cross-process broker into `app.Service`.
+3. Lane A blockers are resolved:
+   - broker shutdown now clears local waiters and durable registrations for the dead callback address,
+   - failed delivery cleanup removes stale rows,
+   - loopback wake packets require the shared per-runtime secret,
+   - `Close()`/use-after-close behavior is covered by focused tests.
+4. The remaining integration blocker was a SQLite lock on the cancel path during mirrored attention cleanup.
+   - Fix landed: `internal/adapters/storage/sqlite/repo.go` now resolves attention items inside a `sql.LevelSerializable` transaction so SQLite acquires the write lock up front and avoids the deferred read-to-write upgrade race under cross-process contention.
+5. Forward integration is no longer paused; the slice is ready for repo-wide validation and the live collaborative rerun.
+
+Status update:
+1. Lane A is complete.
+2. Files added:
+   - [`internal/adapters/livewait/localipc/broker.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/adapters/livewait/localipc/broker.go)
+   - [`internal/adapters/livewait/localipc/broker_test.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/adapters/livewait/localipc/broker_test.go)
+3. Acceptance evidence:
+   - `just test-pkg ./internal/adapters/livewait/localipc` -> PASS
+4. Lane B/runtime integration is complete.
+5. Acceptance evidence before repo-wide gates:
+   - `just test-pkg ./internal/adapters/livewait/localipc` -> PASS
+   - `just test-pkg ./internal/adapters/storage/sqlite` -> PASS
+   - `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+   - `just test-pkg ./internal/app` -> PASS
+   - `just test-pkg ./cmd/till` -> PASS
+6. QA evidence:
+   - builder lane A QA: no remaining blockers after the cleanup/security hardening wave,
+   - builder lane B/final cancel-lock fix QA-1: no blockers; confirmed `sql.LevelSerializable` is the correct driver-level `BEGIN IMMEDIATE` fix for the failing path,
+   - builder lane B/final cancel-lock fix QA-2: no blockers; noted only that the lock hardening is intentionally narrow and the pre-existing shared-DB atomicity caveat remains documented.
+7. Remaining work:
+   - commit,
+   - push,
+   - watch GitHub Actions,
+   - then proceed to the collaborative E2E worksheet.
+8. Repo-wide validation evidence:
+   - `just check` -> PASS
+   - `just ci` -> PASS
+9. Final QA follow-up:
+   - final QA reviewer verdict: no blockers,
+   - residual risk recorded: the SQLite lock hardening is intentionally narrow to the auth cross-process path, and the broader session-aware stdio/comment-handoff notification layer remains future work already captured in the docs.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 
