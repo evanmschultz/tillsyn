@@ -292,6 +292,7 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestI
 	if err != nil {
 		return ApprovedAuthRequestResult{}, err
 	}
+	s.publishAuthRequestResolved(out.Request)
 	if err := s.resolveAuthRequestAttention(ctx, out.Request, resolvedBy, resolvedType); err != nil {
 		return ApprovedAuthRequestResult{}, err
 	}
@@ -312,42 +313,70 @@ func (s *Service) ClaimAuthRequest(ctx context.Context, in ClaimAuthRequestInput
 		return ClaimedAuthRequestResult{}, fmt.Errorf("wait timeout must be >= 0")
 	}
 	if waitTimeout <= 0 {
-		result, err := s.authRequests.ClaimAuthRequest(ctx, ClaimAuthRequestInput{
-			RequestID:   requestID,
-			ResumeToken: strings.TrimSpace(in.ResumeToken),
-			PrincipalID: strings.TrimSpace(in.PrincipalID),
-			ClientID:    strings.TrimSpace(in.ClientID),
-		})
-		if err != nil {
-			return ClaimedAuthRequestResult{}, err
-		}
-		if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
-			return ClaimedAuthRequestResult{}, err
-		}
+		return s.claimAuthRequestOnce(ctx, requestID, in)
+	}
+	if s.liveWait != nil {
+		return s.claimAuthRequestLive(ctx, requestID, in, waitTimeout)
+	}
+	return s.claimAuthRequestPolling(ctx, requestID, in, waitTimeout)
+}
+
+// claimAuthRequestOnce loads one requester-visible auth request state without waiting.
+func (s *Service) claimAuthRequestOnce(ctx context.Context, requestID string, in ClaimAuthRequestInput) (ClaimedAuthRequestResult, error) {
+	result, err := s.authRequests.ClaimAuthRequest(ctx, ClaimAuthRequestInput{
+		RequestID:   requestID,
+		ResumeToken: strings.TrimSpace(in.ResumeToken),
+		PrincipalID: strings.TrimSpace(in.PrincipalID),
+		ClientID:    strings.TrimSpace(in.ClientID),
+	})
+	if err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	return result, nil
+}
+
+// claimAuthRequestLive waits on one in-process resolution event instead of polling storage.
+func (s *Service) claimAuthRequestLive(ctx context.Context, requestID string, in ClaimAuthRequestInput, waitTimeout time.Duration) (ClaimedAuthRequestResult, error) {
+	result, err := s.claimAuthRequestOnce(ctx, requestID, in)
+	if err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	if domain.NormalizeAuthRequestState(result.Request.State) != domain.AuthRequestStatePending {
 		return result, nil
 	}
+	waitCtx, cancel := context.WithDeadline(ctx, authRequestWaitDeadline(s.clock().UTC(), result.Request.ExpiresAt, waitTimeout))
+	defer cancel()
+	if _, err := s.liveWait.Wait(waitCtx, LiveWaitEventAuthRequestResolved, requestID); err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return ClaimedAuthRequestResult{}, err
+		}
+	}
+	result, err = s.claimAuthRequestOnce(ctx, requestID, in)
+	if err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	if domain.NormalizeAuthRequestState(result.Request.State) == domain.AuthRequestStatePending {
+		result.Waiting = true
+	}
+	return result, nil
+}
+
+// claimAuthRequestPolling preserves the legacy polling-based wait behavior when no live broker is configured.
+func (s *Service) claimAuthRequestPolling(ctx context.Context, requestID string, in ClaimAuthRequestInput, waitTimeout time.Duration) (ClaimedAuthRequestResult, error) {
 	deadline := time.Now().UTC().Add(waitTimeout)
 	for {
-		result, err := s.authRequests.ClaimAuthRequest(ctx, ClaimAuthRequestInput{
-			RequestID:   requestID,
-			ResumeToken: strings.TrimSpace(in.ResumeToken),
-			PrincipalID: strings.TrimSpace(in.PrincipalID),
-			ClientID:    strings.TrimSpace(in.ClientID),
-		})
+		result, err := s.claimAuthRequestOnce(ctx, requestID, in)
 		if err != nil {
 			return ClaimedAuthRequestResult{}, err
 		}
 		if domain.NormalizeAuthRequestState(result.Request.State) != domain.AuthRequestStatePending {
-			if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
-				return ClaimedAuthRequestResult{}, err
-			}
 			return result, nil
 		}
 		if !time.Now().UTC().Before(deadline) {
 			result.Waiting = true
-			if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
-				return ClaimedAuthRequestResult{}, err
-			}
 			return result, nil
 		}
 		timer := time.NewTimer(claimAuthRequestPollInterval)
@@ -373,6 +402,7 @@ func (s *Service) DenyAuthRequest(ctx context.Context, in DenyAuthRequestInput) 
 	if err != nil {
 		return domain.AuthRequest{}, err
 	}
+	s.publishAuthRequestResolved(req)
 	if err := s.resolveAuthRequestAttention(ctx, req, resolvedBy, resolvedType); err != nil {
 		return domain.AuthRequest{}, err
 	}
@@ -390,10 +420,32 @@ func (s *Service) CancelAuthRequest(ctx context.Context, in CancelAuthRequestInp
 	if err != nil {
 		return domain.AuthRequest{}, err
 	}
+	s.publishAuthRequestResolved(req)
 	if err := s.resolveAuthRequestAttention(ctx, req, resolvedBy, resolvedType); err != nil {
 		return domain.AuthRequest{}, err
 	}
 	return req, nil
+}
+
+// publishAuthRequestResolved wakes any live waiters for one terminal auth request.
+func (s *Service) publishAuthRequestResolved(req domain.AuthRequest) {
+	if s == nil || s.liveWait == nil {
+		return
+	}
+	s.liveWait.Publish(LiveWaitEvent{
+		Type:  LiveWaitEventAuthRequestResolved,
+		Key:   strings.TrimSpace(req.ID),
+		Value: domain.NormalizeAuthRequestState(req.State),
+	})
+}
+
+// authRequestWaitDeadline bounds one live wait by both user timeout and auth-request expiry.
+func authRequestWaitDeadline(now time.Time, expiresAt time.Time, waitTimeout time.Duration) time.Time {
+	deadline := now.Add(waitTimeout)
+	if !expiresAt.IsZero() && expiresAt.Before(deadline) {
+		return expiresAt
+	}
+	return deadline
 }
 
 // ListAuthSessions returns caller-safe auth-session inventory through the configured backend.

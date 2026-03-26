@@ -141,6 +141,11 @@ Evidence:
     - `just ci` PASS
   - Next live step:
     - rerun this same `C1` auth-review interaction on the fresh binary and confirm the explicit-confirm flow feels correct.
+  - Active rerun request:
+    - request id: `8a080168-719c-46b7-bf36-41342558010d`
+    - principal: `Codex Collab Wait Orchestrator`
+    - requester continuation token: `resume-c1-wait-20260325`
+    - one background waiter lane is holding `till.claim_auth_request(wait_timeout=10m)` for this request so we can observe the current continuation behavior after live TUI approval or denial.
 
 ## Section C2: Fresh Orchestrator Auth Through MCP
 
@@ -168,7 +173,7 @@ Steps:
 
 Expected:
 1. Unauthenticated mutation fails closed before any auth exists.
-2. Pending claim shows a real waiting state instead of leaving the requester blind.
+2. For the current local same-process dogfood path, `till.claim_auth_request(wait_timeout=...)` should now stay open and wake on approve/deny/cancel without app-layer polling.
 3. The request is visible in TUI without shell spelunking.
 4. Approval happens in the dedicated TUI flow.
 5. Claim/resume works natively for the same requester.
@@ -182,6 +187,15 @@ Evidence:
 - denied request id:
 - canceled request id:
 - pass/fail notes:
+
+Status note before continuing:
+- `C2` should still prove current fail-closed auth, TUI visibility, and native claim/resume behavior.
+- `C2` can now prove the first auth-specific live wake path for the local same-process dogfood run.
+- `C2` should still not be used to claim that the broader session-aware stdio communication layer or comment/handoff consumers already exist.
+- Automated evidence before the next live rerun:
+  - `just test-pkg ./internal/app` PASS
+  - `just check` PASS
+  - `just ci` PASS
 
 ## Section C3: Authenticated Mutation And Fail-Closed Revoke
 

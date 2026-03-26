@@ -1921,6 +1921,104 @@ Status:
 4. Remaining limitation intentionally not solved in this slice:
    - requester waiting still relies on bounded claim polling rather than a true pushed wakeup/notification channel.
 5. `C1` remains paused until the user reruns the same auth-review section on the fresh binary and confirms the behavior now matches the explicit-confirm contract.
+6. Fresh rerun setup for the live `C1` pass:
+   - pending request id: `8a080168-719c-46b7-bf36-41342558010d`
+   - principal: `Codex Collab Wait Orchestrator`
+   - requester identity: `client_id=codex-collab-wait-c1-20260325`, `principal_id=codex-collab-wait-orchestrator-20260325`
+   - requester-owned continuation token: `resume-c1-wait-20260325`
+   - one background waiter lane is currently holding `till.claim_auth_request(wait_timeout=10m)` so the current continuation behavior can be observed during the live TUI approval/denial rerun.
+
+### 2026-03-25: C2 Blocker - Reusable Live MCP Wait/Notify Layer Still Missing
+
+Objective:
+- reconcile the user-expected "agent waits live and gets woken up" behavior with the code that actually exists today,
+- record the exact gap so we do not keep speaking about the future architecture as if it were already implemented,
+- and lock the next-slice direction before more auth/collab testing proceeds.
+
+Confirmed findings from local code inspection and official MCP/mcp-go docs:
+1. Tillsyn currently has durable coordination state, not a reusable live notify/wakeup transport layer.
+   - auth requests, attention items, handoffs, and capability leases are persisted and inspectable,
+   - but none of those domain surfaces currently drive an outbound MCP wakeup/notification path.
+2. `till.claim_auth_request` waiting is currently app-layer polling only.
+   - `internal/app/auth_requests.go` loops with `claimAuthRequestPollInterval = 100ms` until timeout,
+   - the backend claim path only reads current durable state once and does not push anything to MCP clients.
+3. The current MCP adapters do not add a generic wait broker or notifier.
+   - stdio is served directly,
+   - streamable HTTP is currently configured stateless,
+   - no reusable event bus, client-session registry, waiter registry, or outbound notification bridge exists in Tillsyn.
+4. MCP and `mcp-go` can support the direction we want, but Tillsyn has not wired it yet.
+   - MCP transports support requests, responses, and notifications over stdio,
+   - Streamable HTTP can also support server-to-client SSE notifications and continuous listening,
+   - `mcp-go` documents continuous listening for HTTP/SSE transport,
+   - but none of that currently exists as a reusable Tillsyn coordination layer.
+
+Consensus after discussion:
+1. Do not pretend the current polling-based continuation is the final coordination model.
+2. Build the reusable live wait/notify layer as a stdio-first, local-only slice.
+   - local stdio is the current product reality and the user-facing dogfood path,
+   - HTTP/server-side continuous-listening support remains roadmap work until local stdio behavior is solid.
+3. Auth should be the first consumer of that reusable layer.
+   - first prove one waiting auth requester can stay open and visibly resume on approve/deny/cancel,
+   - then reuse the same transport/session/waiter primitives for comments, handoffs, attention changes, and later task-discussion flows.
+4. Keep durable Tillsyn state as the source of truth.
+   - live MCP notifications/wakeups are the transport convenience layer on top,
+   - reconnect/restart/discovery must still recover from durable state when the live channel is gone.
+
+Recommended next slice (stdio-first live coordination substrate):
+1. Add one reusable stdio client-session and waiter registry inside the MCP adapter layer.
+   - track active initialized stdio clients,
+   - track long-lived wait subscriptions keyed by requester/session and event interest,
+   - support cancellation/cleanup on disconnect or explicit cancel.
+2. Add one transport-agnostic internal event surface for domain changes that matter to waiting agents.
+   - auth request resolved,
+   - comment/thread update,
+   - handoff state changed,
+   - attention item raised/resolved,
+   - capability lease changed when relevant.
+3. Bridge those domain events to the stdio MCP layer.
+   - wake the right waiting request when possible,
+   - and/or send a client-visible MCP notification on the same stdio connection for subscribed surfaces.
+4. Keep auth as the first consumer:
+   - `claim_auth_request(wait_timeout=...)` should stop feeling like blind polling,
+   - the requester should visibly remain blocked on that same line of work until resolution or timeout,
+   - approval/denial/cancel should wake the waiter on the same connection if still live.
+5. After auth proves out, extend the same substrate to comments and handoffs.
+   - comments: human<->agent and agent<->agent discussion wakeups,
+   - handoffs: structured waiting/resume for builder/qa/orchestrator coordination,
+   - later: attention and other task-level workflow signals.
+
+Open questions still to close before implementation:
+1. For stdio, do we model wakeups primarily as:
+   - one long-lived in-flight request that gets its response when the event happens,
+   - or explicit server notifications plus a follow-up state fetch,
+   - or both for different call types?
+2. What is the minimal generic subscription shape for non-auth surfaces so the first auth slice does not paint us into a corner?
+3. How should waiter state and disconnect cleanup be surfaced in Tillsyn recovery views for orchestrators?
+
+Status update after implementation:
+1. Landed now:
+   - one reusable in-process live wait broker in the app layer,
+   - auth approve/deny/cancel now publish terminal-state wakeups,
+   - `claim_auth_request(wait_timeout=...)` now waits on the live broker instead of polling when the broker is available,
+   - lost-wakeup replay is covered so late waiter registration still observes an already-published auth resolution event,
+   - focused tests now cover wake-on-approve, wake-on-deny, timeout waiting, and broker replay behavior.
+2. Not landed yet:
+   - stdio client/session-aware waiter registry in the MCP adapter layer,
+   - disconnect-aware cleanup tied to client/session lifecycle,
+   - outbound MCP notifications for non-auth waiting surfaces,
+   - comment/handoff consumers on top of the same substrate.
+3. Product interpretation:
+   - this slice is the first practical auth wakeup implementation for local same-process dogfooding,
+   - it is not yet the full session-aware stdio communication layer originally discussed.
+4. Validation evidence for this slice:
+   - `just test-pkg ./internal/app` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
+   - 2 QA review lanes ran on the implementation:
+     - both flagged the same lost-wakeup race,
+     - 1 also flagged that the implementation is a smaller app-layer first cut than the fuller session-aware adapter design discussed in the plan,
+     - the race was fixed before the final green gates,
+     - the docs were updated to accurately describe the smaller first-cut implementation and the remaining open work.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 

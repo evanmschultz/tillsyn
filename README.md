@@ -97,7 +97,8 @@ Current auth note:
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
-- Current continuation caveat: `till.claim_auth_request` can wait for a bounded timeout, but the current implementation still polls durable state rather than using a true pushed approval/deny wakeup channel.
+- Current continuation status: `till.claim_auth_request` now uses an in-process live wake path for local same-process dogfood runs, so approve/deny/cancel can wake a waiting requester without polling.
+- Current live-transport caveat: this is still a first-cut auth consumer, not the full session-aware stdio communication layer. Tillsyn does not yet have client/session-aware disconnect cleanup or broader wait/notify consumers for comments/handoffs, and HTTP/continuous-listening support remains roadmap work for a later wave.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
@@ -108,7 +109,7 @@ Instruction-tool usage guidance:
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
 - remote/team auth-tenancy expansion and additional security hardening,
-- template reseeding/apply-scope UX, richer TUI/CLI template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, and broader template-library expansion.
+- template reseeding/apply-scope UX, richer TUI/CLI template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, and HTTP/continuous-listening support for the future reusable MCP wakeup layer.
 
 Current post-dogfood consensus note:
 - the detailed working consensus for that template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.

@@ -207,6 +207,7 @@ func TestServiceClaimAuthRequestRejectsWrongResumeToken(t *testing.T) {
 		Path:              "project/" + fixture.project.ID,
 		PrincipalID:       "review-agent",
 		ClientID:          "till-mcp-stdio",
+		ClientType:        "mcp-stdio",
 		Reason:            "resume after approval",
 		Continuation:      map[string]any{"resume_token": "resume-123"},
 		RequestedBy:       "review-agent",
@@ -232,7 +233,9 @@ func TestServiceClaimAuthRequestRejectsMismatchedRequesterIdentity(t *testing.T)
 	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
 		Path:              "project/" + fixture.project.ID,
 		PrincipalID:       "review-agent",
+		PrincipalType:     "agent",
 		ClientID:          "till-mcp-stdio",
+		ClientType:        "mcp-stdio",
 		Reason:            "resume after approval",
 		Continuation:      map[string]any{"resume_token": "resume-123"},
 		RequestedBy:       "review-agent",
@@ -308,7 +311,9 @@ func TestServiceClaimAuthRequestWaitsForPendingResolution(t *testing.T) {
 	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
 		Path:              "project/" + fixture.project.ID,
 		PrincipalID:       "review-agent",
+		PrincipalType:     "agent",
 		ClientID:          "till-mcp-stdio",
+		ClientType:        "mcp-stdio",
 		Reason:            "resume after approval",
 		Continuation:      map[string]any{"resume_token": "resume-123"},
 		RequestedBy:       "review-agent",
@@ -335,6 +340,157 @@ func TestServiceClaimAuthRequestWaitsForPendingResolution(t *testing.T) {
 	}
 	if got := claimed.SessionSecret; got != "" {
 		t.Fatalf("ClaimAuthRequest() session_secret = %q, want empty while pending", got)
+	}
+}
+
+// TestServiceClaimAuthRequestWakesOnApproval verifies one waiting continuation claim resumes when the request is approved.
+func TestServiceClaimAuthRequestWakesOnApproval(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "review-agent",
+		PrincipalType:     "agent",
+		ClientID:          "till-mcp-stdio",
+		ClientType:        "mcp-stdio",
+		Reason:            "resume after approval",
+		Continuation:      map[string]any{"resume_token": "resume-123"},
+		RequestedBy:       "review-agent",
+		RequesterClientID: "till-mcp-stdio",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	claimedCh := make(chan app.ClaimedAuthRequestResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		claimed, claimErr := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+			RequestID:   request.ID,
+			ResumeToken: "resume-123",
+			PrincipalID: "review-agent",
+			ClientID:    "till-mcp-stdio",
+			WaitTimeout: 2 * time.Second,
+		})
+		if claimErr != nil {
+			errCh <- claimErr
+			return
+		}
+		claimedCh <- claimed
+	}()
+
+	// The waiter should remain blocked until a terminal auth decision is published.
+	select {
+	case err := <-errCh:
+		t.Fatalf("ClaimAuthRequest() early error = %v", err)
+	case claimed := <-claimedCh:
+		t.Fatalf("ClaimAuthRequest() returned early with %#v before approval", claimed)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for live wait",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	case claimed := <-claimedCh:
+		if got := claimed.Request.State; got != domain.AuthRequestStateApproved {
+			t.Fatalf("ClaimAuthRequest() state = %q, want approved", got)
+		}
+		if got := claimed.Request.IssuedSessionID; got != approved.Request.IssuedSessionID {
+			t.Fatalf("ClaimAuthRequest() issued_session_id = %q, want %q", got, approved.Request.IssuedSessionID)
+		}
+		if got := claimed.SessionSecret; got != approved.SessionSecret {
+			t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)
+		}
+		if claimed.Waiting {
+			t.Fatal("ClaimAuthRequest() waiting = true, want false after approval")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ClaimAuthRequest() did not wake after approval")
+	}
+}
+
+// TestServiceClaimAuthRequestWakesOnDeny verifies one waiting continuation claim resumes with a denied result and no secret.
+func TestServiceClaimAuthRequestWakesOnDeny(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "review-agent",
+		PrincipalType:     "agent",
+		ClientID:          "till-mcp-stdio",
+		ClientType:        "mcp-stdio",
+		Reason:            "resume after denial",
+		Continuation:      map[string]any{"resume_token": "resume-123"},
+		RequestedBy:       "review-agent",
+		RequesterClientID: "till-mcp-stdio",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	claimedCh := make(chan app.ClaimedAuthRequestResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		claimed, claimErr := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+			RequestID:   request.ID,
+			ResumeToken: "resume-123",
+			PrincipalID: "review-agent",
+			ClientID:    "till-mcp-stdio",
+			WaitTimeout: 2 * time.Second,
+		})
+		if claimErr != nil {
+			errCh <- claimErr
+			return
+		}
+		claimedCh <- claimed
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ClaimAuthRequest() early error = %v", err)
+	case claimed := <-claimedCh:
+		t.Fatalf("ClaimAuthRequest() returned early with %#v before denial", claimed)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	denied, err := fixture.svc.DenyAuthRequest(context.Background(), app.DenyAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "denied for live wait",
+	})
+	if err != nil {
+		t.Fatalf("DenyAuthRequest() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ClaimAuthRequest() error = %v", err)
+	case claimed := <-claimedCh:
+		if got := claimed.Request.State; got != domain.AuthRequestStateDenied {
+			t.Fatalf("ClaimAuthRequest() state = %q, want denied", got)
+		}
+		if got := claimed.Request.ResolutionNote; got != denied.ResolutionNote {
+			t.Fatalf("ClaimAuthRequest() resolution_note = %q, want %q", got, denied.ResolutionNote)
+		}
+		if got := claimed.SessionSecret; got != "" {
+			t.Fatalf("ClaimAuthRequest() session_secret = %q, want empty after denial", got)
+		}
+		if claimed.Waiting {
+			t.Fatal("ClaimAuthRequest() waiting = true, want false after denial")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ClaimAuthRequest() did not wake after denial")
 	}
 }
 

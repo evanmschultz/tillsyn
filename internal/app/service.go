@@ -71,6 +71,7 @@ type ServiceConfig struct {
 	SearchSemanticWeight     float64
 	SearchSemanticCandidates int
 	AuthBackend              AuthBackend
+	LiveWaitBroker           LiveWaitBroker
 }
 
 // StateTemplate represents state template data used by this package.
@@ -108,6 +109,7 @@ type Service struct {
 	searchSemanticW    float64
 	searchSemanticK    int
 	authBackend        AuthBackend
+	liveWait           LiveWaitBroker
 }
 
 // NewService constructs a new value for this package.
@@ -144,6 +146,10 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	if semanticCandidates <= 0 {
 		semanticCandidates = defaultSearchSemanticCandidates
 	}
+	liveWait := cfg.LiveWaitBroker
+	if liveWait == nil {
+		liveWait = NewInProcessLiveWaitBroker()
+	}
 
 	return &Service{
 		repo:               repo,
@@ -163,6 +169,7 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		searchSemanticW:    semanticWeight,
 		searchSemanticK:    semanticCandidates,
 		authBackend:        cfg.AuthBackend,
+		liveWait:           liveWait,
 	}
 }
 
