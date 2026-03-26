@@ -17,7 +17,55 @@ import (
 
 // projectDiscoveryError returns a discoverability hint for missing project ids.
 func projectDiscoveryError(command string) error {
-	return fmt.Errorf("--project-id is required for %s; run till project list to discover a project id, then run till project discover --project-id <project-id> to review collaboration readiness, or run till project create --name \"Example Project\" to create one", command)
+	return fmt.Errorf("--project-id is required for %s; run till project list to discover a project id, then run till project discover --project-id <project-id> (or till project discover <project-id>) to review collaboration readiness, or run till project create --name \"Example Project\" (or till project create \"Example Project\") to create one", command)
+}
+
+// resolveProjectNameInput accepts either --name or one positional project name.
+func resolveProjectNameInput(name string, args []string) (string, error) {
+	name = strings.TrimSpace(name)
+	if len(args) > 1 {
+		return "", fmt.Errorf("project create accepts at most one positional project name")
+	}
+	if len(args) == 1 {
+		positional := strings.TrimSpace(args[0])
+		if positional == "" {
+			return "", fmt.Errorf("project create positional project name cannot be empty")
+		}
+		if name == "" {
+			return positional, nil
+		}
+		if name != positional {
+			return "", fmt.Errorf("project create accepts either --name or one positional project name; received both %q and %q", name, positional)
+		}
+	}
+	if name == "" {
+		return "", fmt.Errorf("project name is required; pass --name \"Example Project\" or one positional name, or run till project create --help")
+	}
+	return name, nil
+}
+
+// resolveProjectIDInput accepts either --project-id or one positional project id.
+func resolveProjectIDInput(command, projectID string, args []string) (string, error) {
+	projectID = strings.TrimSpace(projectID)
+	if len(args) > 1 {
+		return "", fmt.Errorf("%s accepts at most one positional project id", command)
+	}
+	if len(args) == 1 {
+		positional := strings.TrimSpace(args[0])
+		if positional == "" {
+			return "", projectDiscoveryError(command)
+		}
+		if projectID == "" {
+			return positional, nil
+		}
+		if projectID != positional {
+			return "", fmt.Errorf("%s accepts either --project-id or one positional project id; received both %q and %q", command, projectID, positional)
+		}
+	}
+	if err := requireProjectID(command, projectID); err != nil {
+		return "", err
+	}
+	return projectID, nil
 }
 
 // requireProjectID validates one project-scoped command input.

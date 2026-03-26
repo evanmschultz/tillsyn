@@ -534,11 +534,13 @@ add a new one.
 	}
 	projectListCmd.Flags().BoolVar(&projectListOpts.includeArchived, "include-archived", false, "Include archived projects")
 	projectCreateCmd := &cobra.Command{
-		Use:   "create",
+		Use:   "create [name]",
 		Short: "Create one project",
 		Long: strings.TrimSpace(`
-Create one project with a name, optional description, optional kind override,
-and optional metadata defaults from flags or --metadata-json.
+Create one project with a required name, optional description, optional kind
+override, and optional metadata defaults from flags or --metadata-json.
+
+The name may be passed either as --name or as one positional argument.
 
 Next step: use till project list to confirm the new record, or till project
 discover --project-id <project-id> to inspect the collaboration-readiness
@@ -546,10 +548,16 @@ bridge after creation.
 `),
 		Example: strings.Join([]string{
 			"  till project create --name Inbox --description \"Local execution inbox\" --owner \"Platform\" --tag dogfood",
+			"  till project create Inbox",
 			"  till project create --name \"Go Migration\" --kind project --homepage https://example.invalid",
 		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := resolveProjectNameInput(projectCreateOpts.name, args)
+			if err != nil {
+				return err
+			}
+			projectCreateOpts.name = name
 			return runFlow(cmd.Context(), "project.create")
 		},
 	}
@@ -563,40 +571,60 @@ bridge after creation.
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.homepage, "homepage", "", "Optional project homepage")
 	projectCreateCmd.Flags().StringSliceVar(&projectCreateOpts.tags, "tag", nil, "Optional project tag")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.standardsMarkdown, "standards-markdown", "", "Optional project standards markdown")
-	mustMarkFlagRequired(projectCreateCmd, "name")
 	projectShowCmd := &cobra.Command{
-		Use:   "show",
+		Use:   "show [project-id]",
 		Short: "Show one project",
 		Long: strings.TrimSpace(`
 Show one project in a readable detail view.
 
 If you do not know the id yet, run till project list first to discover it.
+The project id may be passed either as --project-id or as one positional
+argument.
 
 Next step: after inspecting the project, use till project discover --project-id
 <project-id> to see the auth/session/lease/handoff bridge, or return to till
 project list to choose another record.
 `),
-		Example: "  till project show --project-id p1",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Example: strings.Join([]string{
+			"  till project show --project-id p1",
+			"  till project show p1",
+		}, "\n"),
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectID, err := resolveProjectIDInput("project show", projectShowOpts.projectID, args)
+			if err != nil {
+				return err
+			}
+			projectShowOpts.projectID = projectID
 			return runFlow(cmd.Context(), "project.show")
 		},
 	}
 	projectShowCmd.Flags().StringVar(&projectShowOpts.projectID, "project-id", "", "Project identifier")
 	projectShowCmd.Flags().BoolVar(&projectShowOpts.includeArchived, "include-archived", false, "Include archived projects")
 	projectDiscoverCmd := &cobra.Command{
-		Use:   "discover",
+		Use:   "discover [project-id]",
 		Short: "Show one project collaboration-readiness summary",
 		Long: strings.TrimSpace(`
 Show one project with a collaboration-readiness bridge that points the operator
 at the next auth, session, lease, or handoff step.
 
+The project id may be passed either as --project-id or as one positional
+argument.
+
 Next step: after reading the readiness summary, follow the recommended command
 in order rather than relying on remembered setup steps.
 `),
-		Example: "  till project discover --project-id p1",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Example: strings.Join([]string{
+			"  till project discover --project-id p1",
+			"  till project discover p1",
+		}, "\n"),
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectID, err := resolveProjectIDInput("project discover", projectDiscoverOpts.projectID, args)
+			if err != nil {
+				return err
+			}
+			projectDiscoverOpts.projectID = projectID
 			return runFlow(cmd.Context(), "project.discover")
 		},
 	}
@@ -1692,8 +1720,8 @@ func executeCommandFlow(
 	if err != nil {
 		return fmt.Errorf("configure runtime logger: %w", err)
 	}
-	if command == "" {
-		// Keep TUI rendering clean: runtime logs stay in the dev-file sink while the board is active.
+	if shouldMuteRuntimeConsole(command) {
+		// Keep interactive and one-shot operator surfaces clean: runtime logs stay in the dev-file sink while the command is active.
 		logger.SetConsoleEnabled(false)
 	}
 	logger.InstallAsDefault(rootOpts.appName)
@@ -2127,6 +2155,16 @@ func executeCommandFlow(
 	}
 	logger.Info("command flow complete", "command", "tui")
 	return nil
+}
+
+// shouldMuteRuntimeConsole reports whether runtime logs should stay off the console for one command.
+func shouldMuteRuntimeConsole(command string) bool {
+	switch command {
+	case "serve", "mcp":
+		return false
+	default:
+		return true
+	}
 }
 
 // runServe runs the serve subcommand flow.

@@ -1,8 +1,8 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-24
-Status: In progress; Slice 7 is green in local gates after final operator-inventory and handoff-clarity fixes. The next required step is push + remote GitHub Actions confirmation, then the full collaborative E2E dogfood run proceeds from this file.
+Updated: 2026-03-25
+Status: In progress; Slice 7 follow-up is green locally and remotely, and the next required step is to execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
 
 ## 1) Active Run Source Of Truth
 
@@ -1335,7 +1335,14 @@ Locked post-collab implementation follow-up:
    - use Bubble Tea/Bubbles/Fang v2-native patterns only,
    - do not add `huh` v1 as a runtime dependency,
    - use a Charm `huh`/Charm reference checkout under `.tmp/` only as implementation inspiration after the collaborative run,
-   - aim for a clean picker/input experience that feels like a Huh-style guided operator flow while staying within the repo's v2-only UI direction.
+   - aim for a clean picker/input experience that feels like a Huh-style guided operator flow while staying within the repo's v2-only UI direction,
+   - keep bare `till project` as the project help menu for MVP and current dogfooding,
+   - after dogfooding is ready, add a guided interactive project surface that users can enter explicitly from the project command family,
+   - use that guided surface to let users:
+     - browse existing projects,
+     - inspect project details and readiness,
+     - start project creation,
+     - and choose the next collaboration-oriented action without memorizing flags first.
 5. After the current collaborative run, reassess whether additional operator improvements are needed before the next dogfood loop:
    - better hierarchy discovery,
    - friendlier current-project/default-project behavior where safe,
@@ -1716,9 +1723,10 @@ QA findings and resolutions:
    - one additional fresh final QA reviewer timed out before returning, so final completeness confidence for Slice 7 is based on the completed QA findings above plus green touched-package tests, `just check`, and `just ci`.
 
 Outcome:
-1. Slice 7 is green locally and no longer blocks the full collaborative E2E dogfood run.
-2. One post-push remote-only formatting miss was found and contained to two newly tracked coordination files; it is now remediated locally with green local gates again.
-3. The next required action is to commit/push the formatting-only follow-up, wait for GitHub Actions to finish green, and then execute the collaborative E2E checklist immediately below without reopening scope first.
+1. Slice 7 is green locally and remotely and no longer blocks the full collaborative E2E dogfood run.
+2. One post-push remote-only formatting miss was found and contained to two newly tracked coordination files, then remediated in follow-up commit `e886380`.
+3. GitHub Actions run `23569389061` finished green after the formatting-only follow-up.
+4. The next required action is to execute the collaborative E2E checklist immediately below through the dated worksheet `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` without reopening scope first.
 
 Full collaborative E2E run required immediately after Slice 7 is green:
 1. runtime + entrypoint preflight
@@ -1775,6 +1783,116 @@ Full collaborative E2E run required immediately after Slice 7 is green:
 10. final collaborative verdict
    - record every pass/fail finding here in `PLAN.md`
    - if defects appear, stop forward progression, fix that scope, rerun the same section, then continue.
+
+### 2026-03-25: Collaborative E2E Worksheet Lock-In
+
+Objective:
+- turn the now-green pre-collab baseline into one dated collaborative worksheet that keeps human time focused on the real remaining auth/MCP proof,
+- avoid re-running old fixed auth-review issues as a long rediscovery loop,
+- and keep `PLAN.md` canonical while honoring the user's explicit request for one split worksheet to run together.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS; confirmed a clean workspace before the docs-only worksheet update.
+2. `sed -n '1,220p' Justfile` -> PASS; revalidated `just check` and `just ci` as the final implementation gates and confirmed no test execution is required for this docs-only step.
+3. `sed -n '1,260p' PLAN.md` -> PASS; reloaded the active source-of-truth contract and the current full collaborative checklist.
+4. `sed -n '1680,1795p' PLAN.md` -> PASS; confirmed the currently locked collaborative section list and identified stale remote-CI wording that needed correction.
+5. `sed -n '1,260p' worklogs/AUTH_GATEKEEPING_DOGFOOD_FIX_WAVE_2026-03-21.md` -> PASS; extracted the historical auth-review fixes that should now be spot-checked only.
+6. `sed -n '1,220p' worklogs/AUTH_UX_DOGFOOD_WAVE_PLAN_2026-03-20.md` -> PASS; reused the older split-worksheet structure only as formatting inspiration.
+7. subagent review `Lagrange` -> PASS; confirmed the spot-check-only versus full-rerun split from the historical auth wave.
+8. subagent review `Planck` -> PASS; confirmed the human-led CLI/TUI checks that still need live readability validation.
+9. subagent review `Ptolemy` -> PASS; confirmed the minimum full auth+MCP contract includes:
+   - unauthenticated mutation fail-closed,
+   - waiting claim semantics,
+   - terminal deny/cancel states,
+   - requester-bound continuation and anti-adoption,
+   - in-scope versus out-of-scope mutation denial,
+   - guarded lease and handoff mutation,
+   - revoke and recovery inventory.
+
+Current conclusions:
+1. The new dated worksheet is `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md`.
+2. `PLAN.md` remains the only canonical status and completion ledger for the run.
+3. The worksheet is a user-requested execution companion and evidence checklist, not a second competing source of truth.
+4. Short human spot-checks are enough for:
+   - runtime/path parity and clean `Ctrl-C`,
+   - auth review approve-default and deny-note-first behavior,
+   - historical notification-routing fixes,
+   - role-only or targetless handoff rendering.
+5. Full live rerun remains required for:
+   - CLI/operator bootstrap and readiness,
+   - unauthenticated mutation fail-closed,
+   - fresh orchestrator auth through MCP,
+   - waiting approval and native claim/resume,
+   - denied and canceled request terminal states,
+   - authenticated mutation,
+   - revoke and fail-closed retry,
+   - orchestrator-created builder and QA auth choreography,
+   - anti-adoption and wrong-token continuation denial,
+   - in-scope versus out-of-scope mutation denial,
+   - lease lifecycle,
+   - handoff lifecycle,
+   - guarded authenticated-agent mutation,
+   - recovery/readiness visibility,
+   - name-first human clarity.
+6. The next step is to execute the worksheet section-by-section with the user and log every pass/fail result back into this file immediately.
+
+### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
+
+Objective:
+- fix the newly surfaced operator-path blockers before restarting the collaborative worksheet:
+  - noisy runtime logs on human-facing CLI inventory/detail commands,
+  - and brittle current project command ergonomics that do not match how a human naturally tries `show` and `discover`.
+
+User-reported live findings before code edits:
+1. `./till project list` returned the correct table, but startup/runtime INFO logs printed above and below the human-facing output.
+   - user decision: this log noise is a blocker, not a cosmetic follow-up.
+2. `./till project create` without `--name` failed with the expected required-flag error.
+   - current product decision remains:
+     - bare `till project` stays the help hub for MVP,
+     - guided Charm-v2 picker/input flow remains post-dogfood work.
+3. `./till project show <project-id>` failed because the current command only accepts `--project-id` and treats a positional id as an unexpected subcommand argument.
+   - user expectation for the current product: the operator path should be less brittle than this before dogfooding resumes.
+
+Locked current fix scope:
+1. suppress runtime console log noise on human-facing one-shot CLI operator commands while preserving runtime/file logging where configured.
+2. keep daemon/runtime logs visible for `till mcp` and `till serve`.
+3. keep bare `till project` as help for MVP.
+4. improve current project command ergonomics so `project show` and `project discover` accept the natural operator path instead of forcing one brittle flag-only shape.
+5. if safe within the same slice, improve `project create` missing-name guidance without pulling the post-dogfood guided flow into scope early.
+
+Commands run and outcomes:
+1. Context7 resolve/query for Cobra and Fang -> PASS; confirmed the current fix should use:
+   - Cobra positional-argument validation for one optional arg,
+   - Fang/Cobra default help behavior without inventing a custom project hub for MVP.
+2. `rg -n "project list|project create|project show|startup configuration resolved|configuration loaded|command flow start|command flow complete"` across `cmd/till/**` and `internal/**` -> PASS; identified:
+   - human-facing project commands already render correct tables/details,
+   - runtime log noise came from the shared command-flow logger path in `cmd/till/main.go`.
+3. `sed -n '1,260p' cmd/till/project_cli.go` -> PASS; confirmed current project discoverability helpers and table/detail writers.
+4. `sed -n '260,1220p' cmd/till/main.go` -> PASS; confirmed:
+   - current project command tree shape,
+   - flag-only `show` / `discover`,
+   - and the shared runtime logger setup.
+5. `sed -n '3380,3625p' cmd/till/main.go` -> PASS; confirmed runtime logger supports console-sink suppression cleanly.
+6. `just test-pkg ./cmd/till` -> PASS after the first implementation pass.
+7. `just check` -> PASS after the first implementation pass.
+8. `just ci` -> PASS after the first implementation pass.
+9. QA lane `QA-CLI-LOG-01` -> PASS with low-risk follow-up only:
+   - suggested locking daemon exception behavior with one small regression test.
+10. QA lane `QA-PROJECT-UX-01` -> PASS with low-risk follow-up only:
+   - suggested updating guidance copy to mention positional input and adding a little more regression coverage.
+11. follow-up implementation pass -> PASS:
+   - updated project discovery/help guidance to mention positional `show`, `discover`, and `create` forms,
+   - added more regression coverage for quiet stderr, positional conflicts, and daemon/noise exceptions.
+12. `just test-pkg ./cmd/till` -> PASS after the follow-up pass.
+13. `just check` -> PASS after the follow-up pass.
+14. `just ci` -> PASS after the follow-up pass.
+
+Outcome:
+1. Human-facing one-shot CLI operator commands now keep runtime console logs out of the terminal while preserving the normal daemon/runtime path for `till mcp` and `till serve`.
+2. `project show` and `project discover` now accept either `--project-id` or one positional project id.
+3. `project create` now accepts either `--name` or one positional name and returns clearer missing-name guidance while keeping the guided picker flow out of MVP scope.
+4. The two QA review lanes found no blockers for restarting the collaborative worksheet after this checkpoint.
+5. The next step is to commit this fix scope and rerun worksheet section `C0` from the top against the refreshed CLI behavior.
 
 ### 2026-03-22: P5 Slice 4 TUI And CLI Product Surfaces
 

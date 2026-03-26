@@ -471,17 +471,17 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "project create",
 			args: []string{"project", "create", "--help"},
-			want: []string{"till project create", "--name", "--kind", "--metadata-json"},
+			want: []string{"till project create", "--name", "--kind", "--metadata-json", "one positional argument"},
 		},
 		{
 			name: "project show",
 			args: []string{"project", "show", "--help"},
-			want: []string{"till project show", "--project-id", "project list", "project discover"},
+			want: []string{"till project show", "--project-id", "one positional", "project list", "project discover"},
 		},
 		{
 			name: "project discover",
 			args: []string{"project", "discover", "--help"},
-			want: []string{"till project discover", "--project-id", "collaboration-readiness bridge", "auth", "session", "lease", "handoff"},
+			want: []string{"till project discover", "--project-id", "one positional", "collaboration-readiness bridge", "auth", "session", "lease", "handoff"},
 		},
 		{
 			name: "auth request",
@@ -1336,11 +1336,23 @@ func TestRunProjectCommands(t *testing.T) {
 		t.Fatalf("unexpected project create output: %q", got)
 	}
 
+	var createPositionalOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"project", "create", "Roadmap",
+	}, &createPositionalOut, io.Discard); err != nil {
+		t.Fatalf("run(project create positional) error = %v", err)
+	}
+	if got := createPositionalOut.String(); !strings.Contains(got, "CREATED PROJECT") || !strings.Contains(got, "Roadmap") {
+		t.Fatalf("unexpected positional project create output: %q", got)
+	}
+
 	var listOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "list"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(project list) error = %v", err)
 	}
-	if got := listOut.String(); !strings.Contains(got, "NAME") || !strings.Contains(got, "ID") || !strings.Contains(got, "OWNER") || !strings.Contains(got, "ARCHIVED") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "Inbox") {
+	if got := listOut.String(); !strings.Contains(got, "NAME") || !strings.Contains(got, "ID") || !strings.Contains(got, "OWNER") || !strings.Contains(got, "ARCHIVED") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "Inbox") || !strings.Contains(got, "Roadmap") {
 		t.Fatalf("unexpected project list output: %q", got)
 	}
 
@@ -1350,6 +1362,14 @@ func TestRunProjectCommands(t *testing.T) {
 	}
 	if got := showOut.String(); !strings.Contains(got, "PROJECT") || !strings.Contains(got, "name") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "id") || !strings.Contains(got, "p1") {
 		t.Fatalf("unexpected project show output: %q", got)
+	}
+
+	var showPositionalOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "p1"}, &showPositionalOut, io.Discard); err != nil {
+		t.Fatalf("run(project show positional) error = %v", err)
+	}
+	if got := showPositionalOut.String(); !strings.Contains(got, "PROJECT") || !strings.Contains(got, "Project p1") {
+		t.Fatalf("unexpected positional project show output: %q", got)
 	}
 
 	var requestOut strings.Builder
@@ -1376,6 +1396,134 @@ func TestRunProjectCommands(t *testing.T) {
 	for _, want := range []string{"PROJECT COLLABORATION READINESS", "COORDINATION INVENTORY", "pending_auth_requests", "till auth request show --request-id"} {
 		if !strings.Contains(gotDiscover, want) {
 			t.Fatalf("expected %q in project discover output, got %q", want, gotDiscover)
+		}
+	}
+
+	var discoverPositionalOut strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "discover", "p1"}, &discoverPositionalOut, io.Discard); err != nil {
+		t.Fatalf("run(project discover positional) error = %v", err)
+	}
+	if got := discoverPositionalOut.String(); !strings.Contains(got, "PROJECT COLLABORATION READINESS") || !strings.Contains(got, "Project p1") {
+		t.Fatalf("unexpected positional project discover output: %q", got)
+	}
+}
+
+// TestRunProjectCommandsMuteRuntimeConsoleLogs verifies human-facing project commands stay quiet on stderr.
+func TestRunProjectCommandsMuteRuntimeConsoleLogs(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "list"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run(project list) error = %v", err)
+	}
+	if got := stderr.String(); strings.TrimSpace(got) != "" {
+		t.Fatalf("expected quiet stderr for project list, got %q", got)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Project p1") {
+		t.Fatalf("unexpected project list output: %q", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "p1"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run(project show positional) error = %v", err)
+	}
+	if got := stderr.String(); strings.TrimSpace(got) != "" {
+		t.Fatalf("expected quiet stderr for project show, got %q", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "discover", "p1"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run(project discover positional) error = %v", err)
+	}
+	if got := stderr.String(); strings.TrimSpace(got) != "" {
+		t.Fatalf("expected quiet stderr for project discover, got %q", got)
+	}
+}
+
+// TestRunProjectCreateMissingNameGuidance keeps the current CLI path explicit until guided creation lands later.
+func TestRunProjectCreateMissingNameGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "create"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("expected missing project name error")
+	}
+	for _, want := range []string{"project name is required", "--name", "till project create --help"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in project create guidance, got %v", want, err)
+		}
+	}
+}
+
+// TestRunProjectCommandConflictingInputs rejects mismatched flag and positional values.
+func TestRunProjectCommandConflictingInputs(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "--project-id", "p1", "p2"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("expected conflicting project show inputs error")
+	}
+	if !strings.Contains(err.Error(), "either --project-id or one positional project id") {
+		t.Fatalf("unexpected project show conflicting-input error: %v", err)
+	}
+
+	out.Reset()
+	err = run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "create", "--name", "Inbox", "Roadmap"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("expected conflicting project create inputs error")
+	}
+	if !strings.Contains(err.Error(), "either --name or one positional project name") {
+		t.Fatalf("unexpected project create conflicting-input error: %v", err)
+	}
+}
+
+// TestShouldMuteRuntimeConsole keeps one-shot commands quiet while daemon commands remain noisy.
+func TestShouldMuteRuntimeConsole(t *testing.T) {
+	cases := []struct {
+		command string
+		want    bool
+	}{
+		{command: "", want: true},
+		{command: "project.list", want: true},
+		{command: "capture-state", want: true},
+		{command: "mcp", want: false},
+		{command: "serve", want: false},
+	}
+
+	for _, tc := range cases {
+		if got := shouldMuteRuntimeConsole(tc.command); got != tc.want {
+			t.Fatalf("shouldMuteRuntimeConsole(%q) = %v, want %v", tc.command, got, tc.want)
 		}
 	}
 }

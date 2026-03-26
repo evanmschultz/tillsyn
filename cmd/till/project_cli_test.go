@@ -138,10 +138,122 @@ func TestRequireProjectIDGuidesDiscovery(t *testing.T) {
 		t.Fatal("expected missing project id error")
 	}
 	got := err.Error()
-	for _, want := range []string{"--project-id is required", "till project list", "till project discover --project-id", "till project create --name"} {
+	for _, want := range []string{"--project-id is required", "till project list", "till project discover --project-id", "till project discover <project-id>", "till project create --name", "till project create \"Example Project\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project-id guidance, got %q", want, got)
 		}
+	}
+}
+
+// TestResolveProjectNameInput accepts either --name or one positional project name.
+func TestResolveProjectNameInput(t *testing.T) {
+	cases := []struct {
+		name    string
+		flag    string
+		args    []string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "flag only",
+			flag: "Inbox",
+			want: "Inbox",
+		},
+		{
+			name: "positional only",
+			args: []string{"Inbox"},
+			want: "Inbox",
+		},
+		{
+			name: "matching flag and positional",
+			flag: "Inbox",
+			args: []string{"Inbox"},
+			want: "Inbox",
+		},
+		{
+			name:    "missing name",
+			wantErr: "project name is required",
+		},
+		{
+			name:    "conflicting inputs",
+			flag:    "Inbox",
+			args:    []string{"Roadmap"},
+			wantErr: "either --name or one positional project name",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveProjectNameInput(tc.flag, tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveProjectNameInput() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveProjectNameInput() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveProjectNameInput() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveProjectIDInput accepts either --project-id or one positional project id.
+func TestResolveProjectIDInput(t *testing.T) {
+	cases := []struct {
+		name    string
+		flag    string
+		args    []string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "flag only",
+			flag: "p1",
+			want: "p1",
+		},
+		{
+			name: "positional only",
+			args: []string{"p1"},
+			want: "p1",
+		},
+		{
+			name: "matching flag and positional",
+			flag: "p1",
+			args: []string{"p1"},
+			want: "p1",
+		},
+		{
+			name:    "missing project id",
+			wantErr: "--project-id is required",
+		},
+		{
+			name:    "conflicting inputs",
+			flag:    "p1",
+			args:    []string{"p2"},
+			wantErr: "either --project-id or one positional project id",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveProjectIDInput("project show", tc.flag, tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveProjectIDInput() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveProjectIDInput() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveProjectIDInput() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
