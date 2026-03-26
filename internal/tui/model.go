@@ -8353,12 +8353,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.loadData
 		case key.Matches(msg, m.keys.newProject):
 			return m, m.startProjectForm(nil)
-		case msg.String() == "j" || msg.String() == "down" || msg.String() == "right":
+		case msg.String() == "j" || msg.String() == "down" || msg.String() == "right" || msg.Code == tea.KeyDown || msg.Code == tea.KeyRight:
 			if m.projectPickerIndex < len(m.projects)-1 {
 				m.projectPickerIndex++
 			}
 			return m, nil
-		case msg.String() == "k" || msg.String() == "up" || msg.String() == "left":
+		case msg.String() == "k" || msg.String() == "up" || msg.String() == "left" || msg.Code == tea.KeyUp || msg.Code == tea.KeyLeft:
 			if m.projectPickerIndex > 0 {
 				m.projectPickerIndex--
 			}
