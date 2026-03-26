@@ -121,9 +121,35 @@ func sqliteFileURI(path string) string {
 	query.Add("_pragma", "foreign_keys(1)")
 	return (&url.URL{
 		Scheme:   "file",
-		Path:     path,
+		Path:     sqliteURIPath(path),
 		RawQuery: query.Encode(),
 	}).String()
+}
+
+// sqliteURIPath normalizes local filesystem paths into SQLite-compatible file: URI paths.
+func sqliteURIPath(path string) string {
+	path = filepath.Clean(path)
+	path = strings.ReplaceAll(path, `\`, `/`)
+	switch {
+	case strings.HasPrefix(path, `//`):
+		return path
+	case isWindowsDrivePath(path) && !strings.HasPrefix(path, "/"):
+		return "/" + path
+	default:
+		return path
+	}
+}
+
+// isWindowsDrivePath reports whether path starts with a Windows drive-letter prefix like C:/.
+func isWindowsDrivePath(path string) bool {
+	if len(path) < 2 {
+		return false
+	}
+	drive := path[0]
+	if (drive < 'a' || drive > 'z') && (drive < 'A' || drive > 'Z') {
+		return false
+	}
+	return path[1] == ':'
 }
 
 // migrate applies schema and data migrations required for compatibility.

@@ -2136,7 +2136,10 @@ Status update:
    - pushed commit `1cee689` and watched GitHub Actions run `23585340658`,
    - remote failure found: `just check` failed `fmt-check` because `cmd/till/live_wait_runtime_test.go` still needed `gofmt`,
    - remediation: ran `just fmt`, then reran `just check` -> PASS and `just ci` -> PASS locally,
-   - next step: push the formatting-only follow-up and re-watch GitHub Actions before starting the collaborative E2E worksheet.
+   - pushed formatting follow-up commit `34afcb8` and watched replacement run `23585562111`,
+   - remote failure then narrowed to Windows only: the SQLite DSN builder produced an invalid `file:` URI for Windows drive-letter paths, so `sqlite.Open(...)` failed with `sqlite3: unable to open database file`,
+   - remediation: normalized Windows drive-letter paths in `sqliteFileURI`, added a regression test in `internal/adapters/storage/sqlite/repo_test.go`, reran `just test-pkg ./internal/adapters/storage/sqlite` -> PASS, `just test-pkg ./cmd/till` -> PASS, `just check` -> PASS, and `just ci` -> PASS locally,
+   - next step: commit/push the Windows follow-up and re-watch GitHub Actions before starting the collaborative E2E worksheet.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 

@@ -4,13 +4,36 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
 )
+
+// TestSQLiteFileURIWindowsDrivePath verifies Windows drive-letter paths become valid SQLite file URIs.
+func TestSQLiteFileURIWindowsDrivePath(t *testing.T) {
+	uri := sqliteFileURI(`C:\Users\runneradmin\AppData\Local\Temp\tillsyn.db`)
+	if strings.Contains(uri, `\`) {
+		t.Fatalf("sqliteFileURI() = %q, want forward slashes only", uri)
+	}
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	if got := parsed.Scheme; got != "file" {
+		t.Fatalf("scheme = %q, want file", got)
+	}
+	if got := parsed.Path; got != "/C:/Users/runneradmin/AppData/Local/Temp/tillsyn.db" {
+		t.Fatalf("path = %q, want Windows drive-letter file URI path", got)
+	}
+	if got := parsed.Query()["_pragma"]; len(got) != 3 {
+		t.Fatalf("_pragma count = %d, want 3", len(got))
+	}
+}
 
 // TestRepository_ProjectColumnTaskLifecycle verifies behavior for the covered scenario.
 func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
