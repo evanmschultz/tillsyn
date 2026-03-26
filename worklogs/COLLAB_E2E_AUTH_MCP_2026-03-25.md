@@ -126,6 +126,21 @@ Expected:
 
 Evidence:
 - pass/fail notes:
+  - BLOCKED on 2026-03-25 after the first live auth-review retest, then remediated in code and automated gates.
+  - Confirmed scope picker currently matches the locked `project[/branch[/phase...]]` contract.
+  - Landed remediation before rerun:
+    - auth review `enter` now opens an explicit confirm modal instead of applying immediately,
+    - auth approve/deny confirm modal now defaults to `confirm`,
+    - denial note flow remains note-first and now also requires the same final confirm step,
+    - auth review notes now stay optional and blank by default,
+    - normal dogfood runtime now persists file logs under the resolved runtime `logs` path.
+  - Automated evidence after remediation:
+    - `just test-pkg ./internal/tui` PASS
+    - `just test-pkg ./cmd/till` PASS
+    - `just check` PASS
+    - `just ci` PASS
+  - Next live step:
+    - rerun this same `C1` auth-review interaction on the fresh binary and confirm the explicit-confirm flow feels correct.
 
 ## Section C2: Fresh Orchestrator Auth Through MCP
 

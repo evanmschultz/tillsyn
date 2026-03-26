@@ -2831,7 +2831,7 @@ func TestRunDevModeCreatesRuntimeRootLogFile(t *testing.T) {
 	}
 }
 
-// TestRunTUIModeWritesRuntimeLogsToFileOnly verifies TUI runtime logs stay out of stderr and persist to the runtime log file.
+// TestRunTUIModeWritesRuntimeLogsToFileOnly verifies default-runtime TUI logs stay out of stderr and persist to the runtime log file.
 func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
 	origFactory := programFactory
 	t.Cleanup(func() { programFactory = origFactory })
@@ -2846,7 +2846,7 @@ func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
 	cfgPath := filepath.Join(workspace, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	var stderr bytes.Buffer
-	if err := run(context.Background(), []string{"--dev", "--db", dbPath, "--config", cfgPath}, io.Discard, &stderr); err != nil {
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, &stderr); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 

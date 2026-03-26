@@ -10,7 +10,7 @@ A core product purpose is maintaining one DB-backed source of truth for planning
 
 Current scope:
 - local tracking and planning workflows (human-operated TUI).
-- local runtime diagnostics with styled logging and dev-mode local log files.
+- local runtime diagnostics with styled logging and runtime log files under the active root, plus dev-mode workspace-local log placement.
 - the active auth/runtime dogfood run is tracked in `PLAN.md`.
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
@@ -35,7 +35,7 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-03-21)
+## Active Status (2026-03-25)
 Implemented now:
 - Use `PLAN.md` as the active source of truth for the current dogfood auth/runtime wave.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
@@ -92,11 +92,12 @@ Current auth note:
   - `global`;
   with multi-project/general scope reserved for orchestrators.
 - TUI auth-request notifications route to focused-project vs global panels, and `enter` opens auth review directly instead of a generic thread fallback.
-- TUI auth review now uses a dedicated full-screen review surface with visible decision controls, human-readable scope labels, and a simpler default approve flow; deny remains note-first with explicit confirm/cancel.
+- TUI auth review now uses a dedicated full-screen review surface with visible decision controls, human-readable scope labels, explicit confirm-before-apply for both approve and deny, and optional notes that start blank instead of prefilled audit prose.
 - TUI auth inventory distinguishes pending requests, resolved requests, and active approved sessions, and supports direct revoke for active sessions.
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
+- Current continuation caveat: `till.claim_auth_request` can wait for a bounded timeout, but the current implementation still polls durable state rather than using a true pushed approval/deny wakeup channel.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.

@@ -2563,35 +2563,12 @@ func (m Model) prepareConfirmAction() (confirmAction, error) {
 // confirmActionHints returns modal help copy for the current confirmation surface.
 func confirmActionHints(authMode, scopeEditable bool) string {
 	if authMode && scopeEditable {
-		return "tab move fields • enter next/apply • esc cancel"
+		return "enter confirm • esc return to review • h/l switch"
 	}
 	if authMode {
-		return "tab move fields • enter next/apply • esc cancel"
+		return "enter confirm • esc return to review • h/l switch"
 	}
 	return "enter apply • esc cancel • h/l switch • y confirm • n cancel"
-}
-
-// authRequestReviewNoteDefault returns deterministic default note text for one auth-request decision.
-func authRequestReviewNoteDefault(confirm confirmAction, decision string) string {
-	principal := firstNonEmptyTrimmed(confirm.AuthRequestPrincipal, confirm.AuthRequestID)
-	requestedLabel := firstNonEmptyTrimmed(
-		confirm.AuthRequestRequestedPathLabel,
-		confirm.AuthRequestRequestedPath,
-		confirm.AuthRequestPathLabel,
-		confirm.AuthRequestPath,
-	)
-	approvedLabel := firstNonEmptyTrimmed(confirm.AuthRequestPathLabel, confirm.AuthRequestPath, requestedLabel)
-	switch strings.TrimSpace(strings.ToLower(decision)) {
-	case "approve":
-		if requestedLabel != "" && approvedLabel != "" && requestedLabel != approvedLabel {
-			return fmt.Sprintf("approved in Tillsyn for %s; requested scope %s; approved scope %s", principal, requestedLabel, approvedLabel)
-		}
-		return fmt.Sprintf("approved in Tillsyn for %s at %s", principal, approvedLabel)
-	case "deny":
-		return fmt.Sprintf("denied in Tillsyn for %s at %s", principal, requestedLabel)
-	default:
-		return fmt.Sprintf("resolved in Tillsyn for %s at %s", principal, approvedLabel)
-	}
 }
 
 // setPendingAuthRequestDecision switches the active auth-request decision without leaving the review modal.
@@ -2603,14 +2580,7 @@ func (m *Model) setPendingAuthRequestDecision(decision string) tea.Cmd {
 	if decision != "approve" && decision != "deny" {
 		return nil
 	}
-	currentDefault := authRequestReviewNoteDefault(m.pendingConfirm, m.pendingConfirm.AuthRequestDecision)
-	nextDefault := authRequestReviewNoteDefault(m.pendingConfirm, decision)
 	currentNote := strings.TrimSpace(m.confirmAuthNoteInput.Value())
-	if currentNote == "" || currentNote == currentDefault {
-		m.confirmAuthNoteInput.SetValue(nextDefault)
-		m.confirmAuthNoteInput.CursorEnd()
-		currentNote = nextDefault
-	}
 	m.pendingConfirm.Kind = decision + "-auth-request"
 	m.pendingConfirm.Label = decision + " auth request"
 	m.pendingConfirm.AuthRequestDecision = decision
@@ -2713,16 +2683,28 @@ func (m *Model) authReviewApplyEditedNote(decision string) {
 		return
 	}
 	note := strings.TrimSpace(m.confirmAuthNoteInput.Value())
-	if note == "" {
-		note = authRequestReviewNoteDefault(m.pendingConfirm, decision)
-		m.confirmAuthNoteInput.SetValue(note)
-		m.confirmAuthNoteInput.CursorEnd()
-	}
 	m.pendingConfirm.AuthRequestNote = note
 	m.pendingConfirm.AuthRequestDecision = decision
 	m.pendingConfirm.Kind = decision + "-auth-request"
 	m.pendingConfirm.Label = decision + " auth request"
 	m.authReviewReturnToSummary()
+}
+
+// openAuthReviewConfirm opens the generic confirm modal from auth review with the current decision snapshot.
+func (m *Model) openAuthReviewConfirm() error {
+	if m == nil {
+		return nil
+	}
+	action, err := m.prepareConfirmAction()
+	if err != nil {
+		return err
+	}
+	m.pendingConfirm = action
+	m.authReviewReturnToSummary()
+	m.mode = modeConfirmAction
+	m.confirmChoice = 0
+	m.status = "confirm auth decision"
+	return nil
 }
 
 // startAuthInventory opens the dedicated coordination surface and loads request/session/lease/handoff state.
@@ -8774,17 +8756,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.authReviewOpenNoteStage(authReviewStageDeny)
 			case "enter":
 				_ = m.setPendingAuthRequestDecision("approve")
-				action, err := m.prepareConfirmAction()
-				if err != nil {
+				if err := m.openAuthReviewConfirm(); err != nil {
 					m.status = err.Error()
 					return m, nil
 				}
-				m.mode = modeNone
-				m.pendingConfirm = confirmAction{}
-				m.authReviewResetInputFocus()
-				m.authReviewReturnMode = modeNone
-				m.status = "applying action..."
-				return m.applyConfirmedAction(action)
+				return m, nil
 			default:
 				return m, nil
 			}
@@ -8817,17 +8793,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if m.authReviewStage == authReviewStageDeny {
 					_ = m.setPendingAuthRequestDecision("deny")
 					m.pendingConfirm.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
-					action, err := m.prepareConfirmAction()
-					if err != nil {
+					if err := m.openAuthReviewConfirm(); err != nil {
 						m.status = err.Error()
 						return m, nil
 					}
-					m.mode = modeNone
-					m.pendingConfirm = confirmAction{}
-					m.authReviewResetInputFocus()
-					m.authReviewReturnMode = modeNone
-					m.status = "applying action..."
-					return m.applyConfirmedAction(action)
+					return m, nil
 				}
 				m.authReviewApplyEditedNote("approve")
 				m.status = "auth review"
@@ -8848,6 +8818,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeConfirmAction {
 		switch msg.String() {
 		case "esc", "n":
+			if strings.TrimSpace(m.pendingConfirm.AuthRequestID) != "" {
+				m.mode = modeAuthReview
+				m.authReviewReturnToSummary()
+				m.status = "auth review"
+				return m, nil
+			}
 			if m.pendingConfirm.ReturnToAuthAccess {
 				m.mode = modeAuthInventory
 			} else {
@@ -8872,6 +8848,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.applyConfirmedAction(action)
 		case "enter":
 			if m.confirmChoice == 1 {
+				if strings.TrimSpace(m.pendingConfirm.AuthRequestID) != "" {
+					m.mode = modeAuthReview
+					m.authReviewReturnToSummary()
+					m.status = "auth review"
+					return m, nil
+				}
 				if m.pendingConfirm.ReturnToAuthAccess {
 					m.mode = modeAuthInventory
 				} else {
@@ -11067,15 +11049,6 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 		resolvedBy := m.threadActorID()
 		resolvedType := m.threadActorType()
 		note := strings.TrimSpace(action.AuthRequestNote)
-		if note == "" {
-			req := domain.AuthRequest{
-				ID:          action.AuthRequestID,
-				Path:        action.AuthRequestPath,
-				PrincipalID: action.AuthRequestPrincipal,
-				ClientID:    action.AuthRequestClient,
-			}
-			note = authRequestResolutionNoteWithPathLabel(req, "approve", action.AuthRequestPathLabel)
-		}
 		return m, func() tea.Msg {
 			result, err := m.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
 				RequestID:      action.AuthRequestID,
@@ -11103,15 +11076,6 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 		resolvedBy := m.threadActorID()
 		resolvedType := m.threadActorType()
 		note := strings.TrimSpace(action.AuthRequestNote)
-		if note == "" {
-			req := domain.AuthRequest{
-				ID:          action.AuthRequestID,
-				Path:        action.AuthRequestPath,
-				PrincipalID: action.AuthRequestPrincipal,
-				ClientID:    action.AuthRequestClient,
-			}
-			note = authRequestResolutionNoteWithPathLabel(req, "deny", action.AuthRequestPathLabel)
-		}
 		return m, func() tea.Msg {
 			if _, err := m.svc.DenyAuthRequest(context.Background(), app.DenyAuthRequestInput{
 				RequestID:      action.AuthRequestID,
@@ -13348,13 +13312,7 @@ func (m *Model) applySelectedAuthScopePickerItem() {
 	m.pendingConfirm.AuthRequestPathLabel = firstNonEmptyTrimmed(item.Label, item.Path)
 	m.confirmAuthPathInput.SetValue(m.pendingConfirm.AuthRequestPath)
 	m.confirmAuthPathInput.CursorEnd()
-	currentNote := strings.TrimSpace(m.confirmAuthNoteInput.Value())
-	if currentNote == "" || authRequestNoteLooksDefault(currentNote) {
-		currentNote = authRequestReviewNoteDefault(m.pendingConfirm, m.pendingConfirm.AuthRequestDecision)
-		m.confirmAuthNoteInput.SetValue(currentNote)
-		m.confirmAuthNoteInput.CursorEnd()
-	}
-	m.pendingConfirm.AuthRequestNote = currentNote
+	m.pendingConfirm.AuthRequestNote = strings.TrimSpace(m.confirmAuthNoteInput.Value())
 }
 
 // beginAuthRequestDecision opens the dedicated auth-review surface for one concrete auth request.
@@ -13390,7 +13348,7 @@ func (m Model) beginAuthRequestDecision(req domain.AuthRequest, decision string,
 		AuthRequestPathLabel:          pathLabel,
 		AuthRequestTTL:                req.RequestedSessionTTL.String(),
 		AuthRequestDecision:           decision,
-		AuthRequestNote:               authRequestResolutionNoteWithPathLabel(req, decision, pathLabel),
+		AuthRequestNote:               "",
 		ReturnToAuthAccess:            returnMode == modeAuthInventory,
 	}
 	m.status = "auth review"
@@ -16197,7 +16155,7 @@ func (m Model) authReviewSummaryBody(contentWidth int, hintStyle, accentStyle li
 		"",
 		accentStyle.Render("approve now"),
 		"default decision: approve",
-		"[enter] approve and confirm",
+		"[enter] review approval confirmation",
 		"[d] deny with note",
 		"[esc] cancel review",
 		"",
@@ -16236,9 +16194,9 @@ func (m Model) authReviewInputBody(contentWidth int, hintStyle, accentStyle lipg
 		noteInput := m.confirmAuthNoteInput
 		noteInput.SetWidth(max(24, contentWidth-12))
 		lines = append(lines, "", accentStyle.Render("denial note"), noteInput.View())
-		lines = append(lines, hintStyle.Render("[confirm deny: enter]  [cancel: esc]"))
+		lines = append(lines, hintStyle.Render("[next: enter]  [cancel: esc]"))
 	}
-	lines = append(lines, "", hintStyle.Render("type directly in the active field. press enter to apply or esc to return to review."))
+	lines = append(lines, "", hintStyle.Render("type directly in the active field. press enter to continue or esc to return to review."))
 	return strings.Join(lines, "\n")
 }
 
@@ -17163,38 +17121,20 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			fmt.Sprintf("%s: %s", m.pendingConfirm.Label, targetTitle),
 		}
 		if m.authConfirmFieldsActive() {
-			pathInput := m.confirmAuthPathInput
-			ttlInput := m.confirmAuthTTLInput
-			noteInput := m.confirmAuthNoteInput
-			pathInput.SetWidth(max(18, maxWidth-18))
-			ttlInput.SetWidth(max(10, maxWidth-18))
-			noteInput.SetWidth(max(18, maxWidth-18))
-			lines = append(lines, hintStyle.Render("decision: "+strings.TrimSpace(m.pendingConfirm.AuthRequestDecision)))
-			approveStyle := lipgloss.NewStyle().Foreground(muted)
-			denyStyle := lipgloss.NewStyle().Foreground(muted)
-			if strings.TrimSpace(m.pendingConfirm.AuthRequestDecision) == "approve" {
-				approveStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
-			} else {
-				denyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+			decision := strings.TrimSpace(m.pendingConfirm.AuthRequestDecision)
+			note := strings.TrimSpace(m.pendingConfirm.AuthRequestNote)
+			if note == "" {
+				note = "-"
 			}
-			if m.confirmFocus == confirmFocusAuthDecision {
-				if strings.TrimSpace(m.pendingConfirm.AuthRequestDecision) == "approve" {
-					approveStyle = approveStyle.Underline(true)
-				} else {
-					denyStyle = denyStyle.Underline(true)
-				}
+			lines = append(lines, hintStyle.Render("review this decision before it is applied"))
+			lines = append(lines, fmt.Sprintf("decision: %s", firstNonEmptyTrimmed(decision, "-")))
+			lines = append(lines, fmt.Sprintf("requested scope: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestRequestedPathLabel, m.pendingConfirm.AuthRequestRequestedPath, "-")))
+			lines = append(lines, fmt.Sprintf("approved scope: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPathLabel, m.pendingConfirm.AuthRequestPath, "-")))
+			lines = append(lines, fmt.Sprintf("raw path: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestPath, "-")))
+			if strings.EqualFold(decision, "approve") {
+				lines = append(lines, fmt.Sprintf("session ttl: %s", firstNonEmptyTrimmed(m.pendingConfirm.AuthRequestTTL, "-")))
 			}
-			lines = append(lines, approveStyle.Render("[approve]")+"  "+denyStyle.Render("[deny]"))
-			if m.authConfirmScopeFieldsActive() {
-				lines = append(lines,
-					hintStyle.Render("approve with scoped constraints"),
-					pathInput.View(),
-					ttlInput.View(),
-				)
-			} else {
-				lines = append(lines, hintStyle.Render("deny request with optional note"))
-			}
-			lines = append(lines, noteInput.View())
+			lines = append(lines, fmt.Sprintf("note: %s", truncate(note, max(24, maxWidth-12))))
 		}
 		lines = append(lines,
 			confirmStyle.Render("[confirm]")+"  "+cancelStyle.Render("[cancel]"),
@@ -17648,9 +17588,12 @@ func (m Model) modePrompt() string {
 	case modeActivityEventInfo:
 		return "activity event: enter/g go to node, esc back"
 	case modeConfirmAction:
+		if m.authConfirmFieldsActive() {
+			return "confirm auth decision: enter confirm, esc return to review"
+		}
 		return "confirm action: enter confirm, esc cancel"
 	case modeAuthReview:
-		return "auth review: enter approves, d starts deny, s picks scope, t edits ttl, n edits note, esc cancels"
+		return "auth review: enter opens confirm, d starts deny, s picks scope, t edits ttl, n edits note, esc cancels"
 	case modeAuthScopePicker:
 		return "auth scope picker: up/down selects named scopes, enter chooses one, esc returns to review"
 	case modeAuthInventory:

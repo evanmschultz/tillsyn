@@ -1740,7 +1740,7 @@ func executeCommandFlow(
 	logger.Debug("runtime paths resolved", "config_path", configPath, "root", rootDir, "db_path", dbPath, "logs_dir", logDir)
 	logger.Info("configuration loaded", "config_path", configPath, "db_path", cfg.Database.Path, "log_level", cfg.Logging.Level)
 	if devPath := logger.DevLogPath(); devPath != "" {
-		logger.Info("dev file logging enabled", "path", devPath)
+		logger.Info("runtime file logging enabled", "path", devPath)
 	}
 
 	logger.Info("opening sqlite repository", "db_path", cfg.Database.Path)
@@ -3471,7 +3471,7 @@ func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config
 		consoleEnabled: true,
 		level:          level,
 	}
-	if !devMode || !cfg.DevFile.Enabled {
+	if !cfg.DevFile.Enabled {
 		return logger, nil
 	}
 
@@ -3570,7 +3570,7 @@ func (w *runtimeLogBridgeWriter) Write(p []byte) (int, error) {
 	return len(p), firstErr
 }
 
-// DevLogPath returns the active dev log file path.
+// DevLogPath returns the active runtime log file path configured through logging.dev_file.
 func (l *runtimeLogger) DevLogPath() string {
 	if l == nil {
 		return ""
@@ -3578,7 +3578,7 @@ func (l *runtimeLogger) DevLogPath() string {
 	return l.devLog
 }
 
-// Close closes the optional dev-file sink.
+// Close closes the optional runtime log-file sink.
 func (l *runtimeLogger) Close() error {
 	if l == nil || l.closeFile == nil {
 		return nil

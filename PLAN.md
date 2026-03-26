@@ -1239,6 +1239,14 @@ Tasks:
 3. `P5-T03` Agent-type policy, bounded delegation, first-class handoffs, and durable wait/recovery coordination.
 4. `P5-T04` Multi-user/team auth-tenancy and security hardening.
 
+Roadmap detail:
+1. `P5-T03` must explicitly cover finer-grained mutation policy beyond the current project/branch/phase auth-path contract:
+   - task/subtask-aware guardrails remain deferred from MVP, but the roadmap must preserve the need for them,
+   - likely examples include QA being unable to move builder-owned task progress while still being able to complete QA-owned child work or signoff surfaces, and the reverse for builder lanes,
+   - this is not just an auth-path problem; it also requires action-class policy, node-type policy, agent-type policy, and clearer completion/handoff semantics.
+2. The current valid auth-path contract remains `project[/branch[/phase...]]` for now, and task/subtask auth paths stay deferred until the product has a credible UX for presenting dynamic scope levels, templates, and agent types without making the TUI unreadable.
+3. Future task/subtask auth-path work is therefore blocked on a deliberate TUI/CLI redesign pass rather than being treated as a small additive follow-up.
+
 Reference note:
 1. The current detailed consensus for the post-dogfood template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.
 
@@ -1313,6 +1321,7 @@ Current conclusions:
 3. The current collaborative run should explicitly include:
    - project creation,
    - new orchestrator auth creation from a fresh Codex instance,
+   - one orchestrator request for `global` approval routed through the global notifications panel, with live verification that approval can be narrowed back down to a lower scope,
    - subagent creation,
    - auth gatekeeping and anti-conflict checks,
    - display-name clarity in TUI surfaces,
@@ -1835,6 +1844,83 @@ Current conclusions:
    - recovery/readiness visibility,
    - name-first human clarity.
 6. The next step is to execute the worksheet section-by-section with the user and log every pass/fail result back into this file immediately.
+
+### 2026-03-25: C1 Blocker - Auth Review Confirmation And Runtime Log Persistence
+
+Objective:
+- stop forward collaborative progression on `C1` after the live auth-review run exposed a real accidental-approval risk and weak runtime diagnostics,
+- lock the user-agreed UX direction before code edits,
+- and keep the worksheet, README, and plan synchronized as the fix lands.
+
+Live findings from the current `C1` run:
+1. Auth review still applies approval directly on summary `enter` instead of requiring a second explicit confirmation step.
+   - user impact: the human can think they are just moving through the review flow, close help, or return from an editor and still accidentally approve.
+2. The auth review note field is prefilled with verbose audit text that duplicates already-visible request/scope context and confuses the decision flow.
+   - user decision: note should stay optional and should not auto-fill a long approval/denial sentence by default.
+3. The live request `09dc9c80-4b7b-454f-84e3-d0c84650afdc` ended up `approved` with a denial-style note:
+   - state: `approved`
+   - issued session id: `b5a1e1e5-4134-444d-a847-606fa997ddc6`
+   - resolution note: `denied by user! test, did the gate stay open or did you need to check things again to know you were denied or approved`
+   - conclusion: this was a TUI confirmation/flow failure, not a successful auth bypass.
+4. Runtime logs were not persisted under the default runtime `logs` directory during the live run, leaving no file evidence to inspect for the TUI path.
+   - `./till paths` reported `logs: /Users/evanschultz/Library/Application Support/tillsyn/logs`
+   - `ls -la "$HOME/Library/Application Support/tillsyn/logs"` returned no files
+   - current implementation only opens the file sink in dev mode, which is too weak for this auth/runtime dogfood loop.
+5. MCP/Tillsyn waiting semantics remain only partially sufficient:
+   - current app-layer `claim_auth_request` can hold one request open until timeout by polling storage,
+   - but the current implementation is not a real push/wakeup channel and the agent still needs to claim/check durable state to learn about approval or denial.
+
+User-approved fix direction:
+1. Keep the dedicated full-screen auth review surface for context gathering and scope/TTL/note edits.
+2. Change auth review so `enter` from the summary no longer applies immediately:
+   - `enter` on approve path should open the existing confirm modal,
+   - confirm default should be `confirm`, not `cancel`, for auth approve/deny decisions,
+   - `enter` again in the confirm modal should apply the already-selected approve or deny action.
+3. Keep denial note-first, but route it through the same explicit confirm step:
+   - `d` starts the denial flow,
+   - note remains optional,
+   - `enter` from the denial note stage opens the confirm modal instead of immediately denying.
+4. Auth approval/denial notes should default blank or near-blank in the TUI:
+   - no long auto-filled decision sentence,
+   - path/principal/scope context is already stored and shown elsewhere.
+5. Runtime file logging should be available for normal dogfood runs as well as dev runs so auth/runtime incidents leave inspectable evidence under the resolved runtime `logs` path.
+6. Keep the broader roadmap note intact:
+   - current auth paths remain `project[/branch[/phase...]]`,
+   - finer-grained task/subtask policy remains roadmap work because it requires deeper TUI/CLI design, not just one parser change.
+
+Commands run and outcomes:
+1. `mcp till.get_auth_request request_id=09dc9c80-4b7b-454f-84e3-d0c84650afdc` -> PASS; confirmed the request ended in `approved`, not `denied`.
+2. `mcp till.list_auth_requests project_id=cead38cc-3430-4ca1-8425-fbb340e5ccd9 limit=10` -> PASS; confirmed the accidental approval is visible in durable inventory.
+3. `./till paths` -> PASS; confirmed the expected runtime `logs` path for the non-dev run.
+4. `ls -la "$HOME/Library/Application Support/tillsyn/logs"` -> PASS; confirmed no persisted runtime log files existed for the current live run.
+5. Context7 Bubble Tea query -> PASS; revalidated modal key-handling patterns before touching the TUI confirmation flow.
+6. local code inspection -> PASS:
+   - `internal/tui/model.go` confirmed auth review summary `enter` currently applies approval directly and deny-note `enter` currently applies deny directly,
+   - `cmd/till/main.go` confirmed runtime file sink is only enabled under `devMode`.
+
+Status:
+1. Remediation implementation is now complete for this fix scope:
+   - auth review summary `enter` opens the confirm modal instead of applying immediately,
+   - auth confirm modal defaults to `confirm` for approve and deny,
+   - deny remains note-first but now also routes through confirm-before-apply,
+   - approval/denial notes now stay optional and blank by default,
+   - runtime file logging now persists for normal dogfood runs as well as dev runs.
+2. Commands run and outcomes after implementation:
+   - `just test-pkg ./internal/tui` -> PASS
+   - `just test-pkg ./cmd/till` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
+3. Files changed in this remediation scope:
+   - `internal/tui/model.go`
+   - `internal/tui/model_test.go`
+   - `cmd/till/main.go`
+   - `cmd/till/main_test.go`
+   - `PLAN.md`
+   - `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md`
+   - `README.md`
+4. Remaining limitation intentionally not solved in this slice:
+   - requester waiting still relies on bounded claim polling rather than a true pushed wakeup/notification channel.
+5. `C1` remains paused until the user reruns the same auth-review section on the fresh binary and confirms the behavior now matches the explicit-confirm contract.
 
 ### 2026-03-25: Pre-Collab CLI Noise And Project Ergonomics Fix
 

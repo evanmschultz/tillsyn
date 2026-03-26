@@ -7279,21 +7279,25 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestPathLabel); got != "Inbox" {
 		t.Fatalf("pendingConfirm.AuthRequestPathLabel = %q, want Inbox", got)
 	}
-	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "approved in Tillsyn") {
-		t.Fatalf("expected deterministic approval note, got %q", m.pendingConfirm.AuthRequestNote)
+	if got := strings.TrimSpace(m.pendingConfirm.AuthRequestNote); got != "" {
+		t.Fatalf("expected blank default approval note, got %q", got)
 	}
-	if !strings.Contains(m.pendingConfirm.AuthRequestNote, "at Inbox") {
-		t.Fatalf("expected approval note to use project label, got %q", m.pendingConfirm.AuthRequestNote)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected auth review enter to open confirm modal, got %v", m.mode)
+	}
+	if m.confirmChoice != 0 {
+		t.Fatalf("expected auth confirm modal to default to confirm, got %d", m.confirmChoice)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeNone {
-		t.Fatalf("expected approve action to close review, got %v", m.mode)
+		t.Fatalf("expected approve action to close after confirm, got %v", m.mode)
 	}
 	if got := strings.TrimSpace(svc.lastApproveAuthRequest.RequestID); got != authRequest.ID {
 		t.Fatalf("expected approve request id %q, got %q", authRequest.ID, got)
 	}
-	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); !strings.Contains(got, "approved in Tillsyn") || !strings.Contains(got, "at Inbox") {
-		t.Fatalf("expected approval note to be forwarded with project label, got %q", got)
+	if got := strings.TrimSpace(svc.lastApproveAuthRequest.ResolutionNote); got != "" {
+		t.Fatalf("expected blank approval note to be forwarded unchanged, got %q", got)
 	}
 	if len(m.attentionItems) != 0 {
 		t.Fatalf("expected reload to clear pending auth-request row, got %d attention items", len(m.attentionItems))
@@ -7436,6 +7440,13 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	}
 	m.confirmAuthTTLInput.SetValue("2h")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected auth review enter to open confirm modal, got %v", m.mode)
+	}
+	if m.confirmChoice != 0 {
+		t.Fatalf("expected auth confirm modal to default to confirm, got %d", m.confirmChoice)
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := strings.TrimSpace(svc.lastApproveAuthRequest.Path); got != "project/p1/branch/narrowed" {
 		t.Fatalf("ApproveAuthRequest() path = %q, want project/p1/branch/narrowed", got)
@@ -7782,20 +7793,20 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	if action.AuthRequestPath != "project/p1/branch/b1" || action.AuthRequestTTL != "90m" || action.AuthRequestNote != "operator note" {
 		t.Fatalf("prepareConfirmAction() = %#v, want path + ttl + note snapshot", action)
 	}
-	if got := confirmActionHints(true, true); !strings.Contains(got, "tab move fields") {
-		t.Fatalf("confirmActionHints(true) = %q, want auth field guidance", got)
+	if got := confirmActionHints(true, true); !strings.Contains(got, "enter confirm") {
+		t.Fatalf("confirmActionHints(true, true) = %q, want confirm guidance", got)
 	}
-	if got := confirmActionHints(true, true); strings.Contains(got, "left/right choose decision") || strings.Contains(got, "h/l") {
-		t.Fatalf("confirmActionHints(true, true) = %q, want auth review typing-safe guidance", got)
+	if got := confirmActionHints(true, true); !strings.Contains(got, "h/l switch") {
+		t.Fatalf("confirmActionHints(true, true) = %q, want confirm-switch guidance", got)
 	}
 	if got := confirmActionHints(false, false); strings.Contains(got, "a approve") {
 		t.Fatalf("confirmActionHints(false, false) = %q, want generic confirm guidance", got)
 	}
-	if got := confirmActionHints(true, false); strings.Contains(got, "a approve") || strings.Contains(got, "h/l") {
-		t.Fatalf("confirmActionHints(true, false) = %q, want auth review guidance without confirm hotkeys", got)
+	if got := confirmActionHints(true, false); strings.Contains(got, "a approve") {
+		t.Fatalf("confirmActionHints(true, false) = %q, want auth confirm guidance without stale approve hotkeys", got)
 	}
-	if got := confirmActionHints(true, false); !strings.Contains(got, "tab move fields") {
-		t.Fatalf("confirmActionHints(true, false) = %q, want note-field navigation guidance", got)
+	if got := confirmActionHints(true, false); !strings.Contains(got, "enter confirm") {
+		t.Fatalf("confirmActionHints(true, false) = %q, want confirm guidance", got)
 	}
 	if cmd := m.setConfirmFocus(confirmFocusAuthDecision); cmd != nil {
 		t.Fatalf("setConfirmFocus(decision) = %v, want nil focus cmd for decision selector", cmd)
@@ -7884,11 +7895,11 @@ func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 		AuthRequestPathLabel:          "Inbox -> branch:narrowed",
 		AuthRequestTTL:                "2h",
 		AuthRequestDecision:           "approve",
-		AuthRequestNote:               "approved in Tillsyn for Review Agent at Inbox -> branch:narrowed",
+		AuthRequestNote:               "",
 	}
 	m.confirmAuthPathInput.SetValue("project/p1/branch/narrowed")
 	m.confirmAuthTTLInput.SetValue("2h")
-	m.confirmAuthNoteInput.SetValue("approved in Tillsyn for Review Agent at Inbox -> branch:narrowed")
+	m.confirmAuthNoteInput.SetValue("")
 
 	rendered := fmt.Sprint(m.View())
 	for _, want := range []string{
@@ -7904,14 +7915,14 @@ func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 		"requested session ttl: 8h",
 		"approve now",
 		"default decision: approve",
-		"[enter] approve and confirm",
+		"[enter] review approval confirmation",
 		"[s] pick approved scope",
 		"approved scope: Inbox -> branch:narrowed",
 		"path: project/p1/branch/narrowed",
 		"session ttl: 2h",
 		"[d] deny with note",
 		"project/p1/branch/narrowed",
-		"approved in Tillsyn for Review Agent at Inbox -> branch:narrowed",
+		"note: -",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in auth review:\n%s", want, rendered)
@@ -8300,6 +8311,10 @@ func TestModelAuthInventoryApproveReturnsToInventory(t *testing.T) {
 		t.Fatalf("expected enter to open auth review, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected auth review enter to open confirm modal, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeAuthInventory {
 		t.Fatalf("expected approve to return to auth inventory, got %v", m.mode)
 	}
@@ -8354,6 +8369,13 @@ func TestModelAuthInventoryDenyReturnsToInventory(t *testing.T) {
 	}
 	m = applyMsg(t, m, keyRune('d'))
 	m.confirmAuthNoteInput.SetValue("denied from inventory review")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected deny note enter to open confirm modal, got mode=%v stage=%d status=%q", m.mode, m.authReviewStage, m.status)
+	}
+	if m.confirmChoice != 0 {
+		t.Fatalf("expected auth confirm modal to default to confirm, got %d", m.confirmChoice)
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeAuthInventory {
 		t.Fatalf("expected deny to return to auth inventory, got mode=%v stage=%d status=%q", m.mode, m.authReviewStage, m.status)
@@ -8414,8 +8436,15 @@ func TestModelAuthReviewDenyUsesSingleConfirm(t *testing.T) {
 	m = applyMsg(t, m, keyRune('d'))
 	m.confirmAuthNoteInput.SetValue("needs more scope review")
 	rendered := fmt.Sprint(m.View())
-	if !strings.Contains(rendered, "[confirm deny: enter]  [cancel: esc]") {
-		t.Fatalf("View() missing deny confirm prompt:\n%s", rendered)
+	if !strings.Contains(rendered, "[next: enter]  [cancel: esc]") {
+		t.Fatalf("View() missing deny next-step prompt:\n%s", rendered)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected deny note enter to open confirm modal, got %v", m.mode)
+	}
+	if m.confirmChoice != 0 {
+		t.Fatalf("expected auth confirm modal to default to confirm, got %d", m.confirmChoice)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeAuthInventory {
@@ -8865,6 +8894,13 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	}
 	m.confirmAuthNoteInput.SetValue("switched to deny after review")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected deny note enter to open confirm modal, got %v", m.mode)
+	}
+	if m.confirmChoice != 0 {
+		t.Fatalf("expected auth confirm modal to default to confirm, got %d", m.confirmChoice)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
 		t.Fatalf("expected deny request id %q, got %q (mode=%v stage=%d status=%q approveID=%q)", authRequest.ID, got, m.mode, m.authReviewStage, m.status, strings.TrimSpace(svc.lastApproveAuthRequest.RequestID))
 	}
@@ -8952,6 +8988,10 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 		t.Fatalf("authReviewStage = %d, want deny stage", got)
 	}
 	m.confirmAuthNoteInput.SetValue("denied in global panel for missing scope")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected deny note enter to open confirm modal, got %v", m.mode)
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := strings.TrimSpace(svc.lastDenyAuthRequest.RequestID); got != authRequest.ID {
 		t.Fatalf("expected deny request id %q, got %q (mode=%v stage=%d status=%q)", authRequest.ID, got, m.mode, m.authReviewStage, m.status)
