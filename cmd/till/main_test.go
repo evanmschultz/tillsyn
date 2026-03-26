@@ -1528,6 +1528,39 @@ func TestShouldMuteRuntimeConsole(t *testing.T) {
 	}
 }
 
+// TestRunProjectListDoesNotUseInterruptEchoSuppression keeps one-shot operator commands off the daemon-only terminal wrapper path.
+func TestRunProjectListDoesNotUseInterruptEchoSuppression(t *testing.T) {
+	origWrapper := withInterruptEchoSuppressedFunc
+	t.Cleanup(func() { withInterruptEchoSuppressedFunc = origWrapper })
+
+	var calls int
+	withInterruptEchoSuppressedFunc = func(runFn func() error) error {
+		calls++
+		if runFn == nil {
+			return nil
+		}
+		return runFn()
+	}
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "list"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(project list) error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("withInterruptEchoSuppressedFunc calls = %d, want 0", calls)
+	}
+}
+
 // TestRunProjectListArchivedOnlyGuidance points operators toward archived discovery before duplicate creation.
 func TestRunProjectListArchivedOnlyGuidance(t *testing.T) {
 	workspace := t.TempDir()
@@ -2087,6 +2120,42 @@ func TestRunMCPCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
 	}
 }
 
+// TestRunMCPCommandUsesInterruptEchoSuppression verifies the stdio daemon path applies the Ctrl-C echo suppression wrapper.
+func TestRunMCPCommandUsesInterruptEchoSuppression(t *testing.T) {
+	origRunner := mcpCommandRunner
+	origWrapper := withInterruptEchoSuppressedFunc
+	t.Cleanup(func() {
+		mcpCommandRunner = origRunner
+		withInterruptEchoSuppressedFunc = origWrapper
+	})
+
+	var calls int
+	withInterruptEchoSuppressedFunc = func(runFn func() error) error {
+		calls++
+		if runFn == nil {
+			return nil
+		}
+		return runFn()
+	}
+	mcpCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		return nil
+	}
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	writeConfigExample(t, workspace, "[logging]\nlevel = \"debug\"\n")
+
+	if err := run(context.Background(), []string{"--app", "tillsyn-mcp", "--dev", "mcp"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(mcp) error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("withInterruptEchoSuppressedFunc calls = %d, want 1", calls)
+	}
+}
+
 // TestRunUnknownCommand verifies behavior for the covered scenario.
 func TestRunUnknownCommand(t *testing.T) {
 	err := run(context.Background(), []string{"unknown-command"}, io.Discard, io.Discard)
@@ -2131,6 +2200,38 @@ func TestRunServeCommandWiresDefaults(t *testing.T) {
 	}
 }
 
+// TestRunServeCommandUsesInterruptEchoSuppression verifies the HTTP daemon path applies the Ctrl-C echo suppression wrapper.
+func TestRunServeCommandUsesInterruptEchoSuppression(t *testing.T) {
+	origRunner := serveCommandRunner
+	origWrapper := withInterruptEchoSuppressedFunc
+	t.Cleanup(func() {
+		serveCommandRunner = origRunner
+		withInterruptEchoSuppressedFunc = origWrapper
+	})
+
+	var calls int
+	withInterruptEchoSuppressedFunc = func(runFn func() error) error {
+		calls++
+		if runFn == nil {
+			return nil
+		}
+		return runFn()
+	}
+	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		return nil
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(serve) error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("withInterruptEchoSuppressedFunc calls = %d, want 1", calls)
+	}
+}
+
 // TestRunServeCommandWiresFlags verifies serve command forwards endpoint flag overrides.
 func TestRunServeCommandWiresFlags(t *testing.T) {
 	origRunner := serveCommandRunner
@@ -2164,6 +2265,31 @@ func TestRunServeCommandWiresFlags(t *testing.T) {
 	}
 	if gotCfg.MCPEndpoint != "/custom-mcp" {
 		t.Fatalf("serve mcp endpoint = %q, want /custom-mcp", gotCfg.MCPEndpoint)
+	}
+}
+
+// TestRunServeCommandTreatsCanceledRunnerAsCleanShutdown verifies serve interrupt shutdown stays clean through the wrapper path.
+func TestRunServeCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
+	origRunner := serveCommandRunner
+	t.Cleanup(func() { serveCommandRunner = origRunner })
+	started := make(chan struct{})
+	serveCommandRunner = func(ctx context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	if err := run(ctx, []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(serve canceled) error = %v, want nil clean shutdown", err)
 	}
 }
 

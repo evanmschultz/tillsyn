@@ -1894,6 +1894,63 @@ Outcome:
 4. The two QA review lanes found no blockers for restarting the collaborative worksheet after this checkpoint.
 5. The next step is to commit this fix scope and rerun worksheet section `C0` from the top against the refreshed CLI behavior.
 
+### 2026-03-25: Pre-Collab Ctrl-C Echo Cleanup
+
+Objective:
+- remove the terminal-rendered `^C` prefix that still muddies the final clean-shutdown log on `till mcp` and `till serve`,
+- while keeping normal interrupt handling and the existing daemon log visibility intact.
+
+User-reported live finding before code edits:
+1. `./till mcp` and `./till serve` now shut down cleanly with the right log message, but pressing `Ctrl-C` still prints a literal `^C` immediately before the final `shutdown=interrupt` line.
+   - user decision: this should be fixed now before the collaborative run continues.
+
+Fallback source note:
+1. Context7 did not provide a useful terminal-control entry for this standard Go/termios seam.
+2. Local fallback sources used before editing:
+   - `go doc golang.org/x/term`
+   - `go doc github.com/charmbracelet/x/termios`
+   - `go doc golang.org/x/sys/unix.IoctlGetTermios`
+   - local source inspection of the already vendored terminal dependencies in the module cache.
+
+Locked current fix scope:
+1. keep one-shot CLI commands unchanged.
+2. keep `till mcp` and `till serve` on the daemon-visible logging path.
+3. suppress echoed control characters on the active stdin terminal for those long-running daemon commands only.
+4. restore the original terminal state on exit.
+5. keep Windows behavior as a no-op.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS; confirmed a clean workspace before the fix.
+2. `rg -n "signal.NotifyContext|os.Interrupt|term\\.|shutdown=interrupt|command flow complete"` -> PASS; confirmed the shutdown path already handles interrupts correctly and the issue is terminal echo, not logger formatting.
+3. `go doc golang.org/x/term` -> PASS; confirmed safe state capture/restore helpers.
+4. `go doc github.com/charmbracelet/x/termios` -> PASS; confirmed we can toggle `ECHOCTL` through an existing dependency already in the module graph.
+5. `go doc golang.org/x/sys/unix.IoctlGetTermios` and local module-source inspection -> PASS; confirmed the underlying Unix termios seam the wrapper depends on.
+6. `just test-pkg ./cmd/till` -> PASS.
+7. `just check` -> PASS.
+8. `just ci` -> PASS.
+9. QA lane `QA-INTERRUPT-02` -> PASS with low-risk follow-up only:
+   - wrapper placement is correct,
+   - tests prove daemon-only routing rather than true tty mutation.
+10. QA lane `QA-INTERRUPT-01` -> initial FAIL:
+   - flagged one real blocker: restore failure was silently swallowed after terminal mutation.
+11. follow-up implementation pass -> PASS:
+   - terminal-state restore failure now emits a runtime warning instead of being swallowed,
+   - added the missing clean-cancel `serve` regression test through the wrapper path.
+12. `just test-pkg ./cmd/till` -> PASS after the follow-up pass.
+13. `just check` -> PASS after the follow-up pass.
+14. `just ci` -> PASS after the follow-up pass.
+
+Current conclusions:
+1. The fix is intentionally narrow:
+   - only daemon-style `mcp` and `serve` go through the Ctrl-C echo suppression wrapper,
+   - one-shot operator commands stay off that path.
+2. The behavior is now test-covered at the command-routing level even though CI does not simulate a real interactive tty.
+3. Restore failure is no longer silent; if tty state restoration fails after suppression, the runtime logger now emits a warning.
+4. The next step is:
+   - commit this tiny fix scope,
+   - rerun the user-facing `mcp` / `serve` interrupt check on the fresh binary,
+   - then continue evaluating the rest of the `C0` results without restarting from a stale binary.
+
 ### 2026-03-22: P5 Slice 4 TUI And CLI Product Surfaces
 
 Objective:

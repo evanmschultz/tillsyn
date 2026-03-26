@@ -57,6 +57,9 @@ var mcpCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps 
 	return serveradapter.RunStdio(ctx, cfg, deps)
 }
 
+// withInterruptEchoSuppressedFunc wraps long-running terminal commands so Ctrl-C does not render as ^C before clean shutdown logs.
+var withInterruptEchoSuppressedFunc = withInterruptEchoSuppressed
+
 // supportsStyledOutputFunc allows tests to force styled output mode.
 var supportsStyledOutputFunc = supportsStyledOutput
 
@@ -1810,7 +1813,9 @@ func executeCommandFlow(
 		logger.Info("command flow start", "command", "tui")
 	case "serve":
 		logger.Info("command flow start", "command", "serve")
-		if err := runServe(ctx, svc, authSvc, rootOpts.appName, serveOpts); err != nil {
+		if err := withInterruptEchoSuppressedFunc(func() error {
+			return runServe(ctx, svc, authSvc, rootOpts.appName, serveOpts)
+		}); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("command flow complete", "command", "serve", "shutdown", "interrupt")
 				return nil
@@ -1822,7 +1827,9 @@ func executeCommandFlow(
 		return nil
 	case "mcp":
 		logger.Info("command flow start", "command", "mcp", "transport", "stdio")
-		if err := runMCP(ctx, svc, authSvc, rootOpts.appName, serveOpts); err != nil {
+		if err := withInterruptEchoSuppressedFunc(func() error {
+			return runMCP(ctx, svc, authSvc, rootOpts.appName, serveOpts)
+		}); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("command flow complete", "command", "mcp", "transport", "stdio", "shutdown", "interrupt")
 				return nil
