@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-26
-Status: In progress; the local cross-process auth wait slice, the Windows SQLite-open remediation, and the latest Windows-only regression follow-up are green through repo-wide local gates, and the next required step is to commit/push the current follow-up, watch GitHub Actions to green, and only then execute the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
+Status: In progress; the local cross-process auth wait slice, the Windows SQLite-open remediation, and the latest TUI/macOS follow-up are now green locally and remotely through GitHub Actions run `23588942774`, and the next required step is to resume the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
 
 ## 1) Active Run Source Of Truth
 
@@ -2213,6 +2213,49 @@ User-reported live findings before code edits:
 Locked current fix scope:
 1. suppress runtime console log noise on human-facing one-shot CLI operator commands while preserving runtime/file logging where configured.
 2. keep daemon/runtime logs visible for `till mcp` and `till serve`.
+
+### 2026-03-26: macOS Remote Follow-Up - Project Picker Arrow Normalization
+
+Objective:
+- close the remaining remote-only blocker before resuming the collaborative worksheet,
+- keep the fix narrow to the project picker path,
+- and revalidate both locally and in GitHub Actions before returning to live user+agent testing.
+
+Remote failure evidence from run `23587330204`:
+1. `check (macos-latest)` failed in `internal/tui`:
+   - `TestModelProjectSwitchAndSearch`
+   - failure: expected `selectedProject=1` after picker choose, got `0`
+2. Ubuntu and Windows were green on the same run.
+3. The failure pointed at platform-sensitive project-picker arrow handling rather than broader auth/MCP logic.
+
+Fix that landed:
+1. Commit `a736437` (`fix(tui): normalize project picker arrows`) broadens project-picker navigation so arrow-key movement accepts both `msg.String()` and `msg.Code`:
+   - [internal/tui/model.go](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model.go)
+2. The fix stays scoped to `modeProjectPicker` only.
+3. This keeps arrow-key UX aligned with the repo guardrail that the TUI supports both vim keys and arrow keys.
+
+Validation evidence for `a736437`:
+1. Local:
+   - `just test-pkg ./internal/tui` -> PASS
+   - `just test-golden` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
+2. QA:
+   - QA-1 -> no blockers; confirmed the `msg.Code` matcher is the correct narrow fix for the project picker path.
+   - QA-2 -> no blockers; confirmed this remains a behavior-test concern rather than a golden-test concern.
+   - final QA -> no blockers; judged the slice ready to resume the collaborative auth/MCP worksheet once remote CI was fully green.
+3. Remote:
+   - GitHub Actions run `23588942774` -> PASS
+   - `check (ubuntu-latest)` -> PASS
+   - `check (windows-latest)` -> PASS
+   - `check (macos-latest)` -> PASS
+   - `full gate (ubuntu-latest)` -> PASS
+   - `release snapshot check` -> PASS
+
+Current outcome:
+1. The remote blocker is closed.
+2. The current code/doc state is ready to resume the collaborative worksheet from the next live section.
+3. Non-blocking residual note: the current regression coverage still bundles picker navigation and search scoping in one behavior test, so a later dedicated arrow-only test would improve diagnosis if this area regresses again.
 3. keep bare `till project` as help for MVP.
 4. improve current project command ergonomics so `project show` and `project discover` accept the natural operator path instead of forcing one brittle flag-only shape.
 5. if safe within the same slice, improve `project create` missing-name guidance without pulling the post-dogfood guided flow into scope early.

@@ -219,9 +219,12 @@ Status note before continuing:
 - `C2` should still not be used to claim that the broader session-aware stdio communication layer or comment/handoff consumers already exist.
 - `C2` should still treat broader MCP notification reuse, disconnect-aware session cleanup, and HTTP/continuous-listening support as follow-on work.
 - Automated evidence before the next live rerun:
+  - `just test-pkg ./internal/tui` PASS
+  - `just test-golden` PASS
   - `just test-pkg ./internal/app` PASS
   - `just check` PASS
   - `just ci` PASS
+  - GitHub Actions run `23588942774` PASS (ubuntu, windows, macos, full gate, release snapshot)
 
 ## Section C3: Authenticated Mutation And Fail-Closed Revoke
 

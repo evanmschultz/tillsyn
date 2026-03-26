@@ -59,8 +59,7 @@ Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - orchestrator/builder/qa scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement and bounded delegation
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
-- the original Windows SQLite-open failure is fixed, but the current follow-up still needs one final remote-green closeout for the related Windows-only test-regression hardening
-- final remote-green closeout on the current Windows-only CI follow-up before the next collaborative auth/MCP rerun
+- broader wait/notify reuse beyond auth, including comment/handoff wakeups, richer disconnect-aware cleanup, and later HTTP/continuous-listening transport support
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
