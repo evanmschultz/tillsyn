@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -254,8 +255,9 @@ func TestServiceClaimAuthRequestRejectsMismatchedRequesterIdentity(t *testing.T)
 	}
 }
 
-// TestServiceClaimAuthRequestAllowsRequesterOverride verifies one requester can claim an approved request on behalf of a different requested principal.
-func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
+// TestServiceClaimAuthRequestRejectsRequesterOverride verifies delegated continuation
+// claims fail closed when the original requester tries to adopt the approved child claim.
+func TestServiceClaimAuthRequestRejectsRequesterOverride(t *testing.T) {
 	fixture := newAuthRequestServiceFixture(t)
 
 	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
@@ -274,11 +276,50 @@ func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
 	}
-	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+	if _, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
 		RequestID:      request.ID,
 		ResolvedBy:     "approver-1",
 		ResolvedType:   domain.ActorTypeUser,
 		ResolutionNote: "approved for builder handoff",
+	}); err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	if _, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-456",
+		PrincipalID: "orchestrator-1",
+		ClientID:    "orchestrator-client",
+	}); !errors.Is(err, domain.ErrAuthRequestClaimMismatch) {
+		t.Fatalf("ClaimAuthRequest() error = %v, want ErrAuthRequestClaimMismatch", err)
+	}
+}
+
+// TestServiceClaimAuthRequestAllowsChildSelfClaim verifies an on-behalf-of child can claim its own approved request directly.
+func TestServiceClaimAuthRequestAllowsChildSelfClaim(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:              "project/" + fixture.project.ID,
+		PrincipalID:       "builder-1",
+		PrincipalType:     "agent",
+		PrincipalRole:     "builder",
+		ClientID:          "builder-client",
+		ClientType:        "mcp-stdio",
+		Reason:            "child accepts delegated approval",
+		Continuation:      map[string]any{"resume_token": "resume-789"},
+		RequestedBy:       "orchestrator-1",
+		RequestedType:     domain.ActorTypeAgent,
+		RequesterClientID: "orchestrator-client",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for child claim",
 	})
 	if err != nil {
 		t.Fatalf("ApproveAuthRequest() error = %v", err)
@@ -286,9 +327,9 @@ func TestServiceClaimAuthRequestAllowsRequesterOverride(t *testing.T) {
 
 	claimed, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
 		RequestID:   request.ID,
-		ResumeToken: "resume-456",
-		PrincipalID: "orchestrator-1",
-		ClientID:    "orchestrator-client",
+		ResumeToken: "resume-789",
+		PrincipalID: "builder-1",
+		ClientID:    "builder-client",
 	})
 	if err != nil {
 		t.Fatalf("ClaimAuthRequest() error = %v", err)
@@ -310,14 +351,16 @@ func TestServiceClaimAuthRequestWaitsForPendingResolution(t *testing.T) {
 
 	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
 		Path:              "project/" + fixture.project.ID,
-		PrincipalID:       "review-agent",
+		PrincipalID:       "builder-1",
 		PrincipalType:     "agent",
-		ClientID:          "till-mcp-stdio",
+		PrincipalRole:     "builder",
+		ClientID:          "builder-client",
 		ClientType:        "mcp-stdio",
 		Reason:            "resume after approval",
 		Continuation:      map[string]any{"resume_token": "resume-123"},
-		RequestedBy:       "review-agent",
-		RequesterClientID: "till-mcp-stdio",
+		RequestedBy:       "orchestrator-1",
+		RequestedType:     domain.ActorTypeAgent,
+		RequesterClientID: "orchestrator-client",
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
@@ -325,8 +368,8 @@ func TestServiceClaimAuthRequestWaitsForPendingResolution(t *testing.T) {
 	claimed, err := fixture.svc.ClaimAuthRequest(context.Background(), app.ClaimAuthRequestInput{
 		RequestID:   request.ID,
 		ResumeToken: "resume-123",
-		PrincipalID: "review-agent",
-		ClientID:    "till-mcp-stdio",
+		PrincipalID: "builder-1",
+		ClientID:    "builder-client",
 		WaitTimeout: 50 * time.Millisecond,
 	})
 	if err != nil {

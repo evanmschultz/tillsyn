@@ -118,6 +118,9 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	if got.HasContinuation != true {
 		t.Fatal("GetAuthRequest() has_continuation = false, want true")
 	}
+	if got := got.Continuation[app.AuthRequestContinuationRequesterClientIDKey]; got != "till-mcp-stdio" {
+		t.Fatalf("GetAuthRequest() continuation requester client = %#v, want till-mcp-stdio", got)
+	}
 
 	approved, err := adapter.service.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
 		RequestID:      created.ID,
@@ -173,8 +176,8 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	claimed, err = adapter.ClaimAuthRequest(context.Background(), ClaimAuthRequestRequest{
 		RequestID:   adapterCreated.ID,
 		ResumeToken: "resume-123",
-		PrincipalID: "orchestrator-1",
-		ClientID:    "orchestrator-client",
+		PrincipalID: "resume-agent",
+		ClientID:    "builder-client",
 	})
 	if err != nil {
 		t.Fatalf("ClaimAuthRequest() error = %v", err)
@@ -202,6 +205,12 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	}
 	if got := claimed.Request.RequestedByActor; got != "orchestrator-1" {
 		t.Fatalf("ClaimAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
+	}
+	if got := claimed.Request.PrincipalID; got != "resume-agent" {
+		t.Fatalf("ClaimAuthRequest() principal_id = %q, want resume-agent", got)
+	}
+	if got := claimed.Request.Continuation[app.AuthRequestContinuationRequesterClientIDKey]; got != "orchestrator-client" {
+		t.Fatalf("ClaimAuthRequest() continuation requester client = %#v, want orchestrator-client", got)
 	}
 	if got := claimed.SessionSecret; got != approved.SessionSecret {
 		t.Fatalf("ClaimAuthRequest() session_secret = %q, want approved secret", got)
@@ -343,18 +352,18 @@ func TestAppServiceAdapterClaimAuthRequestWaitingAndValidation(t *testing.T) {
 	}
 }
 
-// TestAppServiceAdapterCancelAuthRequestRejectsRequesterMismatch verifies cancel reuses continuation proof and fails closed for the wrong requester.
-func TestAppServiceAdapterCancelAuthRequestRejectsRequesterMismatch(t *testing.T) {
+// TestAppServiceAdapterCancelAuthRequestRejectsClaimantMismatch verifies cancel stays requester-bound even when a child principal can claim later.
+func TestAppServiceAdapterCancelAuthRequestRejectsClaimantMismatch(t *testing.T) {
 	adapter, _ := newAuthRequestAdapterForTest(t)
 
 	request, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
 		Path:              "project/p1",
-		PrincipalID:       "cancel-agent",
+		PrincipalID:       "child-agent",
 		PrincipalType:     "agent",
 		RequestedByActor:  "orchestrator-1",
 		RequestedByType:   "agent",
 		RequesterClientID: "orchestrator-client",
-		ClientID:          "builder-client",
+		ClientID:          "child-client",
 		ClientType:        "mcp-stdio",
 		Reason:            "cancel review",
 		ContinuationJSON:  `{"resume_token":"cancel-123"}`,
@@ -366,16 +375,16 @@ func TestAppServiceAdapterCancelAuthRequestRejectsRequesterMismatch(t *testing.T
 	_, err = adapter.CancelAuthRequest(context.Background(), CancelAuthRequestRequest{
 		RequestID:   request.ID,
 		ResumeToken: "cancel-123",
-		PrincipalID: "other-agent",
-		ClientID:    "other-client",
+		PrincipalID: "child-agent",
+		ClientID:    "child-client",
 	})
 	if err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
-		t.Fatalf("CancelAuthRequest() error = %v, want ErrInvalidCaptureStateRequest", err)
+		t.Fatalf("CancelAuthRequest(child claimant mismatch) error = %v, want ErrInvalidCaptureStateRequest", err)
 	}
 }
 
-// TestAppServiceAdapterClaimAuthRequestRejectsRequesterMismatch verifies claim transport rejects attempts to adopt another caller's approved auth request.
-func TestAppServiceAdapterClaimAuthRequestRejectsRequesterMismatch(t *testing.T) {
+// TestAppServiceAdapterClaimAuthRequestRejectsClaimantMismatch verifies claim transport rejects attempts to adopt another caller's approved auth request.
+func TestAppServiceAdapterClaimAuthRequestRejectsClaimantMismatch(t *testing.T) {
 	adapter, _ := newAuthRequestAdapterForTest(t)
 
 	request, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
@@ -405,6 +414,6 @@ func TestAppServiceAdapterClaimAuthRequestRejectsRequesterMismatch(t *testing.T)
 		PrincipalID: "other-agent",
 		ClientID:    "other-client",
 	}); err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
-		t.Fatalf("ClaimAuthRequest(requester mismatch) error = %v, want ErrInvalidCaptureStateRequest", err)
+		t.Fatalf("ClaimAuthRequest(claimant mismatch) error = %v, want ErrInvalidCaptureStateRequest", err)
 	}
 }

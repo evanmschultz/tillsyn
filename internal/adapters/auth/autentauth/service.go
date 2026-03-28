@@ -1151,17 +1151,18 @@ func authRequestResumeTokenMatches(continuation map[string]any, want string) boo
 	return strings.TrimSpace(got) == want
 }
 
-// authRequestClaimIdentityMatches reports whether one claim request matches the original requester identity.
+// authRequestClaimIdentityMatches reports whether one claim request matches
+// the requested child claimant identity.
 func authRequestClaimIdentityMatches(req domain.AuthRequest, principalID, clientID string) error {
 	principalID = strings.TrimSpace(principalID)
 	clientID = strings.TrimSpace(clientID)
 	if principalID == "" || clientID == "" {
 		return domain.ErrAuthRequestClaimMismatch
 	}
-	if req.RequestedByActor != principalID || app.AuthRequestClaimClientIDFromContinuation(req.Continuation, req.ClientID) != clientID {
-		return domain.ErrAuthRequestClaimMismatch
+	if req.PrincipalID == principalID && req.ClientID == clientID {
+		return nil
 	}
-	return nil
+	return domain.ErrAuthRequestClaimMismatch
 }
 
 // sessionProjectID returns the project id that one session metadata payload is scoped to.

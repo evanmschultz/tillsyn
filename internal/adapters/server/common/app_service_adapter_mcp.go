@@ -175,25 +175,21 @@ func (a *AppServiceAdapter) CancelAuthRequest(ctx context.Context, in CancelAuth
 	if requestID == "" {
 		return AuthRequestRecord{}, fmt.Errorf("request_id is required: %w", ErrInvalidCaptureStateRequest)
 	}
-	claimed, err := a.service.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
-		RequestID:   requestID,
-		ResumeToken: strings.TrimSpace(in.ResumeToken),
-		PrincipalID: strings.TrimSpace(in.PrincipalID),
-		ClientID:    strings.TrimSpace(in.ClientID),
-	})
+	request, err := a.GetAuthRequest(ctx, requestID)
 	if err != nil {
 		return AuthRequestRecord{}, mapAppError("cancel auth request", err)
 	}
-	// Reuse the same requester-bound continuation proof as claim/resume so cancel
-	// cannot bypass ownership checks with caller-supplied actor fields.
+	if err := authRequestCancelOwnershipMatches(request, in.PrincipalID, in.ClientID, in.ResumeToken); err != nil {
+		return AuthRequestRecord{}, err
+	}
 	resolvedBy, resolvedType, err := resolvedAuthRequestActor(
 		strings.TrimSpace(in.PrincipalID),
-		string(claimed.Request.RequestedByType),
+		string(request.RequestedByType),
 	)
 	if err != nil {
 		return AuthRequestRecord{}, err
 	}
-	request, err := a.service.CancelAuthRequest(ctx, app.CancelAuthRequestInput{
+	canceled, err := a.service.CancelAuthRequest(ctx, app.CancelAuthRequestInput{
 		RequestID:      requestID,
 		ResolvedBy:     resolvedBy,
 		ResolvedType:   resolvedType,
@@ -202,7 +198,7 @@ func (a *AppServiceAdapter) CancelAuthRequest(ctx context.Context, in CancelAuth
 	if err != nil {
 		return AuthRequestRecord{}, mapAppError("cancel auth request", err)
 	}
-	return mapAuthRequestRecord(request), nil
+	return mapAuthRequestRecord(canceled), nil
 }
 
 // CreateProject creates one project with optional kind and metadata.
@@ -622,6 +618,7 @@ func mapAuthRequestRecord(request domain.AuthRequest) AuthRequestRecord {
 		ApprovedSessionTTL:     approvedSessionTTL,
 		Reason:                 request.Reason,
 		HasContinuation:        len(request.Continuation) > 0,
+		Continuation:           cloneJSONObject(request.Continuation),
 		RequestedByActor:       request.RequestedByActor,
 		RequestedByType:        string(request.RequestedByType),
 		CreatedAt:              request.CreatedAt.UTC(),
@@ -633,6 +630,36 @@ func mapAuthRequestRecord(request domain.AuthRequest) AuthRequestRecord {
 		IssuedSessionID:        request.IssuedSessionID,
 		IssuedSessionExpiresAt: request.IssuedSessionExpiresAt,
 	}
+}
+
+// authRequestCancelOwnershipMatches verifies one cancel request uses requester-owned continuation proof.
+func authRequestCancelOwnershipMatches(request AuthRequestRecord, principalID, clientID, resumeToken string) error {
+	principalID = strings.TrimSpace(principalID)
+	clientID = strings.TrimSpace(clientID)
+	resumeToken = strings.TrimSpace(resumeToken)
+	if principalID == "" || clientID == "" || resumeToken == "" {
+		return fmt.Errorf("cancel auth request proof is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	if strings.TrimSpace(request.RequestedByActor) != principalID {
+		return fmt.Errorf("cancel auth request requester mismatch: %w", ErrInvalidCaptureStateRequest)
+	}
+	if requesterClientID := app.AuthRequestClaimClientIDFromContinuation(request.Continuation, request.ClientID); requesterClientID != clientID {
+		return fmt.Errorf("cancel auth request client mismatch: %w", ErrInvalidCaptureStateRequest)
+	}
+	if !authRequestResumeTokenMatches(request.Continuation, resumeToken) {
+		return fmt.Errorf("cancel auth request continuation mismatch: %w", ErrInvalidCaptureStateRequest)
+	}
+	return nil
+}
+
+// authRequestResumeTokenMatches reports whether one continuation payload carries the expected resume token.
+func authRequestResumeTokenMatches(continuation map[string]any, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	got, _ := continuation["resume_token"].(string)
+	return strings.TrimSpace(got) == want
 }
 
 // ListProjectAllowedKinds lists canonical kind ids in one project's allowlist.

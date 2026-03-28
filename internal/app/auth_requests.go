@@ -323,17 +323,31 @@ func (s *Service) ClaimAuthRequest(ctx context.Context, in ClaimAuthRequestInput
 
 // claimAuthRequestOnce loads one requester-visible auth request state without waiting.
 func (s *Service) claimAuthRequestOnce(ctx context.Context, requestID string, in ClaimAuthRequestInput) (ClaimedAuthRequestResult, error) {
-	result, err := s.authRequests.ClaimAuthRequest(ctx, ClaimAuthRequestInput{
-		RequestID:   requestID,
-		ResumeToken: strings.TrimSpace(in.ResumeToken),
-		PrincipalID: strings.TrimSpace(in.PrincipalID),
-		ClientID:    strings.TrimSpace(in.ClientID),
-	})
+	result, err := s.claimAuthRequestRecord(ctx, requestID, in)
 	if err != nil {
 		return ClaimedAuthRequestResult{}, err
 	}
 	if err := s.syncExpiredAuthRequestAttention(ctx, result.Request); err != nil {
 		return ClaimedAuthRequestResult{}, err
+	}
+	return result, nil
+}
+
+// claimAuthRequestRecord loads one auth request and validates the approved child claimant identity against it.
+func (s *Service) claimAuthRequestRecord(ctx context.Context, requestID string, in ClaimAuthRequestInput) (ClaimedAuthRequestResult, error) {
+	req, err := s.authRequests.GetAuthRequest(ctx, requestID)
+	if err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	if err := authRequestClaimIdentityMatches(req, strings.TrimSpace(in.PrincipalID), strings.TrimSpace(in.ClientID)); err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
+	if !authRequestResumeTokenMatches(req.Continuation, strings.TrimSpace(in.ResumeToken)) {
+		return ClaimedAuthRequestResult{}, domain.ErrInvalidAuthContinuation
+	}
+	result := ClaimedAuthRequestResult{Request: req}
+	if domain.NormalizeAuthRequestState(req.State) == domain.AuthRequestStateApproved {
+		result.SessionSecret = req.IssuedSessionSecret
 	}
 	return result, nil
 }
@@ -446,6 +460,34 @@ func authRequestWaitDeadline(now time.Time, expiresAt time.Time, waitTimeout tim
 		return expiresAt
 	}
 	return deadline
+}
+
+// authRequestResumeTokenMatches reports whether one continuation payload carries the expected shared resume token.
+func authRequestResumeTokenMatches(continuation map[string]any, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	got, _ := continuation["resume_token"].(string)
+	return strings.TrimSpace(got) == want
+}
+
+// authRequestClaimIdentityMatches reports whether one claim request matches the requested child principal/client pair.
+func authRequestClaimIdentityMatches(req domain.AuthRequest, principalID, clientID string) error {
+	principalID = strings.TrimSpace(principalID)
+	clientID = strings.TrimSpace(clientID)
+	if principalID == "" || clientID == "" {
+		return domain.ErrAuthRequestClaimMismatch
+	}
+	if authRequestChildClaimIdentityMatches(req, principalID, clientID) {
+		return nil
+	}
+	return domain.ErrAuthRequestClaimMismatch
+}
+
+// authRequestChildClaimIdentityMatches reports whether one claim request matches the requested child principal/client pair.
+func authRequestChildClaimIdentityMatches(req domain.AuthRequest, principalID, clientID string) bool {
+	return strings.TrimSpace(req.PrincipalID) == principalID && strings.TrimSpace(req.ClientID) == clientID
 }
 
 // ListAuthSessions returns caller-safe auth-session inventory through the configured backend.

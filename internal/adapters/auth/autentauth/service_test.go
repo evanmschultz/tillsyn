@@ -732,7 +732,7 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 	claimed, err := auth.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
 		RequestID:   request.ID,
 		ResumeToken: "resume-123",
-		PrincipalID: "lane-user",
+		PrincipalID: "agent-1",
 		ClientID:    "till-mcp-stdio",
 	})
 	if err != nil {
@@ -790,6 +790,106 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 	}
 	if denied.DecisionCode != "deny" {
 		t.Fatalf("Authorize(denied) decision = %q, want deny", denied.DecisionCode)
+	}
+}
+
+// TestServiceDelegatedAuthRequestClaimSupportsChildOnly verifies delegated
+// continuation claims are owned by the approved child principal, while the
+// original requester and unrelated callers still fail closed.
+func TestServiceDelegatedAuthRequestClaimSupportsChildOnly(t *testing.T) {
+	ctx := context.Background()
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 3, 28, 15, 15, 0, 0, time.UTC)
+	auth, err := NewSharedDB(Config{
+		DB:    repo.DB(),
+		Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(ctx); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+	project, err := domain.NewProject("p1", "Project One", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	request, err := auth.CreateAuthRequest(ctx, domain.AuthRequest{
+		ID:                  "req-delegated",
+		Path:                "project/p1",
+		ProjectID:           "p1",
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             "p1",
+		PrincipalID:         "builder-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            "builder-client",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "orchestrator requests builder scope",
+		Continuation: map[string]any{
+			"resume_token": "resume-456",
+			app.AuthRequestContinuationRequesterClientIDKey: "orchestrator-client",
+		},
+		State:            domain.AuthRequestStatePending,
+		RequestedByActor: "orchestrator-1",
+		RequestedByType:  domain.ActorTypeAgent,
+		CreatedAt:        now,
+		ExpiresAt:        now.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := auth.ApproveAuthRequest(ctx, app.ApproveAuthRequestGatewayInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for delegated claim",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	claimedByChild, err := auth.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-456",
+		PrincipalID: "builder-1",
+		ClientID:    "builder-client",
+	})
+	if err != nil {
+		t.Fatalf("ClaimAuthRequest(child) error = %v", err)
+	}
+	if claimedByChild.SessionSecret != approved.SessionSecret {
+		t.Fatalf("ClaimAuthRequest(child) session_secret = %q, want approved secret", claimedByChild.SessionSecret)
+	}
+
+	if _, err := auth.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-456",
+		PrincipalID: "orchestrator-1",
+		ClientID:    "orchestrator-client",
+	}); !errors.Is(err, domain.ErrAuthRequestClaimMismatch) {
+		t.Fatalf("ClaimAuthRequest(requester) error = %v, want ErrAuthRequestClaimMismatch", err)
+	}
+
+	if _, err := auth.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
+		RequestID:   request.ID,
+		ResumeToken: "resume-456",
+		PrincipalID: "other-agent",
+		ClientID:    "other-client",
+	}); !errors.Is(err, domain.ErrAuthRequestClaimMismatch) {
+		t.Fatalf("ClaimAuthRequest(other) error = %v, want ErrAuthRequestClaimMismatch", err)
 	}
 }
 

@@ -283,7 +283,7 @@ type ListAuthRequestsRequest struct {
 	Limit     int
 }
 
-// ClaimAuthRequestRequest stores transport input for continuation-based auth-request resume and requester-bound waiting.
+// ClaimAuthRequestRequest stores transport input for continuation-based auth-request resume by an approved claimant.
 type ClaimAuthRequestRequest struct {
 	RequestID   string
 	ResumeToken string
@@ -292,7 +292,7 @@ type ClaimAuthRequestRequest struct {
 	WaitTimeout string
 }
 
-// CancelAuthRequestRequest stores transport input for canceling one pending auth request.
+// CancelAuthRequestRequest stores transport input for requester-bound auth-request cleanup.
 type CancelAuthRequestRequest struct {
 	RequestID      string
 	ResumeToken    string
@@ -303,36 +303,38 @@ type CancelAuthRequestRequest struct {
 
 // AuthRequestRecord stores one transport-facing auth request row.
 type AuthRequestRecord struct {
-	ID                     string     `json:"id"`
-	State                  string     `json:"state"`
-	Path                   string     `json:"path"`
-	ApprovedPath           string     `json:"approved_path,omitempty"`
-	ProjectID              string     `json:"project_id"`
-	BranchID               string     `json:"branch_id,omitempty"`
-	PhaseIDs               []string   `json:"phase_ids,omitempty"`
-	ScopeType              string     `json:"scope_type"`
-	ScopeID                string     `json:"scope_id"`
-	PrincipalID            string     `json:"principal_id"`
-	PrincipalType          string     `json:"principal_type"`
-	PrincipalRole          string     `json:"principal_role,omitempty"`
-	PrincipalName          string     `json:"principal_name,omitempty"`
-	ClientID               string     `json:"client_id"`
-	ClientType             string     `json:"client_type"`
-	ClientName             string     `json:"client_name,omitempty"`
-	RequestedSessionTTL    string     `json:"requested_session_ttl"`
-	ApprovedSessionTTL     string     `json:"approved_session_ttl,omitempty"`
-	Reason                 string     `json:"reason,omitempty"`
-	HasContinuation        bool       `json:"has_continuation,omitempty"`
-	RequestedByActor       string     `json:"requested_by_actor"`
-	RequestedByType        string     `json:"requested_by_type"`
-	CreatedAt              time.Time  `json:"created_at"`
-	ExpiresAt              time.Time  `json:"expires_at"`
-	ResolvedByActor        string     `json:"resolved_by_actor,omitempty"`
-	ResolvedByType         string     `json:"resolved_by_type,omitempty"`
-	ResolvedAt             *time.Time `json:"resolved_at,omitempty"`
-	ResolutionNote         string     `json:"resolution_note,omitempty"`
-	IssuedSessionID        string     `json:"issued_session_id,omitempty"`
-	IssuedSessionExpiresAt *time.Time `json:"issued_session_expires_at,omitempty"`
+	ID                  string   `json:"id"`
+	State               string   `json:"state"`
+	Path                string   `json:"path"`
+	ApprovedPath        string   `json:"approved_path,omitempty"`
+	ProjectID           string   `json:"project_id"`
+	BranchID            string   `json:"branch_id,omitempty"`
+	PhaseIDs            []string `json:"phase_ids,omitempty"`
+	ScopeType           string   `json:"scope_type"`
+	ScopeID             string   `json:"scope_id"`
+	PrincipalID         string   `json:"principal_id"`
+	PrincipalType       string   `json:"principal_type"`
+	PrincipalRole       string   `json:"principal_role,omitempty"`
+	PrincipalName       string   `json:"principal_name,omitempty"`
+	ClientID            string   `json:"client_id"`
+	ClientType          string   `json:"client_type"`
+	ClientName          string   `json:"client_name,omitempty"`
+	RequestedSessionTTL string   `json:"requested_session_ttl"`
+	ApprovedSessionTTL  string   `json:"approved_session_ttl,omitempty"`
+	Reason              string   `json:"reason,omitempty"`
+	HasContinuation     bool     `json:"has_continuation,omitempty"`
+	// Continuation keeps private ownership proof for claim/cancel validation while staying out of tool JSON.
+	Continuation           map[string]any `json:"-"`
+	RequestedByActor       string         `json:"requested_by_actor"`
+	RequestedByType        string         `json:"requested_by_type"`
+	CreatedAt              time.Time      `json:"created_at"`
+	ExpiresAt              time.Time      `json:"expires_at"`
+	ResolvedByActor        string         `json:"resolved_by_actor,omitempty"`
+	ResolvedByType         string         `json:"resolved_by_type,omitempty"`
+	ResolvedAt             *time.Time     `json:"resolved_at,omitempty"`
+	ResolutionNote         string         `json:"resolution_note,omitempty"`
+	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
+	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
 }
 
 // AuthRequestClaimResult stores one requester-visible auth request state plus approved session secret material.

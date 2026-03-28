@@ -1,8 +1,8 @@
 # Collaborative E2E Auth And MCP Worksheet
 
 Created: 2026-03-25
-Updated: 2026-03-26
-Status: Temporarily paused. The raw-path SQLite remediation cleared the original Windows open failure, and the two replacement Windows-only test regressions are now fixed locally; the live worksheet should resume only after the next remote GitHub Actions run is green.
+Updated: 2026-03-28
+Status: Active. `C2` and `C3` are proven live, the delegated child-self-claim/requester-cleanup remediation slice is green locally, and the next live step is to rerun `C4` against the updated child-claim contract before continuing to later recovery/coordination sections.
 
 ## Purpose
 
@@ -210,7 +210,7 @@ Evidence:
 - request id: `a9d80803-0c60-48f4-a660-0fa64866a6ff`
 - approved path: `project/cead38cc-3430-4ca1-8425-fbb340e5ccd9`
 - denied request id: `1b96f171-7552-4664-a679-8979f67918e6`
-- canceled request id: pending live rerun now that `till.cancel_auth_request` is landed
+- canceled request id: `ccf66945-76ac-4f04-8c02-6f65ac34cce8`
 - pass/fail notes:
   - PASS: requester created the auth request through MCP only.
   - PASS: requester immediately called `till.claim_auth_request(wait_timeout=10m)` and stayed blocked while the human resolved the request in TUI.
@@ -227,9 +227,13 @@ Evidence:
       - `just test-pkg ./internal/adapters/server/mcpapi` PASS
       - `just check` PASS
       - `just ci` PASS
-  - Active follow-up before continuing:
-    - rerun the canceled request path over MCP only,
-    - then move to authenticated mutation and revoke/fail-closed retry.
+  - PASS: the canceled request path now also works over MCP only.
+    - waiting claimant stayed blocked on `till.claim_auth_request(wait_timeout=10m)`,
+    - requester called `till.cancel_auth_request(...)` with its continuation proof,
+    - the waiting MCP claim resumed directly with `state = canceled`,
+    - no `session_secret` was returned.
+  - `C2` outcome:
+    - PASS: approve, deny, and cancel are all now proven live over the current local MCP wait path.
 
 Status note before continuing:
 - `C2` should still prove current fail-closed auth, TUI visibility, and native claim/resume behavior.
@@ -268,10 +272,23 @@ Expected:
 4. Failure is understandable rather than ambiguous.
 
 Evidence:
+- approved request id: `bb5bedfd-abda-4e88-907a-8e3769981d3f`
+- approved session id: `93631161-8778-4fde-8f43-adfeafa3515f`
 - mutation used:
+  - `till.create_handoff` on project `cead38cc-3430-4ca1-8425-fbb340e5ccd9`
+  - created handoff id: `fec163b2-c3dc-4b5e-ba9b-11d54b4c85e9`
 - out-of-scope mutation used:
+  - `till.create_handoff` against project `9b40f103-72eb-49c4-b981-320fd6ab27c0`
 - revoke surface used:
+  - CLI: `./till auth revoke-session --session-id 93631161-8778-4fde-8f43-adfeafa3515f`
 - pass/fail notes:
+  - PASS: approved session created an in-scope handoff on the Evan project.
+  - PASS: the same approved session failed closed on an out-of-scope mutation with `auth_denied: auth denied: authorization denied`.
+  - PASS: after CLI revoke, the same session failed closed on retry with `invalid_auth: invalid session or secret: invalid authentication`.
+  - FINDING: TUI session revoke is not yet discoverable enough for this flow.
+    - the command-palette auth/history surface is confusing enough that it should not be the expected operator revoke path yet,
+    - for this run the reliable operator revoke path was CLI,
+    - this is follow-up UX work, not a blocker to auth/session correctness.
 
 ## Section C4: Builder And QA Delegation With Anti-Adoption
 
@@ -300,10 +317,43 @@ Expected:
 4. Human operator can see who requested what and who is now active.
 
 Evidence:
-- builder display name:
-- QA display name:
+- builder display name: `Codex Builder Agent`
+- QA display name: `Codex QA Agent`
+- builder request id: `1f03c7e7-026f-4bbc-b754-ef946abd867f`
+- QA request id: `45475763-77e7-40ee-b4d5-1cd5c19e84db`
 - anti-adoption attempt:
+  - builder request with wrong `resume_token`
+  - builder principal/client trying to claim QA request
+  - QA principal/client trying to claim builder request
 - pass/fail notes:
+  - FINDING: the TUI auth-review/request inventory is still confusing enough that the user had to hunt for the right surface even though the builder and QA requests were eventually visible and operable.
+    - this is follow-up UX work,
+    - it does not block the underlying MCP auth/gatekeeping proof for `C4`.
+  - PASS: all three anti-adoption probes failed closed with `auth request claim mismatch`.
+  - FINDING: child principals could not directly claim their own on-behalf-of requests once `requested_by_actor` and `requester_client_id` were set.
+    - this is not a random bug; it matches the current code/test contract,
+    - continuation claim is currently requester-bound to the orchestrator for on-behalf-of requests.
+  - PASS: the orchestrator requester identity successfully claimed both approved child requests and received child-scoped sessions.
+    - builder issued session id: `994f07fd-9d2a-42f9-ac8b-bfb5ef1afccf`
+    - QA issued session id: `9469d9ab-cc95-41d7-b04d-d196d217fde2`
+  - FINDING: approved child sessions still needed capability leases before mutation.
+    - without a lease tuple, mutation failed with `agent_name, agent_instance_id, and lease_token are required for authenticated agent mutations`.
+  - PASS: after issuing matching project-scoped capability leases, both child sessions behaved consistently:
+    - builder in-scope handoff create -> PASS
+    - builder out-of-scope handoff create -> FAIL CLOSED with `auth_denied`
+    - QA in-scope handoff create -> PASS
+    - QA out-of-scope handoff create -> FAIL CLOSED with `auth_denied`
+  - INTERPRETATION: that equal builder/QA success for handoff creation is currently product-policy behavior, not an auth failure.
+    - handoff create is guarded as `CapabilityActionComment`,
+    - both builder and QA currently include `comment` in their default capability actions.
+  - SCOPE OF THIS SECTION:
+    - `C4` proved requester-bound continuation, anti-adoption, capability-lease enforcement, and project/path scope enforcement,
+    - `C4` did **not** prove the future node-type or template-driven builder-vs-QA work-lane policy model because that layer is not built yet.
+  - LATER REMEDIATION LANDING:
+    - approved delegated child requests now self-claim through the child principal/client,
+    - delegated requester claim attempts now fail closed instead of adopting the child continuation,
+    - requester-side cancel cleanup stays separate and requester-bound,
+    - the future node-type/template policy model remains follow-on and was not tested by `C4`.
 
 ## Section C5: Lease, Handoff, And Recovery Visibility
 

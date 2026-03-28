@@ -1,8 +1,8 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-26
-Status: In progress; the local cross-process auth wait slice, the Windows SQLite-open remediation, and the latest TUI/macOS follow-up are now green locally and remotely through GitHub Actions run `23588942774`, and the next required step is to resume the collaborative E2E auth/MCP worksheet in `worklogs/COLLAB_E2E_AUTH_MCP_2026-03-25.md` while recording pass/fail evidence here.
+Updated: 2026-03-28
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, and the next required step is to rerun the collaborative E2E auth/MCP worksheet with `C4` against the now-implemented child self-claim split while carrying the TUI auth-history/session-revoke cleanup as explicit follow-up work.
 
 ## 1) Active Run Source Of Truth
 
@@ -2372,6 +2372,142 @@ Current next live step:
 1. rerun the canceled request path from `C2` using `till.cancel_auth_request` over MCP only,
 2. confirm the waiting MCP claim returns the canceled terminal state with no `session_secret`,
 3. then continue into authenticated mutation and revoke/fail-closed retry.
+
+### 2026-03-28: C2 Canceled Live MCP Wait Pass
+
+Objective:
+- prove the last terminal auth-request state, `canceled`, behaves like approve/deny from the requester's point of view:
+  - the requester stays blocked on the MCP claim call,
+  - a requester-owned MCP cancel resolves that wait,
+  - and no session material is issued.
+
+Live result:
+1. A fresh cancel-path MCP auth request was created on the secondary test project:
+   - request id: `ccf66945-76ac-4f04-8c02-6f65ac34cce8`
+   - principal: `codex-cancel-orchestrator-20260328-b`
+   - client id: `codex-cancel-client-20260328-b`
+   - path: `project/9b40f103-72eb-49c4-b981-320fd6ab27c0`
+2. A waiting claimant stayed blocked on `till.claim_auth_request(wait_timeout=10m)` using the requester-owned continuation proof for that request.
+3. The requester then called `till.cancel_auth_request(...)` over MCP with the same continuation proof:
+   - `request_id`
+   - `resume_token`
+   - `principal_id`
+   - `client_id`
+4. The waiting MCP claim resumed directly with the canceled terminal request.
+5. No `session_secret` was returned.
+6. The canceled request recorded:
+   - `state = canceled`
+   - `resolved_by_actor = codex-cancel-orchestrator-20260328-b`
+
+Conclusion:
+1. `C2` is now proven for all three terminal auth-request outcomes over MCP:
+   - approve,
+   - deny,
+   - cancel.
+2. The live local cross-process auth wait path is now good enough to move to scoped mutation and session gatekeeping proofs.
+
+### 2026-03-28: C3 Authenticated Mutation, Scope Gatekeeping, And Revoke Fail-Closed Pass
+
+Objective:
+- prove that an approved scoped session can mutate in-scope,
+- cannot mutate out-of-scope,
+- and loses that power immediately after revoke.
+
+Live result:
+1. A fresh approved mutation-path request was created and approved for the Evan project:
+   - request id: `bb5bedfd-abda-4e88-907a-8e3769981d3f`
+   - approved path: `project/cead38cc-3430-4ca1-8425-fbb340e5ccd9`
+   - issued session id: `93631161-8778-4fde-8f43-adfeafa3515f`
+2. Using that approved session, an in-scope authenticated mutation succeeded:
+   - created handoff id: `fec163b2-c3dc-4b5e-ba9b-11d54b4c85e9`
+   - target project: `cead38cc-3430-4ca1-8425-fbb340e5ccd9`
+3. Using the same approved session, an out-of-scope authenticated mutation failed closed:
+   - attempted against project `9b40f103-72eb-49c4-b981-320fd6ab27c0`
+   - result: `auth_denied: auth denied: authorization denied`
+4. The user then revoked the active approved session through the CLI because the current TUI/session-inventory path is not yet discoverable enough:
+   - command: `./till auth revoke-session --session-id 93631161-8778-4fde-8f43-adfeafa3515f`
+   - result: `revoked_at = 2026-03-28T07:22:40.784781Z`
+5. A retry using the same revoked session then failed closed:
+   - result: `invalid_auth: invalid session or secret: invalid authentication`
+
+Conclusion:
+1. Scoped session gatekeeping is now proven for:
+   - in-scope mutation success,
+   - out-of-scope mutation fail-closed,
+   - revoked-session retry fail-closed.
+2. The current collaborative blocker is no longer auth/session correctness; it is next the delegated builder/qa and anti-adoption path in `C4`.
+3. A follow-up UX cleanup is now explicitly required:
+   - the TUI needs a clear, discoverable session revoke path,
+   - the current command-palette auth/history surface is confusing and malformed enough that it should not be the expected operator path,
+   - that cleanup is follow-up work, not part of this already-proven auth/session correctness slice.
+
+### 2026-03-28: C4 Builder And QA Delegation Contract Finding
+
+Objective:
+- prove requester-bound anti-adoption checks for builder/qa child requests,
+- and verify whether the current product contract lets the child principal claim its own approved request directly.
+
+Live result:
+1. Two fresh child requests were created through MCP on the Evan project:
+   - builder request id: `1f03c7e7-026f-4bbc-b754-ef946abd867f`
+   - QA request id: `45475763-77e7-40ee-b4d5-1cd5c19e84db`
+2. The user approved both in the TUI.
+3. The following claim/adoption checks then failed closed as expected:
+   - builder request with a wrong `resume_token` -> `auth request claim mismatch`
+   - builder principal/client trying to claim the QA request -> `auth request claim mismatch`
+   - QA principal/client trying to claim the builder request -> `auth request claim mismatch`
+4. The surprising part is that the child principal/client also could not claim its own on-behalf-of request directly.
+5. The same approved builder and QA requests were then successfully claimed by the orchestrator requester identity instead:
+   - requester principal id: `codex-c4-orchestrator-20260328-a`
+   - requester client id: `codex-c4-orchestrator-client-20260328-a`
+6. This matches the current code/test contract:
+   - when `requested_by_actor` and `requester_client_id` are supplied, continuation claims stay requester-bound to the orchestrator,
+   - the issued session still belongs to the requested child principal/role,
+   - but the child does not yet perform the continuation claim itself.
+
+Conclusion:
+1. Anti-adoption is working.
+2. At the time of the live pass, the delegated-auth contract was requester-mediated rather than child-self-claim.
+3. That was a meaningful product gap relative to the longer-term builder/qa flow the user wants, and it is the gap this remediation slice now closes.
+4. Until this remediation landed, `C4` had to be read as:
+   - PASS for requester-bound anti-adoption,
+   - OPEN for final delegated child-claim UX/contract.
+5. After the remediation lands, the intended contract is:
+   - approved on-behalf-of child requests self-claim through the child principal/client,
+   - requester-side cancel cleanup remains separate and requester-bound.
+6. Additional delegated-mutation finding from the same live pass:
+   - approved child sessions could not mutate until they also held a capability lease tuple (`agent_name`, `agent_instance_id`, `lease_token`),
+   - after issuing matching project-scoped leases, both builder and QA child sessions could create in-scope handoffs,
+   - both still failed closed out-of-scope with `auth denied: authorization denied`.
+7. Interpretation:
+   - path/session auth is working,
+   - lease enforcement is working,
+   - the remaining granularity gap for builder-vs-QA mutation behavior is product-policy shape, not a broken auth guard.
+8. Current role-policy nuance:
+   - handoff create/update is guarded by `CapabilityActionComment`,
+   - both builder and QA currently include `comment` in their default capability action sets,
+   - so equal success on in-scope handoff creation is expected under the current product policy.
+9. Scope clarification:
+   - this live pass did not test the future node-type/template-driven work-lane policy model,
+   - it tested only the currently implemented requester-binding, capability lease, scope/path, and generic action-policy layers.
+
+Current remediation slice before the next retest:
+1. Delegated auth continuation now lets approved on-behalf-of child requests be claimed only by the approved child principal/client instead of by the orchestrator requester.
+2. Requester-side cleanup now stays separate from claim ownership, so cancel remains requester-bound while delegated requester claim attempts fail closed.
+3. Existing scope/path auth and capability-lease enforcement remain intact.
+4. Rerun `C4` with:
+   - child self-claim for builder and QA,
+   - anti-adoption probes that still fail closed,
+   - and one role-distinguishing mutation such as builder `create-child` vs QA `create-child` so the retest exercises a real current policy difference instead of the generic handoff/comment path.
+5. Keep the richer node-type/template policy model as a separate follow-on wave; do not pretend this remediation slice completes that larger product feature.
+
+Local validation for this remediation slice:
+1. `just test-pkg ./internal/app` -> PASS
+2. `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+3. `just test-pkg ./internal/adapters/server/common` -> PASS
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+5. `just check` -> PASS
+6. `just ci` -> PASS
 
 Commands run and outcomes:
 1. Context7 resolve/query for Cobra and Fang -> PASS; confirmed the current fix should use:
