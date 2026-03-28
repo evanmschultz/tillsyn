@@ -354,6 +354,13 @@ Evidence:
     - delegated requester claim attempts now fail closed instead of adopting the child continuation,
     - requester-side cancel cleanup stays separate and requester-bound,
     - the future node-type/template policy model remains follow-on and was not tested by `C4`.
+  - Local remediation validation:
+    - `just test-pkg ./internal/app` PASS
+    - `just test-pkg ./internal/adapters/auth/autentauth` PASS
+    - `just test-pkg ./internal/adapters/server/common` PASS
+    - `just test-pkg ./internal/adapters/server/mcpapi` PASS
+    - `just check` PASS
+    - `just ci` PASS
 
 ## Section C5: Lease, Handoff, And Recovery Visibility
 
