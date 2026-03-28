@@ -208,6 +208,59 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	}
 }
 
+// TestAppServiceAdapterCancelAuthRequest verifies cancel maps through the real service lifecycle and resolves mirrored attention.
+func TestAppServiceAdapterCancelAuthRequest(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	created, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:              "project/p1",
+		PrincipalID:       "cancel-agent",
+		PrincipalType:     "agent",
+		PrincipalRole:     "orchestrator",
+		RequestedByActor:  "orchestrator-1",
+		RequestedByType:   "agent",
+		RequesterClientID: "orchestrator-client",
+		ClientID:          "builder-client",
+		ClientType:        "mcp-stdio",
+		Reason:            "cancel review",
+		ContinuationJSON:  `{"resume_token":"cancel-123"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	canceled, err := adapter.CancelAuthRequest(context.Background(), CancelAuthRequestRequest{
+		RequestID:      created.ID,
+		ResumeToken:    "cancel-123",
+		PrincipalID:    "orchestrator-1",
+		ClientID:       "orchestrator-client",
+		ResolutionNote: "superseded by newer request",
+	})
+	if err != nil {
+		t.Fatalf("CancelAuthRequest() error = %v", err)
+	}
+	if got := canceled.State; got != "canceled" {
+		t.Fatalf("CancelAuthRequest() state = %q, want canceled", got)
+	}
+	if got := canceled.ResolutionNote; got != "superseded by newer request" {
+		t.Fatalf("CancelAuthRequest() resolution_note = %q, want superseded by newer request", got)
+	}
+	if got := canceled.ResolvedByActor; got != "orchestrator-1" {
+		t.Fatalf("CancelAuthRequest() resolved_by_actor = %q, want orchestrator-1", got)
+	}
+	if got := canceled.ResolvedByType; got != "agent" {
+		t.Fatalf("CancelAuthRequest() resolved_by_type = %q, want agent", got)
+	}
+
+	got, err := adapter.GetAuthRequest(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if got.State != "canceled" {
+		t.Fatalf("GetAuthRequest() state = %q, want canceled", got.State)
+	}
+}
+
 // TestAppServiceAdapterCreateAuthRequestRejectsBadContinuationJSON verifies invalid continuation input fails closed.
 func TestAppServiceAdapterCreateAuthRequestRejectsBadContinuationJSON(t *testing.T) {
 	adapter, _ := newAuthRequestAdapterForTest(t)
@@ -287,6 +340,37 @@ func TestAppServiceAdapterClaimAuthRequestWaitingAndValidation(t *testing.T) {
 		WaitTimeout: "-1s",
 	}); err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
 		t.Fatalf("ClaimAuthRequest(negative wait timeout) error = %v, want ErrInvalidCaptureStateRequest", err)
+	}
+}
+
+// TestAppServiceAdapterCancelAuthRequestRejectsRequesterMismatch verifies cancel reuses continuation proof and fails closed for the wrong requester.
+func TestAppServiceAdapterCancelAuthRequestRejectsRequesterMismatch(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	request, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:              "project/p1",
+		PrincipalID:       "cancel-agent",
+		PrincipalType:     "agent",
+		RequestedByActor:  "orchestrator-1",
+		RequestedByType:   "agent",
+		RequesterClientID: "orchestrator-client",
+		ClientID:          "builder-client",
+		ClientType:        "mcp-stdio",
+		Reason:            "cancel review",
+		ContinuationJSON:  `{"resume_token":"cancel-123"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	_, err = adapter.CancelAuthRequest(context.Background(), CancelAuthRequestRequest{
+		RequestID:   request.ID,
+		ResumeToken: "cancel-123",
+		PrincipalID: "other-agent",
+		ClientID:    "other-client",
+	})
+	if err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("CancelAuthRequest() error = %v, want ErrInvalidCaptureStateRequest", err)
 	}
 }
 

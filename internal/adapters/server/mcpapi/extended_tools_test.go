@@ -33,6 +33,7 @@ type stubExpandedService struct {
 	lastGetAuthRequestID     string
 	lastGetHandoffID         string
 	lastClaimAuthRequestReq  common.ClaimAuthRequestRequest
+	lastCancelAuthRequestReq common.CancelAuthRequestRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -164,6 +165,29 @@ func (s *stubExpandedService) ClaimAuthRequest(_ context.Context, in common.Clai
 			IssuedSessionExpiresAt: &expiresAt,
 		},
 		SessionSecret: "secret-1",
+	}, nil
+}
+
+// CancelAuthRequest returns one deterministic canceled auth-request result.
+func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in common.CancelAuthRequestRequest) (common.AuthRequestRecord, error) {
+	s.lastCancelAuthRequestReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return common.AuthRequestRecord{
+		ID:               strings.TrimSpace(in.RequestID),
+		State:            "canceled",
+		Path:             "project/p1",
+		ProjectID:        "p1",
+		ScopeType:        common.ScopeTypeProject,
+		ScopeID:          "p1",
+		PrincipalID:      "review-agent",
+		PrincipalType:    "agent",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		RequestedByActor: strings.TrimSpace(in.PrincipalID),
+		RequestedByType:  "agent",
+		ResolutionNote:   strings.TrimSpace(in.ResolutionNote),
+		CreatedAt:        now,
+		ExpiresAt:        now.Add(30 * time.Minute),
 	}, nil
 }
 
@@ -714,6 +738,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.list_auth_requests",
 		"till.get_auth_request",
 		"till.claim_auth_request",
+		"till.cancel_auth_request",
 		"till.list_tasks",
 		"till.create_task",
 		"till.update_task",
@@ -786,6 +811,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.list_auth_requests", args: map[string]any{"project_id": "p1", "state": "pending", "limit": 10}},
 		{name: "till.get_auth_request", args: map[string]any{"request_id": "req-1"}},
 		{name: "till.claim_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio"}},
+		{name: "till.cancel_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio", "resolution_note": "superseded"}},
 		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
 		{name: "till.create_task", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",

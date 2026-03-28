@@ -73,18 +73,21 @@ type stubProjectService struct {
 // stubAuthRequestService provides deterministic auth-request responses for MCP tool tests.
 type stubAuthRequestService struct {
 	stubCaptureStateReader
-	created     common.AuthRequestRecord
-	requests    []common.AuthRequestRecord
-	getResult   common.AuthRequestRecord
-	claimResult common.AuthRequestClaimResult
-	createErr   error
-	listErr     error
-	getErr      error
-	claimErr    error
-	lastCreate  common.CreateAuthRequestRequest
-	lastList    common.ListAuthRequestsRequest
-	lastGetID   string
-	lastClaim   common.ClaimAuthRequestRequest
+	created      common.AuthRequestRecord
+	requests     []common.AuthRequestRecord
+	getResult    common.AuthRequestRecord
+	claimResult  common.AuthRequestClaimResult
+	cancelResult common.AuthRequestRecord
+	createErr    error
+	listErr      error
+	getErr       error
+	claimErr     error
+	cancelErr    error
+	lastCreate   common.CreateAuthRequestRequest
+	lastList     common.ListAuthRequestsRequest
+	lastGetID    string
+	lastClaim    common.ClaimAuthRequestRequest
+	lastCancel   common.CancelAuthRequestRequest
 }
 
 // stubMutationAuthorizer provides deterministic session-auth results for mutating MCP tool tests.
@@ -176,6 +179,15 @@ func (s *stubAuthRequestService) ClaimAuthRequest(_ context.Context, req common.
 		return common.AuthRequestClaimResult{}, s.claimErr
 	}
 	return s.claimResult, nil
+}
+
+// CancelAuthRequest records one cancellation request and returns one deterministic canceled auth-request row.
+func (s *stubAuthRequestService) CancelAuthRequest(_ context.Context, req common.CancelAuthRequestRequest) (common.AuthRequestRecord, error) {
+	s.lastCancel = req
+	if s.cancelErr != nil {
+		return common.AuthRequestRecord{}, s.cancelErr
+	}
+	return s.cancelResult, nil
 }
 
 // ListAttentionItems returns deterministic list data.
@@ -536,6 +548,8 @@ func TestHandlerRegistersAuthRequestToolsWhenAvailable(t *testing.T) {
 		"till.create_auth_request",
 		"till.list_auth_requests",
 		"till.get_auth_request",
+		"till.claim_auth_request",
+		"till.cancel_auth_request",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
@@ -1212,6 +1226,23 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			},
 			SessionSecret: "secret-1",
 		},
+		cancelResult: common.AuthRequestRecord{
+			ID:               "req-1",
+			State:            "canceled",
+			Path:             "project/p1",
+			ProjectID:        "p1",
+			ScopeType:        common.ScopeTypeProject,
+			ScopeID:          "p1",
+			PrincipalID:      "review-agent",
+			PrincipalType:    "agent",
+			ClientID:         "till-mcp-stdio",
+			ClientType:       "mcp-stdio",
+			RequestedByActor: "review-agent",
+			RequestedByType:  "agent",
+			ResolutionNote:   "superseded",
+			CreatedAt:        now,
+			ExpiresAt:        now.Add(30 * time.Minute),
+		},
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -1349,6 +1380,36 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	if got := capture.lastClaim.WaitTimeout; got != "30s" {
 		t.Fatalf("ClaimAuthRequest() wait_timeout = %q, want 30s", got)
 	}
+
+	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.cancel_auth_request", map[string]any{
+		"request_id":      "req-1",
+		"resume_token":    "resume-1",
+		"principal_id":    "review-agent",
+		"client_id":       "till-mcp-stdio",
+		"resolution_note": "superseded",
+	}))
+	cancelStructured := toolResultStructured(t, cancelResp.Result)
+	if got := cancelStructured["state"].(string); got != "canceled" {
+		t.Fatalf("cancel auth request state = %q, want canceled", got)
+	}
+	if got := cancelStructured["resolution_note"].(string); got != "superseded" {
+		t.Fatalf("cancel auth request resolution_note = %q, want superseded", got)
+	}
+	if got := capture.lastCancel.RequestID; got != "req-1" {
+		t.Fatalf("CancelAuthRequest() request_id = %q, want req-1", got)
+	}
+	if got := capture.lastCancel.ResumeToken; got != "resume-1" {
+		t.Fatalf("CancelAuthRequest() resume_token = %q, want resume-1", got)
+	}
+	if got := capture.lastCancel.PrincipalID; got != "review-agent" {
+		t.Fatalf("CancelAuthRequest() principal_id = %q, want review-agent", got)
+	}
+	if got := capture.lastCancel.ClientID; got != "till-mcp-stdio" {
+		t.Fatalf("CancelAuthRequest() client_id = %q, want till-mcp-stdio", got)
+	}
+	if got := capture.lastCancel.ResolutionNote; got != "superseded" {
+		t.Fatalf("CancelAuthRequest() resolution_note = %q, want superseded", got)
+	}
 }
 
 // TestHandlerClaimAuthRequestWaitingPayload verifies waiting claims return a pending request plus waiting=true without secrets.
@@ -1405,6 +1466,68 @@ func TestHandlerClaimAuthRequestWaitingPayload(t *testing.T) {
 	}
 	if got := requestRecord["state"].(string); got != "pending" {
 		t.Fatalf("claim waiting state = %q, want pending", got)
+	}
+}
+
+// TestHandlerCancelAuthRequestRequiresRequesterArgs verifies missing required requester proof fails as a tool error.
+func TestHandlerCancelAuthRequestRequiresRequesterArgs(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9, "till.cancel_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+	}))
+	if isError, _ := cancelResp.Result["isError"].(bool); !isError {
+		t.Fatalf("cancel_auth_request isError = %v, want true", cancelResp.Result["isError"])
+	}
+	if got := toolResultText(t, cancelResp.Result); !strings.Contains(got, "resume_token") {
+		t.Fatalf("cancel_auth_request error text = %q, want missing resume_token", got)
+	}
+}
+
+// TestHandlerCancelAuthRequestRejectsRequesterMismatch verifies mismatched requester cancel attempts fail as invalid_request tool errors.
+func TestHandlerCancelAuthRequestRejectsRequesterMismatch(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		cancelErr: errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(10, "till.cancel_auth_request", map[string]any{
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+		"principal_id": "other-agent",
+		"client_id":    "other-client",
+	}))
+	if isError, _ := cancelResp.Result["isError"].(bool); !isError {
+		t.Fatalf("cancel_auth_request isError = %v, want true", cancelResp.Result["isError"])
+	}
+	if got := toolResultText(t, cancelResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+		t.Fatalf("cancel_auth_request mismatch error text = %q, want prefix invalid_request:", got)
 	}
 }
 

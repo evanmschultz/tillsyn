@@ -206,12 +206,30 @@ Expected:
 7. No manual shell copying is needed as the primary path.
 
 Evidence:
-- orchestrator display name:
-- request id:
-- approved path:
-- denied request id:
-- canceled request id:
+- orchestrator display name: `Codex C2 Orchestrator`
+- request id: `a9d80803-0c60-48f4-a660-0fa64866a6ff`
+- approved path: `project/cead38cc-3430-4ca1-8425-fbb340e5ccd9`
+- denied request id: `1b96f171-7552-4664-a679-8979f67918e6`
+- canceled request id: pending live rerun now that `till.cancel_auth_request` is landed
 - pass/fail notes:
+  - PASS: requester created the auth request through MCP only.
+  - PASS: requester immediately called `till.claim_auth_request(wait_timeout=10m)` and stayed blocked while the human resolved the request in TUI.
+  - PASS: human approval in TUI woke the same MCP claim call directly; no extra lookup call was needed to discover approval.
+  - PASS: claim result returned the approved request plus `session_secret`.
+  - issued session id: `1f6b5def-1cba-47b9-94a4-05993d00055a`
+  - PASS: a second requester created a denied-path auth request through MCP only.
+  - PASS: requester immediately called `till.claim_auth_request(wait_timeout=10m)` and stayed blocked while the human denied the request in TUI.
+  - PASS: the same waiting MCP claim call returned the denied terminal request directly with no `session_secret`.
+  - MCP follow-up slice landed after the denied-path rerun:
+    - `till.cancel_auth_request` is now exposed through MCP with requester-bound continuation proof (`request_id`, `resume_token`, `principal_id`, `client_id`, optional `resolution_note`),
+    - local evidence is green:
+      - `just test-pkg ./internal/adapters/server/common` PASS
+      - `just test-pkg ./internal/adapters/server/mcpapi` PASS
+      - `just check` PASS
+      - `just ci` PASS
+  - Active follow-up before continuing:
+    - rerun the canceled request path over MCP only,
+    - then move to authenticated mutation and revoke/fail-closed retry.
 
 Status note before continuing:
 - `C2` should still prove current fail-closed auth, TUI visibility, and native claim/resume behavior.

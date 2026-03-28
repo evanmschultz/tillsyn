@@ -246,6 +246,51 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			return result, nil
 		},
 	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.cancel_auth_request",
+			mcp.WithDescription("Cancel one pending auth request by request id, requester identity, and requester-owned resume token. Use this to withdraw or clean up a stale request; this is distinct from reviewer denial."),
+			mcp.WithString("request_id", mcp.Required(), mcp.Description("Auth request identifier")),
+			mcp.WithString("resume_token", mcp.Required(), mcp.Description("Opaque requester-owned token stored in continuation_json when the request was created")),
+			mcp.WithString("principal_id", mcp.Required(), mcp.Description("Requester principal identifier")),
+			mcp.WithString("client_id", mcp.Required(), mcp.Description("Requester client identifier")),
+			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			requestID, err := req.RequireString("request_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			resumeToken, err := req.RequireString("resume_token")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			principalID, err := req.RequireString("principal_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			clientID, err := req.RequireString("client_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			record, err := authRequests.CancelAuthRequest(ctx, common.CancelAuthRequestRequest{
+				RequestID:      requestID,
+				ResumeToken:    resumeToken,
+				PrincipalID:    principalID,
+				ClientID:       clientID,
+				ResolutionNote: req.GetString("resolution_note", ""),
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(record)
+			if err != nil {
+				return nil, fmt.Errorf("encode cancel_auth_request result: %w", err)
+			}
+			return result, nil
+		},
+	)
 }
 
 // NewHandler builds one stateless MCP streamable HTTP adapter with capture_state, attention, and optional app-backed tools.

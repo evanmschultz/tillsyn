@@ -70,6 +70,7 @@ Current MCP/runtime direction:
 - MCP tool surface now includes:
   - instructions: `till.get_instructions`
   - bootstrap guidance: `till.get_bootstrap_guide`
+  - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
   - projects: `till.list_projects`, `till.create_project`, `till.update_project`
   - tasks/work graph: `till.list_tasks`, `till.create_task`, `till.update_task`, `till.move_task`, `till.delete_task`, `till.restore_task`, `till.reparent_task`, `till.list_child_tasks`, `till.search_task_matches`
   - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.raise_attention_item`, `till.resolve_attention_item`
@@ -97,8 +98,10 @@ Current auth note:
 - TUI auth inventory distinguishes pending requests, resolved requests, and active approved sessions, and supports direct revoke for active sessions.
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`.
+- MCP requesters can now also withdraw their own pending requests through `till.cancel_auth_request` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`).
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.claim_auth_request` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling.
+- Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management.
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 
@@ -195,6 +198,8 @@ Dogfood MCP continuation pattern:
 ```
 
 After the user approves the request in the TUI, the requester can claim the approved session through MCP with the same `request_id` plus that `resume_token` using `till.claim_auth_request`.
+
+If the requester needs to withdraw a still-pending request, it can call `till.cancel_auth_request` with that same `request_id` plus the requester-owned `resume_token`, `principal_id`, and `client_id`.
 
 Current auth caveat:
 - the request/session commands above are the primary operator dogfood path

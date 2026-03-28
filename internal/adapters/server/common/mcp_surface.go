@@ -292,6 +292,15 @@ type ClaimAuthRequestRequest struct {
 	WaitTimeout string
 }
 
+// CancelAuthRequestRequest stores transport input for canceling one pending auth request.
+type CancelAuthRequestRequest struct {
+	RequestID      string
+	ResumeToken    string
+	PrincipalID    string
+	ClientID       string
+	ResolutionNote string
+}
+
 // AuthRequestRecord stores one transport-facing auth request row.
 type AuthRequestRecord struct {
 	ID                     string     `json:"id"`
@@ -428,6 +437,7 @@ type AuthRequestService interface {
 	ListAuthRequests(context.Context, ListAuthRequestsRequest) ([]AuthRequestRecord, error)
 	GetAuthRequest(context.Context, string) (AuthRequestRecord, error)
 	ClaimAuthRequest(context.Context, ClaimAuthRequestRequest) (AuthRequestClaimResult, error)
+	CancelAuthRequest(context.Context, CancelAuthRequestRequest) (AuthRequestRecord, error)
 }
 
 // durationFromSeconds converts positive integer seconds to a transport duration.

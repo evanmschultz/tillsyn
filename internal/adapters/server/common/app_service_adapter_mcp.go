@@ -166,6 +166,45 @@ func (a *AppServiceAdapter) ClaimAuthRequest(ctx context.Context, in ClaimAuthRe
 	}, nil
 }
 
+// CancelAuthRequest cancels one pending auth request through app-level APIs.
+func (a *AppServiceAdapter) CancelAuthRequest(ctx context.Context, in CancelAuthRequestRequest) (AuthRequestRecord, error) {
+	if a == nil || a.service == nil {
+		return AuthRequestRecord{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return AuthRequestRecord{}, fmt.Errorf("request_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	claimed, err := a.service.ClaimAuthRequest(ctx, app.ClaimAuthRequestInput{
+		RequestID:   requestID,
+		ResumeToken: strings.TrimSpace(in.ResumeToken),
+		PrincipalID: strings.TrimSpace(in.PrincipalID),
+		ClientID:    strings.TrimSpace(in.ClientID),
+	})
+	if err != nil {
+		return AuthRequestRecord{}, mapAppError("cancel auth request", err)
+	}
+	// Reuse the same requester-bound continuation proof as claim/resume so cancel
+	// cannot bypass ownership checks with caller-supplied actor fields.
+	resolvedBy, resolvedType, err := resolvedAuthRequestActor(
+		strings.TrimSpace(in.PrincipalID),
+		string(claimed.Request.RequestedByType),
+	)
+	if err != nil {
+		return AuthRequestRecord{}, err
+	}
+	request, err := a.service.CancelAuthRequest(ctx, app.CancelAuthRequestInput{
+		RequestID:      requestID,
+		ResolvedBy:     resolvedBy,
+		ResolvedType:   resolvedType,
+		ResolutionNote: strings.TrimSpace(in.ResolutionNote),
+	})
+	if err != nil {
+		return AuthRequestRecord{}, mapAppError("cancel auth request", err)
+	}
+	return mapAuthRequestRecord(request), nil
+}
+
 // CreateProject creates one project with optional kind and metadata.
 func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectRequest) (domain.Project, error) {
 	if a == nil || a.service == nil {
@@ -541,6 +580,19 @@ func requesterClientID(in CreateAuthRequestRequest) string {
 		return trimmed
 	}
 	return strings.TrimSpace(in.ClientID)
+}
+
+// resolvedAuthRequestActor normalizes auth-request resolver identity for transport-facing lifecycle actions.
+func resolvedAuthRequestActor(resolvedByActor, resolvedByType string) (string, domain.ActorType, error) {
+	resolvedBy := strings.TrimSpace(resolvedByActor)
+	if resolvedBy == "" {
+		resolvedBy = "tillsyn-user"
+	}
+	resolvedType, err := normalizeResolvedActorType(resolvedByType)
+	if err != nil {
+		return "", "", err
+	}
+	return resolvedBy, resolvedType, nil
 }
 
 // mapAuthRequestRecord converts one domain auth request into one transport-facing record.
@@ -1007,6 +1059,20 @@ func normalizeActorType(actorType string) domain.ActorType {
 		return domain.ActorTypeUser
 	}
 	return normalized
+}
+
+// normalizeResolvedActorType canonicalizes auth-request resolution actor types and defaults to user.
+func normalizeResolvedActorType(actorType string) (domain.ActorType, error) {
+	normalized := domain.ActorType(strings.TrimSpace(strings.ToLower(actorType)))
+	if normalized == "" {
+		return domain.ActorTypeUser, nil
+	}
+	switch normalized {
+	case domain.ActorTypeUser, domain.ActorTypeAgent, domain.ActorTypeSystem:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("resolved_by_type %q is unsupported: %w", actorType, ErrInvalidCaptureStateRequest)
+	}
 }
 
 // isValidActorType reports whether actor type values are supported by app/domain rules.

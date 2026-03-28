@@ -2057,6 +2057,17 @@ Resolved status update on 2026-03-26:
    - disconnect-aware cleanup tied to richer client/session lifecycle tracking,
    - comment/handoff consumers on top of the same substrate,
    - HTTP/continuous-listening follow-on support.
+3. Additional follow-on auth control requested during live collab:
+   - add one MCP revoke-session capability so orchestrators can revoke child sessions without dropping to CLI/TUI,
+   - keep that revoke path gatekept to descendants only:
+     - the caller must already hold valid auth for its own approved scope,
+     - the target session must belong to a child/descendant principal rather than the caller itself or a peer/superior lane,
+     - the target session scope must be at or below the caller's approved path/scope,
+     - out-of-scope or peer revocation attempts must fail closed and remain user-review territory.
+4. Product intent for that future revoke seam:
+   - human-first revocation remains available in TUI/CLI,
+   - orchestrator-side revocation is for bounded child-session cleanup and recovery only,
+   - it should support flows like "builder lane died, revoke its child auth, then request a replacement child" without granting orchestrators carte blanche over unrelated sessions.
 
 ### 2026-03-26: Cross-Process Wait Execution Kickoff
 
@@ -2256,9 +2267,111 @@ Current outcome:
 1. The remote blocker is closed.
 2. The current code/doc state is ready to resume the collaborative worksheet from the next live section.
 3. Non-blocking residual note: the current regression coverage still bundles picker navigation and search scoping in one behavior test, so a later dedicated arrow-only test would improve diagnosis if this area regresses again.
-3. keep bare `till project` as help for MVP.
-4. improve current project command ergonomics so `project show` and `project discover` accept the natural operator path instead of forcing one brittle flag-only shape.
-5. if safe within the same slice, improve `project create` missing-name guidance without pulling the post-dogfood guided flow into scope early.
+
+### 2026-03-27: C2 Live MCP Wait Pass
+
+Objective:
+- verify the requester-side MCP wait stays open and resumes directly from human TUI approval without any extra lookup call,
+- and record the exact live evidence before moving on to deny/cancel and authenticated mutation checks.
+
+Live result:
+1. A fresh MCP auth request was created for the Evan test project:
+   - request id: `a9d80803-0c60-48f4-a660-0fa64866a6ff`
+   - principal: `Codex C2 Orchestrator`
+   - path: `project/cead38cc-3430-4ca1-8425-fbb340e5ccd9`
+2. The requester immediately called `till.claim_auth_request(wait_timeout=10m)` with its owned `resume_token`.
+3. The user approved the request in the TUI while the MCP claim call remained open.
+4. The same MCP claim call returned the approved request plus `session_secret` directly, with no manual follow-up `get_auth_request` or shell/CLI inspection required.
+5. Approved result details:
+   - approved path: `project/cead38cc-3430-4ca1-8425-fbb340e5ccd9`
+   - issued session id: `1f6b5def-1cba-47b9-94a4-05993d00055a`
+6. Conclusion:
+   - the default local human-in-the-loop auth wait path is now behaving as intended for approve/resume on the MCP side,
+   - the earlier 2026-03-27 miss was operator error in this thread because the wait call had not been started after request creation.
+
+Next live checks from the worksheet:
+1. create one denied request and confirm the waiting MCP claim returns a denied terminal state without any session secret.
+2. create one canceled request and confirm the waiting MCP claim returns a canceled terminal state without any session secret.
+3. then continue into authenticated mutation and revoke/fail-closed retry using the approved session above or a fresh approved requester if needed.
+
+### 2026-03-27: C2 Denied Live MCP Wait Pass
+
+Objective:
+- prove the same MCP wait path returns a denied terminal state directly, without any shell or follow-up lookup, and without leaking session material.
+
+Live result:
+1. A fresh denied-path MCP auth request was created on the secondary test project:
+   - request id: `1b96f171-7552-4664-a679-8979f67918e6`
+   - principal: `Codex Deny Orchestrator`
+   - path: `project/9b40f103-72eb-49c4-b981-320fd6ab27c0`
+2. The requester immediately called `till.claim_auth_request(wait_timeout=10m)` with its owned `resume_token`.
+3. The user denied the request in the TUI.
+4. The same waiting MCP claim call returned the denied terminal request directly.
+5. No `session_secret` was returned.
+
+Conclusion:
+1. The auth-specific local cross-process wake path now behaves correctly for both approve and deny.
+2. The remaining unproven terminal-state gap in `C2` is cancel.
+
+### 2026-03-27: C2 MCP Cancel Surface
+
+Objective:
+- close the remaining `C2` terminal-state gap by adding one real MCP cancel path so requester/orchestrator flows can withdraw stale pending requests without dropping to CLI or relying on ambiguous TUI behavior.
+
+Historical pre-implementation state:
+1. `cancel` is already a first-class auth-request terminal state in domain and app layers.
+2. CLI already exposes request cancel.
+3. MCP did not yet expose request cancel before this slice landed.
+4. TUI auth review does not currently cancel the underlying request; `esc` only backs out of the review UI.
+
+Locked product intent:
+1. `deny` remains the explicit reviewer/operator "no" decision.
+2. `cancel` means requester/operator withdrawal or cleanup of a still-pending request.
+3. MCP must expose request cancel for requester/orchestrator cleanup.
+4. The initial MCP cancel seam for this collab slice should be requester-bound:
+   - require `request_id`,
+   - require requester-owned `resume_token`,
+   - require requester `principal_id`,
+   - require requester `client_id`,
+   - optional `resolution_note`.
+5. This requester-bound MCP cancel path should reuse the same continuation-proof material as claim/resume rather than introducing a separate bypass path.
+6. Follow-on descendant orchestration control remains required after this slice:
+   - orchestrators should eventually be able to cancel child pending requests and revoke child sessions at or below their own approved scope,
+   - peer or out-of-scope cleanup must fail closed.
+
+Implemented now:
+1. `till.cancel_auth_request` is now registered on the MCP auth-request surface.
+2. The first landed MCP cancel path is requester-bound and pending-only:
+   - `request_id`
+   - `resume_token`
+   - `principal_id`
+   - `client_id`
+   - optional `resolution_note`
+3. The MCP/common adapter now reuses `ClaimAuthRequest(...)` as the ownership proof path before canceling.
+4. Successful MCP cancel returns the canceled auth request record as JSON.
+5. Existing auth live-wait behavior now means cancel should wake any waiting `claim_auth_request(wait_timeout=...)` caller immediately through the same cross-process local broker path already proven for approve and deny.
+
+Validation on this slice:
+1. Context7 re-consulted for `mcp-go` tool registration patterns before editing -> PASS.
+2. `just test-pkg ./internal/adapters/server/common` -> PASS.
+3. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+
+QA status:
+1. Common QA-1 -> no findings; noted only non-blocking lack of a focused transport-level non-pending cancel assertion.
+2. Common QA-2 -> no blockers; noted the same non-blocking coverage gap and that continuation-bound cancel must stay explicit in docs.
+3. MCP QA-1 -> one medium finding: missing handler-level negative-path coverage for required args and requester-mismatch.
+4. Remediation landed:
+   - added handler-level negative-path tests for missing requester proof and requester-mismatch mapping,
+   - restored auth-tool list symmetry for `claim` + `cancel`.
+5. MCP QA-2 -> no blockers after review; noted only non-blocking smoke/assertion asymmetry.
+6. Integrated QA -> code is go, but docs had to be synced before resuming the live worksheet.
+
+Current next live step:
+1. rerun the canceled request path from `C2` using `till.cancel_auth_request` over MCP only,
+2. confirm the waiting MCP claim returns the canceled terminal state with no `session_secret`,
+3. then continue into authenticated mutation and revoke/fail-closed retry.
 
 Commands run and outcomes:
 1. Context7 resolve/query for Cobra and Fang -> PASS; confirmed the current fix should use:
