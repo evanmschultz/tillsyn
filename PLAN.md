@@ -2501,6 +2501,19 @@ Current remediation slice before the next retest:
    - and one role-distinguishing mutation such as builder `create-child` vs QA `create-child` so the retest exercises a real current policy difference instead of the generic handoff/comment path.
 5. Keep the richer node-type/template policy model as a separate follow-on wave; do not pretend this remediation slice completes that larger product feature.
 
+Local validation and QA evidence for this remediation slice:
+1. `just test-pkg ./internal/app` -> PASS
+2. `just test-pkg ./internal/adapters/auth/autentauth` -> PASS
+3. `just test-pkg ./internal/adapters/server/common` -> PASS
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+5. `just check` -> PASS
+6. `just ci` -> PASS
+7. QA lane `q1-app-backend` -> PASS with one low maintenance note about duplicate claimant-check helpers.
+8. QA lane `q2-app-backend` -> PASS.
+9. QA lane `q3-common-docs` -> PASS.
+10. QA lane `q4-common-docs` -> PASS with one low note to keep README wording honest about TUI revoke discoverability.
+11. QA lane `q5-final` -> PASS.
+
 Local validation for this remediation slice:
 1. `just test-pkg ./internal/app` -> PASS
 2. `just test-pkg ./internal/adapters/auth/autentauth` -> PASS

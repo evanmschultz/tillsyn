@@ -354,6 +354,13 @@ Evidence:
     - delegated requester claim attempts now fail closed instead of adopting the child continuation,
     - requester-side cancel cleanup stays separate and requester-bound,
     - the future node-type/template policy model remains follow-on and was not tested by `C4`.
+  - CURRENT RETEST TARGET:
+    - builder child self-claims its own approved request,
+    - QA child self-claims its own approved request,
+    - wrong token still fails closed,
+    - builder cannot adopt QA claim,
+    - QA cannot adopt builder claim,
+    - orchestrator/requester cannot adopt either child continuation any longer.
   - Local remediation validation:
     - `just test-pkg ./internal/app` PASS
     - `just test-pkg ./internal/adapters/auth/autentauth` PASS
