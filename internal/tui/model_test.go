@@ -7260,6 +7260,51 @@ func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 	}
 }
 
+// TestModelBoardGlobalKeysRemainAvailableInNoticesFocus verifies project picker and command palette still open from notices focus.
+func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
+	now := time.Date(2026, 3, 29, 10, 45, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	testCases := []struct {
+		name       string
+		panel      noticesPanelFocusTarget
+		key        tea.KeyPressMsg
+		wantMode   inputMode
+		wantStatus string
+	}{
+		{name: "project notices lowercase p", panel: noticesPanelFocusProject, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
+		{name: "project notices uppercase p", panel: noticesPanelFocusProject, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
+		{name: "project notices command palette", panel: noticesPanelFocusProject, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},
+		{name: "global notices lowercase p", panel: noticesPanelFocusGlobal, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
+		{name: "global notices uppercase p", panel: noticesPanelFocusGlobal, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
+		{name: "global notices command palette", panel: noticesPanelFocusGlobal, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+			m.noticesFocused = true
+			m.noticesPanel = tc.panel
+			m = applyMsg(t, m, tc.key)
+			if m.mode != tc.wantMode {
+				t.Fatalf("mode = %v, want %v", m.mode, tc.wantMode)
+			}
+			if got := strings.TrimSpace(m.status); got != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", got, tc.wantStatus)
+			}
+		})
+	}
+}
+
 // TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread verifies project attention rows without task ids route to thread mode.
 func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
@@ -8333,12 +8378,12 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	}
 
 	rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
-	for _, want := range []string{"Coordination", "live coordination", "project scope (Inbox)", "project-local (Inbox)", "action required: 0", "pending requests", "active sessions", "active leases", "open handoffs", "[pending] Review Agent • builder", "[active] Review Agent • builder", "[active] Orchestrator", "[waiting] builder -> qa", "requested by: lane-user (user)", "reason: inventory review", "resume:", "timeout: 30m"} {
+	for _, want := range []string{"Coordination", "project scope (Inbox)", "live", "action required: 0", "pending requests", "active sessions", "active leases", "open handoffs", "[pending] Review Agent • builder", "[active] Review Agent • builder", "[active] Orchestrator", "[waiting] builder -> qa", "requested by: lane-user (user)", "reason: inventory review", "resume:", "timeout: 30m"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in coordination surface:\n%s", want, rendered)
 		}
 	}
-	for _, unwanted := range []string{"resolved requests", "[approved] Other Agent"} {
+	for _, unwanted := range []string{"resolved requests", "[approved] Other Agent", "live coordination", "project-local (Inbox)", "requests/sessions:", "leases/handoffs:"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("View() unexpectedly included %q in live coordination surface:\n%s", unwanted, rendered)
 		}
@@ -12005,8 +12050,8 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if !strings.Contains(rendered, "Global Notifications") {
 		t.Fatalf("expected global notifications panel title, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "Live Coordination") {
-		t.Fatalf("expected live coordination section in notices panel, got\n%s", rendered)
+	if !strings.Contains(rendered, "Coordination") {
+		t.Fatalf("expected coordination section in notices panel, got\n%s", rendered)
 	}
 	for _, want := range []string{"pending requests: 0", "active sessions: 0", "active leases: 0", "open handoffs: 0"} {
 		if !strings.Contains(rendered, want) {
@@ -12016,8 +12061,8 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if !strings.Contains(rendered, "Action Required") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "coordination and user action") {
-		t.Fatalf("expected global notifications subtitle, got\n%s", rendered)
+	if strings.Contains(rendered, "coordination and user action") {
+		t.Fatalf("expected global notifications subtitle to be removed, got\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Notices\nproject:") || strings.Contains(rendered, "Notices\r\nproject:") {
 		t.Fatalf("expected legacy notices fallback block to be absent, got\n%s", rendered)
@@ -12064,8 +12109,8 @@ func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) 
 	if !strings.Contains(panel, "Global Notifications") {
 		t.Fatalf("expected global notifications panel title, got\n%s", panel)
 	}
-	if !strings.Contains(panel, "Live Coordination") {
-		t.Fatalf("expected live coordination section in project notices panel, got\n%s", panel)
+	if !strings.Contains(panel, "Coordination") {
+		t.Fatalf("expected coordination section in project notices panel, got\n%s", panel)
 	}
 	for _, want := range []string{"pending requests: 0", "active sessions: 0", "active leases: 0", "open handoffs: 0"} {
 		if !strings.Contains(panel, want) {

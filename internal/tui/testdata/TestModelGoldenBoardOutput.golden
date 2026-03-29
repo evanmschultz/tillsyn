@@ -6,23 +6,23 @@
  ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
  │  To Do (1)                                          │ │ Project Notifications              │
- │  │  Golden board task                               │ │ Live Coordination                  │
- │     [medium|#alpha,#beta]                           │ │ pending requests: 0                │
+ │                                                     │ │                                    │
+ │  │  Golden board task                               │ │ Coordination                       │
+ │     [medium|#alpha,#beta]                           │ │                                    │
+ │                                                     │ │ pending requests: 0                │
  │                                                     │ │ active sessions: 0                 │
  │                                                     │ │ active leases: 0                   │
  │                                                     │ │ open handoffs: 0                   │
- │                                                     │ │                                    │
  │                                                     │ │ Warnings                           │
  │                                                     │ │ none                               │
- │                                                     │ │                                    │
  │                                                     │ │ Action Required                    │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
  │                                                     │ │ Global Notifications               │
- │                                                     │ │ coordination and user action ac…   │
  │                                                     │ │                                    │
+ │                                                     │ │ no coordination or notification…   │
  │                                                     │ │                                    │
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
  n new task • enter task info • e edit • tab panels • / search • : commands • q quit • ? help[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

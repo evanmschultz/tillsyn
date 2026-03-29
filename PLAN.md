@@ -3187,6 +3187,61 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
        - global coordination rows stay grouped project-first and open the related coordination screen on `enter`,
        - `enter` on a lease or handoff row opens a typed detail modal with non-error styling for active state,
        - and the detail modal exposes the expected lease/handoff actions from that surface.
+15. Fresh live UX findings on 2026-03-29 after commit `b4367d3`:
+   - PASS:
+     - the typed coordination detail/action modal is now opening,
+     - and the current-project duplication bug in global coordination counts is gone.
+   - FAIL / follow-up requested before more TUI polish:
+     - the `Global Notifications` subtitle/help text (`coordination and user action across projects`) is still low-value noise and should be removed,
+     - all board-side panels need a small vertical gap between the section header and the first item:
+       - `To Do`
+       - `In Progress`
+       - `Done`
+       - `Project Notifications`
+       - `Global Notifications`
+     - the label `Live Coordination` itself now needs product review because the user questioned whether it is the clearest noun for the board panel,
+     - the full-screen `Coordination` surface still needs copy review because the summary block at the top is doing too much explanatory work inline,
+     - and board-level hotkeys `p` / `P` plus `:` do not currently work when focus is inside the project/global notifications panels.
+   - requested next discussion topics before code:
+     - decide whether `Live Coordination` should stay or be renamed,
+     - explain every summary line and row on the current `Coordination` screen,
+     - decide how much inline explanation stays in the body versus moving into `?` help,
+     - and then do one focused follow-up for spacing, naming, panel copy cleanup, and board-hotkey routing.
+   - evidence:
+     - user live validation on the rebuilt binary after commit `b4367d3`
+     - `test_not_applicable`: discussion-only follow-up note; no code/test commands run for this ledger update.
+16. Focused TUI cleanup follow-up on 2026-03-29 after the discussion-only checkpoint:
+   - commands run:
+     - `just test-pkg ./internal/tui` -> FAIL initially on a new test-only type reference (`undefined: noticesPanelFocus`); fixed immediately in test code after a required Context7 re-check.
+     - `just test-pkg ./internal/tui` -> FAIL on stale goldens and compact-panel rendering expectations; used `just test-golden-update` plus one compact-section follow-up to preserve `Recent Activity` visibility.
+     - `just test-golden-update` -> PASS
+     - `just test-pkg ./internal/tui` -> PASS
+     - `just test-pkg ./internal/tui` -> FAIL once later with a broad transient TUI package miss after the final helper cleanup; immediate rerun passed unchanged.
+     - `just check` -> PASS
+     - `just ci` -> FAIL once in `internal/tui` at `TestModelTaskInfoAndEditHideLabelInheritanceBlocks` during the coverage run with no code diff between attempts; treated as a transient gate miss and immediately re-run.
+     - `just ci` -> PASS on immediate rerun
+     - `just fmt` -> PASS
+     - `just check` -> PASS on the final post-cleanup rerun
+     - `just ci` -> PASS on one additional confirmation rerun
+   - implementation outcome:
+     - board task columns now keep a small blank line between the column header and the first task row,
+     - `Project Notifications` now starts with a small gap under the panel title and renames the coordination section from `Live Coordination` to `Coordination`,
+     - notifications sections now keep their header-to-items gap for real content while collapsing placeholder-only sections enough to keep later sections like `Recent Activity` visible on shorter panels,
+     - `Global Notifications` no longer renders the static subtitle/help copy and now uses a cleaner empty state:
+       - `no coordination or notifications across other projects`,
+     - the full-screen `Coordination` body no longer repeats scope/explanation prose that is already covered by the screen chrome and `?` help,
+     - board-global entrypoints `p` / `P` and `:` now work even while project/global notifications panels own focus,
+     - coordination detail modal chrome now uses a fixed active-state tone instead of inheriting the project accent color, which avoids error-like red chrome for healthy active items,
+     - the old two-value coordination surface scope helper was reduced back to one live request/session scope label after the body stopped rendering the `project-local` explanation line,
+     - targeted TUI tests now cover the notifications-focus hotkey routing directly,
+     - and the TUI goldens were refreshed and manually reviewed to confirm the intended structural layout changes.
+   - files changed for this follow-up:
+     - [`internal/tui/model.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model.go)
+     - [`internal/tui/model_test.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model_test.go)
+     - [`internal/tui/testdata/TestModelGoldenBoardOutput.golden`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/testdata/TestModelGoldenBoardOutput.golden)
+     - [`internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden)
+   - open operational follow-up:
+     - the project still contains older waiting/ready coordination records from prior collaborative passes; those were not auto-cleaned by `C5` because that section only resolved and revoked the fresh artifacts it created for that rerun, not the older historical collaboration records.
 
 ### 2026-03-25: Pre-Collab CLI Quiet-Log And Positional Project Command Cleanup
 

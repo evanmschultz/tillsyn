@@ -2009,7 +2009,9 @@ func (m Model) View() tea.View {
 			}
 
 			innerHeight := max(1, colHeight-4)
-			taskWindowHeight := max(1, innerHeight-len(headerLines))
+			headerBlock := append([]string{}, headerLines...)
+			headerBlock = append(headerBlock, "")
+			taskWindowHeight := max(1, innerHeight-len(headerBlock))
 			scrollTop := 0
 			if colIdx == m.selectedColumn && selectedStart >= 0 {
 				if selectedEnd >= scrollTop+taskWindowHeight {
@@ -2028,7 +2030,7 @@ func (m Model) View() tea.View {
 				taskLines = append(taskLines, make([]string, taskWindowHeight-len(taskLines))...)
 			}
 
-			lines := append(append([]string{}, headerLines...), taskLines...)
+			lines := append(headerBlock, taskLines...)
 			content := fitLines(strings.Join(lines, "\n"), innerHeight)
 			colStyle := normColStyle.Copy().Width(colRenderWidth)
 			if colIdx == m.selectedColumn && boardPanelFocused {
@@ -3624,8 +3626,8 @@ func (m Model) authInventoryScopeLabel() string {
 	return label
 }
 
-// authInventoryScopeLabels returns the request/session and coordination scope labels for the coordination surface.
-func (m Model) authInventoryScopeLabels() (string, string) {
+// authInventoryScopeLabelForSurface returns the request/session scope label for the coordination surface chrome.
+func (m Model) authInventoryScopeLabelForSurface() string {
 	requestSessionScopeLabel := "global (all projects)"
 	if !m.authInventoryGlobal {
 		if _, ok := m.currentProject(); ok {
@@ -3634,11 +3636,7 @@ func (m Model) authInventoryScopeLabels() (string, string) {
 			requestSessionScopeLabel = "all projects (no project selected)"
 		}
 	}
-	coordinationScopeLabel := "project-local (no project selected)"
-	if project, ok := m.currentProject(); ok {
-		coordinationScopeLabel = "project-local (" + firstNonEmptyTrimmed(projectDisplayName(project), project.ID) + ")"
-	}
-	return requestSessionScopeLabel, coordinationScopeLabel
+	return requestSessionScopeLabel
 }
 
 // authInventoryMoveSelection moves the coordination cursor across selectable rows.
@@ -3656,7 +3654,6 @@ func (m *Model) authInventoryMoveSelection(delta int) {
 
 // authInventoryBodyLines renders the coordination body and returns the selected row and section offsets for viewport alignment.
 func (m Model) authInventoryBodyLines(contentWidth int, hintStyle, accentStyle lipgloss.Style) ([]string, int, int) {
-	requestSessionScopeLabel, coordinationScopeLabel := m.authInventoryScopeLabels()
 	data := m.authInventorySectionData()
 	selectedIndex := -1
 	selectedLine := -1
@@ -3665,18 +3662,14 @@ func (m Model) authInventoryBodyLines(contentWidth int, hintStyle, accentStyle l
 	if items := m.authInventoryItems(); len(items) > 0 {
 		selectedIndex = clamp(m.authInventoryIndex, 0, len(items)-1)
 	}
-	lines := []string{accentStyle.Render(m.authInventoryViewLabel() + " coordination")}
+	lines := []string{}
 	switch m.authInventoryView {
 	case authInventoryViewHistory:
 		lines = append(
 			lines,
-			fmt.Sprintf("requests/sessions: %s", requestSessionScopeLabel),
-			fmt.Sprintf("leases/handoffs: %s", coordinationScopeLabel),
 			fmt.Sprintf("resolved requests: %d", len(data.ResolvedRequests)),
 			fmt.Sprintf("ended leases: %d", len(data.Leases)),
 			fmt.Sprintf("closed handoffs: %d", len(data.Handoffs)),
-			"",
-			hintStyle.Render("history keeps resolved requests and completed or ended project-local coordination records."),
 			"",
 		)
 		if len(data.ResolvedRequests) == 0 && len(data.Leases) == 0 && len(data.Handoffs) == 0 {
@@ -3686,15 +3679,11 @@ func (m Model) authInventoryBodyLines(contentWidth int, hintStyle, accentStyle l
 	default:
 		lines = append(
 			lines,
-			fmt.Sprintf("requests/sessions: %s", requestSessionScopeLabel),
-			fmt.Sprintf("leases/handoffs: %s", coordinationScopeLabel),
 			fmt.Sprintf("action required: %d", data.ActionRequiredCount),
 			fmt.Sprintf("pending requests: %d", len(data.PendingRequests)),
 			fmt.Sprintf("active sessions: %d", len(data.Sessions)),
 			fmt.Sprintf("active leases: %d", len(data.Leases)),
 			fmt.Sprintf("open handoffs: %d", len(data.Handoffs)),
-			"",
-			hintStyle.Render("requests and sessions can widen to all projects; leases and handoffs stay on the selected project."),
 			"",
 		)
 		if data.ActionRequiredCount == 0 && len(data.PendingRequests) == 0 && len(data.Sessions) == 0 && len(data.Leases) == 0 && len(data.Handoffs) == 0 {
@@ -3909,7 +3898,7 @@ func (m *Model) syncAuthInventoryViewport() {
 	}
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
-	requestSessionScopeLabel, _ := m.authInventoryScopeLabels()
+	requestSessionScopeLabel := m.authInventoryScopeLabelForSurface()
 	status := m.authInventoryViewLabel()
 	if scroll := fullPageScrollStatus(m.authInventoryBody); scroll != "" {
 		status += " • " + scroll
@@ -8258,10 +8247,34 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if next, cmd, handled := m.handleBoardGlobalNormalKey(msg); handled {
+		return next, cmd
+	}
 	if m.noticesFocused {
 		return m.handleNoticesPanelNormalKey(msg)
 	}
 	return m.handleBoardPanelNormalKey(msg)
+}
+
+// handleBoardGlobalNormalKey keeps board-wide entrypoints available even when notices own focus.
+func (m Model) handleBoardGlobalNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	switch {
+	case key.Matches(msg, m.keys.projects):
+		m.help.ShowAll = false
+		m.mode = modeProjectPicker
+		if len(m.projects) == 0 {
+			m.projectPickerIndex = 0
+		} else {
+			m.projectPickerIndex = clamp(m.selectedProject, 0, len(m.projects)-1)
+		}
+		m.status = "project picker"
+		return m, nil, true
+	case key.Matches(msg, m.keys.commandPalette):
+		m.help.ShowAll = false
+		return m, m.startCommandPalette(), true
+	default:
+		return m, nil, false
+	}
 }
 
 // handleNoticesPanelNormalKey handles board-mode input while notices panel owns focus.
@@ -13632,7 +13645,7 @@ func (m Model) globalNoticesPanelItemsForInteraction() []globalNoticesPanelItem 
 	if len(m.globalNotices) == 0 {
 		return []globalNoticesPanelItem{{
 			StableKey: globalNoticesEmptyRowKey,
-			Summary:   "no coordination or notifications across projects",
+			Summary:   "no coordination or notifications across other projects",
 		}}
 	}
 	return append([]globalNoticesPanelItem(nil), m.globalNotices...)
@@ -13724,7 +13737,7 @@ func (m Model) noticesCoordinationPanelItems() []noticesPanelItem {
 func noticesSectionTitle(section noticesSectionID) string {
 	switch section {
 	case noticesSectionCoordination:
-		return "Live Coordination"
+		return "Coordination"
 	case noticesSectionWarnings:
 		return "Warnings"
 	case noticesSectionAttention:
@@ -14848,11 +14861,9 @@ func (m Model) renderOverviewPanel(
 	globalContentHeight := max(1, globalPanelHeight-4)
 	projectLines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Project Notifications", contentWidth)),
+		"",
 	}
-	for idx, section := range sections {
-		if idx > 0 {
-			projectLines = append(projectLines, "")
-		}
+	for _, section := range sections {
 		projectLines = append(
 			projectLines,
 			viewModel.renderNoticesSection(
@@ -14895,7 +14906,7 @@ func globalNoticesItemLines(item globalNoticesPanelItem) []string {
 	summary := strings.TrimSpace(item.Summary)
 	if strings.TrimSpace(item.StableKey) == globalNoticesEmptyRowKey {
 		if summary == "" {
-			summary = "no coordination or notifications across projects"
+			summary = "no coordination or notifications across other projects"
 		}
 		return []string{summary}
 	}
@@ -14936,7 +14947,7 @@ func (m Model) renderGlobalNoticesPanel(
 
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Global Notifications", contentWidth)),
-		normalStyle.Render(truncate("coordination and user action across projects", contentWidth)),
+		"",
 	}
 	if viewModel.globalNoticesPartialCount > 0 {
 		projectLabel := "projects"
@@ -14949,8 +14960,8 @@ func (m Model) renderGlobalNoticesPanel(
 				truncate(fmt.Sprintf("partial results: %d %s unavailable", viewModel.globalNoticesPartialCount, projectLabel), contentWidth),
 			),
 		)
+		lines = append(lines, "")
 	}
-	lines = append(lines, "")
 	if focused && start > 0 {
 		lines = append(lines, normalStyle.Render(truncate("↑ more", contentWidth)))
 	}
@@ -15012,6 +15023,9 @@ func (m Model) renderNoticesSection(
 	} else {
 		lines = append(lines, headerStyle.Render(section.Title))
 	}
+	if noticesSectionNeedsHeaderGap(section) {
+		lines = append(lines, "")
+	}
 
 	renderItems := func() {
 		if len(section.Items) == 0 {
@@ -15047,6 +15061,22 @@ func (m Model) renderNoticesSection(
 	}
 	renderItems()
 	return lines
+}
+
+// noticesSectionNeedsHeaderGap preserves breathing room for real content while keeping placeholder-only sections compact.
+func noticesSectionNeedsHeaderGap(section noticesPanelSection) bool {
+	if len(section.Summary) > 0 {
+		return true
+	}
+	if len(section.Items) != 1 {
+		return len(section.Items) > 0
+	}
+	switch strings.TrimSpace(strings.ToLower(section.Items[0].Label)) {
+	case "", "none", "(empty)", "(no activity yet)", "no notifications requiring user action":
+		return false
+	default:
+		return true
+	}
 }
 
 // renderInfoLine renders output for the current model state.
@@ -17415,7 +17445,7 @@ func (m Model) renderAuthInventoryModeView() tea.View {
 	}
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
-	requestSessionScopeLabel, _ := m.authInventoryScopeLabels()
+	requestSessionScopeLabel := m.authInventoryScopeLabelForSurface()
 	status := m.authInventoryViewLabel()
 	if scroll := fullPageScrollStatus(m.authInventoryBody); scroll != "" {
 		status += " • " + scroll
@@ -17444,7 +17474,7 @@ func (m Model) renderCoordinationDetailModeView() tea.View {
 	}
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
-	requestSessionScopeLabel, _ := m.authInventoryScopeLabels()
+	requestSessionScopeLabel := m.authInventoryScopeLabelForSurface()
 	status := m.authInventoryViewLabel()
 	if scroll := fullPageScrollStatus(m.authInventoryBody); scroll != "" {
 		status += " • " + scroll
@@ -18120,8 +18150,10 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeCoordinationDetail:
-		toneColor := accent
+		toneColor := lipgloss.Color("81")
 		switch m.coordinationDetailTone {
+		case coordinationDetailToneActive:
+			toneColor = lipgloss.Color("81")
 		case coordinationDetailToneSuccess:
 			toneColor = lipgloss.Color("42")
 		case coordinationDetailToneWarn:
