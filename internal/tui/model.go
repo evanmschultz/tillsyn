@@ -4197,7 +4197,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		m.editingProjectID = project.ID
 		m.projectFormInputs[projectFieldName].SetValue(project.Name)
 		m.projectFormDescription = project.Description
-		m.projectFormInputs[projectFieldOwner].SetValue(project.Metadata.Owner)
+		m.projectFormInputs[projectFieldOwner].SetValue(firstNonEmptyTrimmed(project.Metadata.Owner, m.identityDisplayName))
 		m.projectFormInputs[projectFieldIcon].SetValue(project.Metadata.Icon)
 		m.projectFormInputs[projectFieldColor].SetValue(project.Metadata.Color)
 		m.projectFormInputs[projectFieldHomepage].SetValue(project.Metadata.Homepage)
@@ -4210,6 +4210,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	} else {
 		m.mode = modeAddProject
 		m.status = "new project"
+		m.projectFormInputs[projectFieldOwner].SetValue(strings.TrimSpace(m.identityDisplayName))
 	}
 	m.syncProjectFormDescriptionDisplay()
 	return m.focusProjectFormField(0)
@@ -8265,6 +8266,9 @@ func (m Model) handleBoardGlobalNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.C
 	case key.Matches(msg, m.keys.newProject):
 		m.help.ShowAll = false
 		return m, m.startProjectForm(nil), true
+	case key.Matches(msg, m.keys.search):
+		m.help.ShowAll = false
+		return m, m.startSearchMode(), true
 	case key.Matches(msg, m.keys.projects):
 		m.help.ShowAll = false
 		m.mode = modeProjectPicker
@@ -14869,26 +14873,33 @@ func (m Model) renderOverviewPanel(
 	}
 	projectContentHeight := max(1, projectPanelHeight-4)
 	globalContentHeight := max(1, globalPanelHeight-4)
-	projectLines := []string{
+	projectHeaderLines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Project Notifications", contentWidth)),
 		"",
 	}
+	projectBodyLines := make([]string, 0, len(sections)*(noticesSectionViewWindow+4))
+	projectFocusLine := 0
+	projectFocusSet := false
 	for _, section := range sections {
-		if len(projectLines) > 2 {
-			projectLines = append(projectLines, "")
+		if len(projectBodyLines) > 0 {
+			projectBodyLines = append(projectBodyLines, "")
 		}
-		projectLines = append(
-			projectLines,
-			viewModel.renderNoticesSection(
-				section,
-				focused && m.noticesPanel == noticesPanelFocusProject,
-				accent,
-				contentWidth,
-				selectedStyle,
-				normalStyle,
-			)...,
+		sectionLines, sectionFocusLine := viewModel.renderNoticesSection(
+			section,
+			focused && m.noticesPanel == noticesPanelFocusProject,
+			accent,
+			contentWidth,
+			selectedStyle,
+			normalStyle,
 		)
+		if !projectFocusSet && sectionFocusLine >= 0 {
+			projectFocusLine = len(projectBodyLines) + sectionFocusLine
+			projectFocusSet = true
+		}
+		projectBodyLines = append(projectBodyLines, sectionLines...)
 	}
+	projectBodyHeight := max(0, projectContentHeight-len(projectHeaderLines))
+	projectLines := append(projectHeaderLines, scrollPanelBodyLines(projectBodyLines, projectFocusLine, projectBodyHeight)...)
 	projectBorderColor := dim
 	if focused && m.noticesPanel == noticesPanelFocusProject {
 		projectBorderColor = accent
@@ -15046,11 +15057,13 @@ func (m Model) renderNoticesSection(
 	accent color.Color,
 	contentWidth int,
 	selectedStyle, normalStyle lipgloss.Style,
-) []string {
+) ([]string, int) {
 	lines := make([]string, 0, len(section.Summary)+noticesSectionViewWindow+3)
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	focusLine := -1
 	if focused && section.ID == m.noticesSection {
 		lines = append(lines, headerStyle.Render("▸ "+section.Title))
+		focusLine = 0
 	} else {
 		lines = append(lines, headerStyle.Render(section.Title))
 	}
@@ -15058,6 +15071,9 @@ func (m Model) renderNoticesSection(
 	renderItems := func() {
 		if len(section.Items) == 0 {
 			lines = append(lines, normalStyle.Render("(empty)"))
+			if focusLine < 0 && focused && section.ID == m.noticesSection {
+				focusLine = len(lines) - 1
+			}
 			return
 		}
 		selectedIdx := clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)
@@ -15075,6 +15091,7 @@ func (m Model) renderNoticesSection(
 			if focused && section.ID == m.noticesSection && idx == selectedIdx {
 				prefix = "› "
 				style = selectedStyle
+				focusLine = len(lines)
 			}
 			lineWidth := max(1, contentWidth-utf8.RuneCountInString(prefix))
 			lines = append(lines, style.Render(prefix+truncate(item.Label, lineWidth)))
@@ -15088,7 +15105,22 @@ func (m Model) renderNoticesSection(
 		lines = append(lines, normalStyle.Render(truncate(summary, contentWidth)))
 	}
 	renderItems()
-	return lines
+	return lines, focusLine
+}
+
+// scrollPanelBodyLines keeps the focused line visible inside one fixed-height side-panel body.
+func scrollPanelBodyLines(lines []string, focusLine, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	if len(lines) <= height {
+		return strings.Split(fitLines(strings.Join(lines, "\n"), height), "\n")
+	}
+	if focusLine < 0 {
+		focusLine = 0
+	}
+	start, end := windowBounds(len(lines), focusLine, height)
+	return append([]string(nil), lines[start:end]...)
 }
 
 // renderInfoLine renders output for the current model state.

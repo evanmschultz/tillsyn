@@ -7283,11 +7283,13 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 	}{
 		{name: "project notices new task", panel: noticesPanelFocusProject, key: keyRune('n'), wantMode: modeAddTask, wantStatus: "new task"},
 		{name: "project notices new project", panel: noticesPanelFocusProject, key: keyRune('N'), wantMode: modeAddProject, wantStatus: "new project"},
+		{name: "project notices search", panel: noticesPanelFocusProject, key: keyRune('/'), wantMode: modeSearch, wantStatus: "search"},
 		{name: "project notices lowercase p", panel: noticesPanelFocusProject, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "project notices uppercase p", panel: noticesPanelFocusProject, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "project notices command palette", panel: noticesPanelFocusProject, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},
 		{name: "global notices new task", panel: noticesPanelFocusGlobal, key: keyRune('n'), wantMode: modeAddTask, wantStatus: "new task"},
 		{name: "global notices new project", panel: noticesPanelFocusGlobal, key: keyRune('N'), wantMode: modeAddProject, wantStatus: "new project"},
+		{name: "global notices search", panel: noticesPanelFocusGlobal, key: keyRune('/'), wantMode: modeSearch, wantStatus: "search"},
 		{name: "global notices lowercase p", panel: noticesPanelFocusGlobal, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "global notices uppercase p", panel: noticesPanelFocusGlobal, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "global notices command palette", panel: noticesPanelFocusGlobal, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},
@@ -7306,6 +7308,38 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 				t.Fatalf("status = %q, want %q", got, tc.wantStatus)
 			}
 		})
+	}
+}
+
+// TestRenderOverviewPanelScrollsProjectNoticesBody verifies focused lower notices sections stay visible on shorter boards.
+func TestRenderOverviewPanelScrollsProjectNoticesBody(t *testing.T) {
+	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusProject
+	m.noticesSection = noticesSectionRecentActivity
+	m.noticesActivity = 0
+	m.activityLog = []activityEntry{
+		{At: now, ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create task"},
+		{At: now.Add(time.Minute), ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create phase"},
+		{At: now.Add(2 * time.Minute), ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create branch"},
+	}
+
+	panel := stripANSI(m.renderOverviewPanel(project, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 44, 18, 0, 0, 0, nil, true))
+	for _, want := range []string{"Recent Activity", "user|Evan create branch"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("expected scrolled notices panel to contain %q, got\n%s", want, panel)
+		}
 	}
 }
 
@@ -13613,6 +13647,25 @@ func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected project edit system section to contain %q, got\n%s", want, rendered)
 		}
+	}
+}
+
+// TestStartProjectFormDefaultsOwnerToIdentityName verifies local MVP project ownership starts from bootstrap identity.
+func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
+	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
+	m.identityDisplayName = "Evan"
+
+	_ = m.startProjectForm(nil)
+	if got := m.projectFormInputs[projectFieldOwner].Value(); got != "Evan" {
+		t.Fatalf("new project owner default = %q, want %q", got, "Evan")
+	}
+
+	project.Metadata.Owner = ""
+	_ = m.startProjectForm(&project)
+	if got := m.projectFormInputs[projectFieldOwner].Value(); got != "Evan" {
+		t.Fatalf("edit project owner fallback = %q, want %q", got, "Evan")
 	}
 }
 

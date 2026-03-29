@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now renames the board slice to `Coordination`, adds the requested header-to-items spacing across board panels, removes the global subtitle noise, trims redundant top-of-screen coordination prose, restores board-global `n` / `N`, `p` / `P`, and `:` while notifications panels own focus, keeps coordination detail styling/actionability readable, and cleans the stale open handoff/lease artifacts out of the live project runtime state, with the local slice green again on `just test-pkg ./internal/tui`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the final board/global/detail UX.
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now renames the board slice to `Coordination`, adds the requested header-to-items spacing across board panels, removes the global subtitle noise, trims redundant top-of-screen coordination prose, restores board-global `n` / `N`, `p` / `P`, and `:` while notifications panels own focus, keeps coordination detail styling/actionability readable, cleans the stale open handoff/lease artifacts out of the live project runtime state, restores `/` search from notifications focus, makes the project notifications body scroll to lower sections on shorter boards, and aligns local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, with the local slice green again on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the final board/global/detail/project-owner UX.
 
 ## 1) Active Run Source Of Truth
 
@@ -3259,6 +3259,69 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
      - the user still needs one final live reopen on the rebuilt binary to confirm the cleaned board/global/detail UX against the final local commit, including `n` / `N` from both notifications panels, before the run advances to the next collaborative section.
 
 ### 2026-03-25: Pre-Collab CLI Quiet-Log And Positional Project Command Cleanup
+
+### 2026-03-29: C6 Notifications Search/Scroll And Local Project Owner Alignment
+
+Objective:
+- close the remaining `C6` live UX gaps without reopening broader roadmap work:
+  - restore `/` search while project/global notifications own focus,
+  - make the project notifications panel scroll its stacked sections on shorter boards instead of pinning `Coordination` at the top,
+  - and stop local-MVP project surfaces from showing `owner -` when the bootstrap identity already supplies the local user name.
+
+Fresh user-reported findings before code edits:
+1. `/` still did nothing while focus was inside either notifications panel, even though `n` / `N`, `p` / `P`, and `:` had already been restored there.
+2. On shorter boards the project notifications panel only moved selection inside individual sections; the overall panel body stayed pinned at the top, so lower sections like `Recent Activity` could not be brought into view.
+3. `./till project discover --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9` still printed `owner -`, which is wrong for the current local-only MVP where project owner should track the bootstrap identity/display name.
+
+Context and local inspection before edits:
+1. Context7 consult before edits:
+   - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for focused-subview key routing so board-global shortcuts can still fire while nested surfaces own input.
+   - `/charmbracelet/bubbles` viewport guidance for keeping focused content visible inside bounded scrollable regions.
+2. Local code inspection:
+   - `internal/tui/model.go` showed `handleBoardGlobalNormalKey(...)` had recovered `n` / `N`, `p` / `P`, and `:`, but not `/`.
+   - `internal/tui/model.go` showed the project notifications panel still rendered the full section stack and then hard-clipped it with `fitLines(...)`, which explained the pinned-top behavior.
+   - `internal/app/service.go`, `cmd/till/project_cli.go`, and `internal/adapters/storage/sqlite/repo.go` confirmed the storage layer already persists `project.Metadata.Owner`; the gap was creation/defaulting and fallback display, not a missing DB column/schema.
+3. Runtime-log inspection:
+   - `.tillsyn/log/` does not currently exist under the repo root in this runtime, so there were no workspace-local dev logs to inspect for this specific TUI/owner follow-up.
+
+Implementation outcome:
+1. Notifications focus/global keys:
+   - `/` now routes through the same board-global shortcut path as `n` / `N`, `p` / `P`, and `:`, so search opens normally from both notifications panels.
+2. Project notifications panel scrolling:
+   - the project notifications panel now keeps its title fixed but scrolls the stacked body lines around the focused section/item, so lower blocks like `Recent Activity` are reachable on smaller boards instead of being clipped behind the top `Coordination` section.
+3. Local-MVP project owner handling:
+   - `internal/app/service.go` now defaults empty project owner metadata from the resolved mutation actor name when the acting principal is the local user,
+   - the TUI project form pre-fills/falls back to the bootstrap display name for new projects and legacy empty-owner edits,
+   - and CLI project list/show/discover surfaces now fall back to the configured bootstrap display name for older local projects whose stored owner metadata is still empty.
+4. Readiness/discovery clarity:
+   - `project discover` now reports `active_project_leases` instead of the ambiguous `project_leases`, and it counts only currently active leases for readiness guidance.
+
+Files changed:
+1. `internal/tui/model.go`
+2. `internal/tui/model_test.go`
+3. `internal/app/service.go`
+4. `internal/app/service_test.go`
+5. `cmd/till/project_cli.go`
+6. `cmd/till/project_cli_test.go`
+7. `cmd/till/main.go`
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/tui` -> PASS
+2. `just test-pkg ./internal/app` -> PASS
+3. `just test-pkg ./cmd/till` -> PASS
+4. `just fmt` -> PASS
+5. `just test-golden-update` -> PASS (no fixture drift after the focused panel-scroll fix)
+6. `just check` -> PASS
+7. `just ci` -> PASS
+8. `just build` -> PASS
+9. `./till project discover --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9` -> PASS (`owner Evan`, `active_project_leases 0`, `open_project_handoffs 0`)
+
+Current status:
+1. Local code/tests are green for this `C6` fix scope.
+2. Next required step is one fresh user rerun on the rebuilt binary to confirm:
+   - `/` opens search from both notifications panels,
+   - the project notifications panel body scrolls to `Recent Activity` on smaller boards,
+   - and project CLI discovery/output now shows the bootstrap owner correctly for the local-MVP case.
 
 ### 2026-03-25: Pre-Collab Ctrl-C Echo Cleanup
 

@@ -1942,7 +1942,7 @@ func executeCommandFlow(
 		return nil
 	case "project.list":
 		logger.Info("command flow start", "command", "project.list")
-		if err := runProjectList(ctx, svc, projectListOpts, stdout); err != nil {
+		if err := runProjectList(ctx, svc, cfg, projectListOpts, stdout); err != nil {
 			logger.Error("command flow failed", "command", "project.list", "err", err)
 			return fmt.Errorf("run project list command: %w", err)
 		}
@@ -1958,7 +1958,7 @@ func executeCommandFlow(
 		return nil
 	case "project.show":
 		logger.Info("command flow start", "command", "project.show")
-		if err := runProjectShow(ctx, svc, projectShowOpts, stdout); err != nil {
+		if err := runProjectShow(ctx, svc, cfg, projectShowOpts, stdout); err != nil {
 			logger.Error("command flow failed", "command", "project.show", "err", err)
 			return fmt.Errorf("run project show command: %w", err)
 		}
@@ -1966,7 +1966,7 @@ func executeCommandFlow(
 		return nil
 	case "project.discover":
 		logger.Info("command flow start", "command", "project.discover")
-		if err := runProjectDiscover(ctx, svc, projectDiscoverOpts, stdout); err != nil {
+		if err := runProjectDiscover(ctx, svc, cfg, projectDiscoverOpts, stdout); err != nil {
 			logger.Error("command flow failed", "command", "project.discover", "err", err)
 			return fmt.Errorf("run project discover command: %w", err)
 		}

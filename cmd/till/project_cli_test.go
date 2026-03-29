@@ -119,6 +119,8 @@ func TestWriteProjectReadiness(t *testing.T) {
 		"2",
 		"active_orchestrator_sessions",
 		"1",
+		"active_project_leases",
+		"0",
 		"open_project_handoffs",
 		"1",
 		"NEXT STEP",
@@ -128,6 +130,21 @@ func TestWriteProjectReadiness(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project readiness output, got %q", want, got)
 		}
+	}
+}
+
+// TestProjectWithOwnerFallbackUsesDisplayName verifies local config identity fills empty owner labels.
+func TestProjectWithOwnerFallbackUsesDisplayName(t *testing.T) {
+	project := domain.Project{Metadata: domain.ProjectMetadata{}}
+	project = projectWithOwnerFallback(project, "Evan")
+	if got := project.Metadata.Owner; got != "Evan" {
+		t.Fatalf("project owner fallback = %q, want %q", got, "Evan")
+	}
+
+	project.Metadata.Owner = "explicit-owner"
+	project = projectWithOwnerFallback(project, "Evan")
+	if got := project.Metadata.Owner; got != "explicit-owner" {
+		t.Fatalf("project owner fallback overwrote explicit owner: %q", got)
 	}
 }
 
@@ -376,6 +393,35 @@ func TestCountOpenHandoffs(t *testing.T) {
 	}
 	if got := countOpenHandoffs(handoffs); got != 3 {
 		t.Fatalf("countOpenHandoffs() = %d, want 3", got)
+	}
+}
+
+// TestCountActiveCapabilityLeases excludes expired and revoked leases from readiness guidance.
+func TestCountActiveCapabilityLeases(t *testing.T) {
+	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
+	active, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-active",
+		LeaseToken: "token-active",
+		AgentName:  "Builder",
+		ProjectID:  "p1",
+		ScopeType:  domain.CapabilityScopeProject,
+		ScopeID:    "p1",
+		Role:       domain.CapabilityRoleBuilder,
+		ExpiresAt:  now.Add(time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease(active) error = %v", err)
+	}
+	expired := active
+	expired.InstanceID = "lease-expired"
+	expired.ExpiresAt = now.Add(-time.Minute)
+	revoked := active
+	revoked.InstanceID = "lease-revoked"
+	revokedAt := now.Add(-time.Minute)
+	revoked.RevokedAt = &revokedAt
+
+	if got := countActiveCapabilityLeases([]domain.CapabilityLease{active, expired, revoked}, now); got != 1 {
+		t.Fatalf("countActiveCapabilityLeases() = %d, want 1", got)
 	}
 }
 

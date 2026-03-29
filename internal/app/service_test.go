@@ -2036,6 +2036,34 @@ func TestCreateProjectWithMetadataAndAutoColumns(t *testing.T) {
 	}
 }
 
+// TestCreateProjectWithMetadataDefaultsOwnerFromResolvedUser verifies empty owner metadata falls back to the acting local user.
+func TestCreateProjectWithMetadataDefaultsOwnerFromResolvedUser(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
+	svc := NewService(repo, func() string { return "p1" }, func() time.Time { return now }, ServiceConfig{
+		AutoCreateProjectColumns: false,
+	})
+	ctx := WithMutationActor(context.Background(), MutationActor{
+		ActorID:   "user-1",
+		ActorName: "Evan",
+		ActorType: domain.ActorTypeUser,
+	})
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:        "Inbox",
+		Description: "Owner fallback",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	if got := project.Metadata.Owner; got != "Evan" {
+		t.Fatalf("project owner = %q, want %q", got, "Evan")
+	}
+	if got := repo.projects[project.ID].Metadata.Owner; got != "Evan" {
+		t.Fatalf("persisted project owner = %q, want %q", got, "Evan")
+	}
+}
+
 // TestUpdateProject verifies behavior for the covered scenario.
 func TestUpdateProject(t *testing.T) {
 	repo := newFakeRepo()

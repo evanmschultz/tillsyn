@@ -106,13 +106,16 @@ func locateProjectForCLI(ctx context.Context, svc *app.Service, projectID string
 }
 
 // runProjectList lists projects and writes a human-readable table.
-func runProjectList(ctx context.Context, svc *app.Service, opts projectListCommandOptions, stdout io.Writer) error {
+func runProjectList(ctx context.Context, svc *app.Service, cfg config.Config, opts projectListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
 	}
 	projects, err := svc.ListProjects(ctx, opts.includeArchived)
 	if err != nil {
 		return fmt.Errorf("list projects: %w", err)
+	}
+	for idx := range projects {
+		projects[idx] = projectWithOwnerFallback(projects[idx], cfg.Identity.DisplayName)
 	}
 	slices.SortFunc(projects, compareProjectsForCLI)
 	emptyGuidance := `Next step: till project create --name "Example Project"`
@@ -151,7 +154,7 @@ func runProjectCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 }
 
 // runProjectShow shows one project and writes a human-readable detail view.
-func runProjectShow(ctx context.Context, svc *app.Service, opts projectShowCommandOptions, stdout io.Writer) error {
+func runProjectShow(ctx context.Context, svc *app.Service, cfg config.Config, opts projectShowCommandOptions, stdout io.Writer) error {
 	if err := requireProjectID("project show", opts.projectID); err != nil {
 		return err
 	}
@@ -159,11 +162,12 @@ func runProjectShow(ctx context.Context, svc *app.Service, opts projectShowComma
 	if err != nil {
 		return err
 	}
+	project = projectWithOwnerFallback(project, cfg.Identity.DisplayName)
 	return writeProjectDetail(stdout, project, "Project")
 }
 
 // runProjectDiscover shows one project collaboration-readiness summary and writes a human-readable detail view.
-func runProjectDiscover(ctx context.Context, svc *app.Service, opts projectReadinessCommandOptions, stdout io.Writer) error {
+func runProjectDiscover(ctx context.Context, svc *app.Service, cfg config.Config, opts projectReadinessCommandOptions, stdout io.Writer) error {
 	if err := requireProjectID("project discover", opts.projectID); err != nil {
 		return err
 	}
@@ -171,6 +175,7 @@ func runProjectDiscover(ctx context.Context, svc *app.Service, opts projectReadi
 	if err != nil {
 		return err
 	}
+	project = projectWithOwnerFallback(project, cfg.Identity.DisplayName)
 	pendingRequests, err := svc.ListAuthRequests(ctx, domain.AuthRequestListFilter{
 		ProjectID: project.ID,
 		State:     domain.AuthRequestStatePending,
@@ -312,6 +317,7 @@ func writeProjectDetail(stdout io.Writer, project domain.Project, title string) 
 func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequests []domain.AuthRequest, activeSessions []app.AuthSession, leases []domain.CapabilityLease, handoffs []domain.Handoff) error {
 	activeAgentSessions := countActiveAgentSessions(activeSessions)
 	activeOrchestratorSessions := countActiveAgentRoleSessions(activeSessions, "orchestrator")
+	activeLeases := countActiveCapabilityLeases(leases, time.Now().UTC())
 	openHandoffs := countOpenHandoffs(handoffs)
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "PROJECT COLLABORATION READINESS"); err != nil {
@@ -341,7 +347,7 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 		{"active_auth_sessions", fmt.Sprintf("%d", len(activeSessions))},
 		{"active_agent_sessions", fmt.Sprintf("%d", activeAgentSessions)},
 		{"active_orchestrator_sessions", fmt.Sprintf("%d", activeOrchestratorSessions)},
-		{"project_leases", fmt.Sprintf("%d", len(leases))},
+		{"active_project_leases", fmt.Sprintf("%d", activeLeases)},
 		{"open_project_handoffs", fmt.Sprintf("%d", openHandoffs)},
 	}
 	for _, row := range inventoryRows {
@@ -352,7 +358,7 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 	if _, err := fmt.Fprintln(tw); err != nil {
 		return fmt.Errorf("write project readiness spacer: %w", err)
 	}
-	command, reason := projectReadinessNextStep(project.ID, pendingRequests, activeOrchestratorSessions, len(leases), openHandoffs)
+	command, reason := projectReadinessNextStep(project.ID, pendingRequests, activeOrchestratorSessions, activeLeases, openHandoffs)
 	if _, err := fmt.Fprintln(tw, "NEXT STEP"); err != nil {
 		return fmt.Errorf("write project readiness next-step header: %w", err)
 	}
@@ -415,6 +421,17 @@ func countActiveAgentRoleSessions(sessions []app.AuthSession, role string) int {
 	return count
 }
 
+// countActiveCapabilityLeases returns the number of currently active project leases.
+func countActiveCapabilityLeases(leases []domain.CapabilityLease, now time.Time) int {
+	count := 0
+	for _, lease := range leases {
+		if lease.IsActive(now) {
+			count++
+		}
+	}
+	return count
+}
+
 // countOpenHandoffs returns the number of non-terminal handoffs visible for project coordination.
 func countOpenHandoffs(handoffs []domain.Handoff) int {
 	count := 0
@@ -425,6 +442,15 @@ func countOpenHandoffs(handoffs []domain.Handoff) int {
 		count++
 	}
 	return count
+}
+
+// projectWithOwnerFallback fills the local-MVP owner label from bootstrap identity when metadata is empty.
+func projectWithOwnerFallback(project domain.Project, displayName string) domain.Project {
+	if strings.TrimSpace(project.Metadata.Owner) != "" {
+		return project
+	}
+	project.Metadata.Owner = strings.TrimSpace(displayName)
+	return project
 }
 
 // compactText reduces multiline output to one line for table display.

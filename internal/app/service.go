@@ -229,7 +229,7 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
 		return domain.Project{}, err
 	}
-	ctx, _, _ = withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
+	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	now := s.clock()
 	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
 	if err != nil {
@@ -249,6 +249,9 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	mergedMetadata, err := domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
 	if err != nil {
 		return domain.Project{}, err
+	}
+	if hasResolvedActor && resolvedActor.ActorType == domain.ActorTypeUser && strings.TrimSpace(mergedMetadata.Owner) == "" {
+		mergedMetadata.Owner = strings.TrimSpace(resolvedActor.ActorName)
 	}
 	if err := project.UpdateDetails(project.Name, project.Description, mergedMetadata, now); err != nil {
 		return domain.Project{}, err
