@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now replaces the compact project coordination summary with four vertical project-scoped count rows, filters current-project coordination out of Global Notifications, renders project-first global coordination blocks, and upgrades `Coordination` item details into typed action modals with state-based styling plus lease revoke and handoff status actions, with the local slice green again on `just test-pkg ./internal/tui`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the new board/global/detail UX.
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now renames the board slice to `Coordination`, adds the requested header-to-items spacing across board panels, removes the global subtitle noise, trims redundant top-of-screen coordination prose, restores `p` / `P` and `:` while notifications panels own focus, keeps coordination detail styling/actionability readable, and cleans the stale open handoff/lease artifacts out of the live project runtime state, with the local slice green again on `just test-pkg ./internal/tui`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the final board/global/detail UX.
 
 ## 1) Active Run Source Of Truth
 
@@ -3216,13 +3216,18 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
      - `just test-pkg ./internal/tui` -> FAIL on stale goldens and compact-panel rendering expectations; used `just test-golden-update` plus one compact-section follow-up to preserve `Recent Activity` visibility.
      - `just test-golden-update` -> PASS
      - `just test-pkg ./internal/tui` -> PASS
-     - `just test-pkg ./internal/tui` -> FAIL once later with a broad transient TUI package miss after the final helper cleanup; immediate rerun passed unchanged.
-     - `just check` -> PASS
-     - `just ci` -> FAIL once in `internal/tui` at `TestModelTaskInfoAndEditHideLabelInheritanceBlocks` during the coverage run with no code diff between attempts; treated as a transient gate miss and immediately re-run.
-     - `just ci` -> PASS on immediate rerun
      - `just fmt` -> PASS
      - `just check` -> PASS on the final post-cleanup rerun
      - `just ci` -> PASS on one additional confirmation rerun
+     - `./till handoff list --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9` -> PASS (read-only live inventory check; confirmed the remaining open rows were older collaborative proof artifacts, not current work)
+     - `./till lease list --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9 --include-revoked` -> PASS (read-only live inventory check; confirmed one stale active builder lease remained outside the fresh `C5` revoke path)
+     - `./till handoff update --handoff-id 9b96d055-2b33-407d-9de1-412bdeab2741 --summary "Builder ready for QA review on the C5 live handoff probe" --status superseded --resolution-note "Superseded by the refreshed C5 rerun handoff 841492e1-5ecc-485d-86dd-13c85cc804d3 after the approved-path auth-context fix."` -> PASS
+     - `./till handoff update --handoff-id e892f257-812a-4852-baf3-3494db509db2 --summary "builder leased in-scope handoff probe" --status superseded --resolution-note "Superseded after the later child-self-claim and C5 coordination reruns proved the intended builder path live."` -> PASS
+     - `./till handoff update --handoff-id 320072e5-251a-4443-97f1-eb9f19f8a3a3 --summary "qa leased in-scope handoff probe" --status superseded --resolution-note "Superseded after the later child-self-claim and C5 coordination reruns proved the intended QA path live."` -> PASS
+     - `./till handoff update --handoff-id fec163b2-c3dc-4b5e-ba9b-11d54b4c85e9 --summary "C3 in-scope mutation proof: create a project-scoped handoff while proving authenticated MCP mutation succeeds within the approved project scope." --status superseded --resolution-note "Superseded by later C4/C5 collaborative reruns; retained as historical proof but no longer an open coordination item."` -> PASS
+     - `./till lease revoke --agent-instance-id codex-c5-builder-lease-20260328-a --reason "stale C5 collaborative cleanup after TUI rerun"` -> PASS
+     - `./till handoff list --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9` -> PASS (post-cleanup verification: only one resolved handoff remains active history; all former waiting/ready rows now show `superseded`)
+     - `./till lease list --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9 --include-revoked` -> PASS (post-cleanup verification: no active leases remain for the project; both C5 builder leases now show `revoked`)
    - implementation outcome:
      - board task columns now keep a small blank line between the column header and the first task row,
      - `Project Notifications` now starts with a small gap under the panel title and renames the coordination section from `Live Coordination` to `Coordination`,
@@ -3234,14 +3239,20 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
      - coordination detail modal chrome now uses a fixed active-state tone instead of inheriting the project accent color, which avoids error-like red chrome for healthy active items,
      - the old two-value coordination surface scope helper was reduced back to one live request/session scope label after the body stopped rendering the `project-local` explanation line,
      - targeted TUI tests now cover the notifications-focus hotkey routing directly,
-     - and the TUI goldens were refreshed and manually reviewed to confirm the intended structural layout changes.
+     - the TUI goldens were refreshed and manually reviewed to confirm the intended structural layout changes,
+     - and the stale collaborative runtime artifacts were cleaned so the live project no longer shows old `waiting` / `ready` coordination rows or a stray active builder lease from the earlier C5 path.
    - files changed for this follow-up:
      - [`internal/tui/model.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model.go)
      - [`internal/tui/model_test.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model_test.go)
      - [`internal/tui/testdata/TestModelGoldenBoardOutput.golden`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/testdata/TestModelGoldenBoardOutput.golden)
      - [`internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden)
+   - QA review notes after the final diff:
+     - one focused QA pass found no blocking issues and confirmed the refreshed goldens match the intended semantics.
+     - two non-blocking follow-ups remain for later polish:
+       - `internal/tui/model.go`: placeholder-copy coupling in `noticesSectionNeedsHeaderGap` means future copy changes could silently affect panel compaction.
+       - `internal/tui/model.go`: `active` and neutral/waiting detail states both currently use the same blue tone, which is acceptable for now but could be differentiated further in a later polish pass.
    - open operational follow-up:
-     - the project still contains older waiting/ready coordination records from prior collaborative passes; those were not auto-cleaned by `C5` because that section only resolved and revoked the fresh artifacts it created for that rerun, not the older historical collaboration records.
+     - the user still needs one final live reopen on the rebuilt binary to confirm the cleaned board/global/detail UX against the final local commit before the run advances to the next collaborative section.
 
 ### 2026-03-25: Pre-Collab CLI Quiet-Log And Positional Project Command Cleanup
 
