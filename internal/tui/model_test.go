@@ -8103,9 +8103,14 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	}
 
 	rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
-	for _, want := range []string{"Coordination", "project scope (Inbox)", "project-local (Inbox)", "pending requests", "resolved requests", "active sessions", "capability leases", "handoffs", "[pending] Review Agent • builder", "[active] Review Agent • builder", "[active] Orchestrator", "[waiting] builder -> qa", "requested by: lane-user (user)", "reason: inventory review", "resume:", "till-mcp-stdio", "timeout: 30m"} {
+	for _, want := range []string{"Coordination", "live coordination", "project scope (Inbox)", "project-local (Inbox)", "action required: 0", "pending requests", "active sessions", "active leases", "open handoffs", "[pending] Review Agent • builder", "[active] Review Agent • builder", "[active] Orchestrator", "[waiting] builder -> qa", "requested by: lane-user (user)", "reason: inventory review", "resume:", "timeout: 30m"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q in coordination surface:\n%s", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"resolved requests", "[approved] Other Agent"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("View() unexpectedly included %q in live coordination surface:\n%s", unwanted, rendered)
 		}
 	}
 
@@ -8267,11 +8272,160 @@ func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 	if got := m.authInventoryResolvedRequests[0].ID; got != approved.ID {
 		t.Fatalf("authInventoryResolvedRequests[0].ID = %q, want %q", got, approved.ID)
 	}
-	m.authInventoryMoveSelection(1)
 	rendered := stripANSI(fmt.Sprint(m.View()))
+	if strings.Contains(rendered, "selected resolved request") {
+		t.Fatalf("expected live coordination view to hide resolved request details by default:\n%s", rendered)
+	}
+	m = applyMsg(t, m, keyRune('h'))
+	if m.authInventoryView != authInventoryViewHistory {
+		t.Fatalf("expected coordination view to toggle to history, got %v", m.authInventoryView)
+	}
+	rendered = stripANSI(fmt.Sprint(m.View()))
 	for _, want := range []string{"selected resolved request", "approved-agent", "note:", "approved"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("View() missing %q for selected resolved request:\n%s", want, rendered)
+		}
+	}
+}
+
+// TestAuthInventoryMouseWheelReachesLowerSections verifies the coordination surface
+// can scroll into lower lease and handoff sections on shorter terminals.
+func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
+	now := time.Date(2026, 3, 29, 2, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "QA Check",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	pending, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-pending-overflow",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "pending-agent",
+		PrincipalType:       "agent",
+		PrincipalRole:       string(domain.AuthRequestRoleBuilder),
+		PrincipalName:       "Pending Agent",
+		ClientID:            "pending-client",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Pending Client",
+		RequestedSessionTTL: 8 * time.Hour,
+		Reason:              "overflow coverage",
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(pending) error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[pending.ID] = pending
+	for idx := 0; idx < 7; idx++ {
+		id := fmt.Sprintf("req-pending-%d", idx)
+		svc.authRequests[id] = domain.AuthRequest{
+			ID:                  id,
+			ProjectID:           project.ID,
+			Path:                "project/" + project.ID,
+			ScopeType:           domain.ScopeLevelProject,
+			ScopeID:             project.ID,
+			PrincipalID:         fmt.Sprintf("pending-agent-%d", idx),
+			PrincipalType:       "agent",
+			PrincipalRole:       string(domain.AuthRequestRoleBuilder),
+			PrincipalName:       fmt.Sprintf("Pending Agent %d", idx),
+			ClientID:            fmt.Sprintf("pending-client-%d", idx),
+			ClientType:          "mcp-stdio",
+			ClientName:          fmt.Sprintf("Pending Client %d", idx),
+			State:               domain.AuthRequestStatePending,
+			RequestedSessionTTL: 8 * time.Hour,
+			RequestedByActor:    "lane-user",
+			RequestedByType:     domain.ActorTypeUser,
+			CreatedAt:           now.Add(time.Duration(idx+1) * time.Minute),
+			ExpiresAt:           now.Add(8*time.Hour + time.Duration(idx)*time.Minute),
+		}
+	}
+	svc.authSessions = append(svc.authSessions, app.AuthSession{
+		SessionID:     "session-project",
+		ProjectID:     project.ID,
+		ApprovedPath:  "project/" + project.ID,
+		PrincipalID:   "review-agent",
+		PrincipalRole: string(domain.AuthRequestRoleBuilder),
+		PrincipalType: "agent",
+		PrincipalName: "Review Agent",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+		ExpiresAt:     now.Add(2 * time.Hour),
+	})
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-project",
+		LeaseToken: "token-project",
+		AgentName:  "Orchestrator",
+		ProjectID:  project.ID,
+		ScopeType:  domain.CapabilityScopeProject,
+		Role:       domain.CapabilityRoleOrchestrator,
+		ExpiresAt:  now.Add(24 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+	svc.capabilityLeases = append(svc.capabilityLeases, lease)
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:              "handoff-project",
+		ProjectID:       project.ID,
+		ScopeType:       domain.ScopeLevelProject,
+		SourceRole:      "builder",
+		TargetScopeType: domain.ScopeLevelTask,
+		TargetScopeID:   task.ID,
+		TargetRole:      "qa",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "builder to qa handoff",
+		NextAction:      "qa verifies the run",
+		CreatedByActor:  "lane-user",
+		CreatedByType:   domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+	svc.handoffs = append(svc.handoffs, handoff)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 120, Height: 18})
+	m = applyCmd(t, m, m.startAuthInventory(false))
+
+	totalItems := len(m.authInventoryItems())
+	if totalItems < 2 {
+		t.Fatalf("expected coordination inventory to include lease and handoff rows, got %d items", totalItems)
+	}
+
+	for i := 0; i < totalItems-2; i++ {
+		m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+	if m.authInventoryIndex == 0 {
+		t.Fatal("expected mouse wheel to move the coordination selection")
+	}
+	if selected, ok := m.selectedAuthInventoryItem(); !ok || selected.Lease == nil {
+		t.Fatalf("expected coordination selection to stop on the lease row, got %+v", selected)
+	}
+
+	rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
+	for _, want := range []string{"active leases", "[active] Orchestrator"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected coordination viewport to reveal %q on the lease row:\n%s", want, rendered)
+		}
+	}
+
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if selected, ok := m.selectedAuthInventoryItem(); !ok || selected.Handoff == nil {
+		t.Fatalf("expected coordination selection to stop on the handoff row, got %+v", selected)
+	}
+
+	rendered = strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
+	for _, want := range []string{"open handoffs", "[waiting] builder -> qa"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected coordination viewport to reveal %q on the handoff row:\n%s", want, rendered)
 		}
 	}
 }
@@ -11407,11 +11561,12 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 			DependsOn:     []string{"missing"},
 		},
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService(
+	svc := newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, progress, done},
 		[]domain.Task{blocked},
-	)))
+	)
+	m := loadReadyModel(t, NewModel(svc))
 	// Notices panel rendering now starts at the clean-fit threshold; widen beyond default test viewport.
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 128, Height: 40})
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
@@ -11420,6 +11575,9 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Global Notifications") {
 		t.Fatalf("expected global notifications panel title, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Live Coordination") {
+		t.Fatalf("expected live coordination summary in notices panel, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Action Required") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
@@ -11435,6 +11593,18 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "attention items") {
 		t.Fatalf("expected attention warning in notices panel, got\n%s", rendered)
+	}
+	if got := domain.NormalizeAuthRequestState(svc.lastAuthRequestFilter.State); got != domain.AuthRequestStatePending {
+		t.Fatalf("expected notices coordination summary to load pending requests, got state filter %q", got)
+	}
+	if got := strings.TrimSpace(strings.ToLower(svc.lastAuthSessionFilter.State)); got != "active" {
+		t.Fatalf("expected notices coordination summary to load active sessions, got state filter %q", got)
+	}
+	if got := strings.TrimSpace(svc.lastCapabilityLeases.ProjectID); got != p.ID {
+		t.Fatalf("expected notices coordination summary to load project leases for %q, got %q", p.ID, got)
+	}
+	if got := strings.TrimSpace(svc.lastHandoffs.Level.ProjectID); got != p.ID {
+		t.Fatalf("expected notices coordination summary to load project handoffs for %q, got %q", p.ID, got)
 	}
 }
 
@@ -11459,6 +11629,9 @@ func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) 
 	}
 	if !strings.Contains(panel, "Global Notifications") {
 		t.Fatalf("expected global notifications panel title, got\n%s", panel)
+	}
+	if !strings.Contains(panel, "Live Coordination") {
+		t.Fatalf("expected live coordination summary in project notices panel, got\n%s", panel)
 	}
 	if strings.Contains(panel, "Notices") {
 		t.Fatalf("expected legacy single-panel notices title to be absent, got\n%s", panel)

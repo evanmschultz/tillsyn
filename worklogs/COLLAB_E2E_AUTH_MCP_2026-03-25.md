@@ -2,7 +2,7 @@
 
 Created: 2026-03-25
 Updated: 2026-03-28
-Status: Active. `C2` and `C3` are proven live, the delegated child-self-claim/requester-cleanup remediation slice is green locally, and the next live step is to rerun `C4` against the updated child-claim contract before continuing to later recovery/coordination sections.
+Status: Active. `C2` and `C3` are proven live, the delegated child-self-claim/requester-cleanup remediation slice is green locally, the refreshed `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the live MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug and then a live/history readability gap, both follow-ups are now fixed locally with green `just test-pkg ./internal/tui`, `just test-golden-update`, `just check`, and `just ci`, and one fresh live TUI reopen is still pending to confirm the new notices-panel summary plus live/history coordination split on the fresh binary.
 
 ## Purpose
 
@@ -361,6 +361,19 @@ Evidence:
     - builder cannot adopt QA claim,
     - QA cannot adopt builder claim,
     - orchestrator/requester cannot adopt either child continuation any longer.
+  - MODEL NOTE FOR THIS RETEST:
+    - this proves the current interim delegated-auth hardening only,
+    - orchestrator/requester still creates the delegated child auth envelope,
+    - approved child principal/client owns the continuation claim,
+    - requester/orchestrator keeps separate cancel/revoke cleanup authority,
+    - the longer-term target is stronger still: direct child wakeup on its own live channel plus child-only session-secret delivery on the normal path.
+  - CURRENT LIVE BLOCKER:
+    - the corrected child-client retest pair was created and approved,
+    - but the live MCP claim path still behaved like the older requester-bound contract:
+      - child builder claimant failed with `auth request claim mismatch`,
+      - orchestrator/requester claim against that same corrected request still succeeded,
+    - that does not match the current repository code or local green tests,
+    - so this `C4` rerun is blocked on restarting the live MCP side on the newest build before continuing.
   - Local remediation validation:
     - `just test-pkg ./internal/app` PASS
     - `just test-pkg ./internal/adapters/auth/autentauth` PASS
@@ -368,6 +381,25 @@ Evidence:
     - `just test-pkg ./internal/adapters/server/mcpapi` PASS
     - `just check` PASS
     - `just ci` PASS
+  - FRESH LIVE RERUN RESULT ON THE RESTARTED MCP PATH:
+    - fresh builder request id: `fad675d9-e2e4-4e14-86f3-9f03c4bd0a33`
+    - fresh QA request id: `30f19c52-79bb-4a2f-9fbd-63c2e34f2127`
+    - pre-approval child `till.claim_auth_request(wait_timeout=1s)` returned `waiting = true` for both requests while pending, confirming the live MCP path was now on the refreshed child-owned continuation code.
+    - PASS: builder child self-claimed the builder request and received builder session id `e77b8584-367d-4cfc-8db2-259a51dba135`.
+    - PASS: QA child self-claimed the QA request and received QA session id `707fa65e-207e-4ad5-b2ed-7155b1d20de7`.
+    - PASS: builder wrong `resume_token` failed closed with `invalid auth request continuation`.
+    - PASS: builder principal/client trying to claim the QA request failed closed with `auth request claim mismatch`.
+    - PASS: QA principal/client trying to claim the builder request failed closed with `auth request claim mismatch`.
+    - PASS: orchestrator/requester trying to claim the builder request failed closed with `auth request claim mismatch`.
+    - TOOLING BLOCKER ONLY: the mirrored orchestrator/requester -> QA claim probe was canceled by the external tool safety layer before it reached `tillsyn`, so this session has no product-side result to record for that one redundant symmetry check.
+    - FINDING: the first `create-child` role probe failed closed as `mutation lease is invalid` because the issued child sessions resolved to the existing stored principal display names `Codex Builder Agent` / `Codex QA Agent`, not the fresh request labels `Codex C4 Builder Agent` / `Codex C4 QA Agent`.
+    - PASS: after reissuing project-scoped capability leases with the authenticated session names, the role-distinguishing `create-child` probe now shows the live capability policy does distinguish builder vs QA:
+      - builder `till.create_task` with `kind=subtask`, `scope=subtask`, parent `380d8f50-5974-4be8-96fc-90eed6c498e9` -> PASS, created task id `46e16863-b219-4e48-818d-84e92b0e97aa`
+      - QA same in-scope `till.create_task` path -> FAIL CLOSED with `invalid capability action`
+    - INTERPRETATION:
+      - refreshed live `C4` now proves the interim child-self-claim hardening on fresh requests,
+      - builder-vs-QA policy distinction already exists on the real `create-child` seam,
+      - the session-name versus request-label lease identity nuance is operational follow-up, not a blocker to auth or role-policy correctness.
 
 ## Section C5: Lease, Handoff, And Recovery Visibility
 
@@ -399,9 +431,137 @@ Expected:
 4. Recovery/readiness surfaces make active or hanging work visible enough for an orchestrator or human to recover safely.
 
 Evidence:
-- lease id:
-- handoff id:
+- lease id: `codex-c5-builder-lease-20260328-a`
+- handoff id: `9b96d055-2b33-407d-9de1-412bdeab2741`
 - pass/fail notes:
+  - PASS: issued a live builder lease over MCP using builder session id `e77b8584-367d-4cfc-8db2-259a51dba135`.
+    - lease token: `7f4531e5-ce9c-40f5-9926-adb048486dd2`
+    - lease `agent_name`: `Codex Builder Agent`
+  - PASS: CLI `lease list`, `lease heartbeat`, and `lease renew --ttl 36h` all worked against that lease.
+  - PASS: MCP `till.create_handoff` succeeded with the same session + lease tuple and created handoff id `9b96d055-2b33-407d-9de1-412bdeab2741`.
+  - PASS: CLI `handoff list` and `handoff get` both showed the created handoff coherently.
+  - FAIL: MCP `till.update_handoff` using the same approved builder session and same lease tuple failed closed with `auth_denied: auth denied: authorization denied`.
+  - STOP ON FAIL: did not continue `C5` steps 7-11 after this live blocker.
+  - Diagnosis from code inspection:
+    - `till.create_handoff` authorizes with project-scoped context (`namespace = project:<project-id>`, plus `project_id` in auth context),
+    - `till.update_handoff` currently authorizes with `namespace = tillsyn` and only `handoff_id` in auth context,
+    - approved-path auth derives the allowed path from `project_id` or `project:<project-id>`,
+    - so the update is denied before lease validation because the MCP handler does not pass enough project-scoped context.
+  - Local validation around the failure remains green:
+    - `just test-pkg ./internal/adapters/server/common` PASS
+    - `just test-pkg ./internal/adapters/server/mcpapi` PASS
+    - `just test-pkg ./internal/adapters/auth/autentauth` PASS
+  - Focused local remediation result on 2026-03-28:
+    - widened the fix from a handoff-only patch to one shared mutation-auth normalization seam in `AppServiceAdapter.AuthorizeMutation`,
+    - kept hierarchy/path derivation in shared helpers instead of adding a handoff-only transport shim,
+    - added app/common auth helpers so by-id mutations resolve project/branch/phase context before approved-path auth runs,
+    - aligned explicit-scope MCP auth args for `create_task`, `create_comment`, `create_handoff`, and `issue_capability_lease`.
+  - New local regression coverage:
+    - shared adapter approved-path auth-context coverage in `internal/adapters/server/common/app_service_adapter_auth_context_test.go`, widened to cover additional sibling task and lease lifecycle actions through the same resolver
+    - real MCP `update_handoff` approved-path regression in `internal/adapters/server/mcpapi/handler_integration_test.go`, including out-of-scope fail-closed transport coverage
+    - real HTTP by-id approved-path regression in `internal/adapters/server/httpapi/handler_integration_test.go`, including out-of-scope fail-closed transport coverage
+  - Focused local validation after remediation:
+    - `just test-pkg ./internal/app` PASS
+    - `just test-pkg ./internal/adapters/auth/autentauth` PASS
+    - `just test-pkg ./internal/adapters/server/common` PASS
+    - `just test-pkg ./internal/adapters/server/mcpapi` PASS
+    - `just test-pkg ./internal/adapters/server/httpapi` PASS
+    - `just test-pkg ./cmd/till` PASS
+    - `just check` PASS
+    - `just ci` PASS
+  - QA/process note:
+    - QA was executed as separate local review passes over the shared auth seam, transport coverage, remaining server-surface mutation-auth seams, and cross-surface noun/semantics consistency.
+    - local review found no remaining project-rooted mutation seam on the current MCP/HTTP server surface after the shared resolver plus explicit-scope arg alignments.
+    - intentionally non-project-rooted server auth calls that remain are projectless/global admin/operator flows such as `create_project` and kind-definition policy mutation.
+    - exploratory parallel QA sweeps were also launched where available, but gate closeout for this local fix wave relies on the recorded repository evidence and live rerun remains pending.
+  - FRESH LIVE CONTINUATION RESULT ON 2026-03-29:
+    - PASS: created one fresh builder auth request over MCP for the Evan project:
+      - request id: `ec63bfa1-7d03-4451-9fcd-694d33c65da5`
+      - pre-approval child `till.claim_auth_request(wait_timeout=1s)` returned `waiting = true`
+    - PASS: after TUI approval, the builder principal self-claimed the fresh request and received session id `78072889-d526-43a9-b4ab-8e1133042d42`.
+    - PASS: `./till auth session validate --session-id 78072889-d526-43a9-b4ab-8e1133042d42 --session-secret <redacted>` confirmed the live builder identity:
+      - principal name: `Codex Builder Agent`
+      - principal id: `codex-c5-builder-20260328-b`
+      - client id: `codex-c5-builder-client-20260328-b`
+    - PASS: issued fresh builder lease `codex-c5-builder-lease-20260328-b` over MCP with lease token `9ed62815-a385-4ccb-9302-95ab68599790`.
+    - PASS: CLI lifecycle surfaces worked against that lease:
+      - `./till lease list --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9 --include-revoked`
+      - `./till lease heartbeat --agent-instance-id codex-c5-builder-lease-20260328-b --lease-token 9ed62815-a385-4ccb-9302-95ab68599790`
+      - `./till lease renew --agent-instance-id codex-c5-builder-lease-20260328-b --lease-token 9ed62815-a385-4ccb-9302-95ab68599790 --ttl 36h`
+      - renewed `expires_at`: `2026-03-30T13:48:27.248952Z`
+    - PASS: MCP `till.create_handoff` succeeded with that same approved builder session plus lease tuple and created handoff id `841492e1-5ecc-485d-86dd-13c85cc804d3`.
+    - PASS: CLI `handoff list` and `handoff get` both showed that fresh handoff coherently.
+    - PASS: MCP `till.update_handoff` on the same approved builder session, the same lease tuple, and handoff `841492e1-5ecc-485d-86dd-13c85cc804d3` now succeeds live.
+      - result: handoff status `resolved`
+      - resolution note: `Resolved during the refreshed C5 live rerun after the shared approved-path auth-context fix.`
+    - PASS: the guardrail negative probe still fails closed:
+      - `till.update_handoff` retried without `agent_name`, `agent_instance_id`, or `lease_token`
+      - response: `invalid_request: agent_name, agent_instance_id, and lease_token are required for authenticated agent mutations`
+    - PASS: `./till project discover --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9` reflected live collaboration state:
+      - `active_auth_sessions = 1`
+      - `active_agent_sessions = 1`
+      - `active_orchestrator_sessions = 0`
+      - `project_leases = 10`
+      - `open_project_handoffs = 4`
+      - next-step guidance pointed at requesting an orchestrator session because none was active for the project.
+    - PASS: lease cleanup and post-revoke fail-closed behavior:
+      - `./till lease revoke --agent-instance-id codex-c5-builder-lease-20260328-b --reason "C5 live rerun cleanup after successful handoff update"` -> PASS
+      - `./till lease list --project-id cead38cc-3430-4ca1-8425-fbb340e5ccd9 --include-revoked` -> PASS; lease now shows `revoked`
+      - `./till lease heartbeat --agent-instance-id codex-c5-builder-lease-20260328-b --lease-token 9ed62815-a385-4ccb-9302-95ab68599790` -> FAIL CLOSED with `mutation lease is revoked`
+      - `./till lease renew --agent-instance-id codex-c5-builder-lease-20260328-b --lease-token 9ed62815-a385-4ccb-9302-95ab68599790 --ttl 1h` -> FAIL CLOSED with `mutation lease is revoked`
+    - USER-CONFIRMATION PENDING:
+      - the user was asked to confirm that the TUI coordination surface showed active then revoked lease state for `codex-c5-builder-lease-20260328-b` and resolved handoff state for `841492e1-5ecc-485d-86dd-13c85cc804d3`,
+      - but explicit fresh-pass confirmation was not captured before the run continued.
+  - LIVE TUI FOLLOW-UP ON 2026-03-28:
+    - FAIL: during the requested TUI confirmation, the user reported that the lower coordination content went below the page and would not move into view while scrolling.
+    - local root cause: the coordination/auth-inventory screen was still rendered as one static full-page string body instead of using a viewport-backed full-page surface.
+    - landed local fix:
+      - added a dedicated `authInventoryBody` viewport,
+      - synced it on window resize, inventory load, scope reopen, keyboard movement, and mouse-wheel movement,
+      - switched the coordination renderer to `renderFullPageSurfaceViewport(...)`,
+      - added one short-terminal regression that proves mouse-wheel scrolling can reach the lower lease and handoff sections.
+    - focused evidence:
+      - Context7 `/charmbracelet/bubbles` viewport docs rechecked before the fix and again after each failed TUI test iteration while tightening the regression.
+      - `just test-pkg ./internal/tui` -> FAIL
+      - `just test-pkg ./internal/tui` -> FAIL
+      - `just test-pkg ./internal/tui` -> FAIL
+      - `just test-pkg ./internal/tui` -> FAIL
+      - `just test-pkg ./internal/tui` -> FAIL
+      - `just test-pkg ./internal/tui` -> PASS
+      - `just check` -> PASS
+      - `just ci` -> PASS
+    - next live step:
+      - reopen the TUI `Coordination` screen and confirm the lower `capability leases` and `handoffs` sections are now reachable by scrolling.
+  - SECOND LIVE USABILITY FOLLOW-UP ON 2026-03-28:
+    - PARTIAL LIVE CONFIRMATION:
+      - after restarting on the fresh binary, the user reached the lower `active sessions` and `capability leases` sections in the `Coordination` screen, which confirmed the original clipping bug was fixed live.
+    - NEW LIVE UX GAP:
+      - the user reported that the coordination screen was still confusing because it mixed live and historical rows in one long list,
+      - and the current live coordination state was still hidden behind the command-palette screen instead of also surfacing in the board notifications panel.
+    - landed local follow-up:
+      - added one compact inline `Live Coordination` summary row to the project notifications panel so pending requests, active sessions, active leases, and open handoffs are visible from the board,
+      - split the full-screen `Coordination` surface into `live` and `history` slices with `h` toggle behavior,
+      - tightened the coordination viewport alignment logic to use wrapped line offsets so mouse-wheel and keyboard movement keep the selected lease/handoff section visible even when long detail rows soft-wrap,
+      - refreshed the TUI goldens for the intentional notices-panel summary change.
+    - focused evidence:
+      - Context7 `/charmbracelet/bubbles` viewport docs rechecked before the first edit and again after each failed TUI/check loop in this follow-up.
+      - `just test-pkg ./internal/tui` -> FAIL
+      - `just test-golden-update` -> PASS
+      - `just test-pkg ./internal/tui` -> PASS
+      - `just fmt` -> PASS
+      - `just check` -> PASS
+      - `just ci` -> PASS
+    - files changed:
+      - `internal/tui/model.go`
+      - `internal/tui/model_test.go`
+      - `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+      - `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+    - next live step:
+      - reopen the fresh TUI and confirm:
+        - the board shows the compact `Live Coordination` summary row,
+        - `Coordination` defaults to live/actionable rows,
+        - `h` cleanly toggles to history,
+        - and the lower handoff rows remain reachable after the wrapped-line viewport fix.
 
 ## Section C6: Display-Name Clarity And Readiness Bridge
 

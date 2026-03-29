@@ -88,6 +88,7 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 				map[string]string{
 					"project_id": projectID,
 					"scope_type": strings.TrimSpace(args.ScopeType),
+					"scope_id":   scopeID,
 				},
 			)
 			if err != nil {

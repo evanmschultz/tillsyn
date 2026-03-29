@@ -34,14 +34,18 @@ func (a *AppServiceAdapter) AuthorizeMutation(ctx context.Context, in MutationAu
 	if a == nil || a.auth == nil {
 		return domain.AuthenticatedCaller{}, fmt.Errorf("mutation auth is not configured")
 	}
+	req, err := a.normalizeMutationAuthorizationRequest(ctx, in)
+	if err != nil {
+		return domain.AuthenticatedCaller{}, err
+	}
 	result, err := a.auth.Authorize(ctx, autentauth.AuthorizationRequest{
-		SessionID:     strings.TrimSpace(in.SessionID),
-		SessionSecret: strings.TrimSpace(in.SessionSecret),
-		Action:        strings.TrimSpace(in.Action),
-		Namespace:     strings.TrimSpace(in.Namespace),
-		ResourceType:  strings.TrimSpace(in.ResourceType),
-		ResourceID:    strings.TrimSpace(in.ResourceID),
-		Context:       cloneStringMap(in.Context),
+		SessionID:     req.SessionID,
+		SessionSecret: req.SessionSecret,
+		Action:        req.Action,
+		Namespace:     req.Namespace,
+		ResourceType:  req.ResourceType,
+		ResourceID:    req.ResourceID,
+		Context:       req.Context,
 	})
 	if err != nil {
 		return domain.AuthenticatedCaller{}, err

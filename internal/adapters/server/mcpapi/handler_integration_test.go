@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	autent "github.com/evanmschultz/autent"
@@ -12,6 +13,7 @@ import (
 	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // newRealMCPAttentionHandlerForTest constructs one real auth-backed MCP handler plus its backing store.
@@ -65,6 +67,198 @@ func issueUserMCPTestSession(t *testing.T, auth *autentauth.Service) autent.Issu
 		ClientID:      "till-mcp-stdio",
 		ClientType:    "mcp-stdio",
 		ClientName:    "Till MCP STDIO",
+	})
+	if err != nil {
+		t.Fatalf("IssueSession() error = %v", err)
+	}
+	return issued
+}
+
+// approvedPathHandoffFixture stores one real MCP handler plus approved-path handoff fixtures.
+type approvedPathHandoffFixture struct {
+	handler             *Handler
+	auth                *autentauth.Service
+	repo                *sqlite.Repository
+	projectID           string
+	branchID            string
+	phaseID             string
+	handoffID           string
+	outOfScopeHandoffID string
+}
+
+// newApprovedPathHandoffFixture constructs one real MCP fixture for approved-path handoff updates.
+func newApprovedPathHandoffFixture(t *testing.T) approvedPathHandoffFixture {
+	t.Helper()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	auth, err := autentauth.NewSharedDB(autentauth.Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+
+	nextID := 0
+	service := app.NewService(repo, func() string {
+		nextID++
+		return fmt.Sprintf("id-%03d", nextID)
+	}, nil, app.ServiceConfig{
+		AutoCreateProjectColumns: true,
+	})
+	project, err := service.CreateProject(context.Background(), "Demo", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	columnID := firstMCPProjectColumnIDForTest(t, repo, project.ID)
+	branch, phase, task := createMCPScopedTaskChainForTest(t, service, project.ID, columnID)
+	otherBranch, _, otherTask := createMCPScopedTaskChainForTest(t, service, project.ID, columnID)
+	handoff, err := service.CreateHandoff(context.Background(), app.CreateHandoffInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: project.ID,
+			BranchID:  branch.ID,
+			ScopeType: domain.ScopeLevelTask,
+			ScopeID:   task.ID,
+		},
+		SourceRole:  "builder",
+		TargetRole:  "qa",
+		Summary:     "handoff summary",
+		NextAction:  "review",
+		CreatedBy:   "user-1",
+		CreatedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateHandoff() error = %v", err)
+	}
+	outOfScopeHandoff, err := service.CreateHandoff(context.Background(), app.CreateHandoffInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: project.ID,
+			BranchID:  otherBranch.ID,
+			ScopeType: domain.ScopeLevelTask,
+			ScopeID:   otherTask.ID,
+		},
+		SourceRole:  "builder",
+		TargetRole:  "qa",
+		Summary:     "out-of-scope handoff",
+		NextAction:  "review",
+		CreatedBy:   "user-1",
+		CreatedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateHandoff(out of scope) error = %v", err)
+	}
+
+	adapter := servercommon.NewAppServiceAdapter(service, auth)
+	handler, err := NewHandler(Config{}, adapter, adapter)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	return approvedPathHandoffFixture{
+		handler:             handler,
+		auth:                auth,
+		repo:                repo,
+		projectID:           project.ID,
+		branchID:            branch.ID,
+		phaseID:             phase.ID,
+		handoffID:           handoff.ID,
+		outOfScopeHandoffID: outOfScopeHandoff.ID,
+	}
+}
+
+// firstMCPProjectColumnIDForTest returns one auto-created project column for MCP integration fixtures.
+func firstMCPProjectColumnIDForTest(t *testing.T, repo *sqlite.Repository, projectID string) string {
+	t.Helper()
+
+	columns, err := repo.ListColumns(context.Background(), projectID, true)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) == 0 {
+		t.Fatal("ListColumns() returned no columns, want defaults")
+	}
+	return columns[0].ID
+}
+
+// createMCPScopedTaskChainForTest creates one branch -> phase -> task chain for MCP auth-context tests.
+func createMCPScopedTaskChainForTest(t *testing.T, service *app.Service, projectID, columnID string) (domain.Task, domain.Task, domain.Task) {
+	t.Helper()
+
+	branch, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+		ProjectID:      projectID,
+		Kind:           domain.WorkKind("branch"),
+		Scope:          domain.KindAppliesToBranch,
+		ColumnID:       columnID,
+		Title:          "Branch",
+		CreatedByActor: "user-1",
+		CreatedByName:  "User One",
+		UpdatedByActor: "user-1",
+		UpdatedByName:  "User One",
+		UpdatedByType:  domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+	phase, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+		ProjectID:      projectID,
+		ParentID:       branch.ID,
+		Kind:           domain.WorkKindPhase,
+		Scope:          domain.KindAppliesToPhase,
+		ColumnID:       columnID,
+		Title:          "Phase",
+		CreatedByActor: "user-1",
+		CreatedByName:  "User One",
+		UpdatedByActor: "user-1",
+		UpdatedByName:  "User One",
+		UpdatedByType:  domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(phase) error = %v", err)
+	}
+	task, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+		ProjectID:      projectID,
+		ParentID:       phase.ID,
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		ColumnID:       columnID,
+		Title:          "Task",
+		CreatedByActor: "user-1",
+		CreatedByName:  "User One",
+		UpdatedByActor: "user-1",
+		UpdatedByName:  "User One",
+		UpdatedByType:  domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(task) error = %v", err)
+	}
+	return branch, phase, task
+}
+
+// issueApprovedPathMCPTestSession issues one MCP user session constrained to the requested branch/phase path.
+func issueApprovedPathMCPTestSession(t *testing.T, auth *autentauth.Service, projectID, branchID string, phaseIDs ...string) autent.IssuedSession {
+	t.Helper()
+
+	issued, err := auth.IssueSession(context.Background(), autentauth.IssueSessionInput{
+		PrincipalID:   "user-1",
+		PrincipalType: "user",
+		PrincipalName: "User One",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+		Metadata: map[string]string{
+			"approved_path": domain.AuthRequestPath{
+				ProjectID: projectID,
+				BranchID:  branchID,
+				PhaseIDs:  append([]string(nil), phaseIDs...),
+			}.String(),
+			"project_id": projectID,
+		},
 	})
 	if err != nil {
 		t.Fatalf("IssueSession() error = %v", err)
@@ -137,5 +331,78 @@ func TestHandlerAttentionMutationPersistsAuthenticatedAttribution(t *testing.T) 
 	}
 	if resolvedByType != "user" {
 		t.Fatalf("resolved_by_type = %q, want user", resolvedByType)
+	}
+}
+
+// TestHandlerUpdateHandoffResolvesApprovedPathContext verifies the real MCP transport now resolves by-id handoff scope before auth.
+func TestHandlerUpdateHandoffResolvesApprovedPathContext(t *testing.T) {
+	fixture := newApprovedPathHandoffFixture(t)
+	issued := issueApprovedPathMCPTestSession(t, fixture.auth, fixture.projectID, fixture.branchID, fixture.phaseID)
+
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(22, "till.update_handoff", map[string]any{
+		"handoff_id":      fixture.handoffID,
+		"status":          "resolved",
+		"summary":         "resolved handoff",
+		"next_action":     "none",
+		"resolution_note": "done",
+		"session_id":      issued.Session.ID,
+		"session_secret":  issued.Secret,
+	}))
+	if resp.Error != nil {
+		t.Fatalf("update_handoff response error = %#v, want nil", resp.Error)
+	}
+	if isError, _ := resp.Result["isError"].(bool); isError {
+		t.Fatalf("update_handoff returned isError=true: %q", toolResultText(t, resp.Result))
+	}
+
+	var (
+		status         string
+		resolutionNote string
+	)
+	if err := fixture.repo.DB().QueryRowContext(
+		context.Background(),
+		`SELECT status, resolution_note FROM handoffs WHERE id = ?`,
+		fixture.handoffID,
+	).Scan(&status, &resolutionNote); err != nil {
+		t.Fatalf("QueryRow(updated handoff) error = %v", err)
+	}
+	if status != "resolved" {
+		t.Fatalf("handoff status = %q, want resolved", status)
+	}
+	if resolutionNote != "done" {
+		t.Fatalf("handoff resolution_note = %q, want done", resolutionNote)
+	}
+}
+
+// TestHandlerUpdateHandoffOutOfScopeApprovedPathDenied verifies the MCP transport still fails closed for out-of-scope approved-path sessions.
+func TestHandlerUpdateHandoffOutOfScopeApprovedPathDenied(t *testing.T) {
+	fixture := newApprovedPathHandoffFixture(t)
+	issued := issueApprovedPathMCPTestSession(t, fixture.auth, fixture.projectID, fixture.branchID, fixture.phaseID)
+
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(23, "till.update_handoff", map[string]any{
+		"handoff_id":      fixture.outOfScopeHandoffID,
+		"status":          "resolved",
+		"summary":         "should fail",
+		"next_action":     "none",
+		"resolution_note": "denied",
+		"session_id":      issued.Session.ID,
+		"session_secret":  issued.Secret,
+	}))
+	if resp.Error != nil {
+		t.Fatalf("update_handoff response error = %#v, want nil", resp.Error)
+	}
+	if isError, _ := resp.Result["isError"].(bool); !isError {
+		t.Fatalf("update_handoff isError = %v, want true", resp.Result["isError"])
+	}
+	if got := toolResultText(t, resp.Result); !strings.HasPrefix(got, "auth_denied:") {
+		t.Fatalf("update_handoff error text = %q, want auth_denied prefix", got)
 	}
 }

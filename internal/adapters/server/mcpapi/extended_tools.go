@@ -400,6 +400,7 @@ func registerTaskTools(
 					"new",
 					map[string]string{
 						"project_id": strings.TrimSpace(args.ProjectID),
+						"parent_id":  strings.TrimSpace(args.ParentID),
 						"column_id":  strings.TrimSpace(args.ColumnID),
 						"scope":      strings.TrimSpace(args.Scope),
 					},
@@ -1227,6 +1228,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 				map[string]string{
 					"project_id": projectID,
 					"scope_type": scopeType,
+					"scope_id":   strings.TrimSpace(args.ScopeID),
 					"role":       role,
 				},
 			); err != nil {
@@ -1557,7 +1559,10 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				"project:"+projectID,
 				"comment",
 				targetID,
-				map[string]string{"project_id": projectID, "target_type": targetType},
+				map[string]string{
+					"project_id":  projectID,
+					"target_type": targetType,
+				},
 			)
 			if err != nil {
 				return toolResultFromError(err), nil

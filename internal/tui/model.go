@@ -397,6 +397,25 @@ type authInventoryItem struct {
 	Detail          string
 }
 
+// authInventoryViewMode identifies which coordination slice is visible in the full-screen dashboard.
+type authInventoryViewMode int
+
+// Coordination dashboard view modes.
+const (
+	authInventoryViewLive authInventoryViewMode = iota
+	authInventoryViewHistory
+)
+
+// authInventorySectionData stores the visible coordination rows for the active dashboard view.
+type authInventorySectionData struct {
+	ActionRequiredCount int
+	PendingRequests     []domain.AuthRequest
+	ResolvedRequests    []domain.AuthRequest
+	Sessions            []app.AuthSession
+	Leases              []domain.CapabilityLease
+	Handoffs            []domain.Handoff
+}
+
 // activityEntry describes one recorded user action for the in-app activity log.
 type activityEntry struct {
 	At         time.Time
@@ -491,6 +510,14 @@ type globalNoticesPanelItem struct {
 	ThreadDescription string
 }
 
+// noticesCoordinationSummary stores live project-scoped coordination counts for the board notices panel.
+type noticesCoordinationSummary struct {
+	PendingRequests []domain.AuthRequest
+	ActiveSessions  []app.AuthSession
+	ActiveLeases    []domain.CapabilityLease
+	OpenHandoffs    []domain.Handoff
+}
+
 // historyStepKind identifies one reversible operation in a mutation set.
 type historyStepKind string
 
@@ -573,12 +600,14 @@ type Model struct {
 	authReviewReturnStage         int
 	authReviewReturnMode          inputMode
 	authInventoryGlobal           bool
+	authInventoryView             authInventoryViewMode
 	authInventoryIndex            int
 	authInventoryRequests         []domain.AuthRequest
 	authInventoryResolvedRequests []domain.AuthRequest
 	authInventorySessions         []app.AuthSession
 	authInventoryLeases           []domain.CapabilityLease
 	authInventoryHandoffs         []domain.Handoff
+	authInventoryBody             viewport.Model
 	authInventoryNeedsReload      bool
 	threadInput                   textarea.Model
 	threadDetailsInput            textarea.Model
@@ -700,18 +729,19 @@ type Model struct {
 
 	projectionRootTaskID string
 
-	selectedTaskIDs  map[string]struct{}
-	activityLog      []activityEntry
-	noticesFocused   bool
-	noticesPanel     noticesPanelFocusTarget
-	noticesSection   noticesSectionID
-	noticesWarnings  int
-	noticesAttention int
-	noticesSelection int
-	noticesActivity  int
-	attentionItems   []domain.AttentionItem
-	globalNotices    []globalNoticesPanelItem
-	globalNoticesIdx int
+	selectedTaskIDs     map[string]struct{}
+	activityLog         []activityEntry
+	noticesFocused      bool
+	noticesPanel        noticesPanelFocusTarget
+	noticesSection      noticesSectionID
+	noticesWarnings     int
+	noticesAttention    int
+	noticesSelection    int
+	noticesActivity     int
+	attentionItems      []domain.AttentionItem
+	noticesCoordination noticesCoordinationSummary
+	globalNotices       []globalNoticesPanelItem
+	globalNoticesIdx    int
 	// globalNoticesPartialCount reports how many projects were skipped while aggregating global notices.
 	globalNoticesPartialCount int
 	globalNoticeTransition    globalNoticeTransitionTrace
@@ -790,6 +820,7 @@ type loadedMsg struct {
 	attentionItems            []domain.AttentionItem
 	globalNotices             []globalNoticesPanelItem
 	globalNoticesPartialCount int
+	noticesCoordination       noticesCoordinationSummary
 	rollup                    domain.DependencyRollup
 	err                       error
 	attentionItemsCount       int
@@ -983,6 +1014,10 @@ func NewModel(svc Service, opts ...Option) Model {
 	taskInfoBody.SoftWrap = true
 	taskInfoBody.MouseWheelEnabled = false
 	taskInfoBody.FillHeight = true
+	authInventoryBody := viewport.New()
+	authInventoryBody.SoftWrap = true
+	authInventoryBody.MouseWheelEnabled = false
+	authInventoryBody.FillHeight = true
 	taskInfoDetails := viewport.New()
 	taskInfoDetails.SoftWrap = true
 	taskInfoDetails.MouseWheelEnabled = false
@@ -1026,6 +1061,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		threadInput:                    threadInput,
 		threadDetailsInput:             threadDetailsInput,
 		descriptionEditorInput:         descriptionEditorInput,
+		authInventoryBody:              authInventoryBody,
 		taskInfoBody:                   taskInfoBody,
 		taskInfoDetails:                taskInfoDetails,
 		descriptionPreview:             descriptionPreview,
@@ -1140,6 +1176,7 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.globalNotices = append([]globalNoticesPanelItem(nil), msg.globalNotices...)
 		m.reanchorGlobalNoticesSelection(previousGlobalNoticesKey)
 	}
+	m.noticesCoordination = msg.noticesCoordination
 	m.globalNoticesPartialCount = max(0, msg.globalNoticesPartialCount)
 	m.dependencyRollup = msg.rollup
 	m.warnings = buildScopeWarnings(msg.attentionItemsCount, msg.attentionUserActionCount, m.globalNoticesPartialCount)
@@ -1152,6 +1189,7 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.tasks = nil
 		m.activityLog = []activityEntry{}
 		m.attentionItems = []domain.AttentionItem{}
+		m.noticesCoordination = noticesCoordinationSummary{}
 		m.globalNotices = []globalNoticesPanelItem{}
 		m.globalNoticesIdx = 0
 		m.globalNoticesPartialCount = 0
@@ -1357,6 +1395,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncDescriptionEditorViewportLayout()
 			}
 		}
+		if m.mode == modeAuthInventory {
+			m.syncAuthInventoryViewport()
+		}
 		m.normalizePanelFocus()
 		return m, nil
 
@@ -1520,11 +1561,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.authInventoryGlobal {
 			requestSessionScope = "project scope (" + scopeText + ")"
 		}
+		statusPrefix := "coordination " + m.authInventoryViewLabel() + ": "
 		if coordinationProjectID, coordinationProjectLabel, ok := m.authInventoryCoordinationProject(); ok && coordinationProjectID != "" {
-			m.status = "coordination: requests/sessions " + requestSessionScope + " • project-local " + coordinationProjectLabel
+			m.status = statusPrefix + "requests/sessions " + requestSessionScope + " • project-local " + coordinationProjectLabel
 		} else {
-			m.status = "coordination: requests/sessions " + requestSessionScope
+			m.status = statusPrefix + "requests/sessions " + requestSessionScope
 		}
+		m.syncAuthInventoryViewport()
 		return m, nil
 
 	case searchResultsMsg:
@@ -2250,6 +2293,22 @@ func (m Model) loadData() tea.Msg {
 			requiresUserAction++
 		}
 	}
+	coordinationStartedAt := time.Now()
+	noticesCoordination, coordinationErr := m.loadNoticesCoordinationSummary(projectID)
+	m.traceLoadDataStage(
+		"coordination",
+		coordinationStartedAt,
+		coordinationErr,
+		"project_id", projectID,
+		"pending_requests", len(noticesCoordination.PendingRequests),
+		"active_sessions", len(noticesCoordination.ActiveSessions),
+		"active_leases", len(noticesCoordination.ActiveLeases),
+		"open_handoffs", len(noticesCoordination.OpenHandoffs),
+	)
+	if coordinationErr != nil {
+		m.traceLoadDataStage("total", totalStartedAt, coordinationErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
+		return loadedMsg{err: coordinationErr}
+	}
 	m.traceLoadDataStage(
 		"total",
 		totalStartedAt,
@@ -2272,6 +2331,7 @@ func (m Model) loadData() tea.Msg {
 		attentionItems:            attentionItems,
 		globalNotices:             globalNotices,
 		globalNoticesPartialCount: globalNoticesPartialCount,
+		noticesCoordination:       noticesCoordination,
 		rollup:                    rollup,
 		attentionItemsCount:       len(attentionItems),
 		attentionUserActionCount:  requiresUserAction,
@@ -2713,7 +2773,9 @@ func (m *Model) startAuthInventory(global bool) tea.Cmd {
 		return nil
 	}
 	m.authInventoryGlobal = global
+	m.authInventoryView = authInventoryViewLive
 	m.authInventoryIndex = 0
+	m.authInventoryBody.GotoTop()
 	m.mode = modeAuthInventory
 	m.status = "loading coordination surface"
 	return m.loadAuthInventoryCmd()
@@ -2793,84 +2855,213 @@ func (m Model) loadAuthInventoryCmd() tea.Cmd {
 	}
 }
 
-// authInventoryItems flattens coordination inventory into one selectable list.
+// loadNoticesCoordinationSummary loads compact live coordination data for the selected project's notices panel.
+func (m Model) loadNoticesCoordinationSummary(projectID string) (noticesCoordinationSummary, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || m.svc == nil {
+		return noticesCoordinationSummary{}, nil
+	}
+
+	requests, err := m.svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
+		ProjectID: projectID,
+		State:     domain.AuthRequestStatePending,
+		Limit:     32,
+	})
+	if err != nil {
+		return noticesCoordinationSummary{}, err
+	}
+	sessions, err := m.svc.ListAuthSessions(context.Background(), app.AuthSessionFilter{
+		ProjectID: projectID,
+		State:     "active",
+		Limit:     32,
+	})
+	if err != nil {
+		return noticesCoordinationSummary{}, err
+	}
+	leases, err := m.svc.ListCapabilityLeases(context.Background(), app.ListCapabilityLeasesInput{
+		ProjectID: projectID,
+	})
+	if err != nil {
+		return noticesCoordinationSummary{}, err
+	}
+	handoffs, err := m.svc.ListHandoffs(context.Background(), app.ListHandoffsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: projectID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   projectID,
+		},
+		Statuses: []domain.HandoffStatus{
+			domain.HandoffStatusReady,
+			domain.HandoffStatusWaiting,
+			domain.HandoffStatusBlocked,
+			domain.HandoffStatusFailed,
+			domain.HandoffStatusReturned,
+		},
+		Limit: 32,
+	})
+	if err != nil {
+		return noticesCoordinationSummary{}, err
+	}
+
+	now := time.Now().UTC()
+	activeLeases := make([]domain.CapabilityLease, 0, len(leases))
+	for _, lease := range leases {
+		if !authInventoryLeaseIsLive(lease, now) {
+			continue
+		}
+		activeLeases = append(activeLeases, lease)
+	}
+
+	return noticesCoordinationSummary{
+		PendingRequests: requests,
+		ActiveSessions:  sessions,
+		ActiveLeases:    activeLeases,
+		OpenHandoffs:    handoffs,
+	}, nil
+}
+
+// authInventoryLeaseIsLive reports whether one lease should remain on the live coordination surface.
+func authInventoryLeaseIsLive(lease domain.CapabilityLease, now time.Time) bool {
+	return !lease.IsRevoked() && !lease.IsExpired(now)
+}
+
+// authInventoryHandoffIsOpen reports whether one handoff belongs on the live coordination surface.
+func authInventoryHandoffIsOpen(handoff domain.Handoff) bool {
+	return !domain.IsTerminalHandoffStatus(handoff.Status)
+}
+
+// authInventoryViewLabel returns the current user-facing coordination dashboard view label.
+func (m Model) authInventoryViewLabel() string {
+	switch m.authInventoryView {
+	case authInventoryViewHistory:
+		return "history"
+	default:
+		return "live"
+	}
+}
+
+// authInventorySectionData returns the rows visible in the active coordination dashboard view.
+func (m Model) authInventorySectionData() authInventorySectionData {
+	data := authInventorySectionData{}
+	now := time.Now().UTC()
+	switch m.authInventoryView {
+	case authInventoryViewHistory:
+		data.ResolvedRequests = append(data.ResolvedRequests, m.authInventoryResolvedRequests...)
+		for _, lease := range m.authInventoryLeases {
+			if authInventoryLeaseIsLive(lease, now) {
+				continue
+			}
+			data.Leases = append(data.Leases, lease)
+		}
+		for _, handoff := range m.authInventoryHandoffs {
+			if authInventoryHandoffIsOpen(handoff) {
+				continue
+			}
+			data.Handoffs = append(data.Handoffs, handoff)
+		}
+	default:
+		data.PendingRequests = append(data.PendingRequests, m.authInventoryRequests...)
+		data.Sessions = append(data.Sessions, m.authInventorySessions...)
+		for _, lease := range m.authInventoryLeases {
+			if !authInventoryLeaseIsLive(lease, now) {
+				continue
+			}
+			data.Leases = append(data.Leases, lease)
+		}
+		for _, handoff := range m.authInventoryHandoffs {
+			if !authInventoryHandoffIsOpen(handoff) {
+				continue
+			}
+			data.Handoffs = append(data.Handoffs, handoff)
+		}
+		for _, item := range m.attentionItems {
+			if !item.RequiresUserAction || domain.NormalizeAttentionState(item.State) == domain.AttentionStateResolved {
+				continue
+			}
+			data.ActionRequiredCount++
+		}
+	}
+	return data
+}
+
+// authInventoryItems flattens the visible coordination dashboard rows into one selectable list.
 func (m Model) authInventoryItems() []authInventoryItem {
-	items := make([]authInventoryItem, 0, len(m.authInventoryRequests)+len(m.authInventoryResolvedRequests)+len(m.authInventorySessions)+len(m.authInventoryLeases)+len(m.authInventoryHandoffs))
-	for idx := range m.authInventoryRequests {
-		req := m.authInventoryRequests[idx]
-		labelName := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
-		if role := strings.TrimSpace(req.PrincipalRole); role != "" {
-			labelName += " • " + role
+	data := m.authInventorySectionData()
+	items := make([]authInventoryItem, 0, len(data.PendingRequests)+len(data.ResolvedRequests)+len(data.Sessions)+len(data.Leases)+len(data.Handoffs))
+	if m.authInventoryView == authInventoryViewHistory {
+		for idx := range data.ResolvedRequests {
+			req := data.ResolvedRequests[idx]
+			requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
+			detail := fmt.Sprintf("requested: %s • client: %s", firstNonEmptyTrimmed(requestedLabel, "-"), firstNonEmptyTrimmed(req.ClientName, req.ClientID))
+			if requester := humanActorLabel(req.RequestedByActor, req.RequestedByType); requester != "" {
+				detail += " • requested by: " + requester
+			}
+			if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.ApprovedPath), req.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
+				detail += " • approved: " + approvedLabel
+			}
+			if note := strings.TrimSpace(req.ResolutionNote); note != "" {
+				detail += " • note: " + truncate(note, 40)
+			}
+			labelName := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
+			if role := strings.TrimSpace(req.PrincipalRole); role != "" {
+				labelName += " • " + role
+			}
+			items = append(items, authInventoryItem{
+				ResolvedRequest: &data.ResolvedRequests[idx],
+				Label:           fmt.Sprintf("[%s] %s", strings.TrimSpace(string(req.State)), labelName),
+				Detail:          detail,
+			})
 		}
-		detailParts := []string{
-			"scope: " + firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path),
-			"client: " + firstNonEmptyTrimmed(req.ClientName, req.ClientID),
+	} else {
+		for idx := range data.PendingRequests {
+			req := data.PendingRequests[idx]
+			labelName := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
+			if role := strings.TrimSpace(req.PrincipalRole); role != "" {
+				labelName += " • " + role
+			}
+			detailParts := []string{
+				"scope: " + firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path),
+				"client: " + firstNonEmptyTrimmed(req.ClientName, req.ClientID),
+			}
+			if requester := humanActorLabel(req.RequestedByActor, req.RequestedByType); requester != "" {
+				detailParts = append(detailParts, "requested by: "+requester)
+			}
+			if reason := strings.TrimSpace(req.Reason); reason != "" {
+				detailParts = append(detailParts, "reason: "+truncate(req.Reason, 40))
+			}
+			if resumeClient := firstNonEmptyTrimmed(app.AuthRequestClaimClientIDFromContinuation(req.Continuation, req.ClientID), req.ClientID); resumeClient != "" {
+				detailParts = append(detailParts, "resume: "+resumeClient)
+			}
+			if timeout := formatAuthRequestTimeout(req); timeout != "" {
+				detailParts = append(detailParts, "timeout: "+timeout)
+			}
+			items = append(items, authInventoryItem{
+				Request: &data.PendingRequests[idx],
+				Label:   fmt.Sprintf("[%s] %s", strings.TrimSpace(string(req.State)), labelName),
+				Detail:  strings.Join(detailParts, " • "),
+			})
 		}
-		if requester := humanActorLabel(req.RequestedByActor, req.RequestedByType); requester != "" {
-			detailParts = append(detailParts, "requested by: "+requester)
+		for idx := range data.Sessions {
+			session := data.Sessions[idx]
+			scopePath := strings.TrimSpace(session.ApprovedPath)
+			if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
+				scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+			}
+			scopeLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath)
+			labelName := firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)
+			if role := strings.TrimSpace(session.PrincipalRole); role != "" {
+				labelName += " • " + role
+			}
+			items = append(items, authInventoryItem{
+				Session: &data.Sessions[idx],
+				Label:   fmt.Sprintf("[active] %s", labelName),
+				Detail:  fmt.Sprintf("scope: %s • client: %s • expires: %s", firstNonEmptyTrimmed(scopeLabel, "-"), firstNonEmptyTrimmed(session.ClientName, session.ClientID), session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
+			})
 		}
-		if reason := strings.TrimSpace(req.Reason); reason != "" {
-			detailParts = append(detailParts, "reason: "+truncate(reason, 40))
-		}
-		if resumeClient := firstNonEmptyTrimmed(app.AuthRequestClaimClientIDFromContinuation(req.Continuation, req.ClientID), req.ClientID); resumeClient != "" {
-			detailParts = append(detailParts, "resume: "+resumeClient)
-		}
-		if timeout := formatAuthRequestTimeout(req); timeout != "" {
-			detailParts = append(detailParts, "timeout: "+timeout)
-		}
-		items = append(items, authInventoryItem{
-			Request: &m.authInventoryRequests[idx],
-			Label:   fmt.Sprintf("[%s] %s", strings.TrimSpace(string(req.State)), labelName),
-			Detail:  strings.Join(detailParts, " • "),
-		})
 	}
-	for idx := range m.authInventoryResolvedRequests {
-		req := m.authInventoryResolvedRequests[idx]
-		requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path)
-		detail := fmt.Sprintf("requested: %s • client: %s", firstNonEmptyTrimmed(requestedLabel, "-"), firstNonEmptyTrimmed(req.ClientName, req.ClientID))
-		if requester := humanActorLabel(req.RequestedByActor, req.RequestedByType); requester != "" {
-			detail += " • requested by: " + requester
-		}
-		if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.ApprovedPath), req.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
-			detail += " • approved: " + approvedLabel
-		}
-		if note := strings.TrimSpace(req.ResolutionNote); note != "" {
-			detail += " • note: " + truncate(note, 40)
-		}
-		labelName := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
-		if role := strings.TrimSpace(req.PrincipalRole); role != "" {
-			labelName += " • " + role
-		}
-		items = append(items, authInventoryItem{
-			ResolvedRequest: &m.authInventoryResolvedRequests[idx],
-			Label:           fmt.Sprintf("[%s] %s", strings.TrimSpace(string(req.State)), labelName),
-			Detail:          detail,
-		})
-	}
-	for idx := range m.authInventorySessions {
-		session := m.authInventorySessions[idx]
-		scopePath := strings.TrimSpace(session.ApprovedPath)
-		if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
-			scopePath = "project/" + strings.TrimSpace(session.ProjectID)
-		}
-		scopeLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath)
-		labelName := firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)
-		if role := strings.TrimSpace(session.PrincipalRole); role != "" {
-			labelName += " • " + role
-		}
-		label := fmt.Sprintf("[active] %s", labelName)
-		detail := fmt.Sprintf("scope: %s • client: %s • expires: %s", firstNonEmptyTrimmed(scopeLabel, "-"), firstNonEmptyTrimmed(session.ClientName, session.ClientID), session.ExpiresAt.In(time.Local).Format(time.RFC3339))
-		items = append(items, authInventoryItem{
-			Session: &m.authInventorySessions[idx],
-			Label:   label,
-			Detail:  detail,
-		})
-	}
-	for idx := range m.authInventoryLeases {
-		lease := m.authInventoryLeases[idx]
-		scopeLabel := m.authInventoryLeaseScopeLabel(lease)
-		label := fmt.Sprintf("[%s] %s", m.authInventoryLeaseStatusLabel(lease), firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID))
-		detail := fmt.Sprintf("scope: %s • role: %s • expires: %s", firstNonEmptyTrimmed(scopeLabel, "-"), strings.TrimSpace(string(lease.Role)), lease.ExpiresAt.In(time.Local).Format(time.RFC3339))
+	for idx := range data.Leases {
+		lease := data.Leases[idx]
+		detail := fmt.Sprintf("scope: %s • role: %s • expires: %s", firstNonEmptyTrimmed(m.authInventoryLeaseScopeLabel(lease), "-"), strings.TrimSpace(string(lease.Role)), lease.ExpiresAt.In(time.Local).Format(time.RFC3339))
 		if !lease.HeartbeatAt.IsZero() {
 			detail += " • heartbeat: " + lease.HeartbeatAt.In(time.Local).Format(time.RFC3339)
 		}
@@ -2878,17 +3069,14 @@ func (m Model) authInventoryItems() []authInventoryItem {
 			detail += " • revoked: " + truncate(strings.TrimSpace(lease.RevokedReason), 40)
 		}
 		items = append(items, authInventoryItem{
-			Lease:  &m.authInventoryLeases[idx],
-			Label:  label,
+			Lease:  &data.Leases[idx],
+			Label:  fmt.Sprintf("[%s] %s", m.authInventoryLeaseStatusLabel(lease), firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID)),
 			Detail: detail,
 		})
 	}
-	for idx := range m.authInventoryHandoffs {
-		handoff := m.authInventoryHandoffs[idx]
-		label := fmt.Sprintf("[%s] %s", strings.TrimSpace(string(handoff.Status)), firstNonEmptyTrimmed(m.authInventoryHandoffLabel(handoff), handoff.ID))
-		scopeLabel := m.authInventoryHandoffScopeLabel(handoff)
-		targetLabel := m.authInventoryHandoffTargetLabel(handoff)
-		detail := fmt.Sprintf("scope: %s • target: %s", firstNonEmptyTrimmed(scopeLabel, "-"), firstNonEmptyTrimmed(targetLabel, "-"))
+	for idx := range data.Handoffs {
+		handoff := data.Handoffs[idx]
+		detail := fmt.Sprintf("scope: %s • target: %s", firstNonEmptyTrimmed(m.authInventoryHandoffScopeLabel(handoff), "-"), firstNonEmptyTrimmed(m.authInventoryHandoffTargetLabel(handoff), "-"))
 		if nextAction := strings.TrimSpace(handoff.NextAction); nextAction != "" {
 			detail += " • next: " + truncate(nextAction, 40)
 		}
@@ -2899,8 +3087,8 @@ func (m Model) authInventoryItems() []authInventoryItem {
 			detail += " • note: " + truncate(note, 40)
 		}
 		items = append(items, authInventoryItem{
-			Handoff: &m.authInventoryHandoffs[idx],
-			Label:   label,
+			Handoff: &data.Handoffs[idx],
+			Label:   fmt.Sprintf("[%s] %s", strings.TrimSpace(string(handoff.Status)), firstNonEmptyTrimmed(m.authInventoryHandoffLabel(handoff), handoff.ID)),
 			Detail:  detail,
 		})
 	}
@@ -3084,6 +3272,23 @@ func (m Model) authInventoryScopeLabel() string {
 	return label
 }
 
+// authInventoryScopeLabels returns the request/session and coordination scope labels for the coordination surface.
+func (m Model) authInventoryScopeLabels() (string, string) {
+	requestSessionScopeLabel := "global (all projects)"
+	if !m.authInventoryGlobal {
+		if _, ok := m.currentProject(); ok {
+			requestSessionScopeLabel = "project scope (" + firstNonEmptyTrimmed(m.authInventoryScopeLabel(), "no project selected") + ")"
+		} else {
+			requestSessionScopeLabel = "all projects (no project selected)"
+		}
+	}
+	coordinationScopeLabel := "project-local (no project selected)"
+	if project, ok := m.currentProject(); ok {
+		coordinationScopeLabel = "project-local (" + firstNonEmptyTrimmed(projectDisplayName(project), project.ID) + ")"
+	}
+	return requestSessionScopeLabel, coordinationScopeLabel
+}
+
 // authInventoryMoveSelection moves the coordination cursor across selectable rows.
 func (m *Model) authInventoryMoveSelection(delta int) {
 	if m == nil {
@@ -3094,6 +3299,292 @@ func (m *Model) authInventoryMoveSelection(delta int) {
 		return
 	}
 	m.authInventoryIndex = wrapIndex(m.authInventoryIndex, delta, len(items))
+	m.syncAuthInventoryViewport()
+}
+
+// authInventoryBodyLines renders the coordination body and returns the selected row and section offsets for viewport alignment.
+func (m Model) authInventoryBodyLines(contentWidth int, hintStyle, accentStyle lipgloss.Style) ([]string, int, int) {
+	requestSessionScopeLabel, coordinationScopeLabel := m.authInventoryScopeLabels()
+	data := m.authInventorySectionData()
+	selectedIndex := -1
+	selectedLine := -1
+	selectedSectionLine := -1
+	currentSectionLine := -1
+	if items := m.authInventoryItems(); len(items) > 0 {
+		selectedIndex = clamp(m.authInventoryIndex, 0, len(items)-1)
+	}
+	lines := []string{accentStyle.Render(m.authInventoryViewLabel() + " coordination")}
+	switch m.authInventoryView {
+	case authInventoryViewHistory:
+		lines = append(
+			lines,
+			fmt.Sprintf("requests/sessions: %s", requestSessionScopeLabel),
+			fmt.Sprintf("leases/handoffs: %s", coordinationScopeLabel),
+			fmt.Sprintf("resolved requests: %d", len(data.ResolvedRequests)),
+			fmt.Sprintf("ended leases: %d", len(data.Leases)),
+			fmt.Sprintf("closed handoffs: %d", len(data.Handoffs)),
+			"",
+			hintStyle.Render("history keeps resolved requests and completed or ended project-local coordination records."),
+			"",
+		)
+		if len(data.ResolvedRequests) == 0 && len(data.Leases) == 0 && len(data.Handoffs) == 0 {
+			lines = append(lines, hintStyle.Render("no coordination history is visible in this scope"))
+			return lines, selectedLine, selectedSectionLine
+		}
+	default:
+		lines = append(
+			lines,
+			fmt.Sprintf("requests/sessions: %s", requestSessionScopeLabel),
+			fmt.Sprintf("leases/handoffs: %s", coordinationScopeLabel),
+			fmt.Sprintf("action required: %d", data.ActionRequiredCount),
+			fmt.Sprintf("pending requests: %d", len(data.PendingRequests)),
+			fmt.Sprintf("active sessions: %d", len(data.Sessions)),
+			fmt.Sprintf("active leases: %d", len(data.Leases)),
+			fmt.Sprintf("open handoffs: %d", len(data.Handoffs)),
+			"",
+			hintStyle.Render("requests and sessions can widen to all projects; leases and handoffs stay on the selected project."),
+			"",
+		)
+		if data.ActionRequiredCount == 0 && len(data.PendingRequests) == 0 && len(data.Sessions) == 0 && len(data.Leases) == 0 && len(data.Handoffs) == 0 {
+			lines = append(lines, hintStyle.Render("no live coordination state is visible in this scope"))
+			return lines, selectedLine, selectedSectionLine
+		}
+	}
+
+	displayIndex := 0
+	appendSelectable := func(label, detail string, muted bool) {
+		isSelected := displayIndex == selectedIndex
+		if isSelected {
+			selectedLine = len(lines)
+			if selectedSectionLine < 0 {
+				selectedSectionLine = currentSectionLine
+			}
+		}
+		line := "  "
+		switch {
+		case isSelected && muted:
+			line += accentStyle.Render(label)
+		case isSelected:
+			line += accentStyle.Render(label)
+		case muted:
+			line += hintStyle.Render(label)
+		default:
+			line += label
+		}
+		lines = append(lines, line)
+		if detail != "" {
+			lines = append(lines, hintStyle.Render("    "+detail))
+		}
+		displayIndex++
+	}
+
+	if len(data.PendingRequests) > 0 {
+		currentSectionLine = len(lines)
+		lines = append(lines, accentStyle.Render("pending requests"))
+		for idx := range data.PendingRequests {
+			request := data.PendingRequests[idx]
+			labelName := firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)
+			if role := strings.TrimSpace(request.PrincipalRole); role != "" {
+				labelName += " • " + role
+			}
+			detailParts := []string{
+				"scope: " + firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path),
+				"client: " + firstNonEmptyTrimmed(request.ClientName, request.ClientID),
+			}
+			if requestedBy := humanActorLabel(request.RequestedByActor, request.RequestedByType); requestedBy != "" {
+				detailParts = append(detailParts, "requested by: "+requestedBy)
+			}
+			if reason := strings.TrimSpace(request.Reason); reason != "" {
+				detailParts = append(detailParts, "reason: "+truncate(reason, 40))
+			}
+			if resumeClient := firstNonEmptyTrimmed(app.AuthRequestClaimClientIDFromContinuation(request.Continuation, request.ClientID), request.ClientID); resumeClient != "" {
+				detailParts = append(detailParts, "resume: "+resumeClient)
+			}
+			if timeout := formatAuthRequestTimeout(request); timeout != "" {
+				detailParts = append(detailParts, "timeout: "+timeout)
+			}
+			appendSelectable(fmt.Sprintf("[pending] %s", labelName), strings.Join(detailParts, " • "), false)
+		}
+	}
+	if len(data.ResolvedRequests) > 0 {
+		lines = append(lines, "")
+		currentSectionLine = len(lines)
+		lines = append(lines, accentStyle.Render("resolved requests"))
+		for idx := range data.ResolvedRequests {
+			request := data.ResolvedRequests[idx]
+			stateLabel := strings.TrimSpace(string(request.State))
+			labelName := firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)
+			if role := strings.TrimSpace(request.PrincipalRole); role != "" {
+				labelName += " • " + role
+			}
+			label := fmt.Sprintf("[%s] %s", stateLabel, labelName)
+			requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)
+			detail := fmt.Sprintf("requested: %s • client: %s", requestedLabel, firstNonEmptyTrimmed(request.ClientName, request.ClientID))
+			if requester := humanActorLabel(request.RequestedByActor, request.RequestedByType); requester != "" {
+				detail += " • requested by: " + requester
+			}
+			if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
+				detail += " • approved: " + approvedLabel
+			}
+			if note := strings.TrimSpace(request.ResolutionNote); note != "" {
+				detail += " • note: " + truncate(note, max(24, contentWidth-18))
+			}
+			appendSelectable(label, detail, true)
+		}
+	}
+	if len(data.Sessions) > 0 {
+		lines = append(lines, "")
+		currentSectionLine = len(lines)
+		lines = append(lines, accentStyle.Render("active sessions"))
+		for idx := range data.Sessions {
+			session := data.Sessions[idx]
+			scopePath := strings.TrimSpace(session.ApprovedPath)
+			if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
+				scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+			}
+			roleLabel := strings.TrimSpace(session.PrincipalRole)
+			if roleLabel != "" {
+				roleLabel = " • role: " + roleLabel
+			}
+			labelName := firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)
+			if role := strings.TrimSpace(session.PrincipalRole); role != "" {
+				labelName += " • " + role
+			}
+			appendSelectable(
+				fmt.Sprintf("[active] %s", labelName),
+				fmt.Sprintf(
+					"scope: %s • client: %s%s • expires: %s",
+					firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath),
+					firstNonEmptyTrimmed(session.ClientName, session.ClientID),
+					roleLabel,
+					session.ExpiresAt.In(time.Local).Format(time.RFC3339),
+				),
+				false,
+			)
+		}
+	}
+	if len(data.Leases) > 0 {
+		leaseSectionTitle := "active leases"
+		if m.authInventoryView == authInventoryViewHistory {
+			leaseSectionTitle = "ended leases"
+		}
+		lines = append(lines, "")
+		currentSectionLine = len(lines)
+		lines = append(lines, accentStyle.Render(leaseSectionTitle))
+		for idx := range data.Leases {
+			lease := data.Leases[idx]
+			detail := fmt.Sprintf(
+				"scope: %s • role: %s • expires: %s",
+				firstNonEmptyTrimmed(m.authInventoryLeaseScopeLabel(lease), "-"),
+				strings.TrimSpace(string(lease.Role)),
+				lease.ExpiresAt.In(time.Local).Format(time.RFC3339),
+			)
+			if !lease.HeartbeatAt.IsZero() {
+				detail += " • heartbeat: " + lease.HeartbeatAt.In(time.Local).Format(time.RFC3339)
+			}
+			if lease.IsRevoked() {
+				detail += " • revoked: " + truncate(strings.TrimSpace(lease.RevokedReason), 40)
+			}
+			appendSelectable(
+				fmt.Sprintf("[%s] %s", m.authInventoryLeaseStatusLabel(lease), firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID)),
+				detail,
+				false,
+			)
+		}
+	}
+	if len(data.Handoffs) > 0 {
+		handoffSectionTitle := "open handoffs"
+		if m.authInventoryView == authInventoryViewHistory {
+			handoffSectionTitle = "closed handoffs"
+		}
+		lines = append(lines, "")
+		currentSectionLine = len(lines)
+		lines = append(lines, accentStyle.Render(handoffSectionTitle))
+		for idx := range data.Handoffs {
+			handoff := data.Handoffs[idx]
+			detail := fmt.Sprintf(
+				"scope: %s • target: %s",
+				firstNonEmptyTrimmed(m.authInventoryHandoffScopeLabel(handoff), "-"),
+				firstNonEmptyTrimmed(m.authInventoryHandoffTargetLabel(handoff), "-"),
+			)
+			if nextAction := strings.TrimSpace(handoff.NextAction); nextAction != "" {
+				detail += " • next: " + truncate(nextAction, 40)
+			}
+			if len(handoff.MissingEvidence) > 0 {
+				detail += " • missing: " + truncate(strings.Join(handoff.MissingEvidence, ", "), 40)
+			}
+			if note := strings.TrimSpace(handoff.ResolutionNote); note != "" {
+				detail += " • note: " + truncate(note, 40)
+			}
+			appendSelectable(
+				fmt.Sprintf("[%s] %s", strings.TrimSpace(string(handoff.Status)), firstNonEmptyTrimmed(m.authInventoryHandoffLabel(handoff), handoff.ID)),
+				detail,
+				false,
+			)
+		}
+	}
+	if selected, ok := m.selectedAuthInventoryItem(); ok && selected.ResolvedRequest != nil {
+		request := selected.ResolvedRequest
+		lines = append(lines, "", accentStyle.Render("selected resolved request"))
+		lines = append(lines, fmt.Sprintf("state: %s", strings.TrimSpace(string(request.State))))
+		lines = append(lines, fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)))
+		if role := strings.TrimSpace(request.PrincipalRole); role != "" {
+			lines = append(lines, fmt.Sprintf("role: %s", role))
+		}
+		if requester := humanActorLabel(request.RequestedByActor, request.RequestedByType); requester != "" {
+			lines = append(lines, fmt.Sprintf("requested by: %s", requester))
+		}
+		lines = append(lines, fmt.Sprintf("client: %s", firstNonEmptyTrimmed(request.ClientName, request.ClientID)))
+		lines = append(lines, fmt.Sprintf("requested scope: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)))
+		if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" {
+			lines = append(lines, fmt.Sprintf("approved scope: %s", approvedLabel))
+		}
+		if note := strings.TrimSpace(request.ResolutionNote); note != "" {
+			lines = append(lines, "note:", note)
+		}
+	}
+	if m.authInventoryView == authInventoryViewHistory {
+		lines = append(lines, "", hintStyle.Render("enter inspects the selected historical row • h returns to live coordination • g toggles request/session scope • esc exits"))
+	} else {
+		lines = append(lines, "", hintStyle.Render("enter reviews a pending request, revokes an active session, or inspects a selected lease/handoff row • h toggles history • g toggles request/session scope • r opens revoke for a selected active session • esc exits"))
+	}
+	return lines, wrappedLineOffset(lines, selectedLine, contentWidth), wrappedLineOffset(lines, selectedSectionLine, contentWidth)
+}
+
+// syncAuthInventoryViewport refreshes the coordination viewport dimensions and keeps the selected row visible.
+func (m *Model) syncAuthInventoryViewport() {
+	if m == nil || m.mode != modeAuthInventory {
+		return
+	}
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	requestSessionScopeLabel, _ := m.authInventoryScopeLabels()
+	status := m.authInventoryViewLabel()
+	if scroll := fullPageScrollStatus(m.authInventoryBody); scroll != "" {
+		status += " • " + scroll
+	}
+	metrics := m.fullPageSurfaceMetrics(
+		accent,
+		muted,
+		dim,
+		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"Coordination",
+		requestSessionScopeLabel,
+		status,
+	)
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	bodyLines, focusLine, sectionLine := m.authInventoryBodyLines(metrics.contentWidth, hintStyle, accentStyle)
+	prevYOffset := m.authInventoryBody.YOffset()
+	m.authInventoryBody.SetWidth(metrics.contentWidth)
+	m.authInventoryBody.SetHeight(max(1, metrics.bodyHeight))
+	m.authInventoryBody.SetContent(strings.Join(bodyLines, "\n"))
+	m.authInventoryBody.SetYOffset(prevYOffset)
+	ensureViewportRangeVisible(&m.authInventoryBody, sectionLine, focusLine)
 }
 
 // beginSelectedAuthSessionRevoke opens the dedicated full-screen revoke surface
@@ -8660,11 +9151,42 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, m.startAuthInventory(!m.authInventoryGlobal)
+		case "h":
+			if m.authInventoryView == authInventoryViewHistory {
+				m.authInventoryView = authInventoryViewLive
+			} else {
+				m.authInventoryView = authInventoryViewHistory
+			}
+			m.authInventoryIndex = 0
+			m.authInventoryBody.GotoTop()
+			m.status = "coordination " + m.authInventoryViewLabel()
+			m.syncAuthInventoryViewport()
+			return m, nil
 		case "j", "down":
 			m.authInventoryMoveSelection(1)
+			m.syncAuthInventoryViewport()
 			return m, nil
 		case "k", "up":
 			m.authInventoryMoveSelection(-1)
+			m.syncAuthInventoryViewport()
+			return m, nil
+		case "pgdown", "ctrl+d":
+			m.authInventoryMoveSelection(max(1, m.authInventoryBody.Height()/4))
+			m.syncAuthInventoryViewport()
+			return m, nil
+		case "pgup", "ctrl+u":
+			m.authInventoryMoveSelection(-max(1, m.authInventoryBody.Height()/4))
+			m.syncAuthInventoryViewport()
+			return m, nil
+		case "home":
+			m.authInventoryIndex = 0
+			m.syncAuthInventoryViewport()
+			return m, nil
+		case "end":
+			if items := m.authInventoryItems(); len(items) > 0 {
+				m.authInventoryIndex = len(items) - 1
+			}
+			m.syncAuthInventoryViewport()
 			return m, nil
 		case "r":
 			if next, cmd, ok := m.beginSelectedAuthSessionRevoke(); ok {
@@ -11172,6 +11694,18 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mode == modeAuthInventory {
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.authInventoryMoveSelection(-1)
+		case tea.MouseWheelDown:
+			m.authInventoryMoveSelection(1)
+		default:
+			return m, nil
+		}
+		m.syncAuthInventoryViewport()
+		return m, nil
+	}
 	if m.mode == modeAddTask || m.mode == modeEditTask {
 		m.syncTaskFormViewportToFocus()
 		switch msg.Button {
@@ -12692,6 +13226,23 @@ func (m Model) recentActivityPanelEntries() []activityEntry {
 	return out
 }
 
+// noticesCoordinationSummaryLines renders the compact live coordination summary shown in the project notices panel.
+func (m Model) noticesCoordinationSummaryLines(contentWidth int, accent color.Color, normalStyle lipgloss.Style) []string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	summary := m.noticesCoordination
+	line := "Live Coordination: quiet"
+	if len(summary.PendingRequests) > 0 || len(summary.ActiveSessions) > 0 || len(summary.ActiveLeases) > 0 || len(summary.OpenHandoffs) > 0 {
+		line = fmt.Sprintf(
+			"Live Coordination: pending %d • sessions %d • leases %d • handoffs %d",
+			len(summary.PendingRequests),
+			len(summary.ActiveSessions),
+			len(summary.ActiveLeases),
+			len(summary.OpenHandoffs),
+		)
+	}
+	return []string{normalStyle.Inherit(titleStyle).Render(truncate(line, contentWidth))}
+}
+
 // noticesSectionTitle returns a stable header label for one notices section identifier.
 func noticesSectionTitle(section noticesSectionID) string {
 	switch section {
@@ -13834,8 +14385,11 @@ func (m Model) renderOverviewPanel(
 	projectLines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Project Notifications", contentWidth)),
 	}
-	for _, section := range sections {
-		projectLines = append(projectLines, "")
+	projectLines = append(projectLines, m.noticesCoordinationSummaryLines(contentWidth, accent, normalStyle)...)
+	for idx, section := range sections {
+		if idx > 0 {
+			projectLines = append(projectLines, "")
+		}
 		projectLines = append(
 			projectLines,
 			viewModel.renderNoticesSection(
@@ -14643,6 +15197,35 @@ func ensureViewportLineVisible(vp *viewport.Model, focusLine int) {
 	case focusLine > bottom:
 		vp.SetYOffset(max(0, focusLine-vp.Height()+1))
 	}
+}
+
+// ensureViewportRangeVisible keeps both ends of one important line range visible when the viewport height allows it.
+func ensureViewportRangeVisible(vp *viewport.Model, startLine, endLine int) {
+	if vp == nil {
+		return
+	}
+	if startLine < 0 {
+		ensureViewportLineVisible(vp, endLine)
+		return
+	}
+	if endLine < 0 {
+		ensureViewportLineVisible(vp, startLine)
+		return
+	}
+	if startLine > endLine {
+		startLine, endLine = endLine, startLine
+	}
+	height := vp.Height()
+	if height <= 0 {
+		return
+	}
+	minTop := max(0, endLine-height+1)
+	maxTop := max(0, startLine)
+	if minTop <= maxTop {
+		vp.SetYOffset(clamp(vp.YOffset(), minTop, maxTop))
+		return
+	}
+	vp.SetYOffset(minTop)
 }
 
 func (m *Model) syncTaskFormViewportToFocus() {
@@ -16061,6 +16644,24 @@ func resolveViewportFocus(lines []string) ([]string, int) {
 	return strings.Split(content, "\n"), focusLine
 }
 
+// wrappedLineOffset returns the wrapped viewport row offset for one raw line index at the requested width.
+func wrappedLineOffset(lines []string, rawLine, wrapWidth int) int {
+	if rawLine < 0 {
+		return -1
+	}
+	if rawLine == 0 {
+		return 0
+	}
+	prefix := strings.Join(lines[:rawLine], "\n")
+	if prefix == "" {
+		return 0
+	}
+	if wrapWidth <= 0 {
+		return lipgloss.Height(prefix)
+	}
+	return lipgloss.Height(lipgloss.NewStyle().Width(wrapWidth).Render(prefix))
+}
+
 // renderNodeModalViewport renders the shared bordered body for node full-page surfaces.
 func renderNodeModalViewport(accent, muted color.Color, boxWidth int, title, subtitle, status string, body viewport.Model) string {
 	return renderFullPageSurfaceViewport(accent, muted, boxWidth, title, subtitle, status, body)
@@ -16287,220 +16888,24 @@ func (m Model) renderAuthInventoryModeView() tea.View {
 	}
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
-	requestSessionScopeLabel := "global (all projects)"
-	if !m.authInventoryGlobal {
-		if _, ok := m.currentProject(); ok {
-			requestSessionScopeLabel = "project scope (" + firstNonEmptyTrimmed(m.authInventoryScopeLabel(), "no project selected") + ")"
-		} else {
-			requestSessionScopeLabel = "all projects (no project selected)"
-		}
+	requestSessionScopeLabel, _ := m.authInventoryScopeLabels()
+	status := m.authInventoryViewLabel()
+	if scroll := fullPageScrollStatus(m.authInventoryBody); scroll != "" {
+		status += " • " + scroll
 	}
-	coordinationScopeLabel := "project-local (no project selected)"
-	if project, ok := m.currentProject(); ok {
-		coordinationScopeLabel = "project-local (" + firstNonEmptyTrimmed(projectDisplayName(project), project.ID) + ")"
-	}
-	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), "Coordination", requestSessionScopeLabel, "")
-	hintStyle := lipgloss.NewStyle().Foreground(muted)
-	accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-	lines := []string{
-		accentStyle.Render("coordination"),
-		fmt.Sprintf("requests/sessions: %s", requestSessionScopeLabel),
-		fmt.Sprintf("leases/handoffs: %s", coordinationScopeLabel),
-		fmt.Sprintf("pending requests: %d", len(m.authInventoryRequests)),
-		fmt.Sprintf("resolved requests: %d", len(m.authInventoryResolvedRequests)),
-		fmt.Sprintf("active sessions: %d", len(m.authInventorySessions)),
-		fmt.Sprintf("capability leases: %d", len(m.authInventoryLeases)),
-		fmt.Sprintf("handoffs: %d", len(m.authInventoryHandoffs)),
-		"",
-		hintStyle.Render("requests and sessions can widen to all projects; leases and handoffs stay on the selected project."),
-		"",
-	}
-	if len(m.authInventoryRequests) == 0 && len(m.authInventoryResolvedRequests) == 0 && len(m.authInventorySessions) == 0 && len(m.authInventoryLeases) == 0 && len(m.authInventoryHandoffs) == 0 {
-		lines = append(lines, hintStyle.Render("no coordination state is visible in this scope"))
-	} else {
-		displayIndex := 0
-		if len(m.authInventoryRequests) > 0 {
-			lines = append(lines, accentStyle.Render("pending requests"))
-			for idx := range m.authInventoryRequests {
-				request := m.authInventoryRequests[idx]
-				labelName := firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)
-				if role := strings.TrimSpace(request.PrincipalRole); role != "" {
-					labelName += " • " + role
-				}
-				detailParts := []string{
-					"scope: " + firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path),
-					"client: " + firstNonEmptyTrimmed(request.ClientName, request.ClientID),
-				}
-				if requestedBy := humanActorLabel(request.RequestedByActor, request.RequestedByType); requestedBy != "" {
-					detailParts = append(detailParts, "requested by: "+requestedBy)
-				}
-				if reason := strings.TrimSpace(request.Reason); reason != "" {
-					detailParts = append(detailParts, "reason: "+truncate(reason, 40))
-				}
-				if resumeClient := firstNonEmptyTrimmed(app.AuthRequestClaimClientIDFromContinuation(request.Continuation, request.ClientID), request.ClientID); resumeClient != "" {
-					detailParts = append(detailParts, "resume: "+resumeClient)
-				}
-				if timeout := formatAuthRequestTimeout(request); timeout != "" {
-					detailParts = append(detailParts, "timeout: "+timeout)
-				}
-				item := authInventoryItem{
-					Request: &m.authInventoryRequests[idx],
-					Label:   fmt.Sprintf("[pending] %s", labelName),
-					Detail:  strings.Join(detailParts, " • "),
-				}
-				cursor := "  "
-				label := item.Label
-				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-					cursor = "> "
-					label = accentStyle.Render(label)
-				}
-				lines = append(lines, cursor+label)
-				lines = append(lines, hintStyle.Render("    "+item.Detail))
-				displayIndex++
-			}
-		}
-		if len(m.authInventoryResolvedRequests) > 0 {
-			lines = append(lines, "", accentStyle.Render("resolved requests"))
-			for idx := range m.authInventoryResolvedRequests {
-				request := m.authInventoryResolvedRequests[idx]
-				stateLabel := strings.TrimSpace(string(request.State))
-				labelName := firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)
-				if role := strings.TrimSpace(request.PrincipalRole); role != "" {
-					labelName += " • " + role
-				}
-				label := fmt.Sprintf("[%s] %s", stateLabel, labelName)
-				requestedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)
-				detail := fmt.Sprintf("requested: %s • client: %s", requestedLabel, firstNonEmptyTrimmed(request.ClientName, request.ClientID))
-				if requester := humanActorLabel(request.RequestedByActor, request.RequestedByType); requester != "" {
-					detail += " • requested by: " + requester
-				}
-				if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" && approvedLabel != requestedLabel {
-					detail += " • approved: " + approvedLabel
-				}
-				if note := strings.TrimSpace(request.ResolutionNote); note != "" {
-					detail += " • note: " + truncate(note, max(24, metrics.contentWidth-18))
-				}
-				cursor := "  "
-				renderedLabel := hintStyle.Render(label)
-				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-					cursor = "> "
-					renderedLabel = accentStyle.Render(label)
-				}
-				lines = append(lines, cursor+renderedLabel)
-				lines = append(lines, hintStyle.Render("    "+detail))
-				displayIndex++
-			}
-		}
-		if len(m.authInventorySessions) > 0 {
-			lines = append(lines, "", accentStyle.Render("active sessions"))
-			for idx := range m.authInventorySessions {
-				session := m.authInventorySessions[idx]
-				scopePath := strings.TrimSpace(session.ApprovedPath)
-				if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
-					scopePath = "project/" + strings.TrimSpace(session.ProjectID)
-				}
-				roleLabel := strings.TrimSpace(session.PrincipalRole)
-				if roleLabel != "" {
-					roleLabel = " • role: " + roleLabel
-				}
-				labelName := firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)
-				if role := strings.TrimSpace(session.PrincipalRole); role != "" {
-					labelName += " • " + role
-				}
-				item := authInventoryItem{
-					Session: &m.authInventorySessions[idx],
-					Label:   fmt.Sprintf("[active] %s", labelName),
-					Detail:  fmt.Sprintf("scope: %s • client: %s%s • expires: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath), firstNonEmptyTrimmed(session.ClientName, session.ClientID), roleLabel, session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
-				}
-				cursor := "  "
-				label := item.Label
-				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-					cursor = "> "
-					label = accentStyle.Render(label)
-				}
-				lines = append(lines, cursor+label)
-				lines = append(lines, hintStyle.Render("    "+item.Detail))
-				displayIndex++
-			}
-		}
-		if len(m.authInventoryLeases) > 0 {
-			lines = append(lines, "", accentStyle.Render("capability leases"))
-			for idx := range m.authInventoryLeases {
-				lease := m.authInventoryLeases[idx]
-				item := authInventoryItem{
-					Lease:  &m.authInventoryLeases[idx],
-					Label:  fmt.Sprintf("[%s] %s", m.authInventoryLeaseStatusLabel(lease), firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID)),
-					Detail: fmt.Sprintf("scope: %s • role: %s • expires: %s", firstNonEmptyTrimmed(m.authInventoryLeaseScopeLabel(lease), "-"), strings.TrimSpace(string(lease.Role)), lease.ExpiresAt.In(time.Local).Format(time.RFC3339)),
-				}
-				if !lease.HeartbeatAt.IsZero() {
-					item.Detail += " • heartbeat: " + lease.HeartbeatAt.In(time.Local).Format(time.RFC3339)
-				}
-				if lease.IsRevoked() {
-					item.Detail += " • revoked: " + truncate(strings.TrimSpace(lease.RevokedReason), 40)
-				}
-				cursor := "  "
-				label := item.Label
-				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-					cursor = "> "
-					label = accentStyle.Render(label)
-				}
-				lines = append(lines, cursor+label)
-				lines = append(lines, hintStyle.Render("    "+item.Detail))
-				displayIndex++
-			}
-		}
-		if len(m.authInventoryHandoffs) > 0 {
-			lines = append(lines, "", accentStyle.Render("handoffs"))
-			for idx := range m.authInventoryHandoffs {
-				handoff := m.authInventoryHandoffs[idx]
-				item := authInventoryItem{
-					Handoff: &m.authInventoryHandoffs[idx],
-					Label:   fmt.Sprintf("[%s] %s", strings.TrimSpace(string(handoff.Status)), firstNonEmptyTrimmed(m.authInventoryHandoffLabel(handoff), handoff.ID)),
-					Detail:  fmt.Sprintf("scope: %s • target: %s", firstNonEmptyTrimmed(m.authInventoryHandoffScopeLabel(handoff), "-"), firstNonEmptyTrimmed(m.authInventoryHandoffTargetLabel(handoff), "-")),
-				}
-				if nextAction := strings.TrimSpace(handoff.NextAction); nextAction != "" {
-					item.Detail += " • next: " + truncate(nextAction, 40)
-				}
-				if len(handoff.MissingEvidence) > 0 {
-					item.Detail += " • missing: " + truncate(strings.Join(handoff.MissingEvidence, ", "), 40)
-				}
-				if note := strings.TrimSpace(handoff.ResolutionNote); note != "" {
-					item.Detail += " • note: " + truncate(note, 40)
-				}
-				cursor := "  "
-				label := item.Label
-				if displayIndex == clamp(m.authInventoryIndex, 0, len(m.authInventoryItems())-1) {
-					cursor = "> "
-					label = accentStyle.Render(label)
-				}
-				lines = append(lines, cursor+label)
-				lines = append(lines, hintStyle.Render("    "+item.Detail))
-				displayIndex++
-			}
-		}
-	}
-	if selected, ok := m.selectedAuthInventoryItem(); ok && selected.ResolvedRequest != nil {
-		request := selected.ResolvedRequest
-		lines = append(lines, "", accentStyle.Render("selected resolved request"))
-		lines = append(lines, fmt.Sprintf("state: %s", strings.TrimSpace(string(request.State))))
-		lines = append(lines, fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(request.PrincipalName, request.PrincipalID)))
-		if role := strings.TrimSpace(request.PrincipalRole); role != "" {
-			lines = append(lines, fmt.Sprintf("role: %s", role))
-		}
-		if requester := humanActorLabel(request.RequestedByActor, request.RequestedByType); requester != "" {
-			lines = append(lines, fmt.Sprintf("requested by: %s", requester))
-		}
-		lines = append(lines, fmt.Sprintf("client: %s", firstNonEmptyTrimmed(request.ClientName, request.ClientID)))
-		lines = append(lines, fmt.Sprintf("requested scope: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(request.Path), request.Path)))
-		if approvedLabel := firstNonEmptyTrimmed(m.authRequestPathDisplay(request.ApprovedPath), request.ApprovedPath); approvedLabel != "" {
-			lines = append(lines, fmt.Sprintf("approved scope: %s", approvedLabel))
-		}
-		if note := strings.TrimSpace(request.ResolutionNote); note != "" {
-			lines = append(lines, "note:", note)
-		}
-	}
-	lines = append(lines, "", hintStyle.Render("enter reviews a pending request, revokes an active session, or inspects a selected lease/handoff row • g toggles request/session scope • r opens revoke for a selected active session • esc exits"))
-	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, "Coordination", requestSessionScopeLabel, "", strings.Join(lines, "\n"))
+	metrics := m.fullPageSurfaceMetrics(
+		accent,
+		muted,
+		dim,
+		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"Coordination",
+		requestSessionScopeLabel,
+		status,
+	)
+	bodyViewport := m.authInventoryBody
+	bodyViewport.SetWidth(metrics.contentWidth)
+	bodyViewport.SetHeight(max(1, metrics.bodyHeight))
+	surface := renderFullPageSurfaceViewport(accent, muted, metrics.boxWidth, "Coordination", requestSessionScopeLabel, status, bodyViewport)
 	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }
 
@@ -17597,7 +18002,7 @@ func (m Model) modePrompt() string {
 	case modeAuthScopePicker:
 		return "auth scope picker: up/down selects named scopes, enter chooses one, esc returns to review"
 	case modeAuthInventory:
-		return "coordination: up/down select, enter review request/session revoke or inspect lease/handoff details, g toggle project/global requests, r open revoke for selected session, esc close"
+		return "coordination: up/down select, enter acts on selected row, h toggles live/history, g toggles project/global requests, r opens revoke for selected active session, esc closes"
 	case modeAuthSessionRevoke:
 		return "revoke active session: enter revoke, esc cancel"
 	case modeWarning:
