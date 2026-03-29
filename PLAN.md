@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, and now a final board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, with the latest local slice green on `just test-pkg ./internal/tui`, `just test-golden-update`, `just check`, and `just ci`, and one fresh live TUI reopen still pending to confirm the updated notices panel plus live/history coordination split on the fresh binary.
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now fixes actionable coordination routing from the board/global notifications panels plus `enter`-to-detail behavior inside `Coordination`, with the local slice green again on `just test-pkg ./internal/tui`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the updated board/global notification routing on the rebuilt binary.
 
 ## 1) Active Run Source Of Truth
 
@@ -3108,6 +3108,44 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
      - the full-screen `Coordination` view defaults to live/actionable rows,
      - `h` toggles into the history slice cleanly,
      - and the lower handoff rows remain reachable after the wrapped-line viewport fix.
+12. Fresh live finding on 2026-03-29 from the first reopen after commit `d1dbb44`:
+   - PASS:
+     - `?` detailed help opened correctly on the coordination screen,
+     - `h` toggled between live and history,
+     - `esc` returned to the board,
+     - the legacy `Selection` notices section is gone.
+   - FAIL:
+     - the project/global notifications panels still do not surface actionable auth/coordination rows; they only show the compact summary plus existing warnings/activity content,
+     - and pressing `enter` on a lease or handoff in the full-screen `Coordination` view does not open a dedicated detail/info surface yet.
+   - active remediation direction:
+     - add selectable coordination rows to the project notifications panel with count-by-type labels,
+     - add project-grouped coordination rows to the global notifications panel,
+     - route `enter` on those rows into the related project coordination screen,
+     - and make `enter` on coordination rows open a dedicated item detail surface instead of only updating inline status text.
+13. Local remediation follow-up for the fresh 2026-03-29 notifications/detail finding:
+   - commands:
+     - `just test-pkg ./internal/tui` -> FAIL initially on the expected pre-update goldens after the board/global coordination layout changed
+     - `just test-golden-update` -> PASS
+     - `just test-pkg ./internal/tui` -> PASS
+     - `just fmt` -> PASS
+     - `just check` -> PASS
+     - `just ci` -> PASS
+   - implementation outcome:
+     - the project notifications panel now keeps one compact actionable `Live Coordination` summary row instead of a tall four-row slice, so warnings/action-required/activity remain visible,
+     - the global notifications panel now includes per-project coordination summary rows that open the related project coordination screen on `enter`,
+     - `enter` on coordination sessions/leases/handoffs now opens a centered detail/info modal and `esc` returns to coordination,
+     - and the per-kind coordination deep-link experiment was removed so the panel/coordination path stays compact and DRY.
+   - files changed for this follow-up:
+     - [`internal/tui/model.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model.go)
+     - [`internal/tui/model_test.go`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/model_test.go)
+     - [`internal/tui/testdata/TestModelGoldenBoardOutput.golden`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/testdata/TestModelGoldenBoardOutput.golden)
+     - [`internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`](/Users/evanschultz/Documents/Code/hylla/tillsyn/internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden)
+   - next live step:
+     - restart `./till` and confirm:
+       - the project notifications panel shows one selectable `Live Coordination` summary row,
+       - the global notifications panel shows coordination rows grouped by project,
+       - `enter` on either notification row opens the appropriate coordination screen,
+       - and `enter` on a coordination session/lease/handoff row opens item detail instead of only updating inline status text.
 
 ### 2026-03-25: Pre-Collab CLI Quiet-Log And Positional Project Command Cleanup
 

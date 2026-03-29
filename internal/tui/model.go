@@ -435,7 +435,8 @@ type noticesSectionID int
 
 // Notices panel section identifiers.
 const (
-	noticesSectionWarnings noticesSectionID = iota
+	noticesSectionCoordination noticesSectionID = iota
+	noticesSectionWarnings
 	noticesSectionAttention
 	noticesSectionRecentActivity
 )
@@ -459,16 +460,18 @@ const (
 
 // noticesPanelItem describes one selectable row in a notices-panel section.
 type noticesPanelItem struct {
-	Label             string
-	AttentionID       string
-	TaskID            string
-	ProjectID         string
-	ScopeType         domain.ScopeLevel
-	ScopeID           string
-	ThreadTitle       string
-	ThreadDescription string
-	Activity          activityEntry
-	HasActivity       bool
+	Label                 string
+	AttentionID           string
+	TaskID                string
+	ProjectID             string
+	ScopeType             domain.ScopeLevel
+	ScopeID               string
+	ThreadTitle           string
+	ThreadDescription     string
+	Activity              activityEntry
+	HasActivity           bool
+	CoordinationProjectID string
+	CoordinationGlobal    bool
 }
 
 // noticesPanelSection describes one notices-panel list section.
@@ -481,6 +484,7 @@ type noticesPanelSection struct {
 
 // noticesPanelSectionOrder stores the stable section traversal order for notices navigation.
 var noticesPanelSectionOrder = []noticesSectionID{
+	noticesSectionCoordination,
 	noticesSectionWarnings,
 	noticesSectionAttention,
 	noticesSectionRecentActivity,
@@ -497,15 +501,16 @@ const (
 
 // globalNoticesPanelItem describes one selectable row in the global notifications panel.
 type globalNoticesPanelItem struct {
-	StableKey         string
-	AttentionID       string
-	ProjectID         string
-	ProjectLabel      string
-	ScopeType         domain.ScopeLevel
-	ScopeID           string
-	Summary           string
-	TaskID            string
-	ThreadDescription string
+	StableKey          string
+	AttentionID        string
+	ProjectID          string
+	ProjectLabel       string
+	ScopeType          domain.ScopeLevel
+	ScopeID            string
+	Summary            string
+	TaskID             string
+	ThreadDescription  string
+	CoordinationGlobal bool
 }
 
 // noticesCoordinationSummary stores live project-scoped coordination counts for the board notices panel.
@@ -696,6 +701,8 @@ type Model struct {
 	taskFormBackTaskID             string
 	taskFormBackChildID            string
 	pendingProjectID               string
+	pendingOpenAuthInventory       bool
+	pendingOpenAuthInventoryGlobal bool
 	pendingFocusTaskID             string
 	pendingActivityJumpTask        string
 	pendingOpenTaskInfoID          string
@@ -715,6 +722,7 @@ type Model struct {
 	confirmFocus      int
 	warningTitle      string
 	warningBody       string
+	warningReturnMode inputMode
 
 	boardGroupBy    string
 	showWIPWarnings bool
@@ -727,18 +735,19 @@ type Model struct {
 
 	projectionRootTaskID string
 
-	selectedTaskIDs     map[string]struct{}
-	activityLog         []activityEntry
-	noticesFocused      bool
-	noticesPanel        noticesPanelFocusTarget
-	noticesSection      noticesSectionID
-	noticesWarnings     int
-	noticesAttention    int
-	noticesActivity     int
-	attentionItems      []domain.AttentionItem
-	noticesCoordination noticesCoordinationSummary
-	globalNotices       []globalNoticesPanelItem
-	globalNoticesIdx    int
+	selectedTaskIDs        map[string]struct{}
+	activityLog            []activityEntry
+	noticesFocused         bool
+	noticesPanel           noticesPanelFocusTarget
+	noticesSection         noticesSectionID
+	noticesCoordinationIdx int
+	noticesWarnings        int
+	noticesAttention       int
+	noticesActivity        int
+	attentionItems         []domain.AttentionItem
+	noticesCoordination    noticesCoordinationSummary
+	globalNotices          []globalNoticesPanelItem
+	globalNoticesIdx       int
 	// globalNoticesPartialCount reports how many projects were skipped while aggregating global notices.
 	globalNoticesPartialCount int
 	globalNoticeTransition    globalNoticeTransitionTrace
@@ -1216,6 +1225,12 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		}
 		m.traceGlobalNoticePending("clear", "pending_project_id", pendingProjectID, "reason", "apply_loaded")
 		m.pendingProjectID = ""
+	}
+	if m.pendingOpenAuthInventory {
+		global := m.pendingOpenAuthInventoryGlobal
+		m.pendingOpenAuthInventory = false
+		m.pendingOpenAuthInventoryGlobal = false
+		return m.startAuthInventory(global)
 	}
 	if m.projectionRootTaskID != "" {
 		if _, ok := m.taskByID(m.projectionRootTaskID); !ok {
@@ -2216,9 +2231,30 @@ func (m Model) loadData() tea.Msg {
 
 	attentionStartedAt := time.Now()
 	attentionItems := []domain.AttentionItem{}
+	globalCoordinationRows := make([]globalNoticesPanelItem, 0, len(projects)+1)
 	globalNotices := make([]globalNoticesPanelItem, 0)
+	globalNoticesPartialProjects := map[string]struct{}{}
 	globalNoticesPartialCount := 0
+	markGlobalNoticesPartial := func(projectID string) {
+		projectID = strings.TrimSpace(projectID)
+		if projectID == "" {
+			return
+		}
+		globalNoticesPartialProjects[projectID] = struct{}{}
+		globalNoticesPartialCount = len(globalNoticesPartialProjects)
+	}
 	for _, project := range projects {
+		projectCoordination, coordinationErr := m.loadNoticesCoordinationSummary(project.ID)
+		if coordinationErr != nil {
+			if project.ID == projectID {
+				m.traceLoadDataStage("total", totalStartedAt, coordinationErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
+				return loadedMsg{err: coordinationErr}
+			}
+			markGlobalNoticesPartial(project.ID)
+		} else if row, ok := globalNoticesPanelItemFromCoordinationSummary(project.ID, projectDisplayName(project), projectCoordination, false); ok {
+			globalCoordinationRows = append(globalCoordinationRows, row)
+		}
+
 		projectAttention, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
 			Level: domain.LevelTupleInput{
 				ProjectID: project.ID,
@@ -2242,7 +2278,7 @@ func (m Model) loadData() tea.Msg {
 				m.traceLoadDataStage("total", totalStartedAt, attentionErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
 				return loadedMsg{err: attentionErr}
 			}
-			globalNoticesPartialCount++
+			markGlobalNoticesPartial(project.ID)
 			continue
 		}
 		if project.ID == projectID {
@@ -2256,6 +2292,13 @@ func (m Model) loadData() tea.Msg {
 				continue
 			}
 			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttention(project, item))
+		}
+	}
+
+	globalCoordination, globalCoordinationErr := m.loadNoticesCoordinationSummary(domain.AuthRequestGlobalProjectID)
+	if globalCoordinationErr == nil {
+		if row, ok := globalNoticesPanelItemFromCoordinationSummary(domain.AuthRequestGlobalProjectID, "All Projects", globalCoordination, true); ok {
+			globalCoordinationRows = append([]globalNoticesPanelItem{row}, globalCoordinationRows...)
 		}
 	}
 	globalAttention, globalAttentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
@@ -2275,6 +2318,7 @@ func (m Model) loadData() tea.Msg {
 			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttentionLabel(domain.AuthRequestGlobalProjectID, "All Projects", item))
 		}
 	}
+	globalNotices = append(globalCoordinationRows, globalNotices...)
 	m.traceLoadDataStage(
 		"attention_loop",
 		attentionStartedAt,
@@ -3109,6 +3153,128 @@ func (m Model) selectedAuthInventoryItem() (authInventoryItem, bool) {
 	}
 	idx := clamp(m.authInventoryIndex, 0, len(items)-1)
 	return items[idx], true
+}
+
+// openCoordinationFromNotice opens coordination directly or after a project reload when a notice row targets another project.
+func (m *Model) openCoordinationFromNotice(projectID string, global bool) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	projectID = strings.TrimSpace(projectID)
+	if global {
+		return m.startAuthInventory(true)
+	}
+	currentProjectID, hasCurrentProject := m.currentProjectID()
+	if projectID == "" || (hasCurrentProject && projectID == currentProjectID) {
+		return m.startAuthInventory(false)
+	}
+	m.pendingProjectID = projectID
+	m.pendingOpenAuthInventory = true
+	m.pendingOpenAuthInventoryGlobal = false
+	m.status = "loading coordination..."
+	return m.loadData
+}
+
+// authInventoryItemDetail renders a full detail modal payload for one coordination row.
+func (m Model) authInventoryItemDetail(item authInventoryItem) (string, string, bool) {
+	switch {
+	case item.Request != nil:
+		req := *item.Request
+		lines := []string{
+			fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)),
+			fmt.Sprintf("role: %s", firstNonEmptyTrimmed(req.PrincipalRole, "-")),
+			fmt.Sprintf("scope: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path, "-")),
+			fmt.Sprintf("client: %s", firstNonEmptyTrimmed(req.ClientName, req.ClientID, "-")),
+		}
+		if requester := humanActorLabel(req.RequestedByActor, req.RequestedByType); requester != "" {
+			lines = append(lines, fmt.Sprintf("requested by: %s", requester))
+		}
+		if reason := strings.TrimSpace(req.Reason); reason != "" {
+			lines = append(lines, fmt.Sprintf("reason: %s", reason))
+		}
+		if resumeClient := firstNonEmptyTrimmed(app.AuthRequestClaimClientIDFromContinuation(req.Continuation, req.ClientID), req.ClientID); resumeClient != "" {
+			lines = append(lines, fmt.Sprintf("resume client: %s", resumeClient))
+		}
+		if timeout := formatAuthRequestTimeout(req); timeout != "" {
+			lines = append(lines, fmt.Sprintf("timeout: %s", timeout))
+		}
+		lines = append(lines, "", "enter on pending requests opens the full auth review flow.")
+		return "Pending Request", strings.Join(lines, "\n"), true
+	case item.ResolvedRequest != nil:
+		req := *item.ResolvedRequest
+		lines := []string{
+			fmt.Sprintf("state: %s", firstNonEmptyTrimmed(string(req.State), "-")),
+			fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)),
+			fmt.Sprintf("requested scope: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(req.Path), req.Path, "-")),
+		}
+		if approved := firstNonEmptyTrimmed(m.authRequestPathDisplay(req.ApprovedPath), req.ApprovedPath); approved != "" {
+			lines = append(lines, fmt.Sprintf("approved scope: %s", approved))
+		}
+		lines = append(lines, fmt.Sprintf("client: %s", firstNonEmptyTrimmed(req.ClientName, req.ClientID, "-")))
+		if requester := humanActorLabel(req.RequestedByActor, req.RequestedByType); requester != "" {
+			lines = append(lines, fmt.Sprintf("requested by: %s", requester))
+		}
+		if note := strings.TrimSpace(req.ResolutionNote); note != "" {
+			lines = append(lines, fmt.Sprintf("note: %s", note))
+		}
+		return "Resolved Request", strings.Join(lines, "\n"), true
+	case item.Session != nil:
+		session := *item.Session
+		scopePath := strings.TrimSpace(session.ApprovedPath)
+		if scopePath == "" && strings.TrimSpace(session.ProjectID) != "" {
+			scopePath = "project/" + strings.TrimSpace(session.ProjectID)
+		}
+		lines := []string{
+			fmt.Sprintf("principal: %s", firstNonEmptyTrimmed(session.PrincipalName, session.PrincipalID)),
+			fmt.Sprintf("role: %s", firstNonEmptyTrimmed(session.PrincipalRole, "-")),
+			fmt.Sprintf("approved scope: %s", firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath, "-")),
+			fmt.Sprintf("client: %s", firstNonEmptyTrimmed(session.ClientName, session.ClientID, "-")),
+			fmt.Sprintf("session id: %s", firstNonEmptyTrimmed(session.SessionID, "-")),
+			fmt.Sprintf("expires: %s", session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
+			"",
+			"press r from coordination to open revoke review for an active session.",
+		}
+		return "Active Session", strings.Join(lines, "\n"), true
+	case item.Lease != nil:
+		lease := *item.Lease
+		lines := []string{
+			fmt.Sprintf("status: %s", m.authInventoryLeaseStatusLabel(lease)),
+			fmt.Sprintf("agent: %s", firstNonEmptyTrimmed(lease.AgentName, lease.InstanceID)),
+			fmt.Sprintf("instance id: %s", firstNonEmptyTrimmed(lease.InstanceID, "-")),
+			fmt.Sprintf("scope: %s", firstNonEmptyTrimmed(m.authInventoryLeaseScopeLabel(lease), "-")),
+			fmt.Sprintf("role: %s", firstNonEmptyTrimmed(string(lease.Role), "-")),
+			fmt.Sprintf("expires: %s", lease.ExpiresAt.In(time.Local).Format(time.RFC3339)),
+		}
+		if !lease.HeartbeatAt.IsZero() {
+			lines = append(lines, fmt.Sprintf("heartbeat: %s", lease.HeartbeatAt.In(time.Local).Format(time.RFC3339)))
+		}
+		if lease.IsRevoked() {
+			lines = append(lines, fmt.Sprintf("revoked reason: %s", firstNonEmptyTrimmed(strings.TrimSpace(lease.RevokedReason), "-")))
+		}
+		return "Capability Lease", strings.Join(lines, "\n"), true
+	case item.Handoff != nil:
+		handoff := *item.Handoff
+		lines := []string{
+			fmt.Sprintf("status: %s", firstNonEmptyTrimmed(string(handoff.Status), "-")),
+			fmt.Sprintf("summary: %s", firstNonEmptyTrimmed(strings.TrimSpace(handoff.Summary), "-")),
+			fmt.Sprintf("scope: %s", firstNonEmptyTrimmed(m.authInventoryHandoffScopeLabel(handoff), "-")),
+			fmt.Sprintf("target: %s", firstNonEmptyTrimmed(m.authInventoryHandoffTargetLabel(handoff), "-")),
+			fmt.Sprintf("source role: %s", firstNonEmptyTrimmed(strings.TrimSpace(handoff.SourceRole), "-")),
+			fmt.Sprintf("target role: %s", firstNonEmptyTrimmed(strings.TrimSpace(handoff.TargetRole), "-")),
+		}
+		if nextAction := strings.TrimSpace(handoff.NextAction); nextAction != "" {
+			lines = append(lines, fmt.Sprintf("next: %s", nextAction))
+		}
+		if len(handoff.MissingEvidence) > 0 {
+			lines = append(lines, fmt.Sprintf("missing evidence: %s", strings.Join(handoff.MissingEvidence, ", ")))
+		}
+		if note := strings.TrimSpace(handoff.ResolutionNote); note != "" {
+			lines = append(lines, fmt.Sprintf("resolution note: %s", note))
+		}
+		return "Handoff", strings.Join(lines, "\n"), true
+	default:
+		return "", "", false
+	}
 }
 
 // authInventoryLeaseStatusLabel renders one capability lease status for coordination visibility.
@@ -7828,6 +7994,7 @@ func (m *Model) startWarningModal(title, body string) {
 	}
 	m.warningTitle = title
 	m.warningBody = strings.TrimSpace(body)
+	m.warningReturnMode = m.mode
 	m.mode = modeWarning
 }
 
@@ -7835,7 +8002,8 @@ func (m *Model) startWarningModal(title, body string) {
 func (m *Model) closeWarningModal() {
 	m.warningTitle = ""
 	m.warningBody = ""
-	m.mode = modeNone
+	m.mode = m.warningReturnMode
+	m.warningReturnMode = modeNone
 }
 
 // handleNormalModeKey handles normal mode key.
@@ -9212,12 +9380,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				next, cmd, _ := m.beginAuthRequestDecision(*item.Request, "approve", modeAuthInventory)
 				return next, cmd
 			}
-			if item.ResolvedRequest != nil {
-				m.status = "resolved request details updated"
-				return m, nil
-			}
-			if item.Lease != nil || item.Handoff != nil {
-				m.status = strings.TrimSpace(item.Detail)
+			if title, body, ok := m.authInventoryItemDetail(item); ok {
+				m.startWarningModal(title, body)
 				return m, nil
 			}
 			if next, cmd, ok := m.beginSelectedAuthSessionRevoke(); ok {
@@ -13130,6 +13294,30 @@ func globalNoticesStableKey(projectID, attentionID string, scopeType domain.Scop
 	return fmt.Sprintf("project:%s|summary:%s", projectID, summary)
 }
 
+// globalCoordinationStableKey returns one deterministic row identity for a coordination summary row.
+func globalCoordinationStableKey(projectID string, global bool) string {
+	projectID = strings.TrimSpace(projectID)
+	if global {
+		return fmt.Sprintf("coordination:global:%s", projectID)
+	}
+	return fmt.Sprintf("coordination:project:%s", projectID)
+}
+
+// globalNoticesPanelItemFromCoordinationSummary maps one project/global coordination summary into a global notices row.
+func globalNoticesPanelItemFromCoordinationSummary(projectID, projectLabel string, summary noticesCoordinationSummary, global bool) (globalNoticesPanelItem, bool) {
+	parts := coordinationSummaryParts(summary, false)
+	if len(parts) == 0 {
+		return globalNoticesPanelItem{}, false
+	}
+	return globalNoticesPanelItem{
+		StableKey:          globalCoordinationStableKey(projectID, global),
+		ProjectID:          strings.TrimSpace(projectID),
+		ProjectLabel:       strings.TrimSpace(projectLabel),
+		Summary:            strings.Join(parts, " • "),
+		CoordinationGlobal: global,
+	}, true
+}
+
 // globalNoticesPanelItemFromAttention maps one attention item into a global notifications panel row.
 func globalNoticesPanelItemFromAttention(project domain.Project, item domain.AttentionItem) globalNoticesPanelItem {
 	return globalNoticesPanelItemFromAttentionLabel(strings.TrimSpace(project.ID), projectDisplayName(project), item)
@@ -13166,7 +13354,7 @@ func (m Model) globalNoticesPanelItemsForInteraction() []globalNoticesPanelItem 
 	if len(m.globalNotices) == 0 {
 		return []globalNoticesPanelItem{{
 			StableKey: globalNoticesEmptyRowKey,
-			Summary:   "no notifications requiring user action",
+			Summary:   "no coordination or notifications across projects",
 		}}
 	}
 	return append([]globalNoticesPanelItem(nil), m.globalNotices...)
@@ -13218,26 +13406,44 @@ func (m Model) recentActivityPanelEntries() []activityEntry {
 	return out
 }
 
-// noticesCoordinationSummaryLines renders the compact live coordination summary shown in the project notices panel.
-func (m Model) noticesCoordinationSummaryLines(contentWidth int, accent color.Color, normalStyle lipgloss.Style) []string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-	summary := m.noticesCoordination
-	line := "Live Coordination: quiet"
-	if len(summary.PendingRequests) > 0 || len(summary.ActiveSessions) > 0 || len(summary.ActiveLeases) > 0 || len(summary.OpenHandoffs) > 0 {
-		line = fmt.Sprintf(
-			"Live Coordination: pending %d • sessions %d • leases %d • handoffs %d",
-			len(summary.PendingRequests),
-			len(summary.ActiveSessions),
-			len(summary.ActiveLeases),
-			len(summary.OpenHandoffs),
-		)
+// coordinationSummaryParts renders one project/global summary with count-by-type parts.
+func coordinationSummaryParts(summary noticesCoordinationSummary, includeZero bool) []string {
+	counts := []struct {
+		label string
+		value int
+	}{
+		{label: "pending", value: len(summary.PendingRequests)},
+		{label: "sessions", value: len(summary.ActiveSessions)},
+		{label: "leases", value: len(summary.ActiveLeases)},
+		{label: "handoffs", value: len(summary.OpenHandoffs)},
 	}
-	return []string{normalStyle.Inherit(titleStyle).Render(truncate(line, contentWidth))}
+	parts := make([]string, 0, len(counts))
+	for _, count := range counts {
+		if !includeZero && count.value == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s %d", count.label, count.value))
+	}
+	return parts
+}
+
+// noticesCoordinationPanelItems builds selectable coordination rows for the current project notices panel.
+func (m Model) noticesCoordinationPanelItems() []noticesPanelItem {
+	projectID, _ := m.currentProjectID()
+	summary := m.noticesCoordination
+	return []noticesPanelItem{
+		{
+			Label:                 strings.Join(coordinationSummaryParts(summary, true), " • "),
+			CoordinationProjectID: projectID,
+		},
+	}
 }
 
 // noticesSectionTitle returns a stable header label for one notices section identifier.
 func noticesSectionTitle(section noticesSectionID) string {
 	switch section {
+	case noticesSectionCoordination:
+		return "Live Coordination"
 	case noticesSectionWarnings:
 		return "Warnings"
 	case noticesSectionAttention:
@@ -13252,6 +13458,8 @@ func noticesSectionTitle(section noticesSectionID) string {
 // noticesSelectionIndex returns the current selected row index for one notices section.
 func (m Model) noticesSelectionIndex(section noticesSectionID) int {
 	switch section {
+	case noticesSectionCoordination:
+		return m.noticesCoordinationIdx
 	case noticesSectionWarnings:
 		return m.noticesWarnings
 	case noticesSectionAttention:
@@ -13266,6 +13474,8 @@ func (m Model) noticesSelectionIndex(section noticesSectionID) int {
 // setNoticesSelectionIndex stores one selected row index for the target notices section.
 func (m *Model) setNoticesSelectionIndex(section noticesSectionID, idx int) {
 	switch section {
+	case noticesSectionCoordination:
+		m.noticesCoordinationIdx = idx
 	case noticesSectionWarnings:
 		m.noticesWarnings = idx
 	case noticesSectionAttention:
@@ -13362,6 +13572,14 @@ func (m Model) noticesPanelSections(
 ) []noticesPanelSection {
 	sections := make([]noticesPanelSection, 0, len(noticesPanelSectionOrder))
 	_ = attentionTop
+
+	coordinationRows := m.noticesCoordinationPanelItems()
+	sections = append(sections, noticesPanelSection{
+		ID:      noticesSectionCoordination,
+		Title:   noticesSectionTitle(noticesSectionCoordination),
+		Summary: nil,
+		Items:   coordinationRows,
+	})
 
 	warningItems := m.noticesWarningPanelItems()
 	if len(warningItems) == 0 {
@@ -13970,6 +14188,10 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	}
 	m.clampGlobalNoticesSelection()
 	item := items[clamp(m.globalNoticesIdx, 0, len(items)-1)]
+	if strings.TrimSpace(item.ProjectID) != "" && (strings.HasPrefix(strings.TrimSpace(item.StableKey), "coordination:") || item.CoordinationGlobal) {
+		cmd := m.openCoordinationFromNotice(item.ProjectID, item.CoordinationGlobal)
+		return m, cmd
+	}
 	if req, ok := m.selectedAuthRequestForActiveNotice(); ok && strings.TrimSpace(req.ID) != "" {
 		m.traceGlobalNoticeBranch("auth_request_open_review", "request_id", strings.TrimSpace(req.ID))
 		m.completeGlobalNoticeTransition("auth_request_review")
@@ -14094,6 +14316,10 @@ func (m Model) activateNoticesSelection() (tea.Model, tea.Cmd) {
 	if !ok {
 		m.status = "no notices available"
 		return m, nil
+	}
+	if strings.TrimSpace(item.CoordinationProjectID) != "" || item.CoordinationGlobal {
+		cmd := m.openCoordinationFromNotice(item.CoordinationProjectID, item.CoordinationGlobal)
+		return m, cmd
 	}
 	if req, ok := m.selectedAuthRequestForActiveNotice(); ok && strings.TrimSpace(req.ID) != "" {
 		next, cmd, _ := m.beginSelectedAuthRequestDecision("approve")
@@ -14342,7 +14568,6 @@ func (m Model) renderOverviewPanel(
 	projectLines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Project Notifications", contentWidth)),
 	}
-	projectLines = append(projectLines, m.noticesCoordinationSummaryLines(contentWidth, accent, normalStyle)...)
 	for idx, section := range sections {
 		if idx > 0 {
 			projectLines = append(projectLines, "")
@@ -14414,7 +14639,7 @@ func (m Model) renderGlobalNoticesPanel(
 
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(truncate("Global Notifications", contentWidth)),
-		normalStyle.Render(truncate("requires user action across projects", contentWidth)),
+		normalStyle.Render(truncate("coordination and user action across projects", contentWidth)),
 	}
 	if viewModel.globalNoticesPartialCount > 0 {
 		projectLabel := "projects"

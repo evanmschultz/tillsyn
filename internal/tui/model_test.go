@@ -7047,6 +7047,128 @@ func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testi
 	}
 }
 
+// TestModelProjectNotificationsCoordinationRowsOpenCoordination verifies project coordination count rows deep-link into the coordination screen.
+func TestModelProjectNotificationsCoordinationRowsOpenCoordination(t *testing.T) {
+	now := time.Date(2099, 3, 29, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
+		ID:                  "req-1",
+		Path:                domain.AuthRequestPath{ProjectID: project.ID},
+		PrincipalID:         "builder-agent",
+		PrincipalType:       "agent",
+		PrincipalRole:       string(domain.AuthRequestRoleBuilder),
+		PrincipalName:       "Builder Agent",
+		ClientID:            "builder-client",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Builder Client",
+		RequestedSessionTTL: 8 * time.Hour,
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest() error = %v", err)
+	}
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-1",
+		LeaseToken: "token-1",
+		AgentName:  "Builder Agent",
+		ProjectID:  project.ID,
+		ScopeType:  domain.CapabilityScopeProject,
+		Role:       domain.CapabilityRoleBuilder,
+		ExpiresAt:  now.Add(4 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.authRequests[request.ID] = request
+	svc.capabilityLeases = append(svc.capabilityLeases, lease)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m.noticesSection = noticesSectionCoordination
+	m.noticesCoordinationIdx = 0
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected enter on project coordination row to open coordination, got %v", m.mode)
+	}
+	currentProjectID, ok := m.currentProjectID()
+	if !ok || currentProjectID != project.ID {
+		t.Fatalf("expected coordination deep-link to remain on project %q, got %q", project.ID, currentProjectID)
+	}
+	if m.authInventoryGlobal {
+		t.Fatal("expected project coordination deep-link to open project-scoped coordination")
+	}
+}
+
+// TestModelGlobalCoordinationRowsOpenRelatedProject verifies global coordination rows deep-link into the related project's coordination screen.
+func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
+	now := time.Date(2099, 3, 29, 10, 30, 0, 0, time.UTC)
+	projectA, _ := domain.NewProject("p1", "Inbox", "", now)
+	projectB, _ := domain.NewProject("p2", "Review", "", now)
+	columnA, _ := domain.NewColumn("c1", projectA.ID, "To Do", 0, 0, now)
+	columnB, _ := domain.NewColumn("c2", projectB.ID, "To Do", 0, 0, now)
+	taskB, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-b",
+		ProjectID: projectB.ID,
+		ColumnID:  columnB.ID,
+		Position:  0,
+		Title:     "Review Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-b",
+		LeaseToken: "token-b",
+		AgentName:  "QA Agent",
+		ProjectID:  projectB.ID,
+		ScopeType:  domain.CapabilityScopeProject,
+		Role:       domain.CapabilityRoleQA,
+		ExpiresAt:  now.Add(3 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{projectA, projectB}, []domain.Column{columnA, columnB}, []domain.Task{taskB})
+	svc.capabilityLeases = append(svc.capabilityLeases, lease)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusGlobal
+	foundCoordinationRow := false
+	for idx, item := range m.globalNotices {
+		if item.ProjectID == projectB.ID && strings.HasPrefix(item.StableKey, "coordination:") {
+			m.globalNoticesIdx = idx
+			foundCoordinationRow = true
+			break
+		}
+	}
+	if !foundCoordinationRow {
+		t.Fatalf("expected global coordination row for project %q, got %#v", projectB.ID, m.globalNotices)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected enter on global coordination row to open coordination, got %v", m.mode)
+	}
+	currentProjectID, ok := m.currentProjectID()
+	if !ok || currentProjectID != projectB.ID {
+		t.Fatalf("expected global coordination deep-link to switch to project %q, got %q", projectB.ID, currentProjectID)
+	}
+}
+
 // TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread verifies project attention rows without task ids route to thread mode.
 func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
@@ -7374,8 +7496,10 @@ func TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel(t *testing.T)
 	if len(m.attentionItems) != 1 {
 		t.Fatalf("attentionItems = %d, want 1", len(m.attentionItems))
 	}
-	if len(m.globalNotices) != 0 {
-		t.Fatalf("globalNotices = %d, want 0 for focused-project request", len(m.globalNotices))
+	for _, item := range m.globalNotices {
+		if strings.TrimSpace(item.AttentionID) == authRequest.ID {
+			t.Fatalf("focused-project auth request leaked into global notices: %#v", item)
+		}
 	}
 }
 
@@ -8139,6 +8263,63 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeAuthInventory {
 		t.Fatalf("expected escape to return to coordination, got %v", m.mode)
+	}
+}
+
+// TestModelAuthInventoryEnterOnHandoffOpensDetail verifies non-request coordination rows open a detail modal and return to coordination.
+func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
+	now := time.Date(2026, 3, 29, 11, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "QA Check",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:              "handoff-1",
+		ProjectID:       project.ID,
+		ScopeType:       domain.ScopeLevelProject,
+		SourceRole:      "builder",
+		TargetScopeType: domain.ScopeLevelTask,
+		TargetScopeID:   task.ID,
+		TargetRole:      "qa",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "builder to qa handoff",
+		NextAction:      "qa verifies the run",
+		CreatedByActor:  "lane-user",
+		CreatedByType:   domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.handoffs = append(svc.handoffs, handoff)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	items := m.authInventoryItems()
+	for idx, item := range items {
+		if item.Handoff != nil {
+			m.authInventoryIndex = idx
+			break
+		}
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeWarning {
+		t.Fatalf("expected enter on handoff row to open detail modal, got %v", m.mode)
+	}
+	if !strings.Contains(m.warningBody, "next: qa verifies the run") {
+		t.Fatalf("expected handoff detail modal to include next action, got %q", m.warningBody)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected esc to return to coordination after detail modal, got %v", m.mode)
 	}
 }
 
@@ -11591,12 +11772,15 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 		t.Fatalf("expected global notifications panel title, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Live Coordination") {
-		t.Fatalf("expected live coordination summary in notices panel, got\n%s", rendered)
+		t.Fatalf("expected live coordination section in notices panel, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "pending 0 • sessions 0") {
+		t.Fatalf("expected live coordination summary row in notices panel, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Action Required") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "requires user action across") {
+	if !strings.Contains(rendered, "coordination and user action") {
 		t.Fatalf("expected global notifications subtitle, got\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Notices\nproject:") || strings.Contains(rendered, "Notices\r\nproject:") {
@@ -11645,7 +11829,10 @@ func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) 
 		t.Fatalf("expected global notifications panel title, got\n%s", panel)
 	}
 	if !strings.Contains(panel, "Live Coordination") {
-		t.Fatalf("expected live coordination summary in project notices panel, got\n%s", panel)
+		t.Fatalf("expected live coordination section in project notices panel, got\n%s", panel)
+	}
+	if !strings.Contains(panel, "pending 0 • sessions 0") {
+		t.Fatalf("expected live coordination summary row in project notices panel, got\n%s", panel)
 	}
 	if strings.Contains(panel, "Notices") {
 		t.Fatalf("expected legacy single-panel notices title to be absent, got\n%s", panel)

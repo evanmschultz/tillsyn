@@ -6,22 +6,22 @@
  ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
  │  To Do (1)                                          │ │ Project Notifications              │
- │  │  Golden board task                               │ │ Live Coordination: quiet           │
- │     [medium|#alpha,#beta]                           │ │ Warnings                           │
+ │  │  Golden board task                               │ │ Live Coordination                  │
+ │     [medium|#alpha,#beta]                           │ │ pending 0 • sessions 0 • leases…   │
+ │                                                     │ │                                    │
+ │                                                     │ │ Warnings                           │
  │                                                     │ │ none                               │
  │                                                     │ │                                    │
  │                                                     │ │ Action Required                    │
  │                                                     │ │ no notifications requiring user…   │
  │                                                     │ │                                    │
  │                                                     │ │ Recent Activity                    │
- │                                                     │ │ (no activity yet)                  │
- │                                                     │ │                                    │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
  │                                                     │ │ Global Notifications               │
- │                                                     │ │ requires user action across pro…   │
+ │                                                     │ │ coordination and user action ac…   │
  │                                                     │ │                                    │
  │                                                     │ │                                    │
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯
