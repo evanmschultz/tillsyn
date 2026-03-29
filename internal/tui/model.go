@@ -437,7 +437,6 @@ type noticesSectionID int
 const (
 	noticesSectionWarnings noticesSectionID = iota
 	noticesSectionAttention
-	noticesSectionSelection
 	noticesSectionRecentActivity
 )
 
@@ -484,7 +483,6 @@ type noticesPanelSection struct {
 var noticesPanelSectionOrder = []noticesSectionID{
 	noticesSectionWarnings,
 	noticesSectionAttention,
-	noticesSectionSelection,
 	noticesSectionRecentActivity,
 }
 
@@ -736,7 +734,6 @@ type Model struct {
 	noticesSection      noticesSectionID
 	noticesWarnings     int
 	noticesAttention    int
-	noticesSelection    int
 	noticesActivity     int
 	attentionItems      []domain.AttentionItem
 	noticesCoordination noticesCoordinationSummary
@@ -3542,11 +3539,6 @@ func (m Model) authInventoryBodyLines(contentWidth int, hintStyle, accentStyle l
 		if note := strings.TrimSpace(request.ResolutionNote); note != "" {
 			lines = append(lines, "note:", note)
 		}
-	}
-	if m.authInventoryView == authInventoryViewHistory {
-		lines = append(lines, "", hintStyle.Render("enter inspects the selected historical row • h returns to live coordination • g toggles request/session scope • esc exits"))
-	} else {
-		lines = append(lines, "", hintStyle.Render("enter reviews a pending request, revokes an active session, or inspects a selected lease/handoff row • h toggles history • g toggles request/session scope • r opens revoke for a selected active session • esc exits"))
 	}
 	return lines, wrappedLineOffset(lines, selectedLine, contentWidth), wrappedLineOffset(lines, selectedSectionLine, contentWidth)
 }
@@ -13250,8 +13242,6 @@ func noticesSectionTitle(section noticesSectionID) string {
 		return "Warnings"
 	case noticesSectionAttention:
 		return "Action Required"
-	case noticesSectionSelection:
-		return "Selection"
 	case noticesSectionRecentActivity:
 		return "Recent Activity"
 	default:
@@ -13266,8 +13256,6 @@ func (m Model) noticesSelectionIndex(section noticesSectionID) int {
 		return m.noticesWarnings
 	case noticesSectionAttention:
 		return m.noticesAttention
-	case noticesSectionSelection:
-		return m.noticesSelection
 	case noticesSectionRecentActivity:
 		return m.noticesActivity
 	default:
@@ -13282,8 +13270,6 @@ func (m *Model) setNoticesSelectionIndex(section noticesSectionID, idx int) {
 		m.noticesWarnings = idx
 	case noticesSectionAttention:
 		m.noticesAttention = idx
-	case noticesSectionSelection:
-		m.noticesSelection = idx
 	case noticesSectionRecentActivity:
 		m.noticesActivity = idx
 	}
@@ -13410,35 +13396,6 @@ func (m Model) noticesPanelSections(
 		Title:   noticesSectionTitle(noticesSectionAttention),
 		Summary: attentionSummary,
 		Items:   attentionRows,
-	})
-
-	task, ok := m.selectedTaskInCurrentColumn()
-	selectionItems := []noticesPanelItem{}
-	selectionSummary := []string{}
-	if ok {
-		selectionItems = append(selectionItems, noticesPanelItem{
-			Label:  task.Title,
-			TaskID: task.ID,
-		})
-		if meta := m.cardMeta(task); meta != "" {
-			selectionSummary = append(selectionSummary, meta)
-		}
-		if m.taskFields.ShowDescription {
-			desc := strings.TrimSpace(task.Description)
-			if desc == "" {
-				desc = "-"
-			}
-			selectionSummary = append(selectionSummary, "description: "+desc)
-		}
-	} else {
-		selectionItems = append(selectionItems, noticesPanelItem{Label: "no task selected"})
-		selectionSummary = append(selectionSummary, "tip: use f to drill into scope")
-	}
-	sections = append(sections, noticesPanelSection{
-		ID:      noticesSectionSelection,
-		Title:   noticesSectionTitle(noticesSectionSelection),
-		Summary: selectionSummary,
-		Items:   selectionItems,
 	})
 
 	activityRows := m.recentActivityPanelEntries()
@@ -14549,15 +14506,6 @@ func (m Model) renderNoticesSection(
 		}
 	}
 
-	// Keep selection details in task-title-first order while still rendering the title as the selectable row.
-	if section.ID == noticesSectionSelection {
-		renderItems()
-		for _, summary := range section.Summary {
-			lines = append(lines, normalStyle.Render(truncate(summary, contentWidth)))
-		}
-		return lines
-	}
-
 	for _, summary := range section.Summary {
 		lines = append(lines, normalStyle.Render(truncate(summary, contentWidth)))
 	}
@@ -14885,6 +14833,17 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"d toggles depends_on; b toggles blocked_by; x switches active relation field",
 			"space toggles active relation value for selected candidate",
 			"a applies changes; enter jumps to task; esc cancels",
+		}
+	case modeAuthInventory:
+		return "coordination", []string{
+			"live view defaults to pending requests, active sessions, active leases, and open handoffs",
+			"h toggles between live and history slices",
+			"j/k, up/down, or mouse wheel move the selected row",
+			"pgup/pgdown or ctrl+u/ctrl+d move faster through long inventories",
+			"g toggles request/session scope between project and global inventory",
+			"enter reviews a pending request, opens session revoke review, or shows selected row detail in the status line",
+			"r opens revoke review when an active session row is selected",
+			"esc returns to the previous screen",
 		}
 	case modeThread:
 		return "thread", []string{
@@ -16513,12 +16472,20 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		short := []key.Binding{
 			helpBinding("enter", "review/revoke/details"),
 			helpBinding("↑/↓", "move"),
+			helpBinding("h", "history"),
 			helpBinding("g", "scope"),
-			helpBinding("r", "revoke"),
 			helpBinding("esc", "back"),
 			helpBinding("?", "help"),
 		}
-		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+		full := [][]key.Binding{
+			short,
+			{
+				helpBinding("r", "revoke session"),
+				helpBinding("pgup/dn", "page"),
+				helpBinding("ctrl+u/d", "jump"),
+			},
+		}
+		return staticHelpKeyMap{short: short, full: full}
 	case modeAuthSessionRevoke:
 		short := []key.Binding{
 			helpBinding("enter", "revoke"),

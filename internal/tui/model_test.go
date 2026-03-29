@@ -3566,6 +3566,30 @@ func TestModelHelpOverlayModeSpecific(t *testing.T) {
 	if !strings.Contains(out, "tab cycles include-time, date, time, and options list focus") {
 		t.Fatalf("expected due-picker-specific help guidance, got %q", out)
 	}
+
+	m.mode = modeAuthInventory
+	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
+	if !strings.Contains(out, "screen: coordination") {
+		t.Fatalf("expected coordination-specific help title, got %q", out)
+	}
+	if !strings.Contains(out, "h toggles between live and history slices") {
+		t.Fatalf("expected coordination-specific history guidance, got %q", out)
+	}
+}
+
+// TestModelAuthInventoryBottomHelpIncludesHistory verifies the coordination bottom help line surfaces the history toggle.
+func TestModelAuthInventoryBottomHelpIncludesHistory(t *testing.T) {
+	now := time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+	m.mode = modeAuthInventory
+	m.width = 120
+
+	rendered := stripANSI(m.renderBottomHelpLine(lipgloss.Color("241"), lipgloss.Color("239"), 118))
+	if !strings.Contains(rendered, "h") || !strings.Contains(strings.ToLower(rendered), "history") {
+		t.Fatalf("expected coordination bottom help to include history toggle, got %q", rendered)
+	}
 }
 
 // TestHelpOverlayScreenTitleAndLinesCoverage verifies each input mode resolves mode-scoped help lines.
@@ -5589,14 +5613,14 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	}
 
 	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
-	if !strings.Contains(panelWithSelection, "Selection") {
-		t.Fatalf("expected overview panel selection section, got %q", panelWithSelection)
+	if strings.Contains(panelWithSelection, "Selection") {
+		t.Fatalf("expected overview panel to omit selection section, got %q", panelWithSelection)
 	}
 	noneSelected := m
 	noneSelected.selectedColumn = 1
 	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
-	if !strings.Contains(panelWithoutSelection, "no task selected") {
-		t.Fatalf("expected overview panel no-selection hint, got %q", panelWithoutSelection)
+	if strings.Contains(panelWithoutSelection, "no task selected") {
+		t.Fatalf("expected overview panel to omit no-selection hint, got %q", panelWithoutSelection)
 	}
 }
 
@@ -6949,30 +6973,26 @@ func TestModelNoticesSectionNavigationAndTaskInfoAction(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionSelection {
-		t.Fatalf("expected up-navigation to move focus to selection section, got %v", m.noticesSection)
-	}
-	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected second up-navigation to move focus to attention section, got %v", m.noticesSection)
+		t.Fatalf("expected up-navigation to move focus to attention section, got %v", m.noticesSection)
 	}
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionWarnings {
-		t.Fatalf("expected third up-navigation to move focus to warnings section, got %v", m.noticesSection)
+		t.Fatalf("expected second up-navigation to move focus to warnings section, got %v", m.noticesSection)
 	}
 
-	for i := 0; i < 6 && m.noticesSection != noticesSectionSelection; i++ {
+	for i := 0; i < 4 && m.noticesSection != noticesSectionRecentActivity; i++ {
 		m = applyMsg(t, m, keyRune('j'))
 	}
-	if m.noticesSection != noticesSectionSelection {
-		t.Fatalf("expected down-navigation to return focus to selection section, got %v", m.noticesSection)
+	if m.noticesSection != noticesSectionRecentActivity {
+		t.Fatalf("expected down-navigation to return focus to recent activity section, got %v", m.noticesSection)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected enter on selection row to open task info, got %v", m.mode)
+	if m.mode != modeActivityEventInfo {
+		t.Fatalf("expected enter on recent activity row to open activity event info, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != task.ID {
-		t.Fatalf("expected task-info target %q, got %q", task.ID, m.taskInfoTaskID)
+	if m.activityInfoItem.WorkItemID != task.ID {
+		t.Fatalf("expected activity event target %q, got %q", task.ID, m.activityInfoItem.WorkItemID)
 	}
 }
 
@@ -6996,7 +7016,6 @@ func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testi
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionAttention {
 		t.Fatalf("expected notices focus on attention section, got %v", m.noticesSection)
@@ -7057,7 +7076,6 @@ func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testi
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionAttention {
 		t.Fatalf("expected notices focus on attention section, got %v", m.noticesSection)
@@ -7123,9 +7141,7 @@ func TestModelProjectNotificationsWarningRowsStayScopedAndActionable(t *testing.
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, keyRune('k'))
+	m.noticesSection = noticesSectionWarnings
 	if m.noticesSection != noticesSectionWarnings {
 		t.Fatalf("expected warnings section focus, got %v", m.noticesSection)
 	}
@@ -7248,7 +7264,6 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionAttention {
 		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
@@ -8875,7 +8890,6 @@ func TestModelProjectNotificationsScopedRowsFallbackToProjectThread(t *testing.T
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionAttention {
 		t.Fatalf("expected attention section focus, got %v", m.noticesSection)

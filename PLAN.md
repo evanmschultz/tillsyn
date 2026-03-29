@@ -1,8 +1,8 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-28
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug and then a live/history readability gap, both follow-ups are now fixed locally with green `just test-pkg ./internal/tui`, `just test-golden-update`, `just check`, and `just ci`, and one fresh live TUI reopen is still pending to confirm the new notices-panel summary plus live/history coordination split on the fresh binary.
+Updated: 2026-03-29
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, and now a final board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, with the latest local slice green on `just test-pkg ./internal/tui`, `just test-golden-update`, `just check`, and `just ci`, and one fresh live TUI reopen still pending to confirm the updated notices panel plus live/history coordination split on the fresh binary.
 
 ## 1) Active Run Source Of Truth
 
@@ -3082,10 +3082,12 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
      - and live coordination state was still hidden behind the command-palette screen instead of also surfacing in the project notifications panel.
 8. Follow-up local remediation for the second usability gap:
    - kept the project notices panel lightweight but added one compact inline `Live Coordination` summary row so pending requests, active sessions, active leases, and open handoffs are visible from the board without opening the command palette,
+   - removed the legacy `Selection` notices section so the project panel stays focused on warnings, action-required rows, recent activity, and the new live coordination summary instead of echoing the current task card,
    - split the full-screen `Coordination` surface into `live` and `history` slices with `h` toggle behavior:
      - `live` now defaults to pending requests, active sessions, active leases, and open handoffs,
      - `history` now holds resolved requests, ended leases, and closed handoffs,
    - tightened the coordination viewport alignment logic to use wrapped line offsets instead of raw newline counts so keyboard and mouse-wheel navigation keep the selected lease/handoff section visible even when long detail rows soft-wrap,
+   - moved the detailed coordination key guidance fully into the bottom help bar plus the expanded `?` overlay and removed the duplicated inline hint block from the coordination body,
    - refreshed the TUI goldens to capture the intentional project-panel `Live Coordination` summary line and the resulting help-overlay wrap.
 9. Focused command/test evidence for the second usability follow-up:
    - Context7 consult: `/charmbracelet/bubbles` viewport docs rechecked before the first edit and again after each failed `just test-pkg ./internal/tui` / `just check` loop in this follow-up.

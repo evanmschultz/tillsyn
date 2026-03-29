@@ -1,8 +1,8 @@
 # Collaborative E2E Auth And MCP Worksheet
 
 Created: 2026-03-25
-Updated: 2026-03-28
-Status: Active. `C2` and `C3` are proven live, the delegated child-self-claim/requester-cleanup remediation slice is green locally, the refreshed `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the live MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug and then a live/history readability gap, both follow-ups are now fixed locally with green `just test-pkg ./internal/tui`, `just test-golden-update`, `just check`, and `just ci`, and one fresh live TUI reopen is still pending to confirm the new notices-panel summary plus live/history coordination split on the fresh binary.
+Updated: 2026-03-29
+Status: Active. `C2` and `C3` are proven live, the delegated child-self-claim/requester-cleanup remediation slice is green locally, the refreshed `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the live MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, and now a final board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, with the latest local slice green on `just test-pkg ./internal/tui`, `just test-golden-update`, `just check`, and `just ci`, and one fresh live TUI reopen is still pending to confirm the updated notices panel plus live/history coordination split on the fresh binary.
 
 ## Purpose
 
@@ -540,8 +540,10 @@ Evidence:
       - and the current live coordination state was still hidden behind the command-palette screen instead of also surfacing in the board notifications panel.
     - landed local follow-up:
       - added one compact inline `Live Coordination` summary row to the project notifications panel so pending requests, active sessions, active leases, and open handoffs are visible from the board,
+      - removed the legacy `Selection` notices section so the project panel stays focused on warnings, action-required rows, recent activity, and live coordination instead of duplicating the selected task card,
       - split the full-screen `Coordination` surface into `live` and `history` slices with `h` toggle behavior,
       - tightened the coordination viewport alignment logic to use wrapped line offsets so mouse-wheel and keyboard movement keep the selected lease/handoff section visible even when long detail rows soft-wrap,
+      - moved the detailed coordination key guidance fully into the bottom help bar plus the expanded `?` overlay and removed the duplicated inline hint block from the coordination body,
       - refreshed the TUI goldens for the intentional notices-panel summary change.
     - focused evidence:
       - Context7 `/charmbracelet/bubbles` viewport docs rechecked before the first edit and again after each failed TUI/check loop in this follow-up.
