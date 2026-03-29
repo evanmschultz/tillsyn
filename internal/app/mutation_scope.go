@@ -30,9 +30,11 @@ func (s *Service) capabilityScopesForTaskLineage(ctx context.Context, task domai
 
 	scopes := make([]mutationScopeCandidate, 0, 6)
 	scopes = appendMutationScopeCandidate(scopes, newProjectMutationScopeCandidate(projectID))
-
-	current := task
-	for {
+	lineage, err := s.taskLineage(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+	for _, current := range lineage {
 		scope := mutationScopeCandidate{
 			ScopeType: capabilityScopeTypeForTask(current),
 			ScopeID:   strings.TrimSpace(current.ID),
@@ -41,19 +43,6 @@ func (s *Service) capabilityScopesForTaskLineage(ctx context.Context, task domai
 			scope.ScopeID = projectID
 		}
 		scopes = appendMutationScopeCandidate(scopes, scope)
-
-		parentID := strings.TrimSpace(current.ParentID)
-		if parentID == "" {
-			break
-		}
-		parent, err := s.repo.GetTask(ctx, parentID)
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(parent.ProjectID) != projectID {
-			return nil, ErrNotFound
-		}
-		current = parent
 	}
 	return scopes, nil
 }
