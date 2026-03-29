@@ -7260,7 +7260,7 @@ func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 	}
 }
 
-// TestModelBoardGlobalKeysRemainAvailableInNoticesFocus verifies project picker and command palette still open from notices focus.
+// TestModelBoardGlobalKeysRemainAvailableInNoticesFocus verifies board-global entrypoints still open from notices focus.
 func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 10, 45, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -7281,9 +7281,13 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 		wantMode   inputMode
 		wantStatus string
 	}{
+		{name: "project notices new task", panel: noticesPanelFocusProject, key: keyRune('n'), wantMode: modeAddTask, wantStatus: "new task"},
+		{name: "project notices new project", panel: noticesPanelFocusProject, key: keyRune('N'), wantMode: modeAddProject, wantStatus: "new project"},
 		{name: "project notices lowercase p", panel: noticesPanelFocusProject, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "project notices uppercase p", panel: noticesPanelFocusProject, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "project notices command palette", panel: noticesPanelFocusProject, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},
+		{name: "global notices new task", panel: noticesPanelFocusGlobal, key: keyRune('n'), wantMode: modeAddTask, wantStatus: "new task"},
+		{name: "global notices new project", panel: noticesPanelFocusGlobal, key: keyRune('N'), wantMode: modeAddProject, wantStatus: "new project"},
 		{name: "global notices lowercase p", panel: noticesPanelFocusGlobal, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "global notices uppercase p", panel: noticesPanelFocusGlobal, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "global notices command palette", panel: noticesPanelFocusGlobal, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},

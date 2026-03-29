@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now renames the board slice to `Coordination`, adds the requested header-to-items spacing across board panels, removes the global subtitle noise, trims redundant top-of-screen coordination prose, restores `p` / `P` and `:` while notifications panels own focus, keeps coordination detail styling/actionability readable, and cleans the stale open handoff/lease artifacts out of the live project runtime state, with the local slice green again on `just test-pkg ./internal/tui`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the final board/global/detail UX.
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now renames the board slice to `Coordination`, adds the requested header-to-items spacing across board panels, removes the global subtitle noise, trims redundant top-of-screen coordination prose, restores board-global `n` / `N`, `p` / `P`, and `:` while notifications panels own focus, keeps coordination detail styling/actionability readable, and cleans the stale open handoff/lease artifacts out of the live project runtime state, with the local slice green again on `just test-pkg ./internal/tui`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the final board/global/detail UX.
 
 ## 1) Active Run Source Of Truth
 
@@ -3212,6 +3212,9 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
      - `test_not_applicable`: discussion-only follow-up note; no code/test commands run for this ledger update.
 16. Focused TUI cleanup follow-up on 2026-03-29 after the discussion-only checkpoint:
    - commands run:
+     - `just test-pkg ./internal/tui` -> FAIL on the final live follow-up after the user reported `n` / `N` still missing from notifications focus and inconsistent placeholder spacing; the first broad spacing change also pushed `Recent Activity` rows out of shorter notifications panels.
+     - `just test-golden-update` -> PASS after the final notifications-layout adjustment refreshed the board/help snapshots.
+     - `just test-pkg ./internal/tui` -> PASS on the final notifications-focus and section-spacing rerun.
      - `just test-pkg ./internal/tui` -> FAIL initially on a new test-only type reference (`undefined: noticesPanelFocus`); fixed immediately in test code after a required Context7 re-check.
      - `just test-pkg ./internal/tui` -> FAIL on stale goldens and compact-panel rendering expectations; used `just test-golden-update` plus one compact-section follow-up to preserve `Recent Activity` visibility.
      - `just test-golden-update` -> PASS
@@ -3231,11 +3234,13 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
    - implementation outcome:
      - board task columns now keep a small blank line between the column header and the first task row,
      - `Project Notifications` now starts with a small gap under the panel title and renames the coordination section from `Live Coordination` to `Coordination`,
-     - notifications sections now keep their header-to-items gap for real content while collapsing placeholder-only sections enough to keep later sections like `Recent Activity` visible on shorter panels,
+     - notifications sections now use one consistent gap between section blocks, so `Coordination`, `Warnings`, `Action Required`, and `Recent Activity` read with the same vertical rhythm without sacrificing the first visible activity row,
      - `Global Notifications` no longer renders the static subtitle/help copy and now uses a cleaner empty state:
        - `no coordination or notifications across other projects`,
+     - empty `Warnings` and `Action Required` rows now normalize to the same `none` placeholder copy,
+     - the lower global-notifications panel now shrinks to its natural content height when possible so the project notifications panel keeps enough space to show the first `Recent Activity` row on shorter boards,
      - the full-screen `Coordination` body no longer repeats scope/explanation prose that is already covered by the screen chrome and `?` help,
-     - board-global entrypoints `p` / `P` and `:` now work even while project/global notifications panels own focus,
+     - board-global entrypoints `n` / `N`, `p` / `P`, and `:` now work even while project/global notifications panels own focus,
      - coordination detail modal chrome now uses a fixed active-state tone instead of inheriting the project accent color, which avoids error-like red chrome for healthy active items,
      - the old two-value coordination surface scope helper was reduced back to one live request/session scope label after the body stopped rendering the `project-local` explanation line,
      - targeted TUI tests now cover the notifications-focus hotkey routing directly,
@@ -3249,10 +3254,9 @@ Focused TUI follow-up on 2026-03-28 after the fresh `C5` rerun:
    - QA review notes after the final diff:
      - one focused QA pass found no blocking issues and confirmed the refreshed goldens match the intended semantics.
      - two non-blocking follow-ups remain for later polish:
-       - `internal/tui/model.go`: placeholder-copy coupling in `noticesSectionNeedsHeaderGap` means future copy changes could silently affect panel compaction.
        - `internal/tui/model.go`: `active` and neutral/waiting detail states both currently use the same blue tone, which is acceptable for now but could be differentiated further in a later polish pass.
    - open operational follow-up:
-     - the user still needs one final live reopen on the rebuilt binary to confirm the cleaned board/global/detail UX against the final local commit before the run advances to the next collaborative section.
+     - the user still needs one final live reopen on the rebuilt binary to confirm the cleaned board/global/detail UX against the final local commit, including `n` / `N` from both notifications panels, before the run advances to the next collaborative section.
 
 ### 2026-03-25: Pre-Collab CLI Quiet-Log And Positional Project Command Cleanup
 

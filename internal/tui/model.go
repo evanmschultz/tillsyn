@@ -8259,6 +8259,12 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // handleBoardGlobalNormalKey keeps board-wide entrypoints available even when notices own focus.
 func (m Model) handleBoardGlobalNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	switch {
+	case key.Matches(msg, m.keys.addTask):
+		m.help.ShowAll = false
+		return m, m.startTaskForm(nil), true
+	case key.Matches(msg, m.keys.newProject):
+		m.help.ShowAll = false
+		return m, m.startProjectForm(nil), true
 	case key.Matches(msg, m.keys.projects):
 		m.help.ShowAll = false
 		m.mode = modeProjectPicker
@@ -13889,7 +13895,7 @@ func (m Model) noticesPanelSections(
 	attentionRows := m.noticesAttentionPanelItems()
 	actionableAttentionCount := len(attentionRows)
 	if actionableAttentionCount == 0 {
-		attentionRows = append(attentionRows, noticesPanelItem{Label: "no notifications requiring user action"})
+		attentionRows = append(attentionRows, noticesPanelItem{Label: "none"})
 	}
 	attentionSummary := []string{}
 	if actionableAttentionCount > 0 {
@@ -14852,6 +14858,10 @@ func (m Model) renderOverviewPanel(
 	if globalPanelHeight > maxGlobalHeight {
 		globalPanelHeight = maxGlobalHeight
 	}
+	globalNaturalHeight := max(minStackPanelHeight, min(maxGlobalHeight, 4+globalNoticesPanelContentLines(m.globalNoticesPanelItemsForInteraction(), m.globalNoticesPartialCount)))
+	if globalPanelHeight > globalNaturalHeight {
+		globalPanelHeight = globalNaturalHeight
+	}
 	projectPanelHeight := panelHeight - globalPanelHeight
 	if projectPanelHeight < minStackPanelHeight {
 		projectPanelHeight = minStackPanelHeight
@@ -14864,6 +14874,9 @@ func (m Model) renderOverviewPanel(
 		"",
 	}
 	for _, section := range sections {
+		if len(projectLines) > 2 {
+			projectLines = append(projectLines, "")
+		}
 		projectLines = append(
 			projectLines,
 			viewModel.renderNoticesSection(
@@ -14927,6 +14940,24 @@ func globalNoticesItemLines(item globalNoticesPanelItem) []string {
 		return lines
 	}
 	lines = append(lines, "action required: "+summary)
+	return lines
+}
+
+// globalNoticesPanelContentLines estimates the natural content height for the lower notifications panel.
+func globalNoticesPanelContentLines(items []globalNoticesPanelItem, partialCount int) int {
+	lines := 2 // title + gap
+	if partialCount > 0 {
+		lines += 2 // partial-results line + gap
+	}
+	for idx, item := range items {
+		lines += len(globalNoticesItemLines(item))
+		if idx < len(items)-1 {
+			lines++
+		}
+	}
+	if lines < 1 {
+		return 1
+	}
 	return lines
 }
 
@@ -15023,9 +15054,6 @@ func (m Model) renderNoticesSection(
 	} else {
 		lines = append(lines, headerStyle.Render(section.Title))
 	}
-	if noticesSectionNeedsHeaderGap(section) {
-		lines = append(lines, "")
-	}
 
 	renderItems := func() {
 		if len(section.Items) == 0 {
@@ -15061,22 +15089,6 @@ func (m Model) renderNoticesSection(
 	}
 	renderItems()
 	return lines
-}
-
-// noticesSectionNeedsHeaderGap preserves breathing room for real content while keeping placeholder-only sections compact.
-func noticesSectionNeedsHeaderGap(section noticesPanelSection) bool {
-	if len(section.Summary) > 0 {
-		return true
-	}
-	if len(section.Items) != 1 {
-		return len(section.Items) > 0
-	}
-	switch strings.TrimSpace(strings.ToLower(section.Items[0].Label)) {
-	case "", "none", "(empty)", "(no activity yet)", "no notifications requiring user action":
-		return false
-	default:
-		return true
-	}
 }
 
 // renderInfoLine renders output for the current model state.
