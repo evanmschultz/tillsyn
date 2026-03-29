@@ -197,6 +197,15 @@ func renderFullPageSurfaceViewport(accent, muted color.Color, boxWidth int, titl
 
 // renderFullPageSurfaceView wraps one centered bordered surface with the shared TILLSYN header, path line, and bottom help.
 func (m Model) renderFullPageSurfaceView(accent, muted, dim color.Color, metrics fullPageSurfaceMetrics, surface string) tea.View {
+	overlay := ""
+	if m.help.ShowAll {
+		overlay = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), m.width-8)
+	}
+	return m.renderFullPageSurfaceWithOverlay(accent, muted, dim, metrics, surface, overlay)
+}
+
+// renderFullPageSurfaceWithOverlay wraps one centered bordered surface and composes one centered overlay on top when provided.
+func (m Model) renderFullPageSurfaceWithOverlay(accent, muted, dim color.Color, metrics fullPageSurfaceMetrics, surface, overlay string) tea.View {
 	centeredSurface := lipgloss.PlaceHorizontal(metrics.innerWidth, lipgloss.Center, surface)
 	sections := []string{metrics.headerBlock}
 	for i := 0; i < metrics.headerGapY; i++ {
@@ -216,15 +225,12 @@ func (m Model) renderFullPageSurfaceView(accent, muted, dim color.Color, metrics
 		content = fitLines(content, max(0, m.height-lipgloss.Height(metrics.helpLine)))
 	}
 	fullContent := content + "\n" + metrics.helpLine
-	if m.help.ShowAll {
-		overlay := m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), m.width-8)
-		if overlay != "" {
-			overlayHeight := lipgloss.Height(fullContent)
-			if m.height > 0 {
-				overlayHeight = m.height
-			}
-			fullContent = overlayOnContent(fullContent, overlay, max(1, m.width), max(1, overlayHeight))
+	if overlay != "" {
+		overlayHeight := lipgloss.Height(fullContent)
+		if m.height > 0 {
+			overlayHeight = m.height
 		}
+		fullContent = overlayOnContent(fullContent, overlay, max(1, m.width), max(1, overlayHeight))
 	}
 
 	view := tea.NewView(fullContent)

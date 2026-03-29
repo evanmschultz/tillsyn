@@ -44,6 +44,8 @@ type Service interface {
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
 	RevokeAuthSession(context.Context, string, string) (app.AuthSession, error)
+	RevokeCapabilityLease(context.Context, app.RevokeCapabilityLeaseInput) (domain.CapabilityLease, error)
+	UpdateHandoff(context.Context, app.UpdateHandoffInput) (domain.Handoff, error)
 	GetProjectDependencyRollup(context.Context, string) (domain.DependencyRollup, error)
 	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
@@ -102,6 +104,7 @@ const (
 	modeAuthScopePicker
 	modeAuthInventory
 	modeAuthSessionRevoke
+	modeCoordinationDetail
 	modeWarning
 	modeActivityLog
 	modeActivityEventInfo
@@ -376,7 +379,32 @@ type confirmAction struct {
 	AuthSessionID                 string
 	AuthSessionPrincipal          string
 	AuthSessionPathLabel          string
+	LeaseInstanceID               string
+	LeaseAgentName                string
+	LeaseScopeLabel               string
+	HandoffID                     string
+	HandoffSummary                string
+	HandoffStatus                 string
 	ReturnToAuthAccess            bool
+}
+
+// coordinationDetailTone classifies the coordination-detail modal chrome treatment.
+type coordinationDetailTone string
+
+// Coordination detail tones keep inspect modals aligned with item state instead of warning-red by default.
+const (
+	coordinationDetailToneNeutral coordinationDetailTone = "neutral"
+	coordinationDetailToneActive  coordinationDetailTone = "active"
+	coordinationDetailToneMuted   coordinationDetailTone = "muted"
+	coordinationDetailToneWarn    coordinationDetailTone = "warn"
+	coordinationDetailToneDanger  coordinationDetailTone = "danger"
+	coordinationDetailToneSuccess coordinationDetailTone = "success"
+)
+
+// coordinationDetailAction describes one actionable command exposed from a coordination detail modal.
+type coordinationDetailAction struct {
+	Label   string
+	Confirm confirmAction
 }
 
 // authScopePickerItem describes one user-facing auth scope option in the TUI picker.
@@ -612,6 +640,12 @@ type Model struct {
 	authInventoryHandoffs         []domain.Handoff
 	authInventoryBody             viewport.Model
 	authInventoryNeedsReload      bool
+	coordinationDetailItem        authInventoryItem
+	coordinationDetailTitle       string
+	coordinationDetailBody        string
+	coordinationDetailTone        coordinationDetailTone
+	coordinationDetailActions     []coordinationDetailAction
+	coordinationDetailActionIndex int
 	threadInput                   textarea.Model
 	threadDetailsInput            textarea.Model
 	descriptionEditorInput        textarea.Model
@@ -1753,6 +1787,9 @@ func (m Model) View() tea.View {
 	if m.mode == modeAuthInventory {
 		return m.renderAuthInventoryModeView()
 	}
+	if m.mode == modeCoordinationDetail {
+		return m.renderCoordinationDetailModeView()
+	}
 	if m.mode == modeAuthSessionRevoke {
 		return m.renderAuthSessionRevokeModeView()
 	}
@@ -2251,8 +2288,10 @@ func (m Model) loadData() tea.Msg {
 				return loadedMsg{err: coordinationErr}
 			}
 			markGlobalNoticesPartial(project.ID)
-		} else if row, ok := globalNoticesPanelItemFromCoordinationSummary(project.ID, projectDisplayName(project), projectCoordination, false); ok {
-			globalCoordinationRows = append(globalCoordinationRows, row)
+		} else if project.ID != projectID {
+			if row, ok := globalNoticesPanelItemFromCoordinationSummary(project.ID, projectDisplayName(project), projectCoordination, false); ok {
+				globalCoordinationRows = append(globalCoordinationRows, row)
+			}
 		}
 
 		projectAttention, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
@@ -2295,12 +2334,7 @@ func (m Model) loadData() tea.Msg {
 		}
 	}
 
-	globalCoordination, globalCoordinationErr := m.loadNoticesCoordinationSummary(domain.AuthRequestGlobalProjectID)
-	if globalCoordinationErr == nil {
-		if row, ok := globalNoticesPanelItemFromCoordinationSummary(domain.AuthRequestGlobalProjectID, "All Projects", globalCoordination, true); ok {
-			globalCoordinationRows = append([]globalNoticesPanelItem{row}, globalCoordinationRows...)
-		}
-	}
+	_, globalCoordinationErr := m.loadNoticesCoordinationSummary(domain.AuthRequestGlobalProjectID)
 	globalAttention, globalAttentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: domain.AuthRequestGlobalProjectID,
@@ -2317,6 +2351,9 @@ func (m Model) loadData() tea.Msg {
 			}
 			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttentionLabel(domain.AuthRequestGlobalProjectID, "All Projects", item))
 		}
+	}
+	if globalCoordinationErr != nil {
+		markGlobalNoticesPartial(domain.AuthRequestGlobalProjectID)
 	}
 	globalNotices = append(globalCoordinationRows, globalNotices...)
 	m.traceLoadDataStage(
@@ -3231,8 +3268,6 @@ func (m Model) authInventoryItemDetail(item authInventoryItem) (string, string, 
 			fmt.Sprintf("client: %s", firstNonEmptyTrimmed(session.ClientName, session.ClientID, "-")),
 			fmt.Sprintf("session id: %s", firstNonEmptyTrimmed(session.SessionID, "-")),
 			fmt.Sprintf("expires: %s", session.ExpiresAt.In(time.Local).Format(time.RFC3339)),
-			"",
-			"press r from coordination to open revoke review for an active session.",
 		}
 		return "Active Session", strings.Join(lines, "\n"), true
 	case item.Lease != nil:
@@ -3275,6 +3310,160 @@ func (m Model) authInventoryItemDetail(item authInventoryItem) (string, string, 
 	default:
 		return "", "", false
 	}
+}
+
+// coordinationDetailToneForItem maps one coordination row to the modal chrome treatment that best matches its state.
+func (m Model) coordinationDetailToneForItem(item authInventoryItem) coordinationDetailTone {
+	switch {
+	case item.ResolvedRequest != nil:
+		switch domain.NormalizeAuthRequestState(item.ResolvedRequest.State) {
+		case domain.AuthRequestStateApproved:
+			return coordinationDetailToneSuccess
+		case domain.AuthRequestStateDenied:
+			return coordinationDetailToneDanger
+		case domain.AuthRequestStateExpired:
+			return coordinationDetailToneWarn
+		default:
+			return coordinationDetailToneMuted
+		}
+	case item.Session != nil:
+		return coordinationDetailToneActive
+	case item.Lease != nil:
+		switch m.authInventoryLeaseStatusLabel(*item.Lease) {
+		case "active":
+			return coordinationDetailToneActive
+		case "expired":
+			return coordinationDetailToneWarn
+		default:
+			return coordinationDetailToneMuted
+		}
+	case item.Handoff != nil:
+		switch domain.NormalizeHandoffStatus(item.Handoff.Status) {
+		case domain.HandoffStatusReady, domain.HandoffStatusResolved:
+			return coordinationDetailToneSuccess
+		case domain.HandoffStatusBlocked, domain.HandoffStatusFailed:
+			return coordinationDetailToneDanger
+		case domain.HandoffStatusReturned, domain.HandoffStatusSuperseded:
+			return coordinationDetailToneMuted
+		default:
+			return coordinationDetailToneNeutral
+		}
+	default:
+		return coordinationDetailToneNeutral
+	}
+}
+
+// coordinationDetailActionsForItem builds the available coordination-detail actions for one selected row.
+func (m Model) coordinationDetailActionsForItem(item authInventoryItem) []coordinationDetailAction {
+	actions := []coordinationDetailAction{{Label: "close"}}
+	switch {
+	case item.Session != nil:
+		scopePath := strings.TrimSpace(item.Session.ApprovedPath)
+		if scopePath == "" && strings.TrimSpace(item.Session.ProjectID) != "" {
+			scopePath = "project/" + strings.TrimSpace(item.Session.ProjectID)
+		}
+		actions = append(actions, coordinationDetailAction{
+			Label: "revoke session",
+			Confirm: confirmAction{
+				Kind:                 "revoke-auth-session",
+				Label:                "revoke auth session",
+				AuthSessionID:        strings.TrimSpace(item.Session.SessionID),
+				AuthSessionPrincipal: firstNonEmptyTrimmed(item.Session.PrincipalName, item.Session.PrincipalID),
+				AuthSessionPathLabel: firstNonEmptyTrimmed(m.authRequestPathDisplay(scopePath), scopePath),
+				ReturnToAuthAccess:   true,
+			},
+		})
+	case item.Lease != nil:
+		if m.authInventoryLeaseStatusLabel(*item.Lease) == "active" {
+			actions = append(actions, coordinationDetailAction{
+				Label: "revoke lease",
+				Confirm: confirmAction{
+					Kind:               "revoke-capability-lease",
+					Label:              "revoke capability lease",
+					LeaseInstanceID:    strings.TrimSpace(item.Lease.InstanceID),
+					LeaseAgentName:     firstNonEmptyTrimmed(item.Lease.AgentName, item.Lease.InstanceID),
+					LeaseScopeLabel:    firstNonEmptyTrimmed(m.authInventoryLeaseScopeLabel(*item.Lease), "-"),
+					ReturnToAuthAccess: true,
+				},
+			})
+		}
+	case item.Handoff != nil:
+		if !item.Handoff.IsTerminal() {
+			for _, status := range []domain.HandoffStatus{
+				domain.HandoffStatusReady,
+				domain.HandoffStatusWaiting,
+				domain.HandoffStatusBlocked,
+				domain.HandoffStatusReturned,
+				domain.HandoffStatusFailed,
+				domain.HandoffStatusSuperseded,
+				domain.HandoffStatusResolved,
+			} {
+				if domain.NormalizeHandoffStatus(item.Handoff.Status) == status {
+					continue
+				}
+				actions = append(actions, coordinationDetailAction{
+					Label: "mark " + string(status),
+					Confirm: confirmAction{
+						Kind:               "update-handoff-status",
+						Label:              "update handoff",
+						HandoffID:          strings.TrimSpace(item.Handoff.ID),
+						HandoffSummary:     strings.TrimSpace(item.Handoff.Summary),
+						HandoffStatus:      string(status),
+						ReturnToAuthAccess: true,
+					},
+				})
+			}
+		}
+	}
+	return actions
+}
+
+// openCoordinationDetail opens one typed inspect/action modal over the coordination surface.
+func (m *Model) openCoordinationDetail(item authInventoryItem, title, body string) {
+	if m == nil {
+		return
+	}
+	m.coordinationDetailItem = item
+	m.coordinationDetailTitle = strings.TrimSpace(title)
+	m.coordinationDetailBody = strings.TrimSpace(body)
+	m.coordinationDetailTone = m.coordinationDetailToneForItem(item)
+	m.coordinationDetailActions = m.coordinationDetailActionsForItem(item)
+	m.coordinationDetailActionIndex = 0
+	m.mode = modeCoordinationDetail
+	m.status = firstNonEmptyTrimmed(m.coordinationDetailTitle, "coordination detail")
+}
+
+// closeCoordinationDetail closes the typed coordination-detail modal and returns to the coordination surface.
+func (m *Model) closeCoordinationDetail() {
+	if m == nil {
+		return
+	}
+	m.coordinationDetailItem = authInventoryItem{}
+	m.coordinationDetailTitle = ""
+	m.coordinationDetailBody = ""
+	m.coordinationDetailTone = coordinationDetailToneNeutral
+	m.coordinationDetailActions = nil
+	m.coordinationDetailActionIndex = 0
+	m.mode = modeAuthInventory
+	m.status = "coordination"
+}
+
+// coordinationDetailMoveAction moves the selected coordination-detail action within bounds.
+func (m *Model) coordinationDetailMoveAction(delta int) {
+	if m == nil || len(m.coordinationDetailActions) == 0 {
+		return
+	}
+	next := clamp(m.coordinationDetailActionIndex+delta, 0, len(m.coordinationDetailActions)-1)
+	m.coordinationDetailActionIndex = next
+}
+
+// selectedCoordinationDetailAction returns the currently highlighted detail action.
+func (m Model) selectedCoordinationDetailAction() (coordinationDetailAction, bool) {
+	if len(m.coordinationDetailActions) == 0 {
+		return coordinationDetailAction{}, false
+	}
+	idx := clamp(m.coordinationDetailActionIndex, 0, len(m.coordinationDetailActions)-1)
+	return m.coordinationDetailActions[idx], true
 }
 
 // authInventoryLeaseStatusLabel renders one capability lease status for coordination visibility.
@@ -3711,7 +3900,7 @@ func (m Model) authInventoryBodyLines(contentWidth int, hintStyle, accentStyle l
 
 // syncAuthInventoryViewport refreshes the coordination viewport dimensions and keeps the selected row visible.
 func (m *Model) syncAuthInventoryViewport() {
-	if m == nil || m.mode != modeAuthInventory {
+	if m == nil || (m.mode != modeAuthInventory && m.mode != modeCoordinationDetail) {
 		return
 	}
 	accent := lipgloss.Color("62")
@@ -9381,12 +9570,49 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return next, cmd
 			}
 			if title, body, ok := m.authInventoryItemDetail(item); ok {
-				m.startWarningModal(title, body)
+				m.openCoordinationDetail(item, title, body)
 				return m, nil
 			}
-			if next, cmd, ok := m.beginSelectedAuthSessionRevoke(); ok {
-				return next, cmd
+			return m, nil
+		default:
+			return m, nil
+		}
+	}
+
+	if m.mode == modeCoordinationDetail {
+		switch msg.String() {
+		case "esc":
+			m.closeCoordinationDetail()
+			return m, nil
+		case "j", "down", "tab":
+			m.coordinationDetailMoveAction(1)
+			return m, nil
+		case "k", "up", "shift+tab":
+			m.coordinationDetailMoveAction(-1)
+			return m, nil
+		case "r":
+			for idx, action := range m.coordinationDetailActions {
+				switch strings.TrimSpace(action.Confirm.Kind) {
+				case "revoke-auth-session", "revoke-capability-lease":
+					m.coordinationDetailActionIndex = idx
+					m.pendingConfirm = action.Confirm
+					m.confirmChoice = 1
+					m.mode = modeConfirmAction
+					m.status = "review action"
+					return m, nil
+				}
 			}
+			return m, nil
+		case "enter":
+			action, ok := m.selectedCoordinationDetailAction()
+			if !ok || strings.TrimSpace(action.Confirm.Kind) == "" {
+				m.closeCoordinationDetail()
+				return m, nil
+			}
+			m.pendingConfirm = action.Confirm
+			m.confirmChoice = 1
+			m.mode = modeConfirmAction
+			m.status = "review action"
 			return m, nil
 		default:
 			return m, nil
@@ -11782,6 +12008,58 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 			}
 			return actionMsg{status: status, reload: true, openAuthAccess: action.ReturnToAuthAccess}
 		}
+	case "revoke-capability-lease":
+		instanceID := strings.TrimSpace(action.LeaseInstanceID)
+		if instanceID == "" {
+			m.status = "missing capability lease"
+			return m, nil
+		}
+		return m, func() tea.Msg {
+			revoked, err := m.svc.RevokeCapabilityLease(context.Background(), app.RevokeCapabilityLeaseInput{
+				AgentInstanceID: instanceID,
+				Reason:          "revoked via TUI coordination",
+			})
+			if err != nil {
+				return actionMsg{err: err}
+			}
+			status := "capability lease revoked"
+			if agent := firstNonEmptyTrimmed(revoked.AgentName, revoked.InstanceID); agent != "" {
+				status = "revoked capability lease for " + agent
+			}
+			return actionMsg{status: status, reload: true, openAuthAccess: action.ReturnToAuthAccess}
+		}
+	case "update-handoff-status":
+		handoffID := strings.TrimSpace(action.HandoffID)
+		statusValue := domain.NormalizeHandoffStatus(domain.HandoffStatus(action.HandoffStatus))
+		if handoffID == "" {
+			m.status = "missing handoff"
+			return m, nil
+		}
+		if statusValue == "" {
+			m.status = "missing handoff status"
+			return m, nil
+		}
+		updatedBy := m.threadActorID()
+		updatedType := m.threadActorType()
+		return m, func() tea.Msg {
+			updated, err := m.svc.UpdateHandoff(context.Background(), app.UpdateHandoffInput{
+				HandoffID:    handoffID,
+				Status:       statusValue,
+				Summary:      strings.TrimSpace(action.HandoffSummary),
+				UpdatedBy:    updatedBy,
+				UpdatedType:  updatedType,
+				ResolvedBy:   updatedBy,
+				ResolvedType: updatedType,
+			})
+			if err != nil {
+				return actionMsg{err: err}
+			}
+			status := "handoff updated"
+			if normalized := domain.NormalizeHandoffStatus(updated.Status); normalized != "" {
+				status = "handoff marked " + string(normalized)
+			}
+			return actionMsg{status: status, reload: true, openAuthAccess: action.ReturnToAuthAccess}
+		}
 	default:
 		m.status = "unknown confirm action"
 		return m, nil
@@ -13313,7 +13591,7 @@ func globalNoticesPanelItemFromCoordinationSummary(projectID, projectLabel strin
 		StableKey:          globalCoordinationStableKey(projectID, global),
 		ProjectID:          strings.TrimSpace(projectID),
 		ProjectLabel:       strings.TrimSpace(projectLabel),
-		Summary:            strings.Join(parts, " • "),
+		Summary:            strings.Join(parts, "\n"),
 		CoordinationGlobal: global,
 	}, true
 }
@@ -13412,17 +13690,17 @@ func coordinationSummaryParts(summary noticesCoordinationSummary, includeZero bo
 		label string
 		value int
 	}{
-		{label: "pending", value: len(summary.PendingRequests)},
-		{label: "sessions", value: len(summary.ActiveSessions)},
-		{label: "leases", value: len(summary.ActiveLeases)},
-		{label: "handoffs", value: len(summary.OpenHandoffs)},
+		{label: "pending requests", value: len(summary.PendingRequests)},
+		{label: "active sessions", value: len(summary.ActiveSessions)},
+		{label: "active leases", value: len(summary.ActiveLeases)},
+		{label: "open handoffs", value: len(summary.OpenHandoffs)},
 	}
 	parts := make([]string, 0, len(counts))
 	for _, count := range counts {
 		if !includeZero && count.value == 0 {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s %d", count.label, count.value))
+		parts = append(parts, fmt.Sprintf("%s: %d", count.label, count.value))
 	}
 	return parts
 }
@@ -13431,12 +13709,15 @@ func coordinationSummaryParts(summary noticesCoordinationSummary, includeZero bo
 func (m Model) noticesCoordinationPanelItems() []noticesPanelItem {
 	projectID, _ := m.currentProjectID()
 	summary := m.noticesCoordination
-	return []noticesPanelItem{
-		{
-			Label:                 strings.Join(coordinationSummaryParts(summary, true), " • "),
+	rows := coordinationSummaryParts(summary, true)
+	items := make([]noticesPanelItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, noticesPanelItem{
+			Label:                 row,
 			CoordinationProjectID: projectID,
-		},
+		})
 	}
+	return items
 }
 
 // noticesSectionTitle returns a stable header label for one notices section identifier.
@@ -14609,17 +14890,33 @@ func (m Model) renderOverviewPanel(
 	return lipgloss.JoinVertical(lipgloss.Top, projectPanel, globalPanel)
 }
 
-// globalNoticesItemLabel builds one display label for a global-notifications row.
-func globalNoticesItemLabel(item globalNoticesPanelItem) string {
-	projectLabel := strings.TrimSpace(item.ProjectLabel)
+// globalNoticesItemLines builds display lines for one global-notifications row.
+func globalNoticesItemLines(item globalNoticesPanelItem) []string {
 	summary := strings.TrimSpace(item.Summary)
+	if strings.TrimSpace(item.StableKey) == globalNoticesEmptyRowKey {
+		if summary == "" {
+			summary = "no coordination or notifications across projects"
+		}
+		return []string{summary}
+	}
+	projectLabel := firstNonEmptyTrimmed(item.ProjectLabel, item.ProjectID, "project")
+	lines := []string{projectLabel}
 	if summary == "" {
-		summary = "attention item"
+		lines = append(lines, "notification")
+		return lines
 	}
-	if projectLabel == "" {
-		return summary
+	if strings.HasPrefix(strings.TrimSpace(item.StableKey), "coordination:") || item.CoordinationGlobal {
+		for _, line := range strings.Split(summary, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			lines = append(lines, line)
+		}
+		return lines
 	}
-	return projectLabel + ": " + summary
+	lines = append(lines, "action required: "+summary)
+	return lines
 }
 
 // renderGlobalNoticesPanel renders the lower global notifications panel.
@@ -14659,17 +14956,31 @@ func (m Model) renderGlobalNoticesPanel(
 	}
 	for idx := start; idx < end; idx++ {
 		item := items[idx]
-		prefix := ""
-		style := normalStyle
-		if focused {
-			prefix = "  "
+		prefix := "  "
+		if !focused {
+			prefix = ""
 		}
-		if focused && idx == selectedIdx {
-			prefix = "› "
-			style = selectedStyle
+		itemLines := globalNoticesItemLines(item)
+		for lineIdx, line := range itemLines {
+			linePrefix := prefix
+			style := normalStyle
+			if focused && idx == selectedIdx {
+				if lineIdx == 0 {
+					linePrefix = "› "
+				}
+				style = selectedStyle
+			}
+			if lineIdx > 0 {
+				linePrefix = strings.Repeat(" ", utf8.RuneCountInString(prefix))
+				if focused && idx == selectedIdx {
+					style = normalStyle
+				}
+			}
+			lines = append(lines, style.Render(linePrefix+truncate(line, max(1, contentWidth-utf8.RuneCountInString(linePrefix)))))
 		}
-		lineWidth := max(1, contentWidth-utf8.RuneCountInString(prefix))
-		lines = append(lines, style.Render(prefix+truncate(globalNoticesItemLabel(item), lineWidth)))
+		if idx < end-1 {
+			lines = append(lines, "")
+		}
 	}
 	if focused && end < len(items) {
 		lines = append(lines, normalStyle.Render(truncate("↓ more", contentWidth)))
@@ -14986,6 +15297,14 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"enter applies highlighted choice",
 			"y confirms immediately; n cancels; esc cancels",
 		}
+	case modeCoordinationDetail:
+		return "coordination detail", []string{
+			"shows the selected coordination row with state-specific styling",
+			"j/k, up/down, or tab move between available actions",
+			"enter runs the selected action or closes when close is selected",
+			"r jumps straight to revoke when the selected detail supports it",
+			"esc returns to the coordination list",
+		}
 	case modeWarning:
 		return "warning", []string{
 			"warning modal blocks accidental context mistakes",
@@ -15066,7 +15385,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"j/k, up/down, or mouse wheel move the selected row",
 			"pgup/pgdown or ctrl+u/ctrl+d move faster through long inventories",
 			"g toggles request/session scope between project and global inventory",
-			"enter reviews a pending request, opens session revoke review, or shows selected row detail in the status line",
+			"enter reviews a pending request or opens typed detail/actions for the selected row",
 			"r opens revoke review when an active session row is selected",
 			"esc returns to the previous screen",
 		}
@@ -16695,7 +17014,7 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	case modeAuthInventory:
 		short := []key.Binding{
-			helpBinding("enter", "review/revoke/details"),
+			helpBinding("enter", "review/details"),
 			helpBinding("↑/↓", "move"),
 			helpBinding("h", "history"),
 			helpBinding("g", "scope"),
@@ -16718,6 +17037,22 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("?", "help"),
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeCoordinationDetail:
+		short := []key.Binding{
+			helpBinding("enter", "run/close"),
+			helpBinding("↑/↓", "actions"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		full := [][]key.Binding{
+			short,
+			{
+				helpBinding("j/k", "move"),
+				helpBinding("tab", "next action"),
+				helpBinding("r", "revoke"),
+			},
+		}
+		return staticHelpKeyMap{short: short, full: full}
 	case modeThread:
 		if m.threadComposerActive {
 			short := []key.Binding{
@@ -17099,6 +17434,39 @@ func (m Model) renderAuthInventoryModeView() tea.View {
 	bodyViewport.SetHeight(max(1, metrics.bodyHeight))
 	surface := renderFullPageSurfaceViewport(accent, muted, metrics.boxWidth, "Coordination", requestSessionScopeLabel, status, bodyViewport)
 	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
+}
+
+// renderCoordinationDetailModeView renders the coordination surface with one centered typed detail modal overlay.
+func (m Model) renderCoordinationDetailModeView() tea.View {
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	requestSessionScopeLabel, _ := m.authInventoryScopeLabels()
+	status := m.authInventoryViewLabel()
+	if scroll := fullPageScrollStatus(m.authInventoryBody); scroll != "" {
+		status += " • " + scroll
+	}
+	metrics := m.fullPageSurfaceMetrics(
+		accent,
+		muted,
+		dim,
+		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"Coordination",
+		requestSessionScopeLabel,
+		status,
+	)
+	bodyViewport := m.authInventoryBody
+	bodyViewport.SetWidth(metrics.contentWidth)
+	bodyViewport.SetHeight(max(1, metrics.bodyHeight))
+	surface := renderFullPageSurfaceViewport(accent, muted, metrics.boxWidth, "Coordination", requestSessionScopeLabel, status, bodyViewport)
+	overlay := m.renderModeOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), m.fullPageNodeContentWidth())
+	if m.help.ShowAll {
+		overlay = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), m.width-8)
+	}
+	return m.renderFullPageSurfaceWithOverlay(accent, muted, dim, metrics, surface, overlay)
 }
 
 // renderModeOverlay renders output for the current model state.
@@ -17690,6 +18058,18 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				targetTitle += " @ " + scopeLabel
 			}
 		}
+		if strings.TrimSpace(m.pendingConfirm.LeaseInstanceID) != "" {
+			targetTitle = firstNonEmptyTrimmed(m.pendingConfirm.LeaseAgentName, m.pendingConfirm.LeaseInstanceID)
+			if scopeLabel := strings.TrimSpace(m.pendingConfirm.LeaseScopeLabel); scopeLabel != "" {
+				targetTitle += " @ " + scopeLabel
+			}
+		}
+		if strings.TrimSpace(m.pendingConfirm.HandoffID) != "" {
+			targetTitle = firstNonEmptyTrimmed(m.pendingConfirm.HandoffSummary, m.pendingConfirm.HandoffID)
+			if status := strings.TrimSpace(m.pendingConfirm.HandoffStatus); status != "" {
+				targetTitle += " → " + status
+			}
+		}
 		if targetTitle == "" {
 			targetTitle = "(unknown target)"
 		}
@@ -17737,6 +18117,59 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			confirmStyle.Render("[confirm]")+"  "+cancelStyle.Render("[cancel]"),
 			hintStyle.Render(confirmActionHints(m.authConfirmFieldsActive(), m.authConfirmScopeFieldsActive())),
 		)
+		return style.Render(strings.Join(lines, "\n"))
+
+	case modeCoordinationDetail:
+		toneColor := accent
+		switch m.coordinationDetailTone {
+		case coordinationDetailToneSuccess:
+			toneColor = lipgloss.Color("42")
+		case coordinationDetailToneWarn:
+			toneColor = lipgloss.Color("214")
+		case coordinationDetailToneDanger:
+			toneColor = lipgloss.Color("203")
+		case coordinationDetailToneMuted:
+			toneColor = lipgloss.Color("244")
+		}
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(toneColor).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 44, 108))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(toneColor)
+		selectedActionStyle := lipgloss.NewStyle().Bold(true).Foreground(toneColor)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		title := strings.TrimSpace(m.coordinationDetailTitle)
+		if title == "" {
+			title = "Coordination Detail"
+		}
+		body := strings.TrimSpace(m.coordinationDetailBody)
+		if body == "" {
+			body = "No additional detail is available for this coordination row."
+		}
+		lines := []string{titleStyle.Render(title), body}
+		if len(m.coordinationDetailActions) > 0 {
+			lines = append(lines, "", hintStyle.Render("actions"))
+			for idx, action := range m.coordinationDetailActions {
+				label := action.Label
+				prefix := "  "
+				if idx == clamp(m.coordinationDetailActionIndex, 0, len(m.coordinationDetailActions)-1) {
+					prefix = "> "
+					label = selectedActionStyle.Render(label)
+				}
+				lines = append(lines, prefix+label)
+			}
+		}
+		hint := "enter run/close • j/k select action • esc back"
+		for _, action := range m.coordinationDetailActions {
+			switch strings.TrimSpace(action.Confirm.Kind) {
+			case "revoke-auth-session", "revoke-capability-lease":
+				hint = "enter run/close • j/k select action • r revoke • esc back"
+			}
+		}
+		lines = append(lines, "", hintStyle.Render(hint))
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeWarning:
@@ -18128,6 +18561,8 @@ func (m Model) modeLabel() string {
 		return "coordination"
 	case modeAuthSessionRevoke:
 		return "auth-session-revoke"
+	case modeCoordinationDetail:
+		return "coordination-detail"
 	case modeWarning:
 		return "warning"
 	case modeResourcePicker:
@@ -18194,9 +18629,11 @@ func (m Model) modePrompt() string {
 	case modeAuthScopePicker:
 		return "auth scope picker: up/down selects named scopes, enter chooses one, esc returns to review"
 	case modeAuthInventory:
-		return "coordination: up/down select, enter acts on selected row, h toggles live/history, g toggles project/global requests, r opens revoke for selected active session, esc closes"
+		return "coordination: up/down select, enter opens review/detail, h toggles live/history, g toggles project/global requests, r opens revoke for selected active session, esc closes"
 	case modeAuthSessionRevoke:
 		return "revoke active session: enter revoke, esc cancel"
+	case modeCoordinationDetail:
+		return "coordination detail: enter runs selected action, j/k or tab moves actions, r revokes when available, esc closes"
 	case modeWarning:
 		return "warning: enter close, esc close"
 	case modeResourcePicker:

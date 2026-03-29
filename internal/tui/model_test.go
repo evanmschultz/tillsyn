@@ -44,6 +44,8 @@ type fakeService struct {
 	lastDenyAuthRequest     app.DenyAuthRequestInput
 	lastRevokeAuthSessionID string
 	lastRevokeAuthReason    string
+	lastRevokeLease         app.RevokeCapabilityLeaseInput
+	lastUpdateHandoff       app.UpdateHandoffInput
 	err                     error
 	rollups                 map[string]domain.DependencyRollup
 	changeEvents            map[string][]domain.ChangeEvent
@@ -484,6 +486,53 @@ func (f *fakeService) RevokeAuthSession(_ context.Context, sessionID string, rea
 		return f.authSessions[idx], nil
 	}
 	return app.AuthSession{}, domain.ErrInvalidID
+}
+
+// RevokeCapabilityLease marks one fake capability lease revoked with a stable reason.
+func (f *fakeService) RevokeCapabilityLease(_ context.Context, in app.RevokeCapabilityLeaseInput) (domain.CapabilityLease, error) {
+	instanceID := strings.TrimSpace(in.AgentInstanceID)
+	for idx := range f.capabilityLeases {
+		if strings.TrimSpace(f.capabilityLeases[idx].InstanceID) != instanceID {
+			continue
+		}
+		f.lastRevokeLease = in
+		f.capabilityLeases[idx].Revoke(strings.TrimSpace(in.Reason), time.Now().UTC())
+		return f.capabilityLeases[idx], nil
+	}
+	return domain.CapabilityLease{}, domain.ErrInvalidID
+}
+
+// UpdateHandoff updates one fake handoff row in memory and records the request payload.
+func (f *fakeService) UpdateHandoff(_ context.Context, in app.UpdateHandoffInput) (domain.Handoff, error) {
+	handoffID := strings.TrimSpace(in.HandoffID)
+	for idx := range f.handoffs {
+		if strings.TrimSpace(f.handoffs[idx].ID) != handoffID {
+			continue
+		}
+		f.lastUpdateHandoff = in
+		update := domain.HandoffUpdateInput{
+			Status:          in.Status,
+			SourceRole:      in.SourceRole,
+			TargetBranchID:  in.TargetBranchID,
+			TargetScopeType: in.TargetScopeType,
+			TargetScopeID:   in.TargetScopeID,
+			TargetRole:      in.TargetRole,
+			Summary:         firstNonEmptyTrimmed(strings.TrimSpace(in.Summary), strings.TrimSpace(f.handoffs[idx].Summary)),
+			NextAction:      in.NextAction,
+			MissingEvidence: append([]string(nil), in.MissingEvidence...),
+			RelatedRefs:     append([]string(nil), in.RelatedRefs...),
+			UpdatedByActor:  strings.TrimSpace(in.UpdatedBy),
+			UpdatedByType:   in.UpdatedType,
+			ResolvedByActor: strings.TrimSpace(in.ResolvedBy),
+			ResolvedByType:  in.ResolvedType,
+			ResolutionNote:  strings.TrimSpace(in.ResolutionNote),
+		}
+		if err := f.handoffs[idx].Update(update, time.Now().UTC()); err != nil {
+			return domain.Handoff{}, err
+		}
+		return f.handoffs[idx], nil
+	}
+	return domain.Handoff{}, domain.ErrInvalidID
 }
 
 // GetProjectDependencyRollup returns project dependency rollup totals.
@@ -3575,6 +3624,15 @@ func TestModelHelpOverlayModeSpecific(t *testing.T) {
 	if !strings.Contains(out, "h toggles between live and history slices") {
 		t.Fatalf("expected coordination-specific history guidance, got %q", out)
 	}
+
+	m.mode = modeCoordinationDetail
+	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
+	if !strings.Contains(out, "screen: coordination detail") {
+		t.Fatalf("expected coordination-detail-specific help title, got %q", out)
+	}
+	if !strings.Contains(out, "shows the selected coordination row with state-specific styling") {
+		t.Fatalf("expected coordination-detail-specific guidance, got %q", out)
+	}
 }
 
 // TestModelAuthInventoryBottomHelpIncludesHistory verifies the coordination bottom help line surfaces the history toggle.
@@ -3589,6 +3647,14 @@ func TestModelAuthInventoryBottomHelpIncludesHistory(t *testing.T) {
 	rendered := stripANSI(m.renderBottomHelpLine(lipgloss.Color("241"), lipgloss.Color("239"), 118))
 	if !strings.Contains(rendered, "h") || !strings.Contains(strings.ToLower(rendered), "history") {
 		t.Fatalf("expected coordination bottom help to include history toggle, got %q", rendered)
+	}
+
+	m.mode = modeCoordinationDetail
+	rendered = stripANSI(m.renderBottomHelpLine(lipgloss.Color("241"), lipgloss.Color("239"), 118))
+	for _, want := range []string{"enter", "run/close", "esc", "back"} {
+		if !strings.Contains(strings.ToLower(rendered), want) {
+			t.Fatalf("expected coordination detail bottom help to include %q, got %q", want, rendered)
+		}
 	}
 }
 
@@ -3614,6 +3680,9 @@ func TestHelpOverlayScreenTitleAndLinesCoverage(t *testing.T) {
 		modeCommandPalette,
 		modeQuickActions,
 		modeConfirmAction,
+		modeAuthInventory,
+		modeAuthSessionRevoke,
+		modeCoordinationDetail,
 		modeWarning,
 		modeActivityLog,
 		modeResourcePicker,
@@ -7095,21 +7164,40 @@ func TestModelProjectNotificationsCoordinationRowsOpenCoordination(t *testing.T)
 	svc.authRequests[request.ID] = request
 	svc.capabilityLeases = append(svc.capabilityLeases, lease)
 
-	m := loadReadyModel(t, NewModel(svc))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m.noticesSection = noticesSectionCoordination
-	m.noticesCoordinationIdx = 0
+	rows := loadReadyModel(t, NewModel(svc)).noticesCoordinationPanelItems()
+	if got := len(rows); got != 4 {
+		t.Fatalf("coordination row count = %d, want 4", got)
+	}
+	for _, want := range []string{"pending requests: 1", "active sessions: 0", "active leases: 1", "open handoffs: 0"} {
+		found := false
+		for _, row := range rows {
+			if row.Label == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected project coordination row %q, got %#v", want, rows)
+		}
+	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAuthInventory {
-		t.Fatalf("expected enter on project coordination row to open coordination, got %v", m.mode)
-	}
-	currentProjectID, ok := m.currentProjectID()
-	if !ok || currentProjectID != project.ID {
-		t.Fatalf("expected coordination deep-link to remain on project %q, got %q", project.ID, currentProjectID)
-	}
-	if m.authInventoryGlobal {
-		t.Fatal("expected project coordination deep-link to open project-scoped coordination")
+	for idx := range rows {
+		m := loadReadyModel(t, NewModel(svc))
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		m.noticesSection = noticesSectionCoordination
+		m.noticesCoordinationIdx = idx
+
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.mode != modeAuthInventory {
+			t.Fatalf("expected enter on project coordination row %d to open coordination, got %v", idx, m.mode)
+		}
+		currentProjectID, ok := m.currentProjectID()
+		if !ok || currentProjectID != project.ID {
+			t.Fatalf("expected coordination deep-link to remain on project %q, got %q", project.ID, currentProjectID)
+		}
+		if m.authInventoryGlobal {
+			t.Fatal("expected project coordination deep-link to open project-scoped coordination")
+		}
 	}
 }
 
@@ -7149,6 +7237,9 @@ func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 	m.noticesPanel = noticesPanelFocusGlobal
 	foundCoordinationRow := false
 	for idx, item := range m.globalNotices {
+		if item.ProjectID == projectA.ID && strings.HasPrefix(item.StableKey, "coordination:") {
+			t.Fatalf("expected current project %q to be excluded from global coordination rows, got %#v", projectA.ID, m.globalNotices)
+		}
 		if item.ProjectID == projectB.ID && strings.HasPrefix(item.StableKey, "coordination:") {
 			m.globalNoticesIdx = idx
 			foundCoordinationRow = true
@@ -8266,7 +8357,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	}
 }
 
-// TestModelAuthInventoryEnterOnHandoffOpensDetail verifies non-request coordination rows open a detail modal and return to coordination.
+// TestModelAuthInventoryEnterOnHandoffOpensDetail verifies non-request coordination rows open the typed detail modal and return to coordination.
 func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -8311,15 +8402,158 @@ func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeWarning {
+	if m.mode != modeCoordinationDetail {
 		t.Fatalf("expected enter on handoff row to open detail modal, got %v", m.mode)
 	}
-	if !strings.Contains(m.warningBody, "next: qa verifies the run") {
-		t.Fatalf("expected handoff detail modal to include next action, got %q", m.warningBody)
+	rendered := stripANSI(fmt.Sprint(m.View()))
+	for _, want := range []string{"Handoff", "next: qa verifies the run", "actions", "mark resolved"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected handoff detail modal to include %q, got\n%s", want, rendered)
+		}
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeAuthInventory {
 		t.Fatalf("expected esc to return to coordination after detail modal, got %v", m.mode)
+	}
+}
+
+// TestModelCoordinationDetailCanRevokeLease verifies lease detail actions flow through confirm and revoke the lease.
+func TestModelCoordinationDetailCanRevokeLease(t *testing.T) {
+	now := time.Date(2026, 3, 29, 11, 15, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Lease Check",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-project",
+		LeaseToken: "token-project",
+		AgentName:  "Builder Agent",
+		ProjectID:  project.ID,
+		ScopeType:  domain.CapabilityScopeProject,
+		Role:       domain.CapabilityRoleBuilder,
+		ExpiresAt:  now.Add(24 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.capabilityLeases = append(svc.capabilityLeases, lease)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	items := m.authInventoryItems()
+	for idx, item := range items {
+		if item.Lease != nil {
+			m.authInventoryIndex = idx
+			break
+		}
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeCoordinationDetail {
+		t.Fatalf("expected lease enter to open coordination detail, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected lease action to open confirm modal, got %v", m.mode)
+	}
+	m.confirmChoice = 0
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected confirmed lease revoke to return to coordination, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastRevokeLease.AgentInstanceID); got != lease.InstanceID {
+		t.Fatalf("RevokeCapabilityLease() instance id = %q, want %q", got, lease.InstanceID)
+	}
+	if got := len(m.authInventoryItems()); got != 0 {
+		t.Fatalf("expected revoked lease to leave live coordination view, got %d items", got)
+	}
+}
+
+// TestModelCoordinationDetailCanUpdateHandoffStatus verifies handoff detail actions flow through confirm and update the handoff.
+func TestModelCoordinationDetailCanUpdateHandoffStatus(t *testing.T) {
+	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "QA Check",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:              "handoff-1",
+		ProjectID:       project.ID,
+		ScopeType:       domain.ScopeLevelProject,
+		SourceRole:      "builder",
+		TargetScopeType: domain.ScopeLevelTask,
+		TargetScopeID:   task.ID,
+		TargetRole:      "qa",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "builder to qa handoff",
+		NextAction:      "qa verifies the run",
+		CreatedByActor:  "lane-user",
+		CreatedByType:   domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.handoffs = append(svc.handoffs, handoff)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startAuthInventory(false))
+	items := m.authInventoryItems()
+	for idx, item := range items {
+		if item.Handoff != nil {
+			m.authInventoryIndex = idx
+			break
+		}
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeCoordinationDetail {
+		t.Fatalf("expected handoff enter to open coordination detail, got %v", m.mode)
+	}
+	foundResolve := false
+	for idx, action := range m.coordinationDetailActions {
+		if action.Label == "mark resolved" {
+			m.coordinationDetailActionIndex = idx
+			foundResolve = true
+			break
+		}
+	}
+	if !foundResolve {
+		t.Fatalf("expected mark resolved handoff action, got %#v", m.coordinationDetailActions)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected handoff action to open confirm modal, got %v", m.mode)
+	}
+	m.confirmChoice = 0
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAuthInventory {
+		t.Fatalf("expected confirmed handoff update to return to coordination, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(svc.lastUpdateHandoff.HandoffID); got != handoff.ID {
+		t.Fatalf("UpdateHandoff() handoff id = %q, want %q", got, handoff.ID)
+	}
+	if got := domain.NormalizeHandoffStatus(svc.lastUpdateHandoff.Status); got != domain.HandoffStatusResolved {
+		t.Fatalf("UpdateHandoff() status = %q, want %q", got, domain.HandoffStatusResolved)
+	}
+	if got := len(m.authInventoryItems()); got != 0 {
+		t.Fatalf("expected resolved handoff to leave live coordination view, got %d items", got)
 	}
 }
 
@@ -11774,8 +12008,10 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if !strings.Contains(rendered, "Live Coordination") {
 		t.Fatalf("expected live coordination section in notices panel, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "pending 0 • sessions 0") {
-		t.Fatalf("expected live coordination summary row in notices panel, got\n%s", rendered)
+	for _, want := range []string{"pending requests: 0", "active sessions: 0", "active leases: 0", "open handoffs: 0"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected notices panel coordination row %q, got\n%s", want, rendered)
+		}
 	}
 	if !strings.Contains(rendered, "Action Required") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
@@ -11831,8 +12067,10 @@ func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) 
 	if !strings.Contains(panel, "Live Coordination") {
 		t.Fatalf("expected live coordination section in project notices panel, got\n%s", panel)
 	}
-	if !strings.Contains(panel, "pending 0 • sessions 0") {
-		t.Fatalf("expected live coordination summary row in project notices panel, got\n%s", panel)
+	for _, want := range []string{"pending requests: 0", "active sessions: 0", "active leases: 0", "open handoffs: 0"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("expected project notices coordination row %q, got\n%s", want, panel)
+		}
 	}
 	if strings.Contains(panel, "Notices") {
 		t.Fatalf("expected legacy single-panel notices title to be absent, got\n%s", panel)

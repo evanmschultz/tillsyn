@@ -7,15 +7,15 @@
  │                                                     │ │                                    │
  │  To Do (1)                                          │ │ Project Notifications              │
  │  │  Help Golden Task                                │ │ Live Coordination                  │
- │     [low]                                           │ │ pending 0 • sessions 0 • leases…   │
+ │     [low]                                           │ │ pending requests: 0                │
+ │                                                     │ │ active sessions: 0                 │
+ │                                                     │ │ active leases: 0                   │
+ │                                                     │ │ open handoffs: 0                   │
  │                                                     │ │                                    │
  │                                                     │ │ Warnings                           │
  │                                                     │ │ none                               │
  │                                                     │ │                                    │
  │                                                     │ │ Action Required                    │
- │                                                     │ │ no notifications requiring user…   │
- │                                                     │ │                                    │
- │                                                     │ │ Recent Activity                    │
  │                                                     │ │                                    │
  │                                                     │ ╰────────────────────────────────────╯
  │                                                     │ ╭────────────────────────────────────╮
@@ -34,13 +34,13 @@
     ╭──────────────────────────────────────────────────────────────────────────────────────╮[K
     │ TILLSYN Help                                                            [3P
     │ screen: board                                                       [3P
-    │                                                                                      │[K
+    │                                                                       [3P
     │ - h/l or left/right move columns; j/k or up/down move task selection [3P
-    │ - n new task; i/enter task info; e edit task               [3P
+    │ - n new task; i/enter task info; e edit task                       [3P
     │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore [3P
     │ - f focus subtree; F full board; t toggle archived [3P
-    │ - / search; p project picker; : command palette; . quick actions  [3P
-    │ - tab/shift+tab cycle board/project/global panels; left/right wraps panel focus      │[K
+    │ - / search; p project picker; : command palette; . quick actions [3P
+    │ - tab/shift+tab cycle board/project/global panels; left/right wraps panel focus [3P
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
     │ - ctrl+z undo; ctrl+shift+z redo; g activity log; q quit          [3P
     │                                                   [3P
