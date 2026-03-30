@@ -128,7 +128,7 @@ Current auth note:
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
 - TUI surfaces now expose the same contract model without a separate template UI stack:
-  - project create/edit includes an approved-library picker plus approved-library hints,
+  - project create/edit includes a project-kind picker and an approved-library picker plus approved-library hints,
   - task info shows the active project library and any generated-node contract snapshot,
   - and comments remain shared regardless of template ownership.
 - Template child rules are the contract mechanism:

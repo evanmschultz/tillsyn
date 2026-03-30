@@ -36,6 +36,7 @@ type fakeService struct {
 	authSessions            []app.AuthSession
 	capabilityLeases        []domain.CapabilityLease
 	handoffs                []domain.Handoff
+	kindDefinitions         []domain.KindDefinition
 	templateLibraries       []domain.TemplateLibrary
 	projectBindings         map[string]domain.ProjectTemplateBinding
 	nodeContracts           map[string]domain.NodeContractSnapshot
@@ -76,6 +77,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		projects:                projects,
 		columns:                 colByProject,
 		tasks:                   taskByProject,
+		kindDefinitions:         []domain.KindDefinition{mustNewKindDefinitionForTest(domain.DefaultProjectKind, "Project", []domain.KindAppliesTo{domain.KindAppliesToProject})},
 		comments:                map[string][]domain.Comment{},
 		authRequests:            map[string]domain.AuthRequest{},
 		authSessions:            []app.AuthSession{},
@@ -86,6 +88,21 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		attentionErrByProject:   map[string]error{},
 		attentionItemsByProject: map[string][]domain.AttentionItem{},
 	}
+}
+
+// ListKindDefinitions returns kind definitions visible to the TUI.
+func (f *fakeService) ListKindDefinitions(_ context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([]domain.KindDefinition, 0, len(f.kindDefinitions))
+	for _, kind := range f.kindDefinitions {
+		if !includeArchived && kind.ArchivedAt != nil {
+			continue
+		}
+		out = append(out, kind)
+	}
+	return out, nil
 }
 
 // ListTemplateLibraries returns approved template libraries visible to the TUI.
@@ -1304,7 +1321,8 @@ func TestModelAddAndEditProject(t *testing.T) {
 	m = applyMsg(t, m, keyRune('o'))
 	m = applyMsg(t, m, keyRune('a'))
 	m = applyMsg(t, m, keyRune('d'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyCmdWithTimeout(t, mustModelValue(t, updated), cmd, 50*time.Millisecond)
 	if len(m.projects) < 2 {
 		t.Fatalf("expected project created, got %#v", m.projects)
 	}
@@ -1329,7 +1347,8 @@ func TestModelAddAndEditProject(t *testing.T) {
 		t.Fatalf("expected edit project mode, got %v", m.mode)
 	}
 	m.projectFormInputs[projectFieldName].SetValue("Renamed")
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyCmdWithTimeout(t, mustModelValue(t, updated), cmd, 50*time.Millisecond)
 	if got := m.projects[m.selectedProject].Name; got != "Renamed" {
 		t.Fatalf("expected project renamed, got %q", got)
 	}
@@ -13453,6 +13472,20 @@ func keyRune(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
+// mustNewKindDefinitionForTest constructs one kind definition for TUI tests.
+func mustNewKindDefinitionForTest(id domain.KindID, displayName string, appliesTo []domain.KindAppliesTo) domain.KindDefinition {
+	now := time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC)
+	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
+		ID:          id,
+		DisplayName: displayName,
+		AppliesTo:   appliesTo,
+	}, now)
+	if err != nil {
+		panic(fmt.Sprintf("NewKindDefinition() error = %v", err))
+	}
+	return kind
+}
+
 // mustNewApprovedTemplateLibrary constructs one approved global template library for tests.
 func mustNewApprovedTemplateLibrary(t *testing.T, id, name string, now time.Time) domain.TemplateLibrary {
 	t.Helper()
@@ -13767,6 +13800,7 @@ func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
 	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.kindDefinitions = append(svc.kindDefinitions, mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}))
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	m := loadReadyModel(t, NewModel(svc))
 
@@ -13775,6 +13809,15 @@ func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
 		t.Fatalf("expected add-project mode, got %v", m.mode)
 	}
 	m.projectFormInputs[projectFieldName].SetValue("Go Service")
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
+	m = applyMsg(t, m, keyRune('g'))
+	if m.mode != modeProjectKindPicker {
+		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := m.projectFormInputs[projectFieldKind].Value(); got != "go-service" {
+		t.Fatalf("project form kind = %q, want %q", got, "go-service")
+	}
 	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
 	m = applyMsg(t, m, keyRune('g'))
 	if m.mode != modeTemplateLibraryPicker {
@@ -13798,8 +13841,150 @@ func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
 	if got := svc.lastCreateProject.TemplateLibraryID; got != "go-defaults" {
 		t.Fatalf("CreateProjectWithMetadata() template library = %q, want go-defaults", got)
 	}
+	if got := string(svc.lastCreateProject.Kind); got != "go-service" {
+		t.Fatalf("CreateProjectWithMetadata() kind = %q, want go-service", got)
+	}
 	if binding, ok := svc.projectBindings["p-new"]; !ok || binding.LibraryID != "go-defaults" {
 		t.Fatalf("expected created project binding to go-defaults, got %#v", svc.projectBindings)
+	}
+}
+
+// TestModelAddProjectInfersKindFromTemplateLibrary verifies template-library selection auto-seeds the project kind when one unique project kind exists.
+func TestModelAddProjectInfersKindFromTemplateLibrary(t *testing.T) {
+	now := time.Date(2026, 3, 30, 12, 10, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:     "go-defaults",
+		Scope:  domain.TemplateLibraryScopeGlobal,
+		Name:   "Go Defaults",
+		Status: domain.TemplateLibraryStatusApproved,
+		NodeTemplates: []domain.NodeTemplateInput{{
+			ID:          "project-template",
+			ScopeLevel:  domain.KindAppliesToProject,
+			NodeKindID:  "go-service",
+			DisplayName: "Go Service Project",
+		}},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTemplateLibrary() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.kindDefinitions = append(svc.kindDefinitions, mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}))
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('N'))
+	m.projectFormInputs[projectFieldName].SetValue("Go Service")
+	if got := m.projectFormInputs[projectFieldKind].Value(); got != string(domain.DefaultProjectKind) {
+		t.Fatalf("default project form kind = %q, want %q", got, domain.DefaultProjectKind)
+	}
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
+	m = applyMsg(t, m, keyRune('g'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
+		t.Fatalf("project form template library = %q, want go-defaults", got)
+	}
+	if got := m.projectFormInputs[projectFieldKind].Value(); got != "go-service" {
+		t.Fatalf("project form kind = %q, want auto-seeded go-service", got)
+	}
+}
+
+// TestModelProjectKindPickerRendersHelpersAndOverlay verifies project-kind helper rows and picker rendering stay human-readable.
+func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
+	now := time.Date(2026, 3, 30, 12, 20, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.kindDefinitions = append(svc.kindDefinitions,
+		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
+		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
+		mustNewKindDefinitionForTest("build-task", "Build Task", []domain.KindAppliesTo{domain.KindAppliesToTask}),
+	)
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('N'))
+	lines, _ := m.projectFormBodyLines(84, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+	if !strings.Contains(rendered, "classification") || !strings.Contains(rendered, "project_kinds:") || !strings.Contains(rendered, "go-service — Go Service") {
+		t.Fatalf("expected project form to render kind hints, got\n%s", rendered)
+	}
+	if strings.Contains(rendered, "build-task") {
+		t.Fatalf("expected project-only kind hints, got\n%s", rendered)
+	}
+	if got := m.projectKindName("go-service"); got != "Go Service" {
+		t.Fatalf("projectKindName(go-service) = %q, want Go Service", got)
+	}
+	if got := m.projectKindDisplayLabel("go-service", "Go Service"); got != "go-service — Go Service" {
+		t.Fatalf("projectKindDisplayLabel() = %q, want go-service — Go Service", got)
+	}
+	if rows := m.projectKindSummaryRows(2); len(rows) != 2 || rows[0] != "go-service — Go Service" {
+		t.Fatalf("projectKindSummaryRows(2) = %#v, want go-service first", rows)
+	}
+	if !m.hasProjectKindDefinition("go-service") {
+		t.Fatalf("expected go-service to be selectable")
+	}
+	if m.hasProjectKindDefinition("build-task") {
+		t.Fatalf("expected build-task to be excluded from project picker")
+	}
+
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeProjectKindPicker {
+		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
+	}
+	if got := m.modeLabel(); got != "project-kinds" {
+		t.Fatalf("modeLabel() = %q, want project-kinds", got)
+	}
+	if got := m.modePrompt(); !strings.Contains(got, "project kind picker") {
+		t.Fatalf("modePrompt() = %q, want project kind picker guidance", got)
+	}
+	overlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 72)
+	if !strings.Contains(overlay, "Project Kind") || !strings.Contains(overlay, "current: project") || !strings.Contains(overlay, "go-service — Go Service") {
+		t.Fatalf("expected project-kind overlay details, got\n%s", overlay)
+	}
+}
+
+// TestModelProjectKindPickerCtrlUAndEscape verifies filter clearing and cancel flow for the project-kind picker.
+func TestModelProjectKindPickerCtrlUAndEscape(t *testing.T) {
+	now := time.Date(2026, 3, 30, 12, 25, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.kindDefinitions = append(svc.kindDefinitions,
+		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
+		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
+	)
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('N'))
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
+	m = applyMsg(t, m, keyRune('o'))
+	if m.mode != modeProjectKindPicker {
+		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.projectKindPickerInput.Value()); got != "o" {
+		t.Fatalf("project kind picker filter = %q, want o", got)
+	}
+	if len(m.projectKindPickerItems) == 0 || m.projectKindPickerItems[0].KindID != "ops-service" {
+		t.Fatalf("expected ops-service as filtered picker row, got %#v", m.projectKindPickerItems)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	if got := strings.TrimSpace(m.projectKindPickerInput.Value()); got != "" {
+		t.Fatalf("expected ctrl+u to clear project kind filter, got %q", got)
+	}
+	if len(m.projectKindPickerItems) < 2 {
+		t.Fatalf("expected cleared picker to restore all rows, got %#v", m.projectKindPickerItems)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeAddProject {
+		t.Fatalf("expected esc to return add-project mode, got %v", m.mode)
+	}
+	if m.projectFormFocus != projectFieldKind {
+		t.Fatalf("expected focus to return to kind field, got %d", m.projectFormFocus)
+	}
+	if got := m.status; got != "project kind picker cancelled" {
+		t.Fatalf("status = %q, want project kind picker cancelled", got)
 	}
 }
 

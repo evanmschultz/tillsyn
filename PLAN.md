@@ -2,7 +2,43 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, snapshot transport for template libraries/project bindings/node-contract snapshots, and first-class TUI bind/inspect surfaces, including a real approved-library picker in the project form instead of raw id typing. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical. The main remaining legacy seam is create-time kind-template fallback rather than user-facing authoring/operator workflow.
+Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, snapshot transport for template libraries/project bindings/node-contract snapshots, and first-class TUI bind/inspect surfaces, including real project-kind and template-library pickers in the project form instead of raw id typing. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical. The main remaining legacy seam is create-time kind-template fallback rather than user-facing authoring/operator workflow.
+
+## Checkpoint 2026-03-30: TUI Project Kind Picker + Template-Aware Create Path
+
+Objective:
+- fix the remaining broken TUI dogfood path by making project create/edit send a real project kind, so project-scope template rules can match and generate work like `Initial Build`.
+
+Context7:
+1. `/charmbracelet/bubbletea` reviewed before the TUI patch for:
+   - consistent modal picker mode transitions,
+   - and explicit key-handling order for picker navigation versus filter typing -> PASS.
+
+Implementation summary:
+1. Extended TUI project data loading:
+   - load kind definitions alongside projects and approved template libraries,
+   - keep them in normal model state,
+   - and expose project-applicable kind choices to the project form.
+2. Added a project-kind picker to the existing project form:
+   - the form now includes a `kind` field,
+   - opens a dedicated picker on enter/e/type,
+   - and sends the selected kind on both project create and project update.
+3. Closed the template create-time mismatch:
+   - template-library selection now auto-seeds project kind when the chosen library has exactly one project-scope node-template kind,
+   - so the common path of “pick the library and create the project” now actually triggers project-scope template generation.
+4. Added focused TUI coverage:
+   - explicit project-kind picker selection on create,
+   - template-library binding on create while preserving the selected kind,
+   - and auto-kind seeding from a single project-scope template-library definition.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> PASS.
+
+Current status:
+1. TUI-created projects can now carry the correct kind instead of silently defaulting to `project`.
+2. Brand-new template-backed project creation is now testable in TUI without dropping to CLI just to get the project kind right.
+3. Remaining work is back to template MVP cleanup and battle testing rather than a broken core TUI path.
 
 ## Checkpoint 2026-03-30: TUI Template-Library Picker
 
