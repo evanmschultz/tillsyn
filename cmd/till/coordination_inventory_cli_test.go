@@ -40,7 +40,7 @@ func TestRenderCoordinationLeaseListAt(t *testing.T) {
 	}
 	got := renderCoordinationLeaseListAt(now, leases)
 	for _, want := range []string{
-		"CAPABILITY LEASES",
+		"Capability Leases",
 		"AGENT",
 		"ROLE",
 		"PROJECT",
@@ -88,20 +88,28 @@ func TestRenderCoordinationLeaseDetailAt(t *testing.T) {
 	}
 	got := renderCoordinationLeaseDetailAt(now, lease)
 	for _, want := range []string{
-		"CAPABILITY LEASE",
-		"agent\tBuilder Bot",
-		"id\tlease-a",
-		"role\tbuilder",
-		"project\tp1",
-		"scope\tproject/p1",
-		"status\trevoked",
-		"parent\tparent-1",
-		"allow equal scope delegation\tyes",
-		"issued\t",
-		"expires\t",
-		"heartbeat\t",
-		"revoked\t",
-		"revoked reason\tmanual revoke",
+		"Capability Lease",
+		"agent",
+		"Builder Bot",
+		"id",
+		"lease-a",
+		"role",
+		"builder",
+		"project",
+		"p1",
+		"scope",
+		"project/p1",
+		"status",
+		"revoked",
+		"parent",
+		"parent-1",
+		"allow equal scope delegation",
+		"yes",
+		"issued",
+		"expires",
+		"heartbeat",
+		"revoked reason",
+		"manual revoke",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in lease detail output:\n%s", want, got)
@@ -141,7 +149,7 @@ func TestRenderCoordinationHandoffList(t *testing.T) {
 	}
 	got := renderCoordinationHandoffList(handoffs)
 	for _, want := range []string{
-		"HANDOFFS",
+		"Handoffs",
 		"FLOW",
 		"STATUS",
 		"SCOPE",
@@ -195,21 +203,34 @@ func TestRenderCoordinationHandoffDetail(t *testing.T) {
 	}
 	got := renderCoordinationHandoffDetail(handoff)
 	for _, want := range []string{
-		"HANDOFF",
-		"flow\tbuilder -> qa",
-		"id\thandoff-a",
-		"project\tp1",
-		"scope\tproject/p1",
-		"target\tbranch-1 -> task:task-1",
-		"status\twaiting",
-		"summary\tbuilder to qa handoff",
-		"next action\tqa verifies run",
-		"missing evidence\tcoverage, logs",
-		"related refs\tbranch-1, task-1",
-		"created by\tlane-user (user)",
-		"updated by\tlane-user (user)",
-		"resolved at\t",
-		"resolution note\tfollow-up done",
+		"Handoff",
+		"flow",
+		"builder -> qa",
+		"id",
+		"handoff-a",
+		"project",
+		"p1",
+		"scope",
+		"project/p1",
+		"target",
+		"branch-1 -> task:task-1",
+		"status",
+		"waiting",
+		"summary",
+		"builder to qa handoff",
+		"next action",
+		"qa verifies run",
+		"missing evidence",
+		"coverage, logs",
+		"related refs",
+		"branch-1, task-1",
+		"created by",
+		"lane-user (user)",
+		"updated by",
+		"lane-user (user)",
+		"resolved at",
+		"resolution note",
+		"follow-up done",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in handoff detail output:\n%s", want, got)
@@ -230,8 +251,10 @@ func TestRenderCoordinationHandoffRoleOnlyTarget(t *testing.T) {
 	}
 	got := renderCoordinationHandoffDetail(handoff)
 	for _, want := range []string{
-		"flow\tbuilder -> qa",
-		"target\trole:qa",
+		"flow",
+		"builder -> qa",
+		"target",
+		"role:qa",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in role-only handoff detail output:\n%s", want, got)

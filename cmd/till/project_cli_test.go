@@ -33,7 +33,7 @@ func TestWriteProjectList(t *testing.T) {
 		t.Fatalf("writeProjectList() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"NAME", "ID", "OWNER", "Alpha", "p1", "go-service", "team-a", "Beta", "p2", "team-b"} {
+	for _, want := range []string{"Projects", "NAME", "ID", "OWNER", "Alpha", "p1", "go-service", "team-a", "Beta", "p2", "team-b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project list output, got %q", want, got)
 		}
@@ -47,7 +47,7 @@ func TestWriteProjectListEmpty(t *testing.T) {
 		t.Fatalf("writeProjectList(nil) error = %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "(none)") || !strings.Contains(got, "NAME") || !strings.Contains(got, "till project create --name") {
+	if !strings.Contains(got, "No projects found.") || !strings.Contains(got, "Projects") || !strings.Contains(got, "till project create --name") {
 		t.Fatalf("expected empty project table row, got %q", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestWriteProjectDetail(t *testing.T) {
 		t.Fatalf("writeProjectDetail() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"PROJECT", "name", "Alpha", "id", "p1", "slug", "alpha", "kind", "go-service", "description", "First project", "owner", "team-a", "tags", "go, cli"} {
+	for _, want := range []string{"Project", "name", "Alpha", "id", "p1", "slug", "alpha", "kind", "go-service", "description", "First project", "owner", "team-a", "tags", "go, cli"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project detail output, got %q", want, got)
 		}
@@ -111,8 +111,8 @@ func TestWriteProjectReadiness(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"PROJECT COLLABORATION READINESS",
-		"COORDINATION INVENTORY",
+		"Project Collaboration Readiness",
+		"Coordination Inventory",
 		"active_auth_sessions",
 		"3",
 		"active_agent_sessions",
@@ -123,7 +123,7 @@ func TestWriteProjectReadiness(t *testing.T) {
 		"0",
 		"open_project_handoffs",
 		"1",
-		"NEXT STEP",
+		"Next Step",
 		"till lease issue --project-id p1 --role builder --agent-name <agent-name>",
 		"An active orchestrator session is visible",
 	} {

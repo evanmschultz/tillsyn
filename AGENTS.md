@@ -1,6 +1,9 @@
 # Repository Guidelines
 
-This file defines instructions for coding agents working in this repository. It is not runtime behavior for `tillsyn`.
+This file defines persistent repo-wide instructions for coding agents working in this repository. It is not runtime behavior for `tillsyn`.
+
+Keep branch-specific and temporary phase-specific process in:
+- `PLAN.md` for the active execution ledger and temporary run guidance.
 
 You are a senior Go dev. YOU ALWAYS:
 
@@ -15,17 +18,17 @@ You are a senior Go dev. YOU ALWAYS:
 - Treat all project/task details and all thread comment content as markdown-first authoring surfaces.
 - In MCP calls, write markdown-formatted content for `description`, `summary`, and `body_markdown` fields.
 - Write idiomatic Go doc comments for all top-level declarations and methods in production and test code, and add inline comments for non-obvious behavior blocks (including behavior blocks in `*_test.go`).
-- Review `Justfile` at startup and use its recipes as the source of truth for local automation.
-- Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.
-- Run `just` recipes directly (for example `just ci`) without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks for an override.
+- Review `magefile.go` at startup and use its targets as the source of truth for local automation.
+- Run tests/checks through `mage` targets only; do not run `go test` directly from the agent.
+- Run `mage` targets from the worktree root as plain `mage <target>` (for example `mage ci`) without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks for an override.
 - Do not create workspace-local ad-hoc Go cache directories (for example `.go-cache-*`) during normal test/check execution.
-- During normal implementation loops, run `just check` after meaningful increments to catch local regressions early.
-- When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
-- Before asking the user to push or before opening/refreshing a PR, run `just ci` and report results.
+- During normal implementation loops, run `mage test-pkg <pkg>` after meaningful increments to catch local regressions early.
+- When you touch Go code, finish by running `mage ci` unless the user explicitly approves a narrower suite.
+- Before asking the user to push or before opening/refreshing a PR, run `mage ci` and report results.
 - After pushing a change that is meant to fix or validate CI, run `gh run watch --exit-status` on the new GitHub Actions run and do not claim CI passes until the remote run finishes green.
 - Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
-- Use `git` for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management, unless the current conversation explicitly requires a `gh`-specific workflow.
+- Use `git` for core local repository operations such as status, diff, add, commit, branch, and merge-base inspection, unless the current conversation explicitly requires a `gh`-specific workflow.
 - Do not use the GitHub web UI for repository operations when `gh` can perform the same task.
 - Use Conventional Commits for all commit messages.
 - Format commit messages as `type(scope): short imperative summary` when a scope is useful, otherwise `type: short imperative summary`.
@@ -34,10 +37,8 @@ You are a senior Go dev. YOU ALWAYS:
 - Prefer one primary intent per commit.
 - Allowed commit types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`, `build`, `ci`.
 - Contributors and agents should follow this commit style consistently.
-- If you touch `.github/workflows/` or `Justfile`, run both `just check` and `just ci` before handoff.
-- In subagent parallel mode (single-branch orchestration), worker lanes may run scoped checks (`just test-pkg ...`), but the integrator must run `just ci` before marking a lane integrated/closed.
-- In subagent prompts, explicitly require: Context7 before any code change, Context7 again after any failed test/runtime error, and package-scoped `just test-pkg` checks for touched packages.
-- Add package-scoped `Justfile` recipes when needed for fast iteration, then still finish with `just ci`.
+- If you touch `.github/workflows/` or `magefile.go`, run `mage ci` before handoff.
+- Add package-scoped Mage targets only when they materially simplify the repo; otherwise prefer `mage test-pkg <pkg>` and `mage ci`.
 - Treat runtime logging as a first-class implementation concern:
   - use `github.com/charmbracelet/log` as the canonical logger for application/runtime logs.
   - keep colored/styled console output enabled for local developer ergonomics.
@@ -53,13 +54,14 @@ You are a senior Go dev. YOU ALWAYS:
 - Never delete files or directories without explicit user approval.
 - Never run commands outside this repository root: `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
 - For runtime/protocol validation in this phase, run MCP-only checks (no HTTP/curl validation probes).
-- It is allowed to `just build` and run `./till serve` locally for MCP-side validation.
+- It is allowed to `mage build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
-- For the current auth/runtime remediation run, the active run section at the top of `PLAN.md` is the single source of truth for scope, status, acceptance checklist, commands run, test evidence, open questions, and completion state.
-- For the current auth/runtime remediation run, all other planning or validation markdown files are reference-only unless `PLAN.md` explicitly points to them for corroborating evidence.
-- For the current auth/runtime remediation run, worker and QA subagents must verify their acceptance criteria against the active run section at the top of `PLAN.md` first and treat mismatches between `PLAN.md` and secondary docs as a blocker that must be surfaced to the orchestrator.
-- When proposing new implementation phases, you must explicitly review and discuss the active backlog and open discussion items in `PLAN.md` first; for the current run, treat older deleted collab docs as retired and do not depend on them.
+- Treat `PLAN.md` as the active source of truth for temporary run state, acceptance checklists, commands run, evidence, and completion state.
+- Keep `PLAN.md` single-writer by default:
+  - only the orchestrator/integrator updates run completion state there,
+  - worker lanes provide handoff notes unless explicitly assigned to update `PLAN.md`.
+- When proposing new implementation phases, explicitly review the active backlog and open discussion items in `PLAN.md` first.
 - When clarification is needed, ask in two stages:
   - first ask general goal-alignment questions and lock shared objectives,
   - only after that consensus ask specific implementation-detail questions.
@@ -78,139 +80,22 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Build and Run
 
-- `just run`: run app from source (`go run ./cmd/till`).
-- `just build`: build local binary `./till`.
-- `just fmt`: format Go files.
-- `just check`: cross-platform smoke gate (source verification, format check, tests, build).
-- `just test`, `just test-pkg <pkg>`: test entrypoints.
-- `just test-golden`, `just test-golden-update`: golden fixture validation/update.
-- `just ci`: canonical full gate (source verification, format check, coverage-verified tests, build).
-
-## Worktrees
-
-- Worktrees are optional but supported.
-- If a worktree path is requested by the user, always `cd` into that exact path before editing, testing, or committing.
-- Do not hard-code worktree names.
-- Do not run completion/cleanup git actions (push, merge, rebase, worktree removal, branch deletion) without explicit user approval in the current conversation.
+- `mage run`: run app from source (`go run ./cmd/till`).
+- `mage build`: build local binary `./till`.
+- `mage test-pkg <pkg>`: test entrypoint; use `mage test-pkg ./...` for a full non-coverage run.
+- `mage test-golden`, `mage test-golden-update`: golden fixture validation/update.
+- `mage ci`: canonical full gate (source verification, `gofmt` check, coverage-verified tests, build).
 
 ## Worklogs
 
 - Use `PLAN.md` as the live execution ledger.
-- For the current auth/runtime remediation run, treat the active run section at the top of `PLAN.md` as the only active checklist and completion ledger.
-- Keep updates step-by-step while work is in progress. At minimum log:
+- Every meaningful checkpoint should capture:
   - current objective/plan,
-  - each command/test run and outcome,
-  - each file edit and why,
-  - each failure and remediation,
+  - commands/tests run and outcomes,
+  - file edits and why,
+  - failures/remediation,
   - current status and next step.
-- In subagent parallel mode, `PLAN.md` is single-writer:
-  - only the orchestrator/integrator updates lock tables, lane status, and completion markers.
-  - worker subagents must not directly edit `PLAN.md`; they provide handoff notes for orchestrator ingestion.
-- In the current auth/runtime remediation run, subagent handoffs and QA sign-off must map back to explicit checklist items in `PLAN.md` so the orchestrator can close the run from one file.
-- Every orchestrator checkpoint update in `PLAN.md` must include command/test evidence:
-  - commands run and outcomes,
-  - tests/checks run and outcomes,
-  - or explicit `test_not_applicable` with rationale for docs-only/process-only steps.
-
-## Temporary Next-Step Directive (Collaborative Remediation Closeout)
-
-- Temporary detailed reference for the current cross-process wait/auth wave:
-  - [`CROSS_PROCESS_WAIT_IMPLEMENTATION.md`](/Users/evanschultz/Documents/Code/hylla/tillsyn/CROSS_PROCESS_WAIT_IMPLEMENTATION.md)
-  - use it as detailed reference only; `PLAN.md` remains the active source of truth.
-- Cleanup note for this temporary reference:
-  - after this wave is complete and the content is folded back into canonical docs, ask the user whether they want `CROSS_PROCESS_WAIT_IMPLEMENTATION.md` deleted.
-
-- This temporary section is active for the current phase:
-  - close remaining collaborative remediation gaps tracked in active collab docs,
-  - prioritize dogfooding readiness for real user+agent workflows,
-  - keep planning/roadmap state centralized in `PLAN.md`.
-- Schema and compatibility policy for this temporary phase:
-  - avoid backward-compatibility shims and dual read/write paths unless the user explicitly requests one,
-  - when schema changes are required, implement one clean migration path and remove superseded legacy code in the same wave,
-  - avoid leaving orphaned transitional code; track any unavoidable deferred cleanup as an explicit backlog item in `PLAN.md`.
-- Orchestrator requirements:
-  - plan for coexistent parallel subagents with explicit, non-overlapping file-lock scopes,
-  - prevent workers from touching the same file concurrently,
-  - perform explicit code review on every worker handoff before integration.
-- Delivery requirements for this temporary phase:
-  - keep docs synchronized as implementation lands (`README.md` and affected planning/testing docs),
-  - ensure `just check` and `just ci` both pass before marking work complete,
-  - keep `PLAN.md` as the remediation requirement/worklog source and active validation contract,
-  - use `PLAN.md` itself for secondary corroborating checklist detail during this run unless the user explicitly asks for a new split worksheet,
-  - do not recreate retired collab/runbook markdown unless the user explicitly asks for a new split document.
-- Dogfooding requirement:
-  - testing docs must support collaborative user+agent validation and clearly call out guardrails, blockers, and recovery workflows.
-- Cleanup requirement:
-  - after this temporary phase is confirmed complete by the user, explicitly ask how this temporary AGENTS directive should be removed or reduced.
-- Locked execution flow for this temporary phase (section-by-section remediation):
-  - use explicit `test/fix cycle (collab)` checkpoints:
-    1. run one collaborative test step,
-    2. log findings/evidence,
-    3. if fixes are needed, implement and validate that one fix scope,
-    4. commit the validated fix scope before starting the next fix scope.
-  - if the working tree already contains uncommitted edits from a prior `test/fix cycle (collab)`, do not start another fix scope until those edits are either committed or explicitly discarded with user approval.
-  - execute collaborative testing one section at a time (do not batch all findings for a later fix wave),
-  - when a section reveals a failure/gap (bug), immediately log it in `PLAN.md` and the active worksheet, pause forward testing, and run a focused remediation loop for that section:
-    1. spawn subagents to inspect code and gather local context,
-    2. run Context7 research (and web research when needed) to collect fix options,
-    3. present options to user and reach explicit user+agent consensus before implementation,
-    4. implement fixes via scoped worker subagents under lock discipline,
-    5. run package-scoped checks via `just test-pkg <pkg>` for touched packages,
-    6. rerun the same section’s collaborative checks and record fresh evidence,
-    7. only proceed to the next section after the current section is re-validated and documented.
-  - record user findings with complete and accurate intent preservation; normalize terminology only when needed for technical correctness.
-
-## Parallel/Subagent Mode
-
-- This repository supports parallel subagent execution on a single branch only under lock discipline.
-- Roles:
-  - orchestrator: decomposition, lane assignment, lock ownership, approval escalation.
-  - worker subagent: scoped implementation lane and evidence handoff.
-  - integrator: sole patch applier to shared branch and gate owner.
-- Lock rules:
-  - lane must declare file-glob lock scope before edits.
-  - no edits outside lane lock.
-  - hotspot files require serialized ownership (`internal/tui/model.go`, `internal/app/service.go`, `internal/adapters/storage/sqlite/repo.go`).
-- Approval/permission failure flow:
-  - subagent command fails on permission gate.
-  - orchestrator surfaces exact failure and approval request.
-  - after user approval, orchestrator reruns blocked command or resumes lane.
-- Completion policy:
-  - no lane is marked complete until integrator verifies acceptance criteria and test evidence.
-  - final wave closeout requires successful `just ci`.
-  - for collaborative remediation waves, no lane/section may be marked complete until an independent QA subagent reviews both code changes and affected markdown trackers/worksheets and explicitly signs off.
-  - no collaborative remediation implementation subagents may be launched until the user explicitly says to proceed (for example: "go ahead").
-  - after QA sign-off and passing tests, pause for user-run confirmation; do not mark the collaborative section complete until the user confirms expected behavior in their run.
-
-### Orchestrator Prompt Contract (Required)
-
-- Every worker-lane prompt must include:
-  - lane id and single acceptance objective,
-  - lock scope (allowed file globs) and explicit out-of-scope paths,
-  - concrete acceptance criteria mapped to the current phase/task,
-  - architecture constraints for this repo (hexagonal boundaries, allowed dependency directions, and hotspot ownership),
-  - testing plan (`just` commands only) and whether lane follows tests-first or a justified TDD exception,
-  - explicit worker test scope: package-level `just test-pkg <pkg>` for touched packages (no repo-wide gate in worker lanes),
-  - doc/comment expectations for touched Go declarations and non-obvious logic,
-  - explicit Context7 checkpoints: before first code edit and after every failed test/runtime error, plus fallback behavior when unavailable,
-  - expected handoff format and evidence requirements.
-- Worker prompts must explicitly forbid:
-  - edits outside lane lock,
-  - direct `go test` execution,
-  - running repo-wide test gates (`just test`, `just check`, `just ci`) unless the orchestrator explicitly assigns it,
-  - architecture-layer violations unless explicitly authorized by the lane objective.
-
-### Worker Handoff Contract (Required)
-
-- Every worker handoff must include:
-  - lane id and checkpoint id,
-  - files changed and why,
-  - commands run and pass/fail outcomes,
-  - acceptance criteria checklist with pass/fail per item,
-  - architecture-boundary compliance note,
-  - doc/comment compliance note for touched Go code,
-  - Context7 compliance note (initial consult + any failure-triggered re-consults),
-  - unresolved risks/blockers and recommended next step.
+- Temporary or wave-specific workflow detail belongs in `PLAN.md`, not in this file.
 
 ## Tech Stack
 
@@ -231,28 +116,11 @@ You are a senior Go dev. YOU ALWAYS:
 
 - Tests are co-located as `*_test.go`.
 - Prefer table-driven tests and behavior-oriented assertions.
-- Run package-focused loops with `just test-pkg <pkg>` during implementation.
+- Run package-focused loops with `mage test-pkg <pkg>` during implementation.
 - For substantial TUI changes, update or add tea-driven tests and golden fixtures.
 - Coverage below 70% is a hard failure.
-- Build/test execution must go through `just` recipes only.
-- Do not wrap `just` test commands with custom Go cache env vars by default; use plain `just` invocations.
-- During collaborative validation waves, enforce section-by-section progression:
-  - do not advance to the next worksheet section until each current-section bug is logged, fixed, verified (package tests + section rerun), and revalidated.
-- For each section remediation:
-  - run subagent code/context investigation first,
-  - run Context7 before edits and again after any failed test/runtime error before the next edit,
-  - propose fixes and confirm consensus with user before implementation,
-  - run `just test-pkg <pkg>` for each touched package,
-  - rerun that section’s manual/transport checks and update worksheet evidence immediately.
-
-## UX Guardrails
-
-- Help bar stays bottom-anchored in normal mode.
-- Expanded help is a centered modal overlay (Fang-inspired style).
-- Add/edit/info/project/search overlays are centered and do not push board content.
-- Support both vim keys and arrow keys.
-- Mouse wheel/click behavior must continue to function.
-- Keep modal copy concise and avoid redundant field explanations.
+- Build/test execution must go through `mage` targets only.
+- Do not wrap `mage` test commands with custom Go cache env vars by default; use plain `mage ...` invocations.
 
 ## Release and Security
 
