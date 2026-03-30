@@ -135,6 +135,29 @@ Current status:
 Next step:
 1. Commit the tracked docs cleanup from `main/` with a conventional commit.
 
+## Checkpoint 2026-03-29: AGENTS Cleanup Follow-Up
+
+Objective:
+- keep the tracked checkout `AGENTS.md` free of bare-root/worktree-specific local-layout chatter and keep the bare-root local `AGENTS.md` aligned with the current post-cleanup state.
+
+Implementation summary:
+1. Removed bare-root/worktree-specific framing from `main/AGENTS.md` so the tracked repo instructions are checkout-local and repo-focused again.
+2. Kept `main/AGENTS.md` pointing only at `PLAN.md` as the active execution ledger.
+3. Removed the stale `.pre-bare-root-backup/` note from the bare-root local `AGENTS.md` because that directory has now been deleted.
+
+Commands run and outcomes:
+1. `sed -n '1,260p' /Users/evanschultz/Documents/Code/hylla/tillsyn/main/AGENTS.md` -> PASS.
+2. `sed -n '1,220p' /Users/evanschultz/Documents/Code/hylla/tillsyn/AGENTS.md` -> PASS.
+3. `git -C /Users/evanschultz/Documents/Code/hylla/tillsyn/main status --short` -> PASS.
+4. `test_not_applicable` -> PASS (docs-only AGENTS cleanup; no code/runtime surface changed).
+
+Current status:
+1. `main/AGENTS.md` no longer mentions bare-root/worktree-specific layout details.
+2. The bare-root local `AGENTS.md` is concise and matches the current state of the bare repo.
+
+Next step:
+1. Commit the tracked `main/AGENTS.md` cleanup.
+
 ## 1) Active Run Source Of Truth
 
 This section is authoritative for the current auth/runtime remediation run.
