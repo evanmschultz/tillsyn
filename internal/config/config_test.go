@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,6 +56,21 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if len(cfg.Paths.SearchRoots) != 0 {
 		t.Fatalf("expected no default search roots, got %#v", cfg.Paths.SearchRoots)
+	}
+	if cfg.Embeddings.Enabled {
+		t.Fatal("expected embeddings disabled by default")
+	}
+	if cfg.Embeddings.Provider != "ollama" {
+		t.Fatalf("expected default embeddings provider ollama, got %q", cfg.Embeddings.Provider)
+	}
+	if cfg.Embeddings.Model != "qwen3-embedding:8b" {
+		t.Fatalf("expected default embeddings model qwen3-embedding:8b, got %q", cfg.Embeddings.Model)
+	}
+	if cfg.Embeddings.APIKeyEnv != "" {
+		t.Fatalf("expected default embeddings api_key_env empty for ollama, got %q", cfg.Embeddings.APIKeyEnv)
+	}
+	if cfg.Embeddings.BaseURL != "http://127.0.0.1:11434/v1" {
+		t.Fatalf("expected default embeddings base_url http://127.0.0.1:11434/v1, got %q", cfg.Embeddings.BaseURL)
 	}
 }
 
@@ -122,6 +138,76 @@ show_due_summary = false
 	}
 	if cfg.UI.ShowDueSummary {
 		t.Fatal("expected due summary hidden from config override")
+	}
+}
+
+// TestLoadEnabledEmbeddingsBlankProviderPreservesLegacyOpenAI verifies older configs that only enabled embeddings keep the historical OpenAI default.
+func TestLoadEnabledEmbeddingsBlankProviderPreservesLegacyOpenAI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+[database]
+path = "/custom/tillsyn.db"
+
+[embeddings]
+enabled = true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Embeddings.Provider != "openai" {
+		t.Fatalf("unexpected legacy embeddings provider %q", cfg.Embeddings.Provider)
+	}
+	if cfg.Embeddings.Model != "text-embedding-3-small" {
+		t.Fatalf("unexpected legacy embeddings model %q", cfg.Embeddings.Model)
+	}
+	if cfg.Embeddings.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("unexpected legacy embeddings api_key_env %q", cfg.Embeddings.APIKeyEnv)
+	}
+	if cfg.Embeddings.BaseURL != "" {
+		t.Fatalf("unexpected legacy embeddings base_url %q", cfg.Embeddings.BaseURL)
+	}
+}
+
+// TestExampleConfigEmbeddingsDefaults verifies the checked-in example file documents and parses the supported operator defaults.
+func TestExampleConfigEmbeddingsDefaults(t *testing.T) {
+	examplePath := filepath.Clean(filepath.Join("..", "..", "config.example.toml"))
+	body, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", examplePath, err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"Ollama's OpenAI-compatible embeddings API",
+		"OpenAI-compatible providers",
+		"TogetherAI, OpenRouter",
+		"deterministic provider is intended for tests and fixtures",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config.example.toml missing phrase %q", want)
+		}
+	}
+
+	cfg, err := Load(examplePath, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load(%q) error = %v", examplePath, err)
+	}
+	if cfg.Embeddings.Provider != "ollama" {
+		t.Fatalf("Embeddings.Provider = %q, want ollama", cfg.Embeddings.Provider)
+	}
+	if cfg.Embeddings.Model != "qwen3-embedding:8b" {
+		t.Fatalf("Embeddings.Model = %q, want qwen3-embedding:8b", cfg.Embeddings.Model)
+	}
+	if cfg.Embeddings.APIKeyEnv != "" {
+		t.Fatalf("Embeddings.APIKeyEnv = %q, want empty", cfg.Embeddings.APIKeyEnv)
+	}
+	if cfg.Embeddings.BaseURL != "http://127.0.0.1:11434/v1" {
+		t.Fatalf("Embeddings.BaseURL = %q, want http://127.0.0.1:11434/v1", cfg.Embeddings.BaseURL)
 	}
 }
 
@@ -316,6 +402,31 @@ func TestValidateRejectsInvalidLoggingLevel(t *testing.T) {
 	cfg.Logging.Level = "verbose"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid logging level validation error")
+	}
+}
+
+// TestValidateAllowsEnabledOllamaWithoutAPIKeyEnv verifies the local default embeddings path does not require OpenAI-style credentials.
+func TestValidateAllowsEnabledOllamaWithoutAPIKeyEnv(t *testing.T) {
+	cfg := Default("/tmp/tillsyn.db")
+	cfg.Embeddings.Enabled = true
+	cfg.Embeddings.Provider = "ollama"
+	cfg.Embeddings.Model = "qwen3-embedding:8b"
+	cfg.Embeddings.APIKeyEnv = ""
+	cfg.Embeddings.BaseURL = "http://127.0.0.1:11434/v1"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+// TestValidateRejectsEnabledOpenAIWithoutAPIKeyEnv verifies the OpenAI provider still demands an env-var configuration when enabled.
+func TestValidateRejectsEnabledOpenAIWithoutAPIKeyEnv(t *testing.T) {
+	cfg := Default("/tmp/tillsyn.db")
+	cfg.Embeddings.Enabled = true
+	cfg.Embeddings.Provider = "openai"
+	cfg.Embeddings.Model = "text-embedding-3-small"
+	cfg.Embeddings.APIKeyEnv = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected OpenAI embeddings validation error without api_key_env")
 	}
 }
 

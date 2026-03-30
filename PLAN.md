@@ -1,8 +1,74 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, and `C6` is now closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary; local gates are green on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, `just ci`, and `just build`, the pushed follow-up is `75aa5c4`, and GitHub Actions run `23721667218` is green through all `check` jobs plus `full gate` with only the trailing `release snapshot check` still running at the time of this update.
+Updated: 2026-03-30
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, `C6` is closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary, and the operational embeddings/search wave is now green locally and ready to merge with durable lifecycle state, background processing, reindex/status surfaces, real-DB Ollama validation, and real stdio MCP validation; the remaining follow-up is human-facing relevance/provenance polish for sparse-project semantic search rather than a blocker in the shipped embeddings lifecycle itself.
+
+## Checkpoint 2026-03-30: Operational Embeddings/Search Wave Closeout
+
+Objective:
+- close the operational embeddings/search lane with merge-ready evidence, record the exact behavior proven on a real local DB plus real stdio MCP, and capture the specific human-search gaps that still need retest or follow-up after merge.
+
+Implementation summary:
+1. Added a durable embeddings lifecycle with persistent `pending|running|ready|failed|stale` state, worker claim/recovery, retries/backoff, startup recovery, and idempotent enqueue semantics.
+2. Moved normal mutations to enqueue/stale-mark behavior so task edits do not block on embedding provider calls.
+3. Added operator-visible status and reindex surfaces across CLI, MCP, and TUI, including global/project scope summaries and ready/pending/running/failed/stale counts.
+4. Added TUI embeddings inventory improvements so rows show human-meaningful project/title/path data instead of opaque ids, support inline filtering, and open the backing node on `enter`.
+5. Added TUI search-state improvements so result loading stays visible, empty-result runs remain explicit, and search mode selection is visible.
+6. Added real Ollama operator-path support with `qwen3-embedding:8b` at `http://127.0.0.1:11434/v1` while preserving the OpenAI-compatible fantasy adapter path for other providers/endpoints.
+
+Behavior proven in this lane:
+1. Real local DB validation passed with Ollama `qwen3-embedding:8b` against `/Users/evanschultz/Library/Application Support/tillsyn/tillsyn.db`.
+2. Real stdio MCP validation passed by launching the branch binary as `./till --config /tmp/tillsyn-live-ollama.toml mcp` and exercising `till.search_task_matches` over stdio.
+3. Cross-project embeddings status reached steady state with `ready` rows and `pending|running|failed|stale` all at `0` after reindex on the live validation config.
+4. Rich-content search behaves correctly for agent-oriented retrieval:
+   - exact keyword search finds explicit work-item content,
+   - vague semantic search finds related work-item content,
+   - thread/comment-context search can return `thread_context`-backed matches,
+   - hybrid search returns operator/runbook-style matches.
+5. Strict keyword search on sparse projects behaves correctly by returning `0` matches when no lexical match exists.
+6. Hybrid/semantic search on sparse projects can still surface weak fuzzy matches because the current project content is too thin to produce strong semantic discrimination.
+
+Known behavior and follow-up notes:
+1. Human confusion during TUI search was caused by two separate realities:
+   - the richer test queries lived in the imported QA project `Semantic Search QA Lab`, not in `Evan_Test_Project`,
+   - semantic/hybrid search in sparse projects can still return weak matches even when no visible literal text exists in the inspected node.
+2. The current runtime log does not emit per-query/per-result search diagnostics, so local logs are sufficient for startup/runtime health but not for explaining why a specific search result won.
+3. `till.search_task_matches` is still effectively task-oriented in the surfaced result shape; project-document indexing is present, but project-document retrieval is not yet a clearly first-class result experience.
+4. The TUI embeddings screen is acceptable for operator health/inventory in this wave, but its long-term purpose and relationship to the main search experience still need design follow-up rather than ad-hoc expansion.
+
+Retest after merge:
+1. Retest the normal registered `tillsyn` MCP entry after merge to `main`, not just the branch-local direct stdio launch used in this lane.
+2. Retest TUI search on both:
+   - a rich-content project such as `Semantic Search QA Lab`,
+   - and a sparse-content project such as `Evan_Test_Project`,
+   to verify the current keyword/hybrid/semantic behavior remains understandable.
+3. Retest the operator path on a persisted local config after merge so the `config.example.toml` guidance and real local-machine config stay aligned.
+4. Retest project-document retrieval expectations if agent workflows need first-class project-doc hits rather than task/thread-proxy hits.
+
+Commands run and outcomes:
+1. `just test-pkg ./internal/app` -> PASS.
+2. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+3. `just test-pkg ./internal/adapters/server/common` -> PASS.
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS.
+6. `just test-pkg ./cmd/till` -> PASS.
+7. `just test-pkg ./internal/config` -> PASS.
+8. `just test-golden-update` -> PASS.
+9. `just test-golden` -> PASS.
+10. `just check` -> PASS.
+11. `just ci` -> PASS.
+12. `./till --config /tmp/tillsyn-live-ollama.toml embeddings reindex --cross-project --wait` -> PASS.
+13. `./till --config /tmp/tillsyn-live-ollama.toml embeddings status --cross-project` -> PASS (`ready` rows only after reindex).
+14. real stdio MCP calls to `till.search_task_matches` against the branch binary -> PASS.
+
+Current status:
+1. The embeddings/search wave is merge-ready.
+2. The remaining issues are follow-up relevance/provenance and human-facing search-UX concerns, not missing operational lifecycle wiring.
+3. The live DB used for validation now also contains the imported QA project `Semantic Search QA Lab`.
+
+Next step:
+1. Commit the lane, push the branch, open the PR, merge after review, and then rerun the normal registered MCP path on `main`.
 
 ## Checkpoint 2026-03-29: In-Place Git Topology Refactor For Shared Worktrees
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/hylla/tillsyn/internal/domain"
@@ -308,6 +309,7 @@ func registerTaskTools(
 	srv *mcpserver.MCPServer,
 	tasks common.TaskService,
 	search common.SearchService,
+	embeddings common.EmbeddingsService,
 	changes common.ChangeFeedService,
 ) {
 	if tasks != nil {
@@ -871,7 +873,7 @@ func registerTaskTools(
 				),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				rows, err := search.SearchTasks(ctx, common.SearchTasksRequest{
+				resultPayload, err := search.SearchTasks(ctx, common.SearchTasksRequest{
 					ProjectID:       req.GetString("project_id", ""),
 					Query:           req.GetString("query", ""),
 					CrossProject:    req.GetBool("cross_project", false),
@@ -889,9 +891,87 @@ func registerTaskTools(
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(map[string]any{"matches": rows})
+				result, err := mcp.NewToolResultJSON(resultPayload)
 				if err != nil {
 					return nil, fmt.Errorf("encode search_task_matches result: %w", err)
+				}
+				return result, nil
+			},
+		)
+	}
+
+	if embeddings != nil {
+		srv.AddTool(
+			mcp.NewTool(
+				"till.get_embeddings_status",
+				mcp.WithDescription("Show embeddings lifecycle summary counts and per-subject status rows."),
+				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project inventory")),
+				mcp.WithBoolean("cross_project", mcp.Description("Inspect embeddings lifecycle across all projects")),
+				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects when resolving cross-project scope")),
+				mcp.WithArray("statuses", mcp.Description("Optional lifecycle status filter"), mcp.WithStringItems()),
+				mcp.WithNumber(
+					"limit",
+					mcp.Description("Optional maximum status rows (default 100, max 500)"),
+					mcp.DefaultNumber(100),
+					mcp.Min(0),
+					mcp.Max(500),
+				),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				resultPayload, err := embeddings.GetEmbeddingsStatus(ctx, common.EmbeddingsStatusRequest{
+					ProjectID:       req.GetString("project_id", ""),
+					CrossProject:    req.GetBool("cross_project", false),
+					IncludeArchived: req.GetBool("include_archived", false),
+					Statuses:        req.GetStringSlice("statuses", nil),
+					Limit:           req.GetInt("limit", 0),
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(resultPayload)
+				if err != nil {
+					return nil, fmt.Errorf("encode get_embeddings_status result: %w", err)
+				}
+				return result, nil
+			},
+		)
+
+		srv.AddTool(
+			mcp.NewTool(
+				"till.reindex_embeddings",
+				mcp.WithDescription("Enqueue or force explicit embeddings backfill/reindex work and optionally wait for steady state."),
+				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project reindex requests")),
+				mcp.WithBoolean("cross_project", mcp.Description("Reindex embeddings across all projects")),
+				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects and work items in the reindex scope")),
+				mcp.WithBoolean("force", mcp.Description("Force ready rows back into the queue even when hashes already match")),
+				mcp.WithBoolean("wait", mcp.Description("Wait for the requested scope to reach a steady lifecycle state")),
+				mcp.WithString("wait_timeout", mcp.Description("Optional wait timeout duration (for example 30s or 2m)")),
+				mcp.WithString("wait_poll_interval", mcp.Description("Optional wait polling interval duration")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				waitTimeout, err := optionalDurationArg(req.GetString("wait_timeout", ""))
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				waitPollInterval, err := optionalDurationArg(req.GetString("wait_poll_interval", ""))
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				resultPayload, err := embeddings.ReindexEmbeddings(ctx, common.ReindexEmbeddingsRequest{
+					ProjectID:        req.GetString("project_id", ""),
+					CrossProject:     req.GetBool("cross_project", false),
+					IncludeArchived:  req.GetBool("include_archived", false),
+					Force:            req.GetBool("force", false),
+					Wait:             req.GetBool("wait", false),
+					WaitTimeout:      waitTimeout,
+					WaitPollInterval: waitPollInterval,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(resultPayload)
+				if err != nil {
+					return nil, fmt.Errorf("encode reindex_embeddings result: %w", err)
 				}
 				return result, nil
 			},
@@ -1630,6 +1710,19 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			return result, nil
 		},
 	)
+}
+
+// optionalDurationArg parses one optional duration argument and keeps the zero value when omitted.
+func optionalDurationArg(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", raw, err)
+	}
+	return duration, nil
 }
 
 // invalidRequestToolResult wraps argument-binding failures as deterministic tool errors.

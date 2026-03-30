@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
@@ -16,106 +17,118 @@ type EmbeddingGenerator interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
 }
 
-// TaskSearchIndex stores and retrieves task vectors for semantic retrieval.
-type TaskSearchIndex interface {
-	UpsertTaskEmbedding(context.Context, TaskEmbeddingDocument) error
-	DeleteTaskEmbedding(context.Context, string) error
-	SearchTaskEmbeddings(context.Context, TaskEmbeddingSearchInput) ([]TaskEmbeddingMatch, error)
+// EmbeddingSearchTargetType identifies the entity family a semantic document resolves to at query time.
+type EmbeddingSearchTargetType string
+
+// Supported semantic search target families.
+const (
+	EmbeddingSearchTargetTypeWorkItem EmbeddingSearchTargetType = "work_item"
+	EmbeddingSearchTargetTypeProject  EmbeddingSearchTargetType = "project"
+)
+
+// EmbeddingSearchIndex stores and retrieves semantic documents for indexed subjects.
+type EmbeddingSearchIndex interface {
+	UpsertEmbeddingDocument(context.Context, EmbeddingDocument) error
+	DeleteEmbeddingDocument(context.Context, EmbeddingSubjectType, string) error
+	SearchEmbeddingDocuments(context.Context, EmbeddingSearchInput) ([]EmbeddingSearchMatch, error)
 }
 
-// TaskEmbeddingDocument represents one persisted vectorized task document row.
-type TaskEmbeddingDocument struct {
-	TaskID      string
-	ProjectID   string
-	Content     string
-	ContentHash string
-	Vector      []float32
-	UpdatedAt   time.Time
+// EmbeddingDocument represents one persisted vectorized subject row.
+type EmbeddingDocument struct {
+	SubjectType      EmbeddingSubjectType
+	SubjectID        string
+	ProjectID        string
+	SearchTargetType EmbeddingSearchTargetType
+	SearchTargetID   string
+	Content          string
+	ContentHash      string
+	Vector           []float32
+	UpdatedAt        time.Time
 }
 
-// TaskEmbeddingSearchInput represents semantic search query options for vectors.
-type TaskEmbeddingSearchInput struct {
-	ProjectIDs []string
-	Vector     []float32
-	Limit      int
+// EmbeddingSearchInput represents semantic search query options for vectors.
+type EmbeddingSearchInput struct {
+	ProjectIDs        []string
+	SubjectTypes      []EmbeddingSubjectType
+	SearchTargetTypes []EmbeddingSearchTargetType
+	Vector            []float32
+	Limit             int
 }
 
-// TaskEmbeddingMatch represents one semantic similarity result.
-type TaskEmbeddingMatch struct {
-	TaskID     string
-	Similarity float64
-	SearchedAt time.Time
+// EmbeddingSearchMatch represents one semantic similarity result.
+type EmbeddingSearchMatch struct {
+	SubjectType      EmbeddingSubjectType
+	SubjectID        string
+	SearchTargetType EmbeddingSearchTargetType
+	SearchTargetID   string
+	Similarity       float64
+	SearchedAt       time.Time
 }
 
-// refreshTaskEmbedding best-effort updates one task embedding document after writes.
-func (s *Service) refreshTaskEmbedding(ctx context.Context, task domain.Task) {
-	if s == nil || s.embeddingGenerator == nil || s.searchIndex == nil {
-		return
-	}
-	content := buildTaskEmbeddingContent(task)
-	if strings.TrimSpace(content) == "" {
-		if err := s.searchIndex.DeleteTaskEmbedding(ctx, task.ID); err != nil {
-			log.Warn(
-				"task embedding refresh drop failed",
-				"task_id", task.ID,
-				"project_id", task.ProjectID,
-				"reason", "empty_content",
-				"err", err,
-			)
-		}
-		return
-	}
-	vectorRows, err := s.embeddingGenerator.Embed(ctx, []string{content})
+// BuildThreadContextSubjectID encodes one comment target into a stable subject identifier.
+func BuildThreadContextSubjectID(target domain.CommentTarget) string {
+	return strings.Join([]string{
+		url.QueryEscape(strings.TrimSpace(target.ProjectID)),
+		url.QueryEscape(string(domain.NormalizeCommentTargetType(target.TargetType))),
+		url.QueryEscape(strings.TrimSpace(target.TargetID)),
+	}, "|")
+}
+
+func buildThreadContextSubjectID(target domain.CommentTarget) (string, error) {
+	target, err := domain.NormalizeCommentTarget(target)
 	if err != nil {
-		log.Warn(
-			"task embedding refresh skipped: embed failed",
-			"task_id", task.ID,
-			"project_id", task.ProjectID,
-			"content_hash", hashEmbeddingContent(content),
-			"err", err,
-		)
-		return
+		return "", err
 	}
-	if len(vectorRows) == 0 || len(vectorRows[0]) == 0 {
-		log.Warn(
-			"task embedding refresh skipped: empty embedding vector",
-			"task_id", task.ID,
-			"project_id", task.ProjectID,
-			"vector_rows", len(vectorRows),
-		)
-		return
-	}
-	doc := TaskEmbeddingDocument{
-		TaskID:      task.ID,
-		ProjectID:   task.ProjectID,
-		Content:     content,
-		ContentHash: hashEmbeddingContent(content),
-		Vector:      append([]float32(nil), vectorRows[0]...),
-		UpdatedAt:   s.clock().UTC(),
-	}
-	if err := s.searchIndex.UpsertTaskEmbedding(ctx, doc); err != nil {
-		log.Warn(
-			"task embedding refresh upsert failed",
-			"task_id", task.ID,
-			"project_id", task.ProjectID,
-			"content_hash", doc.ContentHash,
-			"err", err,
-		)
-	}
+	return BuildThreadContextSubjectID(target), nil
 }
 
-// dropTaskEmbedding best-effort removes one task embedding row after hard delete.
-func (s *Service) dropTaskEmbedding(ctx context.Context, taskID string) {
-	if s == nil || s.searchIndex == nil {
-		return
+// ParseThreadContextSubjectID decodes one stable thread-context identifier back into a comment target.
+func ParseThreadContextSubjectID(subjectID string) (domain.CommentTarget, error) {
+	parts := strings.Split(strings.TrimSpace(subjectID), "|")
+	if len(parts) != 3 {
+		return domain.CommentTarget{}, fmt.Errorf("invalid thread context subject id %q: %w", subjectID, domain.ErrInvalidID)
 	}
-	if err := s.searchIndex.DeleteTaskEmbedding(ctx, taskID); err != nil {
-		log.Warn("task embedding drop failed", "task_id", taskID, "err", err)
+	projectID, err := url.QueryUnescape(parts[0])
+	if err != nil {
+		return domain.CommentTarget{}, fmt.Errorf("decode thread context project id: %w", err)
 	}
+	targetType, err := url.QueryUnescape(parts[1])
+	if err != nil {
+		return domain.CommentTarget{}, fmt.Errorf("decode thread context target type: %w", err)
+	}
+	targetID, err := url.QueryUnescape(parts[2])
+	if err != nil {
+		return domain.CommentTarget{}, fmt.Errorf("decode thread context target id: %w", err)
+	}
+	return domain.NormalizeCommentTarget(domain.CommentTarget{
+		ProjectID:  projectID,
+		TargetType: domain.CommentTargetType(targetType),
+		TargetID:   targetID,
+	})
 }
 
-// buildTaskEmbeddingContent produces canonical searchable text for one task.
-func buildTaskEmbeddingContent(task domain.Task) string {
+func parseThreadContextSubjectID(subjectID string) (domain.CommentTarget, error) {
+	return ParseThreadContextSubjectID(subjectID)
+}
+
+// EmbeddingSearchTargetForCommentTarget resolves one comment target into the search target family consumed by query ranking.
+func EmbeddingSearchTargetForCommentTarget(target domain.CommentTarget) (EmbeddingSearchTargetType, string, error) {
+	target, err := domain.NormalizeCommentTarget(target)
+	if err != nil {
+		return "", "", err
+	}
+	if target.TargetType == domain.CommentTargetTypeProject {
+		return EmbeddingSearchTargetTypeProject, target.ProjectID, nil
+	}
+	return EmbeddingSearchTargetTypeWorkItem, target.TargetID, nil
+}
+
+func commentTargetEmbeddingSearchTarget(target domain.CommentTarget) (EmbeddingSearchTargetType, string, error) {
+	return EmbeddingSearchTargetForCommentTarget(target)
+}
+
+// buildWorkItemEmbeddingContent produces canonical searchable text for one work item.
+func buildWorkItemEmbeddingContent(task domain.Task) string {
 	parts := make([]string, 0, 10)
 	appendIfPresent := func(value string) {
 		value = strings.TrimSpace(value)
@@ -134,6 +147,49 @@ func buildTaskEmbeddingContent(task domain.Task) string {
 	appendIfPresent(task.Metadata.ValidationPlan)
 	appendIfPresent(task.Metadata.BlockedReason)
 	appendIfPresent(task.Metadata.RiskNotes)
+	return strings.Join(parts, "\n")
+}
+
+func buildTaskEmbeddingContent(task domain.Task) string {
+	return buildWorkItemEmbeddingContent(task)
+}
+
+// buildProjectDocumentEmbeddingContent produces canonical searchable text for project descriptive surfaces.
+func buildProjectDocumentEmbeddingContent(project domain.Project) string {
+	parts := make([]string, 0, 6)
+	appendIfPresent := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		parts = append(parts, value)
+	}
+	appendIfPresent(project.Name)
+	appendIfPresent(project.Description)
+	if len(project.Metadata.Tags) > 0 {
+		appendIfPresent(strings.Join(project.Metadata.Tags, ", "))
+	}
+	appendIfPresent(project.Metadata.StandardsMarkdown)
+	return strings.Join(parts, "\n")
+}
+
+// buildThreadContextEmbeddingContent produces canonical searchable text for one threaded comment target.
+func buildThreadContextEmbeddingContent(target domain.CommentTarget, targetTitle, targetBody string, comments []domain.Comment) string {
+	parts := make([]string, 0, 5+(len(comments)*2))
+	appendIfPresent := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		parts = append(parts, value)
+	}
+	appendIfPresent(string(domain.NormalizeCommentTargetType(target.TargetType)))
+	appendIfPresent(targetTitle)
+	appendIfPresent(targetBody)
+	for _, comment := range comments {
+		appendIfPresent(comment.Summary)
+		appendIfPresent(comment.BodyMarkdown)
+	}
 	return strings.Join(parts, "\n")
 }
 
