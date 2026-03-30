@@ -564,6 +564,7 @@ Recommended default rule:
 - humans should be able to talk directly to subagents on the relevant node
 - agents should be able to hand off to each other in the same work graph
 - comment attribution should stay first-class so actor identity and intent remain auditable
+- this shared comment layer is a core value-add over external markdown plans
 - template contracts should gate workflow mutations and done truth, not discussion
 
 Recommended later-wave direction:

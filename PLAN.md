@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, and snapshot transport for template libraries/project bindings/node-contract snapshots, while final legacy kind-template quarantine remains intentionally pending. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface.
+Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, and snapshot transport for template libraries/project bindings/node-contract snapshots, while final legacy kind-template quarantine remains intentionally pending. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical.
 
 ## Checkpoint 2026-03-30: Template-Aware Snapshot Transport
 
@@ -257,7 +257,7 @@ Implementation summary:
 5. Updated bootstrap/instruction guidance plus README examples so the operator docs now mention:
    - template-library workflows,
    - AGENTS.md / CLAUDE.md / SKILL.md alignment expectations,
-   - and the explicit rule that SQLite is the source of truth while JSON upsert is only a temporary operator seam.
+   - and the explicit rule that SQLite is the source of truth while JSON remains the stable CLI/MCP transport.
 6. Fixed the repo-wide TUI failure by making `TestAuthInventoryMouseWheelReachesLowerSections` use the current wall clock instead of a now-expired hard-coded timestamp.
 7. Expanded tests for:
    - CLI help coverage,

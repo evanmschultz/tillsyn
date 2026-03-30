@@ -1139,7 +1139,7 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_template_libraries",
-			mcp.WithDescription("List template libraries. SQLite remains the source of truth; JSON here is only the temporary operator transport for this slice."),
+			mcp.WithDescription("List template libraries. SQLite remains the source of truth, and JSON is the stable MCP transport format for these library records."),
 			mcp.WithString("scope", mcp.Description("Optional template-library scope filter"), mcp.Enum("global", "project", "draft")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
 			mcp.WithString("status", mcp.Description("Optional template-library status filter"), mcp.Enum("draft", "approved", "archived")),
@@ -1187,7 +1187,7 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 	srv.AddTool(
 		mcp.NewTool(
 			"till.upsert_template_library",
-			mcp.WithDescription("Create or update one template library. This is a temporary operator transport until dedicated TUI authoring lands."),
+			mcp.WithDescription("Create or update one template library via JSON transport. SQLite remains canonical, while the TUI is the primary human review and approval surface."),
 			mcp.WithObject("library", mcp.Required(), mcp.Description("Template library object")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),

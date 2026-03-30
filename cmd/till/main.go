@@ -770,8 +770,8 @@ default metadata for project, branch, phase, task, and subtask types.
 		Short: "Inspect and bind SQLite-backed template libraries",
 		Long: strings.TrimSpace(`
 Inspect SQLite-backed template libraries, bind approved libraries to projects,
-and inspect generated node-contract snapshots. The temporary CLI/MCP JSON upsert
-seam exists for operator use until dedicated TUI authoring lands.
+and inspect generated node-contract snapshots. JSON is the stable CLI/MCP
+transport for template-library specs while SQLite remains the source of truth.
 `),
 		Args: cobra.NoArgs,
 	}
@@ -2631,7 +2631,7 @@ func runTemplateLibraryShow(ctx context.Context, svc *app.Service, opts template
 	return writeJSON(stdout, library)
 }
 
-// runTemplateLibraryUpsert creates or updates one template library from the temporary JSON CLI seam.
+// runTemplateLibraryUpsert creates or updates one template library from the JSON CLI transport.
 func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.Config, opts templateLibraryUpsertCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -3035,7 +3035,7 @@ func parseOptionalKindTemplateJSON(raw string) (domain.KindTemplate, error) {
 	return template, nil
 }
 
-// parseTemplateLibrarySpecJSON parses one temporary template-library JSON operator spec.
+// parseTemplateLibrarySpecJSON parses one template-library JSON transport spec.
 func parseTemplateLibrarySpecJSON(raw string) (servercommon.UpsertTemplateLibraryRequest, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

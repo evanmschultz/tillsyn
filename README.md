@@ -126,7 +126,7 @@ Current auth note:
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 
 Template-library operator examples:
-- SQLite is the live source of truth. The current CLI/MCP JSON `upsert` seam is temporary operator transport until dedicated TUI authoring lands.
+- SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till template library list --scope global --status approved`
@@ -189,6 +189,7 @@ Snapshot export includes:
 - template libraries + project template bindings + node-contract snapshots
 - comments/threads
 - capability leases
+- handoffs
 
 Import snapshot:
 ```bash

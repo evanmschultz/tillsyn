@@ -614,7 +614,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "template library upsert",
 			args: []string{"template", "library", "upsert", "--help"},
-			want: []string{"till template library upsert", "--spec-json", "operator seam"},
+			want: []string{"till template library upsert", "--spec-json", "JSON"},
 		},
 		{
 			name: "lease",
