@@ -17,6 +17,11 @@ Current scope:
 Contributor workflow and CI policy: `CONTRIBUTING.md`
 Concurrent local branch/worktree workflow: `WORKTREE_WORKFLOW.md`
 
+Local dogfood repo layout note:
+- the bare control repo lives one directory above this checkout,
+- `main/` is the operator/integration worktree,
+- additional linked worktrees typically live under the bare root's `.tmp/`.
+
 ## Features
 - Multi-project Kanban board.
 - Launches into a project picker first (no auto-created default project).

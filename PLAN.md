@@ -85,6 +85,56 @@ Next step:
 1. Review staged tracked docs/layout changes only, explicitly excluding `AGENT_PROMPTS.md`.
 2. Commit the docs + layout refactor with a conventional commit.
 
+## Checkpoint 2026-03-29: Convert Shared Gitdir Layout To Bare Root + `main/` Worktree
+
+Objective:
+- replace the same-day separate-git-dir layout with the true bare-root model used by the local `laslig` pattern while preserving the current work, keeping `AGENT_PROMPTS.md` local-only at the bare root, and avoiding direct data loss during the cutover.
+
+Context7:
+1. `/git/git` `git-worktree`, bare-repo layout, and branch-checkout behavior for bare repositories reviewed before the conversion step -> PASS.
+
+Decision:
+1. Supersede the earlier same-day separate-git-dir recommendation.
+2. Use `/Users/evanschultz/Documents/Code/hylla/tillsyn` as the true bare control repo.
+3. Use `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` as the checked-out integration worktree.
+4. Treat the bare root's `worktrees/` path as Git admin state, not as a checkout container.
+5. Use `.tmp/<lane>` or another explicit sibling path for future linked worktree checkouts.
+6. Keep `AGENT_PROMPTS.md` at the bare root as local-only operator material.
+7. Take the easiest path for tracked `worklogs/`: let them live in `main/worklogs` with the rest of the tracked repo.
+
+Implementation summary:
+1. Renamed the old tracked root `worktrees/` helper directory out of the way before converting the root because bare Git needs `worktrees/` for admin state.
+2. Moved Git control data from `.git-common/` into the root and flipped the root to `core.bare=true`.
+3. Created `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` with `git worktree add main main`.
+4. Moved the old direct-root checkout contents into `.pre-bare-root-backup/` instead of deleting them so the previous layout is still recoverable locally.
+5. Restored the bare repo's `worktrees/` admin directory after the initial cleanup accidentally moved it with the old tracked helper path.
+6. Added a local bare-root `AGENTS.md` at the root and updated the tracked repo docs in `main/` to describe the new bare-root model.
+7. Removed the misleading tracked `worktrees/` helper files from the checked-out repo content because they no longer describe the real worktree paths.
+
+Commands run and outcomes:
+1. `mv worktrees worktrees.repo-docs.prebare` -> PASS.
+2. `find .git-common -mindepth 1 -maxdepth 1 -exec mv {} . \\;` -> PASS.
+3. `rm -f .git` -> PASS.
+4. `git config --file config core.bare true` -> PASS.
+5. `git config --file config --unset-all core.worktree || true` -> PASS.
+6. `git rev-parse --is-bare-repository --git-dir` -> PASS (`true`, `.`).
+7. `git worktree add main main` -> PASS.
+8. `git -C main status --short --branch --ignored` -> PASS.
+9. root-checkout cleanup loop to `.pre-bare-root-backup/` -> PASS after retrying with a non-`path` loop variable.
+10. restore bare admin `worktrees/` dir and move the old tracked helper dir back out of it -> PASS.
+11. `just check` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` -> PASS.
+
+Current status:
+1. The root directory is now the true bare control repo.
+2. `main/` is the checked-out integration worktree on branch `main`.
+3. `AGENT_PROMPTS.md` remains at the bare root and is not part of the tracked repo content.
+4. `.pre-bare-root-backup/` currently preserves the previous direct-root checkout layout as a safety net.
+5. `main/PLAN.md` is now the authoritative execution ledger for this repo layout.
+6. Tracked docs are updated for the bare-root model and local validation is green through `just check`.
+
+Next step:
+1. Commit the tracked docs cleanup from `main/` with a conventional commit.
+
 ## 1) Active Run Source Of Truth
 
 This section is authoritative for the current auth/runtime remediation run.

@@ -2,9 +2,11 @@
 
 This file defines persistent repo-wide instructions for coding agents working in this repository. It is not runtime behavior for `tillsyn`.
 
+In the local bare-root layout, this file lives at the root of each real checkout (`main/` or another linked worktree). The bare parent directory may also carry separate local-only operator files that are not part of the tracked repo.
+
 Keep branch-specific, worktree-specific, and temporary phase-specific process in:
 - `PLAN.md` for the active execution ledger and temporary run guidance.
-- `worktrees/AGENTS.md` for linked-worktree and concurrent-branch workflow rules.
+- `WORKTREE_WORKFLOW.md` for bare-root/worktree topology and concurrent-branch workflow rules.
 
 You are a senior Go dev. YOU ALWAYS:
 
@@ -58,10 +60,11 @@ You are a senior Go dev. YOU ALWAYS:
 - It is allowed to `just build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
-- Treat `PLAN.md` as the active source of truth for temporary run state, acceptance checklists, commands run, evidence, and completion state.
+- Treat the integration worktree's `PLAN.md` as the active source of truth for temporary run state, acceptance checklists, commands run, evidence, and completion state.
 - Keep `PLAN.md` single-writer by default:
   - only the orchestrator/integrator updates run completion state there,
   - worker lanes provide handoff notes unless explicitly assigned to update `PLAN.md`.
+- In the local bare-root layout, the default integration worktree is `/Users/evanschultz/Documents/Code/hylla/tillsyn/main`.
 - When proposing new implementation phases, explicitly review the active backlog and open discussion items in `PLAN.md` first.
 - When clarification is needed, ask in two stages:
   - first ask general goal-alignment questions and lock shared objectives,
@@ -78,7 +81,7 @@ You are a senior Go dev. YOU ALWAYS:
 - `internal/tui`: Bubble Tea/Bubbles/Lip Gloss presentation layer.
 - `.artifacts/`: generated local outputs (exports, temporary build outputs).
 - `PLAN.md`: active roadmap and execution/work log.
-- `WORKTREE_WORKFLOW.md`: repository/worktree topology and concurrent-branch workflow guidance.
+- `WORKTREE_WORKFLOW.md`: bare-root/worktree topology and concurrent-branch workflow guidance.
 
 ## Build and Run
 
