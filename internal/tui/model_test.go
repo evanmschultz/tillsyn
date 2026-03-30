@@ -8804,7 +8804,7 @@ func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 // TestAuthInventoryMouseWheelReachesLowerSections verifies the coordination surface
 // can scroll into lower lease and handoff sections on shorter terminals.
 func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
-	now := time.Date(2026, 3, 29, 2, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	task, _ := domain.NewTask(domain.TaskInput{

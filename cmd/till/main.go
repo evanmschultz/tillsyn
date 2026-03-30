@@ -136,6 +136,39 @@ type kindAllowlistCommandOptions struct {
 	kindIDs   []string
 }
 
+// templateLibraryListCommandOptions stores template library list flag values.
+type templateLibraryListCommandOptions struct {
+	scope     string
+	projectID string
+	status    string
+}
+
+// templateLibraryShowCommandOptions stores template library show flag values.
+type templateLibraryShowCommandOptions struct {
+	libraryID string
+}
+
+// templateLibraryUpsertCommandOptions stores template library upsert flag values.
+type templateLibraryUpsertCommandOptions struct {
+	specJSON string
+}
+
+// templateProjectBindCommandOptions stores template project bind flag values.
+type templateProjectBindCommandOptions struct {
+	projectID string
+	libraryID string
+}
+
+// templateProjectBindingCommandOptions stores template project binding lookup values.
+type templateProjectBindingCommandOptions struct {
+	projectID string
+}
+
+// templateContractShowCommandOptions stores node-contract lookup values.
+type templateContractShowCommandOptions struct {
+	nodeID string
+}
+
 // leaseListCommandOptions stores capability lease list flag values.
 type leaseListCommandOptions struct {
 	projectID      string
@@ -408,6 +441,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	kindListOpts := kindListCommandOptions{}
 	kindUpsertOpts := kindUpsertCommandOptions{}
 	kindAllowlistOpts := kindAllowlistCommandOptions{}
+	templateLibraryListOpts := templateLibraryListCommandOptions{}
+	templateLibraryShowOpts := templateLibraryShowCommandOptions{}
+	templateLibraryUpsertOpts := templateLibraryUpsertCommandOptions{}
+	templateProjectBindOpts := templateProjectBindCommandOptions{}
+	templateProjectBindingOpts := templateProjectBindingCommandOptions{}
+	templateContractShowOpts := templateContractShowCommandOptions{}
 	leaseListOpts := leaseListCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
 	leaseIssueOpts := leaseIssueCommandOptions{scopeType: string(domain.CapabilityScopeProject), role: string(domain.CapabilityRoleBuilder), requestedTTL: 8 * time.Hour}
 	leaseHeartbeatOpts := leaseHeartbeatCommandOptions{}
@@ -420,7 +459,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateProjectBindOpts, templateProjectBindingOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -721,6 +760,101 @@ default metadata for project, branch, phase, task, and subtask types.
 	kindAllowlistSetCmd.Flags().StringSliceVar(&kindAllowlistOpts.kindIDs, "kind-id", nil, "Allowed kind identifier")
 	kindAllowlistCmd.AddCommand(kindAllowlistListCmd, kindAllowlistSetCmd)
 	kindCmd.AddCommand(kindListCmd, kindUpsertCmd, kindAllowlistCmd)
+
+	templateCmd := &cobra.Command{
+		Use:   "template",
+		Short: "Inspect and bind SQLite-backed template libraries",
+		Long: strings.TrimSpace(`
+Inspect SQLite-backed template libraries, bind approved libraries to projects,
+and inspect generated node-contract snapshots. The temporary CLI/MCP JSON upsert
+seam exists for operator use until dedicated TUI authoring lands.
+`),
+		Args: cobra.NoArgs,
+	}
+	templateLibraryCmd := &cobra.Command{
+		Use:   "library",
+		Short: "Inspect and upsert template libraries",
+		Args:  cobra.NoArgs,
+	}
+	templateLibraryListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List template libraries",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.library.list")
+		},
+	}
+	templateLibraryListCmd.Flags().StringVar(&templateLibraryListOpts.scope, "scope", "", "Optional scope filter (global|project|draft)")
+	templateLibraryListCmd.Flags().StringVar(&templateLibraryListOpts.projectID, "project-id", "", "Optional project identifier filter")
+	templateLibraryListCmd.Flags().StringVar(&templateLibraryListOpts.status, "status", "", "Optional status filter (draft|approved|archived)")
+	templateLibraryShowCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show one template library",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.library.show")
+		},
+	}
+	templateLibraryShowCmd.Flags().StringVar(&templateLibraryShowOpts.libraryID, "library-id", "", "Template library identifier")
+	templateLibraryUpsertCmd := &cobra.Command{
+		Use:   "upsert",
+		Short: "Create or update one template library from JSON",
+		Long: strings.TrimSpace(`
+Create or update one template library from a JSON object. This is a temporary
+operator seam; SQLite remains the source of truth and richer TUI authoring is
+planned separately.
+`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.library.upsert")
+		},
+	}
+	templateLibraryUpsertCmd.Flags().StringVar(&templateLibraryUpsertOpts.specJSON, "spec-json", "", "Template library JSON object")
+	mustMarkFlagRequired(templateLibraryUpsertCmd, "spec-json")
+	templateLibraryCmd.AddCommand(templateLibraryListCmd, templateLibraryShowCmd, templateLibraryUpsertCmd)
+
+	templateProjectCmd := &cobra.Command{
+		Use:   "project",
+		Short: "Bind projects to template libraries",
+		Args:  cobra.NoArgs,
+	}
+	templateProjectBindCmd := &cobra.Command{
+		Use:   "bind",
+		Short: "Bind one project to one approved template library",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.project.bind")
+		},
+	}
+	templateProjectBindCmd.Flags().StringVar(&templateProjectBindOpts.projectID, "project-id", "", "Project identifier")
+	templateProjectBindCmd.Flags().StringVar(&templateProjectBindOpts.libraryID, "library-id", "", "Template library identifier")
+	templateProjectBindingCmd := &cobra.Command{
+		Use:   "binding",
+		Short: "Show one project's active template-library binding",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.project.binding")
+		},
+	}
+	templateProjectBindingCmd.Flags().StringVar(&templateProjectBindingOpts.projectID, "project-id", "", "Project identifier")
+	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd)
+
+	templateContractCmd := &cobra.Command{
+		Use:   "contract",
+		Short: "Inspect generated node-contract snapshots",
+		Args:  cobra.NoArgs,
+	}
+	templateContractShowCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show one generated node-contract snapshot",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.contract.show")
+		},
+	}
+	templateContractShowCmd.Flags().StringVar(&templateContractShowOpts.nodeID, "node-id", "", "Generated node identifier")
+	templateContractCmd.AddCommand(templateContractShowCmd)
+	templateCmd.AddCommand(templateLibraryCmd, templateProjectCmd, templateContractCmd)
 
 	leaseCmd := &cobra.Command{
 		Use:   "lease",
@@ -1289,7 +1423,7 @@ as a positional argument.
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, captureStateCmd, kindCmd, templateCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -1646,6 +1780,12 @@ func executeCommandFlow(
 	kindListOpts kindListCommandOptions,
 	kindUpsertOpts kindUpsertCommandOptions,
 	kindAllowlistOpts kindAllowlistCommandOptions,
+	templateLibraryListOpts templateLibraryListCommandOptions,
+	templateLibraryShowOpts templateLibraryShowCommandOptions,
+	templateLibraryUpsertOpts templateLibraryUpsertCommandOptions,
+	templateProjectBindOpts templateProjectBindCommandOptions,
+	templateProjectBindingOpts templateProjectBindingCommandOptions,
+	templateContractShowOpts templateContractShowCommandOptions,
 	leaseListOpts leaseListCommandOptions,
 	leaseIssueOpts leaseIssueCommandOptions,
 	leaseHeartbeatOpts leaseHeartbeatCommandOptions,
@@ -2011,6 +2151,54 @@ func executeCommandFlow(
 			return fmt.Errorf("run kind allowlist set command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "kind.allowlist.set")
+		return nil
+	case "template.library.list":
+		logger.Info("command flow start", "command", "template.library.list")
+		if err := runTemplateLibraryList(ctx, svc, templateLibraryListOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "template.library.list", "err", err)
+			return fmt.Errorf("run template library list command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "template.library.list")
+		return nil
+	case "template.library.show":
+		logger.Info("command flow start", "command", "template.library.show")
+		if err := runTemplateLibraryShow(ctx, svc, templateLibraryShowOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "template.library.show", "err", err)
+			return fmt.Errorf("run template library show command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "template.library.show")
+		return nil
+	case "template.library.upsert":
+		logger.Info("command flow start", "command", "template.library.upsert")
+		if err := runTemplateLibraryUpsert(ctx, svc, cfg, templateLibraryUpsertOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "template.library.upsert", "err", err)
+			return fmt.Errorf("run template library upsert command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "template.library.upsert")
+		return nil
+	case "template.project.bind":
+		logger.Info("command flow start", "command", "template.project.bind")
+		if err := runTemplateProjectBind(ctx, svc, cfg, templateProjectBindOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "template.project.bind", "err", err)
+			return fmt.Errorf("run template project bind command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "template.project.bind")
+		return nil
+	case "template.project.binding":
+		logger.Info("command flow start", "command", "template.project.binding")
+		if err := runTemplateProjectBinding(ctx, svc, templateProjectBindingOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "template.project.binding", "err", err)
+			return fmt.Errorf("run template project binding command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "template.project.binding")
+		return nil
+	case "template.contract.show":
+		logger.Info("command flow start", "command", "template.contract.show")
+		if err := runTemplateContractShow(ctx, svc, templateContractShowOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "template.contract.show", "err", err)
+			return fmt.Errorf("run template contract show command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "template.contract.show")
 		return nil
 	case "lease.list":
 		logger.Info("command flow start", "command", "lease.list")
@@ -2407,6 +2595,153 @@ func runKindAllowlistSet(ctx context.Context, svc *app.Service, cfg config.Confi
 	})
 }
 
+// runTemplateLibraryList lists template libraries and writes them as stable JSON.
+func runTemplateLibraryList(ctx context.Context, svc *app.Service, opts templateLibraryListCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	libraries, err := svc.ListTemplateLibraries(ctx, app.ListTemplateLibrariesInput{
+		Scope:     domain.TemplateLibraryScope(strings.TrimSpace(opts.scope)),
+		ProjectID: strings.TrimSpace(opts.projectID),
+		Status:    domain.TemplateLibraryStatus(strings.TrimSpace(opts.status)),
+	})
+	if err != nil {
+		return fmt.Errorf("list template libraries: %w", err)
+	}
+	return writeJSON(stdout, libraries)
+}
+
+// runTemplateLibraryShow loads one template library and writes it as stable JSON.
+func runTemplateLibraryShow(ctx context.Context, svc *app.Service, opts templateLibraryShowCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	libraryID := strings.TrimSpace(opts.libraryID)
+	if libraryID == "" {
+		return fmt.Errorf("--library-id is required")
+	}
+	library, err := svc.GetTemplateLibrary(ctx, libraryID)
+	if err != nil {
+		return fmt.Errorf("get template library: %w", err)
+	}
+	return writeJSON(stdout, library)
+}
+
+// runTemplateLibraryUpsert creates or updates one template library from the temporary JSON CLI seam.
+func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.Config, opts templateLibraryUpsertCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	spec, err := parseTemplateLibrarySpecJSON(opts.specJSON)
+	if err != nil {
+		return err
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	nodeTemplates := make([]app.UpsertNodeTemplateInput, 0, len(spec.NodeTemplates))
+	for _, nodeTemplate := range spec.NodeTemplates {
+		childRules := make([]app.UpsertTemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
+		for _, childRule := range nodeTemplate.ChildRules {
+			childRules = append(childRules, app.UpsertTemplateChildRuleInput{
+				ID:                        strings.TrimSpace(childRule.ID),
+				Position:                  childRule.Position,
+				ChildScopeLevel:           childRule.ChildScopeLevel,
+				ChildKindID:               childRule.ChildKindID,
+				TitleTemplate:             strings.TrimSpace(childRule.TitleTemplate),
+				DescriptionTemplate:       strings.TrimSpace(childRule.DescriptionTemplate),
+				ResponsibleActorKind:      childRule.ResponsibleActorKind,
+				EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
+				CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
+				OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
+				RequiredForParentDone:     childRule.RequiredForParentDone,
+				RequiredForContainingDone: childRule.RequiredForContainingDone,
+			})
+		}
+		nodeTemplates = append(nodeTemplates, app.UpsertNodeTemplateInput{
+			ID:                      strings.TrimSpace(nodeTemplate.ID),
+			ScopeLevel:              nodeTemplate.ScopeLevel,
+			NodeKindID:              nodeTemplate.NodeKindID,
+			DisplayName:             strings.TrimSpace(nodeTemplate.DisplayName),
+			DescriptionMarkdown:     strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
+			ProjectMetadataDefaults: nodeTemplate.ProjectMetadataDefaults,
+			TaskMetadataDefaults:    nodeTemplate.TaskMetadataDefaults,
+			ChildRules:              childRules,
+		})
+	}
+	library, err := svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
+		ID:              strings.TrimSpace(spec.ID),
+		Scope:           spec.Scope,
+		ProjectID:       strings.TrimSpace(spec.ProjectID),
+		Name:            strings.TrimSpace(spec.Name),
+		Description:     strings.TrimSpace(spec.Description),
+		Status:          spec.Status,
+		SourceLibraryID: strings.TrimSpace(spec.SourceLibraryID),
+		NodeTemplates:   nodeTemplates,
+	})
+	if err != nil {
+		return fmt.Errorf("upsert template library: %w", err)
+	}
+	return writeJSON(stdout, library)
+}
+
+// runTemplateProjectBind binds one project to one approved template library.
+func runTemplateProjectBind(ctx context.Context, svc *app.Service, cfg config.Config, opts templateProjectBindCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	projectID := strings.TrimSpace(opts.projectID)
+	if err := requireProjectID("template project bind", projectID); err != nil {
+		return err
+	}
+	libraryID := strings.TrimSpace(opts.libraryID)
+	if libraryID == "" {
+		return fmt.Errorf("--library-id is required")
+	}
+	binding, err := svc.BindProjectTemplateLibrary(ctx, app.BindProjectTemplateLibraryInput{
+		ProjectID:        projectID,
+		LibraryID:        libraryID,
+		BoundByActorID:   cliMutationActorID(cfg),
+		BoundByActorName: strings.TrimSpace(cfg.Identity.DisplayName),
+		BoundByActorType: cliMutationActorType(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("bind project template library: %w", err)
+	}
+	return writeJSON(stdout, binding)
+}
+
+// runTemplateProjectBinding loads one project's active template-library binding.
+func runTemplateProjectBinding(ctx context.Context, svc *app.Service, opts templateProjectBindingCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	projectID := strings.TrimSpace(opts.projectID)
+	if err := requireProjectID("template project binding", projectID); err != nil {
+		return err
+	}
+	binding, err := svc.GetProjectTemplateBinding(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("get project template binding: %w", err)
+	}
+	return writeJSON(stdout, binding)
+}
+
+// runTemplateContractShow loads one generated-node contract snapshot and writes it as stable JSON.
+func runTemplateContractShow(ctx context.Context, svc *app.Service, opts templateContractShowCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	nodeID := strings.TrimSpace(opts.nodeID)
+	if nodeID == "" {
+		return fmt.Errorf("--node-id is required")
+	}
+	snapshot, err := svc.GetNodeContractSnapshot(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("get node contract snapshot: %w", err)
+	}
+	return writeJSON(stdout, snapshot)
+}
+
 // runLeaseList lists capability leases and writes them in a human-readable operator view.
 func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
@@ -2694,6 +3029,19 @@ func parseOptionalKindTemplateJSON(raw string) (domain.KindTemplate, error) {
 		return domain.KindTemplate{}, fmt.Errorf("parse --template-json: %w", err)
 	}
 	return template, nil
+}
+
+// parseTemplateLibrarySpecJSON parses one temporary template-library JSON operator spec.
+func parseTemplateLibrarySpecJSON(raw string) (servercommon.UpsertTemplateLibraryRequest, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return servercommon.UpsertTemplateLibraryRequest{}, fmt.Errorf("--spec-json is required")
+	}
+	var spec servercommon.UpsertTemplateLibraryRequest
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return servercommon.UpsertTemplateLibraryRequest{}, fmt.Errorf("parse --spec-json: %w", err)
+	}
+	return spec, nil
 }
 
 // cliMutationContext attaches a deterministic CLI mutation actor to context.

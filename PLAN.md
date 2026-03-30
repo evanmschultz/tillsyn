@@ -4,6 +4,84 @@ Created: 2026-02-21
 Updated: 2026-03-29
 Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, and `C6` is now closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary; local gates are green on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, `just ci`, and `just build`, the pushed follow-up is `75aa5c4`, and GitHub Actions run `23721667218` is green through all `check` jobs plus `full gate` with only the trailing `release snapshot check` still running at the time of this update.
 
+## Checkpoint 2026-03-29: Template Operator Surfaces + Repo-Wide Gates Green
+
+Objective:
+- finish the first template-library slice by exposing the new persistence/resolver path through CLI and MCP, tighten README/bootstrap/instructions guidance around template workflows, and clear the repo-wide TUI test blocker so the required gates pass again.
+
+Context7:
+1. `/websites/pkg_go_dev_github_com_spf13_cobra` reviewed before the CLI surface work:
+   - help rendering behavior,
+   - command nesting patterns,
+   - and stable test expectations for generated `--help` output -> PASS.
+2. `/websites/modelcontextprotocol_io` reviewed before the MCP surface work:
+   - discoverable tool naming and JSON result expectations for operator-facing tools -> PASS.
+3. `/charmbracelet/bubbles/v2.0.0` reviewed before the TUI inventory diagnosis:
+   - viewport/mouse-wheel expectations and deterministic test posture -> PASS.
+4. After the first local test failures in this checkpoint, Context7 was refreshed again before edits:
+   - `/websites/sqlite_docs` for foreign-key insert ordering while seeding node-contract snapshot tests -> PASS.
+   - `/websites/pkg_go_dev_github_com_spf13_cobra` for help-output stability under wrapped long descriptions -> PASS.
+   - `/websites/pkg_go_dev_go1_25_3` as the required post-failure refresh before the final test-seeding correction -> PASS.
+
+Implementation summary:
+1. Added operator-facing template-library CLI commands:
+   - `till template library list|show|upsert`
+   - `till template project bind|binding`
+   - `till template contract show`
+2. Added template-library MCP tools and handler wiring:
+   - `till.list_template_libraries`
+   - `till.get_template_library`
+   - `till.upsert_template_library`
+   - `till.bind_project_template_library`
+   - `till.get_project_template_binding`
+   - `till.get_node_contract_snapshot`
+3. Added transport-layer request contracts and app-adapter methods for template-library list/get/upsert/bind plus node-contract and project-binding lookup.
+4. Added JSON tags to template-library domain rows so CLI/MCP output is readable and stable without bespoke one-off payload wrappers.
+5. Updated bootstrap/instruction guidance plus README examples so the operator docs now mention:
+   - template-library workflows,
+   - AGENTS.md / CLAUDE.md / SKILL.md alignment expectations,
+   - and the explicit rule that SQLite is the source of truth while JSON upsert is only a temporary operator seam.
+6. Fixed the repo-wide TUI failure by making `TestAuthInventoryMouseWheelReachesLowerSections` use the current wall clock instead of a now-expired hard-coded timestamp.
+7. Expanded tests for:
+   - CLI help coverage,
+   - real CLI template-library upsert/list/show/bind/contract flows,
+   - MCP expanded tool coverage,
+   - and the updated bootstrap guide expectations.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./internal/adapters/server/common` -> PASS after updating bootstrap-guide assertions.
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS after fixing the time-sensitive test.
+6. `just test-pkg ./cmd/till` -> PASS after:
+   - loosening the brittle wrapped-help assertion,
+   - and seeding the required project/column/task rows before the node-contract snapshot insert.
+7. `just test-golden` -> PASS.
+8. `just check` -> PASS.
+9. `just ci` -> PASS.
+
+Cleanup/orphan review:
+1. Legacy kind-template authoring and fallback generation still exist intentionally as compatibility seams:
+   - project creation is still kind-template-backed for defaults/root children,
+   - task creation still falls back to legacy kind-template expansion when no project template binding exists,
+   - snapshot import/export still reflects the legacy shape,
+   - and the older kind-template CLI/MCP surfaces still exist beside the new template-library surfaces.
+2. This checkpoint does not remove those paths yet; it makes the new template-library path operator-visible and updates the docs so the remaining legacy seams are explicit rather than hidden.
+3. The outstanding cleanup target is to quarantine or remove the legacy template-authoring affordances once project creation, snapshot transport, and broader actor-kind enforcement fully move onto template libraries.
+
+Current status:
+1. The first template-library slice is now operator-visible through CLI and MCP.
+2. README/bootstrap/instructions guidance now aligns with the SQLite-first template-library model and the actor-kind documentation requirement.
+3. Repo-wide validation is green again through `just test-golden`, `just check`, and `just ci`.
+4. Truthful completion gating and actor-kind mutation enforcement against persisted node contracts are still pending.
+
+Next step:
+1. Land the next compatibility-first slice:
+   - enforce actor-kind edit/complete checks from node-contract snapshots,
+   - gate parent/scope completion on required generated blockers,
+   - and start retiring the remaining legacy kind-template compatibility paths called out above.
+
 ## Checkpoint 2026-03-29: Template Library Persistence + Resolver Slice
 
 Objective:

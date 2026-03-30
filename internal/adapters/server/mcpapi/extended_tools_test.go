@@ -27,6 +27,12 @@ type stubExpandedService struct {
 	lastCreateHandoffReq     common.CreateHandoffRequest
 	lastUpdateHandoffReq     common.UpdateHandoffRequest
 	lastListHandoffsReq      common.ListHandoffsRequest
+	lastListTemplateReq      common.ListTemplateLibrariesRequest
+	lastUpsertTemplateReq    common.UpsertTemplateLibraryRequest
+	lastBindTemplateReq      common.BindProjectTemplateLibraryRequest
+	lastGetTemplateID        string
+	lastGetTemplateBindingID string
+	lastGetNodeContractID    string
 	lastSearchTasksReq       common.SearchTasksRequest
 	lastCreateAuthRequestReq common.CreateAuthRequestRequest
 	lastListAuthRequestsReq  common.ListAuthRequestsRequest
@@ -422,6 +428,99 @@ func (s *stubExpandedService) ListProjectAllowedKinds(_ context.Context, _ strin
 	return []string{"phase", "task"}, nil
 }
 
+// ListTemplateLibraries returns one deterministic template-library row.
+func (s *stubExpandedService) ListTemplateLibraries(_ context.Context, in common.ListTemplateLibrariesRequest) ([]domain.TemplateLibrary, error) {
+	s.lastListTemplateReq = in
+	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
+	return []domain.TemplateLibrary{
+		{
+			ID:        "go-defaults",
+			Scope:     domain.TemplateLibraryScopeGlobal,
+			Name:      "Go Defaults",
+			Status:    domain.TemplateLibraryStatusApproved,
+			CreatedAt: now,
+			UpdatedAt: now,
+			NodeTemplates: []domain.NodeTemplate{
+				{
+					ID:          "tmpl-task-build",
+					LibraryID:   "go-defaults",
+					ScopeLevel:  domain.KindAppliesToTask,
+					NodeKindID:  domain.KindID("build-task"),
+					DisplayName: "Build Task",
+				},
+			},
+		},
+	}, nil
+}
+
+// GetTemplateLibrary returns one deterministic template-library row.
+func (s *stubExpandedService) GetTemplateLibrary(_ context.Context, libraryID string) (domain.TemplateLibrary, error) {
+	s.lastGetTemplateID = strings.TrimSpace(libraryID)
+	rows, _ := s.ListTemplateLibraries(context.Background(), common.ListTemplateLibrariesRequest{})
+	return rows[0], nil
+}
+
+// UpsertTemplateLibrary returns one deterministic updated template-library row.
+func (s *stubExpandedService) UpsertTemplateLibrary(_ context.Context, in common.UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error) {
+	s.lastUpsertTemplateReq = in
+	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
+	return domain.TemplateLibrary{
+		ID:        strings.TrimSpace(in.ID),
+		Scope:     in.Scope,
+		ProjectID: strings.TrimSpace(in.ProjectID),
+		Name:      strings.TrimSpace(in.Name),
+		Status:    in.Status,
+		CreatedAt: now,
+		UpdatedAt: now,
+		NodeTemplates: []domain.NodeTemplate{
+			{
+				ID:          "tmpl-task-build",
+				LibraryID:   strings.TrimSpace(in.ID),
+				ScopeLevel:  domain.KindAppliesToTask,
+				NodeKindID:  domain.KindID("build-task"),
+				DisplayName: "Build Task",
+			},
+		},
+	}, nil
+}
+
+// BindProjectTemplateLibrary returns one deterministic project binding.
+func (s *stubExpandedService) BindProjectTemplateLibrary(_ context.Context, in common.BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error) {
+	s.lastBindTemplateReq = in
+	return domain.ProjectTemplateBinding{
+		ProjectID: in.ProjectID,
+		LibraryID: in.LibraryID,
+		BoundAt:   time.Date(2026, 3, 29, 12, 5, 0, 0, time.UTC),
+	}, nil
+}
+
+// GetProjectTemplateBinding returns one deterministic project binding.
+func (s *stubExpandedService) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
+	s.lastGetTemplateBindingID = strings.TrimSpace(projectID)
+	return domain.ProjectTemplateBinding{
+		ProjectID: projectID,
+		LibraryID: "go-defaults",
+		BoundAt:   time.Date(2026, 3, 29, 12, 5, 0, 0, time.UTC),
+	}, nil
+}
+
+// GetNodeContractSnapshot returns one deterministic node-contract snapshot.
+func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
+	s.lastGetNodeContractID = strings.TrimSpace(nodeID)
+	return domain.NodeContractSnapshot{
+		NodeID:                  nodeID,
+		ProjectID:               "p1",
+		SourceLibraryID:         "go-defaults",
+		SourceNodeTemplateID:    "tmpl-task-build",
+		SourceChildRuleID:       "rule-qa-pass",
+		ResponsibleActorKind:    domain.TemplateActorKindQA,
+		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		RequiredForParentDone:   true,
+		CreatedAt:               time.Date(2026, 3, 29, 12, 6, 0, 0, time.UTC),
+	}, nil
+}
+
 // IssueCapabilityLease returns one deterministic lease row.
 func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, _ common.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
@@ -754,6 +853,12 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
 		"till.list_project_allowed_kinds",
+		"till.list_template_libraries",
+		"till.get_template_library",
+		"till.upsert_template_library",
+		"till.bind_project_template_library",
+		"till.get_project_template_binding",
+		"till.get_node_contract_snapshot",
 		"till.list_capability_leases",
 		"till.issue_capability_lease",
 		"till.heartbeat_capability_lease",
@@ -857,6 +962,27 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.upsert_kind_definition", args: mergeArgs(validSessionArgs(), map[string]any{"id": "phase", "applies_to": []any{"phase"}})},
 		{name: "till.set_project_allowed_kinds", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}})},
 		{name: "till.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
+		{name: "till.list_template_libraries", args: map[string]any{"scope": "global", "status": "approved"}},
+		{name: "till.get_template_library", args: map[string]any{"library_id": "go-defaults"}},
+		{name: "till.upsert_template_library", args: mergeArgs(validSessionArgs(), map[string]any{
+			"library": map[string]any{
+				"id":     "go-defaults",
+				"scope":  "global",
+				"name":   "Go Defaults",
+				"status": "approved",
+				"node_templates": []any{
+					map[string]any{
+						"id":           "tmpl-task-build",
+						"scope_level":  "task",
+						"node_kind_id": "phase",
+						"display_name": "Build Task",
+					},
+				},
+			},
+		})},
+		{name: "till.bind_project_template_library", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "library_id": "go-defaults"})},
+		{name: "till.get_project_template_binding", args: map[string]any{"project_id": "p1"}},
+		{name: "till.get_node_contract_snapshot", args: map[string]any{"node_id": "task-qa-1"}},
 		{name: "till.list_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project", "include_revoked": true}},
 		{name: "till.issue_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
 		{name: "till.heartbeat_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"})},

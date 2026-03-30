@@ -43,63 +43,63 @@ const (
 
 // TemplateLibrary stores one approved or draft template-library definition.
 type TemplateLibrary struct {
-	ID                  string
-	Scope               TemplateLibraryScope
-	ProjectID           string
-	Name                string
-	Description         string
-	Status              TemplateLibraryStatus
-	SourceLibraryID     string
-	CreatedByActorID    string
-	CreatedByActorName  string
-	CreatedByActorType  ActorType
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	ApprovedByActorID   string
-	ApprovedByActorName string
-	ApprovedByActorType ActorType
-	ApprovedAt          *time.Time
-	NodeTemplates       []NodeTemplate
+	ID                  string                `json:"id"`
+	Scope               TemplateLibraryScope  `json:"scope"`
+	ProjectID           string                `json:"project_id,omitempty"`
+	Name                string                `json:"name"`
+	Description         string                `json:"description,omitempty"`
+	Status              TemplateLibraryStatus `json:"status"`
+	SourceLibraryID     string                `json:"source_library_id,omitempty"`
+	CreatedByActorID    string                `json:"created_by_actor_id,omitempty"`
+	CreatedByActorName  string                `json:"created_by_actor_name,omitempty"`
+	CreatedByActorType  ActorType             `json:"created_by_actor_type,omitempty"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
+	ApprovedByActorID   string                `json:"approved_by_actor_id,omitempty"`
+	ApprovedByActorName string                `json:"approved_by_actor_name,omitempty"`
+	ApprovedByActorType ActorType             `json:"approved_by_actor_type,omitempty"`
+	ApprovedAt          *time.Time            `json:"approved_at,omitempty"`
+	NodeTemplates       []NodeTemplate        `json:"node_templates"`
 }
 
 // NodeTemplate stores one node-template rule for one scope level and node kind.
 type NodeTemplate struct {
-	ID                      string
-	LibraryID               string
-	ScopeLevel              KindAppliesTo
-	NodeKindID              KindID
-	DisplayName             string
-	DescriptionMarkdown     string
-	ProjectMetadataDefaults *ProjectMetadata
-	TaskMetadataDefaults    *TaskMetadata
-	ChildRules              []TemplateChildRule
+	ID                      string              `json:"id"`
+	LibraryID               string              `json:"library_id"`
+	ScopeLevel              KindAppliesTo       `json:"scope_level"`
+	NodeKindID              KindID              `json:"node_kind_id"`
+	DisplayName             string              `json:"display_name"`
+	DescriptionMarkdown     string              `json:"description_markdown,omitempty"`
+	ProjectMetadataDefaults *ProjectMetadata    `json:"project_metadata_defaults,omitempty"`
+	TaskMetadataDefaults    *TaskMetadata       `json:"task_metadata_defaults,omitempty"`
+	ChildRules              []TemplateChildRule `json:"child_rules"`
 }
 
 // TemplateChildRule stores one auto-generated child rule under one node template.
 type TemplateChildRule struct {
-	ID                        string
-	NodeTemplateID            string
-	Position                  int
-	ChildScopeLevel           KindAppliesTo
-	ChildKindID               KindID
-	TitleTemplate             string
-	DescriptionTemplate       string
-	ResponsibleActorKind      TemplateActorKind
-	EditableByActorKinds      []TemplateActorKind
-	CompletableByActorKinds   []TemplateActorKind
-	OrchestratorMayComplete   bool
-	RequiredForParentDone     bool
-	RequiredForContainingDone bool
+	ID                        string              `json:"id"`
+	NodeTemplateID            string              `json:"node_template_id"`
+	Position                  int                 `json:"position"`
+	ChildScopeLevel           KindAppliesTo       `json:"child_scope_level"`
+	ChildKindID               KindID              `json:"child_kind_id"`
+	TitleTemplate             string              `json:"title_template"`
+	DescriptionTemplate       string              `json:"description_template,omitempty"`
+	ResponsibleActorKind      TemplateActorKind   `json:"responsible_actor_kind"`
+	EditableByActorKinds      []TemplateActorKind `json:"editable_by_actor_kinds"`
+	CompletableByActorKinds   []TemplateActorKind `json:"completable_by_actor_kinds"`
+	OrchestratorMayComplete   bool                `json:"orchestrator_may_complete,omitempty"`
+	RequiredForParentDone     bool                `json:"required_for_parent_done,omitempty"`
+	RequiredForContainingDone bool                `json:"required_for_containing_done,omitempty"`
 }
 
 // ProjectTemplateBinding stores the active template-library binding for one project.
 type ProjectTemplateBinding struct {
-	ProjectID        string
-	LibraryID        string
-	BoundByActorID   string
-	BoundByActorName string
-	BoundByActorType ActorType
-	BoundAt          time.Time
+	ProjectID        string    `json:"project_id"`
+	LibraryID        string    `json:"library_id"`
+	BoundByActorID   string    `json:"bound_by_actor_id,omitempty"`
+	BoundByActorName string    `json:"bound_by_actor_name,omitempty"`
+	BoundByActorType ActorType `json:"bound_by_actor_type,omitempty"`
+	BoundAt          time.Time `json:"bound_at"`
 }
 
 // TemplateLibraryFilter stores listing criteria for template-library queries.
@@ -111,20 +111,20 @@ type TemplateLibraryFilter struct {
 
 // NodeContractSnapshot stores one persisted generated-node contract snapshot.
 type NodeContractSnapshot struct {
-	NodeID                    string
-	ProjectID                 string
-	SourceLibraryID           string
-	SourceNodeTemplateID      string
-	SourceChildRuleID         string
-	CreatedByActorID          string
-	CreatedByActorType        ActorType
-	ResponsibleActorKind      TemplateActorKind
-	EditableByActorKinds      []TemplateActorKind
-	CompletableByActorKinds   []TemplateActorKind
-	OrchestratorMayComplete   bool
-	RequiredForParentDone     bool
-	RequiredForContainingDone bool
-	CreatedAt                 time.Time
+	NodeID                    string              `json:"node_id"`
+	ProjectID                 string              `json:"project_id"`
+	SourceLibraryID           string              `json:"source_library_id"`
+	SourceNodeTemplateID      string              `json:"source_node_template_id"`
+	SourceChildRuleID         string              `json:"source_child_rule_id"`
+	CreatedByActorID          string              `json:"created_by_actor_id,omitempty"`
+	CreatedByActorType        ActorType           `json:"created_by_actor_type,omitempty"`
+	ResponsibleActorKind      TemplateActorKind   `json:"responsible_actor_kind"`
+	EditableByActorKinds      []TemplateActorKind `json:"editable_by_actor_kinds"`
+	CompletableByActorKinds   []TemplateActorKind `json:"completable_by_actor_kinds"`
+	OrchestratorMayComplete   bool                `json:"orchestrator_may_complete,omitempty"`
+	RequiredForParentDone     bool                `json:"required_for_parent_done,omitempty"`
+	RequiredForContainingDone bool                `json:"required_for_containing_done,omitempty"`
+	CreatedAt                 time.Time           `json:"created_at"`
 }
 
 // TemplateLibraryInput stores write-time values for constructing one template library.

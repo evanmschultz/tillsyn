@@ -544,6 +544,16 @@ func TestRunSubcommandHelp(t *testing.T) {
 			want: []string{"till kind allowlist", "list", "set"},
 		},
 		{
+			name: "template",
+			args: []string{"template", "--help"},
+			want: []string{"till template", "library", "project", "contract"},
+		},
+		{
+			name: "template library upsert",
+			args: []string{"template", "library", "upsert", "--help"},
+			want: []string{"till template library upsert", "--spec-json", "operator seam"},
+		},
+		{
 			name: "lease",
 			args: []string{"lease", "--help"},
 			want: []string{"till lease", "list", "issue", "heartbeat", "renew", "revoke", "revoke-all"},
@@ -1725,6 +1735,212 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	}
 	if allowList.ProjectID != "p1" || len(allowList.KindIDs) != 1 || allowList.KindIDs[0] != "qa-check" {
 		t.Fatalf("allowlist list output = %#v, want p1/qa-check", allowList)
+	}
+}
+
+// TestRunTemplateLibraryCommands verifies template library upsert/list/show, project binding, and contract lookup.
+func TestRunTemplateLibraryCommands(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	for _, args := range [][]string{
+		{"kind", "upsert", "--id", "build-task", "--display-name", "Build Task", "--applies-to", "task"},
+		{"kind", "upsert", "--id", "qa-pass", "--display-name", "QA Pass", "--applies-to", "subtask"},
+	} {
+		if err := run(context.Background(), append([]string{"--db", dbPath, "--config", cfgPath}, args...), io.Discard, io.Discard); err != nil {
+			t.Fatalf("run(%v) error = %v", args, err)
+		}
+	}
+
+	specJSON := strings.TrimSpace(`{
+	  "id": "go-defaults",
+	  "scope": "global",
+	  "name": "Go Defaults",
+	  "status": "approved",
+	  "node_templates": [
+	    {
+	      "id": "tmpl-build-task",
+	      "scope_level": "task",
+	      "node_kind_id": "build-task",
+	      "display_name": "Build Task",
+	      "child_rules": [
+	        {
+	          "id": "rule-qa-pass",
+	          "position": 10,
+	          "child_scope_level": "subtask",
+	          "child_kind_id": "qa-pass",
+	          "title_template": "QA Pass",
+	          "responsible_actor_kind": "qa",
+	          "editable_by_actor_kinds": ["qa"],
+	          "completable_by_actor_kinds": ["qa"],
+	          "required_for_parent_done": true
+	        }
+	      ]
+	    }
+	  ]
+	}`)
+
+	var upsertOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "upsert",
+		"--spec-json", specJSON,
+	}, &upsertOut, io.Discard); err != nil {
+		t.Fatalf("run(template library upsert) error = %v", err)
+	}
+	var library domain.TemplateLibrary
+	if err := json.Unmarshal([]byte(upsertOut.String()), &library); err != nil {
+		t.Fatalf("Unmarshal(template library upsert) error = %v", err)
+	}
+	if library.ID != "go-defaults" || library.Name != "Go Defaults" {
+		t.Fatalf("template library upsert output = %#v, want go-defaults/Go Defaults", library)
+	}
+	if len(library.NodeTemplates) != 1 || len(library.NodeTemplates[0].ChildRules) != 1 {
+		t.Fatalf("template library output missing nested rules: %#v", library)
+	}
+
+	var listOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "list",
+		"--scope", "global",
+		"--status", "approved",
+	}, &listOut, io.Discard); err != nil {
+		t.Fatalf("run(template library list) error = %v", err)
+	}
+	var libraries []domain.TemplateLibrary
+	if err := json.Unmarshal([]byte(listOut.String()), &libraries); err != nil {
+		t.Fatalf("Unmarshal(template library list) error = %v", err)
+	}
+	if len(libraries) != 1 || libraries[0].ID != "go-defaults" {
+		t.Fatalf("template library list output = %#v, want go-defaults", libraries)
+	}
+
+	var showOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "show",
+		"--library-id", "go-defaults",
+	}, &showOut, io.Discard); err != nil {
+		t.Fatalf("run(template library show) error = %v", err)
+	}
+	var shown domain.TemplateLibrary
+	if err := json.Unmarshal([]byte(showOut.String()), &shown); err != nil {
+		t.Fatalf("Unmarshal(template library show) error = %v", err)
+	}
+	if shown.ID != "go-defaults" || shown.NodeTemplates[0].NodeKindID != "build-task" {
+		t.Fatalf("template library show output = %#v, want nested build-task rule", shown)
+	}
+
+	var bindOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "project", "bind",
+		"--project-id", "p1",
+		"--library-id", "go-defaults",
+	}, &bindOut, io.Discard); err != nil {
+		t.Fatalf("run(template project bind) error = %v", err)
+	}
+	var binding domain.ProjectTemplateBinding
+	if err := json.Unmarshal([]byte(bindOut.String()), &binding); err != nil {
+		t.Fatalf("Unmarshal(template project bind) error = %v", err)
+	}
+	if binding.ProjectID != "p1" || binding.LibraryID != "go-defaults" {
+		t.Fatalf("template project bind output = %#v, want p1/go-defaults", binding)
+	}
+
+	var bindingOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "project", "binding",
+		"--project-id", "p1",
+	}, &bindingOut, io.Discard); err != nil {
+		t.Fatalf("run(template project binding) error = %v", err)
+	}
+	var shownBinding domain.ProjectTemplateBinding
+	if err := json.Unmarshal([]byte(bindingOut.String()), &shownBinding); err != nil {
+		t.Fatalf("Unmarshal(template project binding) error = %v", err)
+	}
+	if shownBinding.LibraryID != "go-defaults" {
+		t.Fatalf("template project binding output = %#v, want go-defaults", shownBinding)
+	}
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+	column, err := domain.NewColumn("c1", "p1", "To Do", 0, 0, time.Date(2026, 3, 29, 12, 55, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(context.Background(), column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "task-qa-1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "QA Pass",
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Priority:  domain.PriorityMedium,
+	}, time.Date(2026, 3, 29, 12, 58, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
+		NodeID:                  "task-qa-1",
+		ProjectID:               "p1",
+		SourceLibraryID:         "go-defaults",
+		SourceNodeTemplateID:    "tmpl-build-task",
+		SourceChildRuleID:       "rule-qa-pass",
+		ResponsibleActorKind:    domain.TemplateActorKindQA,
+		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		RequiredForParentDone:   true,
+	}, time.Date(2026, 3, 29, 13, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewNodeContractSnapshot() error = %v", err)
+	}
+	if err := repo.CreateNodeContractSnapshot(context.Background(), snapshot); err != nil {
+		t.Fatalf("CreateNodeContractSnapshot() error = %v", err)
+	}
+
+	var contractOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "contract", "show",
+		"--node-id", "task-qa-1",
+	}, &contractOut, io.Discard); err != nil {
+		t.Fatalf("run(template contract show) error = %v", err)
+	}
+	var contract domain.NodeContractSnapshot
+	if err := json.Unmarshal([]byte(contractOut.String()), &contract); err != nil {
+		t.Fatalf("Unmarshal(template contract show) error = %v", err)
+	}
+	if contract.SourceLibraryID != "go-defaults" || contract.ResponsibleActorKind != domain.TemplateActorKindQA {
+		t.Fatalf("template contract output = %#v, want go-defaults/qa", contract)
 	}
 }
 

@@ -83,6 +83,7 @@ Current MCP/runtime direction:
   - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.raise_attention_item`, `till.resolve_attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
   - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.set_project_allowed_kinds`, `till.list_project_allowed_kinds`
+  - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.bind_project_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
   - capability leases: `till.issue_capability_lease`, `till.heartbeat_capability_lease`, `till.renew_capability_lease`, `till.revoke_capability_lease`, `till.revoke_all_capability_leases`
   - comments: `till.create_comment`, `till.list_comments_by_target`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
@@ -111,6 +112,19 @@ Current auth note:
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
+
+Template-library operator examples:
+- SQLite is the live source of truth. The current CLI/MCP JSON `upsert` seam is temporary operator transport until dedicated TUI authoring lands.
+- CLI examples:
+  - `till template library list --scope global --status approved`
+  - `till template library show --library-id go-defaults`
+  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task"}]}'`
+  - `till template project bind --project-id p1 --library-id go-defaults`
+  - `till template project binding --project-id p1`
+  - `till template contract show --node-id task-qa-1`
+- Documentation expectations:
+  - keep README workflow examples, `AGENTS.md` policy, `CLAUDE.md` interaction guidance, and any relevant `SKILL.md` files aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
+  - keep examples readable enough for humans to audit quickly in the TUI and CLI; template contracts should clarify ownership and completion gates instead of hiding them in large markdown files.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
