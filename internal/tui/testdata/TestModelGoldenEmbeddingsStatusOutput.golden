@@ -1,0 +1,17 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+      │ Embeddings                                                                                               │
+      │ runtime: operational                                                                                     │
+      │ scope: Inbox                                                                                             │
+      │ archived: hidden                                                                                         │
+      │ embeddings ready:1 pending:1 running:0 failed:1 stale:0                                                  │
+      │ filter: all                                                                                              │
+      │ showing 3 of 3 rows                                                                                      │
+      │ > Inbox • branch • ready • Embeddings status task                                                        │
+      │    path: Inbox -> Embeddings status task                                                                 │
+      │   Inbox • task thread • pending • Embeddings status thread task                                          │
+      │    path: Inbox -> Embeddings status task -> Embeddings status thread task                                │
+      │   Inbox • project document • failed • project overview                                                   │
+      │    path: Inbox                                                                                           │
+      │    detail: provider unavailable                                                                          │
+      │ j/k move • / filter • enter open • g scope • a archived • r reindex • R force • esc close                │
+      ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
