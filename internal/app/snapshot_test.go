@@ -43,6 +43,53 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	}
 	repo.kindDefs[kind.ID] = kind
 	repo.projectAllowedKinds[p1.ID] = []domain.KindID{kind.ID}
+	templateLibrary, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:                  "global-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Global Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "tester",
+		CreatedByActorName:  "Tester",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "tester",
+		ApprovedByActorName: "Tester",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []domain.NodeTemplateInput{{
+			ID:          "task-template",
+			ScopeLevel:  domain.KindAppliesToTask,
+			NodeKindID:  kind.ID,
+			DisplayName: "Refactor Task",
+		}},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTemplateLibrary() error = %v", err)
+	}
+	repo.templateLibraries[templateLibrary.ID] = templateLibrary
+	binding, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
+		ProjectID:        p1.ID,
+		LibraryID:        templateLibrary.ID,
+		BoundByActorID:   "tester",
+		BoundByActorName: "Tester",
+		BoundByActorType: domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectTemplateBinding() error = %v", err)
+	}
+	repo.projectBindings[p1.ID] = binding
+	nodeContract, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
+		NodeID:                  t1.ID,
+		ProjectID:               p1.ID,
+		SourceLibraryID:         templateLibrary.ID,
+		SourceNodeTemplateID:    "task-template",
+		ResponsibleActorKind:    domain.TemplateActorKindQA,
+		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+		RequiredForParentDone:   true,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewNodeContractSnapshot() error = %v", err)
+	}
+	repo.nodeContracts[t1.ID] = nodeContract
 
 	projectComment, err := domain.NewComment(domain.CommentInput{
 		ID:           "comment-1",
@@ -144,6 +191,15 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapAll.ProjectAllowedKinds) != 1 || snapAll.ProjectAllowedKinds[0].ProjectID != p1.ID {
 		t.Fatalf("expected project allowlist closure in snapshot, got %#v", snapAll.ProjectAllowedKinds)
 	}
+	if len(snapAll.TemplateLibraries) != 1 || snapAll.TemplateLibraries[0].ID != templateLibrary.ID {
+		t.Fatalf("expected template library closure in snapshot, got %#v", snapAll.TemplateLibraries)
+	}
+	if len(snapAll.ProjectBindings) != 1 || snapAll.ProjectBindings[0].ProjectID != p1.ID {
+		t.Fatalf("expected project template binding closure in snapshot, got %#v", snapAll.ProjectBindings)
+	}
+	if len(snapAll.NodeContracts) != 1 || snapAll.NodeContracts[0].NodeID != t1.ID {
+		t.Fatalf("expected node contract closure in snapshot, got %#v", snapAll.NodeContracts)
+	}
 	if len(snapAll.Comments) != 1 || snapAll.Comments[0].ID != "comment-1" {
 		t.Fatalf("expected comment closure in snapshot, got %#v", snapAll.Comments)
 	}
@@ -212,6 +268,65 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 		},
 		ProjectAllowedKinds: []SnapshotProjectAllowedKinds{
 			{ProjectID: "p1", KindIDs: []domain.KindID{"refactor"}},
+		},
+		TemplateLibraries: []domain.TemplateLibrary{
+			func() domain.TemplateLibrary {
+				library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+					ID:                  "global-defaults",
+					Scope:               domain.TemplateLibraryScopeGlobal,
+					Name:                "Global Defaults",
+					Status:              domain.TemplateLibraryStatusApproved,
+					CreatedByActorID:    "importer",
+					CreatedByActorName:  "Importer",
+					CreatedByActorType:  domain.ActorTypeUser,
+					ApprovedByActorID:   "importer",
+					ApprovedByActorName: "Importer",
+					ApprovedByActorType: domain.ActorTypeUser,
+					NodeTemplates: []domain.NodeTemplateInput{{
+						ID:          "task-template",
+						ScopeLevel:  domain.KindAppliesToTask,
+						NodeKindID:  domain.KindID("refactor"),
+						DisplayName: "Refactor Task",
+					}},
+				}, now)
+				if err != nil {
+					t.Fatalf("NewTemplateLibrary(import) error = %v", err)
+				}
+				return library
+			}(),
+		},
+		ProjectBindings: []domain.ProjectTemplateBinding{
+			func() domain.ProjectTemplateBinding {
+				binding, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
+					ProjectID:        "p1",
+					LibraryID:        "global-defaults",
+					BoundByActorID:   "importer",
+					BoundByActorName: "Importer",
+					BoundByActorType: domain.ActorTypeUser,
+				}, now)
+				if err != nil {
+					t.Fatalf("NewProjectTemplateBinding(import) error = %v", err)
+				}
+				return binding
+			}(),
+		},
+		NodeContracts: []domain.NodeContractSnapshot{
+			func() domain.NodeContractSnapshot {
+				snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
+					NodeID:                  "t1",
+					ProjectID:               "p1",
+					SourceLibraryID:         "global-defaults",
+					SourceNodeTemplateID:    "task-template",
+					ResponsibleActorKind:    domain.TemplateActorKindQA,
+					EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+					CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+					RequiredForParentDone:   true,
+				}, now)
+				if err != nil {
+					t.Fatalf("NewNodeContractSnapshot(import) error = %v", err)
+				}
+				return snapshot
+			}(),
 		},
 		Comments: []SnapshotComment{
 			{
@@ -296,6 +411,15 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	allowed := repo.projectAllowedKinds["p1"]
 	if len(allowed) != 1 || allowed[0] != domain.KindID("refactor") {
 		t.Fatalf("expected imported project allowlist for p1, got %#v", allowed)
+	}
+	if _, ok := repo.templateLibraries["global-defaults"]; !ok {
+		t.Fatal("expected imported template library global-defaults")
+	}
+	if binding, ok := repo.projectBindings["p1"]; !ok || binding.LibraryID != "global-defaults" {
+		t.Fatalf("expected imported project binding for p1, got %#v", repo.projectBindings["p1"])
+	}
+	if nodeContract, ok := repo.nodeContracts["t1"]; !ok || nodeContract.SourceLibraryID != "global-defaults" {
+		t.Fatalf("expected imported node contract for t1, got %#v", repo.nodeContracts["t1"])
 	}
 	commentKey := "p1|project|p1"
 	if len(repo.comments[commentKey]) != 1 || repo.comments[commentKey][0].ID != "comment-1" {
@@ -403,6 +527,39 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 	}
 	if err := svc.ImportSnapshot(context.Background(), orphanHandoff); err == nil || !strings.Contains(err.Error(), "unknown source scope") {
 		t.Fatalf("expected orphan handoff validation error, got %v", err)
+	}
+
+	badTemplateRefs := Snapshot{
+		Version: SnapshotVersion,
+		Projects: []SnapshotProject{
+			{ID: "p4", Name: "D", Slug: "d", CreatedAt: now, UpdatedAt: now},
+		},
+		Columns: []SnapshotColumn{
+			{ID: "c4", ProjectID: "p4", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
+		},
+		Tasks: []SnapshotTask{
+			{ID: "t4", ProjectID: "p4", ColumnID: "c4", Position: 0, Title: "Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+		},
+		TemplateLibraries: []domain.TemplateLibrary{
+			{
+				ID:        "broken-library",
+				Scope:     domain.TemplateLibraryScopeGlobal,
+				Name:      "Broken",
+				Status:    domain.TemplateLibraryStatusApproved,
+				CreatedAt: now,
+				UpdatedAt: now,
+				NodeTemplates: []domain.NodeTemplate{{
+					ID:          "broken-template",
+					LibraryID:   "broken-library",
+					ScopeLevel:  domain.KindAppliesToTask,
+					NodeKindID:  domain.KindID("missing-kind"),
+					DisplayName: "Broken Template",
+				}},
+			},
+		},
+	}
+	if err := svc.ImportSnapshot(context.Background(), badTemplateRefs); err == nil || !strings.Contains(err.Error(), "unknown node_kind_id") {
+		t.Fatalf("expected template reference validation error, got %v", err)
 	}
 }
 

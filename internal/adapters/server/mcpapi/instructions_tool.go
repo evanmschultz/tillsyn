@@ -142,6 +142,9 @@ func recommendedInstructionSettings() []string {
 		"Use include_markdown=false for quick inventory checks; enable it when drafting or validating policy text.",
 		"Set max_chars_per_doc to keep responses bounded in long docs such as PLAN.md.",
 		"Treat task/project details and comment summaries/bodies as markdown content in all agent-authored payloads.",
+		"When template libraries are active, keep README examples and operator docs aligned with the actor-kind workflow contracts actually enforced in SQLite.",
+		"When explaining template libraries, prefer concrete child_rules examples such as a build task that auto-generates one or more required QA subtasks owned by qa.",
+		"When proposing policy changes, include concrete suggestions for AGENTS.md, CLAUDE.md, and any relevant SKILL.md files so builder/qa/research/orchestrator expectations stay synchronized.",
 		"Treat recommendations as proposal input and confirm AGENTS.md/CLAUDE.md policy updates with the user before editing.",
 	}
 }
@@ -156,6 +159,7 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Validation policy: exact Mage/test commands and required evidence before handoff.",
 			"Dogfooding policy: reporting format for findings, blockers, and recovery steps.",
 			"Authoring policy: task/project details and comment summaries/bodies must be written as markdown.",
+			"Template policy: which actor kinds may draft, approve, bind, or apply template-library changes, and when human approval is mandatory.",
 		},
 		"CLAUDE.md": {
 			"Interaction contract: communication style, update cadence, and escalation behavior.",
@@ -163,13 +167,24 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Patch policy: file lock discipline, non-destructive defaults, and rollback constraints.",
 			"Verification policy: required checks and how failures are reported.",
 			"Content policy: descriptions and comments should be authored and maintained as markdown.",
+			"Coordination policy: comments and handoffs are shared communication surfaces by default; do not imply private per-role comment silos unless project policy says otherwise.",
+			"Workflow policy: how actor kinds and template-generated blockers should be explained back to the user during execution.",
 		},
 		"README.md": {
 			"Quickstart for till run/serve and MCP endpoint usage.",
 			"Canonical tool index with minimal call examples for high-frequency workflows.",
+			"Canonical template-library examples covering inspect, bind, contract lookup, and JSON transport for CLI/MCP authoring against the SQLite-backed source of truth.",
+			"At least one readable child_rules example that shows multi-role follow-up work and truthful completion gates, such as a build task auto-generating multiple QA subtasks.",
+			"Explicit communication guidance that comments and handoffs are the default human-agent and agent-agent coordination lane inside Tillsyn.",
 			"Dogfooding startup checklist and known operator guardrails.",
 			"Markdown-first guidance for task/project details and comment content.",
 			"Troubleshooting section for common MCP/TUI issues and recovery commands.",
+		},
+		"SKILL.md": {
+			"State which till actor kinds and template-library workflows the skill assumes or modifies.",
+			"Describe when the skill should recommend AGENTS.md or CLAUDE.md updates so human/operator policy stays aligned with runtime behavior.",
+			"Call out the child_rules or blocker model directly when the skill relies on generated QA/research/builder follow-up work.",
+			"Keep examples concrete and readable enough for human operators to audit quickly in TUI/CLI-oriented workflows.",
 		},
 		"MCP_DOGFOODING_WORKSHEET.md": {
 			"Step-by-step validation scenarios covering task, thread, and attention flows.",

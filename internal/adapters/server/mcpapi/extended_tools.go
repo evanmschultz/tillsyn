@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -156,6 +157,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
+			mcp.WithString("template_library_id", mcp.Description("Optional approved global template library id to bind during project creation")),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -165,15 +167,16 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args struct {
-				Name            string                 `json:"name"`
-				Description     string                 `json:"description"`
-				Kind            string                 `json:"kind"`
-				Metadata        domain.ProjectMetadata `json:"metadata"`
-				SessionID       string                 `json:"session_id"`
-				SessionSecret   string                 `json:"session_secret"`
-				AgentInstanceID string                 `json:"agent_instance_id"`
-				LeaseToken      string                 `json:"lease_token"`
-				OverrideToken   string                 `json:"override_token"`
+				Name              string                 `json:"name"`
+				Description       string                 `json:"description"`
+				Kind              string                 `json:"kind"`
+				TemplateLibraryID string                 `json:"template_library_id"`
+				Metadata          domain.ProjectMetadata `json:"metadata"`
+				SessionID         string                 `json:"session_id"`
+				SessionSecret     string                 `json:"session_secret"`
+				AgentInstanceID   string                 `json:"agent_instance_id"`
+				LeaseToken        string                 `json:"lease_token"`
+				OverrideToken     string                 `json:"override_token"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -206,11 +209,12 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
-				Name:        args.Name,
-				Description: args.Description,
-				Kind:        args.Kind,
-				Metadata:    args.Metadata,
-				Actor:       actor,
+				Name:              args.Name,
+				Description:       args.Description,
+				Kind:              args.Kind,
+				TemplateLibraryID: args.TemplateLibraryID,
+				Metadata:          args.Metadata,
+				Actor:             actor,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -1200,6 +1204,219 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			result, err := mcp.NewToolResultJSON(map[string]any{"kind_ids": kindIDs})
 			if err != nil {
 				return nil, fmt.Errorf("encode list_project_allowed_kinds result: %w", err)
+			}
+			return result, nil
+		},
+	)
+}
+
+// registerTemplateLibraryTools registers template-library and node-contract inspection/binding tools.
+func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.TemplateLibraryService) {
+	if templates == nil {
+		return
+	}
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.list_template_libraries",
+			mcp.WithDescription("List template libraries. SQLite remains the source of truth, and JSON is the stable MCP transport format for these library records."),
+			mcp.WithString("scope", mcp.Description("Optional template-library scope filter"), mcp.Enum("global", "project", "draft")),
+			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
+			mcp.WithString("status", mcp.Description("Optional template-library status filter"), mcp.Enum("draft", "approved", "archived")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			rows, err := templates.ListTemplateLibraries(ctx, common.ListTemplateLibrariesRequest{
+				Scope:     domain.TemplateLibraryScope(req.GetString("scope", "")),
+				ProjectID: req.GetString("project_id", ""),
+				Status:    domain.TemplateLibraryStatus(req.GetString("status", "")),
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(map[string]any{"libraries": rows})
+			if err != nil {
+				return nil, fmt.Errorf("encode list_template_libraries result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.get_template_library",
+			mcp.WithDescription("Show one template library by id."),
+			mcp.WithString("library_id", mcp.Required(), mcp.Description("Template library identifier")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			libraryID, err := req.RequireString("library_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			library, err := templates.GetTemplateLibrary(ctx, libraryID)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(library)
+			if err != nil {
+				return nil, fmt.Errorf("encode get_template_library result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.upsert_template_library",
+			mcp.WithDescription("Create or update one template library via JSON transport. SQLite remains canonical, while the TUI is the primary human review and approval surface."),
+			mcp.WithObject("library", mcp.Required(), mcp.Description("Template library object")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args struct {
+				Library       common.UpsertTemplateLibraryRequest `json:"library"`
+				SessionID     string                              `json:"session_id"`
+				SessionSecret string                              `json:"session_secret"`
+			}
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			resourceID := strings.TrimSpace(args.Library.ID)
+			if resourceID == "" {
+				resourceID = "new"
+			}
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(templates),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"upsert_template_library",
+				"tillsyn",
+				"template_library",
+				resourceID,
+				map[string]string{"project_id": strings.TrimSpace(args.Library.ProjectID)},
+			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			ctx = app.WithAuthenticatedCaller(ctx, caller)
+			library, err := templates.UpsertTemplateLibrary(ctx, args.Library)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(library)
+			if err != nil {
+				return nil, fmt.Errorf("encode upsert_template_library result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.bind_project_template_library",
+			mcp.WithDescription("Bind one project to one approved template library."),
+			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+			mcp.WithString("library_id", mcp.Required(), mcp.Description("Template library identifier")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args struct {
+				ProjectID     string `json:"project_id"`
+				LibraryID     string `json:"library_id"`
+				SessionID     string `json:"session_id"`
+				SessionSecret string `json:"session_secret"`
+			}
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			projectID := strings.TrimSpace(args.ProjectID)
+			if projectID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+			}
+			libraryID := strings.TrimSpace(args.LibraryID)
+			if libraryID == "" {
+				return mcp.NewToolResultError(`invalid_request: required argument "library_id" not found`), nil
+			}
+			caller, err := authorizeMCPMutation(
+				ctx,
+				pickMutationAuthorizer(templates),
+				mcpSessionAuthArgs{
+					SessionID:     args.SessionID,
+					SessionSecret: args.SessionSecret,
+				},
+				"bind_project_template_library",
+				"tillsyn",
+				"project",
+				projectID,
+				map[string]string{
+					"project_id": projectID,
+					"library_id": libraryID,
+				},
+			)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			ctx = app.WithAuthenticatedCaller(ctx, caller)
+			binding, err := templates.BindProjectTemplateLibrary(ctx, common.BindProjectTemplateLibraryRequest{
+				ProjectID: projectID,
+				LibraryID: libraryID,
+			})
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(binding)
+			if err != nil {
+				return nil, fmt.Errorf("encode bind_project_template_library result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.get_project_template_binding",
+			mcp.WithDescription("Show the active template-library binding for one project."),
+			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			projectID, err := req.RequireString("project_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			binding, err := templates.GetProjectTemplateBinding(ctx, projectID)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(binding)
+			if err != nil {
+				return nil, fmt.Errorf("encode get_project_template_binding result: %w", err)
+			}
+			return result, nil
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.get_node_contract_snapshot",
+			mcp.WithDescription("Show one generated-node contract snapshot used for truthful completion and actor-kind enforcement."),
+			mcp.WithString("node_id", mcp.Required(), mcp.Description("Generated node identifier")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			nodeID, err := req.RequireString("node_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			snapshot, err := templates.GetNodeContractSnapshot(ctx, nodeID)
+			if err != nil {
+				return toolResultFromError(err), nil
+			}
+			result, err := mcp.NewToolResultJSON(snapshot)
+			if err != nil {
+				return nil, fmt.Errorf("encode get_node_contract_snapshot result: %w", err)
 			}
 			return result, nil
 		},

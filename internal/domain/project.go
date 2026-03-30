@@ -22,21 +22,21 @@ type Project struct {
 
 // ProjectCapabilityPolicy stores project-level capability and override policy values.
 type ProjectCapabilityPolicy struct {
-	AllowOrchestratorOverride bool
-	OrchestratorOverrideToken string
-	AllowEqualScopeDelegation bool
+	AllowOrchestratorOverride bool   `json:"allow_orchestrator_override"`
+	OrchestratorOverrideToken string `json:"orchestrator_override_token"`
+	AllowEqualScopeDelegation bool   `json:"allow_equal_scope_delegation"`
 }
 
 // ProjectMetadata represents project metadata data used by this package.
 type ProjectMetadata struct {
-	Owner             string
-	Icon              string
-	Color             string
-	Homepage          string
-	Tags              []string
-	StandardsMarkdown string
-	KindPayload       json.RawMessage
-	CapabilityPolicy  ProjectCapabilityPolicy
+	Owner             string                  `json:"owner"`
+	Icon              string                  `json:"icon"`
+	Color             string                  `json:"color"`
+	Homepage          string                  `json:"homepage"`
+	Tags              []string                `json:"tags"`
+	StandardsMarkdown string                  `json:"standards_markdown"`
+	KindPayload       json.RawMessage         `json:"kind_payload,omitempty"`
+	CapabilityPolicy  ProjectCapabilityPolicy `json:"capability_policy"`
 }
 
 // NewProject constructs a new value for this package.

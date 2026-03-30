@@ -47,6 +47,23 @@ func newCommonLifecycleFixture(t *testing.T) commonLifecycleFixture {
 	}
 }
 
+// containsStep reports whether one guidance step contains every required fragment.
+func containsStep(steps []string, fragments ...string) bool {
+	for _, step := range steps {
+		matches := true
+		for _, fragment := range fragments {
+			if !strings.Contains(step, fragment) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
 // TestAppServiceAdapterProjectTaskCommentLifecycle verifies common adapter wrappers over project/task/comment flows.
 func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	t.Parallel()
@@ -220,23 +237,23 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if guide.Summary == "" || !strings.Contains(guide.Summary, "approved session") || !strings.Contains(guide.Summary, "auth request") {
 		t.Fatalf("GetBootstrapGuide() summary = %q, want auth-aware bootstrap guidance", guide.Summary)
 	}
-	if len(guide.NextSteps) != 4 {
-		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want 4 operational steps", guide.NextSteps)
+	if len(guide.NextSteps) < 4 {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want at least 4 operational steps", guide.NextSteps)
 	}
-	if got := guide.NextSteps[0]; !strings.Contains(got, "approved") || !strings.Contains(got, "create a project") {
-		t.Fatalf("GetBootstrapGuide() next_steps[0] = %q, want approved-session project guidance", got)
+	if !containsStep(guide.NextSteps, "approved", "create a project") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want approved-session project guidance", guide.NextSteps)
 	}
-	if got := guide.NextSteps[1]; !strings.Contains(got, "till.create_auth_request") {
-		t.Fatalf("GetBootstrapGuide() next_steps[1] = %q, want auth-request guidance", got)
+	if !containsStep(guide.NextSteps, "till.create_auth_request", "resume_token", "continuation_json") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want auth-request continuation guidance", guide.NextSteps)
 	}
-	if got := guide.NextSteps[1]; !strings.Contains(got, "resume_token") || !strings.Contains(got, "continuation_json") {
-		t.Fatalf("GetBootstrapGuide() next_steps[1] = %q, want continuation_json + resume_token guidance", got)
+	if !containsStep(guide.NextSteps, "till.claim_auth_request", "till.create_project") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want claim -> create_project guidance", guide.NextSteps)
 	}
-	if got := guide.NextSteps[2]; !strings.Contains(got, "till.claim_auth_request") || !strings.Contains(got, "till.create_project") || !strings.Contains(got, "till.create_task") {
-		t.Fatalf("GetBootstrapGuide() next_steps[2] = %q, want claim -> create_project -> create_task guidance", got)
+	if !containsStep(guide.NextSteps, "till.list_template_libraries", "till.bind_project_template_library") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want template-library binding guidance", guide.NextSteps)
 	}
-	if got := guide.NextSteps[3]; !strings.Contains(got, "till.capture_state") {
-		t.Fatalf("GetBootstrapGuide() next_steps[3] = %q, want capture-state guidance", got)
+	if !containsStep(guide.NextSteps, "till.capture_state") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want capture-state guidance", guide.NextSteps)
 	}
 	for _, tool := range []string{
 		"till.create_auth_request",

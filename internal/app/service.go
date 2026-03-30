@@ -220,13 +220,14 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 
 // CreateProjectInput holds input values for create project operations.
 type CreateProjectInput struct {
-	Name          string
-	Description   string
-	Kind          domain.KindID
-	Metadata      domain.ProjectMetadata
-	UpdatedBy     string
-	UpdatedByName string
-	UpdatedType   domain.ActorType
+	Name              string
+	Description       string
+	Kind              domain.KindID
+	TemplateLibraryID string
+	Metadata          domain.ProjectMetadata
+	UpdatedBy         string
+	UpdatedByName     string
+	UpdatedType       domain.ActorType
 }
 
 // CreateProject creates project.
@@ -259,7 +260,17 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err != nil {
 		return domain.Project{}, err
 	}
-	mergedMetadata, err := domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
+	templateLibrary, projectTemplate, foundProjectTemplate, err := s.resolveProjectCreateTemplateLibrary(ctx, in.TemplateLibraryID, project.Kind)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	var mergedMetadata domain.ProjectMetadata
+	switch {
+	case foundProjectTemplate:
+		mergedMetadata, err = mergeProjectMetadataWithNodeTemplate(in.Metadata, projectTemplate)
+	default:
+		mergedMetadata, err = domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
+	}
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -272,8 +283,15 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.validateKindPayload(kindDef, project.Metadata.KindPayload); err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToTask, 1); err != nil {
-		return domain.Project{}, err
+	switch {
+	case foundProjectTemplate:
+		if err := s.validateTemplateChildRulesWithLibrary(ctx, project.ID, templateLibrary, projectTemplate.ChildRules, nil, 1); err != nil {
+			return domain.Project{}, err
+		}
+	default:
+		if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToTask, 1); err != nil {
+			return domain.Project{}, err
+		}
 	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
@@ -281,13 +299,31 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.initializeProjectAllowedKinds(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
+	if strings.TrimSpace(templateLibrary.ID) != "" {
+		if _, err := s.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+			ProjectID:        project.ID,
+			LibraryID:        templateLibrary.ID,
+			BoundByActorID:   firstNonEmptyTrimmed(in.UpdatedBy, resolvedActor.ActorID),
+			BoundByActorName: firstNonEmptyTrimmed(in.UpdatedByName, resolvedActor.ActorName, in.UpdatedBy, resolvedActor.ActorID),
+			BoundByActorType: normalizeActorTypeInput(firstActorType(in.UpdatedType, resolvedActor.ActorType)),
+		}); err != nil {
+			return domain.Project{}, err
+		}
+	}
 	if s.autoProjectCols {
 		if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
 			return domain.Project{}, err
 		}
 	}
-	if err := s.applyProjectKindTemplateSystemActions(ctx, project, kindDef, 1); err != nil {
-		return domain.Project{}, err
+	switch {
+	case foundProjectTemplate:
+		if err := s.applyProjectTemplateChildRules(ctx, project, templateLibrary, projectTemplate, 1); err != nil {
+			return domain.Project{}, err
+		}
+	default:
+		if err := s.applyProjectKindTemplateSystemActions(ctx, project, kindDef, 1); err != nil {
+			return domain.Project{}, err
+		}
 	}
 	if _, err := s.enqueueProjectDocumentEmbedding(ctx, project, false, "project_created"); err != nil {
 		return domain.Project{}, err
@@ -556,6 +592,11 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 		if err := s.enforceMutationGuardAcrossScopes(ctx, in.ProjectID, actorType, guardScopes, domain.CapabilityActionCreateChild); err != nil {
 			return domain.Task{}, err
 		}
+		if parent != nil {
+			if err := s.ensureTaskEditableByNodeContract(ctx, *parent); err != nil {
+				return domain.Task{}, err
+			}
+		}
 	}
 
 	scope := normalizeTaskScopeForKind(domain.KindID(in.Kind), in.Scope, parent)
@@ -563,18 +604,39 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 	if err != nil {
 		return domain.Task{}, err
 	}
-	mergedMetadata, err := mergeTaskMetadataWithKindTemplate(in.Metadata, kindDef)
+	boundLibrary, nodeTemplate, foundNodeTemplate, err := s.resolveBoundNodeTemplate(ctx, in.ProjectID, scope, kindDef.ID)
 	if err != nil {
 		return domain.Task{}, err
+	}
+	var mergedMetadata domain.TaskMetadata
+	switch {
+	case foundNodeTemplate:
+		mergedMetadata, err = mergeTaskMetadataWithNodeTemplate(in.Metadata, nodeTemplate)
+		if err != nil {
+			return domain.Task{}, err
+		}
+	default:
+		mergedMetadata, err = mergeTaskMetadataWithKindTemplate(in.Metadata, kindDef)
+		if err != nil {
+			return domain.Task{}, err
+		}
 	}
 	if err := s.validateKindPayload(kindDef, mergedMetadata.KindPayload); err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.validateKindTemplateExpansion(ctx, in.ProjectID, kindDef, &domain.Task{
+	templateParent := &domain.Task{
 		ProjectID: in.ProjectID,
 		Scope:     scope,
-	}, domain.KindAppliesToSubtask, depth); err != nil {
-		return domain.Task{}, err
+	}
+	switch {
+	case foundNodeTemplate:
+		if err := s.validateTemplateChildRules(ctx, in.ProjectID, nodeTemplate.ChildRules, templateParent, depth); err != nil {
+			return domain.Task{}, err
+		}
+	default:
+		if err := s.validateKindTemplateExpansion(ctx, in.ProjectID, kindDef, templateParent, domain.KindAppliesToSubtask, depth); err != nil {
+			return domain.Task{}, err
+		}
 	}
 	tasks, err := s.repo.ListTasks(ctx, in.ProjectID, false)
 	if err != nil {
@@ -626,8 +688,15 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_created"); err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
-		return domain.Task{}, err
+	switch {
+	case foundNodeTemplate:
+		if err := s.applyTemplateChildRules(ctx, task, boundLibrary, nodeTemplate, depth+1); err != nil {
+			return domain.Task{}, err
+		}
+	default:
+		if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
+			return domain.Task{}, err
+		}
 	}
 	return task, nil
 }
@@ -661,7 +730,7 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	case fromState == domain.StateTodo && toState == domain.StateProgress:
 		moveAction = domain.CapabilityActionMarkInProgress
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, moveAction); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, moveAction); err != nil {
 		return domain.Task{}, err
 	}
 	if fromState == domain.StateTodo && toState == domain.StateProgress {
@@ -670,30 +739,21 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 		}
 	}
 	if toState == domain.StateDone {
-		projectTasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)
+		if err := s.ensureTaskCompletableByNodeContract(ctx, task); err != nil {
+			return domain.Task{}, err
+		}
+		projectTasks, listErr := s.ListTasks(ctx, task.ProjectID, true)
 		if listErr != nil {
 			return domain.Task{}, listErr
 		}
-		children := make([]domain.Task, 0)
-		for _, candidate := range projectTasks {
-			if candidate.ParentID == task.ID {
-				children = append(children, candidate)
-			}
-		}
-		for _, child := range children {
-			if child.ArchivedAt != nil {
-				continue
-			}
-			if child.LifecycleState != domain.StateDone {
-				return domain.Task{}, fmt.Errorf("%w: completion criteria unmet (subtasks must be done before moving to done)", domain.ErrTransitionBlocked)
-			}
-		}
-		if unmet := task.CompletionCriteriaUnmet(children); len(unmet) > 0 {
-			return domain.Task{}, fmt.Errorf("%w: completion criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
+		if blockErr := s.ensureTaskCompletionBlockersClear(ctx, task, projectTasks); blockErr != nil {
+			return domain.Task{}, blockErr
 		}
 		if blockErr := s.ensureTaskCompletionAttentionClear(ctx, task); blockErr != nil {
 			return domain.Task{}, blockErr
 		}
+	} else if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
+		return domain.Task{}, err
 	}
 	if err := task.Move(toColumnID, position, s.clock()); err != nil {
 		return domain.Task{}, err
@@ -722,11 +782,11 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 		return domain.Task{}, err
 	}
 	// Guard enforcement must follow the caller's request actor, not historical task attribution.
-	guardActorType := domain.ActorTypeUser
-	if actor, ok := MutationActorFromContext(ctx); ok {
-		guardActorType = normalizeActorTypeInput(actor.ActorType)
-	}
+	guardActorType := currentMutationActorType(ctx, "")
 	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, guardActorType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
 	task.Restore(s.clock())
@@ -761,7 +821,10 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, domain.CapabilityActionEditNode); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionEditNode); err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
 	if err := task.UpdateDetails(title, task.Description, task.Priority, task.DueAt, task.Labels, s.clock()); err != nil {
@@ -791,18 +854,15 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 		return domain.Task{}, err
 	}
 	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
-	actorType := in.UpdatedType
-	if actorType == "" {
-		actorType = task.UpdatedByType
-		if actorType == "" {
-			actorType = domain.ActorTypeUser
-		}
-	}
+	actorType := currentMutationActorType(ctx, in.UpdatedType)
 	guardScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
 	if err != nil {
 		return domain.Task{}, err
 	}
 	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, actorType, guardScopes, domain.CapabilityActionEditNode); err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
 	if hasResolvedActor && strings.TrimSpace(resolvedActor.ActorID) != "" {
@@ -870,7 +930,10 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if guardErr != nil {
 			return guardErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+			return err
+		}
+		if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
 			return err
 		}
 		task.Archive(s.clock())
@@ -885,7 +948,10 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if guardErr != nil {
 			return guardErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+			return err
+		}
+		if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
 			return err
 		}
 		if err := s.repo.DeleteTask(ctx, taskID); err != nil {
@@ -1120,7 +1186,10 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, taskScopes, domain.CapabilityActionEditNode); err != nil {
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), taskScopes, domain.CapabilityActionEditNode); err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
 	parentID = strings.TrimSpace(parentID)
@@ -1138,7 +1207,10 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 		if scopeErr != nil {
 			return domain.Task{}, scopeErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, parentScopes, domain.CapabilityActionEditNode); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), parentScopes, domain.CapabilityActionEditNode); err != nil {
+			return domain.Task{}, err
+		}
+		if err := s.ensureTaskEditableByNodeContract(ctx, parentTask); err != nil {
 			return domain.Task{}, err
 		}
 		tasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)

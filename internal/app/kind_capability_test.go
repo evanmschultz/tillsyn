@@ -833,6 +833,17 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("IssueCapabilityLease(equal scope allowed) error = %v", err)
 	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:        project.ID,
+		ScopeType:        domain.CapabilityScopeTask,
+		ScopeID:          task.ID,
+		Role:             domain.CapabilityRoleResearch,
+		AgentName:        "research-child",
+		AgentInstanceID:  "research-child",
+		ParentInstanceID: parent.InstanceID,
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(research child) error = %v", err)
+	}
 
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:        project.ID,
@@ -879,7 +890,7 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	}
 }
 
-// TestQALeaseActionPolicy verifies qa leases may comment but cannot perform builder-style node edits.
+// TestQALeaseActionPolicy verifies qa leases may comment and edit scoped nodes before template contracts narrow them.
 func TestQALeaseActionPolicy(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 11, 0, 0, 0, time.UTC)
@@ -933,13 +944,13 @@ func TestQALeaseActionPolicy(t *testing.T) {
 	}
 	if _, err := svc.UpdateTask(qaCtx, UpdateTaskInput{
 		TaskID:      task.ID,
-		Title:       "Task A",
+		Title:       "Task A QA",
 		Description: "qa-edited",
 		Priority:    domain.PriorityMedium,
 		UpdatedBy:   "qa-1",
 		UpdatedType: domain.ActorTypeAgent,
-	}); !errors.Is(err, domain.ErrInvalidCapabilityAction) {
-		t.Fatalf("UpdateTask(qa) error = %v, want ErrInvalidCapabilityAction", err)
+	}); err != nil {
+		t.Fatalf("UpdateTask(qa) error = %v", err)
 	}
 }
 

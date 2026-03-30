@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"os"
@@ -31,16 +32,20 @@ import (
 // Service represents service data used by this package.
 type Service interface {
 	ListProjects(context.Context, bool) ([]domain.Project, error)
+	ListKindDefinitions(context.Context, bool) ([]domain.KindDefinition, error)
 	ListColumns(context.Context, string, bool) ([]domain.Column, error)
 	ListTasks(context.Context, string, bool) ([]domain.Task, error)
 	CreateComment(context.Context, app.CreateCommentInput) (domain.Comment, error)
 	ListCommentsByTarget(context.Context, app.ListCommentsByTargetInput) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
+	ListTemplateLibraries(context.Context, app.ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ListAuthSessions(context.Context, app.AuthSessionFilter) ([]app.AuthSession, error)
 	ListCapabilityLeases(context.Context, app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error)
 	ListHandoffs(context.Context, app.ListHandoffsInput) ([]domain.Handoff, error)
+	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
@@ -55,6 +60,8 @@ type Service interface {
 	SearchTasks(context.Context, app.SearchTasksFilter) (app.SearchTaskMatchesResult, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
 	UpdateProject(context.Context, app.UpdateProjectInput) (domain.Project, error)
+	BindProjectTemplateLibrary(context.Context, app.BindProjectTemplateLibraryInput) (domain.ProjectTemplateBinding, error)
+	UnbindProjectTemplateLibrary(context.Context, app.UnbindProjectTemplateLibraryInput) error
 	ArchiveProject(context.Context, string) (domain.Project, error)
 	RestoreProject(context.Context, string) (domain.Project, error)
 	DeleteProject(context.Context, string) error
@@ -116,6 +123,8 @@ const (
 	modeActivityEventInfo
 	modeResourcePicker
 	modeLabelPicker
+	modeProjectKindPicker
+	modeTemplateLibraryPicker
 	modePathsRoots
 	modeLabelsConfig
 	modeHighlightColor
@@ -199,11 +208,13 @@ const (
 const (
 	projectFieldName = iota
 	projectFieldDescription
+	projectFieldKind
 	projectFieldOwner
 	projectFieldIcon
 	projectFieldColor
 	projectFieldHomepage
 	projectFieldTags
+	projectFieldTemplateLibrary
 	projectFieldRootPath
 )
 
@@ -343,6 +354,19 @@ type resourcePickerEntry struct {
 type labelPickerItem struct {
 	Label  string
 	Source string
+}
+
+// templateLibraryPickerItem describes one approved template-library selection row.
+type templateLibraryPickerItem struct {
+	LibraryID string
+	Name      string
+	Clear     bool
+}
+
+// projectKindPickerItem describes one project-kind selection row.
+type projectKindPickerItem struct {
+	KindID      domain.KindID
+	DisplayName string
 }
 
 // labelInheritanceSources groups inherited labels by source precedence.
@@ -739,6 +763,10 @@ type Model struct {
 	projectFormInputs              []textinput.Model
 	projectFormFocus               int
 	projectFormDescription         string
+	kindDefinitions                []domain.KindDefinition
+	templateLibraries              []domain.TemplateLibrary
+	currentProjectTemplateBinding  *domain.ProjectTemplateBinding
+	taskNodeContracts              map[string]domain.NodeContractSnapshot
 	descriptionEditorBack          inputMode
 	descriptionEditorTarget        descriptionEditorTarget
 	descriptionEditorTaskFormField int
@@ -832,11 +860,19 @@ type Model struct {
 	resourcePickerItems  []resourcePickerEntry
 	resourcePickerFilter textinput.Model
 
-	labelPickerBack     inputMode
-	labelPickerIndex    int
-	labelPickerItems    []labelPickerItem
-	labelPickerAllItems []labelPickerItem
-	labelPickerInput    textinput.Model
+	labelPickerBack            inputMode
+	labelPickerIndex           int
+	labelPickerItems           []labelPickerItem
+	labelPickerAllItems        []labelPickerItem
+	labelPickerInput           textinput.Model
+	projectKindPickerBack      inputMode
+	projectKindPickerIndex     int
+	projectKindPickerItems     []projectKindPickerItem
+	projectKindPickerInput     textinput.Model
+	templateLibraryPickerBack  inputMode
+	templateLibraryPickerIndex int
+	templateLibraryPickerItems []templateLibraryPickerItem
+	templateLibraryPickerInput textinput.Model
 
 	dependencyBack        inputMode
 	dependencyOwnerTaskID string
@@ -889,6 +925,10 @@ type loadedMsg struct {
 	selectedProject           int
 	columns                   []domain.Column
 	tasks                     []domain.Task
+	kindDefinitions           []domain.KindDefinition
+	templateLibraries         []domain.TemplateLibrary
+	projectTemplateBinding    *domain.ProjectTemplateBinding
+	taskNodeContracts         map[string]domain.NodeContractSnapshot
 	searchRequestedMode       app.SearchMode
 	searchEffectiveMode       app.SearchMode
 	searchFallbackReason      string
@@ -1152,6 +1192,16 @@ func NewModel(svc Service, opts ...Option) Model {
 	labelPickerInput.Placeholder = "type to fuzzy-find labels"
 	labelPickerInput.CharLimit = 120
 	configureTextInputClipboardBindings(&labelPickerInput)
+	projectKindPickerInput := textinput.New()
+	projectKindPickerInput.Prompt = "filter: "
+	projectKindPickerInput.Placeholder = "type to fuzzy-find project kinds"
+	projectKindPickerInput.CharLimit = 120
+	configureTextInputClipboardBindings(&projectKindPickerInput)
+	templateLibraryPickerInput := textinput.New()
+	templateLibraryPickerInput.Prompt = "filter: "
+	templateLibraryPickerInput.Placeholder = "type to fuzzy-find approved template libraries"
+	templateLibraryPickerInput.CharLimit = 120
+	configureTextInputClipboardBindings(&templateLibraryPickerInput)
 	embeddingsSpinner := spinner.New(
 		spinner.WithSpinner(spinner.Dot),
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)),
@@ -1184,6 +1234,8 @@ func NewModel(svc Service, opts ...Option) Model {
 		duePickerDateInput:             duePickerDateInput,
 		duePickerTimeInput:             duePickerTimeInput,
 		labelPickerInput:               labelPickerInput,
+		projectKindPickerInput:         projectKindPickerInput,
+		templateLibraryPickerInput:     templateLibraryPickerInput,
 		embeddingsSpinner:              embeddingsSpinner,
 		searchMode:                     app.SearchModeHybrid,
 		searchStates:                   []string{"todo", "progress", "done"},
@@ -1284,6 +1336,22 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	m.selectedProject = msg.selectedProject
 	m.columns = msg.columns
 	m.tasks = msg.tasks
+	m.kindDefinitions = append([]domain.KindDefinition(nil), msg.kindDefinitions...)
+	m.templateLibraries = append([]domain.TemplateLibrary(nil), msg.templateLibraries...)
+	if msg.projectTemplateBinding != nil {
+		binding := *msg.projectTemplateBinding
+		m.currentProjectTemplateBinding = &binding
+	} else {
+		m.currentProjectTemplateBinding = nil
+	}
+	if msg.taskNodeContracts != nil {
+		m.taskNodeContracts = make(map[string]domain.NodeContractSnapshot, len(msg.taskNodeContracts))
+		for taskID, snapshot := range msg.taskNodeContracts {
+			m.taskNodeContracts[taskID] = snapshot
+		}
+	} else {
+		m.taskNodeContracts = map[string]domain.NodeContractSnapshot{}
+	}
 	m.searchRequestedMode = msg.searchRequestedMode
 	m.searchEffectiveMode = msg.searchEffectiveMode
 	m.searchFallbackReason = msg.searchFallbackReason
@@ -1309,6 +1377,8 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.projectPickerIndex = 0
 		m.columns = nil
 		m.tasks = nil
+		m.currentProjectTemplateBinding = nil
+		m.taskNodeContracts = map[string]domain.NodeContractSnapshot{}
 		m.activityLog = []activityEntry{}
 		m.attentionItems = []domain.AttentionItem{}
 		m.noticesCoordination = noticesCoordinationSummary{}
@@ -2325,9 +2395,27 @@ func (m Model) loadData() tea.Msg {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", 0, "column_count", 0, "task_count", 0)
 		return loadedMsg{err: err}
 	}
+	kindDefinitions, err := m.svc.ListKindDefinitions(context.Background(), false)
+	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
+		return loadedMsg{err: err}
+	}
+	templateLibraries, err := m.svc.ListTemplateLibraries(context.Background(), app.ListTemplateLibrariesInput{
+		Scope:  domain.TemplateLibraryScopeGlobal,
+		Status: domain.TemplateLibraryStatusApproved,
+	})
+	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
+		return loadedMsg{err: err}
+	}
 	if len(projects) == 0 {
 		m.traceLoadDataStage("total", totalStartedAt, nil, "project_count", 0, "column_count", 0, "task_count", 0)
-		return loadedMsg{projects: projects}
+		return loadedMsg{
+			projects:          projects,
+			kindDefinitions:   kindDefinitions,
+			templateLibraries: templateLibraries,
+			taskNodeContracts: map[string]domain.NodeContractSnapshot{},
+		}
 	}
 
 	projectIdx := clamp(m.selectedProject, 0, len(projects)-1)
@@ -2340,6 +2428,17 @@ func (m Model) loadData() tea.Msg {
 		}
 	}
 	projectID := projects[projectIdx].ID
+	var projectTemplateBinding *domain.ProjectTemplateBinding
+	binding, err := m.svc.GetProjectTemplateBinding(context.Background(), projectID)
+	switch {
+	case err == nil:
+		projectTemplateBinding = &binding
+	case errors.Is(err, app.ErrNotFound):
+		projectTemplateBinding = nil
+	default:
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
+		return loadedMsg{err: err}
+	}
 	columnsStartedAt := time.Now()
 	columns, err := m.svc.ListColumns(context.Background(), projectID, false)
 	m.traceLoadDataStage("columns", columnsStartedAt, err, "project_id", projectID, "count", len(columns))
@@ -2398,6 +2497,19 @@ func (m Model) loadData() tea.Msg {
 	if err != nil {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 		return loadedMsg{err: err}
+	}
+	taskNodeContracts := make(map[string]domain.NodeContractSnapshot, len(tasks))
+	for _, task := range tasks {
+		snapshot, snapshotErr := m.svc.GetNodeContractSnapshot(context.Background(), task.ID)
+		switch {
+		case snapshotErr == nil:
+			taskNodeContracts[task.ID] = snapshot
+		case errors.Is(snapshotErr, app.ErrNotFound):
+			continue
+		default:
+			m.traceLoadDataStage("total", totalStartedAt, snapshotErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
+			return loadedMsg{err: snapshotErr}
+		}
 	}
 	rollupStartedAt := time.Now()
 	rollup, err := m.svc.GetProjectDependencyRollup(context.Background(), projectID)
@@ -2572,6 +2684,10 @@ func (m Model) loadData() tea.Msg {
 		selectedProject:           projectIdx,
 		columns:                   columns,
 		tasks:                     tasks,
+		kindDefinitions:           kindDefinitions,
+		templateLibraries:         templateLibraries,
+		projectTemplateBinding:    projectTemplateBinding,
+		taskNodeContracts:         taskNodeContracts,
 		searchRequestedMode:       searchRequestedMode,
 		searchEffectiveMode:       searchEffectiveMode,
 		searchFallbackReason:      searchFallbackReason,
@@ -4606,11 +4722,13 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	m.projectFormInputs = []textinput.Model{
 		newModalInput("", "project name", "", 120),
 		newModalInput("", "enter opens markdown description editor", "", 240),
+		newModalInput("", "enter opens project-kind picker", "", 120),
 		newModalInput("", "owner/team", "", 120),
 		newModalInput("", "icon / emoji", "", 64),
 		newModalInput("", "accent color (e.g. 62)", "", 32),
 		newModalInput("", "https://...", "", 200),
 		newModalInput("", "csv tags", "", 200),
+		newModalInput("", "enter opens approved template-library picker", "", 160),
 		newModalInput("", "project root path (optional)", "", 512),
 	}
 	m.editingProjectID = ""
@@ -4621,6 +4739,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		m.editingProjectID = project.ID
 		m.projectFormInputs[projectFieldName].SetValue(project.Name)
 		m.projectFormDescription = project.Description
+		m.projectFormInputs[projectFieldKind].SetValue(string(project.Kind))
 		m.projectFormInputs[projectFieldOwner].SetValue(firstNonEmptyTrimmed(project.Metadata.Owner, m.identityDisplayName))
 		m.projectFormInputs[projectFieldIcon].SetValue(project.Metadata.Icon)
 		m.projectFormInputs[projectFieldColor].SetValue(project.Metadata.Color)
@@ -4631,9 +4750,13 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		if slug := strings.TrimSpace(strings.ToLower(project.Slug)); slug != "" {
 			m.projectFormInputs[projectFieldRootPath].SetValue(strings.TrimSpace(m.projectRoots[slug]))
 		}
+		if binding, ok := m.activeProjectTemplateBinding(project.ID); ok {
+			m.projectFormInputs[projectFieldTemplateLibrary].SetValue(binding.LibraryID)
+		}
 	} else {
 		m.mode = modeAddProject
 		m.status = "new project"
+		m.projectFormInputs[projectFieldKind].SetValue(string(domain.DefaultProjectKind))
 		m.projectFormInputs[projectFieldOwner].SetValue(strings.TrimSpace(m.identityDisplayName))
 	}
 	m.syncProjectFormDescriptionDisplay()
@@ -4928,7 +5051,7 @@ func isTaskFormDirectTextInputField(field int) bool {
 
 // isProjectFormDirectTextInputField reports whether the focused project-form field should consume printable text directly.
 func isProjectFormDirectTextInputField(field int) bool {
-	return field != projectFieldDescription
+	return field != projectFieldDescription && field != projectFieldKind && field != projectFieldTemplateLibrary
 }
 
 // taskFormFocusPosition resolves one form-focus field position within the current visual order.
@@ -5108,6 +5231,9 @@ func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	m.projectFormFocus = idx
 	for i := range m.projectFormInputs {
 		m.projectFormInputs[i].Blur()
+	}
+	if idx == projectFieldDescription || idx == projectFieldKind || idx == projectFieldTemplateLibrary {
+		return nil
 	}
 	return m.projectFormInputs[idx].Focus()
 }
@@ -5649,7 +5775,7 @@ func (m Model) allowedLabelsForSelectedProject() []string {
 }
 
 // projectFormFields stores a package-level helper value.
-var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path"}
+var projectFormFields = []string{"name", "description", "kind", "owner", "icon", "color", "homepage", "tags", "template_library_id", "root_path"}
 
 // projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
@@ -5662,6 +5788,396 @@ func (m Model) projectFormValues() map[string]string {
 	}
 	out["description"] = sanitizeFormFieldValue(m.projectFormDescription)
 	return out
+}
+
+// projectKindDisplayLabel returns one stable id/name label for project-kind rows.
+func (m Model) projectKindDisplayLabel(kindID domain.KindID, displayName string) string {
+	kindID = domain.NormalizeKindID(kindID)
+	displayName = strings.TrimSpace(displayName)
+	if kindID == "" {
+		return string(domain.DefaultProjectKind)
+	}
+	if displayName == "" || strings.EqualFold(displayName, string(kindID)) {
+		return string(kindID)
+	}
+	return fmt.Sprintf("%s — %s", kindID, displayName)
+}
+
+// projectKindName returns the currently loaded kind display name for one id when available.
+func (m Model) projectKindName(kindID domain.KindID) string {
+	kindID = domain.NormalizeKindID(kindID)
+	if kindID == "" {
+		return ""
+	}
+	for _, kind := range m.kindDefinitions {
+		if domain.NormalizeKindID(kind.ID) != kindID {
+			continue
+		}
+		return strings.TrimSpace(kind.DisplayName)
+	}
+	return ""
+}
+
+// projectKindPickerOptions returns project-applicable kinds sorted for picker rendering.
+func (m Model) projectKindPickerOptions() []projectKindPickerItem {
+	items := make([]projectKindPickerItem, 0, len(m.kindDefinitions))
+	for _, kind := range m.kindDefinitions {
+		if kind.ArchivedAt != nil {
+			continue
+		}
+		if !kind.AppliesToScope(domain.KindAppliesToProject) {
+			continue
+		}
+		items = append(items, projectKindPickerItem{
+			KindID:      domain.NormalizeKindID(kind.ID),
+			DisplayName: strings.TrimSpace(kind.DisplayName),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := m.projectKindDisplayLabel(items[i].KindID, items[i].DisplayName)
+		right := m.projectKindDisplayLabel(items[j].KindID, items[j].DisplayName)
+		return left < right
+	})
+	return items
+}
+
+// projectKindSummaryRows returns readable project-kind rows for project-form rendering.
+func (m Model) projectKindSummaryRows(limit int) []string {
+	options := m.projectKindPickerOptions()
+	if limit <= 0 {
+		limit = len(options)
+	}
+	rows := make([]string, 0, min(limit, len(options)))
+	for _, item := range options {
+		rows = append(rows, m.projectKindDisplayLabel(item.KindID, item.DisplayName))
+		if len(rows) >= limit {
+			break
+		}
+	}
+	return rows
+}
+
+// hasProjectKindDefinition reports whether the given kind id is currently selectable in the project form.
+func (m Model) hasProjectKindDefinition(kindID domain.KindID) bool {
+	kindID = domain.NormalizeKindID(kindID)
+	if kindID == "" {
+		return false
+	}
+	for _, item := range m.projectKindPickerOptions() {
+		if item.KindID == kindID {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshProjectKindPickerMatches refreshes fuzzy-filtered project-kind picker rows.
+func (m *Model) refreshProjectKindPickerMatches() {
+	if m == nil {
+		return
+	}
+	allItems := m.projectKindPickerOptions()
+	query := strings.TrimSpace(m.projectKindPickerInput.Value())
+	if query == "" {
+		m.projectKindPickerItems = allItems
+		m.projectKindPickerIndex = clamp(m.projectKindPickerIndex, 0, len(m.projectKindPickerItems)-1)
+		return
+	}
+	type scoredProjectKind struct {
+		item  projectKindPickerItem
+		score int
+	}
+	scored := make([]scoredProjectKind, 0, len(allItems))
+	for _, item := range allItems {
+		score, ok := bestFuzzyScore(query, string(item.KindID), item.DisplayName, m.projectKindDisplayLabel(item.KindID, item.DisplayName))
+		if !ok {
+			continue
+		}
+		scored = append(scored, scoredProjectKind{
+			item:  item,
+			score: score,
+		})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		left := m.projectKindDisplayLabel(scored[i].item.KindID, scored[i].item.DisplayName)
+		right := m.projectKindDisplayLabel(scored[j].item.KindID, scored[j].item.DisplayName)
+		return left < right
+	})
+	m.projectKindPickerItems = make([]projectKindPickerItem, 0, len(scored))
+	for _, entry := range scored {
+		m.projectKindPickerItems = append(m.projectKindPickerItems, entry.item)
+	}
+	m.projectKindPickerIndex = clamp(m.projectKindPickerIndex, 0, len(m.projectKindPickerItems)-1)
+}
+
+// startProjectKindPicker opens the project-kind picker with optional initial filter text.
+func (m *Model) startProjectKindPicker(seed string) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.projectKindPickerBack = m.mode
+	m.mode = modeProjectKindPicker
+	m.projectKindPickerInput.SetValue(strings.TrimSpace(seed))
+	m.projectKindPickerInput.CursorEnd()
+	m.refreshProjectKindPickerMatches()
+	current := domain.NormalizeKindID(domain.KindID(m.projectFormInputs[projectFieldKind].Value()))
+	m.projectKindPickerIndex = 0
+	if current != "" && strings.TrimSpace(seed) == "" {
+		for idx, item := range m.projectKindPickerItems {
+			if item.KindID == current {
+				m.projectKindPickerIndex = idx
+				break
+			}
+		}
+	}
+	if len(m.projectKindPickerItems) == 0 {
+		m.status = "no project kinds available"
+	} else {
+		m.status = "project kind picker"
+	}
+	return m.projectKindPickerInput.Focus()
+}
+
+// inferProjectKindFromTemplateLibrary returns one unique project-scope kind when a selected library implies exactly one.
+func (m Model) inferProjectKindFromTemplateLibrary(libraryID string) (domain.KindID, bool) {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	if libraryID == "" {
+		return "", false
+	}
+	seen := map[domain.KindID]struct{}{}
+	candidates := make([]domain.KindID, 0, 1)
+	for _, library := range m.templateLibraries {
+		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
+			continue
+		}
+		for _, nodeTemplate := range library.NodeTemplates {
+			if nodeTemplate.ScopeLevel != domain.KindAppliesToProject {
+				continue
+			}
+			kindID := domain.NormalizeKindID(nodeTemplate.NodeKindID)
+			if kindID == "" {
+				continue
+			}
+			if _, ok := seen[kindID]; ok {
+				continue
+			}
+			seen[kindID] = struct{}{}
+			candidates = append(candidates, kindID)
+		}
+		break
+	}
+	if len(candidates) != 1 {
+		return "", false
+	}
+	return candidates[0], true
+}
+
+// activeProjectTemplateBinding returns the loaded active binding for one project when available.
+func (m Model) activeProjectTemplateBinding(projectID string) (domain.ProjectTemplateBinding, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || m.currentProjectTemplateBinding == nil {
+		return domain.ProjectTemplateBinding{}, false
+	}
+	if strings.TrimSpace(m.currentProjectTemplateBinding.ProjectID) != projectID {
+		return domain.ProjectTemplateBinding{}, false
+	}
+	return *m.currentProjectTemplateBinding, true
+}
+
+// hasApprovedTemplateLibrary reports whether the given global approved template library is currently visible to the TUI.
+func (m Model) hasApprovedTemplateLibrary(libraryID string) bool {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	if libraryID == "" {
+		return false
+	}
+	for _, library := range m.templateLibraries {
+		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
+			continue
+		}
+		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// templateLibrarySummaryRows returns readable approved-library rows for project-form rendering.
+func (m Model) templateLibrarySummaryRows(limit int) []string {
+	if limit <= 0 {
+		limit = len(m.templateLibraries)
+	}
+	rows := make([]string, 0, min(limit, len(m.templateLibraries)))
+	for _, library := range m.templateLibraries {
+		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
+			continue
+		}
+		rows = append(rows, m.templateLibraryDisplayLabel(library.ID, library.Name))
+		if len(rows) >= limit {
+			break
+		}
+	}
+	return rows
+}
+
+// templateLibraryDisplayLabel returns one stable id/name label for project-form and picker rows.
+func (m Model) templateLibraryDisplayLabel(libraryID, libraryName string) string {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	libraryName = strings.TrimSpace(libraryName)
+	if libraryID == "" {
+		return "(none)"
+	}
+	if libraryName == "" || strings.EqualFold(libraryName, libraryID) {
+		return libraryID
+	}
+	return fmt.Sprintf("%s — %s", libraryID, libraryName)
+}
+
+// templateLibraryName returns the currently loaded approved-library name for one id when available.
+func (m Model) templateLibraryName(libraryID string) string {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	if libraryID == "" {
+		return ""
+	}
+	for _, library := range m.templateLibraries {
+		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
+			continue
+		}
+		return strings.TrimSpace(library.Name)
+	}
+	return ""
+}
+
+// approvedTemplateLibraryPickerItems builds the ordered approved-library rows for the project form picker.
+func (m Model) approvedTemplateLibraryPickerItems() []templateLibraryPickerItem {
+	items := []templateLibraryPickerItem{{
+		Name:  "(none)",
+		Clear: true,
+	}}
+	for _, library := range m.templateLibraries {
+		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
+			continue
+		}
+		items = append(items, templateLibraryPickerItem{
+			LibraryID: domain.NormalizeTemplateLibraryID(library.ID),
+			Name:      strings.TrimSpace(library.Name),
+		})
+	}
+	sort.SliceStable(items[1:], func(i, j int) bool {
+		left := items[i+1]
+		right := items[j+1]
+		leftLabel := m.templateLibraryDisplayLabel(left.LibraryID, left.Name)
+		rightLabel := m.templateLibraryDisplayLabel(right.LibraryID, right.Name)
+		return leftLabel < rightLabel
+	})
+	return items
+}
+
+// refreshTemplateLibraryPickerMatches refreshes fuzzy-filtered approved-library picker rows.
+func (m *Model) refreshTemplateLibraryPickerMatches() {
+	if m == nil {
+		return
+	}
+	allItems := m.approvedTemplateLibraryPickerItems()
+	query := strings.TrimSpace(m.templateLibraryPickerInput.Value())
+	if query == "" {
+		m.templateLibraryPickerItems = allItems
+		m.templateLibraryPickerIndex = clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)
+		return
+	}
+
+	type scoredTemplateLibrary struct {
+		item  templateLibraryPickerItem
+		score int
+	}
+	scored := make([]scoredTemplateLibrary, 0, len(allItems))
+	for _, item := range allItems {
+		score, ok := bestFuzzyScore(
+			query,
+			item.LibraryID,
+			item.Name,
+			m.templateLibraryDisplayLabel(item.LibraryID, item.Name),
+			"none clear remove unbind template library",
+		)
+		if !ok {
+			continue
+		}
+		scored = append(scored, scoredTemplateLibrary{
+			item:  item,
+			score: score,
+		})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		left := m.templateLibraryDisplayLabel(scored[i].item.LibraryID, scored[i].item.Name)
+		right := m.templateLibraryDisplayLabel(scored[j].item.LibraryID, scored[j].item.Name)
+		return left < right
+	})
+	m.templateLibraryPickerItems = make([]templateLibraryPickerItem, 0, len(scored))
+	for _, entry := range scored {
+		m.templateLibraryPickerItems = append(m.templateLibraryPickerItems, entry.item)
+	}
+	m.templateLibraryPickerIndex = clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)
+}
+
+// startTemplateLibraryPicker opens the project template-library picker with optional initial filter text.
+func (m *Model) startTemplateLibraryPicker(seed string) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.templateLibraryPickerBack = m.mode
+	m.mode = modeTemplateLibraryPicker
+	m.templateLibraryPickerInput.SetValue(strings.TrimSpace(seed))
+	m.templateLibraryPickerInput.CursorEnd()
+	m.refreshTemplateLibraryPickerMatches()
+	current := domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value())
+	m.templateLibraryPickerIndex = 0
+	if current != "" && strings.TrimSpace(seed) == "" {
+		for idx, item := range m.templateLibraryPickerItems {
+			if item.LibraryID == current {
+				m.templateLibraryPickerIndex = idx
+				break
+			}
+		}
+	}
+	if current == "" && strings.TrimSpace(seed) == "" {
+		for idx, item := range m.templateLibraryPickerItems {
+			if item.Clear {
+				m.templateLibraryPickerIndex = idx
+				break
+			}
+		}
+	}
+	if len(m.templateLibraryPickerItems) == 0 {
+		m.status = "no approved template libraries"
+	} else {
+		m.status = "template library picker"
+	}
+	return m.templateLibraryPickerInput.Focus()
+}
+
+// templateActorKindsText renders actor-kind slices for readable TUI inspection output.
+func templateActorKindsText(kinds []domain.TemplateActorKind) string {
+	if len(kinds) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		value := strings.TrimSpace(string(kind))
+		if value == "" {
+			continue
+		}
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // descriptionFormDisplayValue summarizes markdown description content for compact form rows.
@@ -10922,6 +11438,165 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.mode == modeProjectKindPicker {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.projectKindPickerInput); handled {
+			m.status = status
+			m.projectKindPickerIndex = 0
+			m.refreshProjectKindPickerMatches()
+			return m, nil
+		}
+		switch msg.String() {
+		case "esc":
+			m.mode = m.projectKindPickerBack
+			m.projectKindPickerInput.Blur()
+			m.status = "project kind picker cancelled"
+			if m.mode == modeAddProject || m.mode == modeEditProject {
+				return m, m.focusProjectFormField(projectFieldKind)
+			}
+			return m, nil
+		case "ctrl+u":
+			m.projectKindPickerInput.SetValue("")
+			m.projectKindPickerInput.CursorEnd()
+			m.projectKindPickerIndex = 0
+			m.refreshProjectKindPickerMatches()
+			return m, nil
+		case "j", "down":
+			if m.projectKindPickerIndex < len(m.projectKindPickerItems)-1 {
+				m.projectKindPickerIndex++
+			}
+			return m, nil
+		case "k", "up":
+			if m.projectKindPickerIndex > 0 {
+				m.projectKindPickerIndex--
+			}
+			return m, nil
+		case "enter":
+			if len(m.projectFormInputs) <= projectFieldKind {
+				m.mode = m.projectKindPickerBack
+				m.projectKindPickerInput.Blur()
+				return m, m.focusProjectFormField(projectFieldKind)
+			}
+			if len(m.projectKindPickerItems) == 0 {
+				m.mode = m.projectKindPickerBack
+				m.projectKindPickerInput.Blur()
+				m.status = "no project kinds available"
+				return m, m.focusProjectFormField(projectFieldKind)
+			}
+			item := m.projectKindPickerItems[clamp(m.projectKindPickerIndex, 0, len(m.projectKindPickerItems)-1)]
+			m.projectFormInputs[projectFieldKind].SetValue(string(item.KindID))
+			m.mode = m.projectKindPickerBack
+			m.projectKindPickerInput.Blur()
+			m.status = "project kind selected"
+			return m, m.focusProjectFormField(projectFieldKind + 1)
+		default:
+			if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
+				var cmd tea.Cmd
+				before := m.projectKindPickerInput.Value()
+				m.projectKindPickerInput, cmd = m.projectKindPickerInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.projectKindPickerInput)
+				if m.projectKindPickerInput.Value() != before {
+					m.projectKindPickerIndex = 0
+					m.refreshProjectKindPickerMatches()
+				}
+				return m, cmd
+			}
+			var cmd tea.Cmd
+			before := m.projectKindPickerInput.Value()
+			m.projectKindPickerInput, cmd = m.projectKindPickerInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.projectKindPickerInput)
+			if m.projectKindPickerInput.Value() != before {
+				m.projectKindPickerIndex = 0
+				m.refreshProjectKindPickerMatches()
+			}
+			return m, cmd
+		}
+	}
+
+	if m.mode == modeTemplateLibraryPicker {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.templateLibraryPickerInput); handled {
+			m.status = status
+			m.templateLibraryPickerIndex = 0
+			m.refreshTemplateLibraryPickerMatches()
+			return m, nil
+		}
+		switch msg.String() {
+		case "esc":
+			m.mode = m.templateLibraryPickerBack
+			m.templateLibraryPickerInput.Blur()
+			m.status = "template library picker cancelled"
+			if m.mode == modeAddProject || m.mode == modeEditProject {
+				return m, m.focusProjectFormField(projectFieldTemplateLibrary)
+			}
+			return m, nil
+		case "ctrl+u":
+			m.templateLibraryPickerInput.SetValue("")
+			m.templateLibraryPickerInput.CursorEnd()
+			m.templateLibraryPickerIndex = 0
+			m.refreshTemplateLibraryPickerMatches()
+			return m, nil
+		case "j", "down":
+			if m.templateLibraryPickerIndex < len(m.templateLibraryPickerItems)-1 {
+				m.templateLibraryPickerIndex++
+			}
+			return m, nil
+		case "k", "up":
+			if m.templateLibraryPickerIndex > 0 {
+				m.templateLibraryPickerIndex--
+			}
+			return m, nil
+		case "enter":
+			if len(m.projectFormInputs) <= projectFieldTemplateLibrary {
+				m.mode = m.templateLibraryPickerBack
+				m.templateLibraryPickerInput.Blur()
+				return m, m.focusProjectFormField(projectFieldTemplateLibrary)
+			}
+			if len(m.templateLibraryPickerItems) == 0 {
+				m.mode = m.templateLibraryPickerBack
+				m.templateLibraryPickerInput.Blur()
+				m.status = "no approved template libraries"
+				return m, m.focusProjectFormField(projectFieldTemplateLibrary)
+			}
+			item := m.templateLibraryPickerItems[clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)]
+			if item.Clear {
+				m.projectFormInputs[projectFieldTemplateLibrary].SetValue("")
+				m.status = "template library cleared"
+			} else {
+				m.projectFormInputs[projectFieldTemplateLibrary].SetValue(item.LibraryID)
+				currentProjectKind := domain.NormalizeKindID(domain.KindID(m.projectFormInputs[projectFieldKind].Value()))
+				if (currentProjectKind == "" || currentProjectKind == domain.DefaultProjectKind) && len(m.projectFormInputs) > projectFieldKind {
+					if inferredKind, ok := m.inferProjectKindFromTemplateLibrary(item.LibraryID); ok {
+						m.projectFormInputs[projectFieldKind].SetValue(string(inferredKind))
+					}
+				}
+				m.status = "template library selected"
+			}
+			m.mode = m.templateLibraryPickerBack
+			m.templateLibraryPickerInput.Blur()
+			return m, m.focusProjectFormField(projectFieldTemplateLibrary + 1)
+		default:
+			if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
+				var cmd tea.Cmd
+				before := m.templateLibraryPickerInput.Value()
+				m.templateLibraryPickerInput, cmd = m.templateLibraryPickerInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.templateLibraryPickerInput)
+				if m.templateLibraryPickerInput.Value() != before {
+					m.templateLibraryPickerIndex = 0
+					m.refreshTemplateLibraryPickerMatches()
+				}
+				return m, cmd
+			}
+			var cmd tea.Cmd
+			before := m.templateLibraryPickerInput.Value()
+			m.templateLibraryPickerInput, cmd = m.templateLibraryPickerInput.Update(msg)
+			_ = scrubTextInputTerminalArtifacts(&m.templateLibraryPickerInput)
+			if m.templateLibraryPickerInput.Value() != before {
+				m.templateLibraryPickerIndex = 0
+				m.refreshTemplateLibraryPickerMatches()
+			}
+			return m, cmd
+		}
+	}
+
 	if m.mode == modePathsRoots {
 		if handled, status := applyClipboardShortcutToInput(msg, &m.pathsRootInput); handled {
 			m.status = status
@@ -11085,6 +11760,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.String() == "ctrl+r" && m.projectFormFocus == projectFieldRootPath:
 			return m, m.startResourcePicker("", m.mode)
+		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldKind:
+			return m, m.startProjectKindPicker("")
+		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldTemplateLibrary:
+			return m, m.startTemplateLibraryPicker("")
 		case msg.String() == "i" && m.projectFormFocus == projectFieldDescription:
 			return m, m.startProjectDescriptionEditor(msg)
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i" || msg.String() == "down":
@@ -11099,6 +11778,18 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			if m.projectFormFocus == projectFieldDescription {
 				return m, m.startProjectDescriptionEditor(msg)
+			}
+			if m.projectFormFocus == projectFieldKind {
+				if isPrintableFormTextKey(msg) {
+					return m, m.startProjectKindPicker(msg.Text)
+				}
+				return m, nil
+			}
+			if m.projectFormFocus == projectFieldTemplateLibrary {
+				if isPrintableFormTextKey(msg) {
+					return m, m.startTemplateLibraryPicker(msg.Text)
+				}
+				return m, nil
 			}
 			if len(m.projectFormInputs) == 0 {
 				return m, nil
@@ -11592,6 +12283,20 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.status = "project name required"
 			return m, nil
 		}
+		kindID := domain.NormalizeKindID(domain.KindID(vals["kind"]))
+		if kindID == "" {
+			m.status = "project kind required"
+			return m, nil
+		}
+		if !m.hasProjectKindDefinition(kindID) {
+			m.status = "project kind not found: " + string(kindID)
+			return m, nil
+		}
+		templateLibraryID := domain.NormalizeTemplateLibraryID(vals["template_library_id"])
+		if templateLibraryID != "" && !m.hasApprovedTemplateLibrary(templateLibraryID) {
+			m.status = "approved template library not found: " + templateLibraryID
+			return m, nil
+		}
 		rootPath, err := normalizeProjectRootPathInput(vals["root_path"])
 		if err != nil {
 			m.status = err.Error()
@@ -11606,6 +12311,10 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		description := vals["description"]
 		projectID := m.editingProjectID
+		currentTemplateLibraryID := ""
+		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
+			currentTemplateLibraryID = binding.LibraryID
+		}
 		projectOp := "update"
 		if isAdd || projectID == "" {
 			projectOp = "create"
@@ -11620,12 +12329,14 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		if isAdd || projectID == "" {
 			return m, func() tea.Msg {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
-					Name:          name,
-					Description:   description,
-					Metadata:      metadata,
-					UpdatedBy:     m.threadActorID(),
-					UpdatedByName: m.threadActorName(),
-					UpdatedType:   m.threadActorType(),
+					Name:              name,
+					Description:       description,
+					Kind:              kindID,
+					TemplateLibraryID: templateLibraryID,
+					Metadata:          metadata,
+					UpdatedBy:         m.threadActorID(),
+					UpdatedByName:     m.threadActorName(),
+					UpdatedType:       m.threadActorType(),
 				})
 				if err != nil {
 					return actionMsg{err: err}
@@ -11649,6 +12360,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				ProjectID:     projectID,
 				Name:          name,
 				Description:   description,
+				Kind:          kindID,
 				Metadata:      metadata,
 				UpdatedBy:     m.threadActorID(),
 				UpdatedByName: m.threadActorName(),
@@ -11656,6 +12368,24 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			})
 			if err != nil {
 				return actionMsg{err: err}
+			}
+			switch {
+			case templateLibraryID == "" && currentTemplateLibraryID != "":
+				if err := m.svc.UnbindProjectTemplateLibrary(context.Background(), app.UnbindProjectTemplateLibraryInput{
+					ProjectID: project.ID,
+				}); err != nil {
+					return actionMsg{err: err}
+				}
+			case templateLibraryID != "" && templateLibraryID != currentTemplateLibraryID:
+				if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
+					ProjectID:        project.ID,
+					LibraryID:        templateLibraryID,
+					BoundByActorID:   m.threadActorID(),
+					BoundByActorName: m.threadActorName(),
+					BoundByActorType: m.threadActorType(),
+				}); err != nil {
+					return actionMsg{err: err}
+				}
 			}
 			if m.saveProjectRoot != nil {
 				if err := m.saveProjectRoot(project.Slug, rootPath); err != nil {
@@ -13003,6 +13733,36 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			if m.projectPickerIndex < len(m.projects)-1 {
 				m.projectPickerIndex++
 			}
+		}
+		return m, nil
+	}
+	if m.mode == modeProjectKindPicker {
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.projectKindPickerIndex > 0 {
+				m.projectKindPickerIndex--
+			}
+		case tea.MouseWheelDown:
+			if m.projectKindPickerIndex < len(m.projectKindPickerItems)-1 {
+				m.projectKindPickerIndex++
+			}
+		default:
+			return m, nil
+		}
+		return m, nil
+	}
+	if m.mode == modeTemplateLibraryPicker {
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.templateLibraryPickerIndex > 0 {
+				m.templateLibraryPickerIndex--
+			}
+		case tea.MouseWheelDown:
+			if m.templateLibraryPickerIndex < len(m.templateLibraryPickerItems)-1 {
+				m.templateLibraryPickerIndex++
+			}
+		default:
+			return m, nil
 		}
 		return m, nil
 	}
@@ -16143,15 +16903,33 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		return "new project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
+			"kind field opens the project-kind picker (enter/e; typing starts a filtered picker)",
 			"icon field is shown in path context, notices, and picker and supports emoji",
+			"template library field opens the approved-library picker (enter/e; typing starts a filtered picker)",
 			"root_path field: r opens directory picker",
 		}
 	case modeEditProject:
 		return "edit project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
+			"kind field opens the project-kind picker; changing it updates template matching for future work",
 			"icon field is shown in path context, notices, and picker and supports emoji",
+			"template library field opens the approved-library picker; choose (none) to clear the active project binding",
 			"root_path field: r opens directory picker",
+		}
+	case modeProjectKindPicker:
+		return "project kind picker", []string{
+			"type to fuzzy-filter project kinds",
+			"j/k moves selection; enter chooses the highlighted kind",
+			"the selected kind is sent on project create/update",
+			"ctrl+u clears the picker filter; esc closes the picker",
+		}
+	case modeTemplateLibraryPicker:
+		return "template library picker", []string{
+			"type to fuzzy-filter approved global template libraries",
+			"j/k moves selection; enter chooses the highlighted library",
+			"the (none) row clears project-level template binding",
+			"ctrl+u clears the picker filter; esc closes the picker",
 		}
 	case modeDescriptionEditor:
 		return "description editor", []string{
@@ -17094,12 +17872,56 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	}
 
 	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("classification"))
+	renderProjectInput("kind", projectFieldKind)
+	if m.projectFormFocus == projectFieldKind {
+		lines = append(lines, hintStyle.Render("enter/e opens picker; type to start a filtered picker"))
+	}
+	kindRows := m.projectKindSummaryRows(5)
+	if len(kindRows) == 0 {
+		lines = append(lines, hintStyle.Render("project_kinds: (none available)"))
+	} else {
+		lines = append(lines, hintStyle.Render("project_kinds:"))
+		for _, row := range kindRows {
+			lines = append(lines, hintStyle.Render("  - "+row))
+		}
+		if len(m.projectKindPickerOptions()) > len(kindRows) {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("  +%d more", len(m.projectKindPickerOptions())-len(kindRows))))
+		}
+	}
+
+	lines = append(lines, "")
 	lines = append(lines, hintStyle.Render("metadata"))
 	renderProjectInput("owner", projectFieldOwner)
 	renderProjectInput("icon", projectFieldIcon)
 	renderProjectInput("color", projectFieldColor)
 	renderProjectInput("homepage", projectFieldHomepage)
 	renderProjectInput("tags", projectFieldTags)
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("template workflow"))
+	renderProjectInput("template_library", projectFieldTemplateLibrary)
+	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
+		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
+			lines = append(lines, hintStyle.Render("active_binding: "+m.templateLibraryDisplayLabel(binding.LibraryID, m.templateLibraryName(binding.LibraryID))))
+		} else {
+			lines = append(lines, hintStyle.Render("active_binding: -"))
+		}
+	}
+	if m.projectFormFocus == projectFieldTemplateLibrary {
+		lines = append(lines, hintStyle.Render("enter/e opens picker; type to start a filtered picker; choose (none) to clear"))
+	}
+	libraryRows := m.templateLibrarySummaryRows(5)
+	if len(libraryRows) == 0 {
+		lines = append(lines, hintStyle.Render("approved_global_libraries: (none; create via CLI/MCP first)"))
+	} else {
+		lines = append(lines, hintStyle.Render("approved_global_libraries:"))
+		for _, row := range libraryRows {
+			lines = append(lines, hintStyle.Render("  - "+row))
+		}
+		if len(m.templateLibraries) > len(libraryRows) {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("  +%d more", len(m.templateLibraries)-len(libraryRows))))
+		}
+	}
 	renderProjectInput("root_path", projectFieldRootPath)
 
 	if m.mode == modeEditProject && strings.TrimSpace(m.editingProjectID) != "" {
@@ -17189,6 +18011,27 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 		blockedReason = "-"
 	}
 	lines = append(lines, hintStyle.Render("blocked_reason: "+blockedReason))
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("template contract:"))
+	projectLibraryID := "-"
+	if binding, ok := m.activeProjectTemplateBinding(task.ProjectID); ok {
+		projectLibraryID = binding.LibraryID
+	}
+	lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
+	if snapshot, ok := m.taskNodeContracts[task.ID]; ok {
+		lines = append(lines, hintStyle.Render("source_library: "+fallbackText(strings.TrimSpace(snapshot.SourceLibraryID), "-")))
+		lines = append(lines, hintStyle.Render("source_node_template: "+fallbackText(strings.TrimSpace(snapshot.SourceNodeTemplateID), "-")))
+		lines = append(lines, hintStyle.Render("source_child_rule: "+fallbackText(strings.TrimSpace(snapshot.SourceChildRuleID), "-")))
+		lines = append(lines, hintStyle.Render("responsible_actor_kind: "+fallbackText(strings.TrimSpace(string(snapshot.ResponsibleActorKind)), "-")))
+		lines = append(lines, hintStyle.Render("editable_by: "+templateActorKindsText(snapshot.EditableByActorKinds)))
+		lines = append(lines, hintStyle.Render("completable_by: "+templateActorKindsText(snapshot.CompletableByActorKinds)))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("required_for_parent_done: %t", snapshot.RequiredForParentDone)))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("required_for_containing_done: %t", snapshot.RequiredForContainingDone)))
+		lines = append(lines, hintStyle.Render("generated_by: "+fallbackText(strings.TrimSpace(snapshot.CreatedByActorID), "-")))
+	} else {
+		lines = append(lines, hintStyle.Render("generated_contract: none"))
+	}
 
 	lines = append(lines, "")
 	lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d):", len(m.taskInfoComments))))
@@ -18559,7 +19402,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			titleStyle.Render(title),
 			hintStyle.Render("root: " + truncate(m.resourcePickerRoot, 72)),
 			hintStyle.Render("current: ") + titleStyle.Render(truncate(currentPath, 72)),
-			hintStyle.Render("filter: ") + filterInput.View(),
+			filterInput.View(),
 		}
 		items := m.visibleResourcePickerItems()
 		if len(items) == 0 {
@@ -18603,7 +19446,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		filterInput.SetWidth(max(18, min(56, maxWidth-22)))
 		lines := []string{
 			titleStyle.Render("Label Picker"),
-			hintStyle.Render("filter: ") + filterInput.View(),
+			filterInput.View(),
 			hintStyle.Render("sources: global/project/branch/phase/suggested/default"),
 		}
 		if len(m.labelPickerItems) == 0 {
@@ -18622,6 +19465,84 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 		}
 		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter add label • ctrl+u clear • esc close"))
+		return style.Render(strings.Join(lines, "\n"))
+
+	case modeProjectKindPicker:
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 42, 92))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		filterInput := m.projectKindPickerInput
+		filterInput.SetWidth(max(18, min(60, maxWidth-24)))
+		currentKindLabel := string(domain.DefaultProjectKind)
+		if current := domain.NormalizeKindID(domain.KindID(m.projectFormInputs[projectFieldKind].Value())); current != "" {
+			currentKindLabel = m.projectKindDisplayLabel(current, m.projectKindName(current))
+		}
+		lines := []string{
+			titleStyle.Render("Project Kind"),
+			filterInput.View(),
+			hintStyle.Render("current: " + currentKindLabel),
+		}
+		if len(m.projectKindPickerItems) == 0 {
+			lines = append(lines, hintStyle.Render("(no matching project kinds)"))
+		} else {
+			start, end := windowBounds(len(m.projectKindPickerItems), m.projectKindPickerIndex, 12)
+			for idx := start; idx < end; idx++ {
+				item := m.projectKindPickerItems[idx]
+				cursor := "  "
+				if idx == m.projectKindPickerIndex {
+					cursor = "> "
+				}
+				lines = append(lines, cursor+m.projectKindDisplayLabel(item.KindID, item.DisplayName))
+			}
+		}
+		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter choose • ctrl+u clear • esc close"))
+		return style.Render(strings.Join(lines, "\n"))
+
+	case modeTemplateLibraryPicker:
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 42, 92))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		filterInput := m.templateLibraryPickerInput
+		filterInput.SetWidth(max(18, min(60, maxWidth-24)))
+		currentLibraryLabel := "(none)"
+		if current := domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value()); current != "" {
+			currentLibraryLabel = m.templateLibraryDisplayLabel(current, m.templateLibraryName(current))
+		}
+		lines := []string{
+			titleStyle.Render("Template Library"),
+			filterInput.View(),
+			hintStyle.Render("current: " + currentLibraryLabel),
+		}
+		if len(m.templateLibraryPickerItems) == 0 {
+			lines = append(lines, hintStyle.Render("(no matching approved template libraries)"))
+		} else {
+			start, end := windowBounds(len(m.templateLibraryPickerItems), m.templateLibraryPickerIndex, 12)
+			for idx := start; idx < end; idx++ {
+				item := m.templateLibraryPickerItems[idx]
+				cursor := "  "
+				if idx == m.templateLibraryPickerIndex {
+					cursor = "> "
+				}
+				if item.Clear {
+					lines = append(lines, cursor+"(none) remove project template binding")
+					continue
+				}
+				lines = append(lines, cursor+m.templateLibraryDisplayLabel(item.LibraryID, item.Name))
+			}
+		}
+		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter choose • ctrl+u clear • esc close"))
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeDuePicker:
@@ -19603,6 +20524,10 @@ func (m Model) modeLabel() string {
 		return "resources"
 	case modeLabelPicker:
 		return "labels"
+	case modeProjectKindPicker:
+		return "project-kinds"
+	case modeTemplateLibraryPicker:
+		return "template-libraries"
 	case modePathsRoots:
 		return "paths/roots"
 	case modeLabelsConfig:
@@ -19640,9 +20565,9 @@ func (m Model) modePrompt() string {
 	case modeTaskInfo:
 		return "task info: enter opens selected subtask, d details preview, arrows or j/k scroll, pgup/pgdown/home/end jump, e edit, s new subtask, c thread, [ / ] move, space toggles subtask complete, backspace parent, esc back"
 	case modeAddProject:
-		return "new project: enter save, i edit description, r pick root_path, esc cancel"
+		return "new project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, esc cancels"
 	case modeEditProject:
-		return "edit project: enter save, i edit description, r pick root_path, esc cancel"
+		return "edit project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, esc cancels"
 	case modeSearchResults:
 		return "search results: j/k select, enter jump, esc close"
 	case modeEmbeddingsStatus:
@@ -19676,6 +20601,10 @@ func (m Model) modePrompt() string {
 		return "resource picker: type fuzzy filter, arrows navigate, enter select, ctrl+a choose/attach current, esc cancel"
 	case modeLabelPicker:
 		return "label picker: type fuzzy filter, j/k select, enter add label, ctrl+u clear, esc cancel"
+	case modeProjectKindPicker:
+		return "project kind picker: type fuzzy filter, j/k select, enter choose, ctrl+u clear filter, esc cancel"
+	case modeTemplateLibraryPicker:
+		return "template library picker: type fuzzy filter, j/k select, enter choose, ctrl+u clear filter, esc cancel"
 	case modePathsRoots:
 		return "paths/roots: enter save, r browse dirs, esc cancel"
 	case modeLabelsConfig:

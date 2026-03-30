@@ -60,6 +60,7 @@ const (
 	AuthRequestRoleOrchestrator AuthRequestRole = "orchestrator"
 	AuthRequestRoleBuilder      AuthRequestRole = "builder"
 	AuthRequestRoleQA           AuthRequestRole = "qa"
+	AuthRequestRoleResearch     AuthRequestRole = "research"
 
 	// AuthRequestRoleSubagent preserves the legacy subagent token as an alias for builder.
 	AuthRequestRoleSubagent AuthRequestRole = AuthRequestRoleBuilder
@@ -69,6 +70,7 @@ var validAuthRequestRoles = []AuthRequestRole{
 	AuthRequestRoleOrchestrator,
 	AuthRequestRoleBuilder,
 	AuthRequestRoleQA,
+	AuthRequestRoleResearch,
 }
 
 // AuthRequest stores one persisted auth request and its approval outcome.
@@ -192,6 +194,8 @@ func NormalizeAuthRequestRole(role AuthRequestRole) AuthRequestRole {
 		return AuthRequestRoleBuilder
 	case string(AuthRequestRoleQA):
 		return AuthRequestRoleQA
+	case string(AuthRequestRoleResearch):
+		return AuthRequestRoleResearch
 	default:
 		return AuthRequestRole(strings.TrimSpace(strings.ToLower(string(role))))
 	}

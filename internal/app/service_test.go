@@ -26,6 +26,9 @@ type fakeRepo struct {
 	changeEvents        map[string][]domain.ChangeEvent
 	kindDefs            map[domain.KindID]domain.KindDefinition
 	projectAllowedKinds map[string][]domain.KindID
+	templateLibraries   map[string]domain.TemplateLibrary
+	projectBindings     map[string]domain.ProjectTemplateBinding
+	nodeContracts       map[string]domain.NodeContractSnapshot
 	capabilityLeases    map[string]domain.CapabilityLease
 	createProjectActor  MutationActor
 	updateProjectActor  MutationActor
@@ -47,6 +50,9 @@ func newFakeRepo() *fakeRepo {
 		changeEvents:        map[string][]domain.ChangeEvent{},
 		kindDefs:            map[domain.KindID]domain.KindDefinition{},
 		projectAllowedKinds: map[string][]domain.KindID{},
+		templateLibraries:   map[string]domain.TemplateLibrary{},
+		projectBindings:     map[string]domain.ProjectTemplateBinding{},
+		nodeContracts:       map[string]domain.NodeContractSnapshot{},
 		capabilityLeases:    map[string]domain.CapabilityLease{},
 	}
 }
@@ -511,6 +517,80 @@ func (f *fakeRepo) ListKindDefinitions(_ context.Context, includeArchived bool) 
 		out = append(out, kind)
 	}
 	return out, nil
+}
+
+// UpsertTemplateLibrary stores one template library.
+func (f *fakeRepo) UpsertTemplateLibrary(_ context.Context, library domain.TemplateLibrary) error {
+	f.templateLibraries[library.ID] = library
+	return nil
+}
+
+// GetTemplateLibrary returns one template library by ID.
+func (f *fakeRepo) GetTemplateLibrary(_ context.Context, libraryID string) (domain.TemplateLibrary, error) {
+	library, ok := f.templateLibraries[domain.NormalizeTemplateLibraryID(libraryID)]
+	if !ok {
+		return domain.TemplateLibrary{}, ErrNotFound
+	}
+	return library, nil
+}
+
+// ListTemplateLibraries lists template libraries.
+func (f *fakeRepo) ListTemplateLibraries(_ context.Context, filter domain.TemplateLibraryFilter) ([]domain.TemplateLibrary, error) {
+	out := make([]domain.TemplateLibrary, 0, len(f.templateLibraries))
+	for _, library := range f.templateLibraries {
+		if scope := domain.NormalizeTemplateLibraryScope(filter.Scope); scope != "" && library.Scope != scope {
+			continue
+		}
+		if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" && library.ProjectID != projectID {
+			continue
+		}
+		if status := domain.NormalizeTemplateLibraryStatus(filter.Status); status != "" && library.Status != status {
+			continue
+		}
+		out = append(out, library)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// UpsertProjectTemplateBinding stores one active project binding.
+func (f *fakeRepo) UpsertProjectTemplateBinding(_ context.Context, binding domain.ProjectTemplateBinding) error {
+	f.projectBindings[strings.TrimSpace(binding.ProjectID)] = binding
+	return nil
+}
+
+// GetProjectTemplateBinding returns one active project binding.
+func (f *fakeRepo) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
+	binding, ok := f.projectBindings[strings.TrimSpace(projectID)]
+	if !ok {
+		return domain.ProjectTemplateBinding{}, ErrNotFound
+	}
+	return binding, nil
+}
+
+// DeleteProjectTemplateBinding removes one active project binding.
+func (f *fakeRepo) DeleteProjectTemplateBinding(_ context.Context, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if _, ok := f.projectBindings[projectID]; !ok {
+		return ErrNotFound
+	}
+	delete(f.projectBindings, projectID)
+	return nil
+}
+
+// CreateNodeContractSnapshot stores one node-contract snapshot.
+func (f *fakeRepo) CreateNodeContractSnapshot(_ context.Context, snapshot domain.NodeContractSnapshot) error {
+	f.nodeContracts[strings.TrimSpace(snapshot.NodeID)] = snapshot
+	return nil
+}
+
+// GetNodeContractSnapshot returns one node-contract snapshot.
+func (f *fakeRepo) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
+	snapshot, ok := f.nodeContracts[strings.TrimSpace(nodeID)]
+	if !ok {
+		return domain.NodeContractSnapshot{}, ErrNotFound
+	}
+	return snapshot, nil
 }
 
 // CreateColumn creates column.
@@ -1238,8 +1318,8 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	ctx := WithMutationActor(context.Background(), MutationActor{
-		ActorID:   "orchestrator-1",
-		ActorType: domain.ActorTypeAgent,
+		ActorID:   "user-context-1",
+		ActorType: domain.ActorTypeUser,
 	})
 	updated, err := svc.UpdateTask(ctx, UpdateTaskInput{
 		TaskID: task.ID,
@@ -1248,11 +1328,11 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask() error = %v", err)
 	}
-	if updated.UpdatedByActor != "orchestrator-1" {
-		t.Fatalf("updated actor id = %q, want orchestrator-1", updated.UpdatedByActor)
+	if updated.UpdatedByActor != "user-context-1" {
+		t.Fatalf("updated actor id = %q, want user-context-1", updated.UpdatedByActor)
 	}
-	if updated.UpdatedByType != domain.ActorTypeAgent {
-		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeAgent)
+	if updated.UpdatedByType != domain.ActorTypeUser {
+		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeUser)
 	}
 }
 
@@ -2992,8 +3072,8 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	}
 }
 
-// TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete verifies behavior for the covered scenario.
-func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
+// TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren verifies legacy require-children behavior remains intact.
+func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -3011,6 +3091,11 @@ func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
+		Metadata: domain.TaskMetadata{
+			CompletionContract: domain.CompletionContract{
+				Policy: domain.CompletionPolicy{RequireChildrenDone: true},
+			},
+		},
 	}, now)
 	child, _ := domain.NewTask(domain.TaskInput{
 		ID:             "t-child",
@@ -3030,7 +3115,7 @@ func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
 	if err == nil || !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "subtasks must be done") {
+	if !strings.Contains(err.Error(), "child item") {
 		t.Fatalf("expected incomplete subtask reason, got %v", err)
 	}
 }

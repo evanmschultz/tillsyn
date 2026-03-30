@@ -55,6 +55,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		pickChangeFeedService(captureState, attention),
 	)
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
+	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention))
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention))
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
 	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention))
@@ -808,6 +809,17 @@ func pickAuthRequestService(captureState common.CaptureStateReader, attention co
 		return svc
 	}
 	if svc, ok := attention.(common.AuthRequestService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickTemplateLibraryService resolves one template-library service provider from available services.
+func pickTemplateLibraryService(captureState common.CaptureStateReader, attention common.AttentionService) common.TemplateLibraryService {
+	if svc, ok := captureState.(common.TemplateLibraryService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.TemplateLibraryService); ok {
 		return svc
 	}
 	return nil

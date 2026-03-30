@@ -608,12 +608,18 @@ func mapAppError(operation string, err error) error {
 		errors.Is(err, domain.ErrInvalidKindID),
 		errors.Is(err, domain.ErrInvalidKindAppliesTo),
 		errors.Is(err, domain.ErrInvalidKindTemplate),
+		errors.Is(err, domain.ErrInvalidTemplateLibrary),
+		errors.Is(err, domain.ErrInvalidTemplateLibraryScope),
+		errors.Is(err, domain.ErrInvalidTemplateStatus),
+		errors.Is(err, domain.ErrInvalidTemplateActorKind),
+		errors.Is(err, domain.ErrInvalidTemplateBinding),
 		errors.Is(err, domain.ErrInvalidKindPayload),
 		errors.Is(err, domain.ErrInvalidKindPayloadSchema),
 		errors.Is(err, domain.ErrKindNotAllowed),
 		errors.Is(err, app.ErrInvalidDeleteMode):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))
-	case errors.Is(err, domain.ErrKindNotFound):
+	case errors.Is(err, domain.ErrKindNotFound),
+		errors.Is(err, domain.ErrTemplateLibraryNotFound):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
 	default:
 		return fmt.Errorf("%s: %w", operation, err)
