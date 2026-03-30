@@ -44,20 +44,38 @@ states = ["todo", "progress", "done"]
 [embeddings]
 # Enable semantic/hybrid search indexing and retrieval.
 enabled = false
-# Current provider support: openai
-provider = "openai"
-model = "text-embedding-3-small"
-# API key environment variable read at startup when embeddings are enabled.
-api_key_env = "OPENAI_API_KEY"
-# Optional OpenAI-compatible base URL override.
-base_url = ""
-# Optional embedding dimensions override (0 uses model default).
+# Current provider support: ollama | openai | deterministic
+# The default local operator path is Ollama's OpenAI-compatible embeddings API.
+# The fantasy adapter also supports hosted OpenAI-compatible providers.
+# For TogetherAI, OpenRouter, or similar endpoints, use provider = "openai"
+# with base_url pointed at the provider endpoint and api_key_env set accordingly.
+# The deterministic provider is intended for tests and fixtures, not production retrieval quality.
+provider = "ollama"
+model = "qwen3-embedding:8b"
+# API key environment variable read at startup when embeddings.provider = "openai".
+# Ollama does not require a real API key; leave this blank unless your proxy expects one.
+api_key_env = ""
+# Optional provider endpoint override.
+# Ollama's qwen3-embedding:8b endpoint typically lives at http://127.0.0.1:11434/v1.
+# OpenAI-compatible hosted providers should set base_url to their compatible API root.
+base_url = "http://127.0.0.1:11434/v1"
+# Optional embedding dimensions override (0 uses the provider default).
+# The deterministic provider defaults to 256 dimensions.
 dimensions = 0
 # Candidate window size for semantic retrieval before app-level filtering/ranking.
 query_top_k = 200
 # Hybrid rank weights (normalized at runtime).
 lexical_weight = 0.55
 semantic_weight = 0.45
+# Background worker poll interval for queued indexing work.
+worker_poll_interval = "2s"
+# How long one running claim may go without heartbeat before recovery treats it as abandoned.
+claim_ttl = "2m"
+# Maximum attempts before a row stays failed until another enqueue or explicit reindex.
+max_attempts = 5
+# Retry backoff window for retryable failures.
+initial_retry_backoff = "15s"
+max_retry_backoff = "15m"
 
 [identity]
 # Immutable runtime identity token; auto-generated on first TUI startup if empty.

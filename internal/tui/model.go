@@ -17,6 +17,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -47,7 +48,11 @@ type Service interface {
 	RevokeCapabilityLease(context.Context, app.RevokeCapabilityLeaseInput) (domain.CapabilityLease, error)
 	UpdateHandoff(context.Context, app.UpdateHandoffInput) (domain.Handoff, error)
 	GetProjectDependencyRollup(context.Context, string) (domain.DependencyRollup, error)
-	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
+	ListEmbeddingStates(context.Context, app.EmbeddingListFilter) ([]app.EmbeddingRecord, error)
+	SummarizeEmbeddingStates(context.Context, app.EmbeddingListFilter) (app.EmbeddingSummary, error)
+	EmbeddingsOperational() bool
+	ReindexEmbeddings(context.Context, app.ReindexEmbeddingsInput) (app.ReindexEmbeddingsResult, error)
+	SearchTasks(context.Context, app.SearchTasksFilter) (app.SearchTaskMatchesResult, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
 	UpdateProject(context.Context, app.UpdateProjectInput) (domain.Project, error)
 	ArchiveProject(context.Context, string) (domain.Project, error)
@@ -97,6 +102,7 @@ const (
 	modeAddProject
 	modeEditProject
 	modeSearchResults
+	modeEmbeddingsStatus
 	modeCommandPalette
 	modeQuickActions
 	modeConfirmAction
@@ -234,6 +240,8 @@ const (
 	noticesSectionViewWindow = 4
 	// defaultSearchResultsLimit keeps TUI search views explicit while matching backend defaults.
 	defaultSearchResultsLimit = 50
+	// defaultEmbeddingsStatusLimit keeps the TUI embeddings inventory aligned with CLI defaults.
+	defaultEmbeddingsStatusLimit = 100
 )
 
 // defaultLabelSuggestionsSeed provides baseline label suggestions before user/project customization exists.
@@ -618,6 +626,7 @@ type Model struct {
 
 	searchInput                   textinput.Model
 	commandInput                  textinput.Model
+	embeddingsFilterInput         textinput.Model
 	bootstrapDisplayInput         textinput.Model
 	pathsRootInput                textinput.Model
 	highlightColorInput           textinput.Model
@@ -653,8 +662,10 @@ type Model struct {
 	searchStateCursor             int
 	searchLevelCursor             int
 	searchCrossProject            bool
+	searchMode                    app.SearchMode
 	searchDefaultCrossProject     bool
 	searchDefaultIncludeArchive   bool
+	searchDefaultMode             app.SearchMode
 	searchStates                  []string
 	searchDefaultStates           []string
 	searchLevels                  []string
@@ -663,7 +674,29 @@ type Model struct {
 	searchLabelsAny               []string
 	searchLabelsAll               []string
 	searchMatches                 []app.TaskMatch
+	searchRequestedMode           app.SearchMode
+	searchEffectiveMode           app.SearchMode
+	searchFallbackReason          string
+	searchEmbeddingSummary        app.EmbeddingSummary
 	searchResultIndex             int
+	searchLoading                 bool
+	searchOpeningResult           bool
+	searchRequestSeq              int
+	searchActiveRequestID         int
+	embeddingsGlobal              bool
+	embeddingsIncludeArchived     bool
+	embeddingsFilterQuery         string
+	embeddingsFilterActive        bool
+	embeddingsRows                []app.EmbeddingRecord
+	embeddingsAllDisplayRows      []embeddingsStatusDisplayRow
+	embeddingsDisplayRows         []embeddingsStatusDisplayRow
+	embeddingsSummary             app.EmbeddingSummary
+	embeddingsProjectIDs          []string
+	embeddingsScopeLabel          string
+	embeddingsIndex               int
+	embeddingsSpinner             spinner.Model
+	embeddingsReindexInFlight     bool
+	embeddingsReindexForce        bool
 	quickActionIndex              int
 	quickActionBackMode           inputMode
 	commandMatches                []commandPaletteItem
@@ -856,6 +889,10 @@ type loadedMsg struct {
 	selectedProject           int
 	columns                   []domain.Column
 	tasks                     []domain.Task
+	searchRequestedMode       app.SearchMode
+	searchEffectiveMode       app.SearchMode
+	searchFallbackReason      string
+	searchEmbeddingSummary    app.EmbeddingSummary
 	activityEntries           []activityEntry
 	attentionItems            []domain.AttentionItem
 	globalNotices             []globalNoticesPanelItem
@@ -941,8 +978,40 @@ type autoRefreshLoadedMsg struct {
 
 // searchResultsMsg carries message data through update handling.
 type searchResultsMsg struct {
-	matches []app.TaskMatch
-	err     error
+	requestID int
+	result    app.SearchTaskMatchesResult
+	err       error
+}
+
+// embeddingsStatusLoadedMsg carries embeddings lifecycle inventory rows for modal rendering.
+type embeddingsStatusLoadedMsg struct {
+	projectIDs  []string
+	scopeLabel  string
+	rows        []app.EmbeddingRecord
+	displayRows []embeddingsStatusDisplayRow
+	summary     app.EmbeddingSummary
+	err         error
+}
+
+// embeddingsReindexMsg carries explicit embeddings reindex outcomes for the active scope.
+type embeddingsReindexMsg struct {
+	result app.ReindexEmbeddingsResult
+	err    error
+}
+
+// embeddingsStatusDisplayRow stores one operator-facing TUI row resolved from one lifecycle record.
+type embeddingsStatusDisplayRow struct {
+	Record       app.EmbeddingRecord
+	Project      domain.Project
+	HasProject   bool
+	Task         domain.Task
+	HasTask      bool
+	ProjectLabel string
+	SubjectLabel string
+	TitleLabel   string
+	PathLabel    string
+	DetailLabel  string
+	FilterLabel  string
 }
 
 // dependencyMatchesMsg carries dependency-candidate matches for the inspector modal.
@@ -1028,6 +1097,7 @@ func NewModel(svc Service, opts ...Option) Model {
 	confirmAuthPathInput := newModalInput("path: ", "project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]", "", 256)
 	confirmAuthTTLInput := newModalInput("ttl: ", "for example 2h or 30m", "", 32)
 	confirmAuthNoteInput := newModalInput("note: ", "optional note for the requester and audit trail", "", 256)
+	embeddingsFilterInput := newModalInput("filter: ", "type to narrow lifecycle rows", "", 120)
 	threadInput := textarea.New()
 	threadInput.Prompt = ""
 	threadInput.Placeholder = "Write markdown comment (Ctrl+S posts)"
@@ -1082,6 +1152,10 @@ func NewModel(svc Service, opts ...Option) Model {
 	labelPickerInput.Placeholder = "type to fuzzy-find labels"
 	labelPickerInput.CharLimit = 120
 	configureTextInputClipboardBindings(&labelPickerInput)
+	embeddingsSpinner := spinner.New(
+		spinner.WithSpinner(spinner.Dot),
+		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)),
+	)
 	m := Model{
 		svc:                            svc,
 		status:                         "loading...",
@@ -1091,6 +1165,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		defaultDeleteMode:              app.DeleteModeArchive,
 		searchInput:                    searchInput,
 		commandInput:                   commandInput,
+		embeddingsFilterInput:          embeddingsFilterInput,
 		bootstrapDisplayInput:          bootstrapDisplayInput,
 		pathsRootInput:                 pathsRootInput,
 		highlightColorInput:            highlightColorInput,
@@ -1109,7 +1184,10 @@ func NewModel(svc Service, opts ...Option) Model {
 		duePickerDateInput:             duePickerDateInput,
 		duePickerTimeInput:             duePickerTimeInput,
 		labelPickerInput:               labelPickerInput,
+		embeddingsSpinner:              embeddingsSpinner,
+		searchMode:                     app.SearchModeHybrid,
 		searchStates:                   []string{"todo", "progress", "done"},
+		searchDefaultMode:              app.SearchModeHybrid,
 		searchDefaultStates:            []string{"todo", "progress", "done"},
 		searchLevels:                   []string{"project", "branch", "phase", "task", "subtask"},
 		searchDefaultLevels:            []string{"project", "branch", "phase", "task", "subtask"},
@@ -1206,6 +1284,10 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	m.selectedProject = msg.selectedProject
 	m.columns = msg.columns
 	m.tasks = msg.tasks
+	m.searchRequestedMode = msg.searchRequestedMode
+	m.searchEffectiveMode = msg.searchEffectiveMode
+	m.searchFallbackReason = msg.searchFallbackReason
+	m.searchEmbeddingSummary = msg.searchEmbeddingSummary
 	if msg.activityEntries != nil {
 		m.activityLog = append([]activityEntry(nil), msg.activityEntries...)
 	}
@@ -1352,6 +1434,23 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		return nil
 	}
 	m.launchPicker = false
+	if m.searchApplied && !m.searchCrossProject {
+		status := fmt.Sprintf("%d matches", len(msg.tasks))
+		if len(msg.tasks) == 0 {
+			status = "no matches"
+		}
+		if modeLabel := strings.TrimSpace(searchResultsModeLabel(m.searchRequestedMode, m.searchEffectiveMode, m.searchFallbackReason)); modeLabel != "" {
+			if len(msg.tasks) == 0 {
+				status = "no matches • " + modeLabel
+			} else {
+				status = fmt.Sprintf("%d matches • %s", len(msg.tasks), modeLabel)
+			}
+		}
+		if summaryLabel := strings.TrimSpace(searchResultsEmbeddingSummaryLabel(m.searchEmbeddingSummary)); summaryLabel != "" {
+			status += " • " + summaryLabel
+		}
+		m.status = status
+	}
 	if m.status == "" || m.status == "loading..." {
 		m.status = "ready"
 	}
@@ -1449,6 +1548,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case loadedMsg:
 		m.autoRefreshInFlight = false
+		if m.searchOpeningResult {
+			m.searchLoading = false
+			m.searchOpeningResult = false
+		}
 		if cmd := m.applyLoadedMsg(msg); cmd != nil {
 			return m, cmd
 		}
@@ -1479,6 +1582,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, m.scheduleAutoRefreshTickCmd()
+
+	case spinner.TickMsg:
+		if !m.embeddingsReindexInFlight {
+			return m, nil
+		}
+		cmds := make([]tea.Cmd, 0, 1)
+		if m.embeddingsReindexInFlight {
+			var cmd tea.Cmd
+			m.embeddingsSpinner, cmd = m.embeddingsSpinner.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case resourcePickerLoadedMsg:
 		if msg.err != nil {
@@ -1617,20 +1734,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case searchResultsMsg:
+		if msg.requestID != 0 && msg.requestID != m.searchActiveRequestID {
+			return m, nil
+		}
+		m.searchActiveRequestID = 0
+		m.searchLoading = false
+		m.searchOpeningResult = false
+		if msg.err != nil {
+			m.err = msg.err
+			m.mode = modeSearchResults
+			m.status = "search failed"
+			return m, nil
+		}
+		m.err = nil
+		m.searchMatches = msg.result.Matches
+		m.searchRequestedMode = msg.result.RequestedMode
+		m.searchEffectiveMode = msg.result.EffectiveMode
+		m.searchFallbackReason = msg.result.FallbackReason
+		m.searchEmbeddingSummary = msg.result.EmbeddingSummary
+		m.searchResultIndex = clamp(m.searchResultIndex, 0, len(m.searchMatches)-1)
+		m.mode = modeSearchResults
+		m.status = searchResultsStatusSummary(m.searchMatches, m.searchRequestedMode, m.searchEffectiveMode, m.searchFallbackReason)
+		return m, nil
+
+	case embeddingsStatusLoadedMsg:
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
-		m.searchMatches = msg.matches
-		m.searchResultIndex = clamp(m.searchResultIndex, 0, len(m.searchMatches)-1)
-		if len(m.searchMatches) > 0 {
-			m.mode = modeSearchResults
-			m.status = fmt.Sprintf("%d matches", len(m.searchMatches))
-		} else {
-			m.mode = modeNone
-			m.status = "no matches"
-		}
+		m.err = nil
+		m.embeddingsProjectIDs = append([]string(nil), msg.projectIDs...)
+		m.embeddingsScopeLabel = strings.TrimSpace(msg.scopeLabel)
+		m.embeddingsRows = append([]app.EmbeddingRecord(nil), msg.rows...)
+		m.embeddingsAllDisplayRows = append([]embeddingsStatusDisplayRow(nil), msg.displayRows...)
+		m.embeddingsSummary = msg.summary
+		m.applyEmbeddingsDisplayFilter()
+		m.status = "embeddings inventory"
 		return m, nil
+
+	case embeddingsReindexMsg:
+		m.embeddingsReindexInFlight = false
+		m.embeddingsReindexForce = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
+		m.status = fmt.Sprintf(
+			"embeddings reindex queued:%d ready:%d failed:%d",
+			msg.result.QueuedCount,
+			msg.result.ReadyCount,
+			msg.result.FailedCount,
+		)
+		return m, m.loadEmbeddingsStatusCmd()
 
 	case dependencyMatchesMsg:
 		if msg.err != nil {
@@ -2194,11 +2350,15 @@ func (m Model) loadData() tea.Msg {
 
 	tasksStartedAt := time.Now()
 	var tasks []domain.Task
+	searchRequestedMode := app.SearchMode("")
+	searchEffectiveMode := app.SearchMode("")
+	searchFallbackReason := ""
+	searchEmbeddingSummary := app.EmbeddingSummary{}
 	searchFilterActive := m.searchApplied
 	searchMatchCount := 0
 	taskSource := "list_tasks"
 	if searchFilterActive {
-		matches, searchErr := m.svc.SearchTaskMatches(context.Background(), app.SearchTasksFilter{
+		result, searchErr := m.svc.SearchTasks(context.Background(), app.SearchTasksFilter{
 			ProjectID:       projectID,
 			Query:           m.searchQuery,
 			CrossProject:    m.searchCrossProject,
@@ -2208,7 +2368,7 @@ func (m Model) loadData() tea.Msg {
 			Kinds:           append([]string(nil), m.searchKinds...),
 			LabelsAny:       append([]string(nil), m.searchLabelsAny...),
 			LabelsAll:       append([]string(nil), m.searchLabelsAll...),
-			Mode:            app.SearchModeHybrid,
+			Mode:            m.searchMode,
 			Sort:            app.SearchSortRankDesc,
 			Limit:           defaultSearchResultsLimit,
 			Offset:          0,
@@ -2218,6 +2378,11 @@ func (m Model) loadData() tea.Msg {
 			m.traceLoadDataStage("total", totalStartedAt, searchErr, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 			return loadedMsg{err: searchErr}
 		}
+		searchRequestedMode = result.RequestedMode
+		searchEffectiveMode = result.EffectiveMode
+		searchFallbackReason = result.FallbackReason
+		searchEmbeddingSummary = result.EmbeddingSummary
+		matches := result.Matches
 		searchMatchCount = len(matches)
 		taskSource = "search_matches"
 		tasks = make([]domain.Task, 0, len(matches))
@@ -2407,6 +2572,10 @@ func (m Model) loadData() tea.Msg {
 		selectedProject:           projectIdx,
 		columns:                   columns,
 		tasks:                     tasks,
+		searchRequestedMode:       searchRequestedMode,
+		searchEffectiveMode:       searchEffectiveMode,
+		searchFallbackReason:      searchFallbackReason,
+		searchEmbeddingSummary:    searchEmbeddingSummary,
 		activityEntries:           activityEntries,
 		attentionItems:            attentionItems,
 		globalNotices:             globalNotices,
@@ -2419,27 +2588,273 @@ func (m Model) loadData() tea.Msg {
 }
 
 // loadSearchMatches loads required data for the current operation.
-func (m Model) loadSearchMatches() tea.Msg {
-	projectID, _ := m.currentProjectID()
-	matches, err := m.svc.SearchTaskMatches(context.Background(), app.SearchTasksFilter{
-		ProjectID:       projectID,
-		Query:           m.searchQuery,
-		CrossProject:    m.searchCrossProject,
-		IncludeArchived: m.searchIncludeArchived,
-		States:          append([]string(nil), m.searchStates...),
-		Levels:          canonicalSearchLevels(m.searchLevels),
-		Kinds:           append([]string(nil), m.searchKinds...),
-		LabelsAny:       append([]string(nil), m.searchLabelsAny...),
-		LabelsAll:       append([]string(nil), m.searchLabelsAll...),
-		Mode:            app.SearchModeHybrid,
-		Sort:            app.SearchSortRankDesc,
-		Limit:           defaultSearchResultsLimit,
-		Offset:          0,
-	})
-	if err != nil {
-		return searchResultsMsg{err: err}
+func (m Model) loadSearchMatchesCmd(requestID int) tea.Cmd {
+	return func() tea.Msg {
+		projectID, _ := m.currentProjectID()
+		result, err := m.svc.SearchTasks(context.Background(), app.SearchTasksFilter{
+			ProjectID:       projectID,
+			Query:           m.searchQuery,
+			CrossProject:    m.searchCrossProject,
+			IncludeArchived: m.searchIncludeArchived,
+			States:          append([]string(nil), m.searchStates...),
+			Levels:          canonicalSearchLevels(m.searchLevels),
+			Kinds:           append([]string(nil), m.searchKinds...),
+			LabelsAny:       append([]string(nil), m.searchLabelsAny...),
+			LabelsAll:       append([]string(nil), m.searchLabelsAll...),
+			Mode:            m.searchMode,
+			Sort:            app.SearchSortRankDesc,
+			Limit:           defaultSearchResultsLimit,
+			Offset:          0,
+		})
+		if err != nil {
+			return searchResultsMsg{requestID: requestID, err: err}
+		}
+		return searchResultsMsg{requestID: requestID, result: result}
 	}
-	return searchResultsMsg{matches: matches}
+}
+
+// startEmbeddingsStatus opens the embeddings lifecycle inventory modal for the requested scope.
+func (m *Model) startEmbeddingsStatus(global bool) tea.Cmd {
+	m.embeddingsGlobal = global
+	m.embeddingsIndex = 0
+	m.embeddingsFilterActive = false
+	m.embeddingsFilterInput.Blur()
+	if m.mode != modeEmbeddingsStatus {
+		m.embeddingsFilterQuery = ""
+		m.embeddingsFilterInput.SetValue("")
+	}
+	m.mode = modeEmbeddingsStatus
+	m.status = "embeddings inventory"
+	return m.loadEmbeddingsStatusCmd()
+}
+
+// startEmbeddingsReindex kicks off one explicit embeddings reindex and animates an in-progress indicator.
+func (m *Model) startEmbeddingsReindex(force bool) tea.Cmd {
+	m.mode = modeEmbeddingsStatus
+	m.embeddingsReindexInFlight = true
+	m.embeddingsReindexForce = force
+	if force {
+		m.status = "force reindexing embeddings..."
+	} else {
+		m.status = "reindexing embeddings..."
+	}
+	return tea.Batch(m.runEmbeddingsReindexCmd(force), m.embeddingsSpinner.Tick)
+}
+
+// loadEmbeddingsStatusCmd loads embeddings lifecycle inventory rows for the active TUI scope.
+func (m Model) loadEmbeddingsStatusCmd() tea.Cmd {
+	return func() tea.Msg {
+		projectIDs, err := m.embeddingsStatusProjectIDs()
+		if err != nil {
+			return embeddingsStatusLoadedMsg{err: err}
+		}
+		rows, err := m.svc.ListEmbeddingStates(context.Background(), app.EmbeddingListFilter{
+			ProjectIDs: projectIDs,
+			Limit:      defaultEmbeddingsStatusLimit,
+		})
+		if err != nil {
+			return embeddingsStatusLoadedMsg{err: err}
+		}
+		summary, err := m.svc.SummarizeEmbeddingStates(context.Background(), app.EmbeddingListFilter{
+			ProjectIDs: projectIDs,
+		})
+		if err != nil {
+			return embeddingsStatusLoadedMsg{err: err}
+		}
+		projects, err := m.svc.ListProjects(context.Background(), true)
+		if err != nil {
+			return embeddingsStatusLoadedMsg{err: err}
+		}
+		projectsByID := make(map[string]domain.Project, len(projects))
+		for _, project := range projects {
+			projectsByID[strings.TrimSpace(project.ID)] = project
+		}
+		taskProjectIDs := uniqueTrimmed(projectIDs)
+		if len(rows) > 0 {
+			taskProjectIDs = taskProjectIDs[:0]
+			for _, row := range rows {
+				taskProjectIDs = append(taskProjectIDs, row.ProjectID)
+			}
+			taskProjectIDs = uniqueTrimmed(taskProjectIDs)
+		}
+		tasksByID := map[string]domain.Task{}
+		for _, projectID := range taskProjectIDs {
+			tasks, err := m.svc.ListTasks(context.Background(), projectID, true)
+			if err != nil {
+				return embeddingsStatusLoadedMsg{err: err}
+			}
+			for _, task := range tasks {
+				tasksByID[strings.TrimSpace(task.ID)] = task
+			}
+		}
+		displayRows := make([]embeddingsStatusDisplayRow, 0, len(rows))
+		for _, row := range rows {
+			displayRows = append(displayRows, buildEmbeddingsStatusDisplayRow(row, projectsByID, tasksByID))
+		}
+		return embeddingsStatusLoadedMsg{
+			projectIDs:  projectIDs,
+			scopeLabel:  embeddingsStatusScopeLabel(projectIDs, projectsByID),
+			rows:        rows,
+			displayRows: displayRows,
+			summary:     summary,
+		}
+	}
+}
+
+// runEmbeddingsReindexCmd enqueues embeddings work for the active TUI scope and returns the operator-visible outcome.
+func (m Model) runEmbeddingsReindexCmd(force bool) tea.Cmd {
+	return func() tea.Msg {
+		projectIDs, err := m.embeddingsStatusProjectIDs()
+		if err != nil {
+			return embeddingsReindexMsg{err: err}
+		}
+		projectID := ""
+		if !m.embeddingsGlobal {
+			projectID, _ = m.currentProjectID()
+		}
+		result, err := m.svc.ReindexEmbeddings(context.Background(), app.ReindexEmbeddingsInput{
+			ProjectID:       projectID,
+			CrossProject:    m.embeddingsGlobal,
+			IncludeArchived: m.embeddingsIncludeArchived,
+			Force:           force,
+		})
+		if err != nil {
+			return embeddingsReindexMsg{err: err}
+		}
+		result.TargetProjects = append([]string(nil), projectIDs...)
+		return embeddingsReindexMsg{result: result}
+	}
+}
+
+// embeddingsStatusProjectIDs resolves the current TUI embeddings scope into concrete project ids.
+func (m Model) embeddingsStatusProjectIDs() ([]string, error) {
+	if m.embeddingsGlobal {
+		projects, err := m.svc.ListProjects(context.Background(), m.embeddingsIncludeArchived)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(projects))
+		for _, project := range projects {
+			out = append(out, project.ID)
+		}
+		return out, nil
+	}
+	projectID, ok := m.currentProjectID()
+	if !ok {
+		return []string{}, nil
+	}
+	return []string{projectID}, nil
+}
+
+// applyEmbeddingsDisplayFilter updates visible lifecycle rows for the active inventory query.
+func (m *Model) applyEmbeddingsDisplayFilter() {
+	if m == nil {
+		return
+	}
+	query := strings.ToLower(strings.TrimSpace(m.embeddingsFilterQuery))
+	if query == "" {
+		m.embeddingsDisplayRows = append([]embeddingsStatusDisplayRow(nil), m.embeddingsAllDisplayRows...)
+		m.embeddingsIndex = clamp(m.embeddingsIndex, 0, len(m.embeddingsDisplayRows)-1)
+		return
+	}
+	filtered := make([]embeddingsStatusDisplayRow, 0, len(m.embeddingsAllDisplayRows))
+	for _, row := range m.embeddingsAllDisplayRows {
+		if strings.Contains(row.FilterLabel, query) {
+			filtered = append(filtered, row)
+		}
+	}
+	m.embeddingsDisplayRows = filtered
+	m.embeddingsIndex = clamp(m.embeddingsIndex, 0, len(m.embeddingsDisplayRows)-1)
+}
+
+// selectedEmbeddingStatusRow returns the currently focused operator-visible lifecycle row.
+func (m Model) selectedEmbeddingStatusRow() (embeddingsStatusDisplayRow, bool) {
+	if len(m.embeddingsDisplayRows) == 0 {
+		return embeddingsStatusDisplayRow{}, false
+	}
+	idx := clamp(m.embeddingsIndex, 0, len(m.embeddingsDisplayRows)-1)
+	return m.embeddingsDisplayRows[idx], true
+}
+
+// focusEmbeddingsFilter activates inline lifecycle-row filtering.
+func (m *Model) focusEmbeddingsFilter() tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.embeddingsFilterActive = true
+	m.status = "filter embeddings inventory"
+	return m.embeddingsFilterInput.Focus()
+}
+
+// blurEmbeddingsFilter exits inline lifecycle-row filtering without closing the inventory modal.
+func (m *Model) blurEmbeddingsFilter() {
+	if m == nil {
+		return
+	}
+	m.embeddingsFilterActive = false
+	m.embeddingsFilterInput.Blur()
+	m.status = "embeddings inventory"
+}
+
+// selectProjectInBoardState switches the board selection to one project id when it is already loaded in memory.
+func (m *Model) selectProjectInBoardState(projectID string) bool {
+	if m == nil {
+		return false
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return false
+	}
+	for idx, project := range m.projects {
+		if strings.TrimSpace(project.ID) != projectID {
+			continue
+		}
+		m.selectedProject = idx
+		return true
+	}
+	return false
+}
+
+// openSelectedEmbeddingStatusRow opens the currently focused lifecycle row in the closest human-facing detail view.
+func (m Model) openSelectedEmbeddingStatusRow() (tea.Model, tea.Cmd) {
+	row, ok := m.selectedEmbeddingStatusRow()
+	if !ok {
+		m.status = "no lifecycle row selected"
+		return m, nil
+	}
+	projectID := strings.TrimSpace(row.Record.ProjectID)
+	if row.HasProject {
+		projectID = strings.TrimSpace(row.Project.ID)
+	}
+	if projectID != "" {
+		m.selectProjectInBoardState(projectID)
+	}
+	if row.HasTask {
+		if row.Task.ArchivedAt != nil {
+			m.showArchived = true
+		}
+		m.searchApplied = false
+		m.setBoardContextForTask(row.Task)
+		m.pendingFocusTaskID = row.Task.ID
+		m.pendingOpenTaskInfoID = row.Task.ID
+		m.mode = modeNone
+		m.status = "opening embeddings row..."
+		return m, m.loadData
+	}
+	if row.HasProject {
+		target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+			ProjectID:  row.Project.ID,
+			TargetType: domain.CommentTargetTypeProject,
+			TargetID:   row.Project.ID,
+		})
+		if err != nil {
+			m.status = "project detail target invalid: " + err.Error()
+			return m, nil
+		}
+		return m.startThread(modeNone, target, row.Project.Name, row.Project.Description, threadPanelDetails)
+	}
+	m.status = "selected lifecycle row has no openable subject"
+	return m, nil
 }
 
 // loadActivityLog loads persisted project activity entries for modal rendering.
@@ -3961,6 +4376,15 @@ func configureTextInputClipboardBindings(in *textinput.Model) {
 func (m *Model) startSearchMode() tea.Cmd {
 	m.mode = modeSearch
 	m.input = ""
+	m.searchLoading = false
+	m.searchOpeningResult = false
+	m.searchActiveRequestID = 0
+	if m.searchDefaultMode == "" {
+		m.searchDefaultMode = app.SearchModeHybrid
+	}
+	if m.searchMode == "" {
+		m.searchMode = m.searchDefaultMode
+	}
 	m.searchStates = canonicalSearchStates(m.searchStates)
 	m.searchLevels = canonicalSearchLevels(m.searchLevels)
 	m.searchInput.SetValue(m.searchQuery)
@@ -5799,6 +6223,46 @@ func (m Model) isSearchLevelEnabled(level string) bool {
 	return false
 }
 
+var searchModesOrdered = []app.SearchMode{
+	app.SearchModeHybrid,
+	app.SearchModeKeyword,
+	app.SearchModeSemantic,
+}
+
+// cycleSearchMode rotates the active search execution mode within the operator-visible search modal.
+func (m *Model) cycleSearchMode(delta int) {
+	if m == nil {
+		return
+	}
+	if len(searchModesOrdered) == 0 {
+		m.searchMode = app.SearchModeHybrid
+		return
+	}
+	current := app.SearchMode(strings.TrimSpace(string(m.searchMode)))
+	index := 0
+	for idx, mode := range searchModesOrdered {
+		if mode == current {
+			index = idx
+			break
+		}
+	}
+	m.searchMode = searchModesOrdered[wrapIndex(index, delta, len(searchModesOrdered))]
+}
+
+// searchModeDisplayLabel resolves one readable label for the requested operator search mode.
+func searchModeDisplayLabel(mode app.SearchMode) string {
+	switch mode {
+	case app.SearchModeKeyword:
+		return "keyword"
+	case app.SearchModeSemantic:
+		return "semantic"
+	case app.SearchModeHybrid:
+		return "hybrid"
+	default:
+		return "hybrid"
+	}
+}
+
 // wrapIndex wraps an index by delta for a bounded collection.
 func wrapIndex(current int, delta int, total int) int {
 	if total <= 0 {
@@ -5987,29 +6451,38 @@ func windowBounds(total, selected, windowSize int) (int, int) {
 
 // applySearchFilter applies current search values and returns the follow-up command.
 func (m *Model) applySearchFilter() tea.Cmd {
-	m.mode = modeNone
 	m.searchInput.Blur()
 	m.searchQuery = strings.TrimSpace(m.searchInput.Value())
 	m.searchStates = canonicalSearchStates(m.searchStates)
 	m.searchLevels = canonicalSearchLevels(m.searchLevels)
-	m.searchApplied = true
-	m.selectedTask = 0
-	m.status = "search updated"
-	if m.searchCrossProject {
-		return m.loadSearchMatches
+	if m.searchMode == "" {
+		m.searchMode = app.SearchModeHybrid
 	}
-	return m.loadData
+	m.mode = modeSearchResults
+	m.searchApplied = false
+	m.searchResultIndex = 0
+	m.searchMatches = nil
+	m.searchRequestedMode = m.searchMode
+	m.searchEffectiveMode = ""
+	m.searchFallbackReason = ""
+	m.searchEmbeddingSummary = app.EmbeddingSummary{}
+	m.searchLoading = true
+	m.searchOpeningResult = false
+	m.searchRequestSeq++
+	m.searchActiveRequestID = m.searchRequestSeq
+	m.status = "searching..."
+	return m.loadSearchMatchesCmd(m.searchActiveRequestID)
 }
 
 // clearSearchQuery clears only the search query.
 func (m *Model) clearSearchQuery() tea.Cmd {
 	m.searchQuery = ""
 	m.searchInput.SetValue("")
-	m.searchApplied = true
+	m.searchApplied = false
+	m.searchLoading = false
+	m.searchOpeningResult = false
+	m.searchActiveRequestID = 0
 	m.status = "query cleared"
-	if m.searchCrossProject {
-		return m.loadSearchMatches
-	}
 	return m.loadData
 }
 
@@ -6019,12 +6492,18 @@ func (m *Model) resetSearchFilters() tea.Cmd {
 	m.searchInput.SetValue("")
 	m.searchCrossProject = m.searchDefaultCrossProject
 	m.searchIncludeArchived = m.searchDefaultIncludeArchive
+	m.searchMode = m.searchDefaultMode
 	m.searchStates = canonicalSearchStates(m.searchDefaultStates)
 	m.searchLevels = canonicalSearchLevels(m.searchDefaultLevels)
 	m.searchKinds = nil
 	m.searchLabelsAny = nil
 	m.searchLabelsAll = nil
 	m.searchApplied = false
+	m.searchLoading = false
+	m.searchOpeningResult = false
+	m.searchActiveRequestID = 0
+	m.searchMatches = nil
+	m.searchResultIndex = 0
 	m.status = "filters reset"
 	return m.loadData
 }
@@ -6172,6 +6651,8 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "search", Aliases: []string{}, Description: "open search modal"},
 		{Command: "search-all", Aliases: []string{}, Description: "set search scope to all projects"},
 		{Command: "search-project", Aliases: []string{}, Description: "set search scope to current project"},
+		{Command: "embeddings", Aliases: []string{"embeddings-status", "semantic-status"}, Description: "open embeddings lifecycle inventory"},
+		{Command: "embeddings-reindex", Aliases: []string{"semantic-reindex"}, Description: "enqueue embeddings reindex for the current inventory scope"},
 		{Command: "clear-query", Aliases: []string{"clear-search-query"}, Description: "clear search text only"},
 		{Command: "reset-filters", Aliases: []string{"clear-search"}, Description: "reset query + states + scope + archived"},
 		{Command: "toggle-archived", Aliases: []string{}, Description: "toggle archived visibility"},
@@ -6801,7 +7282,7 @@ func (m *Model) startDependencyInspector(back inputMode, ownerTaskID string, dep
 func (m Model) loadDependencyMatches() tea.Msg {
 	ctx := context.Background()
 	projectID, _ := m.currentProjectID()
-	matches, err := m.svc.SearchTaskMatches(ctx, app.SearchTasksFilter{
+	result, err := m.svc.SearchTasks(ctx, app.SearchTasksFilter{
 		ProjectID:       projectID,
 		Query:           strings.TrimSpace(m.dependencyInput.Value()),
 		CrossProject:    m.dependencyCrossProject,
@@ -6816,6 +7297,7 @@ func (m Model) loadDependencyMatches() tea.Msg {
 	if err != nil {
 		return dependencyMatchesMsg{err: err}
 	}
+	matches := result.Matches
 
 	knownByProject := map[string]map[string]domain.Task{}
 	loadTasksByProject := func(projectID string) (map[string]domain.Task, error) {
@@ -6976,6 +7458,244 @@ func buildDependencyTaskPath(match app.TaskMatch, tasksByID map[string]domain.Ta
 		projectName = match.Project.ID
 	}
 	return projectName + " | " + strings.Join(pathParts, " | ")
+}
+
+// searchResultsStatusSummary returns the status-line text for one search result payload.
+func searchResultsStatusSummary(matches []app.TaskMatch, requested, effective app.SearchMode, fallbackReason string) string {
+	if len(matches) == 0 {
+		if strings.TrimSpace(fallbackReason) != "" {
+			return "no matches • fallback: " + strings.TrimSpace(fallbackReason)
+		}
+		return "no matches"
+	}
+	modeLabel := searchResultsModeLabel(requested, effective, fallbackReason)
+	if strings.TrimSpace(modeLabel) == "" {
+		return fmt.Sprintf("%d matches", len(matches))
+	}
+	return fmt.Sprintf("%d matches • %s", len(matches), modeLabel)
+}
+
+// searchResultsModeLabel returns one readable requested/effective mode label for the TUI search overlay.
+func searchResultsModeLabel(requested, effective app.SearchMode, fallbackReason string) string {
+	requestedText := strings.TrimSpace(string(requested))
+	effectiveText := strings.TrimSpace(string(effective))
+	switch {
+	case requestedText == "" && effectiveText == "":
+		return "mode: hybrid"
+	case requestedText != "" && effectiveText != "" && requestedText != effectiveText:
+		label := fmt.Sprintf("mode: %s -> %s", requestedText, effectiveText)
+		if strings.TrimSpace(fallbackReason) != "" {
+			label += " • fallback: " + strings.TrimSpace(fallbackReason)
+		}
+		return label
+	case effectiveText != "":
+		label := "mode: " + effectiveText
+		if strings.TrimSpace(fallbackReason) != "" {
+			label += " • fallback: " + strings.TrimSpace(fallbackReason)
+		}
+		return label
+	case requestedText != "":
+		return "mode: " + requestedText
+	default:
+		return ""
+	}
+}
+
+// searchResultsEmbeddingSummaryLabel returns one compact lifecycle-summary label for the TUI search overlay.
+func searchResultsEmbeddingSummaryLabel(summary app.EmbeddingSummary) string {
+	return fmt.Sprintf(
+		"embeddings ready:%d pending:%d running:%d failed:%d stale:%d",
+		summary.ReadyCount,
+		summary.PendingCount,
+		summary.RunningCount,
+		summary.FailedCount,
+		summary.StaleCount,
+	)
+}
+
+// searchMatchEmbeddingLabel returns one short per-match lifecycle/search label for the TUI search overlay.
+func searchMatchEmbeddingLabel(match app.TaskMatch) string {
+	status := strings.TrimSpace(string(match.EmbeddingStatus))
+	if status == "" {
+		status = "untracked"
+	}
+	if subjectType := strings.TrimSpace(string(match.EmbeddingSubjectType)); subjectType != "" && subjectType != string(app.EmbeddingSubjectTypeWorkItem) {
+		status += "/" + subjectType
+	}
+	if match.UsedSemantic {
+		return status + "/semantic"
+	}
+	return status
+}
+
+// embeddingsStatusScopeLabel returns one compact named scope label for the embeddings inventory modal.
+func embeddingsStatusScopeLabel(projectIDs []string, projectsByID map[string]domain.Project) string {
+	projectIDs = uniqueTrimmed(projectIDs)
+	if len(projectIDs) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		if project, ok := projectsByID[projectID]; ok {
+			names = append(names, firstNonEmptyTrimmed(projectDisplayName(project), projectID))
+			continue
+		}
+		names = append(names, projectID)
+	}
+	switch len(names) {
+	case 1:
+		return names[0]
+	case 2, 3:
+		return "all projects (" + strconv.Itoa(len(names)) + "): " + strings.Join(names, ", ")
+	default:
+		return fmt.Sprintf("all projects (%d): %s +%d more", len(names), strings.Join(names[:3], ", "), len(names)-3)
+	}
+}
+
+// embeddingsStatusDetailLabel returns one compact operator-visible detail label for an embeddings lifecycle row.
+func embeddingsStatusDetailLabel(row app.EmbeddingRecord) string {
+	switch {
+	case strings.TrimSpace(row.StaleReason) != "":
+		return row.StaleReason
+	case strings.TrimSpace(row.LastErrorSummary) != "":
+		return row.LastErrorSummary
+	case strings.TrimSpace(row.ModelSignature) != "":
+		return row.ModelSignature
+	default:
+		return "-"
+	}
+}
+
+// embeddingsStatusSubjectLabel resolves one human-facing subject label for an embeddings inventory row.
+func embeddingsStatusSubjectLabel(row app.EmbeddingRecord, task domain.Task, hasTask bool) string {
+	switch row.SubjectType {
+	case app.EmbeddingSubjectTypeWorkItem:
+		if hasTask {
+			if marker := strings.TrimSpace(taskHierarchyMarker(task)); marker != "" {
+				return marker
+			}
+			if kind := strings.TrimSpace(string(task.Kind)); kind != "" {
+				return kind
+			}
+		}
+		return "work item"
+	case app.EmbeddingSubjectTypeThreadContext:
+		if hasTask {
+			if marker := strings.TrimSpace(taskHierarchyMarker(task)); marker != "" {
+				return marker + " thread"
+			}
+			if kind := strings.TrimSpace(string(task.Kind)); kind != "" {
+				return kind + " thread"
+			}
+			return "task thread"
+		}
+		return "project thread"
+	case app.EmbeddingSubjectTypeProjectDocument:
+		return "project document"
+	default:
+		value := strings.TrimSpace(strings.ReplaceAll(string(row.SubjectType), "_", " "))
+		if value == "" {
+			return "subject"
+		}
+		return value
+	}
+}
+
+// embeddingsStatusTitleLabel resolves one row title with stable subject-id fallback text.
+func embeddingsStatusTitleLabel(row app.EmbeddingRecord, project domain.Project, hasProject bool, task domain.Task, hasTask bool) string {
+	switch row.SubjectType {
+	case app.EmbeddingSubjectTypeWorkItem:
+		if hasTask {
+			return firstNonEmptyTrimmed(task.Title, task.ID)
+		}
+	case app.EmbeddingSubjectTypeThreadContext:
+		if hasTask {
+			return firstNonEmptyTrimmed(task.Title, task.ID)
+		}
+		if hasProject {
+			return "comments"
+		}
+	case app.EmbeddingSubjectTypeProjectDocument:
+		if hasProject {
+			return "project overview"
+		}
+	}
+	return firstNonEmptyTrimmed(row.SubjectID, "(unknown)")
+}
+
+// embeddingsStatusTaskPath formats one project-rooted hierarchy path for lifecycle rows.
+func embeddingsStatusTaskPath(task domain.Task, tasksByID map[string]domain.Task, projectLabel string) string {
+	chain := []string{firstNonEmptyTrimmed(task.Title, task.ID)}
+	visited := map[string]struct{}{strings.TrimSpace(task.ID): {}}
+	parentID := strings.TrimSpace(task.ParentID)
+	for parentID != "" {
+		if _, seen := visited[parentID]; seen {
+			break
+		}
+		parent, ok := tasksByID[parentID]
+		if !ok {
+			break
+		}
+		visited[parentID] = struct{}{}
+		chain = append(chain, firstNonEmptyTrimmed(parent.Title, parent.ID))
+		parentID = strings.TrimSpace(parent.ParentID)
+	}
+	slices.Reverse(chain)
+	if strings.TrimSpace(projectLabel) != "" {
+		chain = append([]string{projectLabel}, chain...)
+	}
+	return strings.Join(chain, " -> ")
+}
+
+// buildEmbeddingsStatusDisplayRow resolves one lifecycle record into human-facing modal labels.
+func buildEmbeddingsStatusDisplayRow(row app.EmbeddingRecord, projectsByID map[string]domain.Project, tasksByID map[string]domain.Task) embeddingsStatusDisplayRow {
+	display := embeddingsStatusDisplayRow{Record: row}
+	if project, ok := projectsByID[strings.TrimSpace(row.ProjectID)]; ok {
+		display.Project = project
+		display.HasProject = true
+		display.ProjectLabel = firstNonEmptyTrimmed(projectDisplayName(project), row.ProjectID)
+	} else {
+		display.ProjectLabel = firstNonEmptyTrimmed(row.ProjectID, "(project)")
+	}
+
+	switch row.SubjectType {
+	case app.EmbeddingSubjectTypeWorkItem:
+		if task, ok := tasksByID[strings.TrimSpace(row.SubjectID)]; ok {
+			display.Task = task
+			display.HasTask = true
+		}
+	case app.EmbeddingSubjectTypeThreadContext:
+		if target, err := app.ParseThreadContextSubjectID(row.SubjectID); err == nil && target.TargetType != domain.CommentTargetTypeProject {
+			if task, ok := tasksByID[strings.TrimSpace(target.TargetID)]; ok {
+				display.Task = task
+				display.HasTask = true
+			}
+		}
+	}
+
+	display.SubjectLabel = embeddingsStatusSubjectLabel(row, display.Task, display.HasTask)
+	display.TitleLabel = embeddingsStatusTitleLabel(row, display.Project, display.HasProject, display.Task, display.HasTask)
+	switch {
+	case display.HasTask:
+		display.PathLabel = embeddingsStatusTaskPath(display.Task, tasksByID, display.ProjectLabel)
+	case display.HasProject:
+		display.PathLabel = display.ProjectLabel
+	default:
+		display.PathLabel = firstNonEmptyTrimmed(row.ProjectID, row.SubjectID)
+	}
+	display.DetailLabel = embeddingsStatusDetailLabel(row)
+	display.FilterLabel = strings.ToLower(strings.Join([]string{
+		display.ProjectLabel,
+		display.SubjectLabel,
+		display.TitleLabel,
+		display.PathLabel,
+		display.DetailLabel,
+		string(row.Status),
+		string(row.SubjectType),
+		row.SubjectID,
+		row.ProjectID,
+	}, " "))
+	return display
 }
 
 // dependencyStateIDForTask resolves one canonical state identifier for dependency rows.
@@ -9242,7 +9962,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeSearch {
-		const searchFocusSlots = 6
+		const searchFocusSlots = 7
 		if m.searchFocus == 0 {
 			if handled, status := applyClipboardShortcutToInput(msg, &m.searchInput); handled {
 				m.status = status
@@ -9318,6 +10038,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchCrossProject = !m.searchCrossProject
 			case 4:
 				m.searchIncludeArchived = !m.searchIncludeArchived
+			case 5:
+				m.cycleSearchMode(-1)
 			}
 			return m, nil
 		case (msg.String() == "l" || msg.String() == "right") && m.searchFocus != 0:
@@ -9330,6 +10052,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchCrossProject = !m.searchCrossProject
 			case 4:
 				m.searchIncludeArchived = !m.searchIncludeArchived
+			case 5:
+				m.cycleSearchMode(1)
 			}
 			return m, nil
 		case (msg.String() == " " || msg.String() == "space") && m.searchFocus != 0:
@@ -9348,6 +10072,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchCrossProject = !m.searchCrossProject
 			case 4:
 				m.searchIncludeArchived = !m.searchIncludeArchived
+			case 5:
+				m.cycleSearchMode(1)
 			}
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
@@ -9370,6 +10096,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case 4:
 				m.searchIncludeArchived = !m.searchIncludeArchived
 				return m, nil
+			case 5:
+				m.cycleSearchMode(1)
+				return m, nil
 			default:
 				return m, m.applySearchFilter()
 			}
@@ -9389,6 +10118,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeSearchResults {
 		switch msg.String() {
 		case "esc":
+			if m.searchOpeningResult {
+				return m, nil
+			}
+			m.searchLoading = false
+			m.searchActiveRequestID = 0
 			m.mode = modeNone
 			m.status = "ready"
 			return m, nil
@@ -9403,9 +10137,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "enter":
+			if m.searchLoading {
+				return m, nil
+			}
 			if len(m.searchMatches) == 0 {
-				m.mode = modeNone
-				m.status = "no matches"
+				m.status = searchResultsStatusSummary(nil, m.searchRequestedMode, m.searchEffectiveMode, m.searchFallbackReason)
 				return m, nil
 			}
 			match := m.searchMatches[clamp(m.searchResultIndex, 0, len(m.searchMatches)-1)]
@@ -9415,10 +10151,74 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+			m.searchApplied = false
+			m.setBoardContextForTask(match.Task)
 			m.pendingFocusTaskID = match.Task.ID
-			m.mode = modeNone
-			m.status = "jumped to match"
+			m.pendingOpenTaskInfoID = match.Task.ID
+			m.searchLoading = true
+			m.searchOpeningResult = true
+			m.status = "opening search match..."
 			return m, m.loadData
+		default:
+			return m, nil
+		}
+	}
+
+	if m.mode == modeEmbeddingsStatus {
+		if m.embeddingsFilterActive {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.embeddingsFilterInput); handled {
+				m.status = status
+				m.embeddingsFilterQuery = strings.TrimSpace(m.embeddingsFilterInput.Value())
+				m.applyEmbeddingsDisplayFilter()
+				return m, nil
+			}
+			switch msg.String() {
+			case "esc", "enter":
+				m.blurEmbeddingsFilter()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.embeddingsFilterInput, cmd = m.embeddingsFilterInput.Update(msg)
+				_ = scrubTextInputTerminalArtifacts(&m.embeddingsFilterInput)
+				m.embeddingsFilterQuery = strings.TrimSpace(m.embeddingsFilterInput.Value())
+				m.applyEmbeddingsDisplayFilter()
+				return m, cmd
+			}
+		}
+		switch msg.String() {
+		case "esc":
+			m.mode = modeNone
+			m.status = "ready"
+			return m, nil
+		case "/":
+			return m, m.focusEmbeddingsFilter()
+		case "g":
+			return m, m.startEmbeddingsStatus(!m.embeddingsGlobal)
+		case "a":
+			m.embeddingsIncludeArchived = !m.embeddingsIncludeArchived
+			return m, m.loadEmbeddingsStatusCmd()
+		case "j", "down":
+			if m.embeddingsIndex < len(m.embeddingsRows)-1 {
+				m.embeddingsIndex++
+			}
+			return m, nil
+		case "k", "up":
+			if m.embeddingsIndex > 0 {
+				m.embeddingsIndex--
+			}
+			return m, nil
+		case "r":
+			if m.embeddingsReindexInFlight {
+				return m, nil
+			}
+			return m, m.startEmbeddingsReindex(false)
+		case "R":
+			if m.embeddingsReindexInFlight {
+				return m, nil
+			}
+			return m, m.startEmbeddingsReindex(true)
+		case "enter":
+			return m.openSelectedEmbeddingStatusRow()
 		default:
 			return m, nil
 		}
@@ -10982,6 +11782,10 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 	case "search-project":
 		m.searchCrossProject = false
 		return m, m.startSearchMode()
+	case "embeddings", "embeddings-status", "semantic-status":
+		return m, m.startEmbeddingsStatus(false)
+	case "embeddings-reindex", "semantic-reindex":
+		return m, m.startEmbeddingsReindex(false)
 	case "clear-query", "clear-search-query":
 		return m, m.clearSearchQuery()
 	case "reset-filters", "clear-search":
@@ -13325,6 +14129,16 @@ func (m *Model) focusTaskByID(taskID string) bool {
 	return false
 }
 
+// setBoardContextForTask adjusts subtree focus so closing a modal lands back on the matched node context.
+func (m *Model) setBoardContextForTask(task domain.Task) {
+	parentID := strings.TrimSpace(task.ParentID)
+	if parentID == "" {
+		m.projectionRootTaskID = ""
+		return
+	}
+	m.projectionRootTaskID = parentID
+}
+
 // activateSubtreeFocus enters focused scope mode and selects the first visible child when present.
 func (m *Model) activateSubtreeFocus(rootTaskID string) bool {
 	rootTaskID = strings.TrimSpace(rootTaskID)
@@ -15290,9 +16104,9 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeSearch:
 		return "search", []string{
-			"tab cycles query, states, levels, scope, archived, and apply",
-			"space or enter toggles the focused state/level/scope option",
-			"h/l cycles state/level cursors and toggles scope/archived",
+			"tab cycles query, states, levels, scope, archived, mode, and apply",
+			"space or enter toggles the focused state/level/scope/mode option",
+			"h/l cycles state/level cursors and toggles scope/archived/mode",
 			"ctrl+u clears query; ctrl+r resets filters; esc cancels",
 		}
 	case modeRenameTask:
@@ -15351,6 +16165,17 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"j/k moves result selection",
 			"enter jumps to selected result",
 			"esc closes results",
+		}
+	case modeEmbeddingsStatus:
+		return "embeddings", []string{
+			"shows lifecycle counts and human-readable subject rows for the current or global scope",
+			"/ opens inline filtering for the visible lifecycle rows",
+			"enter opens the selected row in task info or project details",
+			"j/k moves the selected lifecycle row",
+			"g toggles current-project vs all-project scope",
+			"a toggles archived-project inclusion",
+			"r enqueues reindex for the current scope; R forces reindex",
+			"esc closes the modal",
 		}
 	case modeCommandPalette:
 		return "command palette", []string{
@@ -17069,6 +17894,32 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("?", "help"),
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeSearchResults:
+		short := []key.Binding{
+			helpBinding("enter", "open"),
+			helpBinding("↑/↓", "move"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeEmbeddingsStatus:
+		short := []key.Binding{
+			helpBinding("enter", "open"),
+			helpBinding("/", "filter"),
+			helpBinding("r", "reindex"),
+			helpBinding("↑/↓", "move"),
+			helpBinding("g", "scope"),
+			helpBinding("a", "archived"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		full := [][]key.Binding{
+			short,
+			{
+				helpBinding("R", "force"),
+			},
+		}
+		return staticHelpKeyMap{short: short, full: full}
 	case modeAuthReview:
 		short := []key.Binding{
 			helpBinding("enter", "approve/save"),
@@ -17869,7 +18720,22 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
 		lines := []string{titleStyle.Render("Search Results")}
-		if len(m.searchMatches) == 0 {
+		if query := strings.TrimSpace(m.searchQuery); query != "" {
+			lines = append(lines, hintStyle.Render("query: "+truncate(query, 72)))
+		}
+		lines = append(lines, hintStyle.Render(searchResultsModeLabel(m.searchRequestedMode, m.searchEffectiveMode, m.searchFallbackReason)))
+		if m.searchLoading {
+			action := "searching..."
+			if m.searchOpeningResult {
+				action = "opening search match..."
+			}
+			lines = append(lines, hintStyle.Render(action))
+		} else {
+			lines = append(lines, hintStyle.Render(searchResultsEmbeddingSummaryLabel(m.searchEmbeddingSummary)))
+		}
+		if m.searchLoading {
+			lines = append(lines, hintStyle.Render("waiting for search results"))
+		} else if len(m.searchMatches) == 0 {
 			lines = append(lines, hintStyle.Render("(empty)"))
 		} else {
 			tasks := make([]domain.Task, 0, len(m.searchMatches))
@@ -17887,11 +18753,96 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				if levelLabel == "" {
 					levelLabel = "-"
 				}
-				row := fmt.Sprintf("%s%s • %s • %s • %s", cursor, match.Project.Name, levelLabel, match.StateID, truncate(match.Task.Title, 40))
+				row := fmt.Sprintf("%s%s • %s • %s • %s • %s", cursor, match.Project.Name, levelLabel, match.StateID, searchMatchEmbeddingLabel(match), truncate(match.Task.Title, 32))
 				lines = append(lines, row)
 			}
 		}
-		lines = append(lines, hintStyle.Render("j/k navigate • enter open • esc close"))
+		footer := "j/k navigate • enter open • esc close"
+		if m.searchLoading {
+			if m.searchOpeningResult {
+				footer = "working..."
+			} else {
+				footer = "esc cancel"
+			}
+		} else if len(m.searchMatches) == 0 {
+			footer = "esc close"
+		}
+		lines = append(lines, hintStyle.Render(footer))
+		return resultsStyle.Render(strings.Join(lines, "\n"))
+
+	case modeEmbeddingsStatus:
+		resultsStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			resultsStyle = resultsStyle.Width(clamp(maxWidth, 40, 108))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		lines := []string{titleStyle.Render("Embeddings")}
+		if m.svc.EmbeddingsOperational() {
+			lines = append(lines, hintStyle.Render("runtime: operational"))
+		} else {
+			lines = append(lines, hintStyle.Render("runtime: unavailable"))
+		}
+		scopeLabel := firstNonEmptyTrimmed(m.embeddingsScopeLabel, embeddingsStatusScopeLabel(m.embeddingsProjectIDs, nil))
+		lines = append(lines, hintStyle.Render("scope: "+scopeLabel))
+		if m.embeddingsIncludeArchived {
+			lines = append(lines, hintStyle.Render("archived: shown"))
+		} else {
+			lines = append(lines, hintStyle.Render("archived: hidden"))
+		}
+		if m.embeddingsReindexInFlight {
+			action := "reindexing embeddings"
+			if m.embeddingsReindexForce {
+				action = "force reindexing embeddings"
+			}
+			lines = append(lines, m.embeddingsSpinner.View()+" "+action)
+		}
+		lines = append(lines, hintStyle.Render(searchResultsEmbeddingSummaryLabel(m.embeddingsSummary)))
+		filterLabel := "all"
+		if query := strings.TrimSpace(m.embeddingsFilterQuery); query != "" {
+			filterLabel = query
+		}
+		if m.embeddingsFilterActive {
+			input := m.embeddingsFilterInput
+			input.SetWidth(max(18, maxWidth-24))
+			lines = append(lines, input.View())
+		} else {
+			lines = append(lines, hintStyle.Render("filter: "+filterLabel))
+		}
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("showing %d of %d rows", len(m.embeddingsDisplayRows), len(m.embeddingsRows))))
+		if len(m.embeddingsDisplayRows) == 0 {
+			if len(m.embeddingsRows) == 0 {
+				lines = append(lines, hintStyle.Render("(no lifecycle rows)"))
+			} else {
+				lines = append(lines, hintStyle.Render("(no lifecycle rows match the current filter)"))
+			}
+		} else {
+			start, end := windowBounds(len(m.embeddingsDisplayRows), m.embeddingsIndex, 6)
+			for idx := start; idx < end; idx++ {
+				row := m.embeddingsDisplayRows[idx]
+				cursor := "  "
+				if idx == m.embeddingsIndex {
+					cursor = "> "
+				}
+				label := fmt.Sprintf(
+					"%s%s • %s • %s • %s",
+					cursor,
+					firstNonEmptyTrimmed(row.ProjectLabel, row.Record.ProjectID),
+					firstNonEmptyTrimmed(row.SubjectLabel, string(row.Record.SubjectType)),
+					row.Record.Status,
+					truncate(firstNonEmptyTrimmed(row.TitleLabel, row.Record.SubjectID), 42),
+				)
+				lines = append(lines, label)
+				lines = append(lines, hintStyle.Render("   path: "+truncate(firstNonEmptyTrimmed(row.PathLabel, row.Record.SubjectID), 78)))
+				if detail := strings.TrimSpace(row.DetailLabel); detail != "" && detail != "-" {
+					lines = append(lines, hintStyle.Render("   detail: "+truncate(detail, 78)))
+				}
+			}
+		}
+		lines = append(lines, hintStyle.Render("j/k move • / filter • enter open • g scope • a archived • r reindex • R force • esc close"))
 		return resultsStyle.Render(strings.Join(lines, "\n"))
 
 	case modeDependencyInspector:
@@ -18332,7 +19283,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			hint = "enter apply field action/save • ctrl+s save • esc cancel • tab next field • enter/e opens field actions"
 		case modeSearch:
 			title = "Search"
-			hint = "tab focus • space/enter toggle • ctrl+u clear query • ctrl+r reset filters"
+			hint = "tab focus • space/enter toggle • h/l cycle • ctrl+u clear query • ctrl+r reset filters"
 		case modeRenameTask:
 			title = "Rename Task"
 		case modeEditTask:
@@ -18459,8 +19410,13 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			} else {
 				lines = append(lines, archivedLabel.Render("archived: hidden"))
 			}
-			applyLabel := hintStyle
+			modeLabel := lipgloss.NewStyle().Foreground(muted)
 			if m.searchFocus == 5 {
+				modeLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
+			}
+			lines = append(lines, modeLabel.Render("mode: "+searchModeDisplayLabel(m.searchMode)))
+			applyLabel := hintStyle
+			if m.searchFocus == 6 {
 				applyLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			}
 			lines = append(lines, applyLabel.Render("[ apply search ]"))
@@ -18619,6 +19575,8 @@ func (m Model) modeLabel() string {
 		return "edit-project"
 	case modeSearchResults:
 		return "search-results"
+	case modeEmbeddingsStatus:
+		return "embeddings"
 	case modeCommandPalette:
 		return "command"
 	case modeQuickActions:
@@ -18687,6 +19645,8 @@ func (m Model) modePrompt() string {
 		return "edit project: enter save, i edit description, r pick root_path, esc cancel"
 	case modeSearchResults:
 		return "search results: j/k select, enter jump, esc close"
+	case modeEmbeddingsStatus:
+		return "embeddings: j/k move, / filter, enter open, g scope, a archived, r reindex, R force reindex, esc close"
 	case modeCommandPalette:
 		return "command palette: enter run, esc cancel"
 	case modeQuickActions:

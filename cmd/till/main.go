@@ -405,6 +405,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	importOpts := importCommandOptions{}
 	captureStateOpts := captureStateCommandOptions{view: string(app.CaptureStateViewSummary)}
+	embeddingsStatusOpts := embeddingsStatusCommandOptions{limit: 100}
+	embeddingsReindexOpts := embeddingsReindexCommandOptions{
+		waitTimeout:      30 * time.Second,
+		waitPollInterval: 2 * time.Second,
+	}
 	kindListOpts := kindListCommandOptions{}
 	kindUpsertOpts := kindUpsertCommandOptions{}
 	kindAllowlistOpts := kindAllowlistCommandOptions{}
@@ -420,7 +425,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -634,6 +639,46 @@ in order rather than relying on remembered setup steps.
 	projectDiscoverCmd.Flags().StringVar(&projectDiscoverOpts.projectID, "project-id", "", "Project identifier")
 	projectDiscoverCmd.Flags().BoolVar(&projectDiscoverOpts.includeArchived, "include-archived", false, "Include archived projects")
 	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd, projectDiscoverCmd)
+
+	embeddingsCmd := &cobra.Command{
+		Use:   "embeddings",
+		Short: "Inspect and operate the background embeddings lifecycle",
+		Long: strings.TrimSpace(`
+Inspect persistent embeddings lifecycle state, view pending/failed/stale rows,
+and trigger explicit backfill or reindex operations without blocking normal
+task mutations.
+`),
+		Args: cobra.NoArgs,
+	}
+	embeddingsStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show embeddings lifecycle health and row inventory",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "embeddings.status")
+		},
+	}
+	embeddingsStatusCmd.Flags().StringVar(&embeddingsStatusOpts.projectID, "project-id", "", "Project identifier")
+	embeddingsStatusCmd.Flags().BoolVar(&embeddingsStatusOpts.crossProject, "cross-project", false, "Inspect embeddings state across all projects")
+	embeddingsStatusCmd.Flags().BoolVar(&embeddingsStatusOpts.includeArchived, "include-archived", false, "Include archived projects when resolving scope")
+	embeddingsStatusCmd.Flags().StringSliceVar(&embeddingsStatusOpts.statuses, "status", nil, "Optional lifecycle status filter (pending|running|ready|failed|stale)")
+	embeddingsStatusCmd.Flags().IntVar(&embeddingsStatusOpts.limit, "limit", embeddingsStatusOpts.limit, "Maximum lifecycle rows to print")
+	embeddingsReindexCmd := &cobra.Command{
+		Use:   "reindex",
+		Short: "Enqueue or force one explicit embeddings backfill/reindex",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "embeddings.reindex")
+		},
+	}
+	embeddingsReindexCmd.Flags().StringVar(&embeddingsReindexOpts.projectID, "project-id", "", "Project identifier")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.crossProject, "cross-project", false, "Reindex embeddings across all projects")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.includeArchived, "include-archived", false, "Include archived projects and work items in the reindex scope")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.force, "force", false, "Force ready rows back into the queue even when hashes already match")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.wait, "wait", false, "Wait for the requested scope to reach a steady lifecycle state")
+	embeddingsReindexCmd.Flags().DurationVar(&embeddingsReindexOpts.waitTimeout, "wait-timeout", embeddingsReindexOpts.waitTimeout, "Maximum time to wait for steady state when --wait is set")
+	embeddingsReindexCmd.Flags().DurationVar(&embeddingsReindexOpts.waitPollInterval, "wait-poll-interval", embeddingsReindexOpts.waitPollInterval, "Polling interval while waiting for steady state")
+	embeddingsCmd.AddCommand(embeddingsStatusCmd, embeddingsReindexCmd)
 
 	captureStateCmd := &cobra.Command{
 		Use:   "capture-state",
@@ -1289,7 +1334,7 @@ as a positional argument.
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -1618,6 +1663,8 @@ func executeCommandFlow(
 	projectShowOpts projectShowCommandOptions,
 	projectDiscoverOpts projectReadinessCommandOptions,
 	captureStateOpts captureStateCommandOptions,
+	embeddingsStatusOpts embeddingsStatusCommandOptions,
+	embeddingsReindexOpts embeddingsReindexCommandOptions,
 	kindListOpts kindListCommandOptions,
 	kindUpsertOpts kindUpsertCommandOptions,
 	kindAllowlistOpts kindAllowlistCommandOptions,
@@ -1766,6 +1813,21 @@ func executeCommandFlow(
 	}
 	logger.Info("autent service ready", "db_path", cfg.Database.Path, "table_prefix", autentauth.DefaultTablePrefix)
 
+	embeddingRuntimeCfg, err := buildEmbeddingRuntimeConfig(cfg, rootOpts.appName, command)
+	if err != nil {
+		logger.Error("embeddings runtime config invalid", "err", err)
+		return fmt.Errorf("build embeddings runtime config: %w", err)
+	}
+
+	var embeddingLifecycle app.EmbeddingLifecycleStore
+	if lifecycle, ok := any(repo).(app.EmbeddingLifecycleStore); ok {
+		embeddingLifecycle = lifecycle
+	}
+	var embeddingSearchIndex app.EmbeddingSearchIndex
+	if idx, ok := any(repo).(app.EmbeddingSearchIndex); ok {
+		embeddingSearchIndex = idx
+	}
+
 	var embeddingGenerator app.EmbeddingGenerator
 	if cfg.Embeddings.Enabled {
 		generator, err := fantasyembed.New(ctx, fantasyembed.Config{
@@ -1782,6 +1844,27 @@ func executeCommandFlow(
 			logger.Info("embeddings runtime enabled", "provider", cfg.Embeddings.Provider, "model", cfg.Embeddings.Model, "query_top_k", cfg.Embeddings.QueryTopK)
 		}
 	}
+	if err := app.PrepareEmbeddingsLifecycle(ctx, embeddingLifecycle, embeddingRuntimeCfg); err != nil {
+		logger.Error("embeddings lifecycle prepare failed", "err", err)
+		return fmt.Errorf("prepare embeddings lifecycle: %w", err)
+	}
+	if cfg.Embeddings.Enabled {
+		switch {
+		case embeddingLifecycle == nil:
+			logger.Warn("embeddings lifecycle store unavailable; semantic status tracking remains disabled")
+		case embeddingGenerator == nil:
+			logger.Warn("embeddings worker not started; queued states remain observable until provider setup succeeds")
+		case embeddingSearchIndex == nil:
+			logger.Warn("embeddings worker not started; task search index is unavailable")
+		default:
+			go func() {
+				if err := app.NewEmbeddingWorker(repo, embeddingLifecycle, embeddingGenerator, embeddingSearchIndex, nil, embeddingRuntimeCfg).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Warn("embeddings worker stopped", "err", err)
+				}
+			}()
+			logger.Info("embeddings worker ready", "worker_id", embeddingRuntimeCfg.WorkerID, "poll_interval", embeddingRuntimeCfg.PollInterval.String(), "claim_ttl", embeddingRuntimeCfg.ClaimTTL.String(), "max_attempts", embeddingRuntimeCfg.MaxAttempts)
+		}
+	}
 
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode:        app.DeleteMode(cfg.Delete.DefaultMode),
@@ -1790,6 +1873,9 @@ func executeCommandFlow(
 		AuthBackend:              authSvc,
 		LiveWaitBroker:           liveWaitBroker,
 		EmbeddingGenerator:       embeddingGenerator,
+		SearchIndex:              embeddingSearchIndex,
+		EmbeddingLifecycle:       embeddingLifecycle,
+		EmbeddingRuntime:         embeddingRuntimeCfg,
 		SearchLexicalWeight:      cfg.Embeddings.LexicalWeight,
 		SearchSemanticWeight:     cfg.Embeddings.SemanticWeight,
 		SearchSemanticCandidates: cfg.Embeddings.QueryTopK,
@@ -1946,6 +2032,22 @@ func executeCommandFlow(
 			return fmt.Errorf("run project discover command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "project.discover")
+		return nil
+	case "embeddings.status":
+		logger.Info("command flow start", "command", "embeddings.status")
+		if err := runEmbeddingsStatus(ctx, svc, embeddingsStatusOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "embeddings.status", "err", err)
+			return fmt.Errorf("run embeddings status command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "embeddings.status")
+		return nil
+	case "embeddings.reindex":
+		logger.Info("command flow start", "command", "embeddings.reindex")
+		if err := runEmbeddingsReindex(ctx, svc, cfg, embeddingsReindexOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "embeddings.reindex", "err", err)
+			return fmt.Errorf("run embeddings reindex command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "embeddings.reindex")
 		return nil
 	case "capture-state":
 		logger.Info("command flow start", "command", "capture-state")

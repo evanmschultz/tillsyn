@@ -84,15 +84,20 @@ type SearchConfig struct {
 
 // EmbeddingsConfig holds runtime semantic-search settings.
 type EmbeddingsConfig struct {
-	Enabled        bool    `toml:"enabled"`
-	Provider       string  `toml:"provider"`
-	Model          string  `toml:"model"`
-	APIKeyEnv      string  `toml:"api_key_env"`
-	BaseURL        string  `toml:"base_url"`
-	Dimensions     int64   `toml:"dimensions"`
-	QueryTopK      int     `toml:"query_top_k"`
-	LexicalWeight  float64 `toml:"lexical_weight"`
-	SemanticWeight float64 `toml:"semantic_weight"`
+	Enabled             bool    `toml:"enabled"`
+	Provider            string  `toml:"provider"`
+	Model               string  `toml:"model"`
+	APIKeyEnv           string  `toml:"api_key_env"`
+	BaseURL             string  `toml:"base_url"`
+	Dimensions          int64   `toml:"dimensions"`
+	QueryTopK           int     `toml:"query_top_k"`
+	LexicalWeight       float64 `toml:"lexical_weight"`
+	SemanticWeight      float64 `toml:"semantic_weight"`
+	WorkerPollInterval  string  `toml:"worker_poll_interval"`
+	ClaimTTL            string  `toml:"claim_ttl"`
+	MaxAttempts         int     `toml:"max_attempts"`
+	InitialRetryBackoff string  `toml:"initial_retry_backoff"`
+	MaxRetryBackoff     string  `toml:"max_retry_backoff"`
 }
 
 // IdentityConfig holds configuration for operator identity defaults.
@@ -142,6 +147,20 @@ type KeyConfig struct {
 	Redo           string `toml:"redo"`
 }
 
+// embeddingsFieldPresence captures whether embeddings keys were explicitly present in TOML.
+type embeddingsFieldPresence struct {
+	Embeddings *embeddingsFieldPresenceSection `toml:"embeddings"`
+}
+
+// embeddingsFieldPresenceSection captures explicit embeddings key presence for legacy-default compatibility.
+type embeddingsFieldPresenceSection struct {
+	Enabled   *bool   `toml:"enabled"`
+	Provider  *string `toml:"provider"`
+	Model     *string `toml:"model"`
+	APIKeyEnv *string `toml:"api_key_env"`
+	BaseURL   *string `toml:"base_url"`
+}
+
 // Default returns default the requested value.
 func Default(dbPath string) Config {
 	return Config{
@@ -173,15 +192,20 @@ func Default(dbPath string) Config {
 			States:          []string{"todo", "progress", "done"},
 		},
 		Embeddings: EmbeddingsConfig{
-			Enabled:        false,
-			Provider:       "openai",
-			Model:          "text-embedding-3-small",
-			APIKeyEnv:      "OPENAI_API_KEY",
-			BaseURL:        "",
-			Dimensions:     0,
-			QueryTopK:      200,
-			LexicalWeight:  0.55,
-			SemanticWeight: 0.45,
+			Enabled:             false,
+			Provider:            "ollama",
+			Model:               "qwen3-embedding:8b",
+			APIKeyEnv:           "",
+			BaseURL:             "http://127.0.0.1:11434/v1",
+			Dimensions:          0,
+			QueryTopK:           200,
+			LexicalWeight:       0.55,
+			SemanticWeight:      0.45,
+			WorkerPollInterval:  "2s",
+			ClaimTTL:            "2m",
+			MaxAttempts:         5,
+			InitialRetryBackoff: "15s",
+			MaxRetryBackoff:     "15m",
 		},
 		Identity: IdentityConfig{
 			ActorID:          "",
@@ -243,6 +267,10 @@ func Load(path string, defaults Config) (Config, error) {
 		return cfg, nil
 	}
 
+	var presence embeddingsFieldPresence
+	if err := toml.Unmarshal(content, &presence); err != nil {
+		return Config{}, fmt.Errorf("decode toml presence: %w", err)
+	}
 	if err := toml.Unmarshal(content, &cfg); err != nil {
 		return Config{}, fmt.Errorf("decode toml: %w", err)
 	}
@@ -251,6 +279,7 @@ func Load(path string, defaults Config) (Config, error) {
 	if strings.TrimSpace(cfg.Database.Path) == "" {
 		cfg.Database.Path = defaultDBPath
 	}
+	applyLegacyEmbeddingsDefaults(&cfg, presence)
 	cfg.normalize()
 
 	if err := cfg.Validate(); err != nil {
@@ -290,17 +319,40 @@ func (c *Config) Validate() error {
 	if c.Embeddings.SemanticWeight < 0 {
 		return fmt.Errorf("embeddings.semantic_weight must be >= 0")
 	}
+	if c.Embeddings.MaxAttempts < 0 {
+		return fmt.Errorf("embeddings.max_attempts must be >= 0")
+	}
 	if c.Embeddings.Enabled {
 		switch c.Embeddings.Provider {
-		case "openai":
+		case "openai", "ollama", "deterministic":
 		default:
 			return fmt.Errorf("embeddings.provider %q is not supported", c.Embeddings.Provider)
 		}
 		if strings.TrimSpace(c.Embeddings.Model) == "" {
 			return errors.New("embeddings.model is required when embeddings are enabled")
 		}
-		if strings.TrimSpace(c.Embeddings.APIKeyEnv) == "" {
+		if c.Embeddings.Provider == "openai" && strings.TrimSpace(c.Embeddings.APIKeyEnv) == "" {
 			return errors.New("embeddings.api_key_env is required when embeddings are enabled")
+		}
+	}
+	for _, durationField := range []struct {
+		name  string
+		value string
+	}{
+		{name: "embeddings.worker_poll_interval", value: c.Embeddings.WorkerPollInterval},
+		{name: "embeddings.claim_ttl", value: c.Embeddings.ClaimTTL},
+		{name: "embeddings.initial_retry_backoff", value: c.Embeddings.InitialRetryBackoff},
+		{name: "embeddings.max_retry_backoff", value: c.Embeddings.MaxRetryBackoff},
+	} {
+		if strings.TrimSpace(durationField.value) == "" {
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(durationField.value))
+		if err != nil {
+			return fmt.Errorf("%s invalid duration %q", durationField.name, durationField.value)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s must be > 0", durationField.name)
 		}
 	}
 
@@ -366,6 +418,23 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// applyLegacyEmbeddingsDefaults preserves historical implicit OpenAI behavior for older configs that enabled embeddings without naming a provider.
+func applyLegacyEmbeddingsDefaults(cfg *Config, presence embeddingsFieldPresence) {
+	if cfg == nil || presence.Embeddings == nil || presence.Embeddings.Enabled == nil || !*presence.Embeddings.Enabled {
+		return
+	}
+	if presence.Embeddings.Provider != nil {
+		return
+	}
+	if presence.Embeddings.Model != nil || presence.Embeddings.APIKeyEnv != nil || presence.Embeddings.BaseURL != nil {
+		return
+	}
+	cfg.Embeddings.Provider = "openai"
+	cfg.Embeddings.Model = "text-embedding-3-small"
+	cfg.Embeddings.APIKeyEnv = "OPENAI_API_KEY"
+	cfg.Embeddings.BaseURL = ""
 }
 
 // DueSoonDurations handles due soon durations.
@@ -440,23 +509,57 @@ func (c *Config) normalize() {
 	c.Search.States = states
 	c.Embeddings.Provider = strings.TrimSpace(strings.ToLower(c.Embeddings.Provider))
 	if c.Embeddings.Provider == "" {
-		c.Embeddings.Provider = "openai"
+		c.Embeddings.Provider = "ollama"
 	}
 	c.Embeddings.Model = strings.TrimSpace(c.Embeddings.Model)
 	if c.Embeddings.Model == "" {
-		c.Embeddings.Model = "text-embedding-3-small"
+		switch c.Embeddings.Provider {
+		case "deterministic":
+			c.Embeddings.Model = "hash-bow-v1"
+		case "openai":
+			c.Embeddings.Model = "text-embedding-3-small"
+		default:
+			c.Embeddings.Model = "qwen3-embedding:8b"
+		}
 	}
 	c.Embeddings.APIKeyEnv = strings.TrimSpace(c.Embeddings.APIKeyEnv)
 	if c.Embeddings.APIKeyEnv == "" {
-		c.Embeddings.APIKeyEnv = "OPENAI_API_KEY"
+		if c.Embeddings.Provider == "openai" {
+			c.Embeddings.APIKeyEnv = "OPENAI_API_KEY"
+		}
 	}
 	c.Embeddings.BaseURL = strings.TrimSpace(c.Embeddings.BaseURL)
+	if c.Embeddings.Provider == "ollama" && c.Embeddings.BaseURL == "" {
+		c.Embeddings.BaseURL = "http://127.0.0.1:11434/v1"
+	}
+	if c.Embeddings.Provider == "deterministic" && c.Embeddings.Dimensions == 0 {
+		c.Embeddings.Dimensions = 256
+	}
 	if c.Embeddings.QueryTopK == 0 {
 		c.Embeddings.QueryTopK = 200
 	}
 	if c.Embeddings.LexicalWeight == 0 && c.Embeddings.SemanticWeight == 0 {
 		c.Embeddings.LexicalWeight = 0.55
 		c.Embeddings.SemanticWeight = 0.45
+	}
+	c.Embeddings.WorkerPollInterval = strings.TrimSpace(strings.ToLower(c.Embeddings.WorkerPollInterval))
+	if c.Embeddings.WorkerPollInterval == "" {
+		c.Embeddings.WorkerPollInterval = "2s"
+	}
+	c.Embeddings.ClaimTTL = strings.TrimSpace(strings.ToLower(c.Embeddings.ClaimTTL))
+	if c.Embeddings.ClaimTTL == "" {
+		c.Embeddings.ClaimTTL = "2m"
+	}
+	if c.Embeddings.MaxAttempts == 0 {
+		c.Embeddings.MaxAttempts = 5
+	}
+	c.Embeddings.InitialRetryBackoff = strings.TrimSpace(strings.ToLower(c.Embeddings.InitialRetryBackoff))
+	if c.Embeddings.InitialRetryBackoff == "" {
+		c.Embeddings.InitialRetryBackoff = "15s"
+	}
+	c.Embeddings.MaxRetryBackoff = strings.TrimSpace(strings.ToLower(c.Embeddings.MaxRetryBackoff))
+	if c.Embeddings.MaxRetryBackoff == "" {
+		c.Embeddings.MaxRetryBackoff = "15m"
 	}
 	c.Identity.ActorID = strings.TrimSpace(c.Identity.ActorID)
 	c.Identity.DisplayName = strings.TrimSpace(c.Identity.DisplayName)
