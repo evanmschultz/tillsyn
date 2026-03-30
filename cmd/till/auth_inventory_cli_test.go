@@ -160,6 +160,40 @@ func TestWriteAuthRequestDetailHuman(t *testing.T) {
 	}
 }
 
+// TestWriteAuthRequestResultHumanIncludesIssuedSecret renders the issued session secret only for mutation results.
+func TestWriteAuthRequestResultHumanIncludesIssuedSecret(t *testing.T) {
+	request := authRequestPayloadJSON{
+		ID:                  "req-1",
+		State:               "approved",
+		ProjectID:           "p1",
+		ScopeType:           "project",
+		ScopeID:             "p1",
+		PrincipalID:         "review-1",
+		PrincipalName:       "Review Agent",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		Path:                "project/p1",
+		ApprovedPath:        "project/p1/branch/review",
+		RequestedSessionTTL: "8h0m0s",
+		ApprovedSessionTTL:  "2h0m0s",
+		HasContinuation:     true,
+		IssuedSessionID:     "sess-1",
+		IssuedSessionSecret: "super-secret",
+	}
+
+	var out strings.Builder
+	if err := writeAuthRequestResultHuman(&out, request); err != nil {
+		t.Fatalf("writeAuthRequestResultHuman() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Auth Request", "issued session", "sess-1", "issued session secret", "super-secret", "has continuation", "yes"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in request result output, got %q", want, got)
+		}
+	}
+}
+
 // TestWriteAuthSessionListHuman renders a deterministic name-first session table.
 func TestWriteAuthSessionListHuman(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
@@ -226,6 +260,57 @@ func TestWriteAuthSessionListHuman(t *testing.T) {
 	}
 	if strings.Index(got, "Alpha Review [review-a] • qa") > strings.Index(got, "Zulu Review [review-b] • builder") {
 		t.Fatalf("expected name-first sorted output, got %q", got)
+	}
+}
+
+// TestWriteAuthSessionDetailHuman renders one session detail block and includes the optional secret only when supplied.
+func TestWriteAuthSessionDetailHuman(t *testing.T) {
+	revokedAt := time.Date(2026, 3, 23, 12, 15, 0, 0, time.UTC)
+	session := authSessionPayloadJSON{
+		SessionID:        "sess-1",
+		State:            "revoked",
+		ProjectID:        "p1",
+		AuthRequestID:    "req-1",
+		ApprovedPath:     "project/p1/branch/review",
+		PrincipalID:      "review-1",
+		PrincipalName:    "Review Agent",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Till MCP STDIO",
+		ExpiresAt:        revokedAt.Add(time.Hour),
+		RevokedAt:        &revokedAt,
+		RevocationReason: "operator cleanup",
+	}
+
+	var out strings.Builder
+	if err := writeAuthSessionDetailHuman(&out, session, "secret-1"); err != nil {
+		t.Fatalf("writeAuthSessionDetailHuman() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Auth Session",
+		"name",
+		"Review Agent [review-1] • builder",
+		"session id",
+		"sess-1",
+		"state",
+		"revoked",
+		"project",
+		"p1",
+		"auth request",
+		"req-1",
+		"approved path",
+		"project/p1/branch/review",
+		"session secret",
+		"secret-1",
+		"revocation reason",
+		"operator cleanup",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in session detail output, got %q", want, got)
+		}
 	}
 }
 
