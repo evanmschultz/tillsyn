@@ -18,7 +18,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
-	"github.com/evanmschultz/laslig"
 	"github.com/google/uuid"
 	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
 	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
@@ -1353,29 +1352,26 @@ func mustMarkFlagRequired(cmd *cobra.Command, name string) {
 
 // writeVersion writes the current CLI version to stdout.
 func writeVersion(stdout io.Writer) error {
-	if _, err := fmt.Fprintf(stdout, "till %s\n", version); err != nil {
-		return fmt.Errorf("write version output: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, "Till Version", [][2]string{
+		{"app", "till"},
+		{"version", version},
+	})
 }
 
-// writePathsOutput renders resolved paths using plain text for scripts and laslig for styled terminals.
+// writePathsOutput renders resolved paths in one structured laslig key/value view.
 func writePathsOutput(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
-	if !supportsStyledOutputFunc(stdout) {
-		return writePathsPlain(stdout, opts, resolvedPaths, rootDir, logDir)
-	}
 	rows := buildPathsRows(opts, resolvedPaths, rootDir, logDir)
 	pairs := make([][2]string, 0, len(rows))
 	for _, row := range rows {
 		pairs = append(pairs, [2]string{row.key, row.value})
 	}
-	if err := newStyledCLIPrinter(stdout).KV(laslig.KV{
-		Title: "Resolved Paths",
-		Pairs: cliFields(pairs),
-	}); err != nil {
-		return fmt.Errorf("write paths output: %w", err)
+	if supportsStyledOutputFunc(stdout) {
+		if err := writeCLIKVWithPrinter(newStyledCLIPrinter(stdout), "Resolved Paths", pairs); err != nil {
+			return fmt.Errorf("write styled paths output: %w", err)
+		}
+		return nil
 	}
-	return nil
+	return writeCLIKV(stdout, "Resolved Paths", pairs)
 }
 
 // buildPathsRows returns the stable key/value rows used by both plain and styled output.
@@ -1394,16 +1390,6 @@ func buildPathsRows(opts rootCommandOptions, resolvedPaths resolvedRuntimePaths,
 		{key: "logs", value: logDir},
 		{key: "dev_mode", value: fmt.Sprintf("%t", opts.devMode)},
 	}
-}
-
-// writePathsPlain renders resolved paths in stable key/value text for scripts.
-func writePathsPlain(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
-	for _, row := range buildPathsRows(opts, resolvedPaths, rootDir, logDir) {
-		if _, err := fmt.Fprintf(stdout, "%s: %s\n", row.key, row.value); err != nil {
-			return fmt.Errorf("write paths %s output: %w", row.key, err)
-		}
-	}
-	return nil
 }
 
 // resolvedRuntimePaths stores CLI runtime config/db path decisions for one command.
@@ -1517,10 +1503,11 @@ func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
 	if created {
 		msg = "created dev config"
 	}
-	if _, err := fmt.Fprintf(stdout, "%s: %s\n", msg, shellEscapePath(configPath)); err != nil {
-		return fmt.Errorf("write init-dev-config output: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, "Dev Config", [][2]string{
+		{"status", msg},
+		{"config path", shellEscapePath(configPath)},
+		{"logging level", "debug"},
+	})
 }
 
 // shellEscapePath returns a POSIX-shell-escaped path token suitable for direct paste.
@@ -2313,19 +2300,9 @@ func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts iss
 	if err != nil {
 		return fmt.Errorf("issue auth session: %w", err)
 	}
-	payload, err := json.MarshalIndent(struct {
-		SessionID     string    `json:"session_id"`
-		SessionSecret string    `json:"session_secret"`
-		PrincipalID   string    `json:"principal_id"`
-		PrincipalType string    `json:"principal_type"`
-		PrincipalName string    `json:"principal_name"`
-		ClientID      string    `json:"client_id"`
-		ClientType    string    `json:"client_type"`
-		ClientName    string    `json:"client_name"`
-		ExpiresAt     time.Time `json:"expires_at"`
-	}{
+	return writeAuthSessionDetailHuman(stdout, authSessionPayloadJSON{
 		SessionID:     issued.Session.ID,
-		SessionSecret: issued.Secret,
+		State:         "active",
 		PrincipalID:   principalID,
 		PrincipalType: strings.TrimSpace(opts.principalType),
 		PrincipalName: firstNonEmpty(strings.TrimSpace(opts.principalName), principalID),
@@ -2333,14 +2310,7 @@ func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts iss
 		ClientType:    strings.TrimSpace(opts.clientType),
 		ClientName:    firstNonEmpty(strings.TrimSpace(opts.clientName), strings.TrimSpace(opts.clientID)),
 		ExpiresAt:     issued.Session.ExpiresAt.UTC(),
-	}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode issued auth session: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "%s\n", payload); err != nil {
-		return fmt.Errorf("write issued auth session: %w", err)
-	}
-	return nil
+	}, issued.Secret)
 }
 
 // runAuthRevokeSession revokes one local auth session.
@@ -2356,22 +2326,15 @@ func runAuthRevokeSession(ctx context.Context, auth *autentauth.Service, opts re
 	if err != nil {
 		return fmt.Errorf("revoke auth session: %w", err)
 	}
-	payload, err := json.MarshalIndent(struct {
-		SessionID        string     `json:"session_id"`
-		RevokedAt        *time.Time `json:"revoked_at,omitempty"`
-		RevocationReason string     `json:"revocation_reason,omitempty"`
-	}{
+	return writeAuthSessionDetailHuman(stdout, authSessionPayloadJSON{
 		SessionID:        session.ID,
+		State:            "revoked",
+		PrincipalID:      session.PrincipalID,
+		ClientID:         session.ClientID,
+		ExpiresAt:        session.ExpiresAt.UTC(),
 		RevokedAt:        session.RevokedAt,
 		RevocationReason: session.RevocationReason,
-	}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode revoked auth session: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "%s\n", payload); err != nil {
-		return fmt.Errorf("write revoked auth session: %w", err)
-	}
-	return nil
+	}, "")
 }
 
 // runCaptureState captures one summary-first recovery snapshot and writes it as stable JSON.
@@ -2504,7 +2467,7 @@ func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOp
 	return writeCoordinationLeaseList(stdout, time.Now().UTC(), leases)
 }
 
-// runLeaseIssue issues one capability lease and writes it as stable JSON.
+// runLeaseIssue issues one capability lease and writes it in a human-readable operator view.
 func runLeaseIssue(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseIssueCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2531,10 +2494,10 @@ func runLeaseIssue(ctx context.Context, svc *app.Service, cfg config.Config, opt
 	if err != nil {
 		return fmt.Errorf("issue capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseHeartbeat refreshes one capability lease heartbeat and writes it as stable JSON.
+// runLeaseHeartbeat refreshes one capability lease heartbeat and writes it in a human-readable operator view.
 func runLeaseHeartbeat(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseHeartbeatCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2547,10 +2510,10 @@ func runLeaseHeartbeat(ctx context.Context, svc *app.Service, cfg config.Config,
 	if err != nil {
 		return fmt.Errorf("heartbeat capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseRenew renews one capability lease and writes it as stable JSON.
+// runLeaseRenew renews one capability lease and writes it in a human-readable operator view.
 func runLeaseRenew(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRenewCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2564,10 +2527,10 @@ func runLeaseRenew(ctx context.Context, svc *app.Service, cfg config.Config, opt
 	if err != nil {
 		return fmt.Errorf("renew capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseRevoke revokes one capability lease and writes it as stable JSON.
+// runLeaseRevoke revokes one capability lease and writes it in a human-readable operator view.
 func runLeaseRevoke(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRevokeCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2580,10 +2543,10 @@ func runLeaseRevoke(ctx context.Context, svc *app.Service, cfg config.Config, op
 	if err != nil {
 		return fmt.Errorf("revoke capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseRevokeAll revokes every capability lease within one scope and writes a JSON summary.
+// runLeaseRevokeAll revokes every capability lease within one scope and writes a human-readable summary.
 func runLeaseRevokeAll(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRevokeAllCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2600,15 +2563,16 @@ func runLeaseRevokeAll(ctx context.Context, svc *app.Service, cfg config.Config,
 	}); err != nil {
 		return fmt.Errorf("revoke all capability leases: %w", err)
 	}
-	return writeJSON(stdout, leaseRevokeAllPayloadJSON{
-		ProjectID: strings.TrimSpace(opts.projectID),
-		ScopeType: strings.TrimSpace(opts.scopeType),
-		ScopeID:   strings.TrimSpace(opts.scopeID),
-		Reason:    strings.TrimSpace(opts.reason),
-	})
+	return writeCoordinationLeaseRevocationSummary(
+		stdout,
+		strings.TrimSpace(opts.projectID),
+		domain.CapabilityScopeType(strings.TrimSpace(opts.scopeType)),
+		strings.TrimSpace(opts.scopeID),
+		strings.TrimSpace(opts.reason),
+	)
 }
 
-// runHandoffCreate creates one durable handoff and writes it as stable JSON.
+// runHandoffCreate creates one durable handoff and writes it in a human-readable operator view.
 func runHandoffCreate(ctx context.Context, svc *app.Service, cfg config.Config, opts handoffCreateCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2643,7 +2607,7 @@ func runHandoffCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	if err != nil {
 		return fmt.Errorf("create handoff: %w", err)
 	}
-	return writeJSON(stdout, handoffPayload(handoff))
+	return writeCoordinationHandoffDetail(stdout, handoff)
 }
 
 // runHandoffGet returns one durable handoff in a human-readable operator view.
@@ -2682,7 +2646,7 @@ func runHandoffList(ctx context.Context, svc *app.Service, opts handoffListComma
 	return writeCoordinationHandoffList(stdout, handoffs)
 }
 
-// runHandoffUpdate updates one durable handoff and writes it as stable JSON.
+// runHandoffUpdate updates one durable handoff and writes it in a human-readable operator view.
 func runHandoffUpdate(ctx context.Context, svc *app.Service, cfg config.Config, opts handoffUpdateCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2709,7 +2673,7 @@ func runHandoffUpdate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	if err != nil {
 		return fmt.Errorf("update handoff: %w", err)
 	}
-	return writeJSON(stdout, handoffPayload(handoff))
+	return writeCoordinationHandoffDetail(stdout, handoff)
 }
 
 // runAuthRequestCreate creates one persisted auth request and mirrors it into notifications.
@@ -2741,7 +2705,7 @@ func runAuthRequestCreate(ctx context.Context, svc *app.Service, cfg config.Conf
 	if err != nil {
 		return fmt.Errorf("create auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(request, ""))
 }
 
 // parseCLIContinuationJSON validates one optional CLI continuation JSON object string.
@@ -2892,7 +2856,7 @@ func runAuthRequestApprove(ctx context.Context, svc *app.Service, cfg config.Con
 	if err != nil {
 		return fmt.Errorf("approve auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(approved.Request, approved.SessionSecret))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(approved.Request, approved.SessionSecret))
 }
 
 // runAuthRequestDeny denies one pending auth request.
@@ -2910,7 +2874,7 @@ func runAuthRequestDeny(ctx context.Context, svc *app.Service, cfg config.Config
 	if err != nil {
 		return fmt.Errorf("deny auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(request, ""))
 }
 
 // runAuthRequestCancel cancels one pending auth request.
@@ -2928,7 +2892,7 @@ func runAuthRequestCancel(ctx context.Context, svc *app.Service, cfg config.Conf
 	if err != nil {
 		return fmt.Errorf("cancel auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(request, ""))
 }
 
 // runAuthSessionList returns caller-safe auth-session inventory in a human-readable operator view.
@@ -2963,7 +2927,7 @@ func runAuthSessionValidate(ctx context.Context, svc *app.Service, opts sessionV
 	if err != nil {
 		return fmt.Errorf("validate auth session: %w", err)
 	}
-	return writeJSON(stdout, authSessionPayload(validated.Session))
+	return writeAuthSessionDetailHuman(stdout, authSessionPayload(validated.Session), "")
 }
 
 // runAuthSessionRevoke revokes one auth session through the app-facing backend.
@@ -2975,7 +2939,7 @@ func runAuthSessionRevoke(ctx context.Context, svc *app.Service, opts revokeSess
 	if err != nil {
 		return fmt.Errorf("revoke auth session: %w", err)
 	}
-	return writeJSON(stdout, authSessionPayload(session))
+	return writeAuthSessionDetailHuman(stdout, authSessionPayload(session), "")
 }
 
 // runExport runs the requested command flow.
@@ -3173,61 +3137,6 @@ type kindAllowlistPayloadJSON struct {
 	KindIDs   []string `json:"kind_ids"`
 }
 
-// capabilityLeasePayloadJSON stores JSON-friendly capability lease output fields.
-type capabilityLeasePayloadJSON struct {
-	InstanceID                string     `json:"instance_id"`
-	LeaseToken                string     `json:"lease_token,omitempty"`
-	AgentName                 string     `json:"agent_name"`
-	ProjectID                 string     `json:"project_id"`
-	ScopeType                 string     `json:"scope_type"`
-	ScopeID                   string     `json:"scope_id"`
-	Role                      string     `json:"role"`
-	ParentInstanceID          string     `json:"parent_instance_id,omitempty"`
-	AllowEqualScopeDelegation bool       `json:"allow_equal_scope_delegation,omitempty"`
-	IssuedAt                  time.Time  `json:"issued_at"`
-	ExpiresAt                 time.Time  `json:"expires_at"`
-	HeartbeatAt               time.Time  `json:"heartbeat_at"`
-	RevokedAt                 *time.Time `json:"revoked_at,omitempty"`
-	RevokedReason             string     `json:"revoked_reason,omitempty"`
-}
-
-// leaseRevokeAllPayloadJSON stores JSON-friendly revoke-all output fields.
-type leaseRevokeAllPayloadJSON struct {
-	ProjectID string `json:"project_id"`
-	ScopeType string `json:"scope_type"`
-	ScopeID   string `json:"scope_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-}
-
-// handoffPayloadJSON stores JSON-friendly handoff output fields.
-type handoffPayloadJSON struct {
-	ID              string     `json:"id"`
-	ProjectID       string     `json:"project_id"`
-	BranchID        string     `json:"branch_id,omitempty"`
-	ScopeType       string     `json:"scope_type"`
-	ScopeID         string     `json:"scope_id"`
-	SourceRole      string     `json:"source_role,omitempty"`
-	TargetBranchID  string     `json:"target_branch_id,omitempty"`
-	TargetScopeType string     `json:"target_scope_type,omitempty"`
-	TargetScopeID   string     `json:"target_scope_id,omitempty"`
-	TargetRole      string     `json:"target_role,omitempty"`
-	Status          string     `json:"status"`
-	Summary         string     `json:"summary"`
-	NextAction      string     `json:"next_action,omitempty"`
-	MissingEvidence []string   `json:"missing_evidence,omitempty"`
-	RelatedRefs     []string   `json:"related_refs,omitempty"`
-	CreatedByActor  string     `json:"created_by_actor"`
-	CreatedByType   string     `json:"created_by_type"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedByActor  string     `json:"updated_by_actor"`
-	UpdatedByType   string     `json:"updated_by_type"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	ResolvedByActor string     `json:"resolved_by_actor,omitempty"`
-	ResolvedByType  string     `json:"resolved_by_type,omitempty"`
-	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
-	ResolutionNote  string     `json:"resolution_note,omitempty"`
-}
-
 // authRequestPayloadJSON stores JSON-friendly auth-request output fields.
 type authRequestPayloadJSON struct {
 	ID                     string     `json:"id"`
@@ -3397,57 +3306,6 @@ func kindDefinitionPayload(kind domain.KindDefinition) kindDefinitionPayloadJSON
 		CreatedAt:           kind.CreatedAt.UTC(),
 		UpdatedAt:           kind.UpdatedAt.UTC(),
 		ArchivedAt:          kind.ArchivedAt,
-	}
-}
-
-// capabilityLeasePayload maps one capability lease into stable CLI JSON output.
-func capabilityLeasePayload(lease domain.CapabilityLease) capabilityLeasePayloadJSON {
-	return capabilityLeasePayloadJSON{
-		InstanceID:                lease.InstanceID,
-		LeaseToken:                lease.LeaseToken,
-		AgentName:                 lease.AgentName,
-		ProjectID:                 lease.ProjectID,
-		ScopeType:                 string(lease.ScopeType),
-		ScopeID:                   lease.ScopeID,
-		Role:                      string(lease.Role),
-		ParentInstanceID:          lease.ParentInstanceID,
-		AllowEqualScopeDelegation: lease.AllowEqualScopeDelegation,
-		IssuedAt:                  lease.IssuedAt.UTC(),
-		ExpiresAt:                 lease.ExpiresAt.UTC(),
-		HeartbeatAt:               lease.HeartbeatAt.UTC(),
-		RevokedAt:                 lease.RevokedAt,
-		RevokedReason:             lease.RevokedReason,
-	}
-}
-
-// handoffPayload maps one durable handoff into stable CLI JSON output.
-func handoffPayload(handoff domain.Handoff) handoffPayloadJSON {
-	return handoffPayloadJSON{
-		ID:              handoff.ID,
-		ProjectID:       handoff.ProjectID,
-		BranchID:        handoff.BranchID,
-		ScopeType:       string(handoff.ScopeType),
-		ScopeID:         handoff.ScopeID,
-		SourceRole:      handoff.SourceRole,
-		TargetBranchID:  handoff.TargetBranchID,
-		TargetScopeType: string(handoff.TargetScopeType),
-		TargetScopeID:   handoff.TargetScopeID,
-		TargetRole:      handoff.TargetRole,
-		Status:          string(handoff.Status),
-		Summary:         handoff.Summary,
-		NextAction:      handoff.NextAction,
-		MissingEvidence: append([]string(nil), handoff.MissingEvidence...),
-		RelatedRefs:     append([]string(nil), handoff.RelatedRefs...),
-		CreatedByActor:  handoff.CreatedByActor,
-		CreatedByType:   string(handoff.CreatedByType),
-		CreatedAt:       handoff.CreatedAt.UTC(),
-		UpdatedByActor:  handoff.UpdatedByActor,
-		UpdatedByType:   string(handoff.UpdatedByType),
-		UpdatedAt:       handoff.UpdatedAt.UTC(),
-		ResolvedByActor: handoff.ResolvedByActor,
-		ResolvedByType:  string(handoff.ResolvedByType),
-		ResolvedAt:      handoff.ResolvedAt,
-		ResolutionNote:  handoff.ResolutionNote,
 	}
 }
 
