@@ -604,6 +604,18 @@ Recommended TUI readability rule:
   - `Human override is allowed.`
   - `This child blocks parent done.`
 
+Recommended TUI implementation rule:
+- reuse existing TUI components and interaction contracts wherever possible
+- extend the current full-page surfaces, confirm flows, quick-action patterns, input controls, and viewport helpers already used in `internal/tui/model.go`
+- do not introduce a second bespoke template-only UI language if an existing pattern already fits
+- new template screens should feel like the rest of Tillsyn, not like a sidecar tool bolted on later
+
+Golden requirement:
+- any implementation slice that changes TUI output must run `just test-golden`
+- if goldens need updating, run `just test-golden-update`
+- then manually inspect the changed golden output and screen behavior to confirm it still looks right against current Tillsyn conventions
+- do not treat golden updates as mechanical-only approval
+
 ### CLI MVP
 
 CLI should support:
@@ -648,6 +660,52 @@ Recommended MCP posture:
 - MCP may inspect previews and current bindings
 - MCP should not be the final approval or publish surface in MVP
 - the human should approve in TUI or CLI
+
+## Documentation And Guidance Surfaces
+
+The first implementation wave should not stop at tables and enforcement.
+
+It also needs canonical human and agent guidance surfaces so people can actually use the feature correctly.
+
+### README Requirement
+
+README should eventually include concrete examples for the best-supported workflows:
+- create a project and bind one project template library
+- create a build task that auto-generates QA follow-up work
+- inspect why a node is blocked from done
+- approve or bind a draft library
+- adopt newer global rules into one project
+- explicitly apply/update managed/generated nodes
+
+README should not just describe nouns.
+It should show the expected happy-path workflow in short, copyable examples.
+
+### MCP Instruction / Bootstrap Requirement
+
+The existing MCP guidance tools should be expanded as part of the implementation wave:
+- `till.get_instructions`
+- `till.get_bootstrap_guide`
+
+Those tools should include:
+- the recommended Tillsyn workflow order for humans and orchestrators
+- short examples of common template/library operations
+- best-practice suggestions for keeping external agent setup aligned with Tillsyn
+- explicit reminders that impactful policy/template changes still need human approval
+
+### AGENTS / CLAUDE / Skills Guidance Requirement
+
+The guidance surfaces should explicitly help operators align surrounding agent setup with Tillsyn.
+
+That includes recommendations such as:
+- update `AGENTS.md` to reflect the project's Tillsyn workflow, approval policy, and validation rules
+- update `CLAUDE.md` or equivalent agent-policy docs so interaction rules match Tillsyn's authority model
+- create or refine skills that reflect the project's repeated branch/phase/task workflow inside Tillsyn
+- keep those files descriptive and human-reviewable instead of hiding process in scattered prompt fragments
+
+Recommended MVP rule:
+- Tillsyn should suggest these changes
+- but should not silently rewrite those external files
+- humans stay the approvers for those policy/doc updates
 
 ## Example Contract
 
@@ -743,6 +801,12 @@ Add:
 - previewed adopt/update flows for project-scoped libraries
 - MCP draft proposal and preview flows
 - node-contract detail and blocked-state explanation surfaces
+- README workflow examples for the canonical happy paths
+- richer `till.get_instructions` and `till.get_bootstrap_guide` guidance for templates, workflows, and surrounding agent-policy files
+- TUI implementation discipline:
+  - reuse existing shared components and interaction logic,
+  - keep full-page surface behavior aligned with current modes,
+  - and clear golden coverage with human review of changed output
 - cleanup of old CLI/TUI wording that still implies templates are only kind defaults
 
 ### Phase 4: Later Wave
@@ -789,8 +853,16 @@ Once implementation planning starts, keep it to these slices:
 - explicit apply/update flow for managed/generated nodes
 - node blocked-state explanation flow
 - node contract inspection flow
+- TUI work must reuse existing shared components/surfaces instead of inventing a parallel template UI stack
+- TUI work must pass `just test-golden`, and changed golden output must be manually reviewed for fit and readability
 
-5. Migration and compatibility
+5. Documentation and MCP guidance
+- README examples for the highest-frequency template workflows
+- `till.get_instructions` updates that explain the best-supported workflow order and related operator guidance
+- `till.get_bootstrap_guide` updates for first-run template/library setup
+- explicit suggestions for aligning skills and `AGENTS.md` / `CLAUDE.md`-style files with Tillsyn policy
+
+6. Migration and compatibility
 - do not silently mutate existing nodes
 - keep legacy kind-template behavior working during transition
 - make new enforcement depend on stored node contracts, not live template lookups only
@@ -846,6 +918,9 @@ When implementation starts, these are the most obvious old seams that should be 
 - `internal/adapters/server/mcpapi/extended_tools.go`
   - current `till.upsert_kind_definition` and `till.list_kind_definitions` should remain for node-kind registry work
   - separate template-library MCP tools should carry the new contract model
+- `internal/adapters/server/mcpapi/instructions_tool.go`
+  - instruction guidance already talks about `AGENTS.md`, `CLAUDE.md`, and recommended doc usage
+  - it should gain template-workflow examples and explicit Tillsyn-alignment suggestions instead of staying generic
 
 ### Tests / Docs Seams
 
@@ -859,6 +934,7 @@ When implementation starts, these are the most obvious old seams that should be 
 - `internal/tui/model.go`
   - current form/search/rendering paths still infer structural labels from kind ids in several places
   - those read/write seams should be reviewed when `kind` and `level` are separated more cleanly
+  - template flows should be added through the existing mode/surface helpers instead of building disconnected one-off widgets
 - `README.md`
   - once implementation lands, remove transitional wording that still describes active behavior as kind-template-backed defaults without the new contract path beside it
 - `PLAN.md`

@@ -37,6 +37,7 @@ Decision:
    - and avoid leaving old template/default wording beside the new contract model.
 9. `system` is an internal audit/provenance actor for generated work, not a normal workflow owner kind.
 10. Project libraries may diverge locally from global libraries; newer global rules reach a project only through explicit preview/adopt/apply flows, never silent backfill.
+11. Template TUI work must extend existing shared TUI components and interaction patterns, stay coherent with current full-page/modal logic, and clear `just test-golden` with manual review when golden output changes.
 
 Artifacts:
 1. `TEMPLATING_DESIGN_MEMO.md` now carries the locked consensus and focused MVP planning checklist.
