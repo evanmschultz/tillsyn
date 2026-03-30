@@ -51,6 +51,7 @@ The cleaner model is:
 - `scope level` = project, branch, phase, task, subtask
 - `node kind/type` = research, build, qa-pass, release-check, design-review, and so on
 - `actor kind/type` = human, orchestrator, builder, qa, research, and so on
+- `system actor` = the internal runtime actor that creates generated nodes and records audit provenance
 - `template` = generated work graph plus role contract plus completion gates
 - `auth/policy` = whether the current actor/session actually has the required actor kind and scope
 - `completion gate` = whether the required generated work was completed by an allowed actor or a human
@@ -67,6 +68,15 @@ The clarified product needs to move toward:
 - under this stored node contract?
 
 That is a stricter and more useful model.
+
+Important clarification:
+- `system` should exist as an internal actor for audit/provenance
+- but `system` should not be treated as the workflow owner kind for generated work
+- generated work should instead carry a required or responsible actor kind such as `builder` or `qa`
+- in other words:
+  - `created_by = system`
+  - `responsible_actor_kind = qa`
+  - these are not the same field
 
 ## What Templates Should Mean In Tillsyn
 
@@ -176,6 +186,11 @@ This is the authority category:
 
 For MVP, I would keep this list small and explicit. I would push back on fully user-defined actor kinds in the first wave, because that explodes the auth matrix too early.
 
+The internal `system` actor should remain separate from this workflow actor-kind list:
+- it is for automatic generation, migrations, and audit trails
+- it is not a normal owner kind that humans assign to work
+- it should not receive general-purpose auth the way orchestrator/builder/qa do
+
 ## Static Defaults Vs Parameterized Templates
 
 ### Static Contract Data
@@ -264,6 +279,59 @@ Promotion should happen inside the DB:
 
 That avoids multi-location drift.
 
+Recommended update model:
+- a project may customize its active project-scoped library without affecting any other project
+- a newer global library revision should not silently alter existing projects
+- instead, a human or an explicitly allowed orchestrator should run an adoption flow:
+  - preview global vs project differences
+  - choose to clone/update into the project library
+  - then optionally apply the updated rules to existing managed/generated nodes
+
+### Focused MVP SQLite Layout
+
+For MVP, the active template contract should be relational inside SQLite.
+
+Do not store the live template system as one large `template_json` blob.
+
+Recommended canonical tables:
+- `template_libraries`
+  - one row per global, project, or draft library
+  - includes `scope`, `project_id`, `status`, `source_library_id`, human approval fields, and audit fields
+- `project_template_bindings`
+  - one active library binding per project
+  - `project_id` should be unique in MVP
+- `node_templates`
+  - one row per `(library_id, scope_level, node_kind_id)`
+  - stores human-readable display name plus default guidance/default payload references
+- `node_template_guidance_sections`
+  - managed human-readable sections such as standards notes, checklist explanations, or role guidance
+- `template_child_rules`
+  - one row per generated child rule
+  - stores child scope level, child node kind, responsible actor kind, blocker flags, orchestrator override flag, ordering, and title/description templates
+- `template_child_rule_edit_actor_kinds`
+  - normalized allowed-editor actor kinds per child rule
+- `template_child_rule_complete_actor_kinds`
+  - normalized allowed-completer actor kinds per child rule
+- `node_contract_snapshots`
+  - one row per generated node that captures the resolved rule at creation time
+  - includes source library/template/rule ids, audit actor identity, responsible actor kind, blocker flags, and override policy
+- `node_contract_edit_actor_kinds`
+  - normalized allowed-editor actor kinds per generated node snapshot
+- `node_contract_complete_actor_kinds`
+  - normalized allowed-completer actor kinds per generated node snapshot
+
+Recommended relational rule:
+- policy columns and actor-kind permissions should live in rows and join tables
+- small leaf JSON should be allowed only where the product already has JSON-shaped payloads, such as kind-payload defaults
+- the canonical contract should not depend on a single serialized template blob
+
+This is the key difference from the current `kind_catalog.template_json` design.
+- `kind_catalog` should continue to own node-kind registry concerns:
+  - allowed levels,
+  - allowed parent levels,
+  - payload schema
+- template tables should own generated work, actor rules, and completion gates
+
 ## Recommended Nouns And Data Shapes
 
 ### Product Nouns
@@ -274,6 +342,13 @@ That avoids multi-location drift.
 - `template binding`: which project uses which template library
 - `node contract snapshot`: the resolved rule persisted on a created node
 - `actor kind`: the authority category used by auth and completion rules
+- `responsible actor kind`: the workflow role expected to do the work
+- `audit actor`: who or what created/approved/bound/applied the rule or node
+
+Recommended wording:
+- prefer `responsible actor kind` over `owner kind`
+- `owner` already reads like human ownership or assignment
+- the template contract needs a clearer workflow term
 
 ### Suggested Go Shapes
 
@@ -328,6 +403,8 @@ type NodeContractSnapshot struct {
 	SourceTemplateLibraryID    string
 	SourceNodeTemplateID       string
 	SourceChildRuleID          string
+	CreatedByActorType         string
+	CreatedByActorID           string
 	NodeKindID                 domain.KindID
 	RequiredActorKind          string
 	EditableByActorKinds       []string
@@ -341,6 +418,14 @@ type NodeContractSnapshot struct {
 The important piece is `NodeContractSnapshot`.
 
 Do not rely only on the live template definition after creation. Persist the resolved contract on the generated node so the truth of that node does not silently change later.
+
+The important identity split is:
+- audit actor: who or what created this row
+- responsible actor kind: which workflow role is meant to do the work
+
+For generated nodes, those will usually be:
+- audit actor = `system`
+- responsible actor kind = `builder` or `qa` or another workflow actor kind
 
 ## Auth And Completion Model
 
@@ -364,10 +449,111 @@ Example actions:
 Recommended rule:
 - scope authorization remains the outer boundary
 - node-contract authorization becomes the inner boundary
+- audit actor identity does not grant workflow authority by itself
 
 That gives a sane MVP path:
 - keep current level-based auth as the coarse scope check
 - add node-kind and actor-kind checks for templated/generated work
+
+Clarification on level vs kind:
+- a QA task inside a phase is still `level=task`
+- the thing that makes it QA rather than build is `node kind`
+- so level does not cover QA-vs-build by itself
+- it is always the combination of:
+  - scope level,
+  - node kind,
+  - and actor kind
+
+Examples:
+- `phase / qa-phase / qa`
+  - a phase-level QA review lane
+- `task / qa-pass / qa`
+  - a task-level QA pass under a build phase
+- `subtask / evidence-capture / research`
+  - a subtask-level research evidence requirement under another task
+
+So in your example:
+- a QA run inside a phase is usually still `level=task`
+- if it is a child of a build task, it might be `level=subtask`
+- `qa-pass` vs `build-task` is the node-kind distinction
+- level only tells the structural slot
+
+## Focused Runtime Flow
+
+The MVP runtime should work like this.
+
+### 1. Create Flow
+
+When a human, orchestrator, or builder creates a node:
+- resolve the active project template library
+- resolve the matching `node_template` by:
+  - project binding,
+  - scope level,
+  - node kind
+- merge human-entered metadata with template defaults
+- create the requested node
+- generate each required child rule as a real node inside the same transaction
+- stamp each generated node with:
+  - audit actor identity
+  - source library/template/rule ids
+  - responsible actor kind
+  - allowed editor actor kinds
+  - allowed completer actor kinds
+  - parent/scope blocker flags
+
+Generated nodes should normally look like this:
+- `created_by_actor_type = system`
+- `created_by_actor_id = tillsyn-system-template`
+- `responsible_actor_kind = qa` or `builder` or another workflow role
+
+### 2. Edit Flow
+
+When someone edits a generated node:
+- check scope auth first
+- then check stored node-contract permissions
+- humans stay allowed
+- non-human actors must match allowed actor kind plus scope
+
+### 3. Complete Flow
+
+When someone marks a node done:
+- check scope auth first
+- check node-contract complete permissions
+- allow human override-complete always
+- allow orchestrator complete only if the stored rule explicitly allows it
+- deny completion if required generated blockers are still open
+- show the specific blocking nodes and role requirements in the error and in UI
+
+### 4. Adopt / Apply Flow
+
+When a project wants newer global rules:
+- preview global library vs project library
+- choose whether to adopt into a new project draft
+- human approves the updated draft
+- bind the project to the approved project library
+- optionally run explicit apply/update on existing managed/generated nodes
+
+Important MVP rule:
+- no silent backfill
+- no hidden reseed
+- updating existing nodes must be an explicit command or wizard step
+- only a human or an explicitly allowed orchestrator may run that apply/update flow
+
+Recommended MVP apply scope:
+- existing managed/generated nodes first
+- do not auto-create missing required children under arbitrary old user-created nodes in the first wave
+
+### 5. Audit Rule
+
+Every meaningful template action should emit durable change history:
+- draft created
+- draft edited
+- draft approved
+- project bound
+- project adopted from global
+- apply/update run on existing nodes
+
+That keeps the feature understandable and reviewable.
 
 ## TUI / CLI / MCP Flow Direction
 
@@ -394,16 +580,59 @@ TUI should support:
 - bind a project to one active template library
 - inspect node contract snapshots on generated nodes
 
+Recommended MVP screens:
+- `Template Libraries`
+  - tabs or filters for `global`, `project`, and `draft`
+- `Template Library Detail`
+  - plain-language summary of generated work and blockers
+- `Template Draft Editor`
+  - primary MVP authoring surface
+- `Template Approval Review`
+  - human review before publish/bind
+- `Project Template Binding / Adopt Preview`
+  - compare active project library vs selected global library
+- `Node Contract Detail`
+  - show responsible actor kind, editable/completable actor kinds, and blocker behavior
+- `Blocked Completion Detail`
+  - show why the node cannot move to done in plain language
+
+Recommended TUI readability rule:
+- always render contract summaries in sentences a human can skim
+- example:
+  - `When a build task is created, generate one qa-pass child.`
+  - `Only qa may edit or complete it.`
+  - `Human override is allowed.`
+  - `This child blocks parent done.`
+
 ### CLI MVP
 
 CLI should support:
 - list libraries
 - show library
 - clone global to project
+- preview adopt-from-global
+- apply adopted rules to existing managed/generated nodes
 - create project draft library
 - approve draft library
 - bind project to approved library
 - show node contract for one node
+
+Recommended CLI command family:
+- `till template library list`
+- `till template library show --library-id <id>`
+- `till template library clone --from-library <id> --project-id <id> --as draft`
+- `till template library approve --library-id <id>`
+- `till template project bind --project-id <id> --library-id <id>`
+- `till template project preview-adopt --project-id <id> --from-library <id>`
+- `till template project adopt --project-id <id> --from-library <id> --as draft`
+- `till template project apply --project-id <id> --managed-only`
+- `till template node contract --node-id <id>`
+
+MVP pushback:
+- I do not recommend full matrix-style template authoring through long CLI flag lists in wave 1
+- that would be error-prone and hard to read
+- use TUI as the primary human authoring surface
+- use CLI for inspect, clone, approve, bind, preview, and apply operations
 
 ### MCP MVP
 
@@ -411,7 +640,14 @@ MCP should support:
 - inspect libraries
 - inspect node contract previews
 - propose drafts
+- propose adopt-from-global previews
 - never publish or approve without human approval
+
+Recommended MCP posture:
+- MCP may propose draft changes
+- MCP may inspect previews and current bindings
+- MCP should not be the final approval or publish surface in MVP
+- the human should approve in TUI or CLI
 
 ## Example Contract
 
@@ -440,9 +676,11 @@ Your direction makes sense, but MVP needs guardrails.
 - SQLite-stored global and project template libraries
 - orchestrator-created drafts
 - human approval before a draft becomes active
+- explicit global-to-project adopt/update flow
 - auto-generated child work
 - actor-kind edit and complete restrictions
 - parent and containing-scope completion blockers
+- explicit apply/update commands for existing managed/generated nodes
 - clear TUI and CLI explanation surfaces
 
 ### What I Would Push Out Of MVP
@@ -458,8 +696,10 @@ Recommended MVP simplifications:
 - one active template library per project
 - fixed small actor-kind set
 - global -> project clone flow
+- previewed global -> project adopt/update flow
 - draft -> approved promotion flow
 - generated-node contract snapshots
+- explicit apply/update only by human or explicitly allowed orchestrator
 
 That is enough to prove the model without turning it into a giant policy system all at once.
 
@@ -481,6 +721,9 @@ Add:
 - child rule records
 - template binding records
 - node contract snapshot records
+- normalized actor-kind permission tables
+- migration path that keeps `kind_catalog.template_json` as a compatibility seam only
+- library lineage fields so project copies can trace which global library they came from
 
 ### Phase 2: Runtime Enforcement
 
@@ -488,13 +731,19 @@ Add:
 - actor-kind-aware edit/complete checks for templated nodes
 - parent and containing-scope done gates
 - readable blocked-state reasons
+- `system` audit actor creation for generated nodes
+- explicit apply/update path for existing managed/generated nodes
+- transaction and savepoint boundaries so create/adopt/apply flows fail cleanly
 
 ### Phase 3: Human Flows
 
 Add:
 - TUI browse/approve/bind flows
 - CLI browse/clone/approve/bind flows
+- previewed adopt/update flows for project-scoped libraries
 - MCP draft proposal and preview flows
+- node-contract detail and blocked-state explanation surfaces
+- cleanup of old CLI/TUI wording that still implies templates are only kind defaults
 
 ### Phase 4: Later Wave
 
@@ -514,13 +763,16 @@ Once implementation planning starts, keep it to these slices:
 - child rules
 - template bindings
 - node contract snapshots
+- normalized editor/completer actor-kind tables
 - foreign-key and transaction boundaries for create/bind/approve flows
+- savepoint-friendly update/apply flows so partial failures do not leave half-updated template adoption state
 
 2. Runtime resolution and snapshotting
 - resolve the active project template library
 - resolve the node template for a requested scope level + node kind
 - generate child rules into concrete child nodes
 - persist the resolved rule as a node contract snapshot on every generated node
+- record audit actor identity separately from responsible actor kind
 
 3. Auth and completion enforcement
 - keep current scope checks as the coarse boundary
@@ -533,6 +785,8 @@ Once implementation planning starts, keep it to these slices:
 - library browse/show
 - project bind flow
 - draft create/edit/approve flow
+- global-to-project adopt preview flow
+- explicit apply/update flow for managed/generated nodes
 - node blocked-state explanation flow
 - node contract inspection flow
 
@@ -540,6 +794,92 @@ Once implementation planning starts, keep it to these slices:
 - do not silently mutate existing nodes
 - keep legacy kind-template behavior working during transition
 - make new enforcement depend on stored node contracts, not live template lookups only
+- plan a single explicit apply/update command path for existing managed/generated nodes, not hidden backfill
+
+## Concrete Cleanup Map
+
+When implementation starts, these are the most obvious old seams that should be removed or clearly quarantined.
+
+### Domain / App Seams
+
+- `internal/domain/kind.go`
+  - `KindTemplate`, `KindTemplateChildSpec`, and related template-file section fields currently bundle node-kind registry and template behavior together
+  - new work should move live contract behavior into template-library tables and leave `kind` focused on node-kind registry/schema concerns
+  - `AgentsFileSections` and `ClaudeFileSections` currently look like legacy template-sidecar fields and should either gain a clear managed-docs home or be removed from the live template path
+- `internal/app/kind_capability.go`
+  - `mergeTaskMetadataWithKindTemplate`
+  - `applyKindTemplateSystemActions`
+  - `applyProjectKindTemplateSystemActions`
+  - `validateKindTemplateExpansion`
+  - these are the main legacy create-time template engine paths and should be replaced by the library resolver + snapshot pipeline
+  - `normalizeTaskScopeForKind` is also a cleanup seam because it still infers structural level from specific kind ids like `branch`, `phase`, and `subtask`
+- `internal/app/service.go`
+  - `createTaskWithTemplates` currently calls legacy kind-template expansion directly
+  - the new path should resolve project library -> node template -> child rules -> contract snapshots
+- `internal/app/mutation_guard.go`
+  - the current internal-template bypass should not remain a hidden authority seam once generated-node contracts exist
+- `internal/domain/project.go`
+  - `MergeProjectMetadata` should remain a merge helper, but not the canonical home of workflow-template policy
+- `internal/domain/workitem.go`
+  - `MergeTaskMetadata` and `MergeCompletionContract` should remain bounded merge helpers, but should no longer be the whole template system
+- `internal/domain/task.go`
+  - `CompletionCriteriaUnmet` currently only sees checklist/children-done state
+  - it will need to work with stored contract snapshots and actor-kind-aware blockers
+
+### Storage / Transport Seams
+
+- `internal/adapters/storage/sqlite/repo.go`
+  - `kind_catalog.template_json` is the main legacy storage seam
+  - keep it readable during transition, but stop treating it as the active authored template system
+  - new template tables should become canonical
+- `internal/app/snapshot.go`
+  - snapshot import/export currently carries kind-template blobs and project allowlists
+  - the snapshot format will need an explicit compatibility update so template libraries, bindings, and node contract snapshots are not silently lost
+- `cmd/till/main.go`
+  - `--template-json` on `till kind upsert` is a legacy authoring surface that should not remain the primary template path
+  - `kind upsert` should become node-kind registry management only
+- `internal/adapters/server/common/mcp_surface.go`
+  - `UpsertKindDefinitionRequest` currently carries template fields through the kind path
+  - the transport should grow separate template-library surfaces instead of overloading kind upsert forever
+- `internal/adapters/server/common/app_service_adapter_mcp.go`
+  - bootstrap and help text that still advertise template-driven child/checklist auto-actions through the kind path will need to move to the new library wording
+- `internal/adapters/server/mcpapi/extended_tools.go`
+  - current `till.upsert_kind_definition` and `till.list_kind_definitions` should remain for node-kind registry work
+  - separate template-library MCP tools should carry the new contract model
+
+### Tests / Docs Seams
+
+- `internal/domain/kind_capability_test.go`
+  - current expectations around `KindDefinition.Template` will need to narrow to kind-registry behavior or move to template-library tests
+- `internal/app/kind_capability_test.go`
+  - these tests currently prove legacy checklist merge and auto-child creation through kind templates
+  - they should be replaced or rewritten around template libraries and node contract snapshots
+- `cmd/till/main_test.go`
+  - help output and command coverage that mention `--template-json` will need replacement
+- `internal/tui/model.go`
+  - current form/search/rendering paths still infer structural labels from kind ids in several places
+  - those read/write seams should be reviewed when `kind` and `level` are separated more cleanly
+- `README.md`
+  - once implementation lands, remove transitional wording that still describes active behavior as kind-template-backed defaults without the new contract path beside it
+- `PLAN.md`
+  - implementation slices should explicitly record when the old kind-template path is removed or quarantined
+
+The point of this map is:
+- no orphaned `kind template` authoring path
+- no duplicate old/new template engines living side by side longer than necessary
+- no stale help text that teaches the wrong model
+
+### Current Level vs Kind Conflation To Watch
+
+These current seams are especially likely to create subtle bugs if they survive the migration:
+- structural level inference from specific kind ids such as `branch`, `phase`, and `subtask`
+- TUI creation defaults that pick both kind and level from current board position
+- search/filter/read models that still treat `phase` as both a level word and a kind word
+- MCP surfaces that expose parallel `levels` and `kinds` filters while built-in values still overlap heavily
+
+Implementation rule:
+- when the new contract lands, audit every place that infers level from kind or kind from level
+- preserve only explicit level fields plus explicit node-kind fields
 
 ## Implementation Hygiene Requirement
 
@@ -554,6 +894,18 @@ In practice that means:
 - avoid parallel old/new template resolution paths unless the compatibility seam is deliberate and documented
 - avoid orphaned CLI commands, TUI copy, schema fields, or tests that still describe templates as simple kind defaults after the contract model lands
 - include code-search cleanup checks in each implementation slice so stale wording and dead branches are caught deliberately
+
+## Locked Consensus
+
+These points are now treated as agreed:
+- templates are workflow-and-authority contracts first
+- SQLite is the active single source of truth
+- one active template library per project in MVP
+- global libraries act as clone/adopt sources; project libraries can diverge locally without affecting other projects
+- human override-complete is always allowed
+- orchestrator complete on builder/QA blockers defaults to off and is opt-in per rule
+- `kind` becomes the node-kind registry while scope level remains separate
+- `system` remains an internal audit/provenance actor, not the workflow owner kind for generated work
 
 ## README / PLAN Handoff Note
 
@@ -577,17 +929,20 @@ I do not recommend editing README and `PLAN.md` further until this updated model
 
 ## Open Questions
 
-1. MVP actor kinds: should the fixed initial set be `human`, `orchestrator`, `builder`, `qa`, and `research`, or should it be even smaller?
-2. Should humans always retain unconditional override-complete power on generated blockers? My recommendation is yes.
-3. Should orchestrator completion on builder/qa-generated blockers default to off and require explicit per-rule opt-in? My recommendation is yes.
-4. Should a project bind exactly one active template library in MVP, with global libraries only serving as clone sources? My recommendation is yes.
-5. Should current `kind` evolve into the canonical node-kind registry while scope level remains a separate field? My recommendation is yes.
-6. Should draft libraries be project-local only in MVP, even if an orchestrator proposed them from a global pattern? My recommendation is yes.
+1. Should explicit apply/update on existing nodes target only:
+   - managed/generated nodes,
+   - or also optionally create missing required children under existing user-created parents?
+   My recommendation is: managed/generated nodes first, with missing-child creation as an explicit opt-in later.
+2. Should project adopt/update from a global library replace the whole project library, or patch selected node templates/rules only?
+   My recommendation is: whole-library preview plus explicit project-side confirmation in MVP.
+3. Should wave 1 support full CLI authoring of template rules, or keep TUI as the primary authoring surface?
+   My recommendation is: keep TUI primary, CLI operational.
 
 ## Recommended Next Step
 
-Lock this corrected model first, then do a small follow-on planning pass that defines:
-- the exact MVP actor-kind set
-- the SQLite table layout
-- the project/global/draft clone-and-approve flow
-- the minimum TUI and CLI screens needed to make the rules readable to humans
+Treat this planning pass as the lock for MVP direction, then start the later implementation branch with this exact first slice:
+- add relational template-library tables beside the current kind catalog
+- build one compatibility-first resolver that prefers project template libraries and falls back to legacy `kind_catalog.template_json`
+- store node contract snapshots on generated nodes
+- land TUI inspect/approve/bind flows plus CLI inspect/clone/approve/bind/apply flows
+- remove or quarantine the legacy template authoring seams called out in the cleanup map
