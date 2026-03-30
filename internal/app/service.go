@@ -518,18 +518,39 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 	if err != nil {
 		return domain.Task{}, err
 	}
-	mergedMetadata, err := mergeTaskMetadataWithKindTemplate(in.Metadata, kindDef)
+	boundLibrary, nodeTemplate, foundNodeTemplate, err := s.resolveBoundNodeTemplate(ctx, in.ProjectID, scope, kindDef.ID)
 	if err != nil {
 		return domain.Task{}, err
+	}
+	var mergedMetadata domain.TaskMetadata
+	switch {
+	case foundNodeTemplate:
+		mergedMetadata, err = mergeTaskMetadataWithNodeTemplate(in.Metadata, nodeTemplate)
+		if err != nil {
+			return domain.Task{}, err
+		}
+	default:
+		mergedMetadata, err = mergeTaskMetadataWithKindTemplate(in.Metadata, kindDef)
+		if err != nil {
+			return domain.Task{}, err
+		}
 	}
 	if err := s.validateKindPayload(kindDef, mergedMetadata.KindPayload); err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.validateKindTemplateExpansion(ctx, in.ProjectID, kindDef, &domain.Task{
+	templateParent := &domain.Task{
 		ProjectID: in.ProjectID,
 		Scope:     scope,
-	}, domain.KindAppliesToSubtask, depth); err != nil {
-		return domain.Task{}, err
+	}
+	switch {
+	case foundNodeTemplate:
+		if err := s.validateTemplateChildRules(ctx, in.ProjectID, nodeTemplate.ChildRules, templateParent, depth); err != nil {
+			return domain.Task{}, err
+		}
+	default:
+		if err := s.validateKindTemplateExpansion(ctx, in.ProjectID, kindDef, templateParent, domain.KindAppliesToSubtask, depth); err != nil {
+			return domain.Task{}, err
+		}
 	}
 	tasks, err := s.repo.ListTasks(ctx, in.ProjectID, false)
 	if err != nil {
@@ -579,8 +600,15 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 		return domain.Task{}, err
 	}
 	s.refreshTaskEmbedding(ctx, task)
-	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
-		return domain.Task{}, err
+	switch {
+	case foundNodeTemplate:
+		if err := s.applyTemplateChildRules(ctx, task, boundLibrary, nodeTemplate, depth+1); err != nil {
+			return domain.Task{}, err
+		}
+	default:
+		if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
+			return domain.Task{}, err
+		}
 	}
 	return task, nil
 }

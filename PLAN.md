@@ -4,6 +4,72 @@ Created: 2026-02-21
 Updated: 2026-03-29
 Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, and `C6` is now closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary; local gates are green on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, `just ci`, and `just build`, the pushed follow-up is `75aa5c4`, and GitHub Actions run `23721667218` is green through all `check` jobs plus `full gate` with only the trailing `release snapshot check` still running at the time of this update.
 
+## Checkpoint 2026-03-29: Template Library Persistence + Resolver Slice
+
+Objective:
+- land the first compatibility-first implementation slice behind the templating design memo without broadening into full auth-policy migration or new TUI authoring yet.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed before the storage work and again after the failed `just check` run:
+   - transactional nested writes,
+   - foreign-key / WAL assumptions,
+   - and the practical constraint that nested follow-up reads on a single SQLite connection must wait until the outer result set is fully consumed -> PASS.
+2. `/websites/pkg_go_dev_go1_25_3` refreshed after the first syntax failure in the new app-layer template file -> PASS.
+3. `/charmbracelet/bubbles/v2.0.0` refreshed after the unrelated reproduced TUI mouse-wheel failure so the follow-up note stays grounded in current viewport behavior docs -> PASS.
+
+Implementation summary:
+1. Added new template-library and node-contract domain types plus validation:
+   - library scope/status,
+   - actor kinds,
+   - node templates,
+   - child rules,
+   - project bindings,
+   - node contract snapshots,
+   - and related domain errors.
+2. Expanded the app repository contract for:
+   - template-library upsert/get/list,
+   - project binding upsert/get,
+   - and node-contract snapshot create/get.
+3. Added a new app-layer template service slice:
+   - library upsert/list/get,
+   - project binding,
+   - bound-template resolution,
+   - node-template metadata merge,
+   - child-rule validation,
+   - and generated child snapshot persistence.
+4. Wired `createTaskWithTemplates` to resolve a bound project template library first and fall back to legacy kind-template behavior second.
+5. Added relational SQLite storage for:
+   - template libraries,
+   - node templates,
+   - child rules,
+   - editor/completer actor-kind join tables,
+   - project bindings,
+   - and node-contract snapshots.
+6. Fixed a real single-connection SQLite deadlock in the first implementation pass by ensuring nested template loads only run after the outer result set is fully consumed and closed.
+7. Extended the shared app fake repo plus added focused tests for:
+   - domain constructors,
+   - SQLite round-trip storage,
+   - bound template-library task generation,
+   - and legacy kind-template fallback behavior.
+
+Validation:
+1. `just test-pkg ./internal/app` -> PASS.
+2. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS after fixing the nested-read deadlock.
+3. `just check` -> FAIL, but the remaining failure is isolated to `./internal/tui` and reproduces independently of this slice:
+   - `TestAuthInventoryMouseWheelReachesLowerSections`
+   - failure observed both in the full `just check` run and in `just test-pkg ./internal/tui`.
+
+Current status:
+1. The backend compatibility slice is in place and locally validated on the touched app/storage packages.
+2. Bound template libraries now drive create-time metadata defaults, generated child nodes, and persisted node-contract snapshots.
+3. Legacy kind-template behavior still works when no project template binding exists.
+4. Minimal CLI/MCP operator surfaces for template-library inspection/binding are still pending.
+5. Completion gating and actor-kind-based mutation enforcement against node-contract snapshots are still pending.
+
+Next step:
+1. Decide whether to fix the existing TUI mouse-wheel inventory test in this lane or treat it as a separate pre-existing blocker.
+2. Once the repo-wide gate is green again, add the minimum CLI/MCP inspection/binding surfaces before any TUI authoring flow.
+
 ## Checkpoint 2026-03-29: Templating Contract Consensus Locked
 
 Objective:

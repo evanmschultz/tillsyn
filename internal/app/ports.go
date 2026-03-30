@@ -21,6 +21,13 @@ type Repository interface {
 	UpdateKindDefinition(context.Context, domain.KindDefinition) error
 	GetKindDefinition(context.Context, domain.KindID) (domain.KindDefinition, error)
 	ListKindDefinitions(context.Context, bool) ([]domain.KindDefinition, error)
+	UpsertTemplateLibrary(context.Context, domain.TemplateLibrary) error
+	GetTemplateLibrary(context.Context, string) (domain.TemplateLibrary, error)
+	ListTemplateLibraries(context.Context, domain.TemplateLibraryFilter) ([]domain.TemplateLibrary, error)
+	UpsertProjectTemplateBinding(context.Context, domain.ProjectTemplateBinding) error
+	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	CreateNodeContractSnapshot(context.Context, domain.NodeContractSnapshot) error
+	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 
 	CreateColumn(context.Context, domain.Column) error
 	UpdateColumn(context.Context, domain.Column) error
