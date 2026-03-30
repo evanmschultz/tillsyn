@@ -127,6 +127,10 @@ Current auth note:
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
+- TUI surfaces now expose the same contract model without a separate template UI stack:
+  - project create/edit includes a `template_library_id` field plus approved-library hints,
+  - task info shows the active project library and any generated-node contract snapshot,
+  - and comments remain shared regardless of template ownership.
 - Template child rules are the contract mechanism:
   - a node template can auto-generate follow-up work,
   - assign each generated node to a responsible actor kind,
@@ -142,6 +146,9 @@ Template-library operator examples:
   - `till template project bind --project-id p1 --library-id go-defaults`
   - `till template project binding --project-id p1`
   - `till template contract show --node-id task-qa-1`
+- Kind catalog note:
+  - `till kind` is now the node-kind registry/allowlist surface.
+  - template-library workflow contracts should be created and inspected through `till template`, the TUI project form, or MCP JSON transport instead of the legacy kind-template seam.
 - Documentation expectations:
   - keep README workflow examples aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
   - keep at least one canonical example that shows multi-child gatekeeping such as a build task that auto-generates multiple QA subtasks.

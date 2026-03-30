@@ -704,10 +704,11 @@ overview, attention overview, and follow-up pointers.
 
 	kindCmd := &cobra.Command{
 		Use:   "kind",
-		Short: "Inspect and update kind templates and allowlists",
+		Short: "Inspect and update kind definitions and allowlists",
 		Long: strings.TrimSpace(`
-Inspect kind definitions and project allowlists, or upsert kind templates and
-default metadata for project, branch, phase, task, and subtask types.
+Inspect kind definitions and project allowlists. Template-library workflow
+contracts now live under the dedicated template commands rather than the kind
+registry path.
 `),
 		Args: cobra.NoArgs,
 	}
@@ -735,6 +736,7 @@ default metadata for project, branch, phase, task, and subtask types.
 	kindUpsertCmd.Flags().StringSliceVar(&kindUpsertOpts.allowedParentScopes, "allowed-parent-scopes", nil, "Allowed parent scopes")
 	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.payloadSchemaJSON, "payload-schema-json", "", "Optional payload schema JSON")
 	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.templateJSON, "template-json", "", "Optional kind template JSON")
+	mustMarkFlagHidden(kindUpsertCmd, "template-json")
 	mustMarkFlagRequired(kindUpsertCmd, "id")
 	mustMarkFlagRequired(kindUpsertCmd, "display-name")
 	mustMarkFlagRequired(kindUpsertCmd, "applies-to")
@@ -1441,6 +1443,13 @@ as a positional argument.
 func mustMarkFlagRequired(cmd *cobra.Command, name string) {
 	if err := cmd.MarkFlagRequired(name); err != nil {
 		panic(fmt.Sprintf("mark %s flag required: %v", name, err))
+	}
+}
+
+// mustMarkFlagHidden fails fast when Cobra cannot hide one legacy flag.
+func mustMarkFlagHidden(cmd *cobra.Command, name string) {
+	if err := cmd.Flags().MarkHidden(name); err != nil {
+		panic(fmt.Sprintf("mark %s flag hidden: %v", name, err))
 	}
 }
 

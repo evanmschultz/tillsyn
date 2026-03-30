@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -230,6 +231,52 @@ func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
 	}
 	if snapshot.SourceLibraryID != library.ID {
 		t.Fatalf("snapshot.SourceLibraryID = %q, want %q", snapshot.SourceLibraryID, library.ID)
+	}
+}
+
+// TestUnbindProjectTemplateLibrary verifies project bindings can be removed cleanly for TUI edit flows.
+func TestUnbindProjectTemplateLibrary(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 30, 11, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Template Project", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	library, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "user-1",
+		CreatedByActorName:  "Operator",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "user-1",
+		ApprovedByActorName: "Operator",
+		ApprovedByActorType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("UpsertTemplateLibrary() error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        library.ID,
+		BoundByActorID:   "user-1",
+		BoundByActorName: "Operator",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+
+	if err := svc.UnbindProjectTemplateLibrary(ctx, UnbindProjectTemplateLibraryInput{
+		ProjectID: project.ID,
+	}); err != nil {
+		t.Fatalf("UnbindProjectTemplateLibrary() error = %v", err)
+	}
+	if _, err := svc.GetProjectTemplateBinding(ctx, project.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetProjectTemplateBinding() error = %v, want ErrNotFound", err)
 	}
 }
 

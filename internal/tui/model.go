@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"os"
@@ -36,10 +37,13 @@ type Service interface {
 	ListCommentsByTarget(context.Context, app.ListCommentsByTargetInput) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
+	ListTemplateLibraries(context.Context, app.ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ListAuthSessions(context.Context, app.AuthSessionFilter) ([]app.AuthSession, error)
 	ListCapabilityLeases(context.Context, app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error)
 	ListHandoffs(context.Context, app.ListHandoffsInput) ([]domain.Handoff, error)
+	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
@@ -50,6 +54,8 @@ type Service interface {
 	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
 	UpdateProject(context.Context, app.UpdateProjectInput) (domain.Project, error)
+	BindProjectTemplateLibrary(context.Context, app.BindProjectTemplateLibraryInput) (domain.ProjectTemplateBinding, error)
+	UnbindProjectTemplateLibrary(context.Context, app.UnbindProjectTemplateLibraryInput) error
 	ArchiveProject(context.Context, string) (domain.Project, error)
 	RestoreProject(context.Context, string) (domain.Project, error)
 	DeleteProject(context.Context, string) error
@@ -198,6 +204,7 @@ const (
 	projectFieldColor
 	projectFieldHomepage
 	projectFieldTags
+	projectFieldTemplateLibrary
 	projectFieldRootPath
 )
 
@@ -706,6 +713,9 @@ type Model struct {
 	projectFormInputs              []textinput.Model
 	projectFormFocus               int
 	projectFormDescription         string
+	templateLibraries              []domain.TemplateLibrary
+	currentProjectTemplateBinding  *domain.ProjectTemplateBinding
+	taskNodeContracts              map[string]domain.NodeContractSnapshot
 	descriptionEditorBack          inputMode
 	descriptionEditorTarget        descriptionEditorTarget
 	descriptionEditorTaskFormField int
@@ -856,6 +866,9 @@ type loadedMsg struct {
 	selectedProject           int
 	columns                   []domain.Column
 	tasks                     []domain.Task
+	templateLibraries         []domain.TemplateLibrary
+	projectTemplateBinding    *domain.ProjectTemplateBinding
+	taskNodeContracts         map[string]domain.NodeContractSnapshot
 	activityEntries           []activityEntry
 	attentionItems            []domain.AttentionItem
 	globalNotices             []globalNoticesPanelItem
@@ -1206,6 +1219,21 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	m.selectedProject = msg.selectedProject
 	m.columns = msg.columns
 	m.tasks = msg.tasks
+	m.templateLibraries = append([]domain.TemplateLibrary(nil), msg.templateLibraries...)
+	if msg.projectTemplateBinding != nil {
+		binding := *msg.projectTemplateBinding
+		m.currentProjectTemplateBinding = &binding
+	} else {
+		m.currentProjectTemplateBinding = nil
+	}
+	if msg.taskNodeContracts != nil {
+		m.taskNodeContracts = make(map[string]domain.NodeContractSnapshot, len(msg.taskNodeContracts))
+		for taskID, snapshot := range msg.taskNodeContracts {
+			m.taskNodeContracts[taskID] = snapshot
+		}
+	} else {
+		m.taskNodeContracts = map[string]domain.NodeContractSnapshot{}
+	}
 	if msg.activityEntries != nil {
 		m.activityLog = append([]activityEntry(nil), msg.activityEntries...)
 	}
@@ -1227,6 +1255,8 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.projectPickerIndex = 0
 		m.columns = nil
 		m.tasks = nil
+		m.currentProjectTemplateBinding = nil
+		m.taskNodeContracts = map[string]domain.NodeContractSnapshot{}
 		m.activityLog = []activityEntry{}
 		m.attentionItems = []domain.AttentionItem{}
 		m.noticesCoordination = noticesCoordinationSummary{}
@@ -2169,9 +2199,21 @@ func (m Model) loadData() tea.Msg {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", 0, "column_count", 0, "task_count", 0)
 		return loadedMsg{err: err}
 	}
+	templateLibraries, err := m.svc.ListTemplateLibraries(context.Background(), app.ListTemplateLibrariesInput{
+		Scope:  domain.TemplateLibraryScopeGlobal,
+		Status: domain.TemplateLibraryStatusApproved,
+	})
+	if err != nil {
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
+		return loadedMsg{err: err}
+	}
 	if len(projects) == 0 {
 		m.traceLoadDataStage("total", totalStartedAt, nil, "project_count", 0, "column_count", 0, "task_count", 0)
-		return loadedMsg{projects: projects}
+		return loadedMsg{
+			projects:          projects,
+			templateLibraries: templateLibraries,
+			taskNodeContracts: map[string]domain.NodeContractSnapshot{},
+		}
 	}
 
 	projectIdx := clamp(m.selectedProject, 0, len(projects)-1)
@@ -2184,6 +2226,17 @@ func (m Model) loadData() tea.Msg {
 		}
 	}
 	projectID := projects[projectIdx].ID
+	var projectTemplateBinding *domain.ProjectTemplateBinding
+	binding, err := m.svc.GetProjectTemplateBinding(context.Background(), projectID)
+	switch {
+	case err == nil:
+		projectTemplateBinding = &binding
+	case errors.Is(err, app.ErrNotFound):
+		projectTemplateBinding = nil
+	default:
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
+		return loadedMsg{err: err}
+	}
 	columnsStartedAt := time.Now()
 	columns, err := m.svc.ListColumns(context.Background(), projectID, false)
 	m.traceLoadDataStage("columns", columnsStartedAt, err, "project_id", projectID, "count", len(columns))
@@ -2233,6 +2286,19 @@ func (m Model) loadData() tea.Msg {
 	if err != nil {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 		return loadedMsg{err: err}
+	}
+	taskNodeContracts := make(map[string]domain.NodeContractSnapshot, len(tasks))
+	for _, task := range tasks {
+		snapshot, snapshotErr := m.svc.GetNodeContractSnapshot(context.Background(), task.ID)
+		switch {
+		case snapshotErr == nil:
+			taskNodeContracts[task.ID] = snapshot
+		case errors.Is(snapshotErr, app.ErrNotFound):
+			continue
+		default:
+			m.traceLoadDataStage("total", totalStartedAt, snapshotErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
+			return loadedMsg{err: snapshotErr}
+		}
 	}
 	rollupStartedAt := time.Now()
 	rollup, err := m.svc.GetProjectDependencyRollup(context.Background(), projectID)
@@ -2407,6 +2473,9 @@ func (m Model) loadData() tea.Msg {
 		selectedProject:           projectIdx,
 		columns:                   columns,
 		tasks:                     tasks,
+		templateLibraries:         templateLibraries,
+		projectTemplateBinding:    projectTemplateBinding,
+		taskNodeContracts:         taskNodeContracts,
 		activityEntries:           activityEntries,
 		attentionItems:            attentionItems,
 		globalNotices:             globalNotices,
@@ -4187,6 +4256,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		newModalInput("", "accent color (e.g. 62)", "", 32),
 		newModalInput("", "https://...", "", 200),
 		newModalInput("", "csv tags", "", 200),
+		newModalInput("", "approved global template library id (optional)", "", 160),
 		newModalInput("", "project root path (optional)", "", 512),
 	}
 	m.editingProjectID = ""
@@ -4206,6 +4276,9 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		}
 		if slug := strings.TrimSpace(strings.ToLower(project.Slug)); slug != "" {
 			m.projectFormInputs[projectFieldRootPath].SetValue(strings.TrimSpace(m.projectRoots[slug]))
+		}
+		if binding, ok := m.activeProjectTemplateBinding(project.ID); ok {
+			m.projectFormInputs[projectFieldTemplateLibrary].SetValue(binding.LibraryID)
 		}
 	} else {
 		m.mode = modeAddProject
@@ -5225,7 +5298,7 @@ func (m Model) allowedLabelsForSelectedProject() []string {
 }
 
 // projectFormFields stores a package-level helper value.
-var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path"}
+var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "template_library_id", "root_path"}
 
 // projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
@@ -5238,6 +5311,77 @@ func (m Model) projectFormValues() map[string]string {
 	}
 	out["description"] = sanitizeFormFieldValue(m.projectFormDescription)
 	return out
+}
+
+// activeProjectTemplateBinding returns the loaded active binding for one project when available.
+func (m Model) activeProjectTemplateBinding(projectID string) (domain.ProjectTemplateBinding, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || m.currentProjectTemplateBinding == nil {
+		return domain.ProjectTemplateBinding{}, false
+	}
+	if strings.TrimSpace(m.currentProjectTemplateBinding.ProjectID) != projectID {
+		return domain.ProjectTemplateBinding{}, false
+	}
+	return *m.currentProjectTemplateBinding, true
+}
+
+// hasApprovedTemplateLibrary reports whether the given global approved template library is currently visible to the TUI.
+func (m Model) hasApprovedTemplateLibrary(libraryID string) bool {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	if libraryID == "" {
+		return false
+	}
+	for _, library := range m.templateLibraries {
+		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
+			continue
+		}
+		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// templateLibrarySummaryRows returns readable approved-library rows for project-form rendering.
+func (m Model) templateLibrarySummaryRows(limit int) []string {
+	if limit <= 0 {
+		limit = len(m.templateLibraries)
+	}
+	rows := make([]string, 0, min(limit, len(m.templateLibraries)))
+	for _, library := range m.templateLibraries {
+		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
+			continue
+		}
+		label := strings.TrimSpace(library.Name)
+		if label == "" {
+			label = library.ID
+		}
+		rows = append(rows, fmt.Sprintf("%s — %s", library.ID, label))
+		if len(rows) >= limit {
+			break
+		}
+	}
+	return rows
+}
+
+// templateActorKindsText renders actor-kind slices for readable TUI inspection output.
+func templateActorKindsText(kinds []domain.TemplateActorKind) string {
+	if len(kinds) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		value := strings.TrimSpace(string(kind))
+		if value == "" {
+			continue
+		}
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // descriptionFormDisplayValue summarizes markdown description content for compact form rows.
@@ -10792,6 +10936,11 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.status = "project name required"
 			return m, nil
 		}
+		templateLibraryID := domain.NormalizeTemplateLibraryID(vals["template_library_id"])
+		if templateLibraryID != "" && !m.hasApprovedTemplateLibrary(templateLibraryID) {
+			m.status = "approved template library not found: " + templateLibraryID
+			return m, nil
+		}
 		rootPath, err := normalizeProjectRootPathInput(vals["root_path"])
 		if err != nil {
 			m.status = err.Error()
@@ -10806,6 +10955,10 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		description := vals["description"]
 		projectID := m.editingProjectID
+		currentTemplateLibraryID := ""
+		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
+			currentTemplateLibraryID = binding.LibraryID
+		}
 		projectOp := "update"
 		if isAdd || projectID == "" {
 			projectOp = "create"
@@ -10820,12 +10973,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		if isAdd || projectID == "" {
 			return m, func() tea.Msg {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
-					Name:          name,
-					Description:   description,
-					Metadata:      metadata,
-					UpdatedBy:     m.threadActorID(),
-					UpdatedByName: m.threadActorName(),
-					UpdatedType:   m.threadActorType(),
+					Name:              name,
+					Description:       description,
+					TemplateLibraryID: templateLibraryID,
+					Metadata:          metadata,
+					UpdatedBy:         m.threadActorID(),
+					UpdatedByName:     m.threadActorName(),
+					UpdatedType:       m.threadActorType(),
 				})
 				if err != nil {
 					return actionMsg{err: err}
@@ -10856,6 +11010,24 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			})
 			if err != nil {
 				return actionMsg{err: err}
+			}
+			switch {
+			case templateLibraryID == "" && currentTemplateLibraryID != "":
+				if err := m.svc.UnbindProjectTemplateLibrary(context.Background(), app.UnbindProjectTemplateLibraryInput{
+					ProjectID: project.ID,
+				}); err != nil {
+					return actionMsg{err: err}
+				}
+			case templateLibraryID != "" && templateLibraryID != currentTemplateLibraryID:
+				if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
+					ProjectID:        project.ID,
+					LibraryID:        templateLibraryID,
+					BoundByActorID:   m.threadActorID(),
+					BoundByActorName: m.threadActorName(),
+					BoundByActorType: m.threadActorType(),
+				}); err != nil {
+					return actionMsg{err: err}
+				}
 			}
 			if m.saveProjectRoot != nil {
 				if err := m.saveProjectRoot(project.Slug, rootPath); err != nil {
@@ -15330,6 +15502,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
 			"icon field is shown in path context, notices, and picker and supports emoji",
+			"template_library_id binds one approved global template library at create time",
 			"root_path field: r opens directory picker",
 		}
 	case modeEditProject:
@@ -15337,6 +15510,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
 			"icon field is shown in path context, notices, and picker and supports emoji",
+			"template_library_id rebinding is supported; clear it to remove the active project binding",
 			"root_path field: r opens directory picker",
 		}
 	case modeDescriptionEditor:
@@ -16275,6 +16449,28 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	renderProjectInput("color", projectFieldColor)
 	renderProjectInput("homepage", projectFieldHomepage)
 	renderProjectInput("tags", projectFieldTags)
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("template workflow"))
+	renderProjectInput("template_library_id", projectFieldTemplateLibrary)
+	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
+		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
+			lines = append(lines, hintStyle.Render("active_binding: "+binding.LibraryID))
+		} else {
+			lines = append(lines, hintStyle.Render("active_binding: -"))
+		}
+	}
+	libraryRows := m.templateLibrarySummaryRows(5)
+	if len(libraryRows) == 0 {
+		lines = append(lines, hintStyle.Render("approved_global_libraries: (none; create via CLI/MCP first)"))
+	} else {
+		lines = append(lines, hintStyle.Render("approved_global_libraries:"))
+		for _, row := range libraryRows {
+			lines = append(lines, hintStyle.Render("  - "+row))
+		}
+		if len(m.templateLibraries) > len(libraryRows) {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("  +%d more", len(m.templateLibraries)-len(libraryRows))))
+		}
+	}
 	renderProjectInput("root_path", projectFieldRootPath)
 
 	if m.mode == modeEditProject && strings.TrimSpace(m.editingProjectID) != "" {
@@ -16364,6 +16560,27 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 		blockedReason = "-"
 	}
 	lines = append(lines, hintStyle.Render("blocked_reason: "+blockedReason))
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("template contract:"))
+	projectLibraryID := "-"
+	if binding, ok := m.activeProjectTemplateBinding(task.ProjectID); ok {
+		projectLibraryID = binding.LibraryID
+	}
+	lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
+	if snapshot, ok := m.taskNodeContracts[task.ID]; ok {
+		lines = append(lines, hintStyle.Render("source_library: "+fallbackText(strings.TrimSpace(snapshot.SourceLibraryID), "-")))
+		lines = append(lines, hintStyle.Render("source_node_template: "+fallbackText(strings.TrimSpace(snapshot.SourceNodeTemplateID), "-")))
+		lines = append(lines, hintStyle.Render("source_child_rule: "+fallbackText(strings.TrimSpace(snapshot.SourceChildRuleID), "-")))
+		lines = append(lines, hintStyle.Render("responsible_actor_kind: "+fallbackText(strings.TrimSpace(string(snapshot.ResponsibleActorKind)), "-")))
+		lines = append(lines, hintStyle.Render("editable_by: "+templateActorKindsText(snapshot.EditableByActorKinds)))
+		lines = append(lines, hintStyle.Render("completable_by: "+templateActorKindsText(snapshot.CompletableByActorKinds)))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("required_for_parent_done: %t", snapshot.RequiredForParentDone)))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("required_for_containing_done: %t", snapshot.RequiredForContainingDone)))
+		lines = append(lines, hintStyle.Render("generated_by: "+fallbackText(strings.TrimSpace(snapshot.CreatedByActorID), "-")))
+	} else {
+		lines = append(lines, hintStyle.Render("generated_contract: none"))
+	}
 
 	lines = append(lines, "")
 	lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d):", len(m.taskInfoComments))))

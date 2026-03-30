@@ -36,6 +36,11 @@ type fakeService struct {
 	authSessions            []app.AuthSession
 	capabilityLeases        []domain.CapabilityLease
 	handoffs                []domain.Handoff
+	templateLibraries       []domain.TemplateLibrary
+	projectBindings         map[string]domain.ProjectTemplateBinding
+	nodeContracts           map[string]domain.NodeContractSnapshot
+	lastCreateProject       app.CreateProjectInput
+	lastUpdateProject       app.UpdateProjectInput
 	lastAuthRequestFilter   domain.AuthRequestListFilter
 	lastAuthSessionFilter   app.AuthSessionFilter
 	lastCapabilityLeases    app.ListCapabilityLeasesInput
@@ -74,11 +79,52 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		comments:                map[string][]domain.Comment{},
 		authRequests:            map[string]domain.AuthRequest{},
 		authSessions:            []app.AuthSession{},
+		projectBindings:         map[string]domain.ProjectTemplateBinding{},
+		nodeContracts:           map[string]domain.NodeContractSnapshot{},
 		rollups:                 map[string]domain.DependencyRollup{},
 		changeEvents:            map[string][]domain.ChangeEvent{},
 		attentionErrByProject:   map[string]error{},
 		attentionItemsByProject: map[string][]domain.AttentionItem{},
 	}
+}
+
+// ListTemplateLibraries returns approved template libraries visible to the TUI.
+func (f *fakeService) ListTemplateLibraries(_ context.Context, in app.ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([]domain.TemplateLibrary, 0, len(f.templateLibraries))
+	for _, library := range f.templateLibraries {
+		if scope := domain.NormalizeTemplateLibraryScope(in.Scope); scope != "" && library.Scope != scope {
+			continue
+		}
+		if projectID := strings.TrimSpace(in.ProjectID); projectID != "" && strings.TrimSpace(library.ProjectID) != projectID {
+			continue
+		}
+		if status := domain.NormalizeTemplateLibraryStatus(in.Status); status != "" && library.Status != status {
+			continue
+		}
+		out = append(out, library)
+	}
+	return out, nil
+}
+
+// GetProjectTemplateBinding returns one active project template binding when present.
+func (f *fakeService) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
+	binding, ok := f.projectBindings[strings.TrimSpace(projectID)]
+	if !ok {
+		return domain.ProjectTemplateBinding{}, app.ErrNotFound
+	}
+	return binding, nil
+}
+
+// GetNodeContractSnapshot returns one generated-node contract snapshot when present.
+func (f *fakeService) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
+	snapshot, ok := f.nodeContracts[strings.TrimSpace(nodeID)]
+	if !ok {
+		return domain.NodeContractSnapshot{}, app.ErrNotFound
+	}
+	return snapshot, nil
 }
 
 // ListProjects lists projects.
@@ -666,6 +712,7 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 
 // CreateProjectWithMetadata creates project with metadata.
 func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.CreateProjectInput) (domain.Project, error) {
+	f.lastCreateProject = in
 	project, err := domain.NewProject("p-new", in.Name, in.Description, time.Now().UTC())
 	if err != nil {
 		return domain.Project{}, err
@@ -684,11 +731,18 @@ func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.Create
 	if _, ok := f.tasks[project.ID]; !ok {
 		f.tasks[project.ID] = []domain.Task{}
 	}
+	if libraryID := domain.NormalizeTemplateLibraryID(in.TemplateLibraryID); libraryID != "" {
+		f.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+			ProjectID: project.ID,
+			LibraryID: libraryID,
+		}
+	}
 	return project, nil
 }
 
 // UpdateProject updates state for the requested operation.
 func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput) (domain.Project, error) {
+	f.lastUpdateProject = in
 	for idx := range f.projects {
 		if f.projects[idx].ID != in.ProjectID {
 			continue
@@ -699,6 +753,29 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 		return f.projects[idx], nil
 	}
 	return domain.Project{}, app.ErrNotFound
+}
+
+// BindProjectTemplateLibrary sets one active project binding.
+func (f *fakeService) BindProjectTemplateLibrary(_ context.Context, in app.BindProjectTemplateLibraryInput) (domain.ProjectTemplateBinding, error) {
+	binding := domain.ProjectTemplateBinding{
+		ProjectID:        strings.TrimSpace(in.ProjectID),
+		LibraryID:        domain.NormalizeTemplateLibraryID(in.LibraryID),
+		BoundByActorID:   strings.TrimSpace(in.BoundByActorID),
+		BoundByActorName: strings.TrimSpace(in.BoundByActorName),
+		BoundByActorType: in.BoundByActorType,
+	}
+	f.projectBindings[binding.ProjectID] = binding
+	return binding, nil
+}
+
+// UnbindProjectTemplateLibrary removes one active project binding.
+func (f *fakeService) UnbindProjectTemplateLibrary(_ context.Context, in app.UnbindProjectTemplateLibraryInput) error {
+	projectID := strings.TrimSpace(in.ProjectID)
+	if _, ok := f.projectBindings[projectID]; !ok {
+		return app.ErrNotFound
+	}
+	delete(f.projectBindings, projectID)
+	return nil
 }
 
 // ArchiveProject archives one project.
@@ -1251,7 +1328,7 @@ func TestModelAddAndEditProject(t *testing.T) {
 	if m.mode != modeEditProject {
 		t.Fatalf("expected edit project mode, got %v", m.mode)
 	}
-	m.projectFormInputs[0].SetValue("Renamed")
+	m.projectFormInputs[projectFieldName].SetValue("Renamed")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := m.projects[m.selectedProject].Name; got != "Renamed" {
 		t.Fatalf("expected project renamed, got %q", got)
@@ -6606,8 +6683,8 @@ func TestProjectFormSavesRootPathOnCreate(t *testing.T) {
 	if m.mode != modeAddProject {
 		t.Fatalf("expected add-project mode, got %v", m.mode)
 	}
-	m.projectFormInputs[0].SetValue("Roadmap")
-	m.projectFormInputs[7].SetValue(rootPath)
+	m.projectFormInputs[projectFieldName].SetValue("Roadmap")
+	m.projectFormInputs[projectFieldRootPath].SetValue(rootPath)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if savedSlug == "" {
 		t.Fatal("expected project-root callback to capture project slug")
@@ -13666,6 +13743,134 @@ func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
 	_ = m.startProjectForm(&project)
 	if got := m.projectFormInputs[projectFieldOwner].Value(); got != "Evan" {
 		t.Fatalf("edit project owner fallback = %q, want %q", got, "Evan")
+	}
+}
+
+// TestModelAddProjectPersistsTemplateLibraryBinding verifies the project form passes template-library binding input through create flow.
+func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
+	now := time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:     "go-defaults",
+		Scope:  domain.TemplateLibraryScopeGlobal,
+		Name:   "Go Defaults",
+		Status: domain.TemplateLibraryStatusApproved,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTemplateLibrary() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('N'))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode, got %v", m.mode)
+	}
+	m.projectFormInputs[projectFieldName].SetValue("Go Service")
+	m.projectFormInputs[projectFieldTemplateLibrary].SetValue("go-defaults")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if got := svc.lastCreateProject.TemplateLibraryID; got != "go-defaults" {
+		t.Fatalf("CreateProjectWithMetadata() template library = %q, want go-defaults", got)
+	}
+	if binding, ok := svc.projectBindings["p-new"]; !ok || binding.LibraryID != "go-defaults" {
+		t.Fatalf("expected created project binding to go-defaults, got %#v", svc.projectBindings)
+	}
+}
+
+// TestModelEditProjectClearsTemplateLibraryBinding verifies blank template-library input unbinds the current project.
+func TestModelEditProjectClearsTemplateLibraryBinding(t *testing.T) {
+	now := time.Date(2026, 3, 30, 12, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:     "go-defaults",
+		Scope:  domain.TemplateLibraryScopeGlobal,
+		Name:   "Go Defaults",
+		Status: domain.TemplateLibraryStatusApproved,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTemplateLibrary() error = %v", err)
+	}
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID: project.ID,
+		LibraryID: library.ID,
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('M'))
+	if m.mode != modeEditProject {
+		t.Fatalf("expected edit-project mode, got %v", m.mode)
+	}
+	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
+		t.Fatalf("expected project form to seed template library id, got %q", got)
+	}
+	lines, _ := m.projectFormBodyLines(72, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+	if !strings.Contains(rendered, "approved_global_libraries:") || !strings.Contains(rendered, "go-defaults") {
+		t.Fatalf("expected project form to render template-library hints, got\n%s", rendered)
+	}
+	m.projectFormInputs[projectFieldTemplateLibrary].SetValue("")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if _, ok := svc.projectBindings[project.ID]; ok {
+		t.Fatalf("expected project binding removed, got %#v", svc.projectBindings[project.ID])
+	}
+}
+
+// TestTaskInfoBodyLinesRenderTemplateContractSection verifies task-info exposes project binding and generated-node contract details.
+func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
+	now := time.Date(2026, 3, 30, 13, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Build feature",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID: project.ID,
+		LibraryID: "go-defaults",
+	}
+	svc.nodeContracts[task.ID] = domain.NodeContractSnapshot{
+		NodeID:                    task.ID,
+		ProjectID:                 project.ID,
+		SourceLibraryID:           "go-defaults",
+		SourceNodeTemplateID:      "build-template",
+		SourceChildRuleID:         "qa-pass-1",
+		CreatedByActorID:          "tillsyn-system-template",
+		ResponsibleActorKind:      domain.TemplateActorKindBuilder,
+		EditableByActorKinds:      []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
+		CompletableByActorKinds:   []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
+		RequiredForParentDone:     true,
+		RequiredForContainingDone: true,
+	}
+	m := loadReadyModel(t, NewModel(svc))
+	lines := m.taskInfoBodyLines(task, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
+	rendered := strings.Join(lines, "\n")
+
+	for _, want := range []string{
+		"template contract:",
+		"project_library: go-defaults",
+		"source_library: go-defaults",
+		"source_node_template: build-template",
+		"source_child_rule: qa-pass-1",
+		"responsible_actor_kind: builder",
+		"editable_by: builder",
+		"completable_by: builder, human",
+		"required_for_parent_done: true",
+		"required_for_containing_done: true",
+		"generated_by: tillsyn-system-template",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected task info template-contract section to contain %q, got\n%s", want, rendered)
+		}
 	}
 }
 

@@ -26,6 +26,7 @@ type Repository interface {
 	ListTemplateLibraries(context.Context, domain.TemplateLibraryFilter) ([]domain.TemplateLibrary, error)
 	UpsertProjectTemplateBinding(context.Context, domain.ProjectTemplateBinding) error
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	DeleteProjectTemplateBinding(context.Context, string) error
 	CreateNodeContractSnapshot(context.Context, domain.NodeContractSnapshot) error
 	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 

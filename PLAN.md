@@ -2,7 +2,52 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, and snapshot transport for template libraries/project bindings/node-contract snapshots, while final legacy kind-template quarantine remains intentionally pending. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical.
+Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, snapshot transport for template libraries/project bindings/node-contract snapshots, and first-class TUI bind/inspect surfaces. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical. The main remaining legacy seam is create-time kind-template fallback rather than user-facing authoring/operator workflow.
+
+## Checkpoint 2026-03-30: TUI Template Bind/Inspect + Kind Surface Quarantine
+
+Objective:
+- finish the template MVP usability gap by surfacing bindings/contracts in the existing TUI, and quarantine the remaining user-facing kind-template authoring seam so `kind` reads as kind-registry work instead of template work.
+
+Context7:
+1. `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` reviewed before the TUI patch for:
+   - stable update/key-handling assumptions,
+   - and why tests should target existing form/modal seams rather than inventing parallel template screens -> PASS.
+2. After one TUI test failure caused by changed project-form field order, `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` was refreshed again before the next edit -> PASS.
+
+Implementation summary:
+1. Extended the existing project create/edit full-page form:
+   - added `template_library_id`,
+   - seeded it from the active project binding when editing,
+   - validated it against approved global libraries already loaded into the TUI,
+   - and used the existing save path to bind or unbind project libraries without adding a separate template modal stack.
+2. Extended the existing task-info inspector:
+   - added a `template contract:` section,
+   - showed the active project library,
+   - and rendered generated-node contract details such as source rule, responsible actor kind, edit/complete actor kinds, and blocker flags.
+3. Added TUI/runtime plumbing:
+   - load approved global libraries, current project binding, and current-project node-contract snapshots during normal TUI reloads,
+   - expose them through the existing model state,
+   - and add a real project unbind path in app/storage so clearing the form field is honest.
+4. Quarantined the legacy kind authoring surface:
+   - `till kind` help now reads as kind-definition and allowlist management,
+   - the legacy `--template-json` flag is hidden from normal help,
+   - and operator-facing docs now steer template work through `till template`, TUI bind/inspect, and MCP JSON transport instead.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/app` -> PASS.
+3. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+4. `just test-pkg ./internal/tui` -> PASS.
+5. `just test-pkg ./cmd/till` -> PASS.
+6. `just test-golden` -> PASS.
+7. `just check` -> PASS.
+8. `just ci` -> PASS.
+
+Current status:
+1. TUI can now bind/unbind project libraries through the existing project form and inspect generated-node contracts through the existing task-info view.
+2. MCP/CLI remain the JSON authoring and automation path, and agents using MCP can work with a human to draft or update libraries there.
+3. The main remaining legacy seam is create-time kind-template fallback when no bound node template exists.
 
 ## Checkpoint 2026-03-30: Legacy Doc-Sidecar Removal + Child-Rule Examples
 

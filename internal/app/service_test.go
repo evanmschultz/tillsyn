@@ -265,6 +265,16 @@ func (f *fakeRepo) GetProjectTemplateBinding(_ context.Context, projectID string
 	return binding, nil
 }
 
+// DeleteProjectTemplateBinding removes one active project binding.
+func (f *fakeRepo) DeleteProjectTemplateBinding(_ context.Context, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if _, ok := f.projectBindings[projectID]; !ok {
+		return ErrNotFound
+	}
+	delete(f.projectBindings, projectID)
+	return nil
+}
+
 // CreateNodeContractSnapshot stores one node-contract snapshot.
 func (f *fakeRepo) CreateNodeContractSnapshot(_ context.Context, snapshot domain.NodeContractSnapshot) error {
 	f.nodeContracts[strings.TrimSpace(snapshot.NodeID)] = snapshot

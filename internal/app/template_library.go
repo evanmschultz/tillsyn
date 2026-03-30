@@ -78,6 +78,11 @@ type BindProjectTemplateLibraryInput struct {
 	BoundByActorType domain.ActorType
 }
 
+// UnbindProjectTemplateLibraryInput stores one project-to-library unbind request.
+type UnbindProjectTemplateLibraryInput struct {
+	ProjectID string
+}
+
 // ListTemplateLibraries lists template libraries with deterministic ordering.
 func (s *Service) ListTemplateLibraries(ctx context.Context, in ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error) {
 	libraries, err := s.repo.ListTemplateLibraries(ctx, domain.TemplateLibraryFilter{
@@ -267,6 +272,21 @@ func (s *Service) GetProjectTemplateBinding(ctx context.Context, projectID strin
 		return domain.ProjectTemplateBinding{}, domain.ErrInvalidID
 	}
 	return s.repo.GetProjectTemplateBinding(ctx, projectID)
+}
+
+// UnbindProjectTemplateLibrary removes the active template-library binding for one project.
+func (s *Service) UnbindProjectTemplateLibrary(ctx context.Context, in UnbindProjectTemplateLibraryInput) error {
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID == "" {
+		return domain.ErrInvalidID
+	}
+	if _, err := s.repo.GetProject(ctx, projectID); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteProjectTemplateBinding(ctx, projectID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetNodeContractSnapshot loads one generated-node contract snapshot.

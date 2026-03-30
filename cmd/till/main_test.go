@@ -599,7 +599,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "kind upsert",
 			args: []string{"kind", "upsert", "--help"},
-			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--template-json"},
+			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--payload-schema-json"},
 		},
 		{
 			name: "kind allowlist",

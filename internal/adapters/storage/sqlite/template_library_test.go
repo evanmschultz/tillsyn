@@ -2,9 +2,11 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
@@ -117,6 +119,15 @@ func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
 	}
 	if loadedBinding.LibraryID != library.ID {
 		t.Fatalf("loadedBinding.LibraryID = %q, want %q", loadedBinding.LibraryID, library.ID)
+	}
+	if err := repo.DeleteProjectTemplateBinding(ctx, project.ID); err != nil {
+		t.Fatalf("DeleteProjectTemplateBinding() error = %v", err)
+	}
+	if _, err := repo.GetProjectTemplateBinding(ctx, project.ID); !errors.Is(err, app.ErrNotFound) {
+		t.Fatalf("GetProjectTemplateBinding() error = %v, want ErrNotFound after delete", err)
+	}
+	if err := repo.UpsertProjectTemplateBinding(ctx, binding); err != nil {
+		t.Fatalf("UpsertProjectTemplateBinding() restore error = %v", err)
 	}
 
 	task, err := domain.NewTask(domain.TaskInput{

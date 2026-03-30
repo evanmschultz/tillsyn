@@ -1649,6 +1649,25 @@ func (r *Repository) GetProjectTemplateBinding(ctx context.Context, projectID st
 	return scanProjectTemplateBinding(row)
 }
 
+// DeleteProjectTemplateBinding removes one project's active template-library binding.
+func (r *Repository) DeleteProjectTemplateBinding(ctx context.Context, projectID string) error {
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM project_template_bindings
+		WHERE project_id = ?
+	`, strings.TrimSpace(projectID))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return app.ErrNotFound
+	}
+	return nil
+}
+
 // CreateNodeContractSnapshot persists one generated-node contract snapshot.
 func (r *Repository) CreateNodeContractSnapshot(ctx context.Context, snapshot domain.NodeContractSnapshot) error {
 	tx, err := r.db.BeginTx(ctx, nil)
