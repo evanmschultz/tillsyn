@@ -127,16 +127,24 @@ Current auth note:
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
+- Template child rules are the contract mechanism:
+  - a node template can auto-generate follow-up work,
+  - assign each generated node to a responsible actor kind,
+  - restrict edit/complete actions per actor kind,
+  - and mark specific generated nodes as required blockers for parent or containing-scope completion.
+- Example shape:
+  - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till template library list --scope global --status approved`
   - `till template library show --library-id go-defaults`
-  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task"}]}'`
+  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-pass-1","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 1","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-pass-2","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 2","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
   - `till template project bind --project-id p1 --library-id go-defaults`
   - `till template project binding --project-id p1`
   - `till template contract show --node-id task-qa-1`
 - Documentation expectations:
-  - keep README workflow examples, `AGENTS.md` policy, `CLAUDE.md` interaction guidance, and any relevant `SKILL.md` files aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
+  - keep README workflow examples aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
+  - keep at least one canonical example that shows multi-child gatekeeping such as a build task that auto-generates multiple QA subtasks.
   - keep examples readable enough for humans to audit quickly in the TUI and CLI; template contracts should clarify ownership and completion gates instead of hiding them in large markdown files.
   - keep the docs explicit that comments are the durable shared communication layer inside Tillsyn, which is a core value-add over external markdown plans for human-to-agent and agent-to-agent coordination.
 

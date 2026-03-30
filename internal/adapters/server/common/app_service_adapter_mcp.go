@@ -28,7 +28,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"Kind catalog plus template-library-driven generated follow-up work and node-contract snapshots",
 			"Pre-session auth requests, approval, and continuation claims",
 			"Capability lease issuance and guardrailed non-user mutations",
-			"Instruction/bootstrap guidance for README, AGENTS.md, CLAUDE.md, and skill alignment",
+			"Instruction/bootstrap guidance for README plus optional external agent-policy and skill alignment",
 		},
 		NextSteps: []string{
 			"If this session is already approved, create a project with till.create_project",
@@ -36,7 +36,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"After approval, claim the request with till.claim_auth_request, then create the project with till.create_project",
 			"If the project should use workflow contracts, inspect approved template libraries with till.list_template_libraries and bind one with till.bind_project_template_library before creating level-scoped work",
 			"Use till.create_comment and till.create_handoff inside Tillsyn for human-agent or agent-agent coordination instead of pushing that discussion back into ad-hoc markdown files",
-			"Call till.get_instructions for README, AGENTS.md, CLAUDE.md, and skill-alignment guidance when operator policy docs need to match the runtime workflow model",
+			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
 			"Call till.capture_state to reorient and continue safely",
 		},
 		Recommended: []string{

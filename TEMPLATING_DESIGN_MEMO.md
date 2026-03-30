@@ -819,7 +819,7 @@ Add:
 - MCP draft proposal and preview flows
 - node-contract detail and blocked-state explanation surfaces
 - README workflow examples for the canonical happy paths
-- richer `till.get_instructions` and `till.get_bootstrap_guide` guidance for templates, workflows, and surrounding agent-policy files
+- richer `till.get_instructions` and `till.get_bootstrap_guide` guidance for templates, workflows, and human-readable operator examples
 - TUI implementation discipline:
   - reuse existing shared components and interaction logic,
   - keep full-page surface behavior aligned with current modes,
@@ -877,7 +877,7 @@ Once implementation planning starts, keep it to these slices:
 - README examples for the highest-frequency template workflows
 - `till.get_instructions` updates that explain the best-supported workflow order and related operator guidance
 - `till.get_bootstrap_guide` updates for first-run template/library setup
-- explicit suggestions for aligning external agent-policy docs and skills with Tillsyn policy, without Tillsyn managing those files directly
+- explicit human-readable examples for child-rule workflow contracts and shared comment/handoff coordination
 
 6. Migration and compatibility
 - do not silently mutate existing nodes
@@ -894,9 +894,9 @@ When implementation starts, these are the most obvious old seams that should be 
 ### Domain / App Seams
 
 - `internal/domain/kind.go`
-  - `KindTemplate`, `KindTemplateChildSpec`, and related template-file section fields currently bundle node-kind registry and template behavior together
+  - `KindTemplate` and `KindTemplateChildSpec` currently bundle node-kind registry and template behavior together
   - new work should move live contract behavior into template-library tables and leave `kind` focused on node-kind registry/schema concerns
-  - `AgentsFileSections` and `ClaudeFileSections` currently look like legacy template-sidecar fields and should either gain a clear managed-docs home or be removed from the live template path
+  - legacy doc-sidecar fields should be removed from the live template path rather than kept as part of kind/template behavior
 - `internal/app/kind_capability.go`
   - `mergeTaskMetadataWithKindTemplate`
   - `applyKindTemplateSystemActions`
@@ -938,8 +938,7 @@ When implementation starts, these are the most obvious old seams that should be 
   - current `till.upsert_kind_definition` and `till.list_kind_definitions` should remain for node-kind registry work
   - separate template-library MCP tools should carry the new contract model
 - `internal/adapters/server/mcpapi/instructions_tool.go`
-  - instruction guidance already talks about `AGENTS.md`, `CLAUDE.md`, and recommended doc usage
-  - it should gain template-workflow examples and explicit Tillsyn-alignment suggestions instead of staying generic
+  - instruction guidance should offer template-workflow examples and optional external-policy alignment suggestions instead of staying generic
 
 ### Tests / Docs Seams
 

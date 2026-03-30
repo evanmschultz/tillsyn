@@ -1743,6 +1743,12 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	if kind.ID != "qa-check" || kind.DisplayName != "QA Check" {
 		t.Fatalf("kind upsert output = %#v, want qa-check/QA Check", kind)
 	}
+	if strings.Contains(upsertOut.String(), "agents_file_sections") {
+		t.Fatalf("kind upsert output still contains legacy agents_file_sections key: %s", upsertOut.String())
+	}
+	if strings.Contains(upsertOut.String(), "claude_file_sections") {
+		t.Fatalf("kind upsert output still contains legacy claude_file_sections key: %s", upsertOut.String())
+	}
 
 	var listOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "kind", "list"}, &listOut, io.Discard); err != nil {

@@ -4,6 +4,39 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, and snapshot transport for template libraries/project bindings/node-contract snapshots, while final legacy kind-template quarantine remains intentionally pending. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical.
 
+## Checkpoint 2026-03-30: Legacy Doc-Sidecar Removal + Child-Rule Examples
+
+Objective:
+- remove the remaining legacy kind-template doc-sidecar fields from the live kind output path and sharpen the operator docs so the real child-rule contract model is obvious.
+
+Context7:
+1. `/golang/go` reviewed before the change for:
+   - `encoding/json` compatibility expectations,
+   - and why removing deprecated struct fields still leaves old JSON input safely ignored during unmarshal -> PASS.
+
+Implementation summary:
+1. Removed legacy `agents_file_sections` / `claude_file_sections` fields from `domain.KindTemplate` so kind output no longer advertises markdown-sidecar behavior as part of the live template path.
+2. Added CLI regression coverage so `kind upsert` output fails the tests if those legacy keys reappear.
+3. Tightened templating docs:
+   - README now explains that `child_rules` are the contract mechanism,
+   - includes a concrete multi-QA-child example,
+   - and keeps comments explicit as the shared coordination lane instead of a gated template surface.
+4. Removed the remaining current-wave planning wording that implied template work should coordinate external policy docs beyond the dedicated instructions-tool guidance.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+7. `just test-golden` -> not needed; no TUI files changed in this slice.
+
+Current status:
+1. Legacy doc-sidecar fields are being removed from the live kind/template surface.
+2. The instructions endpoint remains the place that may suggest optional external policy-doc alignment; the template system itself no longer models that behavior.
+3. The live operator docs now show a concrete multi-QA child-rule example instead of a placeholder template shape.
+
 ## Checkpoint 2026-03-30: Project Metadata JSON Fix + External Policy Clarification
 
 Objective:
@@ -23,9 +56,7 @@ Implementation summary:
    - `capability_policy`,
    - and related nested policy fields.
 2. Added a CLI regression test proving `template library upsert --spec-json` accepts snake_case `project_metadata_defaults` and preserves `standards_markdown`.
-3. Reworded the current templating planning docs so:
-   - external agent-policy docs and skills are suggestion-only alignment targets,
-   - Tillsyn does not read, rewrite, or otherwise manage those files directly.
+3. Reworded the current templating planning docs so Tillsyn does not read, rewrite, or otherwise manage external policy files directly.
 
 Validation:
 1. `just fmt` -> PASS.
@@ -38,7 +69,7 @@ Validation:
 
 Current status:
 1. The manual template smoke run now has a clear follow-up fix for nested project metadata JSON transport.
-2. The templating plan/docs no longer describe Tillsyn as directly managing AGENTS/CLAUDE-style files.
+2. The templating plan/docs no longer describe Tillsyn as directly managing external policy files.
 3. Legacy kind-template compatibility fields still exist in code and remain part of the next quarantine/removal slice.
 
 ## Checkpoint 2026-03-30: Template-Aware Snapshot Transport
