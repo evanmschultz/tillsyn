@@ -28,7 +28,7 @@ Local dogfood repo layout note:
 - SQLite persistence (`modernc.org/sqlite`, no CGO).
 - Keyboard navigation (`vim` keys + arrows) and mouse support.
 - Archive-first delete flow with configurable defaults.
-- Project and work-item thread mode with ownership-attributed markdown comments.
+- Project and work-item thread mode with ownership-attributed markdown comments as the shared in-scope communication lane for human-to-agent and agent-to-agent coordination.
 - Descriptions/comments are stored as markdown source fields and rendered in TUI views.
 - MCP instruction tool for embedded docs + agent recommendations (`till.get_instructions`).
 - Raw stdio MCP via `./till mcp` as the primary local MCP transport.
@@ -58,7 +58,20 @@ Implemented now:
 - `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
-- Kind templates now seed create-time project metadata defaults, task metadata/completion defaults, project root children, and recursive child work-item defaults; broader reseeding/TUI/CLI policy surfaces remain tracked in `TEMPLATE_AGENT_CONSENSUS.md`.
+- Legacy kind-template compatibility paths still exist for create-time defaults and generated work when no template library is selected or when no matching bound node template exists.
+- Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, truthful completion gates, `system` audit provenance for generated nodes, and explicit global-to-project adopt/apply flows instead of silent backfill; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
+- Project creation can now optionally bind one approved global template library at create time, so project-scoped template defaults and root generated work start from the template-library model instead of the legacy kind-template path when the operator chooses that path.
+- Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots so generated workflow contracts round-trip with the work graph instead of being flattened back to legacy defaults.
+- Current template-library enforcement slice is active for generated nodes:
+  - create-child under a generated parent,
+  - update / rename / reparent,
+  - move-to-done,
+  - archive / delete / restore.
+  Stored node-contract snapshots now gate non-human actor kinds after the normal scope lease check, humans remain allowed, orchestrator completion still requires explicit per-rule override, and done transitions now honor required parent / containing-scope blockers from generated descendants instead of treating every child as an implicit blocker.
+- Comments remain deliberately separate from template-contract mutation gating by design:
+  - comments stay shared within the normal project/scope visibility model so humans can talk directly to subagents and agents can hand off to each other inside Tillsyn,
+  - comment attribution/ownership remains first-class audit data,
+  - and later targeted-routing or limit/configuration UX can build on that without turning comments into hidden per-role silos by default.
 - Capability leases now normalize project scope ids, validate scope tuples on issuance, enforce bounded parent delegation, and apply builder/qa/orchestrator action checks in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
@@ -82,6 +95,7 @@ Current MCP/runtime direction:
   - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.raise_attention_item`, `till.resolve_attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
   - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.set_project_allowed_kinds`, `till.list_project_allowed_kinds`
+  - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.bind_project_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
   - capability leases: `till.issue_capability_lease`, `till.heartbeat_capability_lease`, `till.renew_capability_lease`, `till.revoke_capability_lease`, `till.revoke_all_capability_leases`
   - comments: `till.create_comment`, `till.list_comments_by_target`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
@@ -111,6 +125,39 @@ Current auth note:
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 
+Template-library operator examples:
+- SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
+- CLI template operators now follow the same laslig-style human output contract as the rest of the operator surface:
+  - `--spec-json` remains the machine-friendly ingestion path,
+  - list/show/bind/contract commands render human-readable tables/detail views for auditability instead of raw JSON blobs.
+- TUI surfaces now expose the same contract model without a separate template UI stack:
+  - project create/edit includes a project-kind picker and an approved-library picker plus approved-library hints,
+  - task info shows the active project library and any generated-node contract snapshot,
+  - and comments remain shared regardless of template ownership.
+- Template child rules are the contract mechanism:
+  - a node template can auto-generate follow-up work,
+  - assign each generated node to a responsible actor kind,
+  - restrict edit/complete actions per actor kind,
+  - and mark specific generated nodes as required blockers for parent or containing-scope completion.
+- Example shape:
+  - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
+- CLI examples:
+  - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
+  - `till template library list --scope global --status approved`
+  - `till template library show --library-id go-defaults`
+  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-pass-1","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 1","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-pass-2","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 2","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
+  - `till template project bind --project-id p1 --library-id go-defaults`
+  - `till template project binding --project-id p1`
+  - `till template contract show --node-id task-qa-1`
+- Kind catalog note:
+  - `till kind` is now the node-kind registry/allowlist surface.
+  - template-library workflow contracts should be created and inspected through `till template`, the TUI project form, or MCP JSON transport instead of the legacy kind-template seam.
+- Documentation expectations:
+  - keep README workflow examples aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
+  - keep at least one canonical example that shows multi-child gatekeeping such as a build task that auto-generates multiple QA subtasks.
+  - keep examples readable enough for humans to audit quickly in the TUI and CLI; template contracts should clarify ownership and completion gates instead of hiding them in large markdown files.
+  - keep the docs explicit that comments are the durable shared communication layer inside Tillsyn, which is a core value-add over external markdown plans for human-to-agent and agent-to-agent coordination.
+
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
 - Keep context bounded with `doc_names` and `max_chars_per_doc`.
@@ -120,7 +167,7 @@ Instruction-tool usage guidance:
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
 - remote/team auth-tenancy expansion and additional security hardening,
-- template reseeding/apply-scope UX, richer TUI/CLI template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
+- template-library authoring/approval/binding UX, richer actor-kind-aware template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
 
 Current post-dogfood consensus note:
 - the detailed working consensus for that template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.
@@ -157,8 +204,10 @@ Export current data:
 Snapshot export includes:
 - projects, columns, tasks/work-items
 - kind catalog definitions + project allowed-kind closure
+- template libraries + project template bindings + node-contract snapshots
 - comments/threads
 - capability leases
+- handoffs
 
 Import snapshot:
 ```bash

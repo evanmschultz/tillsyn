@@ -141,10 +141,11 @@ func runProjectCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	}
 	ctx = cliMutationContext(ctx, cfg)
 	project, err := svc.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:        opts.name,
-		Description: opts.description,
-		Kind:        domain.KindID(opts.kind),
-		Metadata:    metadata,
+		Name:              opts.name,
+		Description:       opts.description,
+		Kind:              domain.KindID(opts.kind),
+		TemplateLibraryID: opts.templateLibraryID,
+		Metadata:          metadata,
 	})
 	if err != nil {
 		return fmt.Errorf("create project: %w", err)

@@ -191,6 +191,69 @@ func seedProjectForAuthCLITest(t *testing.T, dbPath, projectID string) {
 	}
 }
 
+// seedTemplateLibraryForProjectCreateCLITest stores one approved global project template library for CLI create coverage.
+func seedTemplateLibraryForProjectCreateCLITest(t *testing.T, dbPath string) {
+	t.Helper()
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+
+	svc := app.NewService(repo, func() string { return uuid.NewString() }, func() time.Time {
+		return time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
+	}, app.ServiceConfig{})
+	if _, err := svc.ListKindDefinitions(context.Background(), false); err != nil {
+		t.Fatalf("ListKindDefinitions(seed) error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
+		ID:          "go-service",
+		DisplayName: "Go Service",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(go-service) error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(context.Background(), app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Description:         "Global defaults for Go projects",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "user-1",
+		CreatedByActorName:  "User One",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "user-1",
+		ApprovedByActorName: "User One",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "project-template",
+			ScopeLevel: domain.KindAppliesToProject,
+			NodeKindID: domain.KindID("go-service"),
+			ProjectMetadataDefaults: &domain.ProjectMetadata{
+				Owner:             "Platform",
+				StandardsMarkdown: "Run Go validation",
+			},
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "main-branch",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToBranch,
+				ChildKindID:             domain.KindID("branch"),
+				TitleTemplate:           "Main Branch",
+				DescriptionTemplate:     "default implementation branch",
+				ResponsibleActorKind:    domain.TemplateActorKindBuilder,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(go-defaults) error = %v", err)
+	}
+}
+
 // archiveProjectForCLITest marks one seeded project archived for CLI discovery tests.
 func archiveProjectForCLITest(t *testing.T, dbPath, projectID string) {
 	t.Helper()
@@ -491,7 +554,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "project create",
 			args: []string{"project", "create", "--help"},
-			want: []string{"till project create", "--name", "--kind", "--metadata-json", "one positional argument"},
+			want: []string{"till project create", "--name", "--kind", "--template-library-id", "--metadata-json", "one positional argument"},
 		},
 		{
 			name: "project show",
@@ -556,12 +619,22 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "kind upsert",
 			args: []string{"kind", "upsert", "--help"},
-			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--template-json"},
+			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--payload-schema-json"},
 		},
 		{
 			name: "kind allowlist",
 			args: []string{"kind", "allowlist", "--help"},
 			want: []string{"till kind allowlist", "list", "set"},
+		},
+		{
+			name: "template",
+			args: []string{"template", "--help"},
+			want: []string{"till template", "library", "project", "contract"},
+		},
+		{
+			name: "template library upsert",
+			args: []string{"template", "library", "upsert", "--help"},
+			want: []string{"till template library upsert", "--spec-json", "JSON"},
 		},
 		{
 			name: "lease",
@@ -1304,6 +1377,7 @@ func TestRunProjectCommands(t *testing.T) {
 	cfgPath := filepath.Join(workspace, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	seedProjectForAuthCLITest(t, dbPath, "p1")
+	seedTemplateLibraryForProjectCreateCLITest(t, dbPath)
 
 	var createOut strings.Builder
 	if err := run(context.Background(), []string{
@@ -1653,6 +1727,12 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	if kind.ID != "qa-check" || kind.DisplayName != "QA Check" {
 		t.Fatalf("kind upsert output = %#v, want qa-check/QA Check", kind)
 	}
+	if strings.Contains(upsertOut.String(), "agents_file_sections") {
+		t.Fatalf("kind upsert output still contains legacy agents_file_sections key: %s", upsertOut.String())
+	}
+	if strings.Contains(upsertOut.String(), "claude_file_sections") {
+		t.Fatalf("kind upsert output still contains legacy claude_file_sections key: %s", upsertOut.String())
+	}
 
 	var listOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "kind", "list"}, &listOut, io.Discard); err != nil {
@@ -1709,6 +1789,284 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	}
 	if allowList.ProjectID != "p1" || len(allowList.KindIDs) != 1 || allowList.KindIDs[0] != "qa-check" {
 		t.Fatalf("allowlist list output = %#v, want p1/qa-check", allowList)
+	}
+}
+
+// TestRunTemplateLibraryCommands verifies template library upsert/list/show, project binding, and contract lookup.
+func TestRunTemplateLibraryCommands(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	for _, args := range [][]string{
+		{"kind", "upsert", "--id", "build-task", "--display-name", "Build Task", "--applies-to", "task"},
+		{"kind", "upsert", "--id", "qa-pass", "--display-name", "QA Pass", "--applies-to", "subtask"},
+	} {
+		if err := run(context.Background(), append([]string{"--db", dbPath, "--config", cfgPath}, args...), io.Discard, io.Discard); err != nil {
+			t.Fatalf("run(%v) error = %v", args, err)
+		}
+	}
+
+	specJSON := strings.TrimSpace(`{
+	  "id": "go-defaults",
+	  "scope": "global",
+	  "name": "Go Defaults",
+	  "status": "approved",
+	  "node_templates": [
+	    {
+	      "id": "tmpl-build-task",
+	      "scope_level": "task",
+	      "node_kind_id": "build-task",
+	      "display_name": "Build Task",
+	      "child_rules": [
+	        {
+	          "id": "rule-qa-pass",
+	          "position": 10,
+	          "child_scope_level": "subtask",
+	          "child_kind_id": "qa-pass",
+	          "title_template": "QA Pass",
+	          "responsible_actor_kind": "qa",
+	          "editable_by_actor_kinds": ["qa"],
+	          "completable_by_actor_kinds": ["qa"],
+	          "required_for_parent_done": true
+	        }
+	      ]
+	    }
+	  ]
+	}`)
+
+	var upsertOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "upsert",
+		"--spec-json", specJSON,
+	}, &upsertOut, io.Discard); err != nil {
+		t.Fatalf("run(template library upsert) error = %v", err)
+	}
+	upsertOutput := upsertOut.String()
+	if got := extractCLIKVValue(t, upsertOutput, "id"); got != "go-defaults" {
+		t.Fatalf("template library upsert id = %q, want go-defaults", got)
+	}
+	if got := extractCLIKVValue(t, upsertOutput, "name"); got != "Go Defaults" {
+		t.Fatalf("template library upsert name = %q, want Go Defaults", got)
+	}
+	for _, want := range []string{"Template Library", "Node Templates", "Template Child Rules", "Build Task", "QA Pass"} {
+		if !strings.Contains(upsertOutput, want) {
+			t.Fatalf("expected %q in template library upsert output, got %q", want, upsertOutput)
+		}
+	}
+
+	var listOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "list",
+		"--scope", "global",
+		"--status", "approved",
+	}, &listOut, io.Discard); err != nil {
+		t.Fatalf("run(template library list) error = %v", err)
+	}
+	for _, want := range []string{"Template Libraries", "go-defaults", "Go Defaults", "global", "approved"} {
+		if !strings.Contains(listOut.String(), want) {
+			t.Fatalf("expected %q in template library list output, got %q", want, listOut.String())
+		}
+	}
+
+	var showOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "show",
+		"--library-id", "go-defaults",
+	}, &showOut, io.Discard); err != nil {
+		t.Fatalf("run(template library show) error = %v", err)
+	}
+	showOutput := showOut.String()
+	if got := extractCLIKVValue(t, showOutput, "id"); got != "go-defaults" {
+		t.Fatalf("template library show id = %q, want go-defaults", got)
+	}
+	for _, want := range []string{"Template Library", "Node Templates", "Build Task", "Template Child Rules", "QA Pass"} {
+		if !strings.Contains(showOutput, want) {
+			t.Fatalf("expected %q in template library show output, got %q", want, showOutput)
+		}
+	}
+
+	var bindOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "project", "bind",
+		"--project-id", "p1",
+		"--library-id", "go-defaults",
+	}, &bindOut, io.Discard); err != nil {
+		t.Fatalf("run(template project bind) error = %v", err)
+	}
+	bindOutput := bindOut.String()
+	if got := extractCLIKVValue(t, bindOutput, "project id"); got != "p1" {
+		t.Fatalf("template project bind project = %q, want p1", got)
+	}
+	if got := extractCLIKVValue(t, bindOutput, "library id"); got != "go-defaults" {
+		t.Fatalf("template project bind library = %q, want go-defaults", got)
+	}
+
+	var bindingOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "project", "binding",
+		"--project-id", "p1",
+	}, &bindingOut, io.Discard); err != nil {
+		t.Fatalf("run(template project binding) error = %v", err)
+	}
+	bindingOutput := bindingOut.String()
+	if got := extractCLIKVValue(t, bindingOutput, "library id"); got != "go-defaults" {
+		t.Fatalf("template project binding library = %q, want go-defaults", got)
+	}
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+	column, err := domain.NewColumn("c1", "p1", "To Do", 0, 0, time.Date(2026, 3, 29, 12, 55, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(context.Background(), column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "task-qa-1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "QA Pass",
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Priority:  domain.PriorityMedium,
+	}, time.Date(2026, 3, 29, 12, 58, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
+		NodeID:                  "task-qa-1",
+		ProjectID:               "p1",
+		SourceLibraryID:         "go-defaults",
+		SourceNodeTemplateID:    "tmpl-build-task",
+		SourceChildRuleID:       "rule-qa-pass",
+		ResponsibleActorKind:    domain.TemplateActorKindQA,
+		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
+		RequiredForParentDone:   true,
+	}, time.Date(2026, 3, 29, 13, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewNodeContractSnapshot() error = %v", err)
+	}
+	if err := repo.CreateNodeContractSnapshot(context.Background(), snapshot); err != nil {
+		t.Fatalf("CreateNodeContractSnapshot() error = %v", err)
+	}
+
+	var contractOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "contract", "show",
+		"--node-id", "task-qa-1",
+	}, &contractOut, io.Discard); err != nil {
+		t.Fatalf("run(template contract show) error = %v", err)
+	}
+	contractOutput := contractOut.String()
+	if got := extractCLIKVValue(t, contractOutput, "source library"); got != "go-defaults" {
+		t.Fatalf("template contract source library = %q, want go-defaults", got)
+	}
+	if got := extractCLIKVValue(t, contractOutput, "responsible actor"); got != "qa" {
+		t.Fatalf("template contract responsible actor = %q, want qa", got)
+	}
+}
+
+// TestRunTemplateLibraryUpsertAcceptsSnakeCaseProjectMetadata verifies project metadata defaults accept snake_case JSON keys.
+func TestRunTemplateLibraryUpsertAcceptsSnakeCaseProjectMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"kind", "upsert",
+		"--id", "go-service",
+		"--display-name", "Go Service",
+		"--applies-to", "project",
+	}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(kind upsert go-service) error = %v", err)
+	}
+
+	specJSON := strings.TrimSpace(`{
+	  "id": "go-defaults",
+	  "scope": "global",
+	  "name": "Go Defaults",
+	  "status": "approved",
+	  "node_templates": [
+	    {
+	      "id": "project-template",
+	      "scope_level": "project",
+	      "node_kind_id": "go-service",
+	      "display_name": "Go Service Project",
+	      "project_metadata_defaults": {
+	        "owner": "Platform",
+	        "standards_markdown": "Run Go validation"
+	      }
+	    }
+	  ]
+	}`)
+
+	var upsertOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "upsert",
+		"--spec-json", specJSON,
+	}, &upsertOut, io.Discard); err != nil {
+		t.Fatalf("run(template library upsert snake_case metadata) error = %v", err)
+	}
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+	library, err := repo.GetTemplateLibrary(context.Background(), "go-defaults")
+	if err != nil {
+		t.Fatalf("GetTemplateLibrary(go-defaults) error = %v", err)
+	}
+	if len(library.NodeTemplates) != 1 || library.NodeTemplates[0].ProjectMetadataDefaults == nil {
+		t.Fatalf("template library output = %#v, want one project metadata default", library)
+	}
+	if got := library.NodeTemplates[0].ProjectMetadataDefaults.Owner; got != "Platform" {
+		t.Fatalf("project metadata owner = %q, want Platform", got)
+	}
+	if got := library.NodeTemplates[0].ProjectMetadataDefaults.StandardsMarkdown; got != "Run Go validation" {
+		t.Fatalf("project metadata standards_markdown = %q, want Run Go validation", got)
 	}
 }
 

@@ -331,6 +331,115 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 			FOREIGN KEY(kind_id) REFERENCES kind_catalog(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS template_libraries (
+			id TEXT PRIMARY KEY,
+			scope TEXT NOT NULL,
+			project_id TEXT,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			source_library_id TEXT,
+			created_by_actor_id TEXT NOT NULL DEFAULT '',
+			created_by_actor_name TEXT NOT NULL DEFAULT '',
+			created_by_actor_type TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			approved_by_actor_id TEXT NOT NULL DEFAULT '',
+			approved_by_actor_name TEXT NOT NULL DEFAULT '',
+			approved_by_actor_type TEXT NOT NULL DEFAULT '',
+			approved_at TEXT,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_template_libraries_scope_status ON template_libraries(scope, status, name, id);`,
+		`CREATE INDEX IF NOT EXISTS idx_template_libraries_project ON template_libraries(project_id, status, name, id);`,
+		`CREATE TABLE IF NOT EXISTS template_node_templates (
+			library_id TEXT NOT NULL,
+			id TEXT NOT NULL,
+			scope_level TEXT NOT NULL,
+			node_kind_id TEXT NOT NULL,
+			display_name TEXT NOT NULL,
+			description_markdown TEXT NOT NULL DEFAULT '',
+			project_metadata_defaults_json TEXT NOT NULL DEFAULT '',
+			task_metadata_defaults_json TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(library_id, id),
+			UNIQUE(library_id, scope_level, node_kind_id),
+			FOREIGN KEY(library_id) REFERENCES template_libraries(id) ON DELETE CASCADE,
+			FOREIGN KEY(node_kind_id) REFERENCES kind_catalog(id) ON DELETE RESTRICT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_template_node_templates_library ON template_node_templates(library_id, scope_level, node_kind_id, id);`,
+		`CREATE TABLE IF NOT EXISTS template_child_rules (
+			library_id TEXT NOT NULL,
+			node_template_id TEXT NOT NULL,
+			id TEXT NOT NULL,
+			position INTEGER NOT NULL DEFAULT 0,
+			child_scope_level TEXT NOT NULL,
+			child_kind_id TEXT NOT NULL,
+			title_template TEXT NOT NULL,
+			description_template TEXT NOT NULL DEFAULT '',
+			responsible_actor_kind TEXT NOT NULL,
+			orchestrator_may_complete INTEGER NOT NULL DEFAULT 0,
+			required_for_parent_done INTEGER NOT NULL DEFAULT 0,
+			required_for_containing_done INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(library_id, node_template_id, id),
+			FOREIGN KEY(library_id, node_template_id) REFERENCES template_node_templates(library_id, id) ON DELETE CASCADE,
+			FOREIGN KEY(child_kind_id) REFERENCES kind_catalog(id) ON DELETE RESTRICT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_template_child_rules_template ON template_child_rules(library_id, node_template_id, position, id);`,
+		`CREATE TABLE IF NOT EXISTS template_child_rule_editor_kinds (
+			library_id TEXT NOT NULL,
+			node_template_id TEXT NOT NULL,
+			child_rule_id TEXT NOT NULL,
+			actor_kind TEXT NOT NULL,
+			PRIMARY KEY(library_id, node_template_id, child_rule_id, actor_kind),
+			FOREIGN KEY(library_id, node_template_id, child_rule_id) REFERENCES template_child_rules(library_id, node_template_id, id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS template_child_rule_completer_kinds (
+			library_id TEXT NOT NULL,
+			node_template_id TEXT NOT NULL,
+			child_rule_id TEXT NOT NULL,
+			actor_kind TEXT NOT NULL,
+			PRIMARY KEY(library_id, node_template_id, child_rule_id, actor_kind),
+			FOREIGN KEY(library_id, node_template_id, child_rule_id) REFERENCES template_child_rules(library_id, node_template_id, id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS project_template_bindings (
+			project_id TEXT PRIMARY KEY,
+			library_id TEXT NOT NULL,
+			bound_by_actor_id TEXT NOT NULL DEFAULT '',
+			bound_by_actor_name TEXT NOT NULL DEFAULT '',
+			bound_by_actor_type TEXT NOT NULL DEFAULT 'user',
+			bound_at TEXT NOT NULL,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+			FOREIGN KEY(library_id) REFERENCES template_libraries(id) ON DELETE RESTRICT
+		);`,
+		`CREATE TABLE IF NOT EXISTS node_contract_snapshots (
+			node_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			source_library_id TEXT NOT NULL,
+			source_node_template_id TEXT NOT NULL,
+			source_child_rule_id TEXT NOT NULL,
+			created_by_actor_id TEXT NOT NULL DEFAULT '',
+			created_by_actor_type TEXT NOT NULL DEFAULT 'system',
+			responsible_actor_kind TEXT NOT NULL,
+			orchestrator_may_complete INTEGER NOT NULL DEFAULT 0,
+			required_for_parent_done INTEGER NOT NULL DEFAULT 0,
+			required_for_containing_done INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(node_id) REFERENCES work_items(id) ON DELETE CASCADE,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_node_contract_snapshots_project ON node_contract_snapshots(project_id, created_at, node_id);`,
+		`CREATE TABLE IF NOT EXISTS node_contract_editor_kinds (
+			node_id TEXT NOT NULL,
+			actor_kind TEXT NOT NULL,
+			PRIMARY KEY(node_id, actor_kind),
+			FOREIGN KEY(node_id) REFERENCES node_contract_snapshots(node_id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS node_contract_completer_kinds (
+			node_id TEXT NOT NULL,
+			actor_kind TEXT NOT NULL,
+			PRIMARY KEY(node_id, actor_kind),
+			FOREIGN KEY(node_id) REFERENCES node_contract_snapshots(node_id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS capability_leases (
 			instance_id TEXT PRIMARY KEY,
 			lease_token TEXT NOT NULL,
@@ -1378,6 +1487,331 @@ func (r *Repository) ListKindDefinitions(ctx context.Context, includeArchived bo
 		out = append(out, kind)
 	}
 	return out, rows.Err()
+}
+
+// UpsertTemplateLibrary creates or replaces one template library and all nested rules.
+func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.TemplateLibrary) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO template_libraries(
+			id, scope, project_id, name, description, status, source_library_id,
+			created_by_actor_id, created_by_actor_name, created_by_actor_type,
+			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
+			approved_by_actor_type, approved_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			scope = excluded.scope,
+			project_id = excluded.project_id,
+			name = excluded.name,
+			description = excluded.description,
+			status = excluded.status,
+			source_library_id = excluded.source_library_id,
+			created_by_actor_id = excluded.created_by_actor_id,
+			created_by_actor_name = excluded.created_by_actor_name,
+			created_by_actor_type = excluded.created_by_actor_type,
+			created_at = excluded.created_at,
+			updated_at = excluded.updated_at,
+			approved_by_actor_id = excluded.approved_by_actor_id,
+			approved_by_actor_name = excluded.approved_by_actor_name,
+			approved_by_actor_type = excluded.approved_by_actor_type,
+			approved_at = excluded.approved_at
+	`,
+		library.ID,
+		string(domain.NormalizeTemplateLibraryScope(library.Scope)),
+		nullableString(library.ProjectID),
+		strings.TrimSpace(library.Name),
+		strings.TrimSpace(library.Description),
+		string(domain.NormalizeTemplateLibraryStatus(library.Status)),
+		nullableString(library.SourceLibraryID),
+		strings.TrimSpace(library.CreatedByActorID),
+		strings.TrimSpace(library.CreatedByActorName),
+		normalizeOptionalActorType(library.CreatedByActorType),
+		ts(library.CreatedAt),
+		ts(library.UpdatedAt),
+		strings.TrimSpace(library.ApprovedByActorID),
+		strings.TrimSpace(library.ApprovedByActorName),
+		normalizeOptionalActorType(library.ApprovedByActorType),
+		nullableTS(library.ApprovedAt),
+	)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM template_node_templates WHERE library_id = ?`, library.ID); err != nil {
+		return err
+	}
+	for _, nodeTemplate := range library.NodeTemplates {
+		projectDefaultsJSON, err := marshalTemplateProjectMetadata(nodeTemplate.ProjectMetadataDefaults)
+		if err != nil {
+			return err
+		}
+		taskDefaultsJSON, err := marshalTemplateTaskMetadata(nodeTemplate.TaskMetadataDefaults)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO template_node_templates(
+				library_id, id, scope_level, node_kind_id, display_name, description_markdown,
+				project_metadata_defaults_json, task_metadata_defaults_json
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			library.ID,
+			nodeTemplate.ID,
+			string(domain.NormalizeKindAppliesTo(nodeTemplate.ScopeLevel)),
+			string(domain.NormalizeKindID(nodeTemplate.NodeKindID)),
+			strings.TrimSpace(nodeTemplate.DisplayName),
+			strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
+			projectDefaultsJSON,
+			taskDefaultsJSON,
+		)
+		if err != nil {
+			return err
+		}
+		for _, childRule := range nodeTemplate.ChildRules {
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO template_child_rules(
+					library_id, node_template_id, id, position, child_scope_level, child_kind_id,
+					title_template, description_template, responsible_actor_kind, orchestrator_may_complete,
+					required_for_parent_done, required_for_containing_done
+				)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`,
+				library.ID,
+				nodeTemplate.ID,
+				childRule.ID,
+				childRule.Position,
+				string(domain.NormalizeKindAppliesTo(childRule.ChildScopeLevel)),
+				string(domain.NormalizeKindID(childRule.ChildKindID)),
+				strings.TrimSpace(childRule.TitleTemplate),
+				strings.TrimSpace(childRule.DescriptionTemplate),
+				string(domain.NormalizeTemplateActorKind(childRule.ResponsibleActorKind)),
+				boolToInt(childRule.OrchestratorMayComplete),
+				boolToInt(childRule.RequiredForParentDone),
+				boolToInt(childRule.RequiredForContainingDone),
+			)
+			if err != nil {
+				return err
+			}
+			if err = insertTemplateActorKinds(ctx, tx, "template_child_rule_editor_kinds", library.ID, nodeTemplate.ID, childRule.ID, childRule.EditableByActorKinds); err != nil {
+				return err
+			}
+			if err = insertTemplateActorKinds(ctx, tx, "template_child_rule_completer_kinds", library.ID, nodeTemplate.ID, childRule.ID, childRule.CompletableByActorKinds); err != nil {
+				return err
+			}
+		}
+	}
+
+	err = tx.Commit()
+	return err
+}
+
+// GetTemplateLibrary loads one template library and all nested rules.
+func (r *Repository) GetTemplateLibrary(ctx context.Context, libraryID string) (domain.TemplateLibrary, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			id, scope, project_id, name, description, status, source_library_id,
+			created_by_actor_id, created_by_actor_name, created_by_actor_type,
+			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
+			approved_by_actor_type, approved_at
+		FROM template_libraries
+		WHERE id = ?
+	`, domain.NormalizeTemplateLibraryID(libraryID))
+	library, err := scanTemplateLibrary(row)
+	if err != nil {
+		return domain.TemplateLibrary{}, err
+	}
+	nodeTemplates, err := loadTemplateNodeTemplates(ctx, r.db, library.ID)
+	if err != nil {
+		return domain.TemplateLibrary{}, err
+	}
+	library.NodeTemplates = nodeTemplates
+	return library, nil
+}
+
+// ListTemplateLibraries lists template libraries with optional filters.
+func (r *Repository) ListTemplateLibraries(ctx context.Context, filter domain.TemplateLibraryFilter) ([]domain.TemplateLibrary, error) {
+	query := `
+		SELECT
+			id, scope, project_id, name, description, status, source_library_id,
+			created_by_actor_id, created_by_actor_name, created_by_actor_type,
+			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
+			approved_by_actor_type, approved_at
+		FROM template_libraries
+		WHERE 1 = 1
+	`
+	args := make([]any, 0, 3)
+	if scope := domain.NormalizeTemplateLibraryScope(filter.Scope); scope != "" {
+		query += ` AND scope = ?`
+		args = append(args, string(scope))
+	}
+	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
+		query += ` AND project_id = ?`
+		args = append(args, projectID)
+	}
+	if status := domain.NormalizeTemplateLibraryStatus(filter.Status); status != "" {
+		query += ` AND status = ?`
+		args = append(args, string(status))
+	}
+	query += ` ORDER BY scope ASC, project_id ASC, name ASC, id ASC`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.TemplateLibrary, 0)
+	for rows.Next() {
+		library, err := scanTemplateLibrary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, library)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for idx := range out {
+		out[idx].NodeTemplates, err = loadTemplateNodeTemplates(ctx, r.db, out[idx].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// UpsertProjectTemplateBinding sets the active template-library binding for one project.
+func (r *Repository) UpsertProjectTemplateBinding(ctx context.Context, binding domain.ProjectTemplateBinding) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO project_template_bindings(
+			project_id, library_id, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(project_id) DO UPDATE SET
+			library_id = excluded.library_id,
+			bound_by_actor_id = excluded.bound_by_actor_id,
+			bound_by_actor_name = excluded.bound_by_actor_name,
+			bound_by_actor_type = excluded.bound_by_actor_type,
+			bound_at = excluded.bound_at
+	`,
+		strings.TrimSpace(binding.ProjectID),
+		domain.NormalizeTemplateLibraryID(binding.LibraryID),
+		strings.TrimSpace(binding.BoundByActorID),
+		strings.TrimSpace(binding.BoundByActorName),
+		normalizeOptionalActorType(binding.BoundByActorType),
+		ts(binding.BoundAt),
+	)
+	return err
+}
+
+// GetProjectTemplateBinding loads one project's active template-library binding.
+func (r *Repository) GetProjectTemplateBinding(ctx context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT project_id, library_id, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
+		FROM project_template_bindings
+		WHERE project_id = ?
+	`, strings.TrimSpace(projectID))
+	return scanProjectTemplateBinding(row)
+}
+
+// DeleteProjectTemplateBinding removes one project's active template-library binding.
+func (r *Repository) DeleteProjectTemplateBinding(ctx context.Context, projectID string) error {
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM project_template_bindings
+		WHERE project_id = ?
+	`, strings.TrimSpace(projectID))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return app.ErrNotFound
+	}
+	return nil
+}
+
+// CreateNodeContractSnapshot persists one generated-node contract snapshot.
+func (r *Repository) CreateNodeContractSnapshot(ctx context.Context, snapshot domain.NodeContractSnapshot) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO node_contract_snapshots(
+			node_id, project_id, source_library_id, source_node_template_id, source_child_rule_id,
+			created_by_actor_id, created_by_actor_type, responsible_actor_kind, orchestrator_may_complete,
+			required_for_parent_done, required_for_containing_done, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		strings.TrimSpace(snapshot.NodeID),
+		strings.TrimSpace(snapshot.ProjectID),
+		domain.NormalizeTemplateLibraryID(snapshot.SourceLibraryID),
+		domain.NormalizeTemplateLibraryID(snapshot.SourceNodeTemplateID),
+		domain.NormalizeTemplateLibraryID(snapshot.SourceChildRuleID),
+		strings.TrimSpace(snapshot.CreatedByActorID),
+		normalizeOptionalActorType(snapshot.CreatedByActorType),
+		string(domain.NormalizeTemplateActorKind(snapshot.ResponsibleActorKind)),
+		boolToInt(snapshot.OrchestratorMayComplete),
+		boolToInt(snapshot.RequiredForParentDone),
+		boolToInt(snapshot.RequiredForContainingDone),
+		ts(snapshot.CreatedAt),
+	)
+	if err != nil {
+		return err
+	}
+	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_editor_kinds", snapshot.NodeID, snapshot.EditableByActorKinds); err != nil {
+		return err
+	}
+	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_completer_kinds", snapshot.NodeID, snapshot.CompletableByActorKinds); err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	return err
+}
+
+// GetNodeContractSnapshot loads one generated-node contract snapshot.
+func (r *Repository) GetNodeContractSnapshot(ctx context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			node_id, project_id, source_library_id, source_node_template_id, source_child_rule_id,
+			created_by_actor_id, created_by_actor_type, responsible_actor_kind, orchestrator_may_complete,
+			required_for_parent_done, required_for_containing_done, created_at
+		FROM node_contract_snapshots
+		WHERE node_id = ?
+	`, strings.TrimSpace(nodeID))
+	snapshot, err := scanNodeContractSnapshot(row)
+	if err != nil {
+		return domain.NodeContractSnapshot{}, err
+	}
+	snapshot.EditableByActorKinds, err = loadNodeContractActorKinds(ctx, r.db, "node_contract_editor_kinds", snapshot.NodeID)
+	if err != nil {
+		return domain.NodeContractSnapshot{}, err
+	}
+	snapshot.CompletableByActorKinds, err = loadNodeContractActorKinds(ctx, r.db, "node_contract_completer_kinds", snapshot.NodeID)
+	if err != nil {
+		return domain.NodeContractSnapshot{}, err
+	}
+	return snapshot, nil
 }
 
 // CreateColumn creates column.
@@ -2556,6 +2990,11 @@ type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// queryRowser represents a read-only DB contract used by DB and Tx implementations.
+type queryRowser interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 // getTaskByID returns a task using the canonical work_items table.
 func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, error) {
 	row := q.QueryRowContext(ctx, `
@@ -2823,6 +3262,251 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+// marshalTemplateProjectMetadata encodes optional project-metadata defaults for template storage.
+func marshalTemplateProjectMetadata(defaults *domain.ProjectMetadata) (string, error) {
+	if defaults == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(defaults)
+	if err != nil {
+		return "", fmt.Errorf("encode template project metadata defaults: %w", err)
+	}
+	return string(raw), nil
+}
+
+// marshalTemplateTaskMetadata encodes optional task-metadata defaults for template storage.
+func marshalTemplateTaskMetadata(defaults *domain.TaskMetadata) (string, error) {
+	if defaults == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(defaults)
+	if err != nil {
+		return "", fmt.Errorf("encode template task metadata defaults: %w", err)
+	}
+	return string(raw), nil
+}
+
+// insertTemplateActorKinds persists one template child-rule actor-kind list.
+func insertTemplateActorKinds(ctx context.Context, execer execerContext, table, libraryID, nodeTemplateID, childRuleID string, actorKinds []domain.TemplateActorKind) error {
+	for _, actorKind := range actorKinds {
+		normalized := domain.NormalizeTemplateActorKind(actorKind)
+		if normalized == "" {
+			continue
+		}
+		if _, err := execer.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s(library_id, node_template_id, child_rule_id, actor_kind)
+			VALUES (?, ?, ?, ?)
+		`, table), libraryID, nodeTemplateID, childRuleID, string(normalized)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertNodeContractActorKinds persists one node-contract actor-kind list.
+func insertNodeContractActorKinds(ctx context.Context, execer execerContext, table, nodeID string, actorKinds []domain.TemplateActorKind) error {
+	for _, actorKind := range actorKinds {
+		normalized := domain.NormalizeTemplateActorKind(actorKind)
+		if normalized == "" {
+			continue
+		}
+		if _, err := execer.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s(node_id, actor_kind)
+			VALUES (?, ?)
+		`, table), strings.TrimSpace(nodeID), string(normalized)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadTemplateNodeTemplates loads one library's node templates and nested child rules.
+func loadTemplateNodeTemplates(ctx context.Context, q queryRowser, libraryID string) ([]domain.NodeTemplate, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT
+			id, scope_level, node_kind_id, display_name, description_markdown,
+			project_metadata_defaults_json, task_metadata_defaults_json
+		FROM template_node_templates
+		WHERE library_id = ?
+		ORDER BY scope_level ASC, node_kind_id ASC, id ASC
+	`, domain.NormalizeTemplateLibraryID(libraryID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.NodeTemplate, 0)
+	for rows.Next() {
+		var (
+			nodeTemplate       domain.NodeTemplate
+			scopeLevelRaw      string
+			nodeKindIDRaw      string
+			projectDefaultsRaw string
+			taskDefaultsRaw    string
+		)
+		if err := rows.Scan(
+			&nodeTemplate.ID,
+			&scopeLevelRaw,
+			&nodeKindIDRaw,
+			&nodeTemplate.DisplayName,
+			&nodeTemplate.DescriptionMarkdown,
+			&projectDefaultsRaw,
+			&taskDefaultsRaw,
+		); err != nil {
+			return nil, err
+		}
+		nodeTemplate.LibraryID = domain.NormalizeTemplateLibraryID(libraryID)
+		nodeTemplate.ScopeLevel = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeLevelRaw))
+		nodeTemplate.NodeKindID = domain.NormalizeKindID(domain.KindID(nodeKindIDRaw))
+		if strings.TrimSpace(projectDefaultsRaw) != "" {
+			var projectDefaults domain.ProjectMetadata
+			if err := json.Unmarshal([]byte(projectDefaultsRaw), &projectDefaults); err != nil {
+				return nil, fmt.Errorf("decode template project_metadata_defaults_json: %w", err)
+			}
+			nodeTemplate.ProjectMetadataDefaults = &projectDefaults
+		}
+		if strings.TrimSpace(taskDefaultsRaw) != "" {
+			var taskDefaults domain.TaskMetadata
+			if err := json.Unmarshal([]byte(taskDefaultsRaw), &taskDefaults); err != nil {
+				return nil, fmt.Errorf("decode template task_metadata_defaults_json: %w", err)
+			}
+			nodeTemplate.TaskMetadataDefaults = &taskDefaults
+		}
+		out = append(out, nodeTemplate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for idx := range out {
+		out[idx].ChildRules, err = loadTemplateChildRules(ctx, q, libraryID, out[idx].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// loadTemplateChildRules loads one node template's child rules and actor lists.
+func loadTemplateChildRules(ctx context.Context, q queryRowser, libraryID, nodeTemplateID string) ([]domain.TemplateChildRule, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT
+			id, position, child_scope_level, child_kind_id, title_template, description_template,
+			responsible_actor_kind, orchestrator_may_complete, required_for_parent_done, required_for_containing_done
+		FROM template_child_rules
+		WHERE library_id = ? AND node_template_id = ?
+		ORDER BY position ASC, id ASC
+	`, domain.NormalizeTemplateLibraryID(libraryID), domain.NormalizeTemplateLibraryID(nodeTemplateID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.TemplateChildRule, 0)
+	for rows.Next() {
+		var (
+			childRule             domain.TemplateChildRule
+			childScopeLevelRaw    string
+			childKindIDRaw        string
+			responsibleActorRaw   string
+			orchestratorMayRaw    int
+			requiredParentRaw     int
+			requiredContainingRaw int
+		)
+		if err := rows.Scan(
+			&childRule.ID,
+			&childRule.Position,
+			&childScopeLevelRaw,
+			&childKindIDRaw,
+			&childRule.TitleTemplate,
+			&childRule.DescriptionTemplate,
+			&responsibleActorRaw,
+			&orchestratorMayRaw,
+			&requiredParentRaw,
+			&requiredContainingRaw,
+		); err != nil {
+			return nil, err
+		}
+		childRule.NodeTemplateID = domain.NormalizeTemplateLibraryID(nodeTemplateID)
+		childRule.ChildScopeLevel = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(childScopeLevelRaw))
+		childRule.ChildKindID = domain.NormalizeKindID(domain.KindID(childKindIDRaw))
+		childRule.ResponsibleActorKind = domain.NormalizeTemplateActorKind(domain.TemplateActorKind(responsibleActorRaw))
+		childRule.OrchestratorMayComplete = orchestratorMayRaw != 0
+		childRule.RequiredForParentDone = requiredParentRaw != 0
+		childRule.RequiredForContainingDone = requiredContainingRaw != 0
+		out = append(out, childRule)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for idx := range out {
+		out[idx].EditableByActorKinds, err = loadTemplateChildRuleActorKinds(ctx, q, "template_child_rule_editor_kinds", libraryID, nodeTemplateID, out[idx].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[idx].CompletableByActorKinds, err = loadTemplateChildRuleActorKinds(ctx, q, "template_child_rule_completer_kinds", libraryID, nodeTemplateID, out[idx].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// loadTemplateChildRuleActorKinds loads one child rule's actor-kind list.
+func loadTemplateChildRuleActorKinds(ctx context.Context, q queryRowser, table, libraryID, nodeTemplateID, childRuleID string) ([]domain.TemplateActorKind, error) {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
+		SELECT actor_kind
+		FROM %s
+		WHERE library_id = ? AND node_template_id = ? AND child_rule_id = ?
+		ORDER BY actor_kind ASC
+	`, table), domain.NormalizeTemplateLibraryID(libraryID), domain.NormalizeTemplateLibraryID(nodeTemplateID), domain.NormalizeTemplateLibraryID(childRuleID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.TemplateActorKind, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		normalized := domain.NormalizeTemplateActorKind(domain.TemplateActorKind(raw))
+		if normalized == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	return out, rows.Err()
+}
+
+// loadNodeContractActorKinds loads one node-contract actor-kind list.
+func loadNodeContractActorKinds(ctx context.Context, q queryRowser, table, nodeID string) ([]domain.TemplateActorKind, error) {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
+		SELECT actor_kind
+		FROM %s
+		WHERE node_id = ?
+		ORDER BY actor_kind ASC
+	`, table), strings.TrimSpace(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.TemplateActorKind, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		normalized := domain.NormalizeTemplateActorKind(domain.TemplateActorKind(raw))
+		if normalized == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	return out, rows.Err()
+}
+
 // scanProject handles scan project.
 func scanProject(s scanner) (domain.Project, error) {
 	var (
@@ -3059,6 +3743,132 @@ func scanKindDefinition(s scanner) (domain.KindDefinition, error) {
 	return kind, nil
 }
 
+// scanTemplateLibrary decodes one template_libraries row.
+func scanTemplateLibrary(s scanner) (domain.TemplateLibrary, error) {
+	var (
+		library              domain.TemplateLibrary
+		scopeRaw             string
+		projectIDRaw         sql.NullString
+		statusRaw            string
+		sourceLibraryIDRaw   sql.NullString
+		createdActorTypeRaw  string
+		createdRaw           string
+		updatedRaw           string
+		approvedActorTypeRaw string
+		approvedAtRaw        sql.NullString
+	)
+	if err := s.Scan(
+		&library.ID,
+		&scopeRaw,
+		&projectIDRaw,
+		&library.Name,
+		&library.Description,
+		&statusRaw,
+		&sourceLibraryIDRaw,
+		&library.CreatedByActorID,
+		&library.CreatedByActorName,
+		&createdActorTypeRaw,
+		&createdRaw,
+		&updatedRaw,
+		&library.ApprovedByActorID,
+		&library.ApprovedByActorName,
+		&approvedActorTypeRaw,
+		&approvedAtRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.TemplateLibrary{}, app.ErrNotFound
+		}
+		return domain.TemplateLibrary{}, err
+	}
+	library.ID = domain.NormalizeTemplateLibraryID(library.ID)
+	library.Scope = domain.NormalizeTemplateLibraryScope(domain.TemplateLibraryScope(scopeRaw))
+	library.ProjectID = strings.TrimSpace(projectIDRaw.String)
+	library.Status = domain.NormalizeTemplateLibraryStatus(domain.TemplateLibraryStatus(statusRaw))
+	library.SourceLibraryID = domain.NormalizeTemplateLibraryID(sourceLibraryIDRaw.String)
+	library.CreatedByActorType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(createdActorTypeRaw)))
+	library.CreatedAt = parseTS(createdRaw)
+	library.UpdatedAt = parseTS(updatedRaw)
+	library.ApprovedByActorType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(approvedActorTypeRaw)))
+	library.ApprovedAt = parseNullTS(approvedAtRaw)
+	return library, nil
+}
+
+// scanProjectTemplateBinding decodes one project_template_bindings row.
+func scanProjectTemplateBinding(s scanner) (domain.ProjectTemplateBinding, error) {
+	var (
+		binding      domain.ProjectTemplateBinding
+		actorTypeRaw string
+		boundAtRaw   string
+	)
+	if err := s.Scan(
+		&binding.ProjectID,
+		&binding.LibraryID,
+		&binding.BoundByActorID,
+		&binding.BoundByActorName,
+		&actorTypeRaw,
+		&boundAtRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ProjectTemplateBinding{}, app.ErrNotFound
+		}
+		return domain.ProjectTemplateBinding{}, err
+	}
+	binding.LibraryID = domain.NormalizeTemplateLibraryID(binding.LibraryID)
+	if normalized := normalizeOptionalActorType(domain.ActorType(actorTypeRaw)); normalized != "" {
+		binding.BoundByActorType = domain.ActorType(normalized)
+	} else {
+		binding.BoundByActorType = domain.ActorTypeUser
+	}
+	binding.BoundAt = parseTS(boundAtRaw)
+	return binding, nil
+}
+
+// scanNodeContractSnapshot decodes one node_contract_snapshots row.
+func scanNodeContractSnapshot(s scanner) (domain.NodeContractSnapshot, error) {
+	var (
+		snapshot              domain.NodeContractSnapshot
+		createdActorTypeRaw   string
+		responsibleActorRaw   string
+		orchestratorMayRaw    int
+		requiredParentRaw     int
+		requiredContainingRaw int
+		createdAtRaw          string
+	)
+	if err := s.Scan(
+		&snapshot.NodeID,
+		&snapshot.ProjectID,
+		&snapshot.SourceLibraryID,
+		&snapshot.SourceNodeTemplateID,
+		&snapshot.SourceChildRuleID,
+		&snapshot.CreatedByActorID,
+		&createdActorTypeRaw,
+		&responsibleActorRaw,
+		&orchestratorMayRaw,
+		&requiredParentRaw,
+		&requiredContainingRaw,
+		&createdAtRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.NodeContractSnapshot{}, app.ErrNotFound
+		}
+		return domain.NodeContractSnapshot{}, err
+	}
+	snapshot.SourceLibraryID = domain.NormalizeTemplateLibraryID(snapshot.SourceLibraryID)
+	snapshot.SourceNodeTemplateID = domain.NormalizeTemplateLibraryID(snapshot.SourceNodeTemplateID)
+	snapshot.SourceChildRuleID = domain.NormalizeTemplateLibraryID(snapshot.SourceChildRuleID)
+	if normalized := normalizeOptionalActorType(domain.ActorType(createdActorTypeRaw)); normalized != "" {
+		snapshot.CreatedByActorType = domain.ActorType(normalized)
+	} else {
+		snapshot.CreatedByActorType = domain.ActorTypeSystem
+	}
+	snapshot.ResponsibleActorKind = domain.NormalizeTemplateActorKind(domain.TemplateActorKind(responsibleActorRaw))
+	snapshot.OrchestratorMayComplete = orchestratorMayRaw != 0
+	snapshot.RequiredForParentDone = requiredParentRaw != 0
+	snapshot.RequiredForContainingDone = requiredContainingRaw != 0
+	snapshot.CreatedAt = parseTS(createdAtRaw)
+	return snapshot, nil
+}
+
 // scanCapabilityLease decodes one capability_leases row.
 func scanCapabilityLease(s scanner) (domain.CapabilityLease, error) {
 	var (
@@ -3286,6 +4096,15 @@ func normalizeOptionalActorType(actorType domain.ActorType) string {
 	default:
 		return ""
 	}
+}
+
+// nullableString converts empty strings into SQL NULL values.
+func nullableString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // ts handles ts.

@@ -2,111 +2,524 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, `C6` is closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary, and the operational embeddings/search wave is now green locally and ready to merge with durable lifecycle state, background processing, reindex/status surfaces, real-DB Ollama validation, and real stdio MCP validation; the remaining follow-up is human-facing relevance/provenance polish for sparse-project semantic search rather than a blocker in the shipped embeddings lifecycle itself.
+Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
-## Checkpoint 2026-03-30: Laslig CLI Output Unification
+## Checkpoint 2026-03-30: Template Workflow Contract MVP Merge
 
 Objective:
-- move the remaining human/operator CLI result paths onto the shared `laslig` renderer pattern so `till` no longer mixes structured human views with ad-hoc JSON/plain-text success output for auth, lease, handoff, and basic utility commands.
+- merge the template workflow-contract MVP onto current `main` without losing the newer auth/MCP, laslig CLI, and embeddings/search work.
+
+Implementation plan:
+1. Preserve `main`'s mage/laslig/embeddings/search/auth surfaces as the baseline.
+2. Keep template-library persistence, project binding, generated-node contract enforcement, snapshot transport, and TUI project-kind/template-library picker flows.
+3. Convert template CLI result output onto the shared laslig renderer pattern while keeping JSON as the stable CLI/MCP ingestion transport for template specs.
+4. Re-run full local validation after the merge and then watch remote CI on the pushed branch.
+
+Current status:
+1. Local merge resolution against fetched `origin/main` is complete.
+2. The design record remains in `TEMPLATING_DESIGN_MEMO.md`.
+3. Local validation is green on `mage test-pkg ./cmd/till`, `mage test-pkg ./internal/app`, `mage test-pkg ./internal/tui`, `mage test-pkg ./internal/adapters/storage/sqlite`, `mage test-golden`, and `mage ci`.
+4. The main remaining product seam after this merge is legacy kind-template cleanup rather than missing template-MVP behavior.
+
+Objective:
+- finish the template MVP usability gap by surfacing bindings/contracts in the existing TUI, and quarantine the remaining user-facing kind-template authoring seam so `kind` reads as kind-registry work instead of template work.
 
 Context7:
-1. `resolve_library_id("laslig", ...)` returned no Context7 match before code changes.
-2. Fallback source used per repo instructions: local `cmd/till/cli_render.go` and the existing inventory/detail renderers in `cmd/till/auth_inventory_cli.go` and `cmd/till/coordination_inventory_cli.go`.
+1. `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` reviewed before the TUI patch for:
+   - stable update/key-handling assumptions,
+   - and why tests should target existing form/modal seams rather than inventing parallel template screens -> PASS.
+2. After one TUI test failure caused by changed project-form field order, `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` was refreshed again before the next edit -> PASS.
 
 Implementation summary:
-1. Converted local auth session issue/revoke flows from raw JSON to structured `Auth Session` key/value output.
-2. Converted auth request create/approve/deny/cancel flows from raw JSON to structured `Auth Request` key/value output, while keeping `auth request show` secret-free.
-3. Converted auth session validate/revoke flows from raw JSON to structured `Auth Session` key/value output.
-4. Converted lease issue/heartbeat/renew/revoke flows from raw JSON to the existing `Capability Lease` detail view.
-5. Converted lease `revoke-all` from raw JSON to a structured `Capability Lease Revocation` summary.
-6. Converted handoff create/update flows from raw JSON to the existing `Handoff` detail view.
-7. Converted top-level `--version`, `paths`, and `init-dev-config` outputs to structured `laslig` key/value views so the utility surfaces match the rest of the CLI.
-8. Removed the now-dead lease/handoff JSON payload types and mappers so the CLI no longer carries parallel unused output models for those commands.
+1. Extended the existing project create/edit full-page form:
+   - added `template_library_id`,
+   - seeded it from the active project binding when editing,
+   - validated it against approved global libraries already loaded into the TUI,
+   - and used the existing save path to bind or unbind project libraries without adding a separate template modal stack.
+2. Extended the existing task-info inspector:
+   - added a `template contract:` section,
+   - showed the active project library,
+   - and rendered generated-node contract details such as source rule, responsible actor kind, edit/complete actor kinds, and blocker flags.
+3. Added TUI/runtime plumbing:
+   - load approved global libraries, current project binding, and current-project node-contract snapshots during normal TUI reloads,
+   - expose them through the existing model state,
+   - and add a real project unbind path in app/storage so clearing the form field is honest.
+4. Quarantined the legacy kind authoring surface:
+   - `till kind` help now reads as kind-definition and allowlist management,
+   - the legacy `--template-json` flag is hidden from normal help,
+   - and operator-facing docs now steer template work through `till template`, TUI bind/inspect, and MCP JSON transport instead.
 
-Intentional non-conversion:
-1. `capture-state` remains JSON because it is a machine-facing recovery/data surface.
-2. `kind list`, `kind upsert`, `kind allowlist list`, and `kind allowlist set` remain JSON because they are explicit structured data/configuration surfaces rather than operator inventory/detail views.
-3. `export` remains snapshot JSON by design.
-
-Commands run and outcomes:
-1. Context7 `resolve_library_id("laslig", ...)` -> no match; fallback to repo-local renderer source.
-2. `gofmt -w cmd/till/auth_inventory_cli.go cmd/till/auth_inventory_cli_test.go cmd/till/coordination_inventory_cli.go cmd/till/main.go cmd/till/main_test.go` -> PASS.
-3. `mage TestPkg ./cmd/till` -> PASS.
-4. `mage CI` -> PASS.
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/app` -> PASS.
+3. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+4. `just test-pkg ./internal/tui` -> PASS.
+5. `just test-pkg ./cmd/till` -> PASS.
+6. `just test-golden` -> PASS.
+7. `just check` -> PASS.
+8. `just ci` -> PASS.
 
 Current status:
-1. The structured CLI output pass is locally green.
-2. `cmd/till` package tests are green after switching the affected mutation flows from JSON-decoding assertions to field-level human-output assertions.
-3. Full repo `mage CI` is green, including the 70% minimum package coverage gate; `cmd/till` coverage is now `75.2%`.
+1. TUI can now bind/unbind project libraries through the existing project form and inspect generated-node contracts through the existing task-info view.
+2. MCP/CLI remain the JSON authoring and automation path, and agents using MCP can work with a human to draft or update libraries there.
+3. The main remaining legacy seam is create-time kind-template fallback when no bound node template exists.
 
-Next step:
-1. Review the lane diff, then commit/push/open PR if the remaining intentionally machine-oriented JSON surfaces match operator expectations.
-
-## Checkpoint 2026-03-30: Operational Embeddings/Search Wave Closeout
+## Checkpoint 2026-03-30: Legacy Doc-Sidecar Removal + Child-Rule Examples
 
 Objective:
-- close the operational embeddings/search lane with merge-ready evidence, record the exact behavior proven on a real local DB plus real stdio MCP, and capture the specific human-search gaps that still need retest or follow-up after merge.
+- remove the remaining legacy kind-template doc-sidecar fields from the live kind output path and sharpen the operator docs so the real child-rule contract model is obvious.
+
+Context7:
+1. `/golang/go` reviewed before the change for:
+   - `encoding/json` compatibility expectations,
+   - and why removing deprecated struct fields still leaves old JSON input safely ignored during unmarshal -> PASS.
 
 Implementation summary:
-1. Added a durable embeddings lifecycle with persistent `pending|running|ready|failed|stale` state, worker claim/recovery, retries/backoff, startup recovery, and idempotent enqueue semantics.
-2. Moved normal mutations to enqueue/stale-mark behavior so task edits do not block on embedding provider calls.
-3. Added operator-visible status and reindex surfaces across CLI, MCP, and TUI, including global/project scope summaries and ready/pending/running/failed/stale counts.
-4. Added TUI embeddings inventory improvements so rows show human-meaningful project/title/path data instead of opaque ids, support inline filtering, and open the backing node on `enter`.
-5. Added TUI search-state improvements so result loading stays visible, empty-result runs remain explicit, and search mode selection is visible.
-6. Added real Ollama operator-path support with `qwen3-embedding:8b` at `http://127.0.0.1:11434/v1` while preserving the OpenAI-compatible fantasy adapter path for other providers/endpoints.
+1. Removed legacy `agents_file_sections` / `claude_file_sections` fields from `domain.KindTemplate` so kind output no longer advertises markdown-sidecar behavior as part of the live template path.
+2. Added CLI regression coverage so `kind upsert` output fails the tests if those legacy keys reappear.
+3. Tightened templating docs:
+   - README now explains that `child_rules` are the contract mechanism,
+   - includes a concrete multi-QA-child example,
+   - and keeps comments explicit as the shared coordination lane instead of a gated template surface.
+4. Removed the remaining current-wave planning wording that implied template work should coordinate external policy docs beyond the dedicated instructions-tool guidance.
 
-Behavior proven in this lane:
-1. Real local DB validation passed with Ollama `qwen3-embedding:8b` against `/Users/evanschultz/Library/Application Support/tillsyn/tillsyn.db`.
-2. Real stdio MCP validation passed by launching the branch binary as `./till --config /tmp/tillsyn-live-ollama.toml mcp` and exercising `till.search_task_matches` over stdio.
-3. Cross-project embeddings status reached steady state with `ready` rows and `pending|running|failed|stale` all at `0` after reindex on the live validation config.
-4. Rich-content search behaves correctly for agent-oriented retrieval:
-   - exact keyword search finds explicit work-item content,
-   - vague semantic search finds related work-item content,
-   - thread/comment-context search can return `thread_context`-backed matches,
-   - hybrid search returns operator/runbook-style matches.
-5. Strict keyword search on sparse projects behaves correctly by returning `0` matches when no lexical match exists.
-6. Hybrid/semantic search on sparse projects can still surface weak fuzzy matches because the current project content is too thin to produce strong semantic discrimination.
-
-Known behavior and follow-up notes:
-1. Human confusion during TUI search was caused by two separate realities:
-   - the richer test queries lived in the imported QA project `Semantic Search QA Lab`, not in `Evan_Test_Project`,
-   - semantic/hybrid search in sparse projects can still return weak matches even when no visible literal text exists in the inspected node.
-2. The current runtime log does not emit per-query/per-result search diagnostics, so local logs are sufficient for startup/runtime health but not for explaining why a specific search result won.
-3. `till.search_task_matches` is still effectively task-oriented in the surfaced result shape; project-document indexing is present, but project-document retrieval is not yet a clearly first-class result experience.
-4. The TUI embeddings screen is acceptable for operator health/inventory in this wave, but its long-term purpose and relationship to the main search experience still need design follow-up rather than ad-hoc expansion.
-
-Retest after merge:
-1. Retest the normal registered `tillsyn` MCP entry after merge to `main`, not just the branch-local direct stdio launch used in this lane.
-2. Retest TUI search on both:
-   - a rich-content project such as `Semantic Search QA Lab`,
-   - and a sparse-content project such as `Evan_Test_Project`,
-   to verify the current keyword/hybrid/semantic behavior remains understandable.
-3. Retest the operator path on a persisted local config after merge so the `config.example.toml` guidance and real local-machine config stay aligned.
-4. Retest project-document retrieval expectations if agent workflows need first-class project-doc hits rather than task/thread-proxy hits.
-
-Commands run and outcomes:
-1. `just test-pkg ./internal/app` -> PASS.
-2. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
-3. `just test-pkg ./internal/adapters/server/common` -> PASS.
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
 4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
-5. `just test-pkg ./internal/tui` -> PASS.
-6. `just test-pkg ./cmd/till` -> PASS.
-7. `just test-pkg ./internal/config` -> PASS.
-8. `just test-golden-update` -> PASS.
-9. `just test-golden` -> PASS.
-10. `just check` -> PASS.
-11. `just ci` -> PASS.
-12. `./till --config /tmp/tillsyn-live-ollama.toml embeddings reindex --cross-project --wait` -> PASS.
-13. `./till --config /tmp/tillsyn-live-ollama.toml embeddings status --cross-project` -> PASS (`ready` rows only after reindex).
-14. real stdio MCP calls to `till.search_task_matches` against the branch binary -> PASS.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+7. `just test-golden` -> not needed; no TUI files changed in this slice.
 
 Current status:
-1. The embeddings/search wave is merge-ready.
-2. The remaining issues are follow-up relevance/provenance and human-facing search-UX concerns, not missing operational lifecycle wiring.
-3. The live DB used for validation now also contains the imported QA project `Semantic Search QA Lab`.
+1. Legacy doc-sidecar fields are being removed from the live kind/template surface.
+2. The instructions endpoint remains the place that may suggest optional external policy-doc alignment; the template system itself no longer models that behavior.
+3. The live operator docs now show a concrete multi-QA child-rule example instead of a placeholder template shape.
+
+## Checkpoint 2026-03-30: Project Metadata JSON Fix + External Policy Clarification
+
+Objective:
+- fix the smoke-tested template-library metadata transport bug and remove the remaining templating-plan wording that implied Tillsyn manages external agent-policy files directly.
+
+Context7:
+1. `/websites/pkg_go_dev_go1_25_3` reviewed before the fix for:
+   - `encoding/json` field-tag behavior,
+   - nested struct JSON name mapping,
+   - and why explicit `json` tags are required for snake_case fields such as `standards_markdown` -> PASS.
+2. After one flaky `just check` failure in unrelated TUI tests, `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` was refreshed before any follow-up edit -> PASS.
+
+Implementation summary:
+1. Added explicit JSON tags to project metadata structs so nested template-library JSON transport now accepts and emits stable snake_case keys:
+   - `owner`,
+   - `standards_markdown`,
+   - `capability_policy`,
+   - and related nested policy fields.
+2. Added a CLI regression test proving `template library upsert --spec-json` accepts snake_case `project_metadata_defaults` and preserves `standards_markdown`.
+3. Reworded the current templating planning docs so Tillsyn does not read, rewrite, or otherwise manage external policy files directly.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just test-pkg ./internal/tui` -> PASS after a flaky full-gate failure was rerun directly.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+7. `just test-golden` -> not needed; no TUI output changed in this slice.
+
+Current status:
+1. The manual template smoke run now has a clear follow-up fix for nested project metadata JSON transport.
+2. The templating plan/docs no longer describe Tillsyn as directly managing external policy files.
+3. Legacy kind-template compatibility fields still exist in code and remain part of the next quarantine/removal slice.
+
+## Checkpoint 2026-03-30: Template-Aware Snapshot Transport
+
+Objective:
+- move snapshot export/import onto template libraries so Tillsyn can round-trip workflow contracts without silently downgrading back to legacy kind-template blobs.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed before the transport migration for:
+   - import/export ordering,
+   - related write grouping,
+   - and keeping validation/upsert flow clean around library, binding, and node-contract references -> PASS.
+2. `/websites/pkg_go_dev_go1_25_3` reviewed before the transport migration for:
+   - additive JSON field behavior,
+   - `omitempty` behavior,
+   - and safe struct/slice copy expectations while extending snapshot payloads -> PASS.
+3. After the earlier local runtime/test drift during this overall wave, `/websites/pkg_go_dev_go1_25_3` was refreshed again before the next edit -> PASS.
+
+Implementation summary:
+1. Extended snapshot payloads to carry template-library state directly:
+   - template libraries,
+   - project template bindings,
+   - and stored node-contract snapshots.
+2. Moved snapshot export onto the library-backed runtime source of truth:
+   - export now loads template libraries globally,
+   - project bindings per project,
+   - and node-contract snapshots per task so generated workflow contracts round-trip with the work graph.
+3. Moved snapshot import onto the library-backed transport model:
+   - import now validates and upserts template libraries,
+   - restores project bindings,
+   - and recreates stored node-contract snapshots after task rows exist.
+4. Tightened snapshot validation to fail closed on bad references:
+   - unknown project ids,
+   - unknown kind ids inside template libraries,
+   - unknown library ids in project bindings,
+   - and unknown task/library references in node-contract snapshots.
+5. Expanded snapshot tests so the transport now proves:
+   - export includes template libraries, bindings, and node contracts,
+   - import restores them,
+   - and invalid template references fail validation clearly.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/app` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+6. `just test-golden` -> not needed; no TUI output changed in this slice.
+
+Cleanup/orphan review:
+1. Snapshot transport is no longer the main legacy seam:
+   - template libraries, project bindings, and node-contract snapshots now round-trip through export/import.
+2. The remaining legacy seams are create-time compatibility paths and authoring surfaces:
+   - project/task creation can still fall back to legacy kind-template behavior when no template library is selected or no matching node template exists,
+   - and legacy kind-template authoring surfaces still remain beside template-library surfaces.
+3. Comments remain intentionally shared-by-default:
+   - template contracts do not restrict normal discussion,
+   - humans can talk directly to subagents,
+   - agents can hand off to each other in-node,
+   - and any future comment restrictions should stay optional policy/config work rather than the default product model.
+
+Current status:
+1. New projects can bind approved global template libraries at creation time.
+2. Generated-node contracts are enforced on state mutations and done gating.
+3. Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots.
+4. Comments remain the shared human-to-agent and agent-to-agent coordination lane by default.
+5. The remaining implementation seam is explicit legacy kind-template fallback/authoring quarantine.
 
 Next step:
-1. Commit the lane, push the branch, open the PR, merge after review, and then rerun the normal registered MCP path on `main`.
+1. Quarantine and remove the remaining legacy kind-template seams:
+   - stop treating legacy kind-template authoring as a first-class path,
+   - keep only the minimum compatibility fallback needed during migration,
+   - and then remove the fallback entirely once the replacement path is complete.
+
+## Checkpoint 2026-03-30: Template-Backed Project Creation
+
+Objective:
+- move the next live entry point onto template libraries:
+  - project creation should optionally bind one approved global template library,
+  - project-scoped template defaults/root generated work should use that library when present,
+  - and CLI/MCP create-project surfaces should expose the selection cleanly.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed before implementation for:
+   - transaction/foreign-key expectations,
+   - and why related writes should stay grouped cleanly during create-time migration work -> PASS.
+2. `/websites/pkg_go_dev_go1_25_3` reviewed before implementation for:
+   - wrapped error behavior,
+   - JSON omission behavior,
+   - and safe slice-copy expectations in the refactor -> PASS.
+3. After the first local `cmd/till` test failure, `/websites/sqlite_docs` was refreshed again before the next edit -> PASS.
+4. After the later test-harness/runtime drift while narrowing CLI coverage, `/websites/pkg_go_dev_go1_25_3` was refreshed again before the next edit -> PASS.
+
+Implementation summary:
+1. Added project-create template-library resolution in the app layer:
+   - project creation now accepts one optional template library id,
+   - requires an approved global library for the create-time bind path,
+   - and prefers the project-scope node template over legacy kind-template defaults when both exist.
+2. Added project-root generated child support for template libraries:
+   - root generated tasks now come from project-scope child rules,
+   - and generated root nodes persist node-contract snapshots just like generated descendants.
+3. Bound the selected template library during project creation before applying generated child rules:
+   - nested create-time child generation now resolves through the active bound library instead of silently falling back mid-tree.
+4. Exposed the create-time bind path through operator surfaces:
+   - `CreateProjectInput` / MCP `CreateProjectRequest`,
+   - CLI `project create --template-library-id`,
+   - and MCP `till.create_project template_library_id`.
+5. Tightened docs to keep the product posture explicit:
+   - comments are the shared collaboration layer by default,
+   - future comment restrictions are optional configuration work, not the intended default collaboration model,
+   - and README now shows the template-backed project-create example directly.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/app` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+5. `just test-pkg ./internal/adapters/server/common` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+8. `just test-golden` -> not needed; no TUI output changed in this slice.
+
+Cleanup/orphan review:
+1. Project creation now has a template-library path, but the legacy project-kind template path still remains as the explicit fallback when no template library is selected or when the bound library has no project-scope node template.
+2. Snapshot import/export is still the largest remaining legacy transport seam:
+   - it does not yet carry template libraries, project bindings, or node-contract snapshots.
+3. Comment collaboration remains intentionally shared-by-default:
+   - no template rule can hide or silence node comments by default,
+   - and any future limits should be optional config/policy, not the baseline collaboration model.
+
+Current status:
+1. Operators can now create a project directly against an approved global template library.
+2. Project-scoped template defaults and root generated work now start from template libraries when that path is chosen.
+3. Generated root nodes created during project creation now persist node-contract snapshots.
+4. Comments remain the shared human-to-agent and agent-to-agent coordination surface by default.
+5. Snapshot transport and final legacy kind-template quarantine remain the next compatibility seams.
+
+Next step:
+1. Move snapshot import/export onto template libraries:
+   - snapshot payloads need template libraries, project bindings, and node-contract snapshots,
+   - import needs to preserve those without silent downgrade to legacy kind-template blobs,
+   - and only after that should the remaining legacy kind-template authoring/fallback paths be quarantined or removed.
+
+## Checkpoint 2026-03-30: Template Contract Enforcement + Research Role Alignment
+
+Objective:
+- land the first real enforcement slice so template libraries are no longer just persistence/operator surfaces:
+  - generated-node contract snapshots must now gate edit/complete mutations,
+  - required generated blockers must now stop parent/containing-scope completion,
+  - and the fixed MVP actor-kind list must be satisfiable by the existing auth/lease model.
+
+Context7:
+1. `/websites/pkg_go_dev_go1_25_3` reviewed before implementation for:
+   - `errors.Is` / wrapped-error behavior,
+   - and standard library API references used by the service-layer enforcement helpers -> PASS.
+2. `/websites/sqlite_docs` reviewed before implementation for:
+   - row-loading / transaction assumptions while resolving generated-node contract snapshots during completion checks -> PASS.
+3. After the first local app failure, `/websites/pkg_go_dev_go1_25_3` was refreshed again before the next edit -> PASS.
+4. After the next full-gate failure, `/websites/pkg_go_dev_go1_25_3` was refreshed again before correcting the remaining test drift -> PASS.
+
+Implementation summary:
+1. Added a dedicated app-layer node-contract enforcement helper path:
+   - resolve the current workflow actor kind from the active lease/caller,
+   - load stored node-contract snapshots,
+   - allow humans by default,
+   - allow orchestrator complete only when the stored rule opts in,
+   - and fail closed for non-human actor-kind mismatches.
+2. Wired generated-node contract enforcement into:
+   - `CreateTask` when creating children under generated parents,
+   - `UpdateTask`,
+   - `RenameTask`,
+   - `MoveTask`,
+   - `ReparentTask`,
+   - `DeleteTask`,
+   - and `RestoreTask`.
+3. Replaced the old unconditional “every child blocks done” behavior with the compatibility-first rule set:
+   - required parent blockers come from direct-child node-contract snapshots,
+   - required containing-scope blockers come from descendant node-contract snapshots,
+   - legacy/manual `RequireChildrenDone` completion policy still works,
+   - and optional/informal child nodes no longer block done by default.
+4. Added `research` as a first-class MVP auth/capability role so template actor-kind rules can be satisfied without inventing a parallel role model later.
+5. Corrected a few pre-existing tests that had been implicitly relying on historical actor attribution instead of the current caller context, and restored one QA policy test that had drifted during patch iteration.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./internal/app` -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+
+Cleanup/orphan review:
+1. The following legacy seams still remain intentionally as compatibility paths:
+   - project creation still uses legacy kind-template defaults/root child generation,
+   - task creation still falls back to kind-template expansion when no project template binding exists,
+   - snapshot import/export still uses the legacy shape,
+   - and old kind-template authoring surfaces still exist beside template-library surfaces.
+2. Comments are intentionally staying scope-gated by default:
+   - generated-node contracts do not restrict who may comment on a generated node,
+   - comments remain the shared human-to-agent and agent-to-agent communication lane inside a project/scope,
+   - comment attribution/ownership stays first-class audit data,
+   - and any future targeted/routed or limited comment UX should build on that without turning comments into hidden per-role silos by default.
+3. The enforcement slice now closes the most obvious bypasses for generated work:
+   - editing a generated node directly,
+   - completing it with the wrong actor kind,
+   - or attaching/reparenting children under a generated parent without the allowed actor kind.
+
+Current status:
+1. Template-library node contracts are now operational rather than informational.
+2. Generated nodes can enforce actor-kind edit/complete ownership and truthful parent/scope completion blockers.
+3. Human override-complete remains allowed.
+4. Comments are explicitly not contract-gated by default; workflow contracts govern state mutations and done truth, not discussion.
+5. Project creation, snapshot transport, and remaining legacy kind-template authoring/fallback paths are still pending migration.
+
+Next step:
+1. Move the remaining compatibility seams onto template libraries in order:
+   - project creation first, because new live data should land on template-library resolution before transport/migration is rewritten around it,
+   - snapshot import/export second, so the transport shape follows the post-migration runtime source of truth instead of freezing the old split model in place,
+   - then explicit legacy kind-template removal/quarantine once both creation and transport are library-backed.
+
+## Checkpoint 2026-03-29: Template Operator Surfaces + Repo-Wide Gates Green
+
+Objective:
+- finish the first template-library slice by exposing the new persistence/resolver path through CLI and MCP, tighten README/bootstrap/instructions guidance around template workflows, and clear the repo-wide TUI test blocker so the required gates pass again.
+
+Context7:
+1. `/websites/pkg_go_dev_github_com_spf13_cobra` reviewed before the CLI surface work:
+   - help rendering behavior,
+   - command nesting patterns,
+   - and stable test expectations for generated `--help` output -> PASS.
+2. `/websites/modelcontextprotocol_io` reviewed before the MCP surface work:
+   - discoverable tool naming and JSON result expectations for operator-facing tools -> PASS.
+3. `/charmbracelet/bubbles/v2.0.0` reviewed before the TUI inventory diagnosis:
+   - viewport/mouse-wheel expectations and deterministic test posture -> PASS.
+4. After the first local test failures in this checkpoint, Context7 was refreshed again before edits:
+   - `/websites/sqlite_docs` for foreign-key insert ordering while seeding node-contract snapshot tests -> PASS.
+   - `/websites/pkg_go_dev_github_com_spf13_cobra` for help-output stability under wrapped long descriptions -> PASS.
+   - `/websites/pkg_go_dev_go1_25_3` as the required post-failure refresh before the final test-seeding correction -> PASS.
+
+Implementation summary:
+1. Added operator-facing template-library CLI commands:
+   - `till template library list|show|upsert`
+   - `till template project bind|binding`
+   - `till template contract show`
+2. Added template-library MCP tools and handler wiring:
+   - `till.list_template_libraries`
+   - `till.get_template_library`
+   - `till.upsert_template_library`
+   - `till.bind_project_template_library`
+   - `till.get_project_template_binding`
+   - `till.get_node_contract_snapshot`
+3. Added transport-layer request contracts and app-adapter methods for template-library list/get/upsert/bind plus node-contract and project-binding lookup.
+4. Added JSON tags to template-library domain rows so CLI/MCP output is readable and stable without bespoke one-off payload wrappers.
+5. Updated bootstrap/instruction guidance plus README examples so the operator docs now mention:
+   - template-library workflows,
+   - suggestion-only external agent-policy and skill alignment expectations,
+   - and the explicit rule that SQLite is the source of truth while JSON remains the stable CLI/MCP transport.
+6. Fixed the repo-wide TUI failure by making `TestAuthInventoryMouseWheelReachesLowerSections` use the current wall clock instead of a now-expired hard-coded timestamp.
+7. Expanded tests for:
+   - CLI help coverage,
+   - real CLI template-library upsert/list/show/bind/contract flows,
+   - MCP expanded tool coverage,
+   - and the updated bootstrap guide expectations.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./internal/adapters/server/common` -> PASS after updating bootstrap-guide assertions.
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS after fixing the time-sensitive test.
+6. `just test-pkg ./cmd/till` -> PASS after:
+   - loosening the brittle wrapped-help assertion,
+   - and seeding the required project/column/task rows before the node-contract snapshot insert.
+7. `just test-golden` -> PASS.
+8. `just check` -> PASS.
+9. `just ci` -> PASS.
+
+Cleanup/orphan review:
+1. Legacy kind-template authoring and fallback generation still exist intentionally as compatibility seams:
+   - project creation is still kind-template-backed for defaults/root children,
+   - task creation still falls back to legacy kind-template expansion when no project template binding exists,
+   - snapshot import/export still reflects the legacy shape,
+   - and the older kind-template CLI/MCP surfaces still exist beside the new template-library surfaces.
+2. This checkpoint does not remove those paths yet; it makes the new template-library path operator-visible and updates the docs so the remaining legacy seams are explicit rather than hidden.
+3. The outstanding cleanup target is to quarantine or remove the legacy template-authoring affordances once project creation, snapshot transport, and broader actor-kind enforcement fully move onto template libraries.
+
+Current status:
+1. The first template-library slice is now operator-visible through CLI and MCP.
+2. README/bootstrap/instructions guidance now aligns with the SQLite-first template-library model and the actor-kind documentation requirement.
+3. Repo-wide validation is green again through `just test-golden`, `just check`, and `just ci`.
+4. Truthful completion gating and actor-kind mutation enforcement against persisted node contracts are still pending.
+
+Next step:
+1. Land the next compatibility-first slice:
+   - enforce actor-kind edit/complete checks from node-contract snapshots,
+   - gate parent/scope completion on required generated blockers,
+   - and start retiring the remaining legacy kind-template compatibility paths called out above.
+
+## Checkpoint 2026-03-29: Template Library Persistence + Resolver Slice
+
+Objective:
+- land the first compatibility-first implementation slice behind the templating design memo without broadening into full auth-policy migration or new TUI authoring yet.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed before the storage work and again after the failed `just check` run:
+   - transactional nested writes,
+   - foreign-key / WAL assumptions,
+   - and the practical constraint that nested follow-up reads on a single SQLite connection must wait until the outer result set is fully consumed -> PASS.
+2. `/websites/pkg_go_dev_go1_25_3` refreshed after the first syntax failure in the new app-layer template file -> PASS.
+3. `/charmbracelet/bubbles/v2.0.0` refreshed after the unrelated reproduced TUI mouse-wheel failure so the follow-up note stays grounded in current viewport behavior docs -> PASS.
+
+Implementation summary:
+1. Added new template-library and node-contract domain types plus validation:
+   - library scope/status,
+   - actor kinds,
+   - node templates,
+   - child rules,
+   - project bindings,
+   - node contract snapshots,
+   - and related domain errors.
+2. Expanded the app repository contract for:
+   - template-library upsert/get/list,
+   - project binding upsert/get,
+   - and node-contract snapshot create/get.
+3. Added a new app-layer template service slice:
+   - library upsert/list/get,
+   - project binding,
+   - bound-template resolution,
+   - node-template metadata merge,
+   - child-rule validation,
+   - and generated child snapshot persistence.
+4. Wired `createTaskWithTemplates` to resolve a bound project template library first and fall back to legacy kind-template behavior second.
+5. Added relational SQLite storage for:
+   - template libraries,
+   - node templates,
+   - child rules,
+   - editor/completer actor-kind join tables,
+   - project bindings,
+   - and node-contract snapshots.
+6. Fixed a real single-connection SQLite deadlock in the first implementation pass by ensuring nested template loads only run after the outer result set is fully consumed and closed.
+7. Extended the shared app fake repo plus added focused tests for:
+   - domain constructors,
+   - SQLite round-trip storage,
+   - bound template-library task generation,
+   - and legacy kind-template fallback behavior.
+
+Validation:
+1. `just test-pkg ./internal/app` -> PASS.
+2. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS after fixing the nested-read deadlock.
+3. `just check` -> FAIL, but the remaining failure is isolated to `./internal/tui` and reproduces independently of this slice:
+   - `TestAuthInventoryMouseWheelReachesLowerSections`
+   - failure observed both in the full `just check` run and in `just test-pkg ./internal/tui`.
+
+Current status:
+1. The backend compatibility slice is in place and locally validated on the touched app/storage packages.
+2. Bound template libraries now drive create-time metadata defaults, generated child nodes, and persisted node-contract snapshots.
+3. Legacy kind-template behavior still works when no project template binding exists.
+4. Minimal CLI/MCP operator surfaces for template-library inspection/binding are still pending.
+5. Completion gating and actor-kind-based mutation enforcement against node-contract snapshots are still pending.
+
+Next step:
+1. Decide whether to fix the existing TUI mouse-wheel inventory test in this lane or treat it as a separate pre-existing blocker.
+2. Once the repo-wide gate is green again, add the minimum CLI/MCP inspection/binding surfaces before any TUI authoring flow.
+
+## Checkpoint 2026-03-29: Templating Contract Consensus Locked
+
+Objective:
+- lock the product meaning of templating before any implementation branch broadens the current kind-template defaults path.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed again for the SQLite-backed single-DB design assumption:
+   - transaction batching,
+   - savepoints for multi-step operations,
+   - and `PRAGMA foreign_keys = ON` / WAL-oriented runtime assumptions -> PASS.
+
+Decision:
+1. Templates are workflow-and-authority contracts first, scaffolding second.
+2. Scope level, node kind, and actor kind are separate dimensions:
+   - scope level remains `project|branch|phase|task|subtask`,
+   - node kind becomes the work category registry,
+   - actor kind becomes the authority category used by auth/completion checks.
+3. SQLite is the active single source of truth for template libraries, bindings, and node contract snapshots in MVP.
+4. Humans always retain override-complete power on generated blockers.
+5. Orchestrator completion on builder/QA blockers defaults to off and must be enabled explicitly per rule.
+6. MVP should bind exactly one active template library per project.
+7. MVP actor kinds are locked to a small fixed set for now:
+   - `human`,
+   - `orchestrator`,
+   - `builder`,
+   - `qa`,
+   - `research`.
 
 ## Checkpoint 2026-03-29: In-Place Git Topology Refactor For Shared Worktrees
 

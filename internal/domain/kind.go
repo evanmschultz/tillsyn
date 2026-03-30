@@ -44,14 +44,6 @@ var validWorkItemAppliesTo = []KindAppliesTo{
 	KindAppliesToSubtask,
 }
 
-// KindTemplateFileSection defines one managed template section for markdown autofill.
-type KindTemplateFileSection struct {
-	SectionID       string `json:"section_id"`
-	Heading         string `json:"heading"`
-	BodyMarkdown    string `json:"body_markdown"`
-	RequireUserSync bool   `json:"require_user_sync"`
-}
-
 // KindTemplateChildSpec defines one child item auto-created by a kind template.
 type KindTemplateChildSpec struct {
 	Title           string          `json:"title"`
@@ -64,12 +56,10 @@ type KindTemplateChildSpec struct {
 
 // KindTemplate stores template-driven system actions and default metadata for a kind definition.
 type KindTemplate struct {
-	AutoCreateChildren      []KindTemplateChildSpec   `json:"auto_create_children"`
-	CompletionChecklist     []ChecklistItem           `json:"completion_checklist"`
-	AgentsFileSections      []KindTemplateFileSection `json:"agents_file_sections"`
-	ClaudeFileSections      []KindTemplateFileSection `json:"claude_file_sections"`
-	ProjectMetadataDefaults *ProjectMetadata          `json:"project_metadata_defaults,omitempty"`
-	TaskMetadataDefaults    *TaskMetadata             `json:"task_metadata_defaults,omitempty"`
+	AutoCreateChildren      []KindTemplateChildSpec `json:"auto_create_children"`
+	CompletionChecklist     []ChecklistItem         `json:"completion_checklist"`
+	ProjectMetadataDefaults *ProjectMetadata        `json:"project_metadata_defaults,omitempty"`
+	TaskMetadataDefaults    *TaskMetadata           `json:"task_metadata_defaults,omitempty"`
 }
 
 // KindDefinition stores one reusable kind definition.
@@ -271,8 +261,6 @@ func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
 		return KindTemplate{}, fmt.Errorf("%w: %v", ErrInvalidKindTemplate, err)
 	}
 
-	agentsSections := normalizeKindTemplateSections(in.AgentsFileSections)
-	claudeSections := normalizeKindTemplateSections(in.ClaudeFileSections)
 	var projectDefaults *ProjectMetadata
 	if in.ProjectMetadataDefaults != nil {
 		normalized, err := normalizeProjectMetadata(*in.ProjectMetadataDefaults)
@@ -293,30 +281,7 @@ func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
 	return KindTemplate{
 		AutoCreateChildren:      children,
 		CompletionChecklist:     checklist,
-		AgentsFileSections:      agentsSections,
-		ClaudeFileSections:      claudeSections,
 		ProjectMetadataDefaults: projectDefaults,
 		TaskMetadataDefaults:    taskDefaults,
 	}, nil
-}
-
-// normalizeKindTemplateSections trims template file-section values and removes empty rows.
-func normalizeKindTemplateSections(in []KindTemplateFileSection) []KindTemplateFileSection {
-	out := make([]KindTemplateFileSection, 0, len(in))
-	for _, section := range in {
-		section.SectionID = strings.TrimSpace(section.SectionID)
-		section.Heading = strings.TrimSpace(section.Heading)
-		section.BodyMarkdown = strings.TrimSpace(section.BodyMarkdown)
-		if section.SectionID == "" && section.Heading == "" && section.BodyMarkdown == "" {
-			continue
-		}
-		if section.SectionID == "" {
-			section.SectionID = normalizeSlug(section.Heading)
-		}
-		if section.SectionID == "" {
-			section.SectionID = "section"
-		}
-		out = append(out, section)
-	}
-	return out
 }

@@ -872,10 +872,10 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 			Priority:       domain.PriorityMedium,
 			Labels:         childSpec.Labels,
 			Metadata:       childMetadata,
-			CreatedByActor: "tillsyn-system-template",
-			CreatedByName:  "Tillsyn System Template",
-			UpdatedByActor: "tillsyn-system-template",
-			UpdatedByName:  "Tillsyn System Template",
+			CreatedByActor: templateSystemActorID,
+			CreatedByName:  templateSystemActorName,
+			UpdatedByActor: templateSystemActorID,
+			UpdatedByName:  templateSystemActorName,
 			UpdatedByType:  domain.ActorTypeSystem,
 		}, depth); childErr != nil {
 			return childErr
@@ -912,10 +912,10 @@ func (s *Service) applyProjectKindTemplateSystemActions(ctx context.Context, pro
 			Priority:       domain.PriorityMedium,
 			Labels:         childSpec.Labels,
 			Metadata:       childMetadata,
-			CreatedByActor: "tillsyn-system-template",
-			CreatedByName:  "Tillsyn System Template",
-			UpdatedByActor: "tillsyn-system-template",
-			UpdatedByName:  "Tillsyn System Template",
+			CreatedByActor: templateSystemActorID,
+			CreatedByName:  templateSystemActorName,
+			UpdatedByActor: templateSystemActorID,
+			UpdatedByName:  templateSystemActorName,
 			UpdatedByType:  domain.ActorTypeSystem,
 		}, depth); childErr != nil {
 			return childErr

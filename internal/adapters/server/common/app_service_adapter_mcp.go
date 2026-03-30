@@ -19,28 +19,38 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
 		Summary:       "No project context exists yet. If you already have an approved session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token stored in continuation_json before continuing.",
-		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, pre-session auth requests, and summary-first recovery context.",
+		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment/handoff coordination, pre-session auth requests, summary-first recovery context, and SQLite-backed template libraries for generated workflow contracts.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
 			"Task graph operations across branch/phase/task/subtask scopes",
+			"Markdown comments and durable handoffs as the shared human-agent and agent-agent coordination lane",
 			"Attention/blocker signaling with user-action visibility",
-			"Kind catalog and template-driven child/checklist auto-actions",
+			"Kind catalog plus template-library-driven generated follow-up work and node-contract snapshots",
 			"Pre-session auth requests, approval, and continuation claims",
 			"Capability lease issuance and guardrailed non-user mutations",
+			"Instruction/bootstrap guidance for README plus optional external agent-policy and skill alignment",
 		},
 		NextSteps: []string{
 			"If this session is already approved, create a project with till.create_project",
 			"If it is not approved yet, create an auth request with till.create_auth_request and put the requester-owned resume_token in continuation_json",
-			"After approval, claim the request with till.claim_auth_request, then create the project with till.create_project before creating level-scoped work with till.create_task",
+			"After approval, claim the request with till.claim_auth_request, then create the project with till.create_project",
+			"If the project should use workflow contracts, inspect approved template libraries with till.list_template_libraries and bind one with till.bind_project_template_library before creating level-scoped work",
+			"Use till.create_comment and till.create_handoff inside Tillsyn for human-agent or agent-agent coordination instead of pushing that discussion back into ad-hoc markdown files",
+			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
 			"Call till.capture_state to reorient and continue safely",
 		},
 		Recommended: []string{
+			"till.get_instructions",
 			"till.list_projects",
 			"till.create_auth_request",
 			"till.list_auth_requests",
 			"till.get_auth_request",
 			"till.claim_auth_request",
 			"till.create_project",
+			"till.list_template_libraries",
+			"till.bind_project_template_library",
+			"till.create_comment",
+			"till.create_handoff",
 			"till.create_task",
 			"till.capture_state",
 		},
@@ -212,13 +222,14 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	project, err := a.service.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:          strings.TrimSpace(in.Name),
-		Description:   strings.TrimSpace(in.Description),
-		Kind:          domain.KindID(strings.TrimSpace(in.Kind)),
-		Metadata:      in.Metadata,
-		UpdatedBy:     actorID,
-		UpdatedByName: actorName,
-		UpdatedType:   actorType,
+		Name:              strings.TrimSpace(in.Name),
+		Description:       strings.TrimSpace(in.Description),
+		Kind:              domain.KindID(strings.TrimSpace(in.Kind)),
+		TemplateLibraryID: strings.TrimSpace(in.TemplateLibraryID),
+		Metadata:          in.Metadata,
+		UpdatedBy:         actorID,
+		UpdatedByName:     actorName,
+		UpdatedType:       actorType,
 	})
 	if err != nil {
 		return domain.Project{}, mapAppError("create project", err)
@@ -694,6 +705,128 @@ func (a *AppServiceAdapter) SetProjectAllowedKinds(ctx context.Context, in SetPr
 		return mapAppError("set project allowed kinds", err)
 	}
 	return nil
+}
+
+// ListTemplateLibraries lists template libraries with optional filters.
+func (a *AppServiceAdapter) ListTemplateLibraries(ctx context.Context, in ListTemplateLibrariesRequest) ([]domain.TemplateLibrary, error) {
+	if a == nil || a.service == nil {
+		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	libraries, err := a.service.ListTemplateLibraries(ctx, app.ListTemplateLibrariesInput{
+		Scope:     in.Scope,
+		ProjectID: strings.TrimSpace(in.ProjectID),
+		Status:    in.Status,
+	})
+	if err != nil {
+		return nil, mapAppError("list template libraries", err)
+	}
+	return libraries, nil
+}
+
+// GetTemplateLibrary loads one template library by id.
+func (a *AppServiceAdapter) GetTemplateLibrary(ctx context.Context, libraryID string) (domain.TemplateLibrary, error) {
+	if a == nil || a.service == nil {
+		return domain.TemplateLibrary{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	library, err := a.service.GetTemplateLibrary(ctx, strings.TrimSpace(libraryID))
+	if err != nil {
+		return domain.TemplateLibrary{}, mapAppError("get template library", err)
+	}
+	return library, nil
+}
+
+// UpsertTemplateLibrary creates or updates one template library.
+func (a *AppServiceAdapter) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error) {
+	if a == nil || a.service == nil {
+		return domain.TemplateLibrary{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	nodeTemplates := make([]app.UpsertNodeTemplateInput, 0, len(in.NodeTemplates))
+	for _, nodeTemplate := range in.NodeTemplates {
+		childRules := make([]app.UpsertTemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
+		for _, childRule := range nodeTemplate.ChildRules {
+			childRules = append(childRules, app.UpsertTemplateChildRuleInput{
+				ID:                        strings.TrimSpace(childRule.ID),
+				Position:                  childRule.Position,
+				ChildScopeLevel:           childRule.ChildScopeLevel,
+				ChildKindID:               childRule.ChildKindID,
+				TitleTemplate:             strings.TrimSpace(childRule.TitleTemplate),
+				DescriptionTemplate:       strings.TrimSpace(childRule.DescriptionTemplate),
+				ResponsibleActorKind:      childRule.ResponsibleActorKind,
+				EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
+				CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
+				OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
+				RequiredForParentDone:     childRule.RequiredForParentDone,
+				RequiredForContainingDone: childRule.RequiredForContainingDone,
+			})
+		}
+		nodeTemplates = append(nodeTemplates, app.UpsertNodeTemplateInput{
+			ID:                      strings.TrimSpace(nodeTemplate.ID),
+			ScopeLevel:              nodeTemplate.ScopeLevel,
+			NodeKindID:              nodeTemplate.NodeKindID,
+			DisplayName:             strings.TrimSpace(nodeTemplate.DisplayName),
+			DescriptionMarkdown:     strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
+			ProjectMetadataDefaults: nodeTemplate.ProjectMetadataDefaults,
+			TaskMetadataDefaults:    nodeTemplate.TaskMetadataDefaults,
+			ChildRules:              childRules,
+		})
+	}
+	library, err := a.service.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
+		ID:              strings.TrimSpace(in.ID),
+		Scope:           in.Scope,
+		ProjectID:       strings.TrimSpace(in.ProjectID),
+		Name:            strings.TrimSpace(in.Name),
+		Description:     strings.TrimSpace(in.Description),
+		Status:          in.Status,
+		SourceLibraryID: strings.TrimSpace(in.SourceLibraryID),
+		NodeTemplates:   nodeTemplates,
+	})
+	if err != nil {
+		return domain.TemplateLibrary{}, mapAppError("upsert template library", err)
+	}
+	return library, nil
+}
+
+// BindProjectTemplateLibrary binds one project to one approved template library.
+func (a *AppServiceAdapter) BindProjectTemplateLibrary(ctx context.Context, in BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error) {
+	if a == nil || a.service == nil {
+		return domain.ProjectTemplateBinding{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	caller, _ := app.AuthenticatedCallerFromContext(ctx)
+	binding, err := a.service.BindProjectTemplateLibrary(ctx, app.BindProjectTemplateLibraryInput{
+		ProjectID:        strings.TrimSpace(in.ProjectID),
+		LibraryID:        strings.TrimSpace(in.LibraryID),
+		BoundByActorID:   caller.PrincipalID,
+		BoundByActorName: caller.PrincipalName,
+		BoundByActorType: caller.PrincipalType,
+	})
+	if err != nil {
+		return domain.ProjectTemplateBinding{}, mapAppError("bind project template library", err)
+	}
+	return binding, nil
+}
+
+// GetProjectTemplateBinding loads one project's active template binding.
+func (a *AppServiceAdapter) GetProjectTemplateBinding(ctx context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
+	if a == nil || a.service == nil {
+		return domain.ProjectTemplateBinding{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	binding, err := a.service.GetProjectTemplateBinding(ctx, strings.TrimSpace(projectID))
+	if err != nil {
+		return domain.ProjectTemplateBinding{}, mapAppError("get project template binding", err)
+	}
+	return binding, nil
+}
+
+// GetNodeContractSnapshot loads one generated-node contract snapshot.
+func (a *AppServiceAdapter) GetNodeContractSnapshot(ctx context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
+	if a == nil || a.service == nil {
+		return domain.NodeContractSnapshot{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	snapshot, err := a.service.GetNodeContractSnapshot(ctx, strings.TrimSpace(nodeID))
+	if err != nil {
+		return domain.NodeContractSnapshot{}, mapAppError("get node contract snapshot", err)
+	}
+	return snapshot, nil
 }
 
 // parseOptionalDurationString parses one optional Go duration string used by transport auth request inputs.
