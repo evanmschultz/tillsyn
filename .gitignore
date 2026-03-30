@@ -1,8 +1,10 @@
 .DS_Store
+/.git-common/
 coverage.out
 dist/
 /till
 /till.exe
+/AGENT_PROMPTS.md
 bin/
 .artifacts/
 .tmp/

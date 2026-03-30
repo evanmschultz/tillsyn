@@ -15,6 +15,7 @@ Current scope:
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
+Concurrent local branch/worktree workflow: `WORKTREE_WORKFLOW.md`
 
 ## Features
 - Multi-project Kanban board.

@@ -39,13 +39,16 @@ If line endings are still stale after renormalization, re-clone the repository.
 Install a local hook so pushes fail fast if `just ci` fails:
 
 ```bash
-cat > .git/hooks/pre-push <<'EOF'
+hook_path="$(git rev-parse --git-path hooks/pre-push)"
+cat > "$hook_path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 just ci
 EOF
-chmod +x .git/hooks/pre-push
+chmod +x "$hook_path"
 ```
+
+Use `git rev-parse --git-path ...` instead of hard-coding `.git/...` so the hook still lands in the right place when the repo uses a separate common git dir.
 
 ## GitHub Actions Model
 

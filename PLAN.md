@@ -2,7 +2,88 @@
 
 Created: 2026-02-21
 Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, and the `C5` approved-path handoff/auth-context blocker is fixed locally while the fresh live `C5` runtime rerun now passes through `update_handoff`, missing-lease fail-closed, readiness/discovery, revoke visibility, and post-revoke fail-closed checks on the refreshed MCP path; the subsequent TUI follow-up first exposed a coordination-screen overflow/scroll bug, then a live/history readability gap, then a board/help cleanup pass that removes the legacy `Selection` panel and keeps coordination guidance in the bottom/help surfaces, and the latest follow-up now renames the board slice to `Coordination`, adds the requested header-to-items spacing across board panels, removes the global subtitle noise, trims redundant top-of-screen coordination prose, restores board-global `n` / `N`, `p` / `P`, and `:` while notifications panels own focus, keeps coordination detail styling/actionability readable, cleans the stale open handoff/lease artifacts out of the live project runtime state, restores `/` search from notifications focus, makes the project notifications body scroll to lower sections on shorter boards, and aligns local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, with the local slice green again on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, and `just ci`, and one fresh user reopen still pending to confirm the rebuilt binary matches the final board/global/detail/project-owner UX.
+Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, and `C6` is now closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary; local gates are green on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, `just ci`, and `just build`, the pushed follow-up is `75aa5c4`, and GitHub Actions run `23721667218` is green through all `check` jobs plus `full gate` with only the trailing `release snapshot check` still running at the time of this update.
+
+## Checkpoint 2026-03-29: In-Place Git Topology Refactor For Shared Worktrees
+
+Objective:
+- determine the safest bare-repo-centered equivalent for this checkout, preserve the current cwd as the operator-facing working tree, and implement the reversible repo-layout/docs changes if the result is safe enough.
+
+Context7:
+1. `/git/git` bare-repo, `--separate-git-dir`, `git worktree`, `core.worktree`, `core.bare`, and `extensions.worktreeConfig` docs reviewed before any docs/layout change -> PASS.
+
+Decision:
+1. Use a separate common git dir plus linked worktrees:
+   - keep `/Users/evanschultz/Documents/Code/hylla/tillsyn` as the operator/integration worktree,
+   - move shared git metadata to `/.git-common/`,
+   - reserve `/worktrees/` for concurrent branch worktrees.
+2. Reject a true bare repo at the cwd:
+   - it would remove the working tree from the current directory and violate the requirement to keep active files, worklogs, and operator-facing materials accessible from the cwd.
+3. Defer a fully bare central repo with the current cwd converted into a linked worktree:
+   - Git supports it, but converting this non-empty checkout in place is riskier than a separate common git dir and is not required for the immediate concurrency goal.
+4. Reject a hand-managed `core.worktree`-only layout:
+   - higher foot-gun risk,
+   - more confusing config semantics,
+   - and no advantage over the chosen model here.
+
+Implementation summary:
+1. Cleaned the root `AGENTS.md` down to persistent repo-wide guidance only.
+2. Added `WORKTREE_WORKFLOW.md` for the recommended model, migration, rollback, merge policy, and collision-management policy.
+3. Added `worktrees/AGENTS.md`, `worktrees/README.md`, and `worktrees/.gitignore` for linked-worktree-specific guidance and path hygiene.
+4. Updated `CONTRIBUTING.md` to use `git rev-parse --git-path hooks/pre-push` instead of hard-coding `.git/...`.
+5. Updated `README.md` to point operators at `WORKTREE_WORKFLOW.md`.
+6. Converted the checkout in place with `git init --separate-git-dir=.git-common`.
+7. Set `core.worktree` back to the current cwd so the repo continues to operate from `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
+8. Explicitly ignored `AGENT_PROMPTS.md` so it stays local-only and uncommitted in the cwd for later agent setup.
+
+Commands run and outcomes:
+1. `sed -n '1,260p' AGENTS.md` -> PASS.
+2. `sed -n '1,260p' PLAN.md` -> PASS.
+3. `sed -n '1,260p' Justfile` -> PASS.
+4. `git status --short --branch` -> PASS.
+5. `git rev-parse --show-toplevel --git-dir --is-bare-repository` -> PASS.
+6. `git worktree list --porcelain` -> PASS.
+7. `git branch -vv` -> PASS.
+8. `git remote -v` -> PASS.
+9. `git config --show-origin --get-regexp '^(core\\.bare|core\\.worktree|extensions\\.worktreeConfig|worktree\\..*)'` -> PASS.
+10. `ls -la .git` -> PASS.
+11. `rg --files -g 'AGENTS.md' -g 'README*' -g 'docs/**'` -> PASS.
+12. Context7 `resolve_library_id` for Git -> PASS.
+13. Context7 Git docs query for bare repo vs separate git dir vs worktree behavior -> PASS.
+14. `rg -n "worktree|bare repo|bare repository|core.worktree|separate-git-dir|parallel|branch" README.md AGENTS.md PLAN.md` -> PASS.
+15. `ls -la` -> PASS.
+16. `git diff -- PLAN.md` -> PASS.
+17. `sed -n '1,260p' README.md` -> PASS.
+18. `sed -n '1,220p' .gitignore` -> PASS.
+19. `git rev-parse --git-common-dir` -> PASS.
+20. `du -sh .git .` -> PASS.
+21. `git status --ignored --short | sed -n '1,160p'` -> PASS.
+22. `git ls-files --stage -- till` -> PASS.
+23. `git check-ignore -v .artifacts .tmp till .tillsyn .codex || true` -> PASS.
+24. `git config --get extensions.worktreeConfig || true` -> PASS.
+25. `git rev-parse --git-path config --git-path config.worktree --git-path index --git-path HEAD` -> PASS.
+26. `sed -n '1,260p' CONTRIBUTING.md` -> PASS.
+27. `git init --separate-git-dir=.git-common` -> PASS after approval escalation.
+28. `cat .git` -> PASS.
+29. `git rev-parse --show-toplevel --git-dir --git-common-dir --is-bare-repository` -> PASS.
+30. `git rev-parse --git-path hooks/pre-push` -> PASS.
+31. `git config core.worktree /Users/evanschultz/Documents/Code/hylla/tillsyn` -> PASS after approval escalation.
+32. `git worktree repair /Users/evanschultz/Documents/Code/hylla/tillsyn` -> PASS after approval escalation.
+33. `git status --short --branch --ignored` -> PASS.
+34. `just check` -> PASS.
+
+Current status:
+1. The current cwd remains usable as the working tree and `.git` is now a gitfile that points at `/.git-common/`.
+2. `/.git-common/` is now the shared metadata store for future linked worktrees.
+3. `AGENT_PROMPTS.md` remains in the cwd, untracked, and ignored.
+4. Known caveat:
+   - even after `core.worktree` and `git worktree repair`, `git worktree list --porcelain` still reports `/.git-common/` as the main anchor path instead of the cwd.
+   - Treat this as a known Git/UI quirk of the in-place separate-git-dir model until a first linked worktree is created and validated against the new workflow.
+5. Local validation on the refactored cwd is green through `just check`.
+
+Next step:
+1. Review staged tracked docs/layout changes only, explicitly excluding `AGENT_PROMPTS.md`.
+2. Commit the docs + layout refactor with a conventional commit.
 
 ## 1) Active Run Source Of Truth
 
@@ -3318,10 +3399,50 @@ Commands run and outcomes:
 
 Current status:
 1. Local code/tests are green for this `C6` fix scope.
-2. Next required step is one fresh user rerun on the rebuilt binary to confirm:
+2. The user reopened the rebuilt binary and confirmed:
    - `/` opens search from both notifications panels,
-   - the project notifications panel body scrolls to `Recent Activity` on smaller boards,
-   - and project CLI discovery/output now shows the bootstrap owner correctly for the local-MVP case.
+   - the project notifications panel body now scrolls far enough to expose lower sections like `Recent Activity` on shorter boards,
+   - and the refreshed notifications/global/detail/project-owner UX looks correct.
+3. `C6` is complete locally and in live user confirmation.
+4. Remote CI follow-up on pushed commit `75aa5c4`:
+   - GitHub Actions run `23721667218` is green through all three `check` jobs and `full gate`;
+   - `release snapshot check` was still running when this checkpoint was written.
+
+### 2026-03-29: Follow-On Agent Prompt Pack Refresh
+
+Objective:
+- capture the post-`C6` follow-on agent prompts in one root prompt pack so future parallel work can reuse the same wording without reassembling prompts from chat history.
+- strengthen the embeddings prompt so the next agent is explicitly required to design and implement the full operational lifecycle, not just the provider/search plumbing.
+
+Implementation outcome:
+1. Added a repo-root prompt pack for the next non-bare-repo agents:
+   - embeddings implementation branch
+   - templating/design planning branch
+   - collaborative closeout branch
+2. Tightened the embeddings prompt requirements so the agent must cover:
+   - persistent lifecycle state (`pending|running|ready|failed|stale`)
+   - exact log/event contract (`enqueue`, `start`, `success`, `fail`, `retry`, `skip`, `stale`)
+   - exact status surfaces across CLI/MCP/TUI
+   - worker/recovery semantics (resume, stuck-job recovery, idempotency)
+   - completion criteria for “fully operational and observable”
+3. Left the separate bare-repo/worktree prompt out of the shared prompt pack because that lane is already in flight separately, per user direction.
+
+Files changed:
+1. `PLAN.md`
+2. `AGENT_PROMPTS.md`
+
+Commands run and outcomes:
+1. `git status --short` -> PASS
+2. `rg --files | rg '(^|/)(PROMPTS?|prompts?)'` -> EXPECTED NO MATCH (no existing root prompt file found before adding `AGENT_PROMPTS.md`)
+3. `rg -n "C6|embeddings|prompt" PLAN.md` -> PASS
+4. `sed -n '3240,3345p' PLAN.md` -> PASS
+5. `sed -n '1,80p' PLAN.md` -> PASS
+6. `test_not_applicable` -> PASS (docs-only prompt-pack update; no code, runtime, or test-surface changes)
+
+Current status:
+1. The reusable prompt pack is present in the repo root for future agent launches.
+2. The embeddings prompt now explicitly encodes the operational requirements we discussed, rather than leaving them implied.
+3. No code changed, so no `just` gates were rerun for this docs-only step.
 
 ### 2026-03-25: Pre-Collab Ctrl-C Echo Cleanup
 
