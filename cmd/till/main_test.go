@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,14 @@ import (
 func TestMain(m *testing.M) {
 	_ = os.Setenv("TILL_DEV_MODE", "false")
 	os.Exit(m.Run())
+}
+
+// ansiEscapePattern matches ANSI color/style escape sequences in forced-style output tests.
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripANSITest removes ANSI escape sequences from CLI test output snapshots.
+func stripANSITest(text string) string {
+	return ansiEscapePattern.ReplaceAllString(text, "")
 }
 
 // fakeProgram represents fake program data used by this package.
@@ -729,7 +738,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		t.Fatalf("show output leaked continuation metadata: %s", shownOut.String())
 	}
 	for _, want := range []string{
-		"AUTH REQUEST",
+		"Auth Request",
 		created.ID,
 		"review-agent • builder",
 		"requested path",
@@ -802,7 +811,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		t.Fatalf("approved show output leaked continuation metadata: %s", approvedShowOut.String())
 	}
 	for _, want := range []string{
-		"AUTH REQUEST",
+		"Auth Request",
 		approved.IssuedSessionID,
 		"approved path",
 		"project/p1/branch/review-branch",
@@ -862,7 +871,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		t.Fatalf("run(auth session list) error = %v", err)
 	}
 	for _, want := range []string{
-		"AUTH SESSIONS",
+		"Auth Sessions",
 		approved.IssuedSessionID,
 		"review-agent • builder",
 		"project/p1/branch/review-branch",
@@ -960,7 +969,7 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	}, &deniedListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request list denied) error = %v", err)
 	}
-	for _, want := range []string{"AUTH REQUESTS", deniedRequest.ID, "denied", "user-deny"} {
+	for _, want := range []string{"Auth Requests", deniedRequest.ID, "denied", "user-deny"} {
 		if !strings.Contains(deniedListOut.String(), want) {
 			t.Fatalf("expected %q in denied auth request list output, got %q", want, deniedListOut.String())
 		}
@@ -975,7 +984,7 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	}, &canceledListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request list canceled) error = %v", err)
 	}
-	for _, want := range []string{"AUTH REQUESTS", canceledRequest.ID, "canceled", "user-cancel"} {
+	for _, want := range []string{"Auth Requests", canceledRequest.ID, "canceled", "user-cancel"} {
 		if !strings.Contains(canceledListOut.String(), want) {
 			t.Fatalf("expected %q in canceled auth request list output, got %q", want, canceledListOut.String())
 		}
@@ -1020,7 +1029,7 @@ func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
 	}, &shownOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show timeout) error = %v", err)
 	}
-	for _, want := range []string{"AUTH REQUEST", "expired", "timed_out", created.ID} {
+	for _, want := range []string{"Auth Request", "expired", "timed_out", created.ID} {
 		if !strings.Contains(shownOut.String(), want) {
 			t.Fatalf("expected %q in timeout auth request show output, got %q", want, shownOut.String())
 		}
@@ -1332,7 +1341,7 @@ func TestRunProjectCommands(t *testing.T) {
 	}, &createOut, io.Discard); err != nil {
 		t.Fatalf("run(project create) error = %v", err)
 	}
-	if got := createOut.String(); !strings.Contains(got, "CREATED PROJECT") || !strings.Contains(got, "name") || !strings.Contains(got, "Inbox") || !strings.Contains(got, "owner") || !strings.Contains(got, "Platform") {
+	if got := createOut.String(); !strings.Contains(got, "Created Project") || !strings.Contains(got, "name") || !strings.Contains(got, "Inbox") || !strings.Contains(got, "owner") || !strings.Contains(got, "Platform") {
 		t.Fatalf("unexpected project create output: %q", got)
 	}
 
@@ -1344,7 +1353,7 @@ func TestRunProjectCommands(t *testing.T) {
 	}, &createPositionalOut, io.Discard); err != nil {
 		t.Fatalf("run(project create positional) error = %v", err)
 	}
-	if got := createPositionalOut.String(); !strings.Contains(got, "CREATED PROJECT") || !strings.Contains(got, "Roadmap") {
+	if got := createPositionalOut.String(); !strings.Contains(got, "Created Project") || !strings.Contains(got, "Roadmap") {
 		t.Fatalf("unexpected positional project create output: %q", got)
 	}
 
@@ -1360,7 +1369,7 @@ func TestRunProjectCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "--project-id", "p1"}, &showOut, io.Discard); err != nil {
 		t.Fatalf("run(project show) error = %v", err)
 	}
-	if got := showOut.String(); !strings.Contains(got, "PROJECT") || !strings.Contains(got, "name") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "id") || !strings.Contains(got, "p1") {
+	if got := showOut.String(); !strings.Contains(got, "Project") || !strings.Contains(got, "name") || !strings.Contains(got, "Project p1") || !strings.Contains(got, "id") || !strings.Contains(got, "p1") {
 		t.Fatalf("unexpected project show output: %q", got)
 	}
 
@@ -1368,7 +1377,7 @@ func TestRunProjectCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "show", "p1"}, &showPositionalOut, io.Discard); err != nil {
 		t.Fatalf("run(project show positional) error = %v", err)
 	}
-	if got := showPositionalOut.String(); !strings.Contains(got, "PROJECT") || !strings.Contains(got, "Project p1") {
+	if got := showPositionalOut.String(); !strings.Contains(got, "Project") || !strings.Contains(got, "Project p1") {
 		t.Fatalf("unexpected positional project show output: %q", got)
 	}
 
@@ -1393,7 +1402,7 @@ func TestRunProjectCommands(t *testing.T) {
 		t.Fatalf("run(project discover) error = %v", err)
 	}
 	gotDiscover := discoverOut.String()
-	for _, want := range []string{"PROJECT COLLABORATION READINESS", "COORDINATION INVENTORY", "pending_auth_requests", "till auth request show --request-id"} {
+	for _, want := range []string{"Project Collaboration Readiness", "Coordination Inventory", "pending_auth_requests", "till auth request show --request-id"} {
 		if !strings.Contains(gotDiscover, want) {
 			t.Fatalf("expected %q in project discover output, got %q", want, gotDiscover)
 		}
@@ -1403,7 +1412,7 @@ func TestRunProjectCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "project", "discover", "p1"}, &discoverPositionalOut, io.Discard); err != nil {
 		t.Fatalf("run(project discover positional) error = %v", err)
 	}
-	if got := discoverPositionalOut.String(); !strings.Contains(got, "PROJECT COLLABORATION READINESS") || !strings.Contains(got, "Project p1") {
+	if got := discoverPositionalOut.String(); !strings.Contains(got, "Project Collaboration Readiness") || !strings.Contains(got, "Project p1") {
 		t.Fatalf("unexpected positional project discover output: %q", got)
 	}
 }
@@ -1580,7 +1589,7 @@ func TestRunProjectListArchivedOnlyGuidance(t *testing.T) {
 		t.Fatalf("run(project list archived-only) error = %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "(none)") || !strings.Contains(got, "till project list --include-archived") {
+	if !strings.Contains(got, "No projects found.") || !strings.Contains(got, "till project list --include-archived") {
 		t.Fatalf("expected archived-only guidance, got %q", got)
 	}
 }
@@ -1769,7 +1778,7 @@ func TestRunCapabilityLeaseCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(lease list) error = %v", err)
 	}
-	for _, want := range []string{"CAPABILITY LEASES", "lane-a", issued.InstanceID, "builder", "project/p1", "active"} {
+	for _, want := range []string{"Capability Leases", "lane-a", issued.InstanceID, "builder", "project/p1", "active"} {
 		if !strings.Contains(listOut.String(), want) {
 			t.Fatalf("expected %q in lease list output, got %q", want, listOut.String())
 		}
@@ -1799,7 +1808,7 @@ func TestRunCapabilityLeaseCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1", "--include-revoked"}, &revokedListOut, io.Discard); err != nil {
 		t.Fatalf("run(lease list include revoked) error = %v", err)
 	}
-	for _, want := range []string{"CAPABILITY LEASES", issued.InstanceID, "revoked"} {
+	for _, want := range []string{"Capability Leases", issued.InstanceID, "revoked"} {
 		if !strings.Contains(revokedListOut.String(), want) {
 			t.Fatalf("expected %q in revoked lease list output, got %q", want, revokedListOut.String())
 		}
@@ -1847,7 +1856,7 @@ func TestRunHandoffCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff list) error = %v", err)
 	}
-	for _, want := range []string{"HANDOFFS", created.ID, "builder", "waiting", "qa handoff"} {
+	for _, want := range []string{"Handoffs", created.ID, "builder", "waiting", "qa handoff"} {
 		if !strings.Contains(listOut.String(), "role:qa") {
 			t.Fatalf("expected role-only handoff target in handoff list output, got %q", listOut.String())
 		}
@@ -1860,7 +1869,7 @@ func TestRunHandoffCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "get", "--handoff-id", created.ID}, &getOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff get) error = %v", err)
 	}
-	for _, want := range []string{"HANDOFF", created.ID, "builder -> qa", "role:qa", "qa handoff", "waiting"} {
+	for _, want := range []string{"Handoff", created.ID, "builder -> qa", "role:qa", "qa handoff", "waiting"} {
 		if !strings.Contains(getOut.String(), want) {
 			t.Fatalf("expected %q in handoff get output, got %q", want, getOut.String())
 		}
@@ -2718,7 +2727,7 @@ func TestWritePathsOutputStyled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writePathsOutput(styled) error = %v", err)
 	}
-	got := out.String()
+	got := stripANSITest(out.String())
 	if !strings.Contains(got, "Resolved Paths") {
 		t.Fatalf("expected styled heading in output, got %q", got)
 	}

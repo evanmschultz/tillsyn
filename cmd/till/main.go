@@ -16,9 +16,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
+	"github.com/evanmschultz/laslig"
 	"github.com/google/uuid"
 	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
 	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
@@ -1314,45 +1314,20 @@ func writeVersion(stdout io.Writer) error {
 	return nil
 }
 
-// writePathsOutput renders resolved paths using Fang-aligned styling.
+// writePathsOutput renders resolved paths using plain text for scripts and laslig for styled terminals.
 func writePathsOutput(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
 	if !supportsStyledOutputFunc(stdout) {
 		return writePathsPlain(stdout, opts, resolvedPaths, rootDir, logDir)
 	}
-
-	isDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
-	colors := fang.DefaultColorScheme(lipgloss.LightDark(isDark))
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colors.Title)
-	keyStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colors.Flag)
-	valueStyle := lipgloss.NewStyle().
-		Foreground(colors.Description)
-
 	rows := buildPathsRows(opts, resolvedPaths, rootDir, logDir)
-
-	maxKeyWidth := 0
+	pairs := make([][2]string, 0, len(rows))
 	for _, row := range rows {
-		if len(row.key) > maxKeyWidth {
-			maxKeyWidth = len(row.key)
-		}
+		pairs = append(pairs, [2]string{row.key, row.value})
 	}
-
-	lines := make([]string, 0, len(rows)+1)
-	lines = append(lines, titleStyle.Render("Resolved Paths"))
-	for _, row := range rows {
-		paddedKey := fmt.Sprintf("%-*s:", maxKeyWidth, row.key)
-		line := lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			keyStyle.Render(paddedKey),
-			"  ",
-			valueStyle.Render(row.value),
-		)
-		lines = append(lines, line)
-	}
-	if _, err := fmt.Fprintln(stdout, strings.Join(lines, "\n")); err != nil {
+	if err := newStyledCLIPrinter(stdout).KV(laslig.KV{
+		Title: "Resolved Paths",
+		Pairs: cliFields(pairs),
+	}); err != nil {
 		return fmt.Errorf("write paths output: %w", err)
 	}
 	return nil

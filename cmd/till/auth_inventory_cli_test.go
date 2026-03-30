@@ -53,7 +53,7 @@ func TestWriteAuthRequestListHuman(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"AUTH REQUESTS",
+		"Auth Requests",
 		"NAME",
 		"REQUEST ID",
 		"STATE",
@@ -121,7 +121,7 @@ func TestWriteAuthRequestDetailHuman(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"AUTH REQUEST",
+		"Auth Request",
 		"name",
 		"Review Agent [review-1] • builder",
 		"request id",
@@ -201,7 +201,7 @@ func TestWriteAuthSessionListHuman(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"AUTH SESSIONS",
+		"Auth Sessions",
 		"NAME",
 		"SESSION ID",
 		"STATE",

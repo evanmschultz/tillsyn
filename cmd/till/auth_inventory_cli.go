@@ -5,7 +5,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"time"
 )
 
@@ -13,23 +12,9 @@ import (
 func writeAuthRequestListHuman(stdout io.Writer, requests []authRequestPayloadJSON) error {
 	rows := append([]authRequestPayloadJSON(nil), requests...)
 	slices.SortFunc(rows, compareAuthRequestsForCLI)
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "AUTH REQUESTS"); err != nil {
-		return fmt.Errorf("write auth request list header: %w", err)
-	}
-	if _, err := fmt.Fprintln(tw, "NAME\tREQUEST ID\tSTATE\tCLIENT\tREQUESTED PATH\tAPPROVED PATH\tREQUESTED BY\tREQUESTED TTL\tAPPROVED TTL\tRESULT SESSION"); err != nil {
-		return fmt.Errorf("write auth request list columns: %w", err)
-	}
-	if len(rows) == 0 {
-		if _, err := fmt.Fprintln(tw, "(none)\t-\t-\t-\t-\t-\t-\t-\t-\t-"); err != nil {
-			return fmt.Errorf("write empty auth request row: %w", err)
-		}
-		return flushAuthInventoryTable(tw, "auth request list")
-	}
+	renderRows := make([][]string, 0, len(rows))
 	for _, request := range rows {
-		if _, err := fmt.Fprintf(
-			tw,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		renderRows = append(renderRows, []string{
 			humanAuthPrincipalLabel(request.PrincipalName, request.PrincipalID, request.PrincipalRole),
 			firstNonEmptyTrimmed(request.ID, "-"),
 			firstNonEmptyTrimmed(request.State, "-"),
@@ -40,19 +25,19 @@ func writeAuthRequestListHuman(stdout io.Writer, requests []authRequestPayloadJS
 			humanAuthDurationLabel(request.RequestedSessionTTL),
 			humanAuthDurationLabel(request.ApprovedSessionTTL),
 			firstNonEmptyTrimmed(request.IssuedSessionID, "-"),
-		); err != nil {
-			return fmt.Errorf("write auth request list row: %w", err)
-		}
+		})
 	}
-	return flushAuthInventoryTable(tw, "auth request list")
+	return writeCLITable(
+		stdout,
+		"Auth Requests",
+		[]string{"NAME", "REQUEST ID", "STATE", "CLIENT", "REQUESTED PATH", "APPROVED PATH", "REQUESTED BY", "REQUESTED TTL", "APPROVED TTL", "RESULT SESSION"},
+		renderRows,
+		"No auth requests found.",
+	)
 }
 
 // writeAuthRequestDetailHuman renders one auth request as a stable human-readable detail block.
 func writeAuthRequestDetailHuman(stdout io.Writer, request authRequestPayloadJSON) error {
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "AUTH REQUEST"); err != nil {
-		return fmt.Errorf("write auth request detail header: %w", err)
-	}
 	rows := [][2]string{
 		{"name", humanAuthPrincipalLabel(request.PrincipalName, request.PrincipalID, request.PrincipalRole)},
 		{"request id", firstNonEmptyTrimmed(request.ID, "-")},
@@ -71,41 +56,16 @@ func writeAuthRequestDetailHuman(stdout io.Writer, request authRequestPayloadJSO
 		{"resolved at", formatAuthOptionalTime(request.ResolvedAt)},
 		{"resolution note", firstNonEmptyTrimmed(request.ResolutionNote, "-")},
 	}
-	for _, row := range rows {
-		if row[1] == "" {
-			continue
-		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1]); err != nil {
-			return fmt.Errorf("write auth request detail row: %w", err)
-		}
-	}
-	if err := tw.Flush(); err != nil {
-		return fmt.Errorf("flush auth request detail: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, "Auth Request", rows)
 }
 
 // writeAuthSessionListHuman renders auth sessions as a stable human-readable table.
 func writeAuthSessionListHuman(stdout io.Writer, sessions []authSessionPayloadJSON) error {
 	rows := append([]authSessionPayloadJSON(nil), sessions...)
 	slices.SortFunc(rows, compareAuthSessionsForCLI)
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "AUTH SESSIONS"); err != nil {
-		return fmt.Errorf("write auth session list header: %w", err)
-	}
-	if _, err := fmt.Fprintln(tw, "NAME\tSESSION ID\tSTATE\tCLIENT\tPROJECT\tAPPROVED PATH\tEXPIRES\tREVOCATION"); err != nil {
-		return fmt.Errorf("write auth session list columns: %w", err)
-	}
-	if len(rows) == 0 {
-		if _, err := fmt.Fprintln(tw, "(none)\t-\t-\t-\t-\t-\t-\t-"); err != nil {
-			return fmt.Errorf("write empty auth session row: %w", err)
-		}
-		return flushAuthInventoryTable(tw, "auth session list")
-	}
+	renderRows := make([][]string, 0, len(rows))
 	for _, session := range rows {
-		if _, err := fmt.Fprintf(
-			tw,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		renderRows = append(renderRows, []string{
 			humanAuthPrincipalLabel(session.PrincipalName, session.PrincipalID, session.PrincipalRole),
 			firstNonEmptyTrimmed(session.SessionID, "-"),
 			firstNonEmptyTrimmed(session.State, "-"),
@@ -114,11 +74,15 @@ func writeAuthSessionListHuman(stdout io.Writer, sessions []authSessionPayloadJS
 			firstNonEmptyTrimmed(session.ApprovedPath, "-"),
 			formatAuthTime(session.ExpiresAt),
 			firstNonEmptyTrimmed(session.RevocationReason, "-"),
-		); err != nil {
-			return fmt.Errorf("write auth session list row: %w", err)
-		}
+		})
 	}
-	return flushAuthInventoryTable(tw, "auth session list")
+	return writeCLITable(
+		stdout,
+		"Auth Sessions",
+		[]string{"NAME", "SESSION ID", "STATE", "CLIENT", "PROJECT", "APPROVED PATH", "EXPIRES", "REVOCATION"},
+		renderRows,
+		"No auth sessions found.",
+	)
 }
 
 // compareAuthRequestsForCLI sorts auth requests by operator-visible name, then id.
@@ -236,12 +200,4 @@ func firstNonEmptyTrimmed(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// flushAuthInventoryTable flushes one tabwriter-backed inventory table.
-func flushAuthInventoryTable(tw *tabwriter.Writer, context string) error {
-	if err := tw.Flush(); err != nil {
-		return fmt.Errorf("flush %s: %w", context, err)
-	}
-	return nil
 }

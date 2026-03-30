@@ -15,6 +15,12 @@ Current scope:
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
+Concurrent local branch/worktree workflow: `WORKTREE_WORKFLOW.md`
+
+Local dogfood repo layout note:
+- the bare control repo lives one directory above this checkout,
+- `main/` is the operator/integration worktree,
+- additional linked worktrees typically live under the bare root's `.tmp/`.
 
 ## Features
 - Multi-project Kanban board.
@@ -125,12 +131,12 @@ Dangerous limitation note (pre-hardening, design warning):
 
 ## Run
 ```bash
-just run
+mage run
 ```
 
 Or build once and run the binary:
 ```bash
-just build
+mage build
 ./till
 ```
 
@@ -317,30 +323,24 @@ Current usage is Fang-inspired help copy/style in the in-app command reference o
 ## Developer Workflow
 Primary commands:
 ```bash
-just fmt
-just test-pkg ./internal/app
-just check
-just test
-just ci
+mage test-pkg ./internal/app
+mage ci
+mage build
 ```
 
 For contribution policy, pre-push expectations, and branch-protection recommendations, see `CONTRIBUTING.md`.
 
 VHS visual regression captures:
 ```bash
-just vhs
-just vhs vhs/regression_subtasks.tape
-just vhs vhs/regression_scroll.tape
+vhs vhs/regression_subtasks.tape
+vhs vhs/regression_scroll.tape
 ```
 
 Golden tests:
 ```bash
-just test-golden
-just test-golden-update
+mage test-golden
+mage test-golden-update
 ```
 
 ## CI
-GitHub Actions runs split gates:
-- matrix smoke checks on macOS/Linux/Windows via `just check`
-- full Linux gate via `just ci`
-- Goreleaser snapshot validation after the full Linux gate
+GitHub Actions runs `mage ci` on macOS/Linux/Windows, then validates a Goreleaser snapshot.
