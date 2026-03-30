@@ -173,7 +173,7 @@ The slice is dogfood-ready only if all of the following are true:
 4. No manual “check status again” step is required for the normal path.
 5. If the live wake path fails, durable state still reflects the correct auth decision.
 6. Stale wait registrations are cleaned up or ignored safely.
-7. `just check`, `just ci`, and remote GitHub Actions all pass.
+7. `mage ci` and remote GitHub Actions all pass.
 8. The collaborative E2E auth/MCP worksheet is updated before manual rerun.
 
 ## 9. Implementation Slices

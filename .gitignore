@@ -10,5 +10,6 @@ bin/
 .go-mod-cache/
 .go-build-cache/
 .tillsyn/
+# Codex config belongs at the bare repo root, not inside tracked worktrees.
 .codex/
 .nvimlog

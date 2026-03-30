@@ -111,7 +111,7 @@ When a node is created, the template for that node type should be able to:
 
 Examples already agreed in discussion:
 - a Go project can start with language-specific metadata, testing expectations, and default planning structure
-- a branch can auto-create CI or verification tasks such as `just check` / full validation flows
+- a branch can auto-create CI or verification tasks such as `mage ci`
 - a phase can auto-create QA or review tasks
 - a task can auto-create subtasks for package-level tests, QA checks, or validation follow-ups
 

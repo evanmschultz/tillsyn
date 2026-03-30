@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/hylla/tillsyn/internal/domain"
@@ -14,7 +12,34 @@ import (
 
 // writeCoordinationLeaseList renders one deterministic human-readable lease table.
 func writeCoordinationLeaseList(stdout io.Writer, now time.Time, leases []domain.CapabilityLease) error {
-	if _, err := io.WriteString(stdout, renderCoordinationLeaseListAt(now, leases)); err != nil {
+	ordered := append([]domain.CapabilityLease(nil), leases...)
+	slices.SortFunc(ordered, compareCoordinationLeasesForCLI)
+	rows := make([][]string, 0, len(ordered))
+	for _, lease := range ordered {
+		rows = append(rows, []string{
+			coordinationLeaseAgentLabel(lease),
+			firstNonEmptyTrimmed(string(lease.Role), "-"),
+			firstNonEmptyTrimmed(lease.ProjectID, "-"),
+			coordinationLeaseScopeLabel(lease),
+			coordinationLeaseStatusAt(lease, now),
+			firstNonEmptyTrimmed(lease.InstanceID, lease.LeaseToken, "-"),
+			lease.ExpiresAt.UTC().Format(time.RFC3339),
+		})
+	}
+	printer := newCLIPrinter(stdout)
+	if len(rows) == 0 {
+		if err := writeCLIPanelWithPrinter(printer, "Capability Leases", "No capability leases found.", ""); err != nil {
+			return fmt.Errorf("write coordination lease empty state: %w", err)
+		}
+		return nil
+	}
+	if err := writeCLITableWithPrinter(
+		printer,
+		"Capability Leases",
+		[]string{"AGENT", "ROLE", "PROJECT", "SCOPE", "STATUS", "ID", "EXPIRES"},
+		rows,
+		"No capability leases found.",
+	); err != nil {
 		return fmt.Errorf("write coordination lease list: %w", err)
 	}
 	return nil
@@ -24,66 +49,130 @@ func writeCoordinationLeaseList(stdout io.Writer, now time.Time, leases []domain
 func renderCoordinationLeaseListAt(now time.Time, leases []domain.CapabilityLease) string {
 	ordered := append([]domain.CapabilityLease(nil), leases...)
 	slices.SortFunc(ordered, compareCoordinationLeasesForCLI)
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CAPABILITY LEASES")
-	_, _ = fmt.Fprintln(tw, "AGENT\tROLE\tPROJECT\tSCOPE\tSTATUS\tID\tEXPIRES")
-	if len(ordered) == 0 {
-		_, _ = fmt.Fprintln(tw, "(none)\t-\t-\t-\t-\t-\t-")
-	} else {
-		for _, lease := range ordered {
-			_, _ = fmt.Fprintf(
-				tw,
-				"%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				coordinationLeaseAgentLabel(lease),
-				firstNonEmptyTrimmed(string(lease.Role), "-"),
-				firstNonEmptyTrimmed(lease.ProjectID, "-"),
-				coordinationLeaseScopeLabel(lease),
-				coordinationLeaseStatusAt(lease, now),
-				firstNonEmptyTrimmed(lease.InstanceID, lease.LeaseToken, "-"),
-				lease.ExpiresAt.UTC().Format(time.RFC3339),
-			)
-		}
+	rows := make([][]string, 0, len(ordered))
+	for _, lease := range ordered {
+		rows = append(rows, []string{
+			coordinationLeaseAgentLabel(lease),
+			firstNonEmptyTrimmed(string(lease.Role), "-"),
+			firstNonEmptyTrimmed(lease.ProjectID, "-"),
+			coordinationLeaseScopeLabel(lease),
+			coordinationLeaseStatusAt(lease, now),
+			firstNonEmptyTrimmed(lease.InstanceID, lease.LeaseToken, "-"),
+			lease.ExpiresAt.UTC().Format(time.RFC3339),
+		})
 	}
-	_ = tw.Flush()
-	return buf.String()
+	var out strings.Builder
+	printer := newCLIPrinter(&out)
+	if len(rows) == 0 {
+		_ = writeCLIPanelWithPrinter(printer, "Capability Leases", "No capability leases found.", "")
+		return out.String()
+	}
+	_ = writeCLITableWithPrinter(
+		printer,
+		"Capability Leases",
+		[]string{"AGENT", "ROLE", "PROJECT", "SCOPE", "STATUS", "ID", "EXPIRES"},
+		rows,
+		"No capability leases found.",
+	)
+	return out.String()
 }
 
 // writeCoordinationLeaseDetail renders one deterministic human-readable lease detail block.
 func writeCoordinationLeaseDetail(stdout io.Writer, now time.Time, lease domain.CapabilityLease) error {
-	if _, err := io.WriteString(stdout, renderCoordinationLeaseDetailAt(now, lease)); err != nil {
+	rows := [][2]string{
+		{"agent", coordinationLeaseAgentLabel(lease)},
+		{"id", firstNonEmptyTrimmed(lease.InstanceID, lease.LeaseToken, "-")},
+		{"role", firstNonEmptyTrimmed(string(lease.Role), "-")},
+		{"project", firstNonEmptyTrimmed(lease.ProjectID, "-")},
+		{"scope", coordinationLeaseScopeLabel(lease)},
+		{"status", coordinationLeaseStatusAt(lease, now)},
+		{"parent", firstNonEmptyTrimmed(lease.ParentInstanceID, "-")},
+		{"allow equal scope delegation", yesNo(lease.AllowEqualScopeDelegation)},
+		{"issued", lease.IssuedAt.UTC().Format(time.RFC3339)},
+		{"expires", lease.ExpiresAt.UTC().Format(time.RFC3339)},
+		{"heartbeat", lease.HeartbeatAt.UTC().Format(time.RFC3339)},
+	}
+	if lease.RevokedAt != nil {
+		rows = append(rows, [2]string{"revoked", lease.RevokedAt.UTC().Format(time.RFC3339)})
+	} else {
+		rows = append(rows, [2]string{"revoked", "-"})
+	}
+	rows = append(rows, [2]string{"revoked reason", firstNonEmptyTrimmed(lease.RevokedReason, "-")})
+	if err := writeCLIKV(stdout, "Capability Lease", rows); err != nil {
 		return fmt.Errorf("write coordination lease detail: %w", err)
+	}
+	return nil
+}
+
+// writeCoordinationLeaseRevocationSummary renders one deterministic human-readable revoke-all summary.
+func writeCoordinationLeaseRevocationSummary(stdout io.Writer, projectID string, scopeType domain.CapabilityScopeType, scopeID, reason string) error {
+	rows := [][2]string{
+		{"project", firstNonEmptyTrimmed(projectID, "-")},
+		{"scope", coordinationLeaseScopeLabelFromParts(projectID, scopeType, scopeID)},
+		{"reason", firstNonEmptyTrimmed(reason, "-")},
+		{"status", "revoked"},
+	}
+	if err := writeCLIKV(stdout, "Capability Lease Revocation", rows); err != nil {
+		return fmt.Errorf("write coordination lease revoke-all summary: %w", err)
 	}
 	return nil
 }
 
 // renderCoordinationLeaseDetailAt renders one deterministic human-readable lease detail block.
 func renderCoordinationLeaseDetailAt(now time.Time, lease domain.CapabilityLease) string {
-	var b strings.Builder
-	fmt.Fprintln(&b, "CAPABILITY LEASE")
-	fmt.Fprintf(&b, "agent\t%s\n", coordinationLeaseAgentLabel(lease))
-	fmt.Fprintf(&b, "id\t%s\n", firstNonEmptyTrimmed(lease.InstanceID, lease.LeaseToken, "-"))
-	fmt.Fprintf(&b, "role\t%s\n", firstNonEmptyTrimmed(string(lease.Role), "-"))
-	fmt.Fprintf(&b, "project\t%s\n", firstNonEmptyTrimmed(lease.ProjectID, "-"))
-	fmt.Fprintf(&b, "scope\t%s\n", coordinationLeaseScopeLabel(lease))
-	fmt.Fprintf(&b, "status\t%s\n", coordinationLeaseStatusAt(lease, now))
-	fmt.Fprintf(&b, "parent\t%s\n", firstNonEmptyTrimmed(lease.ParentInstanceID, "-"))
-	fmt.Fprintf(&b, "allow equal scope delegation\t%s\n", yesNo(lease.AllowEqualScopeDelegation))
-	fmt.Fprintf(&b, "issued\t%s\n", lease.IssuedAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "expires\t%s\n", lease.ExpiresAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "heartbeat\t%s\n", lease.HeartbeatAt.UTC().Format(time.RFC3339))
-	if lease.RevokedAt != nil {
-		fmt.Fprintf(&b, "revoked\t%s\n", lease.RevokedAt.UTC().Format(time.RFC3339))
-	} else {
-		fmt.Fprintln(&b, "revoked\t-")
+	rows := [][2]string{
+		{"agent", coordinationLeaseAgentLabel(lease)},
+		{"id", firstNonEmptyTrimmed(lease.InstanceID, lease.LeaseToken, "-")},
+		{"role", firstNonEmptyTrimmed(string(lease.Role), "-")},
+		{"project", firstNonEmptyTrimmed(lease.ProjectID, "-")},
+		{"scope", coordinationLeaseScopeLabel(lease)},
+		{"status", coordinationLeaseStatusAt(lease, now)},
+		{"parent", firstNonEmptyTrimmed(lease.ParentInstanceID, "-")},
+		{"allow equal scope delegation", yesNo(lease.AllowEqualScopeDelegation)},
+		{"issued", lease.IssuedAt.UTC().Format(time.RFC3339)},
+		{"expires", lease.ExpiresAt.UTC().Format(time.RFC3339)},
+		{"heartbeat", lease.HeartbeatAt.UTC().Format(time.RFC3339)},
 	}
-	fmt.Fprintf(&b, "revoked reason\t%s\n", firstNonEmptyTrimmed(lease.RevokedReason, "-"))
-	return b.String()
+	if lease.RevokedAt != nil {
+		rows = append(rows, [2]string{"revoked", lease.RevokedAt.UTC().Format(time.RFC3339)})
+	} else {
+		rows = append(rows, [2]string{"revoked", "-"})
+	}
+	rows = append(rows, [2]string{"revoked reason", firstNonEmptyTrimmed(lease.RevokedReason, "-")})
+	var out strings.Builder
+	_ = writeCLIKV(&out, "Capability Lease", rows)
+	return out.String()
 }
 
 // writeCoordinationHandoffList renders one deterministic human-readable handoff table.
 func writeCoordinationHandoffList(stdout io.Writer, handoffs []domain.Handoff) error {
-	if _, err := io.WriteString(stdout, renderCoordinationHandoffList(handoffs)); err != nil {
+	ordered := append([]domain.Handoff(nil), handoffs...)
+	slices.SortFunc(ordered, compareCoordinationHandoffsForCLI)
+	rows := make([][]string, 0, len(ordered))
+	for _, handoff := range ordered {
+		rows = append(rows, []string{
+			coordinationHandoffFlowLabel(handoff),
+			firstNonEmptyTrimmed(string(handoff.Status), "-"),
+			coordinationHandoffScopeLabel(handoff),
+			coordinationHandoffTargetLabel(handoff),
+			firstNonEmptyTrimmed(handoff.ID, "-"),
+			compactText(handoff.Summary),
+		})
+	}
+	printer := newCLIPrinter(stdout)
+	if len(rows) == 0 {
+		if err := writeCLIPanelWithPrinter(printer, "Handoffs", "No handoffs found.", ""); err != nil {
+			return fmt.Errorf("write coordination handoff empty state: %w", err)
+		}
+		return nil
+	}
+	if err := writeCLITableWithPrinter(
+		printer,
+		"Handoffs",
+		[]string{"FLOW", "STATUS", "SCOPE", "TARGET", "ID", "SUMMARY"},
+		rows,
+		"No handoffs found.",
+	); err != nil {
 		return fmt.Errorf("write coordination handoff list: %w", err)
 	}
 	return nil
@@ -93,33 +182,56 @@ func writeCoordinationHandoffList(stdout io.Writer, handoffs []domain.Handoff) e
 func renderCoordinationHandoffList(handoffs []domain.Handoff) string {
 	ordered := append([]domain.Handoff(nil), handoffs...)
 	slices.SortFunc(ordered, compareCoordinationHandoffsForCLI)
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "HANDOFFS")
-	_, _ = fmt.Fprintln(tw, "FLOW\tSTATUS\tSCOPE\tTARGET\tID\tSUMMARY")
-	if len(ordered) == 0 {
-		_, _ = fmt.Fprintln(tw, "(none)\t-\t-\t-\t-\t-")
-	} else {
-		for _, handoff := range ordered {
-			_, _ = fmt.Fprintf(
-				tw,
-				"%s\t%s\t%s\t%s\t%s\t%s\n",
-				coordinationHandoffFlowLabel(handoff),
-				firstNonEmptyTrimmed(string(handoff.Status), "-"),
-				coordinationHandoffScopeLabel(handoff),
-				coordinationHandoffTargetLabel(handoff),
-				firstNonEmptyTrimmed(handoff.ID, "-"),
-				compactText(handoff.Summary),
-			)
-		}
+	rows := make([][]string, 0, len(ordered))
+	for _, handoff := range ordered {
+		rows = append(rows, []string{
+			coordinationHandoffFlowLabel(handoff),
+			firstNonEmptyTrimmed(string(handoff.Status), "-"),
+			coordinationHandoffScopeLabel(handoff),
+			coordinationHandoffTargetLabel(handoff),
+			firstNonEmptyTrimmed(handoff.ID, "-"),
+			compactText(handoff.Summary),
+		})
 	}
-	_ = tw.Flush()
-	return buf.String()
+	var out strings.Builder
+	printer := newCLIPrinter(&out)
+	if len(rows) == 0 {
+		_ = writeCLIPanelWithPrinter(printer, "Handoffs", "No handoffs found.", "")
+		return out.String()
+	}
+	_ = writeCLITableWithPrinter(
+		printer,
+		"Handoffs",
+		[]string{"FLOW", "STATUS", "SCOPE", "TARGET", "ID", "SUMMARY"},
+		rows,
+		"No handoffs found.",
+	)
+	return out.String()
 }
 
 // writeCoordinationHandoffDetail renders one deterministic human-readable handoff detail block.
 func writeCoordinationHandoffDetail(stdout io.Writer, handoff domain.Handoff) error {
-	if _, err := io.WriteString(stdout, renderCoordinationHandoffDetail(handoff)); err != nil {
+	rows := [][2]string{
+		{"flow", coordinationHandoffFlowLabel(handoff)},
+		{"id", firstNonEmptyTrimmed(handoff.ID, "-")},
+		{"project", firstNonEmptyTrimmed(handoff.ProjectID, "-")},
+		{"scope", coordinationHandoffScopeLabel(handoff)},
+		{"target", coordinationHandoffTargetLabel(handoff)},
+		{"status", firstNonEmptyTrimmed(string(handoff.Status), "-")},
+		{"summary", compactText(handoff.Summary)},
+		{"next action", compactText(handoff.NextAction)},
+		{"missing evidence", renderCoordinationStringList(handoff.MissingEvidence)},
+		{"related refs", renderCoordinationStringList(handoff.RelatedRefs)},
+		{"created by", renderCoordinationActorLabel(handoff.CreatedByActor, handoff.CreatedByType)},
+		{"updated by", renderCoordinationActorLabel(handoff.UpdatedByActor, handoff.UpdatedByType)},
+	}
+	if handoff.ResolvedAt != nil {
+		rows = append(rows, [2]string{"resolved at", handoff.ResolvedAt.UTC().Format(time.RFC3339)})
+	} else {
+		rows = append(rows, [2]string{"resolved at", "-"})
+	}
+	rows = append(rows, [2]string{"resolution note", compactText(handoff.ResolutionNote)})
+	if err := writeCLIKV(stdout, "Handoff", rows); err != nil {
 		return fmt.Errorf("write coordination handoff detail: %w", err)
 	}
 	return nil
@@ -127,27 +239,29 @@ func writeCoordinationHandoffDetail(stdout io.Writer, handoff domain.Handoff) er
 
 // renderCoordinationHandoffDetail renders one deterministic human-readable handoff detail block.
 func renderCoordinationHandoffDetail(handoff domain.Handoff) string {
-	var b strings.Builder
-	fmt.Fprintln(&b, "HANDOFF")
-	fmt.Fprintf(&b, "flow\t%s\n", coordinationHandoffFlowLabel(handoff))
-	fmt.Fprintf(&b, "id\t%s\n", firstNonEmptyTrimmed(handoff.ID, "-"))
-	fmt.Fprintf(&b, "project\t%s\n", firstNonEmptyTrimmed(handoff.ProjectID, "-"))
-	fmt.Fprintf(&b, "scope\t%s\n", coordinationHandoffScopeLabel(handoff))
-	fmt.Fprintf(&b, "target\t%s\n", coordinationHandoffTargetLabel(handoff))
-	fmt.Fprintf(&b, "status\t%s\n", firstNonEmptyTrimmed(string(handoff.Status), "-"))
-	fmt.Fprintf(&b, "summary\t%s\n", compactText(handoff.Summary))
-	fmt.Fprintf(&b, "next action\t%s\n", compactText(handoff.NextAction))
-	fmt.Fprintf(&b, "missing evidence\t%s\n", renderCoordinationStringList(handoff.MissingEvidence))
-	fmt.Fprintf(&b, "related refs\t%s\n", renderCoordinationStringList(handoff.RelatedRefs))
-	fmt.Fprintf(&b, "created by\t%s\n", renderCoordinationActorLabel(handoff.CreatedByActor, handoff.CreatedByType))
-	fmt.Fprintf(&b, "updated by\t%s\n", renderCoordinationActorLabel(handoff.UpdatedByActor, handoff.UpdatedByType))
-	if handoff.ResolvedAt != nil {
-		fmt.Fprintf(&b, "resolved at\t%s\n", handoff.ResolvedAt.UTC().Format(time.RFC3339))
-	} else {
-		fmt.Fprintln(&b, "resolved at\t-")
+	rows := [][2]string{
+		{"flow", coordinationHandoffFlowLabel(handoff)},
+		{"id", firstNonEmptyTrimmed(handoff.ID, "-")},
+		{"project", firstNonEmptyTrimmed(handoff.ProjectID, "-")},
+		{"scope", coordinationHandoffScopeLabel(handoff)},
+		{"target", coordinationHandoffTargetLabel(handoff)},
+		{"status", firstNonEmptyTrimmed(string(handoff.Status), "-")},
+		{"summary", compactText(handoff.Summary)},
+		{"next action", compactText(handoff.NextAction)},
+		{"missing evidence", renderCoordinationStringList(handoff.MissingEvidence)},
+		{"related refs", renderCoordinationStringList(handoff.RelatedRefs)},
+		{"created by", renderCoordinationActorLabel(handoff.CreatedByActor, handoff.CreatedByType)},
+		{"updated by", renderCoordinationActorLabel(handoff.UpdatedByActor, handoff.UpdatedByType)},
 	}
-	fmt.Fprintf(&b, "resolution note\t%s\n", compactText(handoff.ResolutionNote))
-	return b.String()
+	if handoff.ResolvedAt != nil {
+		rows = append(rows, [2]string{"resolved at", handoff.ResolvedAt.UTC().Format(time.RFC3339)})
+	} else {
+		rows = append(rows, [2]string{"resolved at", "-"})
+	}
+	rows = append(rows, [2]string{"resolution note", compactText(handoff.ResolutionNote)})
+	var out strings.Builder
+	_ = writeCLIKV(&out, "Handoff", rows)
+	return out.String()
 }
 
 // compareCoordinationLeasesForCLI sorts leases by agent, then role, then id for stable operator output.
@@ -179,16 +293,20 @@ func coordinationLeaseAgentLabel(lease domain.CapabilityLease) string {
 
 // coordinationLeaseScopeLabel returns one stable lease scope label.
 func coordinationLeaseScopeLabel(lease domain.CapabilityLease) string {
-	scopeType := strings.TrimSpace(string(lease.ScopeType))
+	return coordinationLeaseScopeLabelFromParts(lease.ProjectID, lease.ScopeType, lease.ScopeID)
+}
+
+func coordinationLeaseScopeLabelFromParts(projectID string, scopeType domain.CapabilityScopeType, scopeID string) string {
+	rawScopeType := strings.TrimSpace(string(scopeType))
 	switch {
-	case scopeType == "":
-		return firstNonEmptyTrimmed(lease.ProjectID, "-")
-	case scopeType == string(domain.CapabilityScopeProject):
-		return "project/" + firstNonEmptyTrimmed(lease.ProjectID, "-")
-	case strings.TrimSpace(lease.ScopeID) == "":
-		return scopeType
+	case rawScopeType == "":
+		return firstNonEmptyTrimmed(projectID, "-")
+	case rawScopeType == string(domain.CapabilityScopeProject):
+		return "project/" + firstNonEmptyTrimmed(projectID, "-")
+	case strings.TrimSpace(scopeID) == "":
+		return rawScopeType
 	default:
-		return scopeType + "/" + strings.TrimSpace(lease.ScopeID)
+		return rawScopeType + "/" + strings.TrimSpace(scopeID)
 	}
 }
 

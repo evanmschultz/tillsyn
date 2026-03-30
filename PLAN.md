@@ -2,90 +2,24 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, snapshot transport for template libraries/project bindings/node-contract snapshots, and first-class TUI bind/inspect surfaces, including real project-kind and template-library pickers in the project form instead of raw id typing. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical. The main remaining legacy seam is create-time kind-template fallback rather than user-facing authoring/operator workflow.
+Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
-## Checkpoint 2026-03-30: TUI Project Kind Picker + Template-Aware Create Path
-
-Objective:
-- fix the remaining broken TUI dogfood path by making project create/edit send a real project kind, so project-scope template rules can match and generate work like `Initial Build`.
-
-Context7:
-1. `/charmbracelet/bubbletea` reviewed before the TUI patch for:
-   - consistent modal picker mode transitions,
-   - and explicit key-handling order for picker navigation versus filter typing -> PASS.
-
-Implementation summary:
-1. Extended TUI project data loading:
-   - load kind definitions alongside projects and approved template libraries,
-   - keep them in normal model state,
-   - and expose project-applicable kind choices to the project form.
-2. Added a project-kind picker to the existing project form:
-   - the form now includes a `kind` field,
-   - opens a dedicated picker on enter/e/type,
-   - and sends the selected kind on both project create and project update.
-3. Closed the template create-time mismatch:
-   - template-library selection now auto-seeds project kind when the chosen library has exactly one project-scope node-template kind,
-   - so the common path of “pick the library and create the project” now actually triggers project-scope template generation.
-4. Added focused TUI coverage:
-   - explicit project-kind picker selection on create,
-   - template-library binding on create while preserving the selected kind,
-   - and auto-kind seeding from a single project-scope template-library definition.
-
-Validation:
-1. `just fmt` -> PASS.
-2. `just test-pkg ./internal/tui` -> PASS.
-
-Current status:
-1. TUI-created projects can now carry the correct kind instead of silently defaulting to `project`.
-2. Brand-new template-backed project creation is now testable in TUI without dropping to CLI just to get the project kind right.
-3. Remaining work is back to template MVP cleanup and battle testing rather than a broken core TUI path.
-
-## Checkpoint 2026-03-30: TUI Template-Library Picker
+## Checkpoint 2026-03-30: Template Workflow Contract MVP Merge
 
 Objective:
-- replace the project-form `template_library_id` text-entry UX with a real picker that reuses the existing TUI modal patterns and makes manual testing sane.
+- merge the template workflow-contract MVP onto current `main` without losing the newer auth/MCP, laslig CLI, and embeddings/search work.
 
-Context7:
-1. `/charmbracelet/bubbletea` reviewed before the picker edit for:
-   - modal chooser update-flow structure,
-   - and explicit mode-transition handling for open/confirm/cancel picker interactions -> PASS.
-2. After the first `just test-pkg ./internal/tui` failure, `/charmbracelet/bubbletea` was refreshed again before the next edit for:
-   - key-handling order when a picker has both navigation keys and a filter input,
-   - and why explicit navigation keys should win before printable-text filtering -> PASS.
-
-Implementation summary:
-1. Replaced raw typing with a dedicated template-library picker mode:
-   - the project form now opens a modal approved-library picker from the template-library field,
-   - supports `(none)` as the clear/unbind option,
-   - and keeps the selected library id only as internal form state for submission rather than as a free-typed operator surface.
-2. Reused existing TUI modal patterns instead of inventing a parallel template screen:
-   - added a filter input, selection cursor, cancel/apply flow, and modal rendering consistent with the existing picker family,
-   - and routed project-form key handling through that modal instead of direct `textinput` editing.
-3. Tightened project-form UX:
-   - typing while the template-library field is focused now starts a filtered picker,
-   - selecting a library advances focus to the next field so `enter` can save cleanly,
-   - and the form/help copy now describes picker behavior instead of raw id entry.
-4. Added focused TUI coverage:
-   - add-project selection through typed-filter picker flow,
-   - edit-project clear/unbind through the `(none)` picker row,
-   - and render hints that match the picker interaction contract.
-
-Validation:
-1. `just fmt` -> PASS.
-2. `just test-pkg ./internal/tui` -> FAIL first due to picker key-ordering (`k` was treated as filter text before navigation).
-3. Context7 refreshed after that failure -> PASS.
-4. `just fmt` -> PASS.
-5. `just test-pkg ./internal/tui` -> PASS.
-6. `just test-golden` -> PASS.
-7. `just check` -> PASS.
-8. `just ci` -> PASS.
+Implementation plan:
+1. Preserve `main`'s mage/laslig/embeddings/search/auth surfaces as the baseline.
+2. Keep template-library persistence, project binding, generated-node contract enforcement, snapshot transport, and TUI project-kind/template-library picker flows.
+3. Convert template CLI result output onto the shared laslig renderer pattern while keeping JSON as the stable CLI/MCP ingestion transport for template specs.
+4. Re-run full local validation after the merge and then watch remote CI on the pushed branch.
 
 Current status:
-1. The TUI no longer expects operators to type template-library ids by hand during project create/edit.
-2. Manual dogfood can now test template binding through the same kind of picker flow used elsewhere in the TUI.
-3. Remaining template MVP work is primarily cleanup/polish around legacy create-time fallback and broader battle testing, not missing picker UX.
-
-## Checkpoint 2026-03-30: TUI Template Bind/Inspect + Kind Surface Quarantine
+1. Local merge resolution against fetched `origin/main` is complete.
+2. The design record remains in `TEMPLATING_DESIGN_MEMO.md`.
+3. Local validation is green on `mage test-pkg ./cmd/till`, `mage test-pkg ./internal/app`, `mage test-pkg ./internal/tui`, `mage test-pkg ./internal/adapters/storage/sqlite`, `mage test-golden`, and `mage ci`.
+4. The main remaining product seam after this merge is legacy kind-template cleanup rather than missing template-MVP behavior.
 
 Objective:
 - finish the template MVP usability gap by surfacing bindings/contracts in the existing TUI, and quarantine the remaining user-facing kind-template authoring seam so `kind` reads as kind-registry work instead of template work.
@@ -586,23 +520,6 @@ Decision:
    - `builder`,
    - `qa`,
    - `research`.
-8. The implementation plan must include DRY cleanup and orphan removal explicitly:
-   - identify superseded code paths, UI copy, commands, tests, and assumptions per slice,
-   - remove or clearly quarantine compatibility seams,
-   - and avoid leaving old template/default wording beside the new contract model.
-9. `system` is an internal audit/provenance actor for generated work, not a normal workflow owner kind.
-10. Project libraries may diverge locally from global libraries; newer global rules reach a project only through explicit preview/adopt/apply flows, never silent backfill.
-11. Template TUI work must extend existing shared TUI components and interaction patterns, stay coherent with current full-page/modal logic, and clear `just test-golden` with manual review when golden output changes.
-
-Artifacts:
-1. `TEMPLATING_DESIGN_MEMO.md` now carries the locked consensus and focused MVP planning checklist.
-2. `README.md` now distinguishes current kind-template-backed behavior from the locked next-step SQLite-backed contract model.
-
-Next planning target:
-1. define the SQLite schema for template libraries, node templates, child rules, project bindings, and node contract snapshots,
-2. define the project/global/draft clone-and-approve flow,
-3. define the minimum TUI/CLI screens required to keep these rules readable to humans,
-4. and map every required cleanup seam so the implementation branch does not leave dead/orphaned old code beside the new model.
 
 ## Checkpoint 2026-03-29: In-Place Git Topology Refactor For Shared Worktrees
 
@@ -698,7 +615,7 @@ Decision:
 2. Use `/Users/evanschultz/Documents/Code/hylla/tillsyn` as the true bare control repo.
 3. Use `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` as the checked-out integration worktree.
 4. Treat the bare root's `worktrees/` path as Git admin state, not as a checkout container.
-5. Use `.tmp/<lane>` or another explicit sibling path for future linked worktree checkouts.
+5. Use visible direct-child worktree paths for future linked worktree checkouts, for example `/Users/evanschultz/Documents/Code/hylla/tillsyn/<lane>`, instead of hidden `.tmp/<lane>` paths.
 6. Keep `AGENT_PROMPTS.md` at the bare root as local-only operator material.
 7. Take the easiest path for tracked `worklogs/`: let them live in `main/worklogs` with the rest of the tracked repo.
 
@@ -4117,6 +4034,33 @@ Current status:
 1. The reusable prompt pack is present in the repo root for future agent launches.
 2. The embeddings prompt now explicitly encodes the operational requirements we discussed, rather than leaving them implied.
 3. No code changed, so no `just` gates were rerun for this docs-only step.
+
+### 2026-03-29: Bare-Root Codex Config Clarification
+
+Objective:
+- remove ambiguity about where Codex local config should live now that the repo uses a bare-root control directory plus linked worktrees.
+
+Implementation outcome:
+1. Clarified the bare-root local `AGENTS.md` so it explicitly requires one bare-root `.codex/` directory and forbids `.codex/` directories inside `main/` or linked worktrees.
+2. Added a comment in the tracked `main/.gitignore` so accidental worktree-local `.codex/` directories are still ignored and the intended location is obvious to contributors.
+
+Files changed:
+1. local bare-root `AGENTS.md`
+2. `main/.gitignore`
+3. `main/PLAN.md`
+
+Commands run and outcomes:
+1. `sed -n '1,220p' AGENTS.md` -> PASS
+2. `sed -n '1,220p' main/.gitignore` -> PASS
+3. `git -C main status --short --branch` -> PASS
+4. `test_not_applicable` -> PASS (docs-only clarification; no code or runtime behavior changed)
+
+Current status:
+1. The intended Codex layout is now explicit:
+   - bare-root `.codex/` only,
+   - no `.codex/` inside tracked worktrees,
+   - launch from the bare root and target worktrees with `-C`,
+   - create new worktrees as visible direct children of the bare root, next to `main/`, not under hidden `.tmp/`.
 
 ### 2026-03-25: Pre-Collab Ctrl-C Echo Cleanup
 

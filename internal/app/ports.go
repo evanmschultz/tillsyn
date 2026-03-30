@@ -41,6 +41,7 @@ type Repository interface {
 	DeleteTask(context.Context, string) error
 	CreateComment(context.Context, domain.Comment) error
 	ListCommentsByTarget(context.Context, domain.CommentTarget) ([]domain.Comment, error)
+	ListCommentTargets(context.Context, string) ([]domain.CommentTarget, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	CreateAttentionItem(context.Context, domain.AttentionItem) error
 	GetAttentionItem(context.Context, string) (domain.AttentionItem, error)

@@ -190,7 +190,7 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if len(children) != 1 || children[0].ID != child.ID {
 		t.Fatalf("ListChildTasks() = %#v, want child %q", children, child.ID)
 	}
-	matches, err := fixture.adapter.SearchTasks(ctx, SearchTasksRequest{
+	result, err := fixture.adapter.SearchTasks(ctx, SearchTasksRequest{
 		ProjectID: project.ID,
 		Query:     "updated",
 		Limit:     10,
@@ -198,8 +198,8 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchTasks() error = %v", err)
 	}
-	if len(matches) != 1 || matches[0].Task.ID != task.ID {
-		t.Fatalf("SearchTasks() = %#v, want updated parent task", matches)
+	if len(result.Matches) != 1 || result.Matches[0].Task.ID != task.ID {
+		t.Fatalf("SearchTasks() = %#v, want updated parent task", result)
 	}
 
 	comment, err := fixture.adapter.CreateComment(ctx, CreateCommentRequest{
@@ -339,6 +339,186 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	}
 	if restored.ArchivedAt != nil {
 		t.Fatalf("RestoreTask() archived_at = %#v, want nil", restored.ArchivedAt)
+	}
+}
+
+// TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs verifies MCP-facing embeddings inventory rejects bad filters and hidden archived scope.
+func TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
+		Name:  "Embeddings",
+		Actor: actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	status, err := fixture.adapter.GetEmbeddingsStatus(ctx, EmbeddingsStatusRequest{
+		ProjectID: project.ID,
+	})
+	if err != nil {
+		t.Fatalf("GetEmbeddingsStatus() error = %v", err)
+	}
+	if status.RuntimeOperational {
+		t.Fatal("RuntimeOperational = true, want false when embeddings runtime is not fully wired in the fixture")
+	}
+	if _, err := fixture.adapter.GetEmbeddingsStatus(ctx, EmbeddingsStatusRequest{
+		ProjectID: project.ID,
+		Statuses:  []string{"pendng"},
+	}); err == nil || !strings.Contains(err.Error(), "unsupported embeddings status") {
+		t.Fatalf("GetEmbeddingsStatus(invalid status) error = %v, want unsupported status guidance", err)
+	}
+	if _, err := fixture.svc.ArchiveProject(ctx, project.ID); err != nil {
+		t.Fatalf("ArchiveProject() error = %v", err)
+	}
+	if _, err := fixture.adapter.GetEmbeddingsStatus(ctx, EmbeddingsStatusRequest{
+		ProjectID: project.ID,
+	}); err == nil || !strings.Contains(err.Error(), "include_archived") {
+		t.Fatalf("GetEmbeddingsStatus(archived hidden) error = %v, want archived scope guidance", err)
+	}
+}
+
+// TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies verifies the adapter surfaces mixed lifecycle families and search metadata from a real sqlite-backed service.
+func TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies(t *testing.T) {
+	t.Parallel()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn-embeddings.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	now := time.Date(2026, 3, 20, 18, 0, 0, 0, time.UTC)
+	nextID := 0
+	svc := app.NewService(repo, func() string {
+		nextID++
+		return fmt.Sprintf("embeddings-id-%d", nextID)
+	}, func() time.Time { return now }, app.ServiceConfig{
+		EmbeddingRuntime: app.EmbeddingRuntimeConfig{
+			Enabled:        true,
+			Provider:       "deterministic",
+			Model:          "hash-bow-v1",
+			Dimensions:     3,
+			ModelSignature: app.BuildEmbeddingModelSignature("deterministic", "hash-bow-v1", "", 3),
+			MaxAttempts:    5,
+		},
+	})
+	adapter := NewAppServiceAdapter(svc, nil)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	project, err := adapter.CreateProject(ctx, CreateProjectRequest{
+		Name:        "Embeddings",
+		Description: "Project document content for embeddings inventory",
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := adapter.CreateTask(ctx, CreateTaskRequest{
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Title:       "Searchable task",
+		Description: "work item embeddings content",
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if _, err := adapter.UpdateProject(ctx, UpdateProjectRequest{
+		ProjectID:   project.ID,
+		Name:        "Embeddings",
+		Description: "Updated project document content for embeddings inventory",
+		Actor:       actor,
+	}); err != nil {
+		t.Fatalf("UpdateProject() error = %v", err)
+	}
+	if _, err := adapter.CreateComment(ctx, CreateCommentRequest{
+		ProjectID:    project.ID,
+		TargetType:   string(domain.CommentTargetTypeProject),
+		TargetID:     project.ID,
+		Summary:      "Project thread",
+		BodyMarkdown: "project thread context content",
+		Actor:        actor,
+	}); err != nil {
+		t.Fatalf("CreateComment(project) error = %v", err)
+	}
+	if _, err := adapter.CreateComment(ctx, CreateCommentRequest{
+		ProjectID:    project.ID,
+		TargetType:   string(domain.CommentTargetTypeTask),
+		TargetID:     task.ID,
+		Summary:      "Task thread",
+		BodyMarkdown: "task thread context content",
+		Actor:        actor,
+	}); err != nil {
+		t.Fatalf("CreateComment(task) error = %v", err)
+	}
+
+	status, err := adapter.GetEmbeddingsStatus(ctx, EmbeddingsStatusRequest{
+		ProjectID: project.ID,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("GetEmbeddingsStatus() error = %v", err)
+	}
+	if !slices.Contains(status.ProjectIDs, project.ID) {
+		t.Fatalf("ProjectIDs = %#v, want %q", status.ProjectIDs, project.ID)
+	}
+	types := map[string]int{}
+	for _, row := range status.Rows {
+		types[row.SubjectType]++
+	}
+	for _, want := range []string{
+		string(app.EmbeddingSubjectTypeProjectDocument),
+		string(app.EmbeddingSubjectTypeThreadContext),
+		string(app.EmbeddingSubjectTypeWorkItem),
+	} {
+		if types[want] == 0 {
+			t.Fatalf("status rows = %#v, want subject type %q", status.Rows, want)
+		}
+	}
+	if status.Summary.ReadyCount+status.Summary.PendingCount+status.Summary.RunningCount+status.Summary.FailedCount+status.Summary.StaleCount == 0 {
+		t.Fatalf("status summary = %#v, want non-zero lifecycle counts", status.Summary)
+	}
+
+	search, err := adapter.SearchTasks(ctx, SearchTasksRequest{
+		ProjectID: project.ID,
+		Query:     "searchable task",
+		Mode:      string(app.SearchModeSemantic),
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("SearchTasks() error = %v", err)
+	}
+	if len(search.Matches) == 0 {
+		t.Fatal("SearchTasks() returned no matches, want searchable task metadata")
+	}
+	match := search.Matches[0]
+	if match.Task.ID != task.ID {
+		t.Fatalf("SearchTasks() match task_id = %q, want %q", match.Task.ID, task.ID)
+	}
+	if match.EmbeddingSubjectType == "" || match.EmbeddingSubjectID == "" {
+		t.Fatalf("SearchTasks() embedding metadata = %#v, want subject type/id", match)
+	}
+	if match.EmbeddingStatus == "" {
+		t.Fatalf("SearchTasks() embedding status = %#v, want lifecycle state", match)
 	}
 }
 

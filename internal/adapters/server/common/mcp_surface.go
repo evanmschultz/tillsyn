@@ -131,9 +131,97 @@ type SearchTasksRequest struct {
 
 // SearchTaskMatch stores one transport-facing search match row.
 type SearchTaskMatch struct {
-	Project domain.Project `json:"project"`
-	Task    domain.Task    `json:"task"`
-	StateID string         `json:"state_id"`
+	Project                   domain.Project `json:"project"`
+	Task                      domain.Task    `json:"task"`
+	StateID                   string         `json:"state_id"`
+	EmbeddingSubjectType      string         `json:"embedding_subject_type,omitempty"`
+	EmbeddingSubjectID        string         `json:"embedding_subject_id,omitempty"`
+	EmbeddingStatus           string         `json:"embedding_status,omitempty"`
+	EmbeddingUpdatedAt        *time.Time     `json:"embedding_updated_at,omitempty"`
+	EmbeddingStaleReason      string         `json:"embedding_stale_reason,omitempty"`
+	EmbeddingLastErrorSummary string         `json:"embedding_last_error_summary,omitempty"`
+	SemanticScore             float64        `json:"semantic_score,omitempty"`
+	UsedSemantic              bool           `json:"used_semantic,omitempty"`
+}
+
+// SearchTasksResult stores search rows plus execution metadata.
+type SearchTasksResult struct {
+	Matches                []SearchTaskMatch `json:"matches"`
+	RequestedMode          string            `json:"requested_mode,omitempty"`
+	EffectiveMode          string            `json:"effective_mode,omitempty"`
+	FallbackReason         string            `json:"fallback_reason,omitempty"`
+	SemanticAvailable      bool              `json:"semantic_available"`
+	SemanticCandidateCount int               `json:"semantic_candidate_count"`
+	EmbeddingSummary       EmbeddingSummary  `json:"embedding_summary"`
+}
+
+// EmbeddingSummary stores aggregate lifecycle counts for transport surfaces.
+type EmbeddingSummary struct {
+	SubjectType  string   `json:"subject_type"`
+	ProjectIDs   []string `json:"project_ids,omitempty"`
+	PendingCount int      `json:"pending_count"`
+	RunningCount int      `json:"running_count"`
+	ReadyCount   int      `json:"ready_count"`
+	FailedCount  int      `json:"failed_count"`
+	StaleCount   int      `json:"stale_count"`
+}
+
+// EmbeddingStatusRow stores one transport-facing lifecycle inventory row.
+type EmbeddingStatusRow struct {
+	SubjectType      string     `json:"subject_type"`
+	SubjectID        string     `json:"subject_id"`
+	ProjectID        string     `json:"project_id"`
+	Status           string     `json:"status"`
+	ModelSignature   string     `json:"model_signature"`
+	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
+	LastStartedAt    *time.Time `json:"last_started_at,omitempty"`
+	LastSucceededAt  *time.Time `json:"last_succeeded_at,omitempty"`
+	LastFailedAt     *time.Time `json:"last_failed_at,omitempty"`
+	LastErrorSummary string     `json:"last_error_summary,omitempty"`
+	StaleReason      string     `json:"stale_reason,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// EmbeddingsStatusRequest stores transport input for embeddings inventory queries.
+type EmbeddingsStatusRequest struct {
+	ProjectID       string
+	CrossProject    bool
+	IncludeArchived bool
+	Statuses        []string
+	Limit           int
+}
+
+// EmbeddingsStatusResult stores transport-facing lifecycle inventory results.
+type EmbeddingsStatusResult struct {
+	ProjectIDs         []string             `json:"project_ids,omitempty"`
+	RuntimeOperational bool                 `json:"runtime_operational"`
+	Summary            EmbeddingSummary     `json:"summary"`
+	Rows               []EmbeddingStatusRow `json:"rows"`
+}
+
+// ReindexEmbeddingsRequest stores transport input for explicit reindex requests.
+type ReindexEmbeddingsRequest struct {
+	ProjectID        string
+	CrossProject     bool
+	IncludeArchived  bool
+	Force            bool
+	Wait             bool
+	WaitTimeout      time.Duration
+	WaitPollInterval time.Duration
+}
+
+// ReindexEmbeddingsResult stores transport-facing reindex outcomes.
+type ReindexEmbeddingsResult struct {
+	TargetProjects []string `json:"target_projects,omitempty"`
+	ScannedCount   int      `json:"scanned_count"`
+	QueuedCount    int      `json:"queued_count"`
+	ReadyCount     int      `json:"ready_count"`
+	FailedCount    int      `json:"failed_count"`
+	StaleCount     int      `json:"stale_count"`
+	RunningCount   int      `json:"running_count"`
+	PendingCount   int      `json:"pending_count"`
+	Completed      bool     `json:"completed"`
+	TimedOut       bool     `json:"timed_out"`
 }
 
 // UpsertKindDefinitionRequest stores transport input for kind upserts.
@@ -446,7 +534,13 @@ type TaskService interface {
 
 // SearchService exposes cross-project and project-scoped task search.
 type SearchService interface {
-	SearchTasks(context.Context, SearchTasksRequest) ([]SearchTaskMatch, error)
+	SearchTasks(context.Context, SearchTasksRequest) (SearchTasksResult, error)
+}
+
+// EmbeddingsService exposes operator-facing lifecycle inventory and reindex actions.
+type EmbeddingsService interface {
+	GetEmbeddingsStatus(context.Context, EmbeddingsStatusRequest) (EmbeddingsStatusResult, error)
+	ReindexEmbeddings(context.Context, ReindexEmbeddingsRequest) (ReindexEmbeddingsResult, error)
 }
 
 // ChangeFeedService exposes project-level activity and dependency summaries.

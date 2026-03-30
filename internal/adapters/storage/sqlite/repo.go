@@ -234,6 +234,56 @@ func (r *Repository) migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_task_embeddings_project ON task_embeddings(project_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_task_embeddings_updated_at ON task_embeddings(updated_at);`,
+		`CREATE TABLE IF NOT EXISTS embedding_documents (
+			subject_type TEXT NOT NULL,
+			subject_id TEXT NOT NULL,
+			project_id TEXT NOT NULL,
+			search_target_type TEXT NOT NULL,
+			search_target_id TEXT NOT NULL,
+			content_hash TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			embedding BLOB NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(subject_type, subject_id),
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_embedding_documents_project ON embedding_documents(project_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_embedding_documents_target ON embedding_documents(search_target_type, search_target_id, updated_at DESC, subject_type, subject_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_embedding_documents_updated_at ON embedding_documents(updated_at);`,
+		`CREATE TABLE IF NOT EXISTS embedding_jobs (
+			subject_type TEXT NOT NULL,
+			subject_id TEXT NOT NULL,
+			project_id TEXT NOT NULL,
+			desired_content_hash TEXT NOT NULL DEFAULT '',
+			indexed_content_hash TEXT NOT NULL DEFAULT '',
+			model_provider TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			model_dimensions INTEGER NOT NULL DEFAULT 0,
+			model_signature TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			retry_count INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 0,
+			last_enqueued_at TEXT NOT NULL,
+			last_started_at TEXT,
+			last_heartbeat_at TEXT,
+			last_succeeded_at TEXT,
+			last_failed_at TEXT,
+			next_attempt_at TEXT,
+			claimed_by TEXT NOT NULL DEFAULT '',
+			claim_expires_at TEXT,
+			last_error_code TEXT NOT NULL DEFAULT '',
+			last_error_message TEXT NOT NULL DEFAULT '',
+			last_error_summary TEXT NOT NULL DEFAULT '',
+			stale_reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(subject_type, subject_id),
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_embedding_jobs_project_status_updated_at ON embedding_jobs(project_id, status, updated_at DESC, subject_type, subject_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_embedding_jobs_project_next_attempt ON embedding_jobs(project_id, next_attempt_at, updated_at DESC, subject_type, subject_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_embedding_jobs_claim_expires ON embedding_jobs(claim_expires_at, status, subject_type, subject_id);`,
 		`CREATE TABLE IF NOT EXISTS change_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				project_id TEXT NOT NULL,
@@ -590,6 +640,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.ensureCommentIndexes(ctx); err != nil {
 		return err
 	}
+	if err := r.migrateLegacyEmbeddingDocuments(ctx); err != nil {
+		return err
+	}
 	if _, err := r.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(project_id, parent_id)`); err != nil {
 		return fmt.Errorf("migrate sqlite task parent index: %w", err)
 	}
@@ -607,6 +660,27 @@ func (r *Repository) migrate(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf("migrate sqlite vec capability probe: %w", err)
+	}
+	return nil
+}
+
+// migrateLegacyEmbeddingDocuments copies legacy task-only vectors into the generic document table.
+func (r *Repository) migrateLegacyEmbeddingDocuments(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO embedding_documents (
+			subject_type, subject_id, project_id, search_target_type, search_target_id, content_hash, content, embedding, updated_at
+		)
+		SELECT ?, task_id, project_id, ?, task_id, content_hash, content, embedding, updated_at
+		FROM task_embeddings
+	`, string(app.EmbeddingSubjectTypeWorkItem), string(app.EmbeddingSearchTargetTypeWorkItem)); err != nil {
+		return fmt.Errorf("migrate sqlite legacy embedding documents: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE embedding_jobs
+		SET subject_type = ?
+		WHERE subject_type = ?
+	`, string(app.EmbeddingSubjectTypeWorkItem), "task"); err != nil {
+		return fmt.Errorf("migrate sqlite embedding job subject types: %w", err)
 	}
 	return nil
 }
@@ -2062,12 +2136,15 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	return err
 }
 
-// UpsertTaskEmbedding writes one task embedding row for semantic retrieval.
-func (r *Repository) UpsertTaskEmbedding(ctx context.Context, in app.TaskEmbeddingDocument) error {
-	taskID := strings.TrimSpace(in.TaskID)
+// UpsertEmbeddingDocument writes one indexed subject document row for semantic retrieval.
+func (r *Repository) UpsertEmbeddingDocument(ctx context.Context, in app.EmbeddingDocument) error {
+	subjectType := strings.TrimSpace(string(in.SubjectType))
+	subjectID := strings.TrimSpace(in.SubjectID)
 	projectID := strings.TrimSpace(in.ProjectID)
+	searchTargetType := strings.TrimSpace(string(in.SearchTargetType))
+	searchTargetID := strings.TrimSpace(in.SearchTargetID)
 	contentHash := strings.TrimSpace(in.ContentHash)
-	if taskID == "" || projectID == "" || contentHash == "" {
+	if subjectType == "" || subjectID == "" || projectID == "" || searchTargetType == "" || searchTargetID == "" || contentHash == "" {
 		return domain.ErrInvalidID
 	}
 	if len(in.Vector) == 0 {
@@ -2081,51 +2158,35 @@ func (r *Repository) UpsertTaskEmbedding(ctx context.Context, in app.TaskEmbeddi
 		return fmt.Errorf("marshal embedding vector: %w", err)
 	}
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO task_embeddings (task_id, project_id, content_hash, content, embedding, updated_at)
-		VALUES (?, ?, ?, ?, vec_f32(?), ?)
-		ON CONFLICT(task_id) DO UPDATE SET
+		INSERT INTO embedding_documents (
+			subject_type, subject_id, project_id, search_target_type, search_target_id, content_hash, content, embedding, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, vec_f32(?), ?)
+		ON CONFLICT(subject_type, subject_id) DO UPDATE SET
 			project_id = excluded.project_id,
+			search_target_type = excluded.search_target_type,
+			search_target_id = excluded.search_target_id,
 			content_hash = excluded.content_hash,
 			content = excluded.content,
 			embedding = excluded.embedding,
 			updated_at = excluded.updated_at
-	`, taskID, projectID, contentHash, strings.TrimSpace(in.Content), string(vectorJSON), ts(in.UpdatedAt))
+	`, subjectType, subjectID, projectID, searchTargetType, searchTargetID, contentHash, strings.TrimSpace(in.Content), string(vectorJSON), ts(in.UpdatedAt))
 	if err != nil {
-		return fmt.Errorf("upsert task embedding: %w", err)
+		return fmt.Errorf("upsert embedding document: %w", err)
 	}
 	return nil
 }
 
-// DeleteTaskEmbedding deletes one task embedding row by task id.
-func (r *Repository) DeleteTaskEmbedding(ctx context.Context, taskID string) error {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return nil
-	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM task_embeddings WHERE task_id = ?`, taskID)
-	if err != nil {
-		return fmt.Errorf("delete task embedding: %w", err)
-	}
-	return nil
+// DeleteEmbeddingDocument deletes one subject document row by subject key.
+func (r *Repository) DeleteEmbeddingDocument(ctx context.Context, subjectType app.EmbeddingSubjectType, subjectID string) error {
+	return deleteEmbeddingDocument(ctx, r.db, string(subjectType), subjectID)
 }
 
-// SearchTaskEmbeddings executes one vector similarity search query for task ids.
-func (r *Repository) SearchTaskEmbeddings(ctx context.Context, in app.TaskEmbeddingSearchInput) ([]app.TaskEmbeddingMatch, error) {
-	projectIDs := make([]string, 0, len(in.ProjectIDs))
-	seenProjects := map[string]struct{}{}
-	for _, raw := range in.ProjectIDs {
-		projectID := strings.TrimSpace(raw)
-		if projectID == "" {
-			continue
-		}
-		if _, ok := seenProjects[projectID]; ok {
-			continue
-		}
-		seenProjects[projectID] = struct{}{}
-		projectIDs = append(projectIDs, projectID)
-	}
+// SearchEmbeddingDocuments executes one vector similarity search query for indexed subject rows.
+func (r *Repository) SearchEmbeddingDocuments(ctx context.Context, in app.EmbeddingSearchInput) ([]app.EmbeddingSearchMatch, error) {
+	projectIDs := normalizedStringSet(in.ProjectIDs)
 	if len(projectIDs) == 0 || len(in.Vector) == 0 {
-		return []app.TaskEmbeddingMatch{}, nil
+		return []app.EmbeddingSearchMatch{}, nil
 	}
 	if err := r.requireVecCapability(); err != nil {
 		return nil, err
@@ -2139,48 +2200,116 @@ func (r *Repository) SearchTaskEmbeddings(ctx context.Context, in app.TaskEmbedd
 		return nil, fmt.Errorf("marshal search vector: %w", err)
 	}
 	query := `
-		SELECT task_id, (1.0 - distance) AS similarity, updated_at
+		SELECT subject_type, subject_id, search_target_type, search_target_id, (1.0 - distance) AS similarity, updated_at
 		FROM (
 			SELECT
-				task_id,
+				subject_type,
+				subject_id,
+				search_target_type,
+				search_target_id,
 				vec_distance_cosine(embedding, vec_f32(?)) AS distance,
 				updated_at
-			FROM task_embeddings
+			FROM embedding_documents
 			WHERE project_id IN (` + queryPlaceholders(len(projectIDs)) + `)
-		)
-		ORDER BY distance ASC, task_id ASC
-		LIMIT ?
 	`
-	args := make([]any, 0, len(projectIDs)+2)
+	args := make([]any, 0, len(projectIDs)+len(in.SubjectTypes)+len(in.SearchTargetTypes)+2)
 	args = append(args, string(vectorJSON))
 	for _, projectID := range projectIDs {
 		args = append(args, projectID)
 	}
+	if subjectTypes := normalizeEmbeddingSubjectTypeSet(in.SubjectTypes); len(subjectTypes) > 0 {
+		query += ` AND subject_type IN (` + queryPlaceholders(len(subjectTypes)) + `)`
+		for _, subjectType := range subjectTypes {
+			args = append(args, subjectType)
+		}
+	}
+	if searchTargetTypes := normalizeEmbeddingSearchTargetTypeSet(in.SearchTargetTypes); len(searchTargetTypes) > 0 {
+		query += ` AND search_target_type IN (` + queryPlaceholders(len(searchTargetTypes)) + `)`
+		for _, searchTargetType := range searchTargetTypes {
+			args = append(args, searchTargetType)
+		}
+	}
+	query += `
+		)
+		ORDER BY distance ASC, subject_type ASC, subject_id ASC
+		LIMIT ?
+	`
 	args = append(args, limit)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("search task embeddings: %w", err)
+		return nil, fmt.Errorf("search embedding documents: %w", err)
 	}
 	defer rows.Close()
 
-	out := make([]app.TaskEmbeddingMatch, 0, limit)
+	out := make([]app.EmbeddingSearchMatch, 0, limit)
 	for rows.Next() {
-		var taskID string
-		var similarity float64
-		var updatedAt string
-		if err := rows.Scan(&taskID, &similarity, &updatedAt); err != nil {
-			return nil, fmt.Errorf("scan task embedding match: %w", err)
+		var (
+			subjectType      string
+			subjectID        string
+			searchTargetType string
+			searchTargetID   string
+			similarity       float64
+			updatedAt        string
+		)
+		if err := rows.Scan(&subjectType, &subjectID, &searchTargetType, &searchTargetID, &similarity, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan embedding search match: %w", err)
 		}
-		out = append(out, app.TaskEmbeddingMatch{
-			TaskID:     strings.TrimSpace(taskID),
-			Similarity: similarity,
-			SearchedAt: parseTS(updatedAt),
+		out = append(out, app.EmbeddingSearchMatch{
+			SubjectType:      app.EmbeddingSubjectType(strings.TrimSpace(subjectType)),
+			SubjectID:        strings.TrimSpace(subjectID),
+			SearchTargetType: app.EmbeddingSearchTargetType(strings.TrimSpace(searchTargetType)),
+			SearchTargetID:   strings.TrimSpace(searchTargetID),
+			Similarity:       similarity,
+			SearchedAt:       parseTS(updatedAt),
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate task embedding matches: %w", err)
+		return nil, fmt.Errorf("iterate embedding search matches: %w", err)
 	}
 	return out, nil
+}
+
+func deleteEmbeddingDocument(ctx context.Context, q execer, subjectType, subjectID string) error {
+	subjectType = strings.TrimSpace(strings.ToLower(subjectType))
+	subjectID = strings.TrimSpace(subjectID)
+	if subjectType == "" || subjectID == "" {
+		return nil
+	}
+	_, err := q.ExecContext(ctx, `DELETE FROM embedding_documents WHERE subject_type = ? AND subject_id = ?`, subjectType, subjectID)
+	if err != nil {
+		return fmt.Errorf("delete embedding document: %w", err)
+	}
+	return nil
+}
+
+func normalizeEmbeddingSubjectTypeSet(values []app.EmbeddingSubjectType) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	raw := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.TrimSpace(strings.ToLower(string(value)))
+		if normalized == "" {
+			continue
+		}
+		raw = append(raw, normalized)
+	}
+	return normalizedStringSet(raw)
+}
+
+func normalizeEmbeddingSearchTargetTypeSet(values []app.EmbeddingSearchTargetType) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	raw := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.TrimSpace(strings.ToLower(string(value)))
+		if normalized == "" {
+			continue
+		}
+		raw = append(raw, normalized)
+	}
+	return normalizedStringSet(raw)
 }
 
 // CreateComment persists one normalized comment row.
@@ -2268,6 +2397,49 @@ func (r *Repository) ListCommentsByTarget(ctx context.Context, target domain.Com
 		out = append(out, comment)
 	}
 	return out, rows.Err()
+}
+
+// ListCommentTargets lists unique comment targets for one project in deterministic order.
+func (r *Repository) ListCommentTargets(ctx context.Context, projectID string) ([]domain.CommentTarget, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT project_id, target_type, target_id
+		FROM comments
+		WHERE project_id = ?
+		ORDER BY target_type ASC, target_id ASC
+	`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list comment targets: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]domain.CommentTarget, 0)
+	for rows.Next() {
+		var (
+			rowProjectID string
+			targetType   string
+			targetID     string
+		)
+		if err := rows.Scan(&rowProjectID, &targetType, &targetID); err != nil {
+			return nil, fmt.Errorf("scan comment target: %w", err)
+		}
+		target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+			ProjectID:  rowProjectID,
+			TargetType: domain.CommentTargetType(targetType),
+			TargetID:   targetID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate comment targets: %w", err)
+	}
+	return out, nil
 }
 
 // ListProjectChangeEvents lists recent project events for activity-log consumption.
@@ -2818,8 +2990,8 @@ type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// queryer represents a read-only DB contract used by DB and Tx implementations.
-type queryer interface {
+// queryRowser represents a read-only DB contract used by DB and Tx implementations.
+type queryRowser interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
@@ -3149,7 +3321,7 @@ func insertNodeContractActorKinds(ctx context.Context, execer execerContext, tab
 }
 
 // loadTemplateNodeTemplates loads one library's node templates and nested child rules.
-func loadTemplateNodeTemplates(ctx context.Context, q queryer, libraryID string) ([]domain.NodeTemplate, error) {
+func loadTemplateNodeTemplates(ctx context.Context, q queryRowser, libraryID string) ([]domain.NodeTemplate, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT
 			id, scope_level, node_kind_id, display_name, description_markdown,
@@ -3215,7 +3387,7 @@ func loadTemplateNodeTemplates(ctx context.Context, q queryer, libraryID string)
 }
 
 // loadTemplateChildRules loads one node template's child rules and actor lists.
-func loadTemplateChildRules(ctx context.Context, q queryer, libraryID, nodeTemplateID string) ([]domain.TemplateChildRule, error) {
+func loadTemplateChildRules(ctx context.Context, q queryRowser, libraryID, nodeTemplateID string) ([]domain.TemplateChildRule, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT
 			id, position, child_scope_level, child_kind_id, title_template, description_template,
@@ -3280,7 +3452,7 @@ func loadTemplateChildRules(ctx context.Context, q queryer, libraryID, nodeTempl
 }
 
 // loadTemplateChildRuleActorKinds loads one child rule's actor-kind list.
-func loadTemplateChildRuleActorKinds(ctx context.Context, q queryer, table, libraryID, nodeTemplateID, childRuleID string) ([]domain.TemplateActorKind, error) {
+func loadTemplateChildRuleActorKinds(ctx context.Context, q queryRowser, table, libraryID, nodeTemplateID, childRuleID string) ([]domain.TemplateActorKind, error) {
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
 		SELECT actor_kind
 		FROM %s
@@ -3308,7 +3480,7 @@ func loadTemplateChildRuleActorKinds(ctx context.Context, q queryer, table, libr
 }
 
 // loadNodeContractActorKinds loads one node-contract actor-kind list.
-func loadNodeContractActorKinds(ctx context.Context, q queryer, table, nodeID string) ([]domain.TemplateActorKind, error) {
+func loadNodeContractActorKinds(ctx context.Context, q queryRowser, table, nodeID string) ([]domain.TemplateActorKind, error) {
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
 		SELECT actor_kind
 		FROM %s

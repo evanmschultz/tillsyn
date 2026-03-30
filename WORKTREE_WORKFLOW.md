@@ -35,7 +35,7 @@ The `main/` worktree keeps the tracked repository contents:
 - source directories,
 - repo docs,
 - `PLAN.md`,
-- `Justfile`,
+- `magefile.go`,
 - `worklogs/`,
 - all normal repo-root files.
 
@@ -134,7 +134,7 @@ For branches that live longer than one integration cycle:
    - `README.md`
    - `CONTRIBUTING.md`
    - `.github/workflows/**`
-   - `Justfile`
+   - `magefile.go`
 4. Keep these hotspot Go files serialized unless the operator intentionally queues them:
    - `internal/tui/model.go`
    - `internal/app/service.go`
