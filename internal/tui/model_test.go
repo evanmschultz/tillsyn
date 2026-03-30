@@ -13942,6 +13942,9 @@ func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
 	if !strings.Contains(overlay, "Project Kind") || !strings.Contains(overlay, "current: project") || !strings.Contains(overlay, "go-service — Go Service") {
 		t.Fatalf("expected project-kind overlay details, got\n%s", overlay)
 	}
+	if strings.Contains(overlay, "filter: filter:") {
+		t.Fatalf("expected project-kind overlay to avoid duplicate filter label, got\n%s", overlay)
+	}
 }
 
 // TestModelProjectKindPickerCtrlUAndEscape verifies filter clearing and cancel flow for the project-kind picker.
@@ -13985,6 +13988,54 @@ func TestModelProjectKindPickerCtrlUAndEscape(t *testing.T) {
 	}
 	if got := m.status; got != "project kind picker cancelled" {
 		t.Fatalf("status = %q, want project kind picker cancelled", got)
+	}
+}
+
+// TestModelProjectAndTemplatePickersMouseWheel verifies wheel scrolling moves selection inside picker overlays.
+func TestModelProjectAndTemplatePickersMouseWheel(t *testing.T) {
+	now := time.Date(2026, 3, 30, 12, 27, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.kindDefinitions = append(svc.kindDefinitions,
+		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
+		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
+	)
+	svc.templateLibraries = []domain.TemplateLibrary{
+		mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now),
+		mustNewApprovedTemplateLibrary(t, "ops-defaults", "Ops Defaults", now.Add(time.Minute)),
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('N'))
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeProjectKindPicker {
+		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
+	}
+	if got := m.projectKindPickerIndex; got != 2 {
+		t.Fatalf("expected current project kind to be preselected, got index %d", got)
+	}
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if got := m.projectKindPickerIndex; got != 1 {
+		t.Fatalf("expected mouse wheel up to move project kind selection, got %d", got)
+	}
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if got := m.projectKindPickerIndex; got != 2 {
+		t.Fatalf("expected mouse wheel down to restore project kind selection, got %d", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTemplateLibraryPicker {
+		t.Fatalf("expected template-library picker mode, got %v", m.mode)
+	}
+	if got := m.templateLibraryPickerIndex; got != 0 {
+		t.Fatalf("expected template-library picker to start at first row, got %d", got)
+	}
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if got := m.templateLibraryPickerIndex; got != 1 {
+		t.Fatalf("expected mouse wheel down to move template-library selection, got %d", got)
 	}
 }
 

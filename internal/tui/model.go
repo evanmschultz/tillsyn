@@ -12932,6 +12932,36 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mode == modeProjectKindPicker {
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.projectKindPickerIndex > 0 {
+				m.projectKindPickerIndex--
+			}
+		case tea.MouseWheelDown:
+			if m.projectKindPickerIndex < len(m.projectKindPickerItems)-1 {
+				m.projectKindPickerIndex++
+			}
+		default:
+			return m, nil
+		}
+		return m, nil
+	}
+	if m.mode == modeTemplateLibraryPicker {
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.templateLibraryPickerIndex > 0 {
+				m.templateLibraryPickerIndex--
+			}
+		case tea.MouseWheelDown:
+			if m.templateLibraryPickerIndex < len(m.templateLibraryPickerItems)-1 {
+				m.templateLibraryPickerIndex++
+			}
+		default:
+			return m, nil
+		}
+		return m, nil
+	}
 	if m.mode != modeNone {
 		return m, nil
 	}
@@ -18521,7 +18551,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			titleStyle.Render(title),
 			hintStyle.Render("root: " + truncate(m.resourcePickerRoot, 72)),
 			hintStyle.Render("current: ") + titleStyle.Render(truncate(currentPath, 72)),
-			hintStyle.Render("filter: ") + filterInput.View(),
+			filterInput.View(),
 		}
 		items := m.visibleResourcePickerItems()
 		if len(items) == 0 {
@@ -18565,7 +18595,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		filterInput.SetWidth(max(18, min(56, maxWidth-22)))
 		lines := []string{
 			titleStyle.Render("Label Picker"),
-			hintStyle.Render("filter: ") + filterInput.View(),
+			filterInput.View(),
 			hintStyle.Render("sources: global/project/branch/phase/suggested/default"),
 		}
 		if len(m.labelPickerItems) == 0 {
@@ -18604,7 +18634,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		lines := []string{
 			titleStyle.Render("Project Kind"),
-			hintStyle.Render("filter: ") + filterInput.View(),
+			filterInput.View(),
 			hintStyle.Render("current: " + currentKindLabel),
 		}
 		if len(m.projectKindPickerItems) == 0 {
@@ -18641,7 +18671,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		lines := []string{
 			titleStyle.Render("Template Library"),
-			hintStyle.Render("filter: ") + filterInput.View(),
+			filterInput.View(),
 			hintStyle.Render("current: " + currentLibraryLabel),
 		}
 		if len(m.templateLibraryPickerItems) == 0 {
