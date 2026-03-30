@@ -51,6 +51,7 @@ const (
 	CapabilityRoleOrchestrator CapabilityRole = "orchestrator"
 	CapabilityRoleBuilder      CapabilityRole = "builder"
 	CapabilityRoleQA           CapabilityRole = "qa"
+	CapabilityRoleResearch     CapabilityRole = "research"
 	CapabilityRoleSystem       CapabilityRole = "system"
 
 	// CapabilityRoleWorker preserves the legacy worker token as an alias for builder.
@@ -74,6 +75,7 @@ var validCapabilityRoles = []CapabilityRole{
 	CapabilityRoleOrchestrator,
 	CapabilityRoleBuilder,
 	CapabilityRoleQA,
+	CapabilityRoleResearch,
 	CapabilityRoleSystem,
 }
 
@@ -183,6 +185,8 @@ func NormalizeCapabilityRole(role CapabilityRole) CapabilityRole {
 		return CapabilityRoleBuilder
 	case string(CapabilityRoleQA):
 		return CapabilityRoleQA
+	case string(CapabilityRoleResearch):
+		return CapabilityRoleResearch
 	case string(CapabilityRoleSystem):
 		return CapabilityRoleSystem
 	default:
@@ -219,6 +223,7 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 			CapabilityActionRead,
 			CapabilityActionComment,
 			CapabilityActionCreateChild,
+			CapabilityActionEditNode,
 			CapabilityActionRequestAuth,
 			CapabilityActionApproveAuthWithinBounds,
 			CapabilityActionMarkInProgress,
@@ -241,6 +246,7 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 		return []CapabilityAction{
 			CapabilityActionRead,
 			CapabilityActionComment,
+			CapabilityActionEditNode,
 			CapabilityActionRequestAuth,
 			CapabilityActionMarkInProgress,
 			CapabilityActionMarkComplete,
@@ -248,6 +254,17 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 			CapabilityActionAttachEvidence,
 			CapabilityActionSignoff,
 			CapabilityActionResolveAttention,
+		}
+	case CapabilityRoleResearch:
+		return []CapabilityAction{
+			CapabilityActionRead,
+			CapabilityActionComment,
+			CapabilityActionCreateChild,
+			CapabilityActionEditNode,
+			CapabilityActionRequestAuth,
+			CapabilityActionMarkInProgress,
+			CapabilityActionMarkComplete,
+			CapabilityActionAttachEvidence,
 		}
 	case CapabilityRoleSystem:
 		return append([]CapabilityAction(nil), validCapabilityActions...)
@@ -280,7 +297,7 @@ func (r CapabilityRole) CanDelegateTo(child CapabilityRole) bool {
 	switch NormalizeCapabilityRole(r) {
 	case CapabilityRoleOrchestrator:
 		switch NormalizeCapabilityRole(child) {
-		case CapabilityRoleBuilder, CapabilityRoleQA:
+		case CapabilityRoleBuilder, CapabilityRoleQA, CapabilityRoleResearch:
 			return true
 		default:
 			return false

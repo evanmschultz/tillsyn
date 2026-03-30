@@ -60,6 +60,12 @@ Implemented now:
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
 - Current implementation still uses kind-template-backed create-time defaults for project metadata, task metadata/completion defaults, project root children, and recursive child work-item defaults.
 - Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, truthful completion gates, `system` audit provenance for generated nodes, and explicit global-to-project adopt/apply flows instead of silent backfill; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
+- Current template-library enforcement slice is active for generated nodes:
+  - create-child under a generated parent,
+  - update / rename / reparent,
+  - move-to-done,
+  - archive / delete / restore.
+  Stored node-contract snapshots now gate non-human actor kinds after the normal scope lease check, humans remain allowed, orchestrator completion still requires explicit per-rule override, and done transitions now honor required parent / containing-scope blockers from generated descendants instead of treating every child as an implicit blocker.
 - Capability leases now normalize project scope ids, validate scope tuples on issuance, enforce bounded parent delegation, and apply builder/qa/orchestrator action checks in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:

@@ -150,8 +150,14 @@ func TestAuthRequestNormalizationHelpers(t *testing.T) {
 	if got := NormalizeAuthRequestRole(" worker "); got != AuthRequestRoleBuilder {
 		t.Fatalf("NormalizeAuthRequestRole(worker) = %q, want builder alias", got)
 	}
+	if got := NormalizeAuthRequestRole(" research "); got != AuthRequestRoleResearch {
+		t.Fatalf("NormalizeAuthRequestRole(research) = %q, want research", got)
+	}
 	if !IsValidAuthRequestRole(AuthRequestRoleSubagent) {
 		t.Fatal("IsValidAuthRequestRole(subagent) = false, want true")
+	}
+	if !IsValidAuthRequestRole(AuthRequestRoleResearch) {
+		t.Fatal("IsValidAuthRequestRole(research) = false, want true")
 	}
 	if IsValidAuthRequestRole(AuthRequestRole("global")) {
 		t.Fatal("IsValidAuthRequestRole(global) = true, want false")
@@ -383,6 +389,25 @@ func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 	}
 	if req.PrincipalRole != string(AuthRequestRoleQA) {
 		t.Fatalf("NewAuthRequest(qa role) principal_role = %q, want qa", req.PrincipalRole)
+	}
+
+	req, err = NewAuthRequest(AuthRequestInput{
+		ID:                  "req-role-research",
+		Path:                AuthRequestPath{ProjectID: "p1"},
+		PrincipalID:         "research-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "research",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "needs research scope",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(research role) error = %v", err)
+	}
+	if req.PrincipalRole != string(AuthRequestRoleResearch) {
+		t.Fatalf("NewAuthRequest(research role) principal_role = %q, want research", req.PrincipalRole)
 	}
 
 	if _, err := NewAuthRequest(AuthRequestInput{

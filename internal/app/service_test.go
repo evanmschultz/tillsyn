@@ -971,8 +971,8 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	ctx := WithMutationActor(context.Background(), MutationActor{
-		ActorID:   "orchestrator-1",
-		ActorType: domain.ActorTypeAgent,
+		ActorID:   "user-context-1",
+		ActorType: domain.ActorTypeUser,
 	})
 	updated, err := svc.UpdateTask(ctx, UpdateTaskInput{
 		TaskID: task.ID,
@@ -981,11 +981,11 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask() error = %v", err)
 	}
-	if updated.UpdatedByActor != "orchestrator-1" {
-		t.Fatalf("updated actor id = %q, want orchestrator-1", updated.UpdatedByActor)
+	if updated.UpdatedByActor != "user-context-1" {
+		t.Fatalf("updated actor id = %q, want user-context-1", updated.UpdatedByActor)
 	}
-	if updated.UpdatedByType != domain.ActorTypeAgent {
-		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeAgent)
+	if updated.UpdatedByType != domain.ActorTypeUser {
+		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeUser)
 	}
 }
 
@@ -2379,8 +2379,8 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	}
 }
 
-// TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete verifies behavior for the covered scenario.
-func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
+// TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren verifies legacy require-children behavior remains intact.
+func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2398,6 +2398,11 @@ func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
+		Metadata: domain.TaskMetadata{
+			CompletionContract: domain.CompletionContract{
+				Policy: domain.CompletionPolicy{RequireChildrenDone: true},
+			},
+		},
 	}, now)
 	child, _ := domain.NewTask(domain.TaskInput{
 		ID:             "t-child",
@@ -2417,7 +2422,7 @@ func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
 	if err == nil || !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "subtasks must be done") {
+	if !strings.Contains(err.Error(), "child item") {
 		t.Fatalf("expected incomplete subtask reason, got %v", err)
 	}
 }

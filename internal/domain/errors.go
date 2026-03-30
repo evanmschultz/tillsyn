@@ -29,6 +29,7 @@ var (
 	ErrInvalidTemplateActorKind    = errors.New("invalid template actor kind")
 	ErrInvalidTemplateBinding      = errors.New("invalid template binding")
 	ErrTemplateLibraryNotFound     = errors.New("template library not found")
+	ErrNodeContractForbidden       = errors.New("node contract forbids mutation")
 	ErrInvalidKindPayload          = errors.New("invalid kind payload")
 	ErrInvalidKindPayloadSchema    = errors.New("invalid kind payload schema")
 	ErrInvalidLifecycleState       = errors.New("invalid lifecycle state")

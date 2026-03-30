@@ -145,6 +145,9 @@ func TestCapabilityRolePolicyHelpers(t *testing.T) {
 	if got := NormalizeCapabilityRole(" qa "); got != CapabilityRoleQA {
 		t.Fatalf("NormalizeCapabilityRole(qa) = %q, want qa", got)
 	}
+	if got := NormalizeCapabilityRole(" research "); got != CapabilityRoleResearch {
+		t.Fatalf("NormalizeCapabilityRole(research) = %q, want research", got)
+	}
 	if !IsValidCapabilityAction(CapabilityActionApproveAuthWithinBounds) {
 		t.Fatal("IsValidCapabilityAction(approve-auth-within-bounds) = false, want true")
 	}
@@ -154,20 +157,35 @@ func TestCapabilityRolePolicyHelpers(t *testing.T) {
 	if !CapabilityRoleBuilder.CanPerform(CapabilityActionEditNode) {
 		t.Fatal("CapabilityRoleBuilder.CanPerform(edit-node) = false, want true")
 	}
+	if !CapabilityRoleQA.CanPerform(CapabilityActionEditNode) {
+		t.Fatal("CapabilityRoleQA.CanPerform(edit-node) = false, want true")
+	}
 	if CapabilityRoleBuilder.CanPerform(CapabilityActionSignoff) {
 		t.Fatal("CapabilityRoleBuilder.CanPerform(signoff) = true, want false")
 	}
 	if !CapabilityRoleQA.CanPerform(CapabilityActionSignoff) {
 		t.Fatal("CapabilityRoleQA.CanPerform(signoff) = false, want true")
 	}
+	if !CapabilityRoleResearch.CanPerform(CapabilityActionEditNode) {
+		t.Fatal("CapabilityRoleResearch.CanPerform(edit-node) = false, want true")
+	}
+	if CapabilityRoleResearch.CanPerform(CapabilityActionSignoff) {
+		t.Fatal("CapabilityRoleResearch.CanPerform(signoff) = true, want false")
+	}
 	if !CapabilityRoleOrchestrator.CanPerform(CapabilityActionApproveAuthWithinBounds) {
 		t.Fatal("CapabilityRoleOrchestrator.CanPerform(approve-auth-within-bounds) = false, want true")
+	}
+	if !CapabilityRoleOrchestrator.CanPerform(CapabilityActionEditNode) {
+		t.Fatal("CapabilityRoleOrchestrator.CanPerform(edit-node) = false, want true")
 	}
 	if !CapabilityRoleOrchestrator.CanDelegateTo(CapabilityRoleBuilder) {
 		t.Fatal("CapabilityRoleOrchestrator.CanDelegateTo(builder) = false, want true")
 	}
 	if !CapabilityRoleOrchestrator.CanDelegateTo(CapabilityRoleQA) {
 		t.Fatal("CapabilityRoleOrchestrator.CanDelegateTo(qa) = false, want true")
+	}
+	if !CapabilityRoleOrchestrator.CanDelegateTo(CapabilityRoleResearch) {
+		t.Fatal("CapabilityRoleOrchestrator.CanDelegateTo(research) = false, want true")
 	}
 	if CapabilityRoleBuilder.CanDelegateTo(CapabilityRoleQA) {
 		t.Fatal("CapabilityRoleBuilder.CanDelegateTo(qa) = true, want false")

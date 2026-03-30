@@ -1,8 +1,81 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-29
-Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, and `C6` is now closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary; local gates are green on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, `just ci`, and `just build`, the pushed follow-up is `75aa5c4`, and GitHub Actions run `23721667218` is green through all `check` jobs plus `full gate` with only the trailing `release snapshot check` still running at the time of this update.
+Updated: 2026-03-30
+Status: In progress; the template-library enforcement slice is now green locally through `just test-pkg ./internal/domain`, `just test-pkg ./internal/app`, `just check`, and `just ci`, and generated-node contracts now actively gate edit/complete behavior plus parent/containing-scope done blockers while legacy kind-template creation and snapshot compatibility paths remain intentionally in place.
+
+## Checkpoint 2026-03-30: Template Contract Enforcement + Research Role Alignment
+
+Objective:
+- land the first real enforcement slice so template libraries are no longer just persistence/operator surfaces:
+  - generated-node contract snapshots must now gate edit/complete mutations,
+  - required generated blockers must now stop parent/containing-scope completion,
+  - and the fixed MVP actor-kind list must be satisfiable by the existing auth/lease model.
+
+Context7:
+1. `/websites/pkg_go_dev_go1_25_3` reviewed before implementation for:
+   - `errors.Is` / wrapped-error behavior,
+   - and standard library API references used by the service-layer enforcement helpers -> PASS.
+2. `/websites/sqlite_docs` reviewed before implementation for:
+   - row-loading / transaction assumptions while resolving generated-node contract snapshots during completion checks -> PASS.
+3. After the first local app failure, `/websites/pkg_go_dev_go1_25_3` was refreshed again before the next edit -> PASS.
+4. After the next full-gate failure, `/websites/pkg_go_dev_go1_25_3` was refreshed again before correcting the remaining test drift -> PASS.
+
+Implementation summary:
+1. Added a dedicated app-layer node-contract enforcement helper path:
+   - resolve the current workflow actor kind from the active lease/caller,
+   - load stored node-contract snapshots,
+   - allow humans by default,
+   - allow orchestrator complete only when the stored rule opts in,
+   - and fail closed for non-human actor-kind mismatches.
+2. Wired generated-node contract enforcement into:
+   - `CreateTask` when creating children under generated parents,
+   - `UpdateTask`,
+   - `RenameTask`,
+   - `MoveTask`,
+   - `ReparentTask`,
+   - `DeleteTask`,
+   - and `RestoreTask`.
+3. Replaced the old unconditional “every child blocks done” behavior with the compatibility-first rule set:
+   - required parent blockers come from direct-child node-contract snapshots,
+   - required containing-scope blockers come from descendant node-contract snapshots,
+   - legacy/manual `RequireChildrenDone` completion policy still works,
+   - and optional/informal child nodes no longer block done by default.
+4. Added `research` as a first-class MVP auth/capability role so template actor-kind rules can be satisfied without inventing a parallel role model later.
+5. Corrected a few pre-existing tests that had been implicitly relying on historical actor attribution instead of the current caller context, and restored one QA policy test that had drifted during patch iteration.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./internal/app` -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+
+Cleanup/orphan review:
+1. The following legacy seams still remain intentionally as compatibility paths:
+   - project creation still uses legacy kind-template defaults/root child generation,
+   - task creation still falls back to kind-template expansion when no project template binding exists,
+   - snapshot import/export still uses the legacy shape,
+   - and old kind-template authoring surfaces still exist beside template-library surfaces.
+2. Comments are still scope-gated only:
+   - generated-node contracts do not yet restrict who may comment on a generated node.
+3. The enforcement slice now closes the most obvious bypasses for generated work:
+   - editing a generated node directly,
+   - completing it with the wrong actor kind,
+   - or attaching/reparenting children under a generated parent without the allowed actor kind.
+
+Current status:
+1. Template-library node contracts are now operational rather than informational.
+2. Generated nodes can enforce actor-kind edit/complete ownership and truthful parent/scope completion blockers.
+3. Human override-complete remains allowed.
+4. Project creation, snapshot transport, and remaining legacy kind-template authoring/fallback paths are still pending migration.
+
+Next step:
+1. Move the remaining compatibility seams onto template libraries in order:
+   - project creation,
+   - snapshot import/export,
+   - then explicit legacy kind-template removal/quarantine.
+2. Decide whether comment mutations should become contract-aware in MVP or remain scope-only.
 
 ## Checkpoint 2026-03-29: Template Operator Surfaces + Repo-Wide Gates Green
 
