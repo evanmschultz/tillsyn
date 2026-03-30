@@ -504,6 +504,57 @@ Later:
 - reseeding/migration tools
 - broader actor-kind flexibility if still needed
 
+## Focused MVP Planning Checklist
+
+Once implementation planning starts, keep it to these slices:
+
+1. SQLite schema and storage model
+- template libraries
+- node templates
+- child rules
+- template bindings
+- node contract snapshots
+- foreign-key and transaction boundaries for create/bind/approve flows
+
+2. Runtime resolution and snapshotting
+- resolve the active project template library
+- resolve the node template for a requested scope level + node kind
+- generate child rules into concrete child nodes
+- persist the resolved rule as a node contract snapshot on every generated node
+
+3. Auth and completion enforcement
+- keep current scope checks as the coarse boundary
+- add actor-kind and node-kind checks from the stored node contract
+- add parent and containing-scope done gates using the stored contract
+- keep human override-complete allowed
+- keep orchestrator override-complete opt-in per rule and default off
+
+4. Human-readable TUI and CLI flows
+- library browse/show
+- project bind flow
+- draft create/edit/approve flow
+- node blocked-state explanation flow
+- node contract inspection flow
+
+5. Migration and compatibility
+- do not silently mutate existing nodes
+- keep legacy kind-template behavior working during transition
+- make new enforcement depend on stored node contracts, not live template lookups only
+
+## Implementation Hygiene Requirement
+
+When the implementation branch starts, treat DRY cleanup as part of the plan, not follow-up polish.
+
+Required planning rule:
+- every implementation slice must explicitly identify the old code paths, commands, UI copy, tests, and data assumptions it replaces
+- and must either remove them in the same slice or mark them as temporary compatibility seams with a named cleanup follow-up
+
+In practice that means:
+- update or delete superseded code blocks instead of layering duplicates beside them
+- avoid parallel old/new template resolution paths unless the compatibility seam is deliberate and documented
+- avoid orphaned CLI commands, TUI copy, schema fields, or tests that still describe templates as simple kind defaults after the contract model lands
+- include code-search cleanup checks in each implementation slice so stale wording and dead branches are caught deliberately
+
 ## README / PLAN Handoff Note
 
 Once this model is locked, README and this branch's `PLAN.md` should stop describing templates primarily as "kind templates" or "metadata/checklist defaults".

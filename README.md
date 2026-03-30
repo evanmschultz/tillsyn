@@ -58,7 +58,8 @@ Implemented now:
 - `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
-- Kind templates now seed create-time project metadata defaults, task metadata/completion defaults, project root children, and recursive child work-item defaults; broader reseeding/TUI/CLI policy surfaces remain tracked in `TEMPLATE_AGENT_CONSENSUS.md`.
+- Current implementation still uses kind-template-backed create-time defaults for project metadata, task metadata/completion defaults, project root children, and recursive child work-item defaults.
+- Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, and truthful completion gates; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
 - Capability leases now normalize project scope ids, validate scope tuples on issuance, enforce bounded parent delegation, and apply builder/qa/orchestrator action checks in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
@@ -120,7 +121,7 @@ Instruction-tool usage guidance:
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
 - remote/team auth-tenancy expansion and additional security hardening,
-- template reseeding/apply-scope UX, richer TUI/CLI template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
+- template-library authoring/approval/binding UX, richer actor-kind-aware template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
 
 Current post-dogfood consensus note:
 - the detailed working consensus for that template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.

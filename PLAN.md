@@ -4,6 +4,48 @@ Created: 2026-02-21
 Updated: 2026-03-29
 Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, and `C6` is now closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary; local gates are green on `just test-pkg ./internal/tui`, `just test-pkg ./internal/app`, `just test-pkg ./cmd/till`, `just test-golden-update`, `just fmt`, `just check`, `just ci`, and `just build`, the pushed follow-up is `75aa5c4`, and GitHub Actions run `23721667218` is green through all `check` jobs plus `full gate` with only the trailing `release snapshot check` still running at the time of this update.
 
+## Checkpoint 2026-03-29: Templating Contract Consensus Locked
+
+Objective:
+- lock the product meaning of templating before any implementation branch broadens the current kind-template defaults path.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed again for the SQLite-backed single-DB design assumption:
+   - transaction batching,
+   - savepoints for multi-step operations,
+   - and `PRAGMA foreign_keys = ON` / WAL-oriented runtime assumptions -> PASS.
+
+Decision:
+1. Templates are workflow-and-authority contracts first, scaffolding second.
+2. Scope level, node kind, and actor kind are separate dimensions:
+   - scope level remains `project|branch|phase|task|subtask`,
+   - node kind becomes the work category registry,
+   - actor kind becomes the authority category used by auth/completion checks.
+3. SQLite is the active single source of truth for template libraries, bindings, and node contract snapshots in MVP.
+4. Humans always retain override-complete power on generated blockers.
+5. Orchestrator completion on builder/QA blockers defaults to off and must be enabled explicitly per rule.
+6. MVP should bind exactly one active template library per project.
+7. MVP actor kinds are locked to a small fixed set for now:
+   - `human`,
+   - `orchestrator`,
+   - `builder`,
+   - `qa`,
+   - `research`.
+8. The implementation plan must include DRY cleanup and orphan removal explicitly:
+   - identify superseded code paths, UI copy, commands, tests, and assumptions per slice,
+   - remove or clearly quarantine compatibility seams,
+   - and avoid leaving old template/default wording beside the new contract model.
+
+Artifacts:
+1. `TEMPLATING_DESIGN_MEMO.md` now carries the locked consensus and focused MVP planning checklist.
+2. `README.md` now distinguishes current kind-template-backed behavior from the locked next-step SQLite-backed contract model.
+
+Next planning target:
+1. define the SQLite schema for template libraries, node templates, child rules, project bindings, and node contract snapshots,
+2. define the project/global/draft clone-and-approve flow,
+3. define the minimum TUI/CLI screens required to keep these rules readable to humans,
+4. and map every required cleanup seam so the implementation branch does not leave dead/orphaned old code beside the new model.
+
 ## Checkpoint 2026-03-29: In-Place Git Topology Refactor For Shared Worktrees
 
 Objective:
