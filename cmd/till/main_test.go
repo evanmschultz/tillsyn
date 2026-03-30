@@ -2008,6 +2008,72 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	}
 }
 
+// TestRunTemplateLibraryUpsertAcceptsSnakeCaseProjectMetadata verifies project metadata defaults accept snake_case JSON keys.
+func TestRunTemplateLibraryUpsertAcceptsSnakeCaseProjectMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"kind", "upsert",
+		"--id", "go-service",
+		"--display-name", "Go Service",
+		"--applies-to", "project",
+	}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(kind upsert go-service) error = %v", err)
+	}
+
+	specJSON := strings.TrimSpace(`{
+	  "id": "go-defaults",
+	  "scope": "global",
+	  "name": "Go Defaults",
+	  "status": "approved",
+	  "node_templates": [
+	    {
+	      "id": "project-template",
+	      "scope_level": "project",
+	      "node_kind_id": "go-service",
+	      "display_name": "Go Service Project",
+	      "project_metadata_defaults": {
+	        "owner": "Platform",
+	        "standards_markdown": "Run Go validation"
+	      }
+	    }
+	  ]
+	}`)
+
+	var upsertOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "library", "upsert",
+		"--spec-json", specJSON,
+	}, &upsertOut, io.Discard); err != nil {
+		t.Fatalf("run(template library upsert snake_case metadata) error = %v", err)
+	}
+	var library domain.TemplateLibrary
+	if err := json.Unmarshal([]byte(upsertOut.String()), &library); err != nil {
+		t.Fatalf("Unmarshal(template library upsert snake_case metadata) error = %v", err)
+	}
+	if len(library.NodeTemplates) != 1 || library.NodeTemplates[0].ProjectMetadataDefaults == nil {
+		t.Fatalf("template library output = %#v, want one project metadata default", library)
+	}
+	if got := library.NodeTemplates[0].ProjectMetadataDefaults.Owner; got != "Platform" {
+		t.Fatalf("project metadata owner = %q, want Platform", got)
+	}
+	if got := library.NodeTemplates[0].ProjectMetadataDefaults.StandardsMarkdown; got != "Run Go validation" {
+		t.Fatalf("project metadata standards_markdown = %q, want Run Go validation", got)
+	}
+}
+
 // TestRunCapabilityLeaseCommands verifies issue/list/revoke lease flows on the new CLI surface.
 func TestRunCapabilityLeaseCommands(t *testing.T) {
 	workspace := t.TempDir()

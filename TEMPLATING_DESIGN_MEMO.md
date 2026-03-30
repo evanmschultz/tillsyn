@@ -709,19 +709,19 @@ Those tools should include:
 - best-practice suggestions for keeping external agent setup aligned with Tillsyn
 - explicit reminders that impactful policy/template changes still need human approval
 
-### AGENTS / CLAUDE / Skills Guidance Requirement
+### External Agent-Policy Guidance Requirement
 
 The guidance surfaces should explicitly help operators align surrounding agent setup with Tillsyn.
 
 That includes recommendations such as:
-- update `AGENTS.md` to reflect the project's Tillsyn workflow, approval policy, and validation rules
-- update `CLAUDE.md` or equivalent agent-policy docs so interaction rules match Tillsyn's authority model
+- suggest clear external agent-policy guidance that matches the project's Tillsyn workflow, approval policy, and validation rules
+- suggest interaction rules that match Tillsyn's authority model
 - create or refine skills that reflect the project's repeated branch/phase/task workflow inside Tillsyn
-- keep those files descriptive and human-reviewable instead of hiding process in scattered prompt fragments
+- keep surrounding policy docs descriptive and human-reviewable instead of hiding process in scattered prompt fragments
 
 Recommended MVP rule:
 - Tillsyn should suggest these changes
-- but should not silently rewrite those external files
+- but should not read, rewrite, or otherwise manage those external files directly
 - humans stay the approvers for those policy/doc updates
 
 ## Example Contract
@@ -877,7 +877,7 @@ Once implementation planning starts, keep it to these slices:
 - README examples for the highest-frequency template workflows
 - `till.get_instructions` updates that explain the best-supported workflow order and related operator guidance
 - `till.get_bootstrap_guide` updates for first-run template/library setup
-- explicit suggestions for aligning skills and `AGENTS.md` / `CLAUDE.md`-style files with Tillsyn policy
+- explicit suggestions for aligning external agent-policy docs and skills with Tillsyn policy, without Tillsyn managing those files directly
 
 6. Migration and compatibility
 - do not silently mutate existing nodes

@@ -4,6 +4,43 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, and snapshot transport for template libraries/project bindings/node-contract snapshots, while final legacy kind-template quarantine remains intentionally pending. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical.
 
+## Checkpoint 2026-03-30: Project Metadata JSON Fix + External Policy Clarification
+
+Objective:
+- fix the smoke-tested template-library metadata transport bug and remove the remaining templating-plan wording that implied Tillsyn manages external agent-policy files directly.
+
+Context7:
+1. `/websites/pkg_go_dev_go1_25_3` reviewed before the fix for:
+   - `encoding/json` field-tag behavior,
+   - nested struct JSON name mapping,
+   - and why explicit `json` tags are required for snake_case fields such as `standards_markdown` -> PASS.
+2. After one flaky `just check` failure in unrelated TUI tests, `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` was refreshed before any follow-up edit -> PASS.
+
+Implementation summary:
+1. Added explicit JSON tags to project metadata structs so nested template-library JSON transport now accepts and emits stable snake_case keys:
+   - `owner`,
+   - `standards_markdown`,
+   - `capability_policy`,
+   - and related nested policy fields.
+2. Added a CLI regression test proving `template library upsert --spec-json` accepts snake_case `project_metadata_defaults` and preserves `standards_markdown`.
+3. Reworded the current templating planning docs so:
+   - external agent-policy docs and skills are suggestion-only alignment targets,
+   - Tillsyn does not read, rewrite, or otherwise manage those files directly.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/domain` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just test-pkg ./internal/tui` -> PASS after a flaky full-gate failure was rerun directly.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+7. `just test-golden` -> not needed; no TUI output changed in this slice.
+
+Current status:
+1. The manual template smoke run now has a clear follow-up fix for nested project metadata JSON transport.
+2. The templating plan/docs no longer describe Tillsyn as directly managing AGENTS/CLAUDE-style files.
+3. Legacy kind-template compatibility fields still exist in code and remain part of the next quarantine/removal slice.
+
 ## Checkpoint 2026-03-30: Template-Aware Snapshot Transport
 
 Objective:
@@ -256,7 +293,7 @@ Implementation summary:
 4. Added JSON tags to template-library domain rows so CLI/MCP output is readable and stable without bespoke one-off payload wrappers.
 5. Updated bootstrap/instruction guidance plus README examples so the operator docs now mention:
    - template-library workflows,
-   - AGENTS.md / CLAUDE.md / SKILL.md alignment expectations,
+   - suggestion-only external agent-policy and skill alignment expectations,
    - and the explicit rule that SQLite is the source of truth while JSON remains the stable CLI/MCP transport.
 6. Fixed the repo-wide TUI failure by making `TestAuthInventoryMouseWheelReachesLowerSections` use the current wall clock instead of a now-expired hard-coded timestamp.
 7. Expanded tests for:
