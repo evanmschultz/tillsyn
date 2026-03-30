@@ -4,6 +4,44 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; the local cross-process auth wait slice and MCP cancel support remain green through GitHub Actions run `23673060411`, the delegated child-self-claim/requester-cleanup seam is now green locally through `just test-pkg` on all touched packages plus `just check` and `just ci`, `C2` approve/deny/cancel is proven live, `C3` in-scope/out-of-scope/revoke fail-closed is proven, the fresh `C4` rerun now proves child self-claim plus the current builder-vs-QA `create-child` policy split on the refreshed MCP path, `C5` is proven live through the refreshed MCP rerun, `C6` is closed after the final TUI/CLI polish pass restored `/` search from notifications focus, made the project notifications body scroll to lower sections on shorter boards, aligned local-MVP project ownership with the bootstrap identity for both new project defaults and legacy empty-owner CLI display, and passed fresh user confirmation on the rebuilt binary, and the operational embeddings/search wave is now green locally and ready to merge with durable lifecycle state, background processing, reindex/status surfaces, real-DB Ollama validation, and real stdio MCP validation; the remaining follow-up is human-facing relevance/provenance polish for sparse-project semantic search rather than a blocker in the shipped embeddings lifecycle itself.
 
+## Checkpoint 2026-03-30: Laslig CLI Output Unification
+
+Objective:
+- move the remaining human/operator CLI result paths onto the shared `laslig` renderer pattern so `till` no longer mixes structured human views with ad-hoc JSON/plain-text success output for auth, lease, handoff, and basic utility commands.
+
+Context7:
+1. `resolve_library_id("laslig", ...)` returned no Context7 match before code changes.
+2. Fallback source used per repo instructions: local `cmd/till/cli_render.go` and the existing inventory/detail renderers in `cmd/till/auth_inventory_cli.go` and `cmd/till/coordination_inventory_cli.go`.
+
+Implementation summary:
+1. Converted local auth session issue/revoke flows from raw JSON to structured `Auth Session` key/value output.
+2. Converted auth request create/approve/deny/cancel flows from raw JSON to structured `Auth Request` key/value output, while keeping `auth request show` secret-free.
+3. Converted auth session validate/revoke flows from raw JSON to structured `Auth Session` key/value output.
+4. Converted lease issue/heartbeat/renew/revoke flows from raw JSON to the existing `Capability Lease` detail view.
+5. Converted lease `revoke-all` from raw JSON to a structured `Capability Lease Revocation` summary.
+6. Converted handoff create/update flows from raw JSON to the existing `Handoff` detail view.
+7. Converted top-level `--version`, `paths`, and `init-dev-config` outputs to structured `laslig` key/value views so the utility surfaces match the rest of the CLI.
+8. Removed the now-dead lease/handoff JSON payload types and mappers so the CLI no longer carries parallel unused output models for those commands.
+
+Intentional non-conversion:
+1. `capture-state` remains JSON because it is a machine-facing recovery/data surface.
+2. `kind list`, `kind upsert`, `kind allowlist list`, and `kind allowlist set` remain JSON because they are explicit structured data/configuration surfaces rather than operator inventory/detail views.
+3. `export` remains snapshot JSON by design.
+
+Commands run and outcomes:
+1. Context7 `resolve_library_id("laslig", ...)` -> no match; fallback to repo-local renderer source.
+2. `gofmt -w cmd/till/auth_inventory_cli.go cmd/till/auth_inventory_cli_test.go cmd/till/coordination_inventory_cli.go cmd/till/main.go cmd/till/main_test.go` -> PASS.
+3. `mage TestPkg ./cmd/till` -> PASS.
+4. `mage CI` -> PASS.
+
+Current status:
+1. The structured CLI output pass is locally green.
+2. `cmd/till` package tests are green after switching the affected mutation flows from JSON-decoding assertions to field-level human-output assertions.
+3. Full repo `mage CI` is green, including the 70% minimum package coverage gate; `cmd/till` coverage is now `75.2%`.
+
+Next step:
+1. Review the lane diff, then commit/push/open PR if the remaining intentionally machine-oriented JSON surfaces match operator expectations.
+
 ## Checkpoint 2026-03-30: Operational Embeddings/Search Wave Closeout
 
 Objective:

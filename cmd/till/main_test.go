@@ -42,6 +42,17 @@ func stripANSITest(text string) string {
 	return ansiEscapePattern.ReplaceAllString(text, "")
 }
 
+// extractCLIKVValue returns one laslig key/value field value from human CLI output.
+func extractCLIKVValue(t *testing.T, output, label string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?mi)^\s*` + regexp.QuoteMeta(label) + `\s+(.+?)\s*$`)
+	match := re.FindStringSubmatch(stripANSITest(output))
+	if match == nil {
+		t.Fatalf("expected label %q in output, got %q", label, output)
+	}
+	return strings.TrimSpace(match[1])
+}
+
 // fakeProgram represents fake program data used by this package.
 type fakeProgram struct {
 	runErr error
@@ -627,28 +638,27 @@ func TestRunAuthIssueAndRevokeSession(t *testing.T) {
 	}, &issuedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth issue-session) error = %v", err)
 	}
-
-	var issued struct {
-		SessionID     string    `json:"session_id"`
-		SessionSecret string    `json:"session_secret"`
-		PrincipalID   string    `json:"principal_id"`
-		PrincipalType string    `json:"principal_type"`
-		ExpiresAt     time.Time `json:"expires_at"`
+	issueOutput := issuedOut.String()
+	issuedSessionID := extractCLIKVValue(t, issueOutput, "session id")
+	issuedSessionSecret := extractCLIKVValue(t, issueOutput, "session secret")
+	if issuedSessionID == "" || issuedSessionSecret == "" {
+		t.Fatalf("issue-session returned empty credentials: %q", issueOutput)
 	}
-	if err := json.Unmarshal([]byte(issuedOut.String()), &issued); err != nil {
-		t.Fatalf("Unmarshal(issue-session) error = %v", err)
+	for _, want := range []string{
+		"Auth Session",
+		"Agent One [agent-1]",
+		"Till MCP STDIO",
+		"state",
+		"active",
+		"principal type",
+		"agent",
+	} {
+		if !strings.Contains(issueOutput, want) {
+			t.Fatalf("expected %q in issue-session output, got %q", want, issueOutput)
+		}
 	}
-	if issued.SessionID == "" || issued.SessionSecret == "" {
-		t.Fatalf("issue-session returned empty credentials: %q", issuedOut.String())
-	}
-	if issued.PrincipalID != "agent-1" {
-		t.Fatalf("issue-session principal_id = %q, want agent-1", issued.PrincipalID)
-	}
-	if issued.PrincipalType != "agent" {
-		t.Fatalf("issue-session principal_type = %q, want agent", issued.PrincipalType)
-	}
-	if issued.ExpiresAt.IsZero() {
-		t.Fatalf("issue-session expires_at = zero, want timestamp")
+	if got := extractCLIKVValue(t, issueOutput, "expires"); got == "-" {
+		t.Fatalf("issue-session expires = %q, want timestamp", got)
 	}
 
 	var revokedOut strings.Builder
@@ -656,28 +666,20 @@ func TestRunAuthIssueAndRevokeSession(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "revoke-session",
-		"--session-id", issued.SessionID,
+		"--session-id", issuedSessionID,
 		"--reason", "operator_revoke",
 	}, &revokedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth revoke-session) error = %v", err)
 	}
-
-	var revoked struct {
-		SessionID        string     `json:"session_id"`
-		RevokedAt        *time.Time `json:"revoked_at"`
-		RevocationReason string     `json:"revocation_reason"`
+	revokeOutput := revokedOut.String()
+	if got := extractCLIKVValue(t, revokeOutput, "session id"); got != issuedSessionID {
+		t.Fatalf("revoke-session session id = %q, want %q", got, issuedSessionID)
 	}
-	if err := json.Unmarshal([]byte(revokedOut.String()), &revoked); err != nil {
-		t.Fatalf("Unmarshal(revoke-session) error = %v", err)
+	if got := extractCLIKVValue(t, revokeOutput, "revoked at"); got == "-" {
+		t.Fatalf("revoke-session revoked at = %q, want timestamp", got)
 	}
-	if revoked.SessionID != issued.SessionID {
-		t.Fatalf("revoke-session session_id = %q, want %q", revoked.SessionID, issued.SessionID)
-	}
-	if revoked.RevokedAt == nil {
-		t.Fatal("revoke-session revoked_at = nil, want timestamp")
-	}
-	if revoked.RevocationReason != "operator_revoke" {
-		t.Fatalf("revoke-session reason = %q, want operator_revoke", revoked.RevocationReason)
+	if got := extractCLIKVValue(t, revokeOutput, "revocation reason"); got != "operator_revoke" {
+		t.Fatalf("revoke-session reason = %q, want operator_revoke", got)
 	}
 }
 
@@ -705,24 +707,22 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		t.Fatalf("run(auth request create) error = %v", err)
 	}
 
-	var created authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(createdOut.String()), &created); err != nil {
-		t.Fatalf("Unmarshal(create) error = %v", err)
+	createdOutput := createdOut.String()
+	createdID := extractCLIKVValue(t, createdOutput, "request id")
+	if strings.Contains(createdOutput, "resume_tool") || strings.Contains(createdOutput, "resume_path") {
+		t.Fatalf("create output leaked continuation metadata: %s", createdOutput)
 	}
-	if strings.Contains(createdOut.String(), "resume_tool") || strings.Contains(createdOut.String(), "resume_path") {
-		t.Fatalf("create output leaked continuation metadata: %s", createdOut.String())
-	}
-	if got := created.State; got != "pending" {
+	if got := extractCLIKVValue(t, createdOutput, "state"); got != "pending" {
 		t.Fatalf("create state = %q, want pending", got)
 	}
-	if got := created.Path; got != "project/p1" {
+	if got := extractCLIKVValue(t, createdOutput, "requested path"); got != "project/p1" {
 		t.Fatalf("create path = %q, want project/p1", got)
 	}
-	if got := created.PrincipalRole; got != "builder" {
-		t.Fatalf("create principal_role = %q, want builder", got)
+	if !strings.Contains(createdOutput, "review-agent • builder") {
+		t.Fatalf("expected principal label in create output, got %q", createdOutput)
 	}
-	if !created.HasContinuation {
-		t.Fatal("create has_continuation = false, want true")
+	if got := extractCLIKVValue(t, createdOutput, "has continuation"); got != "yes" {
+		t.Fatalf("create has continuation = %q, want yes", got)
 	}
 
 	var shownOut strings.Builder
@@ -730,7 +730,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "request", "show",
-		"--request-id", created.ID,
+		"--request-id", createdID,
 	}, &shownOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show) error = %v", err)
 	}
@@ -739,7 +739,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Auth Request",
-		created.ID,
+		createdID,
 		"review-agent • builder",
 		"requested path",
 		"project/p1",
@@ -758,44 +758,42 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "request", "approve",
-		"--request-id", created.ID,
+		"--request-id", createdID,
 		"--path", "project/p1/branch/review-branch",
 		"--ttl", "2h",
 		"--note", "approved for dogfood",
 	}, &approvedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request approve) error = %v", err)
 	}
-
-	var approved authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(approvedOut.String()), &approved); err != nil {
-		t.Fatalf("Unmarshal(approve) error = %v", err)
+	approvedOutput := approvedOut.String()
+	if strings.Contains(approvedOutput, "resume_tool") || strings.Contains(approvedOutput, "resume_path") {
+		t.Fatalf("approve output leaked continuation metadata: %s", approvedOutput)
 	}
-	if strings.Contains(approvedOut.String(), "resume_tool") || strings.Contains(approvedOut.String(), "resume_path") {
-		t.Fatalf("approve output leaked continuation metadata: %s", approvedOut.String())
-	}
-	if got := approved.State; got != "approved" {
+	if got := extractCLIKVValue(t, approvedOutput, "state"); got != "approved" {
 		t.Fatalf("approve state = %q, want approved", got)
 	}
-	if got := approved.Path; got != "project/p1" {
+	if got := extractCLIKVValue(t, approvedOutput, "requested path"); got != "project/p1" {
 		t.Fatalf("approve requested path = %q, want project/p1", got)
 	}
-	if got := approved.ProjectID; got != "p1" {
+	if got := extractCLIKVValue(t, approvedOutput, "project"); got != "p1" {
 		t.Fatalf("approve project_id = %q, want p1", got)
 	}
-	if got := approved.ApprovedPath; got != "project/p1/branch/review-branch" {
+	if got := extractCLIKVValue(t, approvedOutput, "approved path"); got != "project/p1/branch/review-branch" {
 		t.Fatalf("approve approved_path = %q, want project/p1/branch/review-branch", got)
 	}
-	if got := approved.RequestedSessionTTL; got != "8h0m0s" {
-		t.Fatalf("approve requested_session_ttl = %q, want 8h0m0s", got)
+	if got := extractCLIKVValue(t, approvedOutput, "requested ttl"); got != "8h" {
+		t.Fatalf("approve requested ttl = %q, want 8h", got)
 	}
-	if got := approved.ApprovedSessionTTL; got != "2h0m0s" {
-		t.Fatalf("approve approved_session_ttl = %q, want 2h0m0s", got)
+	if got := extractCLIKVValue(t, approvedOutput, "approved ttl"); got != "2h" {
+		t.Fatalf("approve approved ttl = %q, want 2h", got)
 	}
-	if !approved.HasContinuation {
-		t.Fatal("approve has_continuation = false, want true")
+	if got := extractCLIKVValue(t, approvedOutput, "has continuation"); got != "yes" {
+		t.Fatalf("approve has continuation = %q, want yes", got)
 	}
-	if approved.IssuedSessionID == "" || approved.IssuedSessionSecret == "" {
-		t.Fatalf("approve output missing issued credentials: %q", approvedOut.String())
+	approvedSessionID := extractCLIKVValue(t, approvedOutput, "issued session")
+	approvedSessionSecret := extractCLIKVValue(t, approvedOutput, "issued session secret")
+	if approvedSessionID == "" || approvedSessionSecret == "" {
+		t.Fatalf("approve output missing issued credentials: %q", approvedOutput)
 	}
 
 	var approvedShowOut strings.Builder
@@ -803,7 +801,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "request", "show",
-		"--request-id", created.ID,
+		"--request-id", createdID,
 	}, &approvedShowOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show approved) error = %v", err)
 	}
@@ -812,7 +810,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Auth Request",
-		approved.IssuedSessionID,
+		approvedSessionID,
 		"approved path",
 		"project/p1/branch/review-branch",
 		"approved ttl",
@@ -822,7 +820,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 			t.Fatalf("expected %q in approved auth request show output, got %q", want, approvedShowOut.String())
 		}
 	}
-	if strings.Contains(approvedShowOut.String(), approved.IssuedSessionSecret) {
+	if strings.Contains(approvedShowOut.String(), approvedSessionSecret) {
 		t.Fatalf("approved show output leaked issued session secret: %s", approvedShowOut.String())
 	}
 
@@ -831,32 +829,29 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "session", "validate",
-		"--session-id", approved.IssuedSessionID,
-		"--session-secret", approved.IssuedSessionSecret,
+		"--session-id", approvedSessionID,
+		"--session-secret", approvedSessionSecret,
 	}, &validatedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth session validate) error = %v", err)
 	}
-
-	var validated authSessionPayloadJSON
-	if err := json.Unmarshal([]byte(validatedOut.String()), &validated); err != nil {
-		t.Fatalf("Unmarshal(validate) error = %v", err)
+	validatedOutput := validatedOut.String()
+	for _, want := range []string{
+		"Auth Session",
+		"review-agent • builder",
+		"state",
+		"active",
+	} {
+		if !strings.Contains(validatedOutput, want) {
+			t.Fatalf("expected %q in auth session validate output, got %q", want, validatedOutput)
+		}
 	}
-	if got := validated.PrincipalID; got != "review-agent" {
-		t.Fatalf("validate principal_id = %q, want review-agent", got)
+	if got := extractCLIKVValue(t, validatedOutput, "project"); got != "p1" {
+		t.Fatalf("validate project = %q, want p1", got)
 	}
-	if got := validated.PrincipalRole; got != "builder" {
-		t.Fatalf("validate principal_role = %q, want builder", got)
+	if got := extractCLIKVValue(t, validatedOutput, "auth request"); got != createdID {
+		t.Fatalf("validate auth request = %q, want %q", got, createdID)
 	}
-	if got := validated.State; got != "active" {
-		t.Fatalf("validate state = %q, want active", got)
-	}
-	if got := validated.ProjectID; got != "p1" {
-		t.Fatalf("validate project_id = %q, want p1", got)
-	}
-	if got := validated.AuthRequestID; got != created.ID {
-		t.Fatalf("validate auth_request_id = %q, want %q", got, created.ID)
-	}
-	if got := validated.ApprovedPath; got != "project/p1/branch/review-branch" {
+	if got := extractCLIKVValue(t, validatedOutput, "approved path"); got != "project/p1/branch/review-branch" {
 		t.Fatalf("validate approved_path = %q, want project/p1/branch/review-branch", got)
 	}
 
@@ -872,7 +867,7 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Auth Sessions",
-		approved.IssuedSessionID,
+		approvedSessionID,
 		"review-agent • builder",
 		"project/p1/branch/review-branch",
 		"p1",
@@ -900,7 +895,7 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "config.toml")
 	seedProjectForAuthCLITest(t, dbPath, "p1")
 
-	createRequest := func(principalID string) authRequestPayloadJSON {
+	createRequest := func(principalID string) string {
 		t.Helper()
 		var out strings.Builder
 		if err := run(context.Background(), []string{
@@ -915,48 +910,36 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 		}, &out, io.Discard); err != nil {
 			t.Fatalf("run(auth request create %q) error = %v", principalID, err)
 		}
-		var request authRequestPayloadJSON
-		if err := json.Unmarshal([]byte(out.String()), &request); err != nil {
-			t.Fatalf("Unmarshal(create %q) error = %v", principalID, err)
-		}
-		return request
+		return extractCLIKVValue(t, out.String(), "request id")
 	}
 
-	deniedRequest := createRequest("user-deny")
+	deniedRequestID := createRequest("user-deny")
 	var deniedOut strings.Builder
 	if err := run(context.Background(), []string{
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "request", "deny",
-		"--request-id", deniedRequest.ID,
+		"--request-id", deniedRequestID,
 		"--note", "outside current scope",
 	}, &deniedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request deny) error = %v", err)
 	}
-	var denied authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(deniedOut.String()), &denied); err != nil {
-		t.Fatalf("Unmarshal(deny) error = %v", err)
-	}
-	if got := denied.State; got != "denied" {
+	if got := extractCLIKVValue(t, deniedOut.String(), "state"); got != "denied" {
 		t.Fatalf("deny state = %q, want denied", got)
 	}
 
-	canceledRequest := createRequest("user-cancel")
+	canceledRequestID := createRequest("user-cancel")
 	var canceledOut strings.Builder
 	if err := run(context.Background(), []string{
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "request", "cancel",
-		"--request-id", canceledRequest.ID,
+		"--request-id", canceledRequestID,
 		"--note", "superseded by another request",
 	}, &canceledOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request cancel) error = %v", err)
 	}
-	var canceled authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(canceledOut.String()), &canceled); err != nil {
-		t.Fatalf("Unmarshal(cancel) error = %v", err)
-	}
-	if got := canceled.State; got != "canceled" {
+	if got := extractCLIKVValue(t, canceledOut.String(), "state"); got != "canceled" {
 		t.Fatalf("cancel state = %q, want canceled", got)
 	}
 
@@ -969,7 +952,7 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	}, &deniedListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request list denied) error = %v", err)
 	}
-	for _, want := range []string{"Auth Requests", deniedRequest.ID, "denied", "user-deny"} {
+	for _, want := range []string{"Auth Requests", deniedRequestID, "denied", "user-deny"} {
 		if !strings.Contains(deniedListOut.String(), want) {
 			t.Fatalf("expected %q in denied auth request list output, got %q", want, deniedListOut.String())
 		}
@@ -984,7 +967,7 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 	}, &canceledListOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request list canceled) error = %v", err)
 	}
-	for _, want := range []string{"Auth Requests", canceledRequest.ID, "canceled", "user-cancel"} {
+	for _, want := range []string{"Auth Requests", canceledRequestID, "canceled", "user-cancel"} {
 		if !strings.Contains(canceledListOut.String(), want) {
 			t.Fatalf("expected %q in canceled auth request list output, got %q", want, canceledListOut.String())
 		}
@@ -1013,10 +996,7 @@ func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
 		t.Fatalf("run(auth request create timeout) error = %v", err)
 	}
 
-	var created authRequestPayloadJSON
-	if err := json.Unmarshal([]byte(createdOut.String()), &created); err != nil {
-		t.Fatalf("Unmarshal(create timeout) error = %v", err)
-	}
+	createdID := extractCLIKVValue(t, createdOut.String(), "request id")
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1025,11 +1005,11 @@ func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"auth", "request", "show",
-		"--request-id", created.ID,
+		"--request-id", createdID,
 	}, &shownOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request show timeout) error = %v", err)
 	}
-	for _, want := range []string{"Auth Request", "expired", "timed_out", created.ID} {
+	for _, want := range []string{"Auth Request", "expired", "timed_out", createdID} {
 		if !strings.Contains(shownOut.String(), want) {
 			t.Fatalf("expected %q in timeout auth request show output, got %q", want, shownOut.String())
 		}
@@ -1055,13 +1035,8 @@ func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
 		t.Fatalf("run(auth issue-session) error = %v", err)
 	}
 
-	var issued struct {
-		SessionID     string `json:"session_id"`
-		SessionSecret string `json:"session_secret"`
-	}
-	if err := json.Unmarshal([]byte(issuedOut.String()), &issued); err != nil {
-		t.Fatalf("Unmarshal(issue-session) error = %v", err)
-	}
+	issuedSessionID := extractCLIKVValue(t, issuedOut.String(), "session id")
+	issuedSessionSecret := extractCLIKVValue(t, issuedOut.String(), "session secret")
 
 	repo, err := sqlite.Open(dbPath)
 	if err != nil {
@@ -1078,8 +1053,8 @@ func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
 		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
 	}
 	auth, err := servercommon.NewAppServiceAdapter(nil, authService).AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
-		SessionID:     issued.SessionID,
-		SessionSecret: issued.SessionSecret,
+		SessionID:     issuedSessionID,
+		SessionSecret: issuedSessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
 		ResourceType:  "task",
@@ -1761,24 +1736,22 @@ func TestRunCapabilityLeaseCommands(t *testing.T) {
 	}, &issueOut, io.Discard); err != nil {
 		t.Fatalf("run(lease issue) error = %v", err)
 	}
-	var issued struct {
-		InstanceID string `json:"instance_id"`
-		ProjectID  string `json:"project_id"`
-		ScopeType  string `json:"scope_type"`
-		Role       string `json:"role"`
+	issuedOutput := issueOut.String()
+	issuedLeaseID := extractCLIKVValue(t, issuedOutput, "id")
+	if issuedLeaseID == "" {
+		t.Fatalf("lease issue output missing lease id: %q", issuedOutput)
 	}
-	if err := json.Unmarshal([]byte(issueOut.String()), &issued); err != nil {
-		t.Fatalf("Unmarshal(lease issue) error = %v", err)
-	}
-	if issued.ProjectID != "p1" || issued.ScopeType != "project" || issued.Role != "builder" || issued.InstanceID == "" {
-		t.Fatalf("lease issue output = %#v, want p1/project/builder with instance id", issued)
+	for _, want := range []string{"Capability Lease", "lane-a", "builder", "project/p1", "active"} {
+		if !strings.Contains(issuedOutput, want) {
+			t.Fatalf("expected %q in lease issue output, got %q", want, issuedOutput)
+		}
 	}
 
 	var listOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(lease list) error = %v", err)
 	}
-	for _, want := range []string{"Capability Leases", "lane-a", issued.InstanceID, "builder", "project/p1", "active"} {
+	for _, want := range []string{"Capability Leases", "lane-a", issuedLeaseID, "builder", "project/p1", "active"} {
 		if !strings.Contains(listOut.String(), want) {
 			t.Fatalf("expected %q in lease list output, got %q", want, listOut.String())
 		}
@@ -1789,28 +1762,53 @@ func TestRunCapabilityLeaseCommands(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"lease", "revoke",
-		"--agent-instance-id", issued.InstanceID,
+		"--agent-instance-id", issuedLeaseID,
 	}, &revokeOut, io.Discard); err != nil {
 		t.Fatalf("run(lease revoke) error = %v", err)
 	}
-	var revoked struct {
-		InstanceID string     `json:"instance_id"`
-		RevokedAt  *time.Time `json:"revoked_at"`
+	revokeOutput := revokeOut.String()
+	if got := extractCLIKVValue(t, revokeOutput, "id"); got != issuedLeaseID {
+		t.Fatalf("lease revoke id = %q, want %q", got, issuedLeaseID)
 	}
-	if err := json.Unmarshal([]byte(revokeOut.String()), &revoked); err != nil {
-		t.Fatalf("Unmarshal(lease revoke) error = %v", err)
-	}
-	if revoked.InstanceID != issued.InstanceID || revoked.RevokedAt == nil {
-		t.Fatalf("lease revoke output = %#v, want revoked lease with timestamp", revoked)
+	if got := extractCLIKVValue(t, revokeOutput, "revoked"); got == "-" {
+		t.Fatalf("lease revoke revoked timestamp = %q, want timestamp", got)
 	}
 
 	var revokedListOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "lease", "list", "--project-id", "p1", "--include-revoked"}, &revokedListOut, io.Discard); err != nil {
 		t.Fatalf("run(lease list include revoked) error = %v", err)
 	}
-	for _, want := range []string{"Capability Leases", issued.InstanceID, "revoked"} {
+	for _, want := range []string{"Capability Leases", issuedLeaseID, "revoked"} {
 		if !strings.Contains(revokedListOut.String(), want) {
 			t.Fatalf("expected %q in revoked lease list output, got %q", want, revokedListOut.String())
+		}
+	}
+
+	var issueSecondOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"lease", "issue",
+		"--project-id", "p1",
+		"--agent-name", "lane-b",
+		"--role", "qa",
+	}, &issueSecondOut, io.Discard); err != nil {
+		t.Fatalf("run(second lease issue) error = %v", err)
+	}
+
+	var revokeAllOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"lease", "revoke-all",
+		"--project-id", "p1",
+		"--reason", "cleanup",
+	}, &revokeAllOut, io.Discard); err != nil {
+		t.Fatalf("run(lease revoke-all) error = %v", err)
+	}
+	for _, want := range []string{"Capability Lease Revocation", "project", "p1", "scope", "project/p1", "reason", "cleanup", "status", "revoked"} {
+		if !strings.Contains(revokeAllOut.String(), want) {
+			t.Fatalf("expected %q in lease revoke-all output, got %q", want, revokeAllOut.String())
 		}
 	}
 }
@@ -1840,23 +1838,22 @@ func TestRunHandoffCommands(t *testing.T) {
 	}, &createOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff create) error = %v", err)
 	}
-	var created struct {
-		ID      string `json:"id"`
-		Status  string `json:"status"`
-		Summary string `json:"summary"`
+	createdOutput := createOut.String()
+	createdID := extractCLIKVValue(t, createdOutput, "id")
+	if createdID == "" {
+		t.Fatalf("handoff create output missing id: %q", createdOutput)
 	}
-	if err := json.Unmarshal([]byte(createOut.String()), &created); err != nil {
-		t.Fatalf("Unmarshal(handoff create) error = %v", err)
-	}
-	if created.ID == "" || created.Status != "waiting" || created.Summary != "qa handoff" {
-		t.Fatalf("handoff create output = %#v, want waiting qa handoff", created)
+	for _, want := range []string{"Handoff", "builder -> qa", "waiting", "qa handoff", "role:qa"} {
+		if !strings.Contains(createdOutput, want) {
+			t.Fatalf("expected %q in handoff create output, got %q", want, createdOutput)
+		}
 	}
 
 	var listOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "list", "--project-id", "p1"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff list) error = %v", err)
 	}
-	for _, want := range []string{"Handoffs", created.ID, "builder", "waiting", "qa handoff"} {
+	for _, want := range []string{"Handoffs", createdID, "builder", "waiting", "qa handoff"} {
 		if !strings.Contains(listOut.String(), "role:qa") {
 			t.Fatalf("expected role-only handoff target in handoff list output, got %q", listOut.String())
 		}
@@ -1866,10 +1863,10 @@ func TestRunHandoffCommands(t *testing.T) {
 	}
 
 	var getOut strings.Builder
-	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "get", "--handoff-id", created.ID}, &getOut, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "handoff", "get", "--handoff-id", createdID}, &getOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff get) error = %v", err)
 	}
-	for _, want := range []string{"Handoff", created.ID, "builder -> qa", "role:qa", "qa handoff", "waiting"} {
+	for _, want := range []string{"Handoff", createdID, "builder -> qa", "role:qa", "qa handoff", "waiting"} {
 		if !strings.Contains(getOut.String(), want) {
 			t.Fatalf("expected %q in handoff get output, got %q", want, getOut.String())
 		}
@@ -1880,23 +1877,22 @@ func TestRunHandoffCommands(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"handoff", "update",
-		"--handoff-id", created.ID,
+		"--handoff-id", createdID,
 		"--summary", "qa handoff",
 		"--status", "resolved",
 		"--resolution-note", "complete",
 	}, &updateOut, io.Discard); err != nil {
 		t.Fatalf("run(handoff update) error = %v", err)
 	}
-	var updated struct {
-		ID         string     `json:"id"`
-		Status     string     `json:"status"`
-		ResolvedAt *time.Time `json:"resolved_at"`
+	updateOutput := updateOut.String()
+	if got := extractCLIKVValue(t, updateOutput, "id"); got != createdID {
+		t.Fatalf("handoff update id = %q, want %q", got, createdID)
 	}
-	if err := json.Unmarshal([]byte(updateOut.String()), &updated); err != nil {
-		t.Fatalf("Unmarshal(handoff update) error = %v", err)
+	if got := extractCLIKVValue(t, updateOutput, "status"); got != "resolved" {
+		t.Fatalf("handoff update status = %q, want resolved", got)
 	}
-	if updated.ID != created.ID || updated.Status != "resolved" || updated.ResolvedAt == nil {
-		t.Fatalf("handoff update output = %#v, want resolved with timestamp", updated)
+	if got := extractCLIKVValue(t, updateOutput, "resolved at"); got == "-" {
+		t.Fatalf("handoff update resolved at = %q, want timestamp", got)
 	}
 }
 
@@ -2524,8 +2520,10 @@ level = "info"
 	if err != nil {
 		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
 	}
-	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("created dev config: %s", shellEscapePath(paths.ConfigPath)) {
-		t.Fatalf("unexpected init-dev-config output %q", got)
+	for _, want := range []string{"Dev Config", "status", "created dev config", shellEscapePath(paths.ConfigPath), "logging level", "debug"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected %q in init-dev-config output, got %q", want, out.String())
+		}
 	}
 
 	content, err := os.ReadFile(paths.ConfigPath)
@@ -2577,8 +2575,10 @@ display_name = "Lane User"
 	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init-dev-config"}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init-dev-config existing) error = %v", err)
 	}
-	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("dev config already exists: %s", shellEscapePath(paths.ConfigPath)) {
-		t.Fatalf("unexpected init-dev-config output %q", got)
+	for _, want := range []string{"Dev Config", "status", "dev config already exists", shellEscapePath(paths.ConfigPath), "logging level", "debug"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected %q in init-dev-config existing output, got %q", want, out.String())
+		}
 	}
 
 	content, err := os.ReadFile(paths.ConfigPath)
@@ -2606,20 +2606,10 @@ func TestRunPathsCommand(t *testing.T) {
 		t.Fatalf("run(paths) error = %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "app: tillsynx") {
-		t.Fatalf("expected app name in paths output, got %q", output)
-	}
-	if !strings.Contains(output, "root:") {
-		t.Fatalf("expected root in paths output, got %q", output)
-	}
-	if !strings.Contains(output, "database:") {
-		t.Fatalf("expected database in paths output, got %q", output)
-	}
-	if !strings.Contains(output, "logs:") {
-		t.Fatalf("expected logs in paths output, got %q", output)
-	}
-	if !strings.Contains(output, "dev_mode: true") {
-		t.Fatalf("expected dev mode in paths output, got %q", output)
+	for _, want := range []string{"Resolved Paths", "app", "tillsynx", "root", "database", "logs", "dev_mode", "true"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in paths output, got %q", want, output)
+		}
 	}
 }
 
@@ -2636,9 +2626,10 @@ func TestRunPathsCommandUsesActiveRuntimeRootForDBOverride(t *testing.T) {
 	}
 	output := out.String()
 	for _, want := range []string{
-		"root: " + root,
-		"database: " + dbPath,
-		"logs: " + filepath.Join(root, "logs"),
+		"Resolved Paths",
+		root,
+		dbPath,
+		filepath.Join(root, "logs"),
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in paths output, got %q", want, output)
@@ -2664,9 +2655,10 @@ func TestRunPathsCommandUsesConfigDatabasePathForRootAndLogs(t *testing.T) {
 	}
 	output := out.String()
 	for _, want := range []string{
-		"root: " + root,
-		"database: " + dbPath,
-		"logs: " + filepath.Join(root, "logs"),
+		"Resolved Paths",
+		root,
+		dbPath,
+		filepath.Join(root, "logs"),
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in paths output, got %q", want, output)
@@ -2683,7 +2675,7 @@ func TestShellEscapePath(t *testing.T) {
 	}
 }
 
-// TestWritePathsOutputPlain verifies non-terminal writers receive script-stable plain output.
+// TestWritePathsOutputPlain verifies non-terminal writers still receive structured path output.
 func TestWritePathsOutputPlain(t *testing.T) {
 	var out strings.Builder
 	err := writePathsOutput(&out, rootCommandOptions{
@@ -2696,17 +2688,20 @@ func TestWritePathsOutputPlain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writePathsOutput() error = %v", err)
 	}
-	want := strings.Join([]string{
-		"app: tillsynx",
-		"root: /tmp/tillsynx",
-		"config: /tmp/tillsynx/config.toml",
-		"database: /tmp/tillsynx/tillsynx.db",
-		"logs: /tmp/tillsynx/logs",
-		"dev_mode: true",
-		"",
-	}, "\n")
-	if got := out.String(); got != want {
-		t.Fatalf("writePathsOutput() = %q, want %q", got, want)
+	got := out.String()
+	for _, want := range []string{
+		"Resolved Paths",
+		"app",
+		"tillsynx",
+		"/tmp/tillsynx/config.toml",
+		"/tmp/tillsynx/tillsynx.db",
+		"/tmp/tillsynx/logs",
+		"dev_mode",
+		"true",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in writePathsOutput output, got %q", want, got)
+		}
 	}
 }
 

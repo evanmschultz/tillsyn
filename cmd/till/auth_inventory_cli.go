@@ -38,10 +38,23 @@ func writeAuthRequestListHuman(stdout io.Writer, requests []authRequestPayloadJS
 
 // writeAuthRequestDetailHuman renders one auth request as a stable human-readable detail block.
 func writeAuthRequestDetailHuman(stdout io.Writer, request authRequestPayloadJSON) error {
+	return writeCLIKV(stdout, "Auth Request", authRequestDetailRows(request, false))
+}
+
+// writeAuthRequestResultHuman renders one auth request result block and includes issued credentials when present.
+func writeAuthRequestResultHuman(stdout io.Writer, request authRequestPayloadJSON) error {
+	return writeCLIKV(stdout, "Auth Request", authRequestDetailRows(request, true))
+}
+
+func authRequestDetailRows(request authRequestPayloadJSON, includeSecret bool) [][2]string {
 	rows := [][2]string{
 		{"name", humanAuthPrincipalLabel(request.PrincipalName, request.PrincipalID, request.PrincipalRole)},
 		{"request id", firstNonEmptyTrimmed(request.ID, "-")},
 		{"state", firstNonEmptyTrimmed(request.State, "-")},
+		{"project", firstNonEmptyTrimmed(request.ProjectID, "-")},
+		{"branch", firstNonEmptyTrimmed(request.BranchID, "-")},
+		{"phases", renderAuthStringList(request.PhaseIDs)},
+		{"scope", humanAuthScopeLabel(request.ProjectID, request.ScopeType, request.ScopeID)},
 		{"principal type", firstNonEmptyTrimmed(request.PrincipalType, "-")},
 		{"client", humanAuthClientLabel(request.ClientName, request.ClientID)},
 		{"requested path", firstNonEmptyTrimmed(request.Path, "-")},
@@ -50,13 +63,43 @@ func writeAuthRequestDetailHuman(stdout io.Writer, request authRequestPayloadJSO
 		{"approved ttl", humanAuthDurationLabel(request.ApprovedSessionTTL)},
 		{"requested by", firstNonEmptyTrimmed(humanAuthActorLabel(request.RequestedByActor, request.RequestedByType), "-")},
 		{"reason", firstNonEmptyTrimmed(request.Reason, "-")},
+		{"has continuation", yesNo(request.HasContinuation)},
+		{"created at", formatAuthTime(request.CreatedAt)},
+		{"expires at", formatAuthTime(request.ExpiresAt)},
 		{"issued session", firstNonEmptyTrimmed(request.IssuedSessionID, "-")},
 		{"issued session expires", formatAuthOptionalTime(request.IssuedSessionExpiresAt)},
 		{"resolved by", firstNonEmptyTrimmed(humanAuthActorLabel(request.ResolvedByActor, request.ResolvedByType), "-")},
 		{"resolved at", formatAuthOptionalTime(request.ResolvedAt)},
 		{"resolution note", firstNonEmptyTrimmed(request.ResolutionNote, "-")},
 	}
-	return writeCLIKV(stdout, "Auth Request", rows)
+	if includeSecret {
+		if secret := strings.TrimSpace(request.IssuedSessionSecret); secret != "" {
+			rows = append(rows, [2]string{"issued session secret", secret})
+		}
+	}
+	return rows
+}
+
+// writeAuthSessionDetailHuman renders one auth session as a stable human-readable detail block.
+func writeAuthSessionDetailHuman(stdout io.Writer, session authSessionPayloadJSON, sessionSecret string) error {
+	rows := [][2]string{
+		{"name", humanAuthPrincipalLabel(session.PrincipalName, session.PrincipalID, session.PrincipalRole)},
+		{"session id", firstNonEmptyTrimmed(session.SessionID, "-")},
+		{"state", firstNonEmptyTrimmed(session.State, "-")},
+		{"project", firstNonEmptyTrimmed(session.ProjectID, "-")},
+		{"auth request", firstNonEmptyTrimmed(session.AuthRequestID, "-")},
+		{"principal type", firstNonEmptyTrimmed(session.PrincipalType, "-")},
+		{"client", humanAuthClientLabel(session.ClientName, session.ClientID)},
+		{"client type", firstNonEmptyTrimmed(session.ClientType, "-")},
+		{"approved path", firstNonEmptyTrimmed(session.ApprovedPath, "-")},
+		{"expires", formatAuthTime(session.ExpiresAt)},
+		{"revoked at", formatAuthOptionalTime(session.RevokedAt)},
+		{"revocation reason", firstNonEmptyTrimmed(session.RevocationReason, "-")},
+	}
+	if secret := strings.TrimSpace(sessionSecret); secret != "" {
+		rows = append(rows, [2]string{"session secret", secret})
+	}
+	return writeCLIKV(stdout, "Auth Session", rows)
 }
 
 // writeAuthSessionListHuman renders auth sessions as a stable human-readable table.
@@ -173,6 +216,46 @@ func humanAuthDurationLabel(raw string) string {
 	default:
 		return d.Round(time.Second).String()
 	}
+}
+
+// humanAuthScopeLabel renders one auth scope with project fallback for operator output.
+func humanAuthScopeLabel(projectID, scopeType, scopeID string) string {
+	scopeType = strings.TrimSpace(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	projectID = strings.TrimSpace(projectID)
+	switch {
+	case scopeType == "":
+		return firstNonEmptyTrimmed(projectID, scopeID, "-")
+	case scopeType == "project":
+		return "project/" + firstNonEmptyTrimmed(projectID, "-")
+	case scopeID == "":
+		return scopeType
+	default:
+		return scopeType + "/" + scopeID
+	}
+}
+
+// renderAuthStringList renders one stable comma-separated list or a fallback dash.
+func renderAuthStringList(values []string) string {
+	if len(values) == 0 {
+		return "-"
+	}
+	ordered := append([]string(nil), values...)
+	slices.SortFunc(ordered, func(a, b string) int {
+		return strings.Compare(strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b)))
+	})
+	parts := make([]string, 0, len(ordered))
+	for _, value := range ordered {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // formatAuthTime renders one timestamp in UTC RFC3339 form.
