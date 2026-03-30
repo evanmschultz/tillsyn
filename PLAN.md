@@ -98,7 +98,7 @@ Decision:
 2. Use `/Users/evanschultz/Documents/Code/hylla/tillsyn` as the true bare control repo.
 3. Use `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` as the checked-out integration worktree.
 4. Treat the bare root's `worktrees/` path as Git admin state, not as a checkout container.
-5. Use `.tmp/<lane>` or another explicit sibling path for future linked worktree checkouts.
+5. Use visible direct-child worktree paths for future linked worktree checkouts, for example `/Users/evanschultz/Documents/Code/hylla/tillsyn/<lane>`, instead of hidden `.tmp/<lane>` paths.
 6. Keep `AGENT_PROMPTS.md` at the bare root as local-only operator material.
 7. Take the easiest path for tracked `worklogs/`: let them live in `main/worklogs` with the rest of the tracked repo.
 
@@ -3517,6 +3517,33 @@ Current status:
 1. The reusable prompt pack is present in the repo root for future agent launches.
 2. The embeddings prompt now explicitly encodes the operational requirements we discussed, rather than leaving them implied.
 3. No code changed, so no `just` gates were rerun for this docs-only step.
+
+### 2026-03-29: Bare-Root Codex Config Clarification
+
+Objective:
+- remove ambiguity about where Codex local config should live now that the repo uses a bare-root control directory plus linked worktrees.
+
+Implementation outcome:
+1. Clarified the bare-root local `AGENTS.md` so it explicitly requires one bare-root `.codex/` directory and forbids `.codex/` directories inside `main/` or linked worktrees.
+2. Added a comment in the tracked `main/.gitignore` so accidental worktree-local `.codex/` directories are still ignored and the intended location is obvious to contributors.
+
+Files changed:
+1. local bare-root `AGENTS.md`
+2. `main/.gitignore`
+3. `main/PLAN.md`
+
+Commands run and outcomes:
+1. `sed -n '1,220p' AGENTS.md` -> PASS
+2. `sed -n '1,220p' main/.gitignore` -> PASS
+3. `git -C main status --short --branch` -> PASS
+4. `test_not_applicable` -> PASS (docs-only clarification; no code or runtime behavior changed)
+
+Current status:
+1. The intended Codex layout is now explicit:
+   - bare-root `.codex/` only,
+   - no `.codex/` inside tracked worktrees,
+   - launch from the bare root and target worktrees with `-C`,
+   - create new worktrees as visible direct children of the bare root, next to `main/`, not under hidden `.tmp/`.
 
 ### 2026-03-25: Pre-Collab Ctrl-C Echo Cleanup
 
