@@ -559,7 +559,7 @@ That keeps the feature understandable and reviewable.
 
 Templates should not turn comments into private per-role silos.
 
-Recommended MVP rule:
+Recommended default rule:
 - comments remain the shared in-scope communication layer
 - humans should be able to talk directly to subagents on the relevant node
 - agents should be able to hand off to each other in the same work graph
@@ -568,6 +568,7 @@ Recommended MVP rule:
 
 Recommended later-wave direction:
 - add optional comment routing or addressing metadata if needed
+- add optional limits/configuration for projects that need tighter communication policy
 - do not use template-contract ownership rules to hide discussion by default
 
 ## TUI / CLI / MCP Flow Direction

@@ -156,6 +156,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
+			mcp.WithString("template_library_id", mcp.Description("Optional approved global template library id to bind during project creation")),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -165,15 +166,16 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args struct {
-				Name            string                 `json:"name"`
-				Description     string                 `json:"description"`
-				Kind            string                 `json:"kind"`
-				Metadata        domain.ProjectMetadata `json:"metadata"`
-				SessionID       string                 `json:"session_id"`
-				SessionSecret   string                 `json:"session_secret"`
-				AgentInstanceID string                 `json:"agent_instance_id"`
-				LeaseToken      string                 `json:"lease_token"`
-				OverrideToken   string                 `json:"override_token"`
+				Name              string                 `json:"name"`
+				Description       string                 `json:"description"`
+				Kind              string                 `json:"kind"`
+				TemplateLibraryID string                 `json:"template_library_id"`
+				Metadata          domain.ProjectMetadata `json:"metadata"`
+				SessionID         string                 `json:"session_id"`
+				SessionSecret     string                 `json:"session_secret"`
+				AgentInstanceID   string                 `json:"agent_instance_id"`
+				LeaseToken        string                 `json:"lease_token"`
+				OverrideToken     string                 `json:"override_token"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -206,11 +208,12 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
-				Name:        args.Name,
-				Description: args.Description,
-				Kind:        args.Kind,
-				Metadata:    args.Metadata,
-				Actor:       actor,
+				Name:              args.Name,
+				Description:       args.Description,
+				Kind:              args.Kind,
+				TemplateLibraryID: args.TemplateLibraryID,
+				Metadata:          args.Metadata,
+				Actor:             actor,
 			})
 			if err != nil {
 				return toolResultFromError(err), nil

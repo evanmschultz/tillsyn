@@ -117,6 +117,122 @@ func TestCreateTaskUsesBoundTemplateLibrary(t *testing.T) {
 	}
 }
 
+// TestCreateProjectUsesApprovedGlobalTemplateLibrary verifies project creation can bind a global library and prefer its project template over legacy kind defaults.
+func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{
+		AutoCreateProjectColumns: false,
+	})
+
+	if _, err := svc.ListKindDefinitions(ctx, false); err != nil {
+		t.Fatalf("ListKindDefinitions() error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(ctx, CreateKindDefinitionInput{
+		ID:          "go-service",
+		DisplayName: "Go Service",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
+		Template: domain.KindTemplate{
+			ProjectMetadataDefaults: &domain.ProjectMetadata{
+				Owner: "legacy-owner",
+				Tags:  []string{"legacy"},
+			},
+			AutoCreateChildren: []domain.KindTemplateChildSpec{{
+				Title:       "Legacy Branch",
+				Description: "legacy root child",
+				Kind:        domain.KindID("branch"),
+				AppliesTo:   domain.KindAppliesToBranch,
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(go-service) error = %v", err)
+	}
+	library, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Description:         "Approved global defaults for Go projects",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "user-1",
+		CreatedByActorName:  "Operator",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "user-1",
+		ApprovedByActorName: "Operator",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "project-template",
+			ScopeLevel: domain.KindAppliesToProject,
+			NodeKindID: domain.KindID("go-service"),
+			ProjectMetadataDefaults: &domain.ProjectMetadata{
+				Owner:             "platform",
+				Tags:              []string{"go", "service"},
+				StandardsMarkdown: "Run gofmt, tests, and QA",
+			},
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "root-branch",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToBranch,
+				ChildKindID:             domain.KindID("branch"),
+				TitleTemplate:           "Main Branch",
+				DescriptionTemplate:     "default implementation branch",
+				ResponsibleActorKind:    domain.TemplateActorKindBuilder,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTemplateLibrary() error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:              "Go API",
+		Kind:              "go-service",
+		TemplateLibraryID: library.ID,
+		Metadata: domain.ProjectMetadata{
+			Tags: []string{"api"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	if project.Metadata.Owner != "platform" {
+		t.Fatalf("project.Metadata.Owner = %q, want platform", project.Metadata.Owner)
+	}
+	if got := project.Metadata.Tags; len(got) != 3 || got[0] != "api" || got[1] != "go" || got[2] != "service" {
+		t.Fatalf("project.Metadata.Tags = %#v, want api+go+service", got)
+	}
+	binding, err := svc.GetProjectTemplateBinding(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectTemplateBinding() error = %v", err)
+	}
+	if binding.LibraryID != library.ID {
+		t.Fatalf("binding.LibraryID = %q, want %q", binding.LibraryID, library.ID)
+	}
+	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("len(tasks) = %d, want 1 generated root task", len(tasks))
+	}
+	if tasks[0].Title != "Main Branch" {
+		t.Fatalf("tasks[0].Title = %q, want Main Branch", tasks[0].Title)
+	}
+	if tasks[0].Kind != domain.WorkKind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
+		t.Fatalf("unexpected generated root task %#v", tasks[0])
+	}
+	snapshot, ok := repo.nodeContracts[tasks[0].ID]
+	if !ok {
+		t.Fatalf("repo.nodeContracts missing generated root task %q", tasks[0].ID)
+	}
+	if snapshot.SourceLibraryID != library.ID {
+		t.Fatalf("snapshot.SourceLibraryID = %q, want %q", snapshot.SourceLibraryID, library.ID)
+	}
+}
+
 // TestCreateTaskFallsBackToLegacyKindTemplate verifies legacy kind-template child generation still works when no binding exists.
 func TestCreateTaskFallsBackToLegacyKindTemplate(t *testing.T) {
 	ctx := context.Background()

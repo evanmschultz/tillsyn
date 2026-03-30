@@ -18,6 +18,7 @@ import (
 type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
+	lastCreateProjectReq     common.CreateProjectRequest
 	lastCreateTaskReq        common.CreateTaskRequest
 	lastUpdateTaskReq        common.UpdateTaskRequest
 	lastRestoreTaskReq       common.RestoreTaskRequest
@@ -65,7 +66,8 @@ func (s *stubExpandedService) ListProjects(_ context.Context, _ bool) ([]domain.
 }
 
 // CreateProject returns one deterministic project row.
-func (s *stubExpandedService) CreateProject(_ context.Context, _ common.CreateProjectRequest) (domain.Project, error) {
+func (s *stubExpandedService) CreateProject(_ context.Context, in common.CreateProjectRequest) (domain.Project, error) {
+	s.lastCreateProjectReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One", CreatedAt: now, UpdatedAt: now}, nil
 }
@@ -1768,6 +1770,41 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	}
 	if got := toolResultText(t, callResp.Result); !strings.HasPrefix(got, "invalid_request:") {
 		t.Fatalf("error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestHandlerExpandedCreateProjectPassesTemplateLibraryID verifies the MCP create_project tool forwards template-library selection.
+func TestHandlerExpandedCreateProjectPassesTemplateLibraryID(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(202, "till.create_project", mergeArgs(validSessionArgs(), map[string]any{
+		"name":                "Project One",
+		"kind":                "go-service",
+		"template_library_id": "go-defaults",
+		"agent_instance_id":   "inst-1",
+		"lease_token":         "tok-1",
+	})))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("create_project returned isError=true: %#v", callResp.Result)
+	}
+	if got := service.lastCreateProjectReq.TemplateLibraryID; got != "go-defaults" {
+		t.Fatalf("create_project template_library_id = %q, want go-defaults", got)
+	}
+	if got := service.lastCreateProjectReq.Kind; got != "go-service" {
+		t.Fatalf("create_project kind = %q, want go-service", got)
 	}
 }
 

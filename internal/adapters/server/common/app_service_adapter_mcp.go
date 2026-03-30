@@ -218,13 +218,14 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	project, err := a.service.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:          strings.TrimSpace(in.Name),
-		Description:   strings.TrimSpace(in.Description),
-		Kind:          domain.KindID(strings.TrimSpace(in.Kind)),
-		Metadata:      in.Metadata,
-		UpdatedBy:     actorID,
-		UpdatedByName: actorName,
-		UpdatedType:   actorType,
+		Name:              strings.TrimSpace(in.Name),
+		Description:       strings.TrimSpace(in.Description),
+		Kind:              domain.KindID(strings.TrimSpace(in.Kind)),
+		TemplateLibraryID: strings.TrimSpace(in.TemplateLibraryID),
+		Metadata:          in.Metadata,
+		UpdatedBy:         actorID,
+		UpdatedByName:     actorName,
+		UpdatedType:       actorType,
 	})
 	if err != nil {
 		return domain.Project{}, mapAppError("create project", err)

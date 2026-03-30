@@ -11,6 +11,11 @@ import (
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
+const (
+	templateSystemActorID   = "tillsyn-system-template"
+	templateSystemActorName = "Tillsyn System Template"
+)
+
 // UpsertTemplateLibraryInput stores write-time values for one template-library upsert.
 type UpsertTemplateLibraryInput struct {
 	ID                  string
@@ -273,6 +278,26 @@ func (s *Service) GetNodeContractSnapshot(ctx context.Context, nodeID string) (d
 	return s.repo.GetNodeContractSnapshot(ctx, nodeID)
 }
 
+// resolveProjectCreateTemplateLibrary loads one approved global library for project creation.
+func (s *Service) resolveProjectCreateTemplateLibrary(ctx context.Context, libraryID string, projectKindID domain.KindID) (domain.TemplateLibrary, domain.NodeTemplate, bool, error) {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	if libraryID == "" {
+		return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, nil
+	}
+	library, err := s.repo.GetTemplateLibrary(ctx, libraryID)
+	if err != nil {
+		return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, err
+	}
+	if library.Status != domain.TemplateLibraryStatusApproved {
+		return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, fmt.Errorf("%w: library must be approved before project creation", domain.ErrInvalidTemplateBinding)
+	}
+	if library.Scope != domain.TemplateLibraryScopeGlobal {
+		return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, fmt.Errorf("%w: project creation currently accepts approved global libraries only", domain.ErrInvalidTemplateBinding)
+	}
+	nodeTemplate, found := library.FindNodeTemplate(domain.KindAppliesToProject, projectKindID)
+	return library, nodeTemplate, found, nil
+}
+
 // resolveBoundNodeTemplate resolves the bound node template for one project scope/kind tuple.
 func (s *Service) resolveBoundNodeTemplate(ctx context.Context, projectID string, scope domain.KindAppliesTo, kindID domain.KindID) (domain.TemplateLibrary, domain.NodeTemplate, bool, error) {
 	binding, err := s.repo.GetProjectTemplateBinding(ctx, projectID)
@@ -301,6 +326,14 @@ func mergeTaskMetadataWithNodeTemplate(base domain.TaskMetadata, nodeTemplate do
 	return domain.MergeTaskMetadata(base, nodeTemplate.TaskMetadataDefaults)
 }
 
+// mergeProjectMetadataWithNodeTemplate applies project defaults from one node template at create time.
+func mergeProjectMetadataWithNodeTemplate(base domain.ProjectMetadata, nodeTemplate domain.NodeTemplate) (domain.ProjectMetadata, error) {
+	if nodeTemplate.ProjectMetadataDefaults == nil {
+		return domain.MergeProjectMetadata(base, nil)
+	}
+	return domain.MergeProjectMetadata(base, nodeTemplate.ProjectMetadataDefaults)
+}
+
 // applyTemplateChildRules creates generated child nodes and stores their node-contract snapshots.
 func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.Task, library domain.TemplateLibrary, nodeTemplate domain.NodeTemplate, depth int) error {
 	if len(nodeTemplate.ChildRules) == 0 {
@@ -316,10 +349,10 @@ func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.Tas
 			Title:          childRule.TitleTemplate,
 			Description:    childRule.DescriptionTemplate,
 			Priority:       domain.PriorityMedium,
-			CreatedByActor: "tillsyn-system-template",
-			CreatedByName:  "Tillsyn System Template",
-			UpdatedByActor: "tillsyn-system-template",
-			UpdatedByName:  "Tillsyn System Template",
+			CreatedByActor: templateSystemActorID,
+			CreatedByName:  templateSystemActorName,
+			UpdatedByActor: templateSystemActorID,
+			UpdatedByName:  templateSystemActorName,
 			UpdatedByType:  domain.ActorTypeSystem,
 		}, depth)
 		if err != nil {
@@ -331,7 +364,7 @@ func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.Tas
 			SourceLibraryID:           library.ID,
 			SourceNodeTemplateID:      nodeTemplate.ID,
 			SourceChildRuleID:         childRule.ID,
-			CreatedByActorID:          "tillsyn-system-template",
+			CreatedByActorID:          templateSystemActorID,
 			CreatedByActorType:        domain.ActorTypeSystem,
 			ResponsibleActorKind:      childRule.ResponsibleActorKind,
 			EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
@@ -344,6 +377,85 @@ func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.Tas
 			return err
 		}
 		if err := s.repo.CreateNodeContractSnapshot(ctx, snapshot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyProjectTemplateChildRules creates project-root generated nodes and stores their node-contract snapshots.
+func (s *Service) applyProjectTemplateChildRules(ctx context.Context, project domain.Project, library domain.TemplateLibrary, nodeTemplate domain.NodeTemplate, depth int) error {
+	if len(nodeTemplate.ChildRules) == 0 {
+		return nil
+	}
+	columnID, err := s.ensureTemplateRootColumn(ctx, project.ID, s.clock())
+	if err != nil {
+		return err
+	}
+	for _, childRule := range nodeTemplate.ChildRules {
+		child, err := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
+			ProjectID:      project.ID,
+			Kind:           domain.WorkKind(childRule.ChildKindID),
+			Scope:          childRule.ChildScopeLevel,
+			ColumnID:       columnID,
+			Title:          childRule.TitleTemplate,
+			Description:    childRule.DescriptionTemplate,
+			Priority:       domain.PriorityMedium,
+			CreatedByActor: templateSystemActorID,
+			CreatedByName:  templateSystemActorName,
+			UpdatedByActor: templateSystemActorID,
+			UpdatedByName:  templateSystemActorName,
+			UpdatedByType:  domain.ActorTypeSystem,
+		}, depth)
+		if err != nil {
+			return err
+		}
+		snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
+			NodeID:                    child.ID,
+			ProjectID:                 child.ProjectID,
+			SourceLibraryID:           library.ID,
+			SourceNodeTemplateID:      nodeTemplate.ID,
+			SourceChildRuleID:         childRule.ID,
+			CreatedByActorID:          templateSystemActorID,
+			CreatedByActorType:        domain.ActorTypeSystem,
+			ResponsibleActorKind:      childRule.ResponsibleActorKind,
+			EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
+			CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
+			OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
+			RequiredForParentDone:     childRule.RequiredForParentDone,
+			RequiredForContainingDone: childRule.RequiredForContainingDone,
+		}, s.clock())
+		if err != nil {
+			return err
+		}
+		if err := s.repo.CreateNodeContractSnapshot(ctx, snapshot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTemplateChildRulesWithLibrary preflights nested child rules against one explicit library.
+func (s *Service) validateTemplateChildRulesWithLibrary(ctx context.Context, projectID string, library domain.TemplateLibrary, childRules []domain.TemplateChildRule, parent *domain.Task, depth int) error {
+	if depth > maxKindTemplateApplyDepth {
+		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidTemplateLibrary)
+	}
+	for _, childRule := range childRules {
+		childKind, err := s.resolveTaskKindDefinition(ctx, projectID, childRule.ChildKindID, childRule.ChildScopeLevel, parent)
+		if err != nil {
+			return err
+		}
+		childParent := &domain.Task{
+			ProjectID: projectID,
+			Scope:     childRule.ChildScopeLevel,
+		}
+		if childTemplate, found := library.FindNodeTemplate(childRule.ChildScopeLevel, childKind.ID); found {
+			if err := s.validateTemplateChildRulesWithLibrary(ctx, projectID, library, childTemplate.ChildRules, childParent, depth+1); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.validateKindTemplateExpansion(ctx, projectID, childKind, childParent, domain.KindAppliesToSubtask, depth+1); err != nil {
 			return err
 		}
 	}

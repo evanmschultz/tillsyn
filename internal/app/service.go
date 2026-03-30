@@ -207,13 +207,14 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 
 // CreateProjectInput holds input values for create project operations.
 type CreateProjectInput struct {
-	Name          string
-	Description   string
-	Kind          domain.KindID
-	Metadata      domain.ProjectMetadata
-	UpdatedBy     string
-	UpdatedByName string
-	UpdatedType   domain.ActorType
+	Name              string
+	Description       string
+	Kind              domain.KindID
+	TemplateLibraryID string
+	Metadata          domain.ProjectMetadata
+	UpdatedBy         string
+	UpdatedByName     string
+	UpdatedType       domain.ActorType
 }
 
 // CreateProject creates project.
@@ -246,7 +247,17 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err != nil {
 		return domain.Project{}, err
 	}
-	mergedMetadata, err := domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
+	templateLibrary, projectTemplate, foundProjectTemplate, err := s.resolveProjectCreateTemplateLibrary(ctx, in.TemplateLibraryID, project.Kind)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	var mergedMetadata domain.ProjectMetadata
+	switch {
+	case foundProjectTemplate:
+		mergedMetadata, err = mergeProjectMetadataWithNodeTemplate(in.Metadata, projectTemplate)
+	default:
+		mergedMetadata, err = domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
+	}
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -259,8 +270,15 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.validateKindPayload(kindDef, project.Metadata.KindPayload); err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToTask, 1); err != nil {
-		return domain.Project{}, err
+	switch {
+	case foundProjectTemplate:
+		if err := s.validateTemplateChildRulesWithLibrary(ctx, project.ID, templateLibrary, projectTemplate.ChildRules, nil, 1); err != nil {
+			return domain.Project{}, err
+		}
+	default:
+		if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToTask, 1); err != nil {
+			return domain.Project{}, err
+		}
 	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
@@ -268,13 +286,31 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.initializeProjectAllowedKinds(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
+	if strings.TrimSpace(templateLibrary.ID) != "" {
+		if _, err := s.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+			ProjectID:        project.ID,
+			LibraryID:        templateLibrary.ID,
+			BoundByActorID:   firstNonEmptyTrimmed(in.UpdatedBy, resolvedActor.ActorID),
+			BoundByActorName: firstNonEmptyTrimmed(in.UpdatedByName, resolvedActor.ActorName, in.UpdatedBy, resolvedActor.ActorID),
+			BoundByActorType: normalizeActorTypeInput(firstActorType(in.UpdatedType, resolvedActor.ActorType)),
+		}); err != nil {
+			return domain.Project{}, err
+		}
+	}
 	if s.autoProjectCols {
 		if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
 			return domain.Project{}, err
 		}
 	}
-	if err := s.applyProjectKindTemplateSystemActions(ctx, project, kindDef, 1); err != nil {
-		return domain.Project{}, err
+	switch {
+	case foundProjectTemplate:
+		if err := s.applyProjectTemplateChildRules(ctx, project, templateLibrary, projectTemplate, 1); err != nil {
+			return domain.Project{}, err
+		}
+	default:
+		if err := s.applyProjectKindTemplateSystemActions(ctx, project, kindDef, 1); err != nil {
+			return domain.Project{}, err
+		}
 	}
 	return project, nil
 }

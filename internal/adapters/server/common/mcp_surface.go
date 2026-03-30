@@ -38,11 +38,12 @@ type ActorLeaseTuple struct {
 
 // CreateProjectRequest stores transport input for project creation.
 type CreateProjectRequest struct {
-	Name        string
-	Description string
-	Kind        string
-	Metadata    domain.ProjectMetadata
-	Actor       ActorLeaseTuple
+	Name              string
+	Description       string
+	Kind              string
+	TemplateLibraryID string
+	Metadata          domain.ProjectMetadata
+	Actor             ActorLeaseTuple
 }
 
 // UpdateProjectRequest stores transport input for project updates.

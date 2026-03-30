@@ -2,7 +2,148 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; the template-library enforcement slice is now green locally through `just test-pkg ./internal/domain`, `just test-pkg ./internal/app`, `just check`, and `just ci`, and generated-node contracts now actively gate edit/complete behavior plus parent/containing-scope done blockers while legacy kind-template creation and snapshot compatibility paths remain intentionally in place. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface.
+Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, and snapshot transport for template libraries/project bindings/node-contract snapshots, while final legacy kind-template quarantine remains intentionally pending. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface.
+
+## Checkpoint 2026-03-30: Template-Aware Snapshot Transport
+
+Objective:
+- move snapshot export/import onto template libraries so Tillsyn can round-trip workflow contracts without silently downgrading back to legacy kind-template blobs.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed before the transport migration for:
+   - import/export ordering,
+   - related write grouping,
+   - and keeping validation/upsert flow clean around library, binding, and node-contract references -> PASS.
+2. `/websites/pkg_go_dev_go1_25_3` reviewed before the transport migration for:
+   - additive JSON field behavior,
+   - `omitempty` behavior,
+   - and safe struct/slice copy expectations while extending snapshot payloads -> PASS.
+3. After the earlier local runtime/test drift during this overall wave, `/websites/pkg_go_dev_go1_25_3` was refreshed again before the next edit -> PASS.
+
+Implementation summary:
+1. Extended snapshot payloads to carry template-library state directly:
+   - template libraries,
+   - project template bindings,
+   - and stored node-contract snapshots.
+2. Moved snapshot export onto the library-backed runtime source of truth:
+   - export now loads template libraries globally,
+   - project bindings per project,
+   - and node-contract snapshots per task so generated workflow contracts round-trip with the work graph.
+3. Moved snapshot import onto the library-backed transport model:
+   - import now validates and upserts template libraries,
+   - restores project bindings,
+   - and recreates stored node-contract snapshots after task rows exist.
+4. Tightened snapshot validation to fail closed on bad references:
+   - unknown project ids,
+   - unknown kind ids inside template libraries,
+   - unknown library ids in project bindings,
+   - and unknown task/library references in node-contract snapshots.
+5. Expanded snapshot tests so the transport now proves:
+   - export includes template libraries, bindings, and node contracts,
+   - import restores them,
+   - and invalid template references fail validation clearly.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/app` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+6. `just test-golden` -> not needed; no TUI output changed in this slice.
+
+Cleanup/orphan review:
+1. Snapshot transport is no longer the main legacy seam:
+   - template libraries, project bindings, and node-contract snapshots now round-trip through export/import.
+2. The remaining legacy seams are create-time compatibility paths and authoring surfaces:
+   - project/task creation can still fall back to legacy kind-template behavior when no template library is selected or no matching node template exists,
+   - and legacy kind-template authoring surfaces still remain beside template-library surfaces.
+3. Comments remain intentionally shared-by-default:
+   - template contracts do not restrict normal discussion,
+   - humans can talk directly to subagents,
+   - agents can hand off to each other in-node,
+   - and any future comment restrictions should stay optional policy/config work rather than the default product model.
+
+Current status:
+1. New projects can bind approved global template libraries at creation time.
+2. Generated-node contracts are enforced on state mutations and done gating.
+3. Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots.
+4. Comments remain the shared human-to-agent and agent-to-agent coordination lane by default.
+5. The remaining implementation seam is explicit legacy kind-template fallback/authoring quarantine.
+
+Next step:
+1. Quarantine and remove the remaining legacy kind-template seams:
+   - stop treating legacy kind-template authoring as a first-class path,
+   - keep only the minimum compatibility fallback needed during migration,
+   - and then remove the fallback entirely once the replacement path is complete.
+
+## Checkpoint 2026-03-30: Template-Backed Project Creation
+
+Objective:
+- move the next live entry point onto template libraries:
+  - project creation should optionally bind one approved global template library,
+  - project-scoped template defaults/root generated work should use that library when present,
+  - and CLI/MCP create-project surfaces should expose the selection cleanly.
+
+Context7:
+1. `/websites/sqlite_docs` reviewed before implementation for:
+   - transaction/foreign-key expectations,
+   - and why related writes should stay grouped cleanly during create-time migration work -> PASS.
+2. `/websites/pkg_go_dev_go1_25_3` reviewed before implementation for:
+   - wrapped error behavior,
+   - JSON omission behavior,
+   - and safe slice-copy expectations in the refactor -> PASS.
+3. After the first local `cmd/till` test failure, `/websites/sqlite_docs` was refreshed again before the next edit -> PASS.
+4. After the later test-harness/runtime drift while narrowing CLI coverage, `/websites/pkg_go_dev_go1_25_3` was refreshed again before the next edit -> PASS.
+
+Implementation summary:
+1. Added project-create template-library resolution in the app layer:
+   - project creation now accepts one optional template library id,
+   - requires an approved global library for the create-time bind path,
+   - and prefers the project-scope node template over legacy kind-template defaults when both exist.
+2. Added project-root generated child support for template libraries:
+   - root generated tasks now come from project-scope child rules,
+   - and generated root nodes persist node-contract snapshots just like generated descendants.
+3. Bound the selected template library during project creation before applying generated child rules:
+   - nested create-time child generation now resolves through the active bound library instead of silently falling back mid-tree.
+4. Exposed the create-time bind path through operator surfaces:
+   - `CreateProjectInput` / MCP `CreateProjectRequest`,
+   - CLI `project create --template-library-id`,
+   - and MCP `till.create_project template_library_id`.
+5. Tightened docs to keep the product posture explicit:
+   - comments are the shared collaboration layer by default,
+   - future comment restrictions are optional configuration work, not the intended default collaboration model,
+   - and README now shows the template-backed project-create example directly.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/app` -> PASS.
+3. `just test-pkg ./cmd/till` -> PASS.
+4. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+5. `just test-pkg ./internal/adapters/server/common` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+8. `just test-golden` -> not needed; no TUI output changed in this slice.
+
+Cleanup/orphan review:
+1. Project creation now has a template-library path, but the legacy project-kind template path still remains as the explicit fallback when no template library is selected or when the bound library has no project-scope node template.
+2. Snapshot import/export is still the largest remaining legacy transport seam:
+   - it does not yet carry template libraries, project bindings, or node-contract snapshots.
+3. Comment collaboration remains intentionally shared-by-default:
+   - no template rule can hide or silence node comments by default,
+   - and any future limits should be optional config/policy, not the baseline collaboration model.
+
+Current status:
+1. Operators can now create a project directly against an approved global template library.
+2. Project-scoped template defaults and root generated work now start from template libraries when that path is chosen.
+3. Generated root nodes created during project creation now persist node-contract snapshots.
+4. Comments remain the shared human-to-agent and agent-to-agent coordination surface by default.
+5. Snapshot transport and final legacy kind-template quarantine remain the next compatibility seams.
+
+Next step:
+1. Move snapshot import/export onto template libraries:
+   - snapshot payloads need template libraries, project bindings, and node-contract snapshots,
+   - import needs to preserve those without silent downgrade to legacy kind-template blobs,
+   - and only after that should the remaining legacy kind-template authoring/fallback paths be quarantined or removed.
 
 ## Checkpoint 2026-03-30: Template Contract Enforcement + Research Role Alignment
 
@@ -57,11 +198,11 @@ Cleanup/orphan review:
    - task creation still falls back to kind-template expansion when no project template binding exists,
    - snapshot import/export still uses the legacy shape,
    - and old kind-template authoring surfaces still exist beside template-library surfaces.
-2. Comments are intentionally staying scope-gated in MVP:
+2. Comments are intentionally staying scope-gated by default:
    - generated-node contracts do not restrict who may comment on a generated node,
    - comments remain the shared human-to-agent and agent-to-agent communication lane inside a project/scope,
    - comment attribution/ownership stays first-class audit data,
-   - and any future targeted/routed comment UX should build on that without turning comments into hidden per-role silos.
+   - and any future targeted/routed or limited comment UX should build on that without turning comments into hidden per-role silos by default.
 3. The enforcement slice now closes the most obvious bypasses for generated work:
    - editing a generated node directly,
    - completing it with the wrong actor kind,
@@ -71,7 +212,7 @@ Current status:
 1. Template-library node contracts are now operational rather than informational.
 2. Generated nodes can enforce actor-kind edit/complete ownership and truthful parent/scope completion blockers.
 3. Human override-complete remains allowed.
-4. Comments are explicitly not contract-gated in MVP; workflow contracts govern state mutations and done truth, not discussion.
+4. Comments are explicitly not contract-gated by default; workflow contracts govern state mutations and done truth, not discussion.
 5. Project creation, snapshot transport, and remaining legacy kind-template authoring/fallback paths are still pending migration.
 
 Next step:

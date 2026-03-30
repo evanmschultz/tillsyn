@@ -58,18 +58,20 @@ Implemented now:
 - `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
-- Current implementation still uses kind-template-backed create-time defaults for project metadata, task metadata/completion defaults, project root children, and recursive child work-item defaults.
+- Legacy kind-template compatibility paths still exist for create-time defaults and generated work when no template library is selected or when no matching bound node template exists.
 - Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, truthful completion gates, `system` audit provenance for generated nodes, and explicit global-to-project adopt/apply flows instead of silent backfill; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
+- Project creation can now optionally bind one approved global template library at create time, so project-scoped template defaults and root generated work start from the template-library model instead of the legacy kind-template path when the operator chooses that path.
+- Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots so generated workflow contracts round-trip with the work graph instead of being flattened back to legacy defaults.
 - Current template-library enforcement slice is active for generated nodes:
   - create-child under a generated parent,
   - update / rename / reparent,
   - move-to-done,
   - archive / delete / restore.
   Stored node-contract snapshots now gate non-human actor kinds after the normal scope lease check, humans remain allowed, orchestrator completion still requires explicit per-rule override, and done transitions now honor required parent / containing-scope blockers from generated descendants instead of treating every child as an implicit blocker.
-- Comments remain deliberately separate from template-contract mutation gating in MVP:
+- Comments remain deliberately separate from template-contract mutation gating by design:
   - comments stay shared within the normal project/scope visibility model so humans can talk directly to subagents and agents can hand off to each other inside Tillsyn,
   - comment attribution/ownership remains first-class audit data,
-  - and later targeted-routing UX can build on that without turning comments into hidden per-role silos.
+  - and later targeted-routing or limit/configuration UX can build on that without turning comments into hidden per-role silos by default.
 - Capability leases now normalize project scope ids, validate scope tuples on issuance, enforce bounded parent delegation, and apply builder/qa/orchestrator action checks in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
@@ -126,6 +128,7 @@ Current auth note:
 Template-library operator examples:
 - SQLite is the live source of truth. The current CLI/MCP JSON `upsert` seam is temporary operator transport until dedicated TUI authoring lands.
 - CLI examples:
+  - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till template library list --scope global --status approved`
   - `till template library show --library-id go-defaults`
   - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task"}]}'`
@@ -183,6 +186,7 @@ Export current data:
 Snapshot export includes:
 - projects, columns, tasks/work-items
 - kind catalog definitions + project allowed-kind closure
+- template libraries + project template bindings + node-contract snapshots
 - comments/threads
 - capability leases
 

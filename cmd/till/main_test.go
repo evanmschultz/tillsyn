@@ -171,6 +171,69 @@ func seedProjectForAuthCLITest(t *testing.T, dbPath, projectID string) {
 	}
 }
 
+// seedTemplateLibraryForProjectCreateCLITest stores one approved global project template library for CLI create coverage.
+func seedTemplateLibraryForProjectCreateCLITest(t *testing.T, dbPath string) {
+	t.Helper()
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+
+	svc := app.NewService(repo, func() string { return uuid.NewString() }, func() time.Time {
+		return time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
+	}, app.ServiceConfig{})
+	if _, err := svc.ListKindDefinitions(context.Background(), false); err != nil {
+		t.Fatalf("ListKindDefinitions(seed) error = %v", err)
+	}
+	if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
+		ID:          "go-service",
+		DisplayName: "Go Service",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
+	}); err != nil {
+		t.Fatalf("UpsertKindDefinition(go-service) error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(context.Background(), app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Description:         "Global defaults for Go projects",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "user-1",
+		CreatedByActorName:  "User One",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "user-1",
+		ApprovedByActorName: "User One",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "project-template",
+			ScopeLevel: domain.KindAppliesToProject,
+			NodeKindID: domain.KindID("go-service"),
+			ProjectMetadataDefaults: &domain.ProjectMetadata{
+				Owner:             "Platform",
+				StandardsMarkdown: "Run Go validation",
+			},
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "main-branch",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToBranch,
+				ChildKindID:             domain.KindID("branch"),
+				TitleTemplate:           "Main Branch",
+				DescriptionTemplate:     "default implementation branch",
+				ResponsibleActorKind:    domain.TemplateActorKindBuilder,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(go-defaults) error = %v", err)
+	}
+}
+
 // archiveProjectForCLITest marks one seeded project archived for CLI discovery tests.
 func archiveProjectForCLITest(t *testing.T, dbPath, projectID string) {
 	t.Helper()
@@ -471,7 +534,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "project create",
 			args: []string{"project", "create", "--help"},
-			want: []string{"till project create", "--name", "--kind", "--metadata-json", "one positional argument"},
+			want: []string{"till project create", "--name", "--kind", "--template-library-id", "--metadata-json", "one positional argument"},
 		},
 		{
 			name: "project show",
@@ -1330,6 +1393,7 @@ func TestRunProjectCommands(t *testing.T) {
 	cfgPath := filepath.Join(workspace, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	seedProjectForAuthCLITest(t, dbPath, "p1")
+	seedTemplateLibraryForProjectCreateCLITest(t, dbPath)
 
 	var createOut strings.Builder
 	if err := run(context.Background(), []string{
