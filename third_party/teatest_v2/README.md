@@ -46,4 +46,4 @@ works directly with the repo's Bubble Tea/Lip Gloss stack. At that point:
 
 1. Remove the `replace` line from root `go.mod`.
 2. Remove `third_party/teatest_v2`.
-3. Re-run repository verification (`just ci`).
+3. Re-run repository verification (`mage ci`).

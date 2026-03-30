@@ -1,24 +1,27 @@
 # Contributing
 
-This project uses local `just` gates plus GitHub Actions gates. Run local gates before push so most failures are caught before CI.
+This project uses a small `mage` surface plus GitHub Actions gates. Run `mage` from the worktree root. Use `mage test-pkg <pkg>` for focused loops and `mage ci` for the full gate.
 
 ## Local Workflow
 
 Use this loop while developing:
 
 ```bash
-just check
+mage test-pkg ./cmd/till
 ```
 
 Before every push (or PR update), run the full gate:
 
 ```bash
-just ci
+mage ci
 ```
 
-`just` gate intent:
-- `just check`: cross-platform smoke gate (`verify-sources`, `fmt-check`, `test`, `build`)
-- `just ci`: full gate (`verify-sources`, `fmt-check`, coverage-enforced test run, `build`)
+`mage` target intent:
+- `mage test-pkg <pkg>`: focused test loop (`mage test-pkg ./...` runs the full suite without coverage)
+- `mage ci`: canonical full gate (`verify-sources`, `gofmt` check, coverage-enforced tests, `build`)
+- `mage build`: local binary build
+- `mage run`: run from source
+- `mage test-golden`, `mage test-golden-update`: focused TUI golden workflows
 
 ## Windows Note (Line Endings)
 
@@ -36,26 +39,31 @@ If line endings are still stale after renormalization, re-clone the repository.
 
 ## Recommended Pre-Push Hook
 
-Install a local hook so pushes fail fast if `just ci` fails:
+Install a local hook so pushes fail fast if `mage ci` fails:
 
 ```bash
 hook_path="$(git rev-parse --git-path hooks/pre-push)"
 cat > "$hook_path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-just ci
+mage ci
 EOF
 chmod +x "$hook_path"
 ```
 
 Use `git rev-parse --git-path ...` instead of hard-coding `.git/...` so the hook still lands in the right place when the repo uses a separate common git dir.
 
+Install Mage locally with:
+
+```bash
+go install github.com/magefile/mage@v1.17.0
+```
+
 ## GitHub Actions Model
 
-CI is intentionally split:
-- Matrix smoke checks on all OSes (`ubuntu-latest`, `macos-latest`, `windows-latest`) run `just check`.
-- Full coverage gate runs once on Linux and executes `just ci`.
-- Release snapshot validation runs only after the Linux full gate passes.
+CI runs:
+- `mage ci` on all OSes (`ubuntu-latest`, `macos-latest`, `windows-latest`)
+- release snapshot validation after the matrix passes
 
 Concurrency policy:
 - `main` branch runs are not canceled in progress.
@@ -64,10 +72,9 @@ Concurrency policy:
 ## Branch Protection Recommendation
 
 Require these checks on `main`:
-- `check (ubuntu-latest)`
-- `check (macos-latest)`
-- `check (windows-latest)`
-- `full gate (ubuntu-latest)`
+- `ci (ubuntu-latest)`
+- `ci (macos-latest)`
+- `ci (windows-latest)`
 - `release snapshot check`
 
 ## Notes

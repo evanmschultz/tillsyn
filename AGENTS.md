@@ -18,13 +18,13 @@ You are a senior Go dev. YOU ALWAYS:
 - Treat all project/task details and all thread comment content as markdown-first authoring surfaces.
 - In MCP calls, write markdown-formatted content for `description`, `summary`, and `body_markdown` fields.
 - Write idiomatic Go doc comments for all top-level declarations and methods in production and test code, and add inline comments for non-obvious behavior blocks (including behavior blocks in `*_test.go`).
-- Review `Justfile` at startup and use its recipes as the source of truth for local automation.
-- Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.
-- Run `just` recipes directly (for example `just ci`) without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks for an override.
+- Review `magefile.go` at startup and use its targets as the source of truth for local automation.
+- Run tests/checks through `mage` targets only; do not run `go test` directly from the agent.
+- Run `mage` targets from the worktree root as plain `mage <target>` (for example `mage ci`) without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks for an override.
 - Do not create workspace-local ad-hoc Go cache directories (for example `.go-cache-*`) during normal test/check execution.
-- During normal implementation loops, run `just check` after meaningful increments to catch local regressions early.
-- When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
-- Before asking the user to push or before opening/refreshing a PR, run `just ci` and report results.
+- During normal implementation loops, run `mage test-pkg <pkg>` after meaningful increments to catch local regressions early.
+- When you touch Go code, finish by running `mage ci` unless the user explicitly approves a narrower suite.
+- Before asking the user to push or before opening/refreshing a PR, run `mage ci` and report results.
 - After pushing a change that is meant to fix or validate CI, run `gh run watch --exit-status` on the new GitHub Actions run and do not claim CI passes until the remote run finishes green.
 - Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
@@ -37,8 +37,8 @@ You are a senior Go dev. YOU ALWAYS:
 - Prefer one primary intent per commit.
 - Allowed commit types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`, `build`, `ci`.
 - Contributors and agents should follow this commit style consistently.
-- If you touch `.github/workflows/` or `Justfile`, run both `just check` and `just ci` before handoff.
-- Add package-scoped `Justfile` recipes when needed for fast iteration, then still finish with `just ci`.
+- If you touch `.github/workflows/` or `magefile.go`, run `mage ci` before handoff.
+- Add package-scoped Mage targets only when they materially simplify the repo; otherwise prefer `mage test-pkg <pkg>` and `mage ci`.
 - Treat runtime logging as a first-class implementation concern:
   - use `github.com/charmbracelet/log` as the canonical logger for application/runtime logs.
   - keep colored/styled console output enabled for local developer ergonomics.
@@ -54,7 +54,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Never delete files or directories without explicit user approval.
 - Never run commands outside this repository root: `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
 - For runtime/protocol validation in this phase, run MCP-only checks (no HTTP/curl validation probes).
-- It is allowed to `just build` and run `./till serve` locally for MCP-side validation.
+- It is allowed to `mage build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
 - Treat `PLAN.md` as the active source of truth for temporary run state, acceptance checklists, commands run, evidence, and completion state.
@@ -80,13 +80,11 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Build and Run
 
-- `just run`: run app from source (`go run ./cmd/till`).
-- `just build`: build local binary `./till`.
-- `just fmt`: format Go files.
-- `just check`: cross-platform smoke gate (source verification, format check, tests, build).
-- `just test`, `just test-pkg <pkg>`: test entrypoints.
-- `just test-golden`, `just test-golden-update`: golden fixture validation/update.
-- `just ci`: canonical full gate (source verification, format check, coverage-verified tests, build).
+- `mage run`: run app from source (`go run ./cmd/till`).
+- `mage build`: build local binary `./till`.
+- `mage test-pkg <pkg>`: test entrypoint; use `mage test-pkg ./...` for a full non-coverage run.
+- `mage test-golden`, `mage test-golden-update`: golden fixture validation/update.
+- `mage ci`: canonical full gate (source verification, `gofmt` check, coverage-verified tests, build).
 
 ## Worklogs
 
@@ -118,11 +116,11 @@ You are a senior Go dev. YOU ALWAYS:
 
 - Tests are co-located as `*_test.go`.
 - Prefer table-driven tests and behavior-oriented assertions.
-- Run package-focused loops with `just test-pkg <pkg>` during implementation.
+- Run package-focused loops with `mage test-pkg <pkg>` during implementation.
 - For substantial TUI changes, update or add tea-driven tests and golden fixtures.
 - Coverage below 70% is a hard failure.
-- Build/test execution must go through `just` recipes only.
-- Do not wrap `just` test commands with custom Go cache env vars by default; use plain `just` invocations.
+- Build/test execution must go through `mage` targets only.
+- Do not wrap `mage` test commands with custom Go cache env vars by default; use plain `mage ...` invocations.
 
 ## Release and Security
 
