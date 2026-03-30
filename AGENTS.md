@@ -28,7 +28,7 @@ You are a senior Go dev. YOU ALWAYS:
 - After pushing a change that is meant to fix or validate CI, run `gh run watch --exit-status` on the new GitHub Actions run and do not claim CI passes until the remote run finishes green.
 - Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
-- Use `git` for core local repository operations such as status, diff, add, commit, branch, merge-base inspection, and worktree management, unless the current conversation explicitly requires a `gh`-specific workflow.
+- Use `git` for core local repository operations such as status, diff, add, commit, branch, and merge-base inspection, unless the current conversation explicitly requires a `gh`-specific workflow.
 - Do not use the GitHub web UI for repository operations when `gh` can perform the same task.
 - Use Conventional Commits for all commit messages.
 - Format commit messages as `type(scope): short imperative summary` when a scope is useful, otherwise `type: short imperative summary`.
@@ -77,7 +77,6 @@ You are a senior Go dev. YOU ALWAYS:
 - `internal/tui`: Bubble Tea/Bubbles/Lip Gloss presentation layer.
 - `.artifacts/`: generated local outputs (exports, temporary build outputs).
 - `PLAN.md`: active roadmap and execution/work log.
-- `WORKTREE_WORKFLOW.md`: local repository workflow guidance.
 
 ## Build and Run
 

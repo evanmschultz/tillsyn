@@ -150,9 +150,10 @@ Commands run and outcomes:
 2. `sed -n '1,220p' /Users/evanschultz/Documents/Code/hylla/tillsyn/AGENTS.md` -> PASS.
 3. `git -C /Users/evanschultz/Documents/Code/hylla/tillsyn/main status --short` -> PASS.
 4. `test_not_applicable` -> PASS (docs-only AGENTS cleanup; no code/runtime surface changed).
+5. final tracked AGENTS scrub removed the last generic `worktree` wording from the checkout-level file -> PASS.
 
 Current status:
-1. `main/AGENTS.md` no longer mentions bare-root/worktree-specific layout details.
+1. `main/AGENTS.md` no longer mentions bare-root/worktree-specific layout details or generic worktree guidance.
 2. The bare-root local `AGENTS.md` is concise and matches the current state of the bare repo.
 
 Next step:
