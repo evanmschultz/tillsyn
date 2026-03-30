@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; the template-library enforcement slice is now green locally through `just test-pkg ./internal/domain`, `just test-pkg ./internal/app`, `just check`, and `just ci`, and generated-node contracts now actively gate edit/complete behavior plus parent/containing-scope done blockers while legacy kind-template creation and snapshot compatibility paths remain intentionally in place.
+Status: In progress; the template-library enforcement slice is now green locally through `just test-pkg ./internal/domain`, `just test-pkg ./internal/app`, `just check`, and `just ci`, and generated-node contracts now actively gate edit/complete behavior plus parent/containing-scope done blockers while legacy kind-template creation and snapshot compatibility paths remain intentionally in place. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface.
 
 ## Checkpoint 2026-03-30: Template Contract Enforcement + Research Role Alignment
 
@@ -57,8 +57,11 @@ Cleanup/orphan review:
    - task creation still falls back to kind-template expansion when no project template binding exists,
    - snapshot import/export still uses the legacy shape,
    - and old kind-template authoring surfaces still exist beside template-library surfaces.
-2. Comments are still scope-gated only:
-   - generated-node contracts do not yet restrict who may comment on a generated node.
+2. Comments are intentionally staying scope-gated in MVP:
+   - generated-node contracts do not restrict who may comment on a generated node,
+   - comments remain the shared human-to-agent and agent-to-agent communication lane inside a project/scope,
+   - comment attribution/ownership stays first-class audit data,
+   - and any future targeted/routed comment UX should build on that without turning comments into hidden per-role silos.
 3. The enforcement slice now closes the most obvious bypasses for generated work:
    - editing a generated node directly,
    - completing it with the wrong actor kind,
@@ -68,14 +71,14 @@ Current status:
 1. Template-library node contracts are now operational rather than informational.
 2. Generated nodes can enforce actor-kind edit/complete ownership and truthful parent/scope completion blockers.
 3. Human override-complete remains allowed.
-4. Project creation, snapshot transport, and remaining legacy kind-template authoring/fallback paths are still pending migration.
+4. Comments are explicitly not contract-gated in MVP; workflow contracts govern state mutations and done truth, not discussion.
+5. Project creation, snapshot transport, and remaining legacy kind-template authoring/fallback paths are still pending migration.
 
 Next step:
 1. Move the remaining compatibility seams onto template libraries in order:
-   - project creation,
-   - snapshot import/export,
-   - then explicit legacy kind-template removal/quarantine.
-2. Decide whether comment mutations should become contract-aware in MVP or remain scope-only.
+   - project creation first, because new live data should land on template-library resolution before transport/migration is rewritten around it,
+   - snapshot import/export second, so the transport shape follows the post-migration runtime source of truth instead of freezing the old split model in place,
+   - then explicit legacy kind-template removal/quarantine once both creation and transport are library-backed.
 
 ## Checkpoint 2026-03-29: Template Operator Surfaces + Repo-Wide Gates Green
 

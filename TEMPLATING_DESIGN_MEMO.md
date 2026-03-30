@@ -555,6 +555,21 @@ Every meaningful template action should emit durable change history:
 
 That keeps the feature understandable and reviewable.
 
+## Comments And Collaboration
+
+Templates should not turn comments into private per-role silos.
+
+Recommended MVP rule:
+- comments remain the shared in-scope communication layer
+- humans should be able to talk directly to subagents on the relevant node
+- agents should be able to hand off to each other in the same work graph
+- comment attribution should stay first-class so actor identity and intent remain auditable
+- template contracts should gate workflow mutations and done truth, not discussion
+
+Recommended later-wave direction:
+- add optional comment routing or addressing metadata if needed
+- do not use template-contract ownership rules to hide discussion by default
+
 ## TUI / CLI / MCP Flow Direction
 
 Readability matters as much as enforcement.
@@ -867,6 +882,8 @@ Once implementation planning starts, keep it to these slices:
 - keep legacy kind-template behavior working during transition
 - make new enforcement depend on stored node contracts, not live template lookups only
 - plan a single explicit apply/update command path for existing managed/generated nodes, not hidden backfill
+- move project creation onto template-library resolution before rewriting snapshot import/export, so new live data uses the new model before the transport shape is updated around it
+- then update snapshot import/export to carry template libraries, bindings, and node-contract snapshots without freezing the old split model in place
 
 ## Concrete Cleanup Map
 

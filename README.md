@@ -28,7 +28,7 @@ Local dogfood repo layout note:
 - SQLite persistence (`modernc.org/sqlite`, no CGO).
 - Keyboard navigation (`vim` keys + arrows) and mouse support.
 - Archive-first delete flow with configurable defaults.
-- Project and work-item thread mode with ownership-attributed markdown comments.
+- Project and work-item thread mode with ownership-attributed markdown comments as the shared in-scope communication lane for human-to-agent and agent-to-agent coordination.
 - Descriptions/comments are stored as markdown source fields and rendered in TUI views.
 - MCP instruction tool for embedded docs + agent recommendations (`till.get_instructions`).
 - Raw stdio MCP via `./till mcp` as the primary local MCP transport.
@@ -66,6 +66,10 @@ Implemented now:
   - move-to-done,
   - archive / delete / restore.
   Stored node-contract snapshots now gate non-human actor kinds after the normal scope lease check, humans remain allowed, orchestrator completion still requires explicit per-rule override, and done transitions now honor required parent / containing-scope blockers from generated descendants instead of treating every child as an implicit blocker.
+- Comments remain deliberately separate from template-contract mutation gating in MVP:
+  - comments stay shared within the normal project/scope visibility model so humans can talk directly to subagents and agents can hand off to each other inside Tillsyn,
+  - comment attribution/ownership remains first-class audit data,
+  - and later targeted-routing UX can build on that without turning comments into hidden per-role silos.
 - Capability leases now normalize project scope ids, validate scope tuples on issuance, enforce bounded parent delegation, and apply builder/qa/orchestrator action checks in app/service write paths for non-user actors.
 
 Still in progress for this dogfood wave:
@@ -131,6 +135,7 @@ Template-library operator examples:
 - Documentation expectations:
   - keep README workflow examples, `AGENTS.md` policy, `CLAUDE.md` interaction guidance, and any relevant `SKILL.md` files aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
   - keep examples readable enough for humans to audit quickly in the TUI and CLI; template contracts should clarify ownership and completion gates instead of hiding them in large markdown files.
+  - keep the docs explicit that comments are the durable shared communication layer inside Tillsyn, which is a core value-add over external markdown plans for human-to-agent and agent-to-agent coordination.
 
 Instruction-tool usage guidance:
 - `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
