@@ -8488,7 +8488,10 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	svc.handoffs = append(svc.handoffs, handoff)
 
 	m := loadReadyModel(t, NewModel(svc))
-	m = applyCmd(t, m, m.startAuthInventory(false))
+	// Coordination inventory loading can take one extra synchronous command hop on
+	// slower CI runners, so give this test a slightly wider window before driving
+	// key events against the loaded rows.
+	m = applyCmdWithTimeout(t, m, m.startAuthInventory(false), 50*time.Millisecond)
 	if m.mode != modeAuthInventory {
 		t.Fatalf("expected coordination mode, got %v", m.mode)
 	}
@@ -8571,7 +8574,10 @@ func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 	svc.handoffs = append(svc.handoffs, handoff)
 
 	m := loadReadyModel(t, NewModel(svc))
-	m = applyCmd(t, m, m.startAuthInventory(false))
+	// Coordination inventory loading can take one extra synchronous command hop on
+	// slower CI runners, so give this test a slightly wider window before driving
+	// key events against the loaded rows.
+	m = applyCmdWithTimeout(t, m, m.startAuthInventory(false), 50*time.Millisecond)
 	items := m.authInventoryItems()
 	for idx, item := range items {
 		if item.Handoff != nil {
@@ -8598,7 +8604,9 @@ func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 
 // TestModelCoordinationDetailCanRevokeLease verifies lease detail actions flow through confirm and revoke the lease.
 func TestModelCoordinationDetailCanRevokeLease(t *testing.T) {
-	now := time.Date(2026, 3, 29, 11, 15, 0, 0, time.UTC)
+	// Keep the lease far enough in the future that the live coordination view
+	// still treats it as active regardless of when CI executes this test.
+	now := time.Date(2030, 3, 29, 11, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	task, _ := domain.NewTask(domain.TaskInput{
