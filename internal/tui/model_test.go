@@ -46,12 +46,21 @@ type fakeService struct {
 	lastRevokeAuthReason    string
 	lastRevokeLease         app.RevokeCapabilityLeaseInput
 	lastUpdateHandoff       app.UpdateHandoffInput
+	lastReindexEmbeddings   app.ReindexEmbeddingsInput
 	err                     error
 	rollups                 map[string]domain.DependencyRollup
 	changeEvents            map[string][]domain.ChangeEvent
 	changeEventsErr         error
 	attentionErrByProject   map[string]error
 	attentionItemsByProject map[string][]domain.AttentionItem
+	embeddingRows           []app.EmbeddingRecord
+	searchRequestedMode     app.SearchMode
+	searchEffectiveMode     app.SearchMode
+	searchFallbackReason    string
+	searchEmbeddingSummary  app.EmbeddingSummary
+	embeddingsOperational   bool
+	reindexResult           app.ReindexEmbeddingsResult
+	reindexDelay            time.Duration
 	commentCreateErr        error
 	commentListErr          error
 	commentSeq              int
@@ -78,6 +87,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		changeEvents:            map[string][]domain.ChangeEvent{},
 		attentionErrByProject:   map[string]error{},
 		attentionItemsByProject: map[string][]domain.AttentionItem{},
+		embeddingsOperational:   true,
 	}
 }
 
@@ -664,6 +674,97 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 	return out, nil
 }
 
+// SearchTasks handles search task matches plus execution metadata.
+func (f *fakeService) SearchTasks(ctx context.Context, in app.SearchTasksFilter) (app.SearchTaskMatchesResult, error) {
+	matches, err := f.SearchTaskMatches(ctx, in)
+	if err != nil {
+		return app.SearchTaskMatchesResult{}, err
+	}
+	requestedMode := in.Mode
+	if f.searchRequestedMode != "" {
+		requestedMode = f.searchRequestedMode
+	}
+	effectiveMode := in.Mode
+	if f.searchEffectiveMode != "" {
+		effectiveMode = f.searchEffectiveMode
+	}
+	summary := f.searchEmbeddingSummary
+	if summary.SubjectType == "" {
+		summary.SubjectType = app.EmbeddingSubjectTypeWorkItem
+	}
+	return app.SearchTaskMatchesResult{
+		Matches:          matches,
+		RequestedMode:    requestedMode,
+		EffectiveMode:    effectiveMode,
+		FallbackReason:   f.searchFallbackReason,
+		EmbeddingSummary: summary,
+	}, nil
+}
+
+// ListEmbeddingStates lists embeddings lifecycle rows for the requested scope.
+func (f *fakeService) ListEmbeddingStates(_ context.Context, filter app.EmbeddingListFilter) ([]app.EmbeddingRecord, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([]app.EmbeddingRecord, 0, len(f.embeddingRows))
+	for _, row := range f.embeddingRows {
+		if len(filter.ProjectIDs) > 0 && !slices.Contains(filter.ProjectIDs, row.ProjectID) {
+			continue
+		}
+		if len(filter.Statuses) > 0 && !slices.Contains(filter.Statuses, row.Status) {
+			continue
+		}
+		out = append(out, row)
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// SummarizeEmbeddingStates aggregates embeddings lifecycle rows for the requested scope.
+func (f *fakeService) SummarizeEmbeddingStates(ctx context.Context, filter app.EmbeddingListFilter) (app.EmbeddingSummary, error) {
+	rows, err := f.ListEmbeddingStates(ctx, filter)
+	if err != nil {
+		return app.EmbeddingSummary{}, err
+	}
+	summary := app.EmbeddingSummary{
+		SubjectType: app.EmbeddingSubjectTypeWorkItem,
+		ProjectIDs:  append([]string(nil), filter.ProjectIDs...),
+	}
+	for _, row := range rows {
+		switch row.Status {
+		case app.EmbeddingLifecyclePending:
+			summary.PendingCount++
+		case app.EmbeddingLifecycleRunning:
+			summary.RunningCount++
+		case app.EmbeddingLifecycleReady:
+			summary.ReadyCount++
+		case app.EmbeddingLifecycleFailed:
+			summary.FailedCount++
+		case app.EmbeddingLifecycleStale:
+			summary.StaleCount++
+		}
+	}
+	return summary, nil
+}
+
+func (f *fakeService) EmbeddingsOperational() bool {
+	return f.embeddingsOperational
+}
+
+// ReindexEmbeddings records the last explicit reindex request and returns the configured result.
+func (f *fakeService) ReindexEmbeddings(_ context.Context, in app.ReindexEmbeddingsInput) (app.ReindexEmbeddingsResult, error) {
+	if f.err != nil {
+		return app.ReindexEmbeddingsResult{}, f.err
+	}
+	f.lastReindexEmbeddings = in
+	if f.reindexDelay > 0 {
+		time.Sleep(f.reindexDelay)
+	}
+	return f.reindexResult, nil
+}
+
 // CreateProjectWithMetadata creates project with metadata.
 func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.CreateProjectInput) (domain.Project, error) {
 	project, err := domain.NewProject("p-new", in.Name, in.Description, time.Now().UTC())
@@ -1033,7 +1134,8 @@ func TestModelCreateTaskFocusesNewTask(t *testing.T) {
 	for _, r := range []rune("New focus task") {
 		m = applyMsg(t, m, keyRune(r))
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	m = applyImmediateCmd(t, mustModelValue(t, updated), cmd)
 
 	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t-new" {
 		t.Fatalf("expected focus on created task t-new, got %#v ok=%t", task, ok)
@@ -1173,8 +1275,220 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	if m.selectedProject != 1 {
 		t.Fatalf("expected jump to second project, got %d", m.selectedProject)
 	}
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode after search jump, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != "t2" {
+		t.Fatalf("taskInfoTaskID = %q, want t2", got)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to return to board mode, got %v", m.mode)
+	}
 	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t2" {
-		t.Fatalf("expected selected task t2 after jump, got %#v ok=%t", task, ok)
+		t.Fatalf("expected selected task t2 after closing info, got %#v ok=%t", task, ok)
+	}
+}
+
+// TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup verifies the search modal stays visible while async lookup is in flight.
+func TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup(t *testing.T) {
+	now := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-search-loading", "Search Loading", "", now)
+	column, _ := domain.NewColumn("c-search-loading", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-search-loading",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Rollout search regression fix",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range "rollout" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mustModelValue(t, updated)
+	if cmd == nil {
+		t.Fatal("expected async search command")
+	}
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected search results modal to stay open, got %v", m.mode)
+	}
+	if !m.searchLoading {
+		t.Fatal("expected search loading state while command is in flight")
+	}
+	if len(m.searchMatches) != 0 {
+		t.Fatalf("expected matches cleared while loading, got %#v", m.searchMatches)
+	}
+	if !strings.Contains(stripANSI(fmt.Sprint(m.View().Content)), "waiting for search results") {
+		t.Fatalf("expected loading view, got %q", stripANSI(fmt.Sprint(m.View().Content)))
+	}
+
+	m = applyCmd(t, m, cmd)
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected search results mode after async completion, got %v", m.mode)
+	}
+	if m.searchLoading {
+		t.Fatal("expected loading state cleared after search completion")
+	}
+	if len(m.searchMatches) != 1 || m.searchMatches[0].Task.ID != task.ID {
+		t.Fatalf("expected search result for %q, got %#v", task.ID, m.searchMatches)
+	}
+}
+
+// TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext verifies project-scoped semantic matches open the node and keep subtree focus on close.
+func TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext(t *testing.T) {
+	now := time.Date(2026, 3, 29, 23, 15, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-search-focus", "Search Focus", "", now)
+	column, _ := domain.NewColumn("c-search-focus", project.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "branch-rollout",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Roll out hybrid task search",
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:          "task-pagerduty",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		ParentID:    parent.ID,
+		Position:    1,
+		Title:       "Stabilize rollout notifications",
+		Description: "pagerduty ack handshake",
+		Priority:    domain.PriorityMedium,
+	}, now)
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range "pagerduty" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected project search to open results mode, got %v", m.mode)
+	}
+	if len(m.searchMatches) == 0 || m.searchMatches[0].Task.ID != child.ID {
+		t.Fatalf("expected first project-scoped match %q, got %#v", child.ID, m.searchMatches)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mustModelValue(t, updated)
+	if cmd == nil {
+		t.Fatal("expected async open command")
+	}
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected results overlay to stay mounted while opening, got %v", m.mode)
+	}
+	if !m.searchLoading || !m.searchOpeningResult {
+		t.Fatalf("expected opening spinner state, got loading=%t opening=%t", m.searchLoading, m.searchOpeningResult)
+	}
+	if !strings.Contains(stripANSI(fmt.Sprint(m.View().Content)), "opening search match...") {
+		t.Fatalf("expected opening state in view, got %q", stripANSI(fmt.Sprint(m.View().Content)))
+	}
+
+	m = applyCmd(t, m, cmd)
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode after opening project-scoped match, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != child.ID {
+		t.Fatalf("taskInfoTaskID = %q, want %q", got, child.ID)
+	}
+	if got := strings.TrimSpace(m.projectionRootTaskID); got != parent.ID {
+		t.Fatalf("projectionRootTaskID = %q, want %q", got, parent.ID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to return to board mode, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.projectionRootTaskID); got != parent.ID {
+		t.Fatalf("projectionRootTaskID after close = %q, want %q", got, parent.ID)
+	}
+	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != child.ID {
+		t.Fatalf("expected child task selected after closing info, got %#v ok=%t", task, ok)
+	}
+}
+
+// TestModelSearchCancelIgnoresLateResults verifies canceled async searches cannot reopen the results modal later.
+func TestModelSearchCancelIgnoresLateResults(t *testing.T) {
+	now := time.Date(2026, 3, 30, 9, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-search-cancel", "Search Cancel", "", now)
+	column, _ := domain.NewColumn("c-search-cancel", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-search-cancel",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Cancel stale result reopen",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range "cancel" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mustModelValue(t, updated)
+	if cmd == nil {
+		t.Fatal("expected async search command")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to close search modal, got %v", m.mode)
+	}
+
+	m = applyCmd(t, m, cmd)
+	if m.mode != modeNone {
+		t.Fatalf("expected canceled search response ignored, got %v", m.mode)
+	}
+	if len(m.searchMatches) != 0 {
+		t.Fatalf("expected no late results applied after cancel, got %#v", m.searchMatches)
+	}
+}
+
+// TestSearchModalAllowsChoosingExecutionMode verifies operators can switch between hybrid, keyword, and semantic before applying search.
+func TestSearchModalAllowsChoosingExecutionMode(t *testing.T) {
+	now := time.Date(2026, 3, 30, 0, 5, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-search-mode", "Search Mode", "", now)
+	column, _ := domain.NewColumn("c-search-mode", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-search-mode",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Mode-aware search task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('/'))
+	for range 5 {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	if got := m.searchMode; got != app.SearchModeKeyword {
+		t.Fatalf("searchMode = %q, want keyword", got)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "mode: keyword") {
+		t.Fatalf("view = %q, want mode selector label", rendered)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := svc.lastSearchFilter.Mode; got != app.SearchModeKeyword {
+		t.Fatalf("lastSearchFilter.Mode = %q, want keyword", got)
 	}
 }
 
@@ -4966,6 +5280,10 @@ func TestModelInputModePaths(t *testing.T) {
 	if m.searchQuery != "T" {
 		t.Fatalf("expected search query set, got %q", m.searchQuery)
 	}
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected search results mode after apply, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('e'))
 	m.input = "Task 2 | expanded details | high | 2026-03-01 | alpha,beta"
@@ -6634,7 +6952,7 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('/'))
-	for _, r := range []rune("road map") {
+	for _, r := range []rune("roadmap") {
 		m = applyMsg(t, m, keyRune(r))
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // states
@@ -6647,16 +6965,36 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // archived
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // mode
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // apply
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !m.searchApplied {
-		t.Fatalf("expected search applied, got %#v", m)
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected no-results search to stay in results mode, got %#v", m)
 	}
-	if m.searchQuery != "road map" {
+	if m.searchQuery != "roadmap" {
 		t.Fatalf("expected search query preserved, got %q", m.searchQuery)
 	}
 	if !m.searchCrossProject || !m.searchIncludeArchived {
 		t.Fatalf("expected scope+archived toggled, got cross=%t archived=%t", m.searchCrossProject, m.searchIncludeArchived)
+	}
+	if m.searchApplied {
+		t.Fatalf("expected board search flag cleared when results modal owns the search, got %#v", m)
+	}
+	if m.searchLoading {
+		t.Fatalf("expected no-results search to finish loading, got %#v", m)
+	}
+	if len(m.searchMatches) != 0 {
+		t.Fatalf("expected no-results search to keep an empty match set, got %#v", m.searchMatches)
+	}
+	if !strings.Contains(m.status, "no matches") {
+		t.Fatalf("expected no-match status, got %q", m.status)
+	}
+	if out := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("8"), lipgloss.Color("7"), lipgloss.NewStyle(), 80)); !strings.Contains(out, "(empty)") {
+		t.Fatalf("expected no-results overlay to render an explicit empty state, got %q", out)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to close the no-results overlay, got %v", m.mode)
 	}
 
 	m = applyMsg(t, m, keyRune(':'))
@@ -6676,6 +7014,112 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.searchApplied {
 		t.Fatalf("expected reset-filters to clear applied state, got %#v", m)
+	}
+}
+
+// TestApplySearchFilterShowsLoadingResultsModal verifies submitted searches keep
+// the results overlay visible while the async search command is still in flight.
+func TestApplySearchFilterShowsLoadingResultsModal(t *testing.T) {
+	now := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-loading", "Loading Search", "", now)
+	column, _ := domain.NewColumn("c-loading", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-loading",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Roadmap planning",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range "help" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	cmd := m.applySearchFilter()
+	if cmd == nil {
+		t.Fatal("expected search submit to return an async command")
+	}
+	if m.mode != modeSearchResults {
+		t.Fatalf("expected loading search to open results mode immediately, got %v", m.mode)
+	}
+	if !m.searchLoading {
+		t.Fatalf("expected loading search state, got %#v", m)
+	}
+	if m.searchActiveRequestID == 0 {
+		t.Fatalf("expected active request id assigned, got %#v", m)
+	}
+	if len(m.searchMatches) != 0 {
+		t.Fatalf("expected loading search to clear previous matches, got %#v", m.searchMatches)
+	}
+	if out := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("8"), lipgloss.Color("7"), lipgloss.NewStyle(), 80)); !strings.Contains(out, "searching...") || !strings.Contains(out, "query: help") {
+		t.Fatalf("expected loading overlay to show query + searching state, got %q", out)
+	}
+
+	unchanged := applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !unchanged.searchLoading {
+		t.Fatalf("expected enter during loading to keep search in flight, got %#v", unchanged)
+	}
+	if unchanged.mode != modeSearchResults {
+		t.Fatalf("expected enter during loading to keep results mode, got %v", unchanged.mode)
+	}
+}
+
+// TestSearchResultsIgnoreLateResponseAfterCancel verifies canceling a loading
+// search prevents a later async response from reopening the results overlay.
+func TestSearchResultsIgnoreLateResponseAfterCancel(t *testing.T) {
+	now := time.Date(2026, 3, 30, 9, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-stale-search", "Stale Search", "", now)
+	column, _ := domain.NewColumn("c-stale-search", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-stale-search",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Pagerduty handshake",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m.mode = modeSearchResults
+	m.searchQuery = "help"
+	m.searchLoading = true
+	m.searchRequestSeq = 1
+	m.searchActiveRequestID = 1
+	m.searchRequestedMode = app.SearchModeHybrid
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected escape to close loading results overlay, got %v", m.mode)
+	}
+	if m.searchLoading {
+		t.Fatalf("expected escape to cancel loading search, got %#v", m)
+	}
+	if m.searchActiveRequestID != 0 {
+		t.Fatalf("expected escape to clear active request id, got %d", m.searchActiveRequestID)
+	}
+
+	late := searchResultsMsg{
+		requestID: 1,
+		result: app.SearchTaskMatchesResult{
+			Matches: []app.TaskMatch{{
+				Project: project,
+				Task:    task,
+				StateID: "todo",
+			}},
+			RequestedMode: app.SearchModeHybrid,
+			EffectiveMode: app.SearchModeHybrid,
+		},
+	}
+	m = applyMsg(t, m, late)
+	if m.mode != modeNone {
+		t.Fatalf("expected stale search result to be ignored, got %v", m.mode)
+	}
+	if len(m.searchMatches) != 0 {
+		t.Fatalf("expected stale search result not to repopulate matches, got %#v", m.searchMatches)
 	}
 }
 
@@ -6895,7 +7339,7 @@ func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
 	if m.mode != modeActivityLog {
 		t.Fatalf("expected activity-log mode after load failure, got %v", m.mode)
 	}
-	if !strings.Contains(m.status, "activity log unavailable") {
+	if !strings.Contains(m.status, "activity log") {
 		t.Fatalf("expected non-fatal activity load status, got %q", m.status)
 	}
 	out := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
@@ -8912,36 +9356,49 @@ func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 	if totalItems < 2 {
 		t.Fatalf("expected coordination inventory to include lease and handoff rows, got %d items", totalItems)
 	}
+	leaseIndex := -1
+	handoffIndex := -1
+	for idx, item := range m.authInventoryItems() {
+		if leaseIndex == -1 && item.Lease != nil {
+			leaseIndex = idx
+		}
+		if handoffIndex == -1 && item.Handoff != nil {
+			handoffIndex = idx
+		}
+	}
+	if handoffIndex == -1 {
+		t.Fatalf("expected coordination inventory to include one handoff row: %+v", m.authInventoryItems())
+	}
 
-	moved := false
-	leaseVisible := false
-	handoffVisible := false
-	for i := 0; i < totalItems*4; i++ {
+	startIndex := 0
+	if leaseIndex != -1 {
+		leaseViewportReached := false
+		for i := 0; i < leaseIndex; i++ {
+			m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+			rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
+			if strings.Contains(rendered, "active leases") && strings.Contains(rendered, "[active] Orchestrator") {
+				leaseViewportReached = true
+				break
+			}
+		}
+		if !leaseViewportReached {
+			t.Fatalf("expected coordination viewport to reveal the lease section after wheel scrolling:\n%s", strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " "))
+		}
+		startIndex = leaseIndex
+	}
+
+	handoffViewportReached := false
+	for i := startIndex; i < handoffIndex; i++ {
 		m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-		if m.authInventoryIndex > 0 {
-			moved = true
-		}
 		rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
-		if strings.Contains(rendered, "active leases") && strings.Contains(rendered, "[active] Orchestrator") {
-			leaseVisible = true
-		}
 		if strings.Contains(rendered, "open handoffs") && strings.Contains(rendered, "[waiting] builder -> qa") {
-			handoffVisible = true
-		}
-		if leaseVisible && handoffVisible {
+			handoffViewportReached = true
 			break
 		}
 	}
-	if !moved {
-		t.Fatal("expected mouse wheel to move the coordination selection")
-	}
-	if !leaseVisible {
+	if !handoffViewportReached {
 		rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
-		t.Fatalf("expected coordination viewport to reveal the lease section:\n%s", rendered)
-	}
-	if !handoffVisible {
-		rendered := strings.Join(strings.Fields(stripANSI(fmt.Sprint(m.View()))), " ")
-		t.Fatalf("expected coordination viewport to reveal the handoff section:\n%s", rendered)
+		t.Fatalf("expected coordination viewport to reveal the handoff section after wheel scrolling:\n%s", rendered)
 	}
 }
 
@@ -13228,6 +13685,417 @@ func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 	}
 }
 
+// TestLoadDataPreservesSingleProjectSearchFallbackStatus verifies the primary board search flow retains semantic degradation metadata.
+func TestLoadDataPreservesSingleProjectSearchFallbackStatus(t *testing.T) {
+	now := time.Date(2026, 3, 29, 20, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-search-status", "Search Status", "", now)
+	column, _ := domain.NewColumn("c-search-status", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t-search-status",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Title:       "Ship embeddings",
+		Description: "Keep search fallback visible",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.searchRequestedMode = app.SearchModeSemantic
+	svc.searchEffectiveMode = app.SearchModeKeyword
+	svc.searchFallbackReason = "semantic_index_not_ready"
+	svc.searchEmbeddingSummary = app.EmbeddingSummary{
+		SubjectType:  app.EmbeddingSubjectTypeWorkItem,
+		PendingCount: 1,
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.searchApplied = true
+	m.searchQuery = "ship"
+	m.searchInput.SetValue("ship")
+
+	m = applyCmd(t, m, m.loadData)
+	if got := m.searchFallbackReason; got != "semantic_index_not_ready" {
+		t.Fatalf("searchFallbackReason = %q, want semantic_index_not_ready", got)
+	}
+	if got := m.searchEffectiveMode; got != app.SearchModeKeyword {
+		t.Fatalf("searchEffectiveMode = %q, want keyword", got)
+	}
+	if !strings.Contains(m.status, "fallback: semantic_index_not_ready") {
+		t.Fatalf("status = %q, want fallback metadata", m.status)
+	}
+	if !strings.Contains(m.status, "embeddings ready:0 pending:1") {
+		t.Fatalf("status = %q, want embedding summary counts", m.status)
+	}
+}
+
+// TestEmbeddingsStatusModalLoadsAndReindexes verifies the TUI exposes lifecycle inventory plus a reindex action.
+func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
+	now := time.Date(2026, 3, 29, 20, 35, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-embeddings-modal", "Embeddings", "", now)
+	column, _ := domain.NewColumn("c-embeddings-modal", project.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t-embeddings-modal",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Title:       "Observe pending rows",
+		Kind:        domain.WorkKind("branch"),
+		Scope:       domain.KindAppliesToBranch,
+		Description: "Open the embeddings inventory modal",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t-embeddings-modal-child",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		ParentID:    parent.ID,
+		Position:    1,
+		Title:       "Stabilize rollout notifications",
+		Description: "pagerduty ack handshake",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   child.ID,
+	})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})
+	svc.embeddingRows = []app.EmbeddingRecord{{
+		SubjectType: app.EmbeddingSubjectTypeWorkItem,
+		SubjectID:   parent.ID,
+		ProjectID:   project.ID,
+		Status:      app.EmbeddingLifecycleReady,
+	}, {
+		SubjectType: app.EmbeddingSubjectTypeThreadContext,
+		SubjectID:   threadSubjectID,
+		ProjectID:   project.ID,
+		Status:      app.EmbeddingLifecyclePending,
+	}, {
+		SubjectType:      app.EmbeddingSubjectTypeProjectDocument,
+		SubjectID:        project.ID,
+		ProjectID:        project.ID,
+		Status:           app.EmbeddingLifecycleFailed,
+		LastErrorSummary: "provider unavailable",
+	}}
+	svc.reindexResult = app.ReindexEmbeddingsResult{
+		TargetProjects: []string{project.ID},
+		QueuedCount:    3,
+		PendingCount:   1,
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	cmd := (&m).startEmbeddingsStatus(false)
+	m = applyCmd(t, m, cmd)
+	if m.mode != modeEmbeddingsStatus {
+		t.Fatalf("mode = %v, want modeEmbeddingsStatus", m.mode)
+	}
+	if len(m.embeddingsRows) != 3 {
+		t.Fatalf("embeddingsRows = %#v, want 3 rows", m.embeddingsRows)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	for _, want := range []string{
+		"runtime: operational",
+		"Embeddings",
+		"Observe pending rows",
+		"Stabilize rollout notifications",
+		"project overview",
+		"path: Embeddings -> Observe pending rows",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("view = %q, want %q", rendered, want)
+		}
+	}
+	if !strings.Contains(rendered, "embeddings ready:1 pending:1 running:0 failed:1 stale:0") {
+		t.Fatalf("view = %q, want mixed embeddings summary", rendered)
+	}
+	if !strings.Contains(rendered, "provider unavailable") {
+		t.Fatalf("view = %q, want runtime operational status", stripANSI(fmt.Sprint(m.View().Content)))
+	}
+
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range "project overview" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	rendered = stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "showing 1 of 3 rows") {
+		t.Fatalf("view = %q, want filtered row counts", rendered)
+	}
+	if !strings.Contains(rendered, "project overview") {
+		t.Fatalf("view = %q, want project overview row after filter", rendered)
+	}
+
+	m = applyMsg(t, m, keyRune('a'))
+	if !m.embeddingsIncludeArchived {
+		t.Fatal("embeddingsIncludeArchived = false, want true after toggle")
+	}
+	_ = (&m).startEmbeddingsReindex(false)
+	m = applyImmediateCmd(t, m, m.runEmbeddingsReindexCmd(false))
+	if got := svc.lastReindexEmbeddings.ProjectID; got != project.ID {
+		t.Fatalf("lastReindexEmbeddings.ProjectID = %q, want %q", got, project.ID)
+	}
+	if svc.lastReindexEmbeddings.CrossProject {
+		t.Fatal("lastReindexEmbeddings.CrossProject = true, want false")
+	}
+	if !svc.lastReindexEmbeddings.IncludeArchived {
+		t.Fatal("lastReindexEmbeddings.IncludeArchived = false, want true after archived toggle")
+	}
+	if m.mode != modeEmbeddingsStatus {
+		t.Fatalf("mode after reindex = %v, want modeEmbeddingsStatus", m.mode)
+	}
+}
+
+// TestEmbeddingsStatusModalShowsInFlightSpinnerState verifies the modal exposes an actively ticking progress indicator during a long-running reindex.
+func TestEmbeddingsStatusModalShowsInFlightSpinnerState(t *testing.T) {
+	now := time.Date(2026, 3, 29, 21, 5, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-embeddings-spinner", "Embeddings Spinner", "", now)
+	column, _ := domain.NewColumn("c-embeddings-spinner", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-embeddings-spinner",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Reindex spinner task",
+		Priority:  domain.PriorityLow,
+	}, now)
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.reindexDelay = 50 * time.Millisecond
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startEmbeddingsStatus(false))
+
+	_ = (&m).startEmbeddingsReindex(false)
+	if !m.embeddingsReindexInFlight {
+		t.Fatal("expected reindex to mark in-flight state before the background command completes")
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "reindexing embeddings") {
+		t.Fatalf("view = %q, want in-flight reindex indicator", rendered)
+	}
+	firstFrame := m.embeddingsSpinner.View()
+	msg := m.embeddingsSpinner.Tick()
+	updated, nextCmd := m.Update(msg)
+	m = mustModelValue(t, updated)
+	if nextCmd == nil {
+		t.Fatal("expected spinner tick to schedule another animation command")
+	}
+	secondFrame := m.embeddingsSpinner.View()
+	if firstFrame == secondFrame {
+		t.Fatalf("spinner frame = %q before and after tick, want animation to advance", firstFrame)
+	}
+
+	m = applyCmdWithTimeout(t, m, m.runEmbeddingsReindexCmd(false), 100*time.Millisecond)
+	if m.embeddingsReindexInFlight {
+		t.Fatal("expected reindex in-flight flag to clear after completion")
+	}
+}
+
+// TestCommandPaletteEmbeddingsReindexPreservesGlobalScope verifies the command palette respects the currently visible embeddings inventory scope.
+func TestCommandPaletteEmbeddingsReindexPreservesGlobalScope(t *testing.T) {
+	now := time.Date(2026, 3, 29, 22, 5, 0, 0, time.UTC)
+	projectA, _ := domain.NewProject("p-embeddings-a", "Embeddings A", "", now)
+	projectB, _ := domain.NewProject("p-embeddings-b", "Embeddings B", "", now)
+	columnA, _ := domain.NewColumn("c-embeddings-a", projectA.ID, "To Do", 0, 0, now)
+	columnB, _ := domain.NewColumn("c-embeddings-b", projectB.ID, "To Do", 0, 0, now)
+	taskA, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-embeddings-a",
+		ProjectID: projectA.ID,
+		ColumnID:  columnA.ID,
+		Position:  0,
+		Title:     "Embeddings task A",
+		Priority:  domain.PriorityLow,
+	}, now)
+	taskB, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-embeddings-b",
+		ProjectID: projectB.ID,
+		ColumnID:  columnB.ID,
+		Position:  0,
+		Title:     "Embeddings task B",
+		Priority:  domain.PriorityLow,
+	}, now)
+
+	svc := newFakeService(
+		[]domain.Project{projectA, projectB},
+		[]domain.Column{columnA, columnB},
+		[]domain.Task{taskA, taskB},
+	)
+	svc.reindexResult = app.ReindexEmbeddingsResult{
+		TargetProjects: []string{projectA.ID, projectB.ID},
+		QueuedCount:    2,
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startEmbeddingsStatus(true))
+	if !m.embeddingsGlobal {
+		t.Fatal("expected global embeddings scope before running command palette reindex")
+	}
+
+	updated, _ := m.executeCommandPalette("embeddings-reindex")
+	m = mustModelValue(t, updated)
+	if !m.embeddingsGlobal {
+		t.Fatal("expected command palette reindex to preserve global embeddings scope")
+	}
+	if !m.embeddingsReindexInFlight {
+		t.Fatal("expected command palette reindex to enter in-flight state")
+	}
+
+	m = applyImmediateCmd(t, m, m.runEmbeddingsReindexCmd(false))
+	if !svc.lastReindexEmbeddings.CrossProject {
+		t.Fatal("expected command palette embeddings reindex to stay cross-project in global scope")
+	}
+	if got := svc.lastReindexEmbeddings.ProjectID; got != "" {
+		t.Fatalf("lastReindexEmbeddings.ProjectID = %q, want empty in global scope", got)
+	}
+}
+
+// TestEmbeddingsStatusModalEnterOpensTaskInfo verifies task-backed lifecycle rows open the same task-info flow as search results.
+func TestEmbeddingsStatusModalEnterOpensTaskInfo(t *testing.T) {
+	now := time.Date(2026, 3, 29, 23, 40, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-embeddings-open", "Embeddings Open", "", now)
+	column, _ := domain.NewColumn("c-embeddings-open", project.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "branch-embeddings-open",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Roll out hybrid task search",
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-embeddings-open",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		ParentID:  parent.ID,
+		Position:  1,
+		Title:     "Stabilize rollout notifications",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   child.ID,
+	})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})
+	svc.embeddingRows = []app.EmbeddingRecord{
+		{
+			SubjectType: app.EmbeddingSubjectTypeWorkItem,
+			SubjectID:   parent.ID,
+			ProjectID:   project.ID,
+			Status:      app.EmbeddingLifecycleReady,
+		},
+		{
+			SubjectType: app.EmbeddingSubjectTypeThreadContext,
+			SubjectID:   threadSubjectID,
+			ProjectID:   project.ID,
+			Status:      app.EmbeddingLifecycleReady,
+		},
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startEmbeddingsStatus(false))
+	m = applyMsg(t, m, keyRune('j'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("mode = %v, want modeTaskInfo", m.mode)
+	}
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != child.ID {
+		t.Fatalf("taskInfoTaskID = %q, want %q", got, child.ID)
+	}
+	if got := strings.TrimSpace(m.projectionRootTaskID); got != parent.ID {
+		t.Fatalf("projectionRootTaskID = %q, want %q", got, parent.ID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("mode after escape = %v, want modeNone", m.mode)
+	}
+	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != child.ID {
+		t.Fatalf("selected task = %#v ok=%t, want %q", task, ok, child.ID)
+	}
+}
+
+// TestEmbeddingsStatusModalProjectRowEnterOpensProjectThread verifies project-backed lifecycle rows open a project details surface.
+func TestEmbeddingsStatusModalProjectRowEnterOpensProjectThread(t *testing.T) {
+	now := time.Date(2026, 3, 29, 23, 50, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-embeddings-project-thread", "Embeddings Project", "Project description", now)
+	column, _ := domain.NewColumn("c-embeddings-project-thread", project.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, nil)
+	svc.embeddingRows = []app.EmbeddingRecord{{
+		SubjectType: app.EmbeddingSubjectTypeProjectDocument,
+		SubjectID:   project.ID,
+		ProjectID:   project.ID,
+		Status:      app.EmbeddingLifecycleReady,
+	}}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startEmbeddingsStatus(false))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("mode = %v, want modeThread", m.mode)
+	}
+	if got := strings.TrimSpace(m.threadTarget.ProjectID); got != project.ID {
+		t.Fatalf("threadTarget.ProjectID = %q, want %q", got, project.ID)
+	}
+	if got := string(m.threadTarget.TargetType); got != string(domain.CommentTargetTypeProject) {
+		t.Fatalf("threadTarget.TargetType = %q, want %q", got, domain.CommentTargetTypeProject)
+	}
+}
+
+// TestSearchMatchEmbeddingLabelFormatsMixedSubjects verifies mixed subject families render clearly in search labels and fallback summaries.
+func TestSearchMatchEmbeddingLabelFormatsMixedSubjects(t *testing.T) {
+	cases := []struct {
+		name  string
+		match app.TaskMatch
+		want  string
+	}{
+		{
+			name: "work item ready",
+			match: app.TaskMatch{
+				EmbeddingStatus:      app.EmbeddingLifecycleReady,
+				EmbeddingSubjectType: app.EmbeddingSubjectTypeWorkItem,
+				UsedSemantic:         true,
+			},
+			want: "ready/semantic",
+		},
+		{
+			name: "thread context semantic",
+			match: app.TaskMatch{
+				EmbeddingStatus:      app.EmbeddingLifecyclePending,
+				EmbeddingSubjectType: app.EmbeddingSubjectTypeThreadContext,
+				UsedSemantic:         true,
+			},
+			want: "pending/thread_context/semantic",
+		},
+		{
+			name: "project document keyword",
+			match: app.TaskMatch{
+				EmbeddingStatus:      app.EmbeddingLifecycleFailed,
+				EmbeddingSubjectType: app.EmbeddingSubjectTypeProjectDocument,
+			},
+			want: "failed/project_document",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := searchMatchEmbeddingLabel(tc.match); got != tc.want {
+				t.Fatalf("searchMatchEmbeddingLabel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	if got := searchResultsEmbeddingSummaryLabel(app.EmbeddingSummary{
+		ReadyCount:   2,
+		PendingCount: 1,
+		RunningCount: 1,
+		FailedCount:  1,
+		StaleCount:   1,
+	}); got != "embeddings ready:2 pending:1 running:1 failed:1 stale:1" {
+		t.Fatalf("searchResultsEmbeddingSummaryLabel() = %q, want mixed summary label", got)
+	}
+}
+
 // applyAutoRefreshTickMsg applies one auto-refresh tick and returns the updated model and resulting command.
 func applyAutoRefreshTickMsg(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
@@ -13310,7 +14178,9 @@ func applyResult(t *testing.T, updated tea.Model, cmd tea.Cmd) Model {
 // loadReadyModel loads data and accepts the initial launch picker when projects already exist.
 func loadReadyModel(t *testing.T, m Model) Model {
 	t.Helper()
-	ready := applyMsg(t, applyCmd(t, m, m.Init()), tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Coverage-mode runs can make the synchronous startup command slightly
+	// slower, so give the initial load a wider budget than other helpers.
+	ready := applyMsg(t, applyCmdWithTimeout(t, m, m.Init(), 100*time.Millisecond), tea.WindowSizeMsg{Width: 120, Height: 40})
 	if ready.mode == modeProjectPicker && len(ready.projects) > 0 {
 		ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyEnter})
 	}
@@ -13335,8 +14205,13 @@ func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 func applyCmdWithTimeout(t *testing.T, m Model, cmd tea.Cmd, timeout time.Duration) Model {
 	t.Helper()
 	out := m
-	currentCmd := cmd
-	for i := 0; i < 6 && currentCmd != nil; i++ {
+	queue := []tea.Cmd{}
+	if cmd != nil {
+		queue = append(queue, cmd)
+	}
+	for i := 0; i < 12 && len(queue) > 0; i++ {
+		currentCmd := queue[0]
+		queue = queue[1:]
 		msgCh := make(chan tea.Msg, 1)
 		// Some bubbles commands schedule timer-driven follow-ups such as cursor
 		// blinking. Tests only need immediate commands, so bail out when a command
@@ -13351,9 +14226,21 @@ func applyCmdWithTimeout(t *testing.T, m Model, cmd tea.Cmd, timeout time.Durati
 		case <-time.After(timeout):
 			return out
 		}
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			// Bubble Tea fans batch commands back into the runtime. Tests need to
+			// do the same or async follow-up commands like search loads never run.
+			for _, batchCmd := range batch {
+				if batchCmd != nil {
+					queue = append(queue, batchCmd)
+				}
+			}
+			continue
+		}
 		updated, nextCmd := out.Update(msg)
 		out = mustModelValue(t, updated)
-		currentCmd = nextCmd
+		if nextCmd != nil {
+			queue = append(queue, nextCmd)
+		}
 	}
 	return out
 }
@@ -13363,12 +14250,27 @@ func applyCmdWithTimeout(t *testing.T, m Model, cmd tea.Cmd, timeout time.Durati
 func applyImmediateCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	out := m
-	currentCmd := cmd
-	for i := 0; i < 6 && currentCmd != nil; i++ {
+	queue := []tea.Cmd{}
+	if cmd != nil {
+		queue = append(queue, cmd)
+	}
+	for i := 0; i < 12 && len(queue) > 0; i++ {
+		currentCmd := queue[0]
+		queue = queue[1:]
 		msg := currentCmd()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, batchCmd := range batch {
+				if batchCmd != nil {
+					queue = append(queue, batchCmd)
+				}
+			}
+			continue
+		}
 		updated, nextCmd := out.Update(msg)
 		out = mustModelValue(t, updated)
-		currentCmd = nextCmd
+		if nextCmd != nil {
+			queue = append(queue, nextCmd)
+		}
 	}
 	return out
 }

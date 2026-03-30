@@ -51,6 +51,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		mcpSrv,
 		pickTaskService(captureState, attention),
 		pickSearchService(captureState, attention),
+		pickEmbeddingsService(captureState, attention),
 		pickChangeFeedService(captureState, attention),
 	)
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
@@ -741,6 +742,17 @@ func pickChangeFeedService(captureState common.CaptureStateReader, attention com
 		return svc
 	}
 	if svc, ok := attention.(common.ChangeFeedService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickEmbeddingsService resolves one embeddings-operator provider from available services.
+func pickEmbeddingsService(captureState common.CaptureStateReader, attention common.AttentionService) common.EmbeddingsService {
+	if svc, ok := captureState.(common.EmbeddingsService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.EmbeddingsService); ok {
 		return svc
 	}
 	return nil

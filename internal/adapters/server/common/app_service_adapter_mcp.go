@@ -410,11 +410,11 @@ func (a *AppServiceAdapter) ListChildTasks(ctx context.Context, projectID, paren
 }
 
 // SearchTasks runs a scoped or cross-project search query.
-func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksRequest) ([]SearchTaskMatch, error) {
+func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksRequest) (SearchTasksResult, error) {
 	if a == nil || a.service == nil {
-		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return SearchTasksResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	matches, err := a.service.SearchTaskMatches(ctx, app.SearchTasksFilter{
+	result, err := a.service.SearchTasks(ctx, app.SearchTasksFilter{
 		ProjectID:       strings.TrimSpace(in.ProjectID),
 		Query:           strings.TrimSpace(in.Query),
 		CrossProject:    in.CrossProject,
@@ -430,17 +430,200 @@ func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksReque
 		Offset:          in.Offset,
 	})
 	if err != nil {
-		return nil, mapAppError("search task matches", err)
+		return SearchTasksResult{}, mapAppError("search task matches", err)
 	}
-	out := make([]SearchTaskMatch, 0, len(matches))
-	for _, match := range matches {
+	out := make([]SearchTaskMatch, 0, len(result.Matches))
+	for _, match := range result.Matches {
 		out = append(out, SearchTaskMatch{
-			Project: match.Project,
-			Task:    match.Task,
-			StateID: match.StateID,
+			Project:                   match.Project,
+			Task:                      match.Task,
+			StateID:                   match.StateID,
+			EmbeddingSubjectType:      string(match.EmbeddingSubjectType),
+			EmbeddingSubjectID:        match.EmbeddingSubjectID,
+			EmbeddingStatus:           string(match.EmbeddingStatus),
+			EmbeddingUpdatedAt:        match.EmbeddingUpdatedAt,
+			EmbeddingStaleReason:      match.EmbeddingStaleReason,
+			EmbeddingLastErrorSummary: match.EmbeddingLastErrorSummary,
+			SemanticScore:             match.SemanticScore,
+			UsedSemantic:              match.UsedSemantic,
 		})
 	}
+	return SearchTasksResult{
+		Matches:                out,
+		RequestedMode:          string(result.RequestedMode),
+		EffectiveMode:          string(result.EffectiveMode),
+		FallbackReason:         result.FallbackReason,
+		SemanticAvailable:      result.SemanticAvailable,
+		SemanticCandidateCount: result.SemanticCandidateCount,
+		EmbeddingSummary:       mapEmbeddingSummary(result.EmbeddingSummary),
+	}, nil
+}
+
+// GetEmbeddingsStatus returns lifecycle inventory rows and summary counts for the requested scope.
+func (a *AppServiceAdapter) GetEmbeddingsStatus(ctx context.Context, in EmbeddingsStatusRequest) (EmbeddingsStatusResult, error) {
+	if a == nil || a.service == nil {
+		return EmbeddingsStatusResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	projectIDs, err := appEmbeddingProjectScope(ctx, a.service, strings.TrimSpace(in.ProjectID), in.CrossProject, in.IncludeArchived)
+	if err != nil {
+		return EmbeddingsStatusResult{}, mapAppError("get embeddings status", err)
+	}
+	statuses, err := parseEmbeddingLifecycleStatuses(in.Statuses)
+	if err != nil {
+		return EmbeddingsStatusResult{}, err
+	}
+	rows, err := a.service.ListEmbeddingStates(ctx, app.EmbeddingListFilter{
+		ProjectIDs: projectIDs,
+		Statuses:   statuses,
+		Limit:      in.Limit,
+	})
+	if err != nil {
+		return EmbeddingsStatusResult{}, mapAppError("get embeddings status", err)
+	}
+	summary, err := a.service.SummarizeEmbeddingStates(ctx, app.EmbeddingListFilter{
+		ProjectIDs: projectIDs,
+	})
+	if err != nil {
+		return EmbeddingsStatusResult{}, mapAppError("get embeddings status", err)
+	}
+	out := make([]EmbeddingStatusRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapEmbeddingStatusRow(row))
+	}
+	return EmbeddingsStatusResult{
+		ProjectIDs:         append([]string(nil), projectIDs...),
+		RuntimeOperational: a.service.EmbeddingsOperational(),
+		Summary:            mapEmbeddingSummary(summary),
+		Rows:               out,
+	}, nil
+}
+
+// ReindexEmbeddings triggers one explicit backfill/reindex request for the requested scope.
+func (a *AppServiceAdapter) ReindexEmbeddings(ctx context.Context, in ReindexEmbeddingsRequest) (ReindexEmbeddingsResult, error) {
+	if a == nil || a.service == nil {
+		return ReindexEmbeddingsResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	result, err := a.service.ReindexEmbeddings(ctx, app.ReindexEmbeddingsInput{
+		ProjectID:        strings.TrimSpace(in.ProjectID),
+		CrossProject:     in.CrossProject,
+		IncludeArchived:  in.IncludeArchived,
+		Force:            in.Force,
+		Wait:             in.Wait,
+		WaitTimeout:      in.WaitTimeout,
+		WaitPollInterval: in.WaitPollInterval,
+	})
+	if err != nil {
+		return ReindexEmbeddingsResult{}, mapAppError("reindex embeddings", err)
+	}
+	return ReindexEmbeddingsResult{
+		TargetProjects: append([]string(nil), result.TargetProjects...),
+		ScannedCount:   result.ScannedCount,
+		QueuedCount:    result.QueuedCount,
+		ReadyCount:     result.ReadyCount,
+		FailedCount:    result.FailedCount,
+		StaleCount:     result.StaleCount,
+		RunningCount:   result.RunningCount,
+		PendingCount:   result.PendingCount,
+		Completed:      result.Completed,
+		TimedOut:       result.TimedOut,
+	}, nil
+}
+
+// appEmbeddingProjectScope resolves one embeddings inventory scope to concrete project ids.
+func appEmbeddingProjectScope(ctx context.Context, service *app.Service, projectID string, crossProject, includeArchived bool) ([]string, error) {
+	if service == nil {
+		return nil, fmt.Errorf("app service is not configured")
+	}
+	if crossProject {
+		projects, err := service.ListProjects(ctx, includeArchived)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(projects))
+		for _, project := range projects {
+			out = append(out, project.ID)
+		}
+		return out, nil
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	projects, err := service.ListProjects(ctx, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	for _, project := range projects {
+		if project.ID == projectID {
+			return []string{project.ID}, nil
+		}
+	}
+	if !includeArchived {
+		allProjects, err := service.ListProjects(ctx, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, project := range allProjects {
+			if project.ID == projectID {
+				return nil, fmt.Errorf("project %q is archived; rerun with include_archived=true", projectID)
+			}
+		}
+	}
+	return nil, fmt.Errorf("project %q not found", projectID)
+}
+
+// parseEmbeddingLifecycleStatuses maps transport-facing lifecycle filters to app statuses.
+func parseEmbeddingLifecycleStatuses(values []string) ([]app.EmbeddingLifecycleStatus, error) {
+	out := make([]app.EmbeddingLifecycleStatus, 0, len(values))
+	for _, value := range values {
+		switch strings.TrimSpace(strings.ToLower(value)) {
+		case "":
+		case string(app.EmbeddingLifecyclePending):
+			out = append(out, app.EmbeddingLifecyclePending)
+		case string(app.EmbeddingLifecycleRunning):
+			out = append(out, app.EmbeddingLifecycleRunning)
+		case string(app.EmbeddingLifecycleReady):
+			out = append(out, app.EmbeddingLifecycleReady)
+		case string(app.EmbeddingLifecycleFailed):
+			out = append(out, app.EmbeddingLifecycleFailed)
+		case string(app.EmbeddingLifecycleStale):
+			out = append(out, app.EmbeddingLifecycleStale)
+		default:
+			return nil, fmt.Errorf("unsupported embeddings status %q; allowed values: pending, running, ready, failed, stale", value)
+		}
+	}
 	return out, nil
+}
+
+// mapEmbeddingSummary converts one app-layer embedding summary into the transport shape.
+func mapEmbeddingSummary(in app.EmbeddingSummary) EmbeddingSummary {
+	return EmbeddingSummary{
+		SubjectType:  string(in.SubjectType),
+		ProjectIDs:   append([]string(nil), in.ProjectIDs...),
+		PendingCount: in.PendingCount,
+		RunningCount: in.RunningCount,
+		ReadyCount:   in.ReadyCount,
+		FailedCount:  in.FailedCount,
+		StaleCount:   in.StaleCount,
+	}
+}
+
+// mapEmbeddingStatusRow converts one app-layer lifecycle record into the transport shape.
+func mapEmbeddingStatusRow(in app.EmbeddingRecord) EmbeddingStatusRow {
+	return EmbeddingStatusRow{
+		SubjectType:      string(in.SubjectType),
+		SubjectID:        in.SubjectID,
+		ProjectID:        in.ProjectID,
+		Status:           string(in.Status),
+		ModelSignature:   in.ModelSignature,
+		NextAttemptAt:    in.NextAttemptAt,
+		LastStartedAt:    in.LastStartedAt,
+		LastSucceededAt:  in.LastSucceededAt,
+		LastFailedAt:     in.LastFailedAt,
+		LastErrorSummary: in.LastErrorSummary,
+		StaleReason:      in.StaleReason,
+		UpdatedAt:        in.UpdatedAt,
+	}
 }
 
 // ListProjectChangeEvents returns recent change events for one project.

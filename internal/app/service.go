@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -66,7 +67,9 @@ type ServiceConfig struct {
 	RequireAgentLease        *bool
 	AuthRequests             AuthRequestGateway
 	EmbeddingGenerator       EmbeddingGenerator
-	SearchIndex              TaskSearchIndex
+	SearchIndex              EmbeddingSearchIndex
+	EmbeddingLifecycle       EmbeddingLifecycleStore
+	EmbeddingRuntime         EmbeddingRuntimeConfig
 	SearchLexicalWeight      float64
 	SearchSemanticWeight     float64
 	SearchSemanticCandidates int
@@ -104,7 +107,9 @@ type Service struct {
 	schemaCacheMu      sync.RWMutex
 	kindBootstrap      kindBootstrapState
 	embeddingGenerator EmbeddingGenerator
-	searchIndex        TaskSearchIndex
+	searchIndex        EmbeddingSearchIndex
+	embeddingLifecycle EmbeddingLifecycleStore
+	embeddingRuntime   EmbeddingRuntimeConfig
 	searchLexicalW     float64
 	searchSemanticW    float64
 	searchSemanticK    int
@@ -136,8 +141,14 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	}
 	searchIndex := cfg.SearchIndex
 	if searchIndex == nil {
-		if idx, ok := repo.(TaskSearchIndex); ok {
+		if idx, ok := repo.(EmbeddingSearchIndex); ok {
 			searchIndex = idx
+		}
+	}
+	embeddingLifecycle := cfg.EmbeddingLifecycle
+	if embeddingLifecycle == nil {
+		if lifecycle, ok := repo.(EmbeddingLifecycleStore); ok {
+			embeddingLifecycle = lifecycle
 		}
 	}
 	handoffRepo, _ := repo.(HandoffRepository)
@@ -165,6 +176,8 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		schemaCache:        map[string]schemaCacheEntry{},
 		embeddingGenerator: cfg.EmbeddingGenerator,
 		searchIndex:        searchIndex,
+		embeddingLifecycle: embeddingLifecycle,
+		embeddingRuntime:   cfg.EmbeddingRuntime.Normalize(),
 		searchLexicalW:     lexicalWeight,
 		searchSemanticW:    semanticWeight,
 		searchSemanticK:    semanticCandidates,
@@ -276,6 +289,9 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.applyProjectKindTemplateSystemActions(ctx, project, kindDef, 1); err != nil {
 		return domain.Project{}, err
 	}
+	if _, err := s.enqueueProjectDocumentEmbedding(ctx, project, false, "project_created"); err != nil {
+		return domain.Project{}, err
+	}
 	return project, nil
 }
 
@@ -322,6 +338,16 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 		return domain.Project{}, err
 	}
 	if err := s.repo.UpdateProject(ctx, project); err != nil {
+		return domain.Project{}, err
+	}
+	if _, err := s.enqueueProjectDocumentEmbedding(ctx, project, false, "project_updated"); err != nil {
+		return domain.Project{}, err
+	}
+	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeProject,
+		TargetID:   project.ID,
+	}, false, "project_updated"); err != nil && !errors.Is(err, ErrNotFound) {
 		return domain.Project{}, err
 	}
 	return project, nil
@@ -467,9 +493,28 @@ type SearchTasksFilter struct {
 
 // TaskMatch describes a matched result.
 type TaskMatch struct {
-	Project domain.Project
-	Task    domain.Task
-	StateID string
+	Project                   domain.Project
+	Task                      domain.Task
+	StateID                   string
+	EmbeddingSubjectType      EmbeddingSubjectType
+	EmbeddingSubjectID        string
+	EmbeddingStatus           EmbeddingLifecycleStatus
+	EmbeddingUpdatedAt        *time.Time
+	EmbeddingStaleReason      string
+	EmbeddingLastErrorSummary string
+	SemanticScore             float64
+	UsedSemantic              bool
+}
+
+// SearchTaskMatchesResult stores search rows plus execution metadata.
+type SearchTaskMatchesResult struct {
+	Matches                []TaskMatch
+	RequestedMode          SearchMode
+	EffectiveMode          SearchMode
+	FallbackReason         string
+	SemanticAvailable      bool
+	SemanticCandidateCount int
+	EmbeddingSummary       EmbeddingSummary
 }
 
 // CreateTask creates task.
@@ -578,7 +623,9 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 	if err := s.repo.CreateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
-	s.refreshTaskEmbedding(ctx, task)
+	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_created"); err != nil {
+		return domain.Task{}, err
+	}
 	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
 		return domain.Task{}, err
 	}
@@ -658,7 +705,9 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
-	s.refreshTaskEmbedding(ctx, task)
+	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_moved"); err != nil {
+		return domain.Task{}, err
+	}
 	return task, nil
 }
 
@@ -696,7 +745,9 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
-	s.refreshTaskEmbedding(ctx, task)
+	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_restored"); err != nil {
+		return domain.Task{}, err
+	}
 	return task, nil
 }
 
@@ -720,7 +771,16 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
-	s.refreshTaskEmbedding(ctx, task)
+	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_renamed"); err != nil {
+		return domain.Task{}, err
+	}
+	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
+		ProjectID:  task.ProjectID,
+		TargetType: snapshotCommentTargetTypeForTask(task),
+		TargetID:   task.ID,
+	}, false, "task_renamed"); err != nil && !errors.Is(err, ErrNotFound) {
+		return domain.Task{}, err
+	}
 	return task, nil
 }
 
@@ -781,7 +841,16 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
-	s.refreshTaskEmbedding(ctx, task)
+	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_updated"); err != nil {
+		return domain.Task{}, err
+	}
+	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
+		ProjectID:  task.ProjectID,
+		TargetType: snapshotCommentTargetTypeForTask(task),
+		TargetID:   task.ID,
+	}, false, "task_updated"); err != nil && !errors.Is(err, ErrNotFound) {
+		return domain.Task{}, err
+	}
 	return task, nil
 }
 
@@ -822,7 +891,36 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if err := s.repo.DeleteTask(ctx, taskID); err != nil {
 			return err
 		}
-		s.dropTaskEmbedding(ctx, taskID)
+		if s.searchIndex != nil {
+			if err := s.searchIndex.DeleteEmbeddingDocument(ctx, EmbeddingSubjectTypeWorkItem, taskID); err != nil {
+				return err
+			}
+			threadSubjectID := BuildThreadContextSubjectID(domain.CommentTarget{
+				ProjectID:  task.ProjectID,
+				TargetType: snapshotCommentTargetTypeForTask(task),
+				TargetID:   task.ID,
+			})
+			if threadSubjectID != "" {
+				if err := s.searchIndex.DeleteEmbeddingDocument(ctx, EmbeddingSubjectTypeThreadContext, threadSubjectID); err != nil {
+					return err
+				}
+			}
+		}
+		if s.embeddingLifecycle != nil {
+			if err := s.embeddingLifecycle.DeleteEmbeddingSubject(ctx, EmbeddingSubjectTypeWorkItem, taskID); err != nil {
+				return err
+			}
+			threadSubjectID := BuildThreadContextSubjectID(domain.CommentTarget{
+				ProjectID:  task.ProjectID,
+				TargetType: snapshotCommentTargetTypeForTask(task),
+				TargetID:   task.ID,
+			})
+			if threadSubjectID != "" {
+				if err := s.embeddingLifecycle.DeleteEmbeddingSubject(ctx, EmbeddingSubjectTypeThreadContext, threadSubjectID); err != nil {
+					return err
+				}
+			}
+		}
 		return nil
 	default:
 		return ErrInvalidDeleteMode
@@ -912,6 +1010,13 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		return domain.Comment{}, err
 	}
 	if err := s.repo.CreateComment(ctx, comment); err != nil {
+		return domain.Comment{}, err
+	}
+	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
+		ProjectID:  comment.ProjectID,
+		TargetType: comment.TargetType,
+		TargetID:   comment.TargetID,
+	}, false, "comment_created"); err != nil {
 		return domain.Comment{}, err
 	}
 	return comment, nil
@@ -1062,17 +1167,26 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 
 // SearchTaskMatches finds task matches using project, state, and archive filters.
 func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) ([]TaskMatch, error) {
-	mode, err := normalizeSearchMode(in.Mode)
+	result, err := s.SearchTasks(ctx, in)
 	if err != nil {
 		return nil, err
+	}
+	return result.Matches, nil
+}
+
+// SearchTasks finds task matches and includes execution metadata for operator-visible surfaces.
+func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (SearchTaskMatchesResult, error) {
+	mode, err := normalizeSearchMode(in.Mode)
+	if err != nil {
+		return SearchTaskMatchesResult{}, err
 	}
 	sortOrder, err := normalizeSearchSort(in.Sort)
 	if err != nil {
-		return nil, err
+		return SearchTaskMatchesResult{}, err
 	}
 	limit, offset, err := normalizeSearchPagination(in.Limit, in.Offset)
 	if err != nil {
-		return nil, err
+		return SearchTaskMatchesResult{}, err
 	}
 
 	stateFilter := map[string]struct{}{}
@@ -1100,20 +1214,25 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 	if in.CrossProject {
 		projects, err := s.repo.ListProjects(ctx, in.IncludeArchived)
 		if err != nil {
-			return nil, err
+			return SearchTaskMatchesResult{}, err
 		}
 		targetProjects = append(targetProjects, projects...)
 	} else {
 		projectID := strings.TrimSpace(in.ProjectID)
 		if projectID == "" {
-			return nil, domain.ErrInvalidID
+			return SearchTaskMatchesResult{}, domain.ErrInvalidID
 		}
 		project, err := s.repo.GetProject(ctx, projectID)
 		if err != nil {
-			return nil, err
+			return SearchTaskMatchesResult{}, err
 		}
 		if !in.IncludeArchived && project.ArchivedAt != nil {
-			return nil, nil
+			return SearchTaskMatchesResult{
+				Matches:          []TaskMatch{},
+				RequestedMode:    mode,
+				EffectiveMode:    mode,
+				EmbeddingSummary: EmbeddingSummary{},
+			}, nil
 		}
 		targetProjects = append(targetProjects, project)
 	}
@@ -1126,7 +1245,7 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 		projectIDs = append(projectIDs, project.ID)
 		columns, err := s.repo.ListColumns(ctx, project.ID, true)
 		if err != nil {
-			return nil, err
+			return SearchTaskMatchesResult{}, err
 		}
 		stateByColumn := make(map[string]string, len(columns))
 		for _, column := range columns {
@@ -1135,7 +1254,7 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 
 		tasks, err := s.repo.ListTasks(ctx, project.ID, true)
 		if err != nil {
-			return nil, err
+			return SearchTaskMatchesResult{}, err
 		}
 		for _, task := range tasks {
 			stateID := stateByColumn[task.ColumnID]
@@ -1169,36 +1288,64 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 	}
 
 	semanticScores := map[string]float64{}
+	semanticSubjects := map[string]EmbeddingSearchMatch{}
 	semanticReady := false
 	effectiveMode := mode
-	if query != "" && (mode == SearchModeSemantic || mode == SearchModeHybrid) &&
-		s.embeddingGenerator != nil && s.searchIndex != nil {
+	fallbackReason := ""
+	if len(projectIDs) > 0 && query != "" && (mode == SearchModeSemantic || mode == SearchModeHybrid) &&
+		s.embeddingGenerator != nil && s.searchIndex != nil && s.embeddingLifecycle != nil {
 		queryVectors, embedErr := s.embeddingGenerator.Embed(ctx, []string{query})
 		if embedErr == nil && len(queryVectors) > 0 && len(queryVectors[0]) > 0 {
 			semanticLimit := max(limit*4, s.searchSemanticK)
-			rows, searchErr := s.searchIndex.SearchTaskEmbeddings(ctx, TaskEmbeddingSearchInput{
-				ProjectIDs: projectIDs,
-				Vector:     queryVectors[0],
-				Limit:      semanticLimit,
+			rows, searchErr := s.searchIndex.SearchEmbeddingDocuments(ctx, EmbeddingSearchInput{
+				ProjectIDs:        projectIDs,
+				SearchTargetTypes: []EmbeddingSearchTargetType{EmbeddingSearchTargetTypeWorkItem},
+				Vector:            queryVectors[0],
+				Limit:             semanticLimit,
 			})
 			if searchErr == nil {
-				for _, row := range rows {
-					taskID := strings.TrimSpace(row.TaskID)
-					if taskID == "" {
-						continue
-					}
-					score := clamp01(row.Similarity)
-					// Keep the strongest similarity for deterministic dedup when duplicate rows appear.
-					if previous, ok := semanticScores[taskID]; !ok || score > previous {
-						semanticScores[taskID] = score
+				readyRows, filterErr := s.filterReadySemanticMatches(ctx, projectIDs, rows)
+				if filterErr != nil {
+					fallbackReason = "embedding_status_unavailable"
+				} else {
+					for _, row := range readyRows {
+						taskID := strings.TrimSpace(row.SearchTargetID)
+						if taskID == "" || row.SearchTargetType != EmbeddingSearchTargetTypeWorkItem {
+							continue
+						}
+						score := clamp01(row.Similarity)
+						if previous, ok := semanticScores[taskID]; !ok || score > previous {
+							semanticScores[taskID] = score
+							semanticSubjects[taskID] = row
+						}
 					}
 				}
-				semanticReady = true
+				if len(semanticScores) > 0 {
+					semanticReady = true
+				} else {
+					fallbackReason = "semantic_index_not_ready"
+				}
+			} else {
+				fallbackReason = "vector_search_failed"
 			}
+		} else {
+			fallbackReason = "query_embedding_failed"
 		}
 	}
 	if (mode == SearchModeSemantic || mode == SearchModeHybrid) && !semanticReady {
 		effectiveMode = SearchModeKeyword
+		if fallbackReason == "" {
+			switch {
+			case s.embeddingGenerator == nil:
+				fallbackReason = "embedding_runtime_unavailable"
+			case s.searchIndex == nil:
+				fallbackReason = "search_index_unavailable"
+			case s.embeddingLifecycle == nil:
+				fallbackReason = "embedding_lifecycle_unavailable"
+			default:
+				fallbackReason = "semantic_unavailable"
+			}
+		}
 	}
 
 	if query != "" {
@@ -1228,10 +1375,12 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 
 	rankScores := map[string]float64{}
 	if query != "" {
-		for _, match := range out {
-			taskID := match.Task.ID
+		for idx := range out {
+			taskID := out[idx].Task.ID
 			lexicalScore := clamp01(lexicalScores[taskID])
 			semanticScore := clamp01(semanticScores[taskID])
+			out[idx].SemanticScore = semanticScore
+			out[idx].UsedSemantic = semanticScore > 0 && effectiveMode != SearchModeKeyword
 			switch effectiveMode {
 			case SearchModeSemantic:
 				rankScores[taskID] = semanticScore
@@ -1272,14 +1421,157 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 		return compareTaskMatchRankDesc(a, b)
 	})
 
-	if offset >= len(out) {
-		return []TaskMatch{}, nil
+	if offset < len(out) {
+		end := offset + limit
+		if end > len(out) {
+			end = len(out)
+		}
+		out = append([]TaskMatch(nil), out[offset:end]...)
+	} else {
+		out = []TaskMatch{}
 	}
-	end := offset + limit
-	if end > len(out) {
-		end = len(out)
+
+	s.annotateTaskMatchesWithEmbeddingState(ctx, projectIDs, out, semanticSubjects)
+	return SearchTaskMatchesResult{
+		Matches:                out,
+		RequestedMode:          mode,
+		EffectiveMode:          effectiveMode,
+		FallbackReason:         fallbackReason,
+		SemanticAvailable:      semanticReady,
+		SemanticCandidateCount: len(semanticScores),
+		EmbeddingSummary:       s.embeddingSummaryForProjects(ctx, projectIDs),
+	}, nil
+}
+
+// filterReadySemanticMatches removes semantic candidates whose durable lifecycle state is not ready.
+func (s *Service) filterReadySemanticMatches(ctx context.Context, projectIDs []string, rows []EmbeddingSearchMatch) ([]EmbeddingSearchMatch, error) {
+	if len(projectIDs) == 0 || len(rows) == 0 {
+		return []EmbeddingSearchMatch{}, nil
 	}
-	return append([]TaskMatch(nil), out[offset:end]...), nil
+	if s == nil {
+		return rows, nil
+	}
+	if s.embeddingLifecycle == nil {
+		return []EmbeddingSearchMatch{}, nil
+	}
+	subjectIDsByType := make(map[EmbeddingSubjectType][]string)
+	for _, row := range rows {
+		subjectType := row.SubjectType
+		subjectID := strings.TrimSpace(row.SubjectID)
+		if subjectType == "" || subjectID == "" {
+			continue
+		}
+		subjectIDsByType[subjectType] = append(subjectIDsByType[subjectType], subjectID)
+	}
+	readyKeys := map[string]struct{}{}
+	for subjectType, subjectIDs := range subjectIDsByType {
+		lifecycleRows, err := s.embeddingLifecycle.ListEmbeddings(ctx, EmbeddingListFilter{
+			ProjectIDs:  append([]string(nil), projectIDs...),
+			SubjectType: subjectType,
+			SubjectIDs:  subjectIDs,
+			Statuses:    []EmbeddingLifecycleStatus{EmbeddingLifecycleReady},
+			Limit:       len(subjectIDs),
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range lifecycleRows {
+			readyKeys[embeddingRecordKey(row.SubjectType, row.SubjectID)] = struct{}{}
+		}
+	}
+	readyRows := make([]EmbeddingSearchMatch, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := readyKeys[embeddingRecordKey(row.SubjectType, row.SubjectID)]; !ok {
+			continue
+		}
+		readyRows = append(readyRows, row)
+	}
+	return readyRows, nil
+}
+
+func (s *Service) annotateTaskMatchesWithEmbeddingState(ctx context.Context, projectIDs []string, matches []TaskMatch, semanticSubjects map[string]EmbeddingSearchMatch) {
+	if len(matches) == 0 {
+		return
+	}
+	for idx := range matches {
+		matches[idx].EmbeddingSubjectType = ""
+		matches[idx].EmbeddingSubjectID = ""
+		matches[idx].EmbeddingStatus = ""
+	}
+	if s.embeddingLifecycle == nil {
+		return
+	}
+	subjectIDsByType := make(map[EmbeddingSubjectType][]string)
+	for idx := range matches {
+		selectedType := EmbeddingSubjectTypeWorkItem
+		selectedID := matches[idx].Task.ID
+		if selected, ok := semanticSubjects[matches[idx].Task.ID]; ok {
+			selectedType = selected.SubjectType
+			selectedID = selected.SubjectID
+		}
+		if strings.TrimSpace(selectedID) == "" || selectedType == "" {
+			continue
+		}
+		matches[idx].EmbeddingSubjectType = selectedType
+		matches[idx].EmbeddingSubjectID = selectedID
+		subjectIDsByType[selectedType] = append(subjectIDsByType[selectedType], selectedID)
+	}
+	byID := map[string]EmbeddingRecord{}
+	for subjectType, subjectIDs := range subjectIDsByType {
+		rows, err := s.embeddingLifecycle.ListEmbeddings(ctx, EmbeddingListFilter{
+			ProjectIDs:  append([]string(nil), projectIDs...),
+			SubjectType: subjectType,
+			SubjectIDs:  subjectIDs,
+			Limit:       len(subjectIDs),
+		})
+		if err != nil {
+			log.Warn("list embedding lifecycle rows for search annotation failed", "subject_type", subjectType, "err", err)
+			return
+		}
+		for _, row := range rows {
+			byID[embeddingRecordKey(row.SubjectType, row.SubjectID)] = row
+		}
+	}
+	for idx := range matches {
+		row, ok := byID[embeddingRecordKey(matches[idx].EmbeddingSubjectType, matches[idx].EmbeddingSubjectID)]
+		if !ok {
+			continue
+		}
+		matches[idx].EmbeddingStatus = row.Status
+		matches[idx].EmbeddingStaleReason = row.StaleReason
+		matches[idx].EmbeddingLastErrorSummary = row.LastErrorSummary
+		if row.LastSucceededAt != nil {
+			ts := *row.LastSucceededAt
+			matches[idx].EmbeddingUpdatedAt = &ts
+		}
+	}
+}
+
+func (s *Service) embeddingSummaryForProjects(ctx context.Context, projectIDs []string) EmbeddingSummary {
+	if len(projectIDs) == 0 {
+		return EmbeddingSummary{
+			ProjectIDs: append([]string(nil), projectIDs...),
+		}
+	}
+	if s == nil || s.embeddingLifecycle == nil {
+		return EmbeddingSummary{
+			ProjectIDs: append([]string(nil), projectIDs...),
+		}
+	}
+	summary, err := s.embeddingLifecycle.SummarizeEmbeddings(ctx, EmbeddingListFilter{
+		ProjectIDs: append([]string(nil), projectIDs...),
+	})
+	if err != nil {
+		log.Warn("summarize embedding lifecycle rows failed", "err", err)
+		return EmbeddingSummary{
+			ProjectIDs: append([]string(nil), projectIDs...),
+		}
+	}
+	return summary
+}
+
+func embeddingRecordKey(subjectType EmbeddingSubjectType, subjectID string) string {
+	return string(subjectType) + "\x00" + strings.TrimSpace(subjectID)
 }
 
 // normalizeSearchMode returns the supported mode or a default when omitted.
