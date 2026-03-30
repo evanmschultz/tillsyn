@@ -2,7 +2,52 @@
 
 Created: 2026-02-21
 Updated: 2026-03-30
-Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, snapshot transport for template libraries/project bindings/node-contract snapshots, and first-class TUI bind/inspect surfaces. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical. The main remaining legacy seam is create-time kind-template fallback rather than user-facing authoring/operator workflow.
+Status: In progress; template libraries now cover persisted rules, operator surfaces, generated-node enforcement, project creation binding via approved global libraries, snapshot transport for template libraries/project bindings/node-contract snapshots, and first-class TUI bind/inspect surfaces, including a real approved-library picker in the project form instead of raw id typing. Comments remain the shared in-scope communication lane rather than a template-contract-gated surface, and JSON remains the stable CLI/MCP transport while SQLite stays canonical. The main remaining legacy seam is create-time kind-template fallback rather than user-facing authoring/operator workflow.
+
+## Checkpoint 2026-03-30: TUI Template-Library Picker
+
+Objective:
+- replace the project-form `template_library_id` text-entry UX with a real picker that reuses the existing TUI modal patterns and makes manual testing sane.
+
+Context7:
+1. `/charmbracelet/bubbletea` reviewed before the picker edit for:
+   - modal chooser update-flow structure,
+   - and explicit mode-transition handling for open/confirm/cancel picker interactions -> PASS.
+2. After the first `just test-pkg ./internal/tui` failure, `/charmbracelet/bubbletea` was refreshed again before the next edit for:
+   - key-handling order when a picker has both navigation keys and a filter input,
+   - and why explicit navigation keys should win before printable-text filtering -> PASS.
+
+Implementation summary:
+1. Replaced raw typing with a dedicated template-library picker mode:
+   - the project form now opens a modal approved-library picker from the template-library field,
+   - supports `(none)` as the clear/unbind option,
+   - and keeps the selected library id only as internal form state for submission rather than as a free-typed operator surface.
+2. Reused existing TUI modal patterns instead of inventing a parallel template screen:
+   - added a filter input, selection cursor, cancel/apply flow, and modal rendering consistent with the existing picker family,
+   - and routed project-form key handling through that modal instead of direct `textinput` editing.
+3. Tightened project-form UX:
+   - typing while the template-library field is focused now starts a filtered picker,
+   - selecting a library advances focus to the next field so `enter` can save cleanly,
+   - and the form/help copy now describes picker behavior instead of raw id entry.
+4. Added focused TUI coverage:
+   - add-project selection through typed-filter picker flow,
+   - edit-project clear/unbind through the `(none)` picker row,
+   - and render hints that match the picker interaction contract.
+
+Validation:
+1. `just fmt` -> PASS.
+2. `just test-pkg ./internal/tui` -> FAIL first due to picker key-ordering (`k` was treated as filter text before navigation).
+3. Context7 refreshed after that failure -> PASS.
+4. `just fmt` -> PASS.
+5. `just test-pkg ./internal/tui` -> PASS.
+6. `just test-golden` -> PASS.
+7. `just check` -> PASS.
+8. `just ci` -> PASS.
+
+Current status:
+1. The TUI no longer expects operators to type template-library ids by hand during project create/edit.
+2. Manual dogfood can now test template binding through the same kind of picker flow used elsewhere in the TUI.
+3. Remaining template MVP work is primarily cleanup/polish around legacy create-time fallback and broader battle testing, not missing picker UX.
 
 ## Checkpoint 2026-03-30: TUI Template Bind/Inspect + Kind Surface Quarantine
 

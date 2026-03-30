@@ -13453,6 +13453,21 @@ func keyRune(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
+// mustNewApprovedTemplateLibrary constructs one approved global template library for tests.
+func mustNewApprovedTemplateLibrary(t *testing.T, id, name string, now time.Time) domain.TemplateLibrary {
+	t.Helper()
+	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:     id,
+		Scope:  domain.TemplateLibraryScopeGlobal,
+		Name:   name,
+		Status: domain.TemplateLibraryStatusApproved,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTemplateLibrary() error = %v", err)
+	}
+	return library
+}
+
 // TestNormalizeAttachmentPathWithinRoot verifies root-bound attachment validation behavior.
 func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
 	root := t.TempDir()
@@ -13750,15 +13765,7 @@ func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
 func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
 	now := time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-		ID:     "go-defaults",
-		Scope:  domain.TemplateLibraryScopeGlobal,
-		Name:   "Go Defaults",
-		Status: domain.TemplateLibraryStatusApproved,
-	}, now)
-	if err != nil {
-		t.Fatalf("NewTemplateLibrary() error = %v", err)
-	}
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	m := loadReadyModel(t, NewModel(svc))
@@ -13768,7 +13775,24 @@ func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
 		t.Fatalf("expected add-project mode, got %v", m.mode)
 	}
 	m.projectFormInputs[projectFieldName].SetValue("Go Service")
-	m.projectFormInputs[projectFieldTemplateLibrary].SetValue("go-defaults")
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
+	m = applyMsg(t, m, keyRune('g'))
+	if m.mode != modeTemplateLibraryPicker {
+		t.Fatalf("expected template-library picker mode, got %v", m.mode)
+	}
+	if got := m.templateLibraryPickerInput.Value(); got != "g" {
+		t.Fatalf("template-library picker filter = %q, want %q", got, "g")
+	}
+	if len(m.templateLibraryPickerItems) == 0 || m.templateLibraryPickerItems[0].LibraryID != "go-defaults" {
+		t.Fatalf("expected go-defaults as the top template-library picker row, got %#v", m.templateLibraryPickerItems)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
+		t.Fatalf("project form template library = %q, want %q", got, "go-defaults")
+	}
+	if m.projectFormFocus != projectFieldRootPath {
+		t.Fatalf("project form focus = %d, want root-path field", m.projectFormFocus)
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if got := svc.lastCreateProject.TemplateLibraryID; got != "go-defaults" {
@@ -13783,15 +13807,7 @@ func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
 func TestModelEditProjectClearsTemplateLibraryBinding(t *testing.T) {
 	now := time.Date(2026, 3, 30, 12, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-		ID:     "go-defaults",
-		Scope:  domain.TemplateLibraryScopeGlobal,
-		Name:   "Go Defaults",
-		Status: domain.TemplateLibraryStatusApproved,
-	}, now)
-	if err != nil {
-		t.Fatalf("NewTemplateLibrary() error = %v", err)
-	}
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
@@ -13807,12 +13823,24 @@ func TestModelEditProjectClearsTemplateLibraryBinding(t *testing.T) {
 	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
 		t.Fatalf("expected project form to seed template library id, got %q", got)
 	}
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
 	lines, _ := m.projectFormBodyLines(72, lipgloss.NewStyle(), lipgloss.Color("62"))
 	rendered := strings.Join(lines, "\n")
-	if !strings.Contains(rendered, "approved_global_libraries:") || !strings.Contains(rendered, "go-defaults") {
+	if !strings.Contains(rendered, "approved_global_libraries:") || !strings.Contains(rendered, "go-defaults") || !strings.Contains(rendered, "enter/e opens picker") {
 		t.Fatalf("expected project form to render template-library hints, got\n%s", rendered)
 	}
-	m.projectFormInputs[projectFieldTemplateLibrary].SetValue("")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTemplateLibraryPicker {
+		t.Fatalf("expected template-library picker mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "" {
+		t.Fatalf("expected template library cleared via picker, got %q", got)
+	}
+	if m.projectFormFocus != projectFieldRootPath {
+		t.Fatalf("project form focus = %d, want root-path field", m.projectFormFocus)
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if _, ok := svc.projectBindings[project.ID]; ok {
