@@ -104,6 +104,20 @@ func writeCoordinationLeaseDetail(stdout io.Writer, now time.Time, lease domain.
 	return nil
 }
 
+// writeCoordinationLeaseRevocationSummary renders one deterministic human-readable revoke-all summary.
+func writeCoordinationLeaseRevocationSummary(stdout io.Writer, projectID string, scopeType domain.CapabilityScopeType, scopeID, reason string) error {
+	rows := [][2]string{
+		{"project", firstNonEmptyTrimmed(projectID, "-")},
+		{"scope", coordinationLeaseScopeLabelFromParts(projectID, scopeType, scopeID)},
+		{"reason", firstNonEmptyTrimmed(reason, "-")},
+		{"status", "revoked"},
+	}
+	if err := writeCLIKV(stdout, "Capability Lease Revocation", rows); err != nil {
+		return fmt.Errorf("write coordination lease revoke-all summary: %w", err)
+	}
+	return nil
+}
+
 // renderCoordinationLeaseDetailAt renders one deterministic human-readable lease detail block.
 func renderCoordinationLeaseDetailAt(now time.Time, lease domain.CapabilityLease) string {
 	rows := [][2]string{
@@ -279,16 +293,20 @@ func coordinationLeaseAgentLabel(lease domain.CapabilityLease) string {
 
 // coordinationLeaseScopeLabel returns one stable lease scope label.
 func coordinationLeaseScopeLabel(lease domain.CapabilityLease) string {
-	scopeType := strings.TrimSpace(string(lease.ScopeType))
+	return coordinationLeaseScopeLabelFromParts(lease.ProjectID, lease.ScopeType, lease.ScopeID)
+}
+
+func coordinationLeaseScopeLabelFromParts(projectID string, scopeType domain.CapabilityScopeType, scopeID string) string {
+	rawScopeType := strings.TrimSpace(string(scopeType))
 	switch {
-	case scopeType == "":
-		return firstNonEmptyTrimmed(lease.ProjectID, "-")
-	case scopeType == string(domain.CapabilityScopeProject):
-		return "project/" + firstNonEmptyTrimmed(lease.ProjectID, "-")
-	case strings.TrimSpace(lease.ScopeID) == "":
-		return scopeType
+	case rawScopeType == "":
+		return firstNonEmptyTrimmed(projectID, "-")
+	case rawScopeType == string(domain.CapabilityScopeProject):
+		return "project/" + firstNonEmptyTrimmed(projectID, "-")
+	case strings.TrimSpace(scopeID) == "":
+		return rawScopeType
 	default:
-		return scopeType + "/" + strings.TrimSpace(lease.ScopeID)
+		return rawScopeType + "/" + strings.TrimSpace(scopeID)
 	}
 }
 
