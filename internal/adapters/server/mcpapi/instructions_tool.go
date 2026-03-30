@@ -156,7 +156,7 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Scope boundaries: which directories and workflows each instruction block governs.",
 			"Execution policy: when agents should act autonomously vs ask for approval.",
 			"Tooling policy: required MCP-first workflow and allowed fallback sources.",
-			"Validation policy: exact just/test commands and required evidence before handoff.",
+			"Validation policy: exact Mage/test commands and required evidence before handoff.",
 			"Dogfooding policy: reporting format for findings, blockers, and recovery steps.",
 			"Authoring policy: task/project details and comment summaries/bodies must be written as markdown.",
 			"Template policy: which actor kinds may draft, approve, bind, or apply template-library changes, and when human approval is mandatory.",

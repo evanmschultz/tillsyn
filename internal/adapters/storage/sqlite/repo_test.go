@@ -215,45 +215,286 @@ func TestRepository_TaskEmbeddingsRoundTrip(t *testing.T) {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
 
-	if err := repo.UpsertTaskEmbedding(ctx, app.TaskEmbeddingDocument{
-		TaskID:      task.ID,
-		ProjectID:   project.ID,
-		Content:     "task embedding content",
-		ContentHash: "hash123",
-		Vector:      []float32{0.1, 0.2, 0.3},
-		UpdatedAt:   now,
+	if err := repo.UpsertEmbeddingDocument(ctx, app.EmbeddingDocument{
+		SubjectType:      app.EmbeddingSubjectTypeWorkItem,
+		SubjectID:        task.ID,
+		ProjectID:        project.ID,
+		SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
+		SearchTargetID:   task.ID,
+		Content:          "task embedding content",
+		ContentHash:      "hash123",
+		Vector:           []float32{0.1, 0.2, 0.3},
+		UpdatedAt:        now,
 	}); err != nil {
-		t.Fatalf("UpsertTaskEmbedding() error = %v", err)
+		t.Fatalf("UpsertEmbeddingDocument() error = %v", err)
 	}
 
-	rows, err := repo.SearchTaskEmbeddings(ctx, app.TaskEmbeddingSearchInput{
-		ProjectIDs: []string{project.ID},
-		Vector:     []float32{0.1, 0.2, 0.3},
-		Limit:      10,
+	rows, err := repo.SearchEmbeddingDocuments(ctx, app.EmbeddingSearchInput{
+		ProjectIDs:        []string{project.ID},
+		SearchTargetTypes: []app.EmbeddingSearchTargetType{app.EmbeddingSearchTargetTypeWorkItem},
+		Vector:            []float32{0.1, 0.2, 0.3},
+		Limit:             10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskEmbeddings() error = %v", err)
+		t.Fatalf("SearchEmbeddingDocuments() error = %v", err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 embedding match, got %d", len(rows))
 	}
-	if rows[0].TaskID != task.ID {
-		t.Fatalf("expected task id %q, got %q", task.ID, rows[0].TaskID)
+	if rows[0].SearchTargetID != task.ID {
+		t.Fatalf("expected task id %q, got %q", task.ID, rows[0].SearchTargetID)
 	}
 
-	if err := repo.DeleteTaskEmbedding(ctx, task.ID); err != nil {
-		t.Fatalf("DeleteTaskEmbedding() error = %v", err)
+	if err := repo.DeleteEmbeddingDocument(ctx, app.EmbeddingSubjectTypeWorkItem, task.ID); err != nil {
+		t.Fatalf("DeleteEmbeddingDocument() error = %v", err)
 	}
-	rows, err = repo.SearchTaskEmbeddings(ctx, app.TaskEmbeddingSearchInput{
-		ProjectIDs: []string{project.ID},
-		Vector:     []float32{0.1, 0.2, 0.3},
-		Limit:      10,
+	rows, err = repo.SearchEmbeddingDocuments(ctx, app.EmbeddingSearchInput{
+		ProjectIDs:        []string{project.ID},
+		SearchTargetTypes: []app.EmbeddingSearchTargetType{app.EmbeddingSearchTargetTypeWorkItem},
+		Vector:            []float32{0.1, 0.2, 0.3},
+		Limit:             10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskEmbeddings(after delete) error = %v", err)
+		t.Fatalf("SearchEmbeddingDocuments(after delete) error = %v", err)
 	}
 	if len(rows) != 0 {
 		t.Fatalf("expected 0 embedding matches after delete, got %d", len(rows))
+	}
+}
+
+// TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies verifies generic embedding documents round-trip across work items, thread context, and project documents.
+func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if !repo.vecAvailable {
+		t.Skip("sqlite-vec capability unavailable in runtime")
+	}
+
+	now := time.Date(2026, 3, 29, 11, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("p1", "Example", "Project description", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task with embedding",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	})
+	rows := []app.EmbeddingDocument{
+		{
+			SubjectType:      app.EmbeddingSubjectTypeWorkItem,
+			SubjectID:        task.ID,
+			ProjectID:        project.ID,
+			SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
+			SearchTargetID:   task.ID,
+			Content:          "work item content",
+			ContentHash:      "hash-work-item",
+			Vector:           []float32{0.1, 0.2, 0.3},
+			UpdatedAt:        now,
+		},
+		{
+			SubjectType:      app.EmbeddingSubjectTypeThreadContext,
+			SubjectID:        threadSubjectID,
+			ProjectID:        project.ID,
+			SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
+			SearchTargetID:   task.ID,
+			Content:          "thread context content",
+			ContentHash:      "hash-thread-context",
+			Vector:           []float32{0.2, 0.1, 0.3},
+			UpdatedAt:        now,
+		},
+		{
+			SubjectType:      app.EmbeddingSubjectTypeProjectDocument,
+			SubjectID:        project.ID,
+			ProjectID:        project.ID,
+			SearchTargetType: app.EmbeddingSearchTargetTypeProject,
+			SearchTargetID:   project.ID,
+			Content:          "project document content",
+			ContentHash:      "hash-project-document",
+			Vector:           []float32{0.3, 0.2, 0.1},
+			UpdatedAt:        now,
+		},
+	}
+	for _, row := range rows {
+		if err := repo.UpsertEmbeddingDocument(ctx, row); err != nil {
+			t.Fatalf("UpsertEmbeddingDocument(%s) error = %v", row.SubjectType, err)
+		}
+	}
+
+	matches, err := repo.SearchEmbeddingDocuments(ctx, app.EmbeddingSearchInput{
+		ProjectIDs: []string{project.ID},
+		SubjectTypes: []app.EmbeddingSubjectType{
+			app.EmbeddingSubjectTypeWorkItem,
+			app.EmbeddingSubjectTypeThreadContext,
+			app.EmbeddingSubjectTypeProjectDocument,
+		},
+		SearchTargetTypes: []app.EmbeddingSearchTargetType{
+			app.EmbeddingSearchTargetTypeWorkItem,
+			app.EmbeddingSearchTargetTypeProject,
+		},
+		Vector: []float32{0.1, 0.2, 0.3},
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("SearchEmbeddingDocuments() error = %v", err)
+	}
+	if len(matches) != 3 {
+		t.Fatalf("expected 3 embedding matches, got %d", len(matches))
+	}
+	seen := map[app.EmbeddingSubjectType]bool{}
+	for _, match := range matches {
+		seen[match.SubjectType] = true
+	}
+	for _, subjectType := range []app.EmbeddingSubjectType{
+		app.EmbeddingSubjectTypeWorkItem,
+		app.EmbeddingSubjectTypeThreadContext,
+		app.EmbeddingSubjectTypeProjectDocument,
+	} {
+		if !seen[subjectType] {
+			t.Fatalf("missing subject type %s in search results %#v", subjectType, matches)
+		}
+	}
+
+	if err := repo.DeleteEmbeddingDocument(ctx, app.EmbeddingSubjectTypeThreadContext, threadSubjectID); err != nil {
+		t.Fatalf("DeleteEmbeddingDocument(thread_context) error = %v", err)
+	}
+	matches, err = repo.SearchEmbeddingDocuments(ctx, app.EmbeddingSearchInput{
+		ProjectIDs: []string{project.ID},
+		SearchTargetTypes: []app.EmbeddingSearchTargetType{
+			app.EmbeddingSearchTargetTypeWorkItem,
+			app.EmbeddingSearchTargetTypeProject,
+		},
+		Vector: []float32{0.1, 0.2, 0.3},
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("SearchEmbeddingDocuments(after delete) error = %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 embedding matches after delete, got %d", len(matches))
+	}
+}
+
+// TestRepository_ListCommentTargets verifies the repository can discover mixed comment targets for reindexing.
+func TestRepository_ListCommentTargets(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
+	project, err := domain.NewProject("p-comment-targets", "Comment Targets", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := domain.NewColumn("c-comment-targets", project.ID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "t-comment-targets",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task target",
+		Priority:  domain.PriorityLow,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	taskComment, err := domain.NewComment(domain.CommentInput{
+		ID:           "c-task",
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		BodyMarkdown: "task comment",
+		ActorID:      "user-1",
+		ActorName:    "User One",
+		ActorType:    domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment(task) error = %v", err)
+	}
+	projectComment, err := domain.NewComment(domain.CommentInput{
+		ID:           "c-project",
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     project.ID,
+		BodyMarkdown: "project comment",
+		ActorID:      "user-2",
+		ActorName:    "User Two",
+		ActorType:    domain.ActorTypeUser,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("NewComment(project) error = %v", err)
+	}
+	if err := repo.CreateComment(ctx, taskComment); err != nil {
+		t.Fatalf("CreateComment(task) error = %v", err)
+	}
+	if err := repo.CreateComment(ctx, projectComment); err != nil {
+		t.Fatalf("CreateComment(project) error = %v", err)
+	}
+
+	targets, err := repo.ListCommentTargets(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListCommentTargets() error = %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 comment targets, got %d", len(targets))
+	}
+	want := map[domain.CommentTargetType]string{
+		domain.CommentTargetTypeTask:    task.ID,
+		domain.CommentTargetTypeProject: project.ID,
+	}
+	for _, target := range targets {
+		if want[target.TargetType] != target.TargetID {
+			t.Fatalf("unexpected comment target %#v", targets)
+		}
 	}
 }
 
@@ -271,22 +512,26 @@ func TestRepository_TaskEmbeddingMethodsReturnVecUnavailable(t *testing.T) {
 	// Force the guard path so the test remains deterministic regardless of host runtime capabilities.
 	repo.vecAvailable = false
 
-	err = repo.UpsertTaskEmbedding(ctx, app.TaskEmbeddingDocument{
-		TaskID:      "t1",
-		ProjectID:   "p1",
-		Content:     "task embedding content",
-		ContentHash: "hash123",
-		Vector:      []float32{0.1, 0.2, 0.3},
-		UpdatedAt:   time.Date(2026, 3, 3, 14, 0, 0, 0, time.UTC),
+	err = repo.UpsertEmbeddingDocument(ctx, app.EmbeddingDocument{
+		SubjectType:      app.EmbeddingSubjectTypeWorkItem,
+		SubjectID:        "t1",
+		ProjectID:        "p1",
+		SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
+		SearchTargetID:   "t1",
+		Content:          "task embedding content",
+		ContentHash:      "hash123",
+		Vector:           []float32{0.1, 0.2, 0.3},
+		UpdatedAt:        time.Date(2026, 3, 3, 14, 0, 0, 0, time.UTC),
 	})
 	if !errors.Is(err, errSQLiteVecUnavailable) {
 		t.Fatalf("expected errSQLiteVecUnavailable, got %v", err)
 	}
 
-	_, err = repo.SearchTaskEmbeddings(ctx, app.TaskEmbeddingSearchInput{
-		ProjectIDs: []string{"p1"},
-		Vector:     []float32{0.1, 0.2, 0.3},
-		Limit:      10,
+	_, err = repo.SearchEmbeddingDocuments(ctx, app.EmbeddingSearchInput{
+		ProjectIDs:        []string{"p1"},
+		SearchTargetTypes: []app.EmbeddingSearchTargetType{app.EmbeddingSearchTargetTypeWorkItem},
+		Vector:            []float32{0.1, 0.2, 0.3},
+		Limit:             10,
 	})
 	if !errors.Is(err, errSQLiteVecUnavailable) {
 		t.Fatalf("expected errSQLiteVecUnavailable, got %v", err)

@@ -127,6 +127,9 @@ Current auth note:
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
+- CLI template operators now follow the same laslig-style human output contract as the rest of the operator surface:
+  - `--spec-json` remains the machine-friendly ingestion path,
+  - list/show/bind/contract commands render human-readable tables/detail views for auditability instead of raw JSON blobs.
 - TUI surfaces now expose the same contract model without a separate template UI stack:
   - project create/edit includes a project-kind picker and an approved-library picker plus approved-library hints,
   - task info shows the active project library and any generated-node contract snapshot,
@@ -175,12 +178,12 @@ Dangerous limitation note (pre-hardening, design warning):
 
 ## Run
 ```bash
-just run
+mage run
 ```
 
 Or build once and run the binary:
 ```bash
-just build
+mage build
 ./till
 ```
 
@@ -369,30 +372,24 @@ Current usage is Fang-inspired help copy/style in the in-app command reference o
 ## Developer Workflow
 Primary commands:
 ```bash
-just fmt
-just test-pkg ./internal/app
-just check
-just test
-just ci
+mage test-pkg ./internal/app
+mage ci
+mage build
 ```
 
 For contribution policy, pre-push expectations, and branch-protection recommendations, see `CONTRIBUTING.md`.
 
 VHS visual regression captures:
 ```bash
-just vhs
-just vhs vhs/regression_subtasks.tape
-just vhs vhs/regression_scroll.tape
+vhs vhs/regression_subtasks.tape
+vhs vhs/regression_scroll.tape
 ```
 
 Golden tests:
 ```bash
-just test-golden
-just test-golden-update
+mage test-golden
+mage test-golden-update
 ```
 
 ## CI
-GitHub Actions runs split gates:
-- matrix smoke checks on macOS/Linux/Windows via `just check`
-- full Linux gate via `just ci`
-- Goreleaser snapshot validation after the full Linux gate
+GitHub Actions runs `mage ci` on macOS/Linux/Windows, then validates a Goreleaser snapshot.

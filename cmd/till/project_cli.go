@@ -7,7 +7,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/hylla/tillsyn/internal/app"
@@ -252,31 +251,22 @@ func parseOptionalProjectMetadataJSON(raw string) (domain.ProjectMetadata, error
 
 // writeProjectList renders projects as a stable table with names first.
 func writeProjectList(stdout io.Writer, projects []domain.Project, emptyGuidance string) error {
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "NAME\tID\tKIND\tOWNER\tARCHIVED"); err != nil {
-		return fmt.Errorf("write project list header: %w", err)
-	}
-	if len(projects) == 0 {
-		if _, err := fmt.Fprintln(tw, "(none)\t-\t-\t-\t-"); err != nil {
-			return fmt.Errorf("write empty project list row: %w", err)
-		}
-	}
+	rows := make([][]string, 0, len(projects))
 	for _, project := range projects {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+		rows = append(rows, []string{
 			compactText(project.Name),
 			compactText(project.ID),
 			compactText(string(project.Kind)),
 			compactText(project.Metadata.Owner),
 			projectArchivedText(project.ArchivedAt),
-		); err != nil {
-			return fmt.Errorf("write project list row: %w", err)
-		}
+		})
 	}
-	if err := tw.Flush(); err != nil {
-		return fmt.Errorf("flush project list: %w", err)
+	printer := newCLIPrinter(stdout)
+	if err := writeCLITableWithPrinter(printer, "Projects", []string{"NAME", "ID", "KIND", "OWNER", "ARCHIVED"}, rows, "No projects found."); err != nil {
+		return err
 	}
 	if len(projects) == 0 {
-		if _, err := fmt.Fprintf(stdout, "\n%s\n", strings.TrimSpace(emptyGuidance)); err != nil {
+		if err := writeCLIPanelWithPrinter(printer, "Next Step", strings.TrimSpace(emptyGuidance), ""); err != nil {
 			return fmt.Errorf("write empty project list guidance: %w", err)
 		}
 	}
@@ -285,7 +275,6 @@ func writeProjectList(stdout io.Writer, projects []domain.Project, emptyGuidance
 
 // writeProjectDetail renders one project as a readable key/value summary.
 func writeProjectDetail(stdout io.Writer, project domain.Project, title string) error {
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	rows := [][2]string{
 		{"name", compactText(project.Name)},
 		{"id", compactText(project.ID)},
@@ -300,18 +289,7 @@ func writeProjectDetail(stdout io.Writer, project domain.Project, title string) 
 		{"description", compactText(project.Description)},
 		{"standards_markdown", compactText(project.Metadata.StandardsMarkdown)},
 	}
-	if _, err := fmt.Fprintln(tw, strings.ToUpper(strings.TrimSpace(title))); err != nil {
-		return fmt.Errorf("write project detail header: %w", err)
-	}
-	for _, row := range rows {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1]); err != nil {
-			return fmt.Errorf("write project detail row: %w", err)
-		}
-	}
-	if err := tw.Flush(); err != nil {
-		return fmt.Errorf("flush project detail: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, strings.TrimSpace(title), rows)
 }
 
 // writeProjectReadiness renders one project collaboration summary with a next-step bridge.
@@ -320,10 +298,7 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 	activeOrchestratorSessions := countActiveAgentRoleSessions(activeSessions, "orchestrator")
 	activeLeases := countActiveCapabilityLeases(leases, time.Now().UTC())
 	openHandoffs := countOpenHandoffs(handoffs)
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "PROJECT COLLABORATION READINESS"); err != nil {
-		return fmt.Errorf("write project readiness header: %w", err)
-	}
+	printer := newCLIPrinter(stdout)
 	rows := [][2]string{
 		{"name", compactText(project.Name)},
 		{"id", compactText(project.ID)},
@@ -332,16 +307,8 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 		{"owner", compactText(project.Metadata.Owner)},
 		{"archived", projectArchivedText(project.ArchivedAt)},
 	}
-	for _, row := range rows {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1]); err != nil {
-			return fmt.Errorf("write project readiness row: %w", err)
-		}
-	}
-	if _, err := fmt.Fprintln(tw); err != nil {
-		return fmt.Errorf("write project readiness spacer: %w", err)
-	}
-	if _, err := fmt.Fprintln(tw, "COORDINATION INVENTORY"); err != nil {
-		return fmt.Errorf("write project readiness inventory header: %w", err)
+	if err := writeCLIKVWithPrinter(printer, "Project Collaboration Readiness", rows); err != nil {
+		return err
 	}
 	inventoryRows := [][2]string{
 		{"pending_auth_requests", fmt.Sprintf("%d", len(pendingRequests))},
@@ -351,26 +318,12 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 		{"active_project_leases", fmt.Sprintf("%d", activeLeases)},
 		{"open_project_handoffs", fmt.Sprintf("%d", openHandoffs)},
 	}
-	for _, row := range inventoryRows {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1]); err != nil {
-			return fmt.Errorf("write project readiness inventory row: %w", err)
-		}
-	}
-	if _, err := fmt.Fprintln(tw); err != nil {
-		return fmt.Errorf("write project readiness spacer: %w", err)
+	if err := writeCLIKVWithPrinter(printer, "Coordination Inventory", inventoryRows); err != nil {
+		return err
 	}
 	command, reason := projectReadinessNextStep(project.ID, pendingRequests, activeOrchestratorSessions, activeLeases, openHandoffs)
-	if _, err := fmt.Fprintln(tw, "NEXT STEP"); err != nil {
-		return fmt.Errorf("write project readiness next-step header: %w", err)
-	}
-	if _, err := fmt.Fprintf(tw, "command\t%s\n", command); err != nil {
-		return fmt.Errorf("write project readiness next-step command: %w", err)
-	}
-	if _, err := fmt.Fprintf(tw, "reason\t%s\n", reason); err != nil {
-		return fmt.Errorf("write project readiness next-step reason: %w", err)
-	}
-	if err := tw.Flush(); err != nil {
-		return fmt.Errorf("flush project readiness: %w", err)
+	if err := writeCLIPanelWithPrinter(printer, "Next Step", command, reason); err != nil {
+		return fmt.Errorf("write project readiness next step: %w", err)
 	}
 	return nil
 }

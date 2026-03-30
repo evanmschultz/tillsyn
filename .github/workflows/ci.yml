@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   test-matrix:
-    name: check (${{ matrix.os }})
+    name: ci (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -31,34 +31,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: taiki-e/install-action@just
+      - name: Install Mage
+        shell: bash
+        run: |
+          go install github.com/magefile/mage@v1.17.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Run CI pipeline (unix)
         if: runner.os != 'Windows'
         shell: bash
-        run: just check
+        run: mage ci
       - name: Run CI pipeline (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: just check
-
-  full-gate-linux:
-    name: full gate (ubuntu-latest)
-    runs-on: ubuntu-latest
-    needs: test-matrix
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: taiki-e/install-action@just
-      - name: Run full CI gate
-        run: just ci
+        run: mage ci
 
   release-snapshot-check:
     name: release snapshot check
     runs-on: ubuntu-latest
-    needs: full-gate-linux
+    needs: test-matrix
     steps:
       - uses: actions/checkout@v6
         with:
@@ -68,7 +58,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Verify required entrypoint sources are tracked
-        run: git ls-files --error-unmatch cmd/till/main.go cmd/till/main_test.go
+        run: git ls-files --error-unmatch magefile.go cmd/till/main.go cmd/till/main_test.go
       - name: Validate goreleaser snapshot
         uses: goreleaser/goreleaser-action@v7
         with:

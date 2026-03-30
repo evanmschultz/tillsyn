@@ -35,6 +35,8 @@ type stubExpandedService struct {
 	lastGetTemplateBindingID string
 	lastGetNodeContractID    string
 	lastSearchTasksReq       common.SearchTasksRequest
+	lastEmbeddingsStatusReq  common.EmbeddingsStatusRequest
+	lastEmbeddingsReindexReq common.ReindexEmbeddingsRequest
 	lastCreateAuthRequestReq common.CreateAuthRequestRequest
 	lastListAuthRequestsReq  common.ListAuthRequestsRequest
 	lastGetAuthRequestID     string
@@ -339,12 +341,12 @@ func (s *stubExpandedService) ListChildTasks(_ context.Context, _, _ string, _ b
 	}, nil
 }
 
-// SearchTasks returns one deterministic match row.
-func (s *stubExpandedService) SearchTasks(_ context.Context, in common.SearchTasksRequest) ([]common.SearchTaskMatch, error) {
+// SearchTasks returns one deterministic match row plus search metadata.
+func (s *stubExpandedService) SearchTasks(_ context.Context, in common.SearchTasksRequest) (common.SearchTasksResult, error) {
 	s.lastSearchTasksReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return []common.SearchTaskMatch{
-		{
+	return common.SearchTasksResult{
+		Matches: []common.SearchTaskMatch{{
 			Project: domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One", CreatedAt: now, UpdatedAt: now},
 			Task: domain.Task{
 				ID:             "t1",
@@ -359,8 +361,74 @@ func (s *stubExpandedService) SearchTasks(_ context.Context, in common.SearchTas
 				CreatedAt:      now,
 				UpdatedAt:      now,
 			},
-			StateID: "todo",
+			StateID:              "todo",
+			EmbeddingSubjectType: "thread_context",
+			EmbeddingSubjectID:   "comment-1",
+			EmbeddingStatus:      "ready",
+			UsedSemantic:         true,
+			SemanticScore:        0.91,
+		}},
+		RequestedMode:          strings.TrimSpace(in.Mode),
+		EffectiveMode:          "semantic",
+		SemanticAvailable:      true,
+		SemanticCandidateCount: 1,
+		EmbeddingSummary: common.EmbeddingSummary{
+			SubjectType: "work_item",
+			ProjectIDs:  []string{"p1"},
+			ReadyCount:  1,
 		},
+	}, nil
+}
+
+// GetEmbeddingsStatus returns one deterministic embeddings status response.
+func (s *stubExpandedService) GetEmbeddingsStatus(_ context.Context, in common.EmbeddingsStatusRequest) (common.EmbeddingsStatusResult, error) {
+	s.lastEmbeddingsStatusReq = in
+	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	return common.EmbeddingsStatusResult{
+		ProjectIDs: []string{"p1"},
+		Summary: common.EmbeddingSummary{
+			SubjectType:  "mixed",
+			ProjectIDs:   []string{"p1"},
+			PendingCount: 1,
+			ReadyCount:   2,
+			FailedCount:  1,
+			StaleCount:   1,
+		},
+		Rows: []common.EmbeddingStatusRow{{
+			SubjectType:      "work_item",
+			SubjectID:        "t1",
+			ProjectID:        "p1",
+			Status:           "failed",
+			ModelSignature:   "fantasy|mini||3",
+			LastErrorSummary: "provider unavailable",
+			UpdatedAt:        now,
+		}, {
+			SubjectType:    "thread_context",
+			SubjectID:      "c1",
+			ProjectID:      "p1",
+			Status:         "pending",
+			ModelSignature: "fantasy|mini||3",
+			UpdatedAt:      now,
+		}, {
+			SubjectType:    "project_document",
+			SubjectID:      "p1",
+			ProjectID:      "p1",
+			Status:         "ready",
+			ModelSignature: "fantasy|mini||3",
+			UpdatedAt:      now,
+		}},
+	}, nil
+}
+
+// ReindexEmbeddings returns one deterministic reindex response.
+func (s *stubExpandedService) ReindexEmbeddings(_ context.Context, in common.ReindexEmbeddingsRequest) (common.ReindexEmbeddingsResult, error) {
+	s.lastEmbeddingsReindexReq = in
+	return common.ReindexEmbeddingsResult{
+		TargetProjects: []string{"p1"},
+		ScannedCount:   3,
+		QueuedCount:    2,
+		ReadyCount:     1,
+		PendingCount:   2,
 	}, nil
 }
 
@@ -849,6 +917,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.reparent_task",
 		"till.list_child_tasks",
 		"till.search_task_matches",
+		"till.get_embeddings_status",
+		"till.reindex_embeddings",
 		"till.list_project_change_events",
 		"till.get_project_dependency_rollup",
 		"till.list_kind_definitions",
@@ -1349,6 +1419,80 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	}
 	if len(service.lastSearchTasksReq.LabelsAll) != 0 {
 		t.Fatalf("default labels_all = %#v, want empty", service.lastSearchTasksReq.LabelsAll)
+	}
+}
+
+// TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata verifies the embeddings tools surface mixed subject families and per-match subject metadata.
+func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, searchResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(612, "till.search_task_matches", map[string]any{
+		"project_id": "p1",
+		"query":      "task",
+		"mode":       "semantic",
+	}))
+	if isError, _ := searchResp.Result["isError"].(bool); isError {
+		t.Fatalf("search_task_matches returned isError=true: %#v", searchResp.Result)
+	}
+	searchStructured := toolResultStructured(t, searchResp.Result)
+	matchesAny, ok := searchStructured["matches"].([]any)
+	if !ok || len(matchesAny) == 0 {
+		t.Fatalf("search matches missing/empty: %#v", searchStructured)
+	}
+	firstMatch, ok := matchesAny[0].(map[string]any)
+	if !ok {
+		t.Fatalf("search match has unexpected type: %#v", matchesAny[0])
+	}
+	if got := firstMatch["embedding_subject_type"]; got != "thread_context" {
+		t.Fatalf("embedding_subject_type = %#v, want thread_context", got)
+	}
+	if got := firstMatch["embedding_subject_id"]; got != "comment-1" {
+		t.Fatalf("embedding_subject_id = %#v, want comment-1", got)
+	}
+	if got := firstMatch["embedding_status"]; got != "ready" {
+		t.Fatalf("embedding_status = %#v, want ready", got)
+	}
+
+	_, statusResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(613, "till.get_embeddings_status", map[string]any{
+		"project_id": "p1",
+		"limit":      10,
+	}))
+	if isError, _ := statusResp.Result["isError"].(bool); isError {
+		t.Fatalf("get_embeddings_status returned isError=true: %#v", statusResp.Result)
+	}
+	statusStructured := toolResultStructured(t, statusResp.Result)
+	rowsAny, ok := statusStructured["rows"].([]any)
+	if !ok || len(rowsAny) < 3 {
+		t.Fatalf("status rows missing/too short: %#v", statusStructured)
+	}
+	types := map[string]bool{}
+	for _, raw := range rowsAny {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("status row has unexpected type: %#v", raw)
+		}
+		if subjectType, _ := row["subject_type"].(string); subjectType != "" {
+			types[subjectType] = true
+		}
+	}
+	for _, want := range []string{"work_item", "thread_context", "project_document"} {
+		if !types[want] {
+			t.Fatalf("status rows missing subject type %q: %#v", want, rowsAny)
+		}
 	}
 }
 

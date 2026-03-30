@@ -1,14 +1,14 @@
 package tui
 
 import (
-	"bytes"
-	"io"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
+	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
@@ -107,27 +107,10 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 		[]domain.Column{c1},
 		[]domain.Task{task},
 	))
-	tm := teatest.NewTestModel(
-		t,
-		m,
-		teatest.WithInitialTermSize(96, 28),
-		teatest.WithProgramOptions(tea.WithEnvironment([]string{"TERM=dumb"})),
-	)
-	var captured bytes.Buffer
-	stream := io.TeeReader(tm.Output(), &captured)
-
-	teatest.WaitFor(t, stream, func(out []byte) bool {
-		return strings.Contains(string(out), "Golden board task")
-	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
-
-	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
-
-	_, err := io.ReadAll(io.TeeReader(tm.FinalOutput(t, teatest.WithFinalTimeout(2*time.Second)), &captured))
-	if err != nil {
-		t.Fatalf("ReadAll(final output) error = %v", err)
-	}
-	teatest.RequireEqualOutput(t, captured.Bytes())
+	ready := loadReadyModel(t, m)
+	ready = applyMsg(t, ready, tea.WindowSizeMsg{Width: 96, Height: 28})
+	rendered := strings.TrimSpace(stripANSI(fmt.Sprint(ready.View().Content)))
+	teatest.RequireEqualOutput(t, []byte(rendered+"\n"))
 }
 
 // TestModelGoldenHelpExpandedOutput verifies behavior for the covered scenario.
@@ -149,32 +132,102 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 		[]domain.Column{c1},
 		[]domain.Task{task},
 	))
-	tm := teatest.NewTestModel(
-		t,
-		m,
-		teatest.WithInitialTermSize(96, 28),
-		teatest.WithProgramOptions(tea.WithEnvironment([]string{"TERM=dumb"})),
+	ready := loadReadyModel(t, m)
+	ready = applyMsg(t, ready, tea.WindowSizeMsg{Width: 96, Height: 28})
+	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: '?', Text: "?"})
+	rendered := strings.TrimSpace(stripANSI(fmt.Sprint(ready.View().Content)))
+	teatest.RequireEqualOutput(t, []byte(rendered+"\n"))
+}
+
+// TestModelGoldenEmbeddingsStatusOutput verifies the embeddings inventory modal renders mixed subject families.
+func TestModelGoldenEmbeddingsStatusOutput(t *testing.T) {
+	now := time.Date(2026, 3, 29, 20, 45, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Embeddings status task",
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Priority:  domain.PriorityLow,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		ParentID:  task.ID,
+		Position:  1,
+		Title:     "Embeddings status thread task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  p.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   child.ID,
+	})
+
+	svc := newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{c1},
+		[]domain.Task{task, child},
 	)
-	var captured bytes.Buffer
-	stream := io.TeeReader(tm.Output(), &captured)
-
-	teatest.WaitFor(t, stream, func(out []byte) bool {
-		return strings.Contains(string(out), "Help Golden Task")
-	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
-
-	tm.Send(tea.KeyPressMsg{Code: '?', Text: "?"})
-	teatest.WaitFor(t, stream, func(out []byte) bool {
-		return strings.Contains(string(out), "TILLSYN Help")
-	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
-
-	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
-
-	_, err := io.ReadAll(io.TeeReader(tm.FinalOutput(t, teatest.WithFinalTimeout(2*time.Second)), &captured))
-	if err != nil {
-		t.Fatalf("ReadAll(final output) error = %v", err)
+	svc.embeddingRows = []app.EmbeddingRecord{
+		{
+			SubjectType: app.EmbeddingSubjectTypeWorkItem,
+			SubjectID:   task.ID,
+			ProjectID:   p.ID,
+			Status:      app.EmbeddingLifecycleReady,
+		},
+		{
+			SubjectType: app.EmbeddingSubjectTypeThreadContext,
+			SubjectID:   threadSubjectID,
+			ProjectID:   p.ID,
+			Status:      app.EmbeddingLifecyclePending,
+		},
+		{
+			SubjectType:      app.EmbeddingSubjectTypeProjectDocument,
+			SubjectID:        p.ID,
+			ProjectID:        p.ID,
+			Status:           app.EmbeddingLifecycleFailed,
+			LastErrorSummary: "provider unavailable",
+		},
 	}
-	teatest.RequireEqualOutput(t, captured.Bytes())
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyCmd(t, m, m.startEmbeddingsStatus(false))
+	rendered := strings.TrimSpace(stripANSI(fmt.Sprint(m.View().Content)))
+	teatest.RequireEqualOutput(t, []byte(rendered+"\n"))
+}
+
+// TestModelGoldenSearchResultsEmptyOutput verifies zero-result searches stay in the explicit results overlay.
+func TestModelGoldenSearchResultsEmptyOutput(t *testing.T) {
+	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p-search-empty", "Search Empty", "", now)
+	c1, _ := domain.NewColumn("c-search-empty", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-search-empty",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Real search anchor",
+		Priority:  domain.PriorityLow,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{c1},
+		[]domain.Task{task},
+	)))
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 96, Height: 28})
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range "help" {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	rendered := strings.TrimSpace(stripANSI(fmt.Sprint(m.View().Content)))
+	teatest.RequireEqualOutput(t, []byte(rendered+"\n"))
 }
 
 // TestModelWithTeatestWIPWarning verifies behavior for the covered scenario.

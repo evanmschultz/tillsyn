@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
@@ -77,40 +78,342 @@ func (f *fakeEmbeddingGenerator) Embed(_ context.Context, inputs []string) ([][]
 	return out, nil
 }
 
-// fakeTaskSearchIndex captures vector index writes/search requests in tests.
+// fakeTaskSearchIndex captures semantic document writes/search requests in tests.
 type fakeTaskSearchIndex struct {
-	upserts    []TaskEmbeddingDocument
-	deletedIDs []string
-	searchIn   TaskEmbeddingSearchInput
-	searchRows []TaskEmbeddingMatch
-	searchErr  error
+	upserts            []EmbeddingDocument
+	deletedSubjectIDs  []string
+	deletedSubjectType []EmbeddingSubjectType
+	searchIn           EmbeddingSearchInput
+	searchRows         []EmbeddingSearchMatch
+	searchErr          error
 }
 
-// UpsertTaskEmbedding stores one in-memory upsert call.
-func (f *fakeTaskSearchIndex) UpsertTaskEmbedding(_ context.Context, in TaskEmbeddingDocument) error {
+// UpsertEmbeddingDocument stores one in-memory upsert call.
+func (f *fakeTaskSearchIndex) UpsertEmbeddingDocument(_ context.Context, in EmbeddingDocument) error {
 	doc := in
 	doc.Vector = append([]float32(nil), in.Vector...)
 	f.upserts = append(f.upserts, doc)
 	return nil
 }
 
-// DeleteTaskEmbedding stores one in-memory delete call.
-func (f *fakeTaskSearchIndex) DeleteTaskEmbedding(_ context.Context, taskID string) error {
-	f.deletedIDs = append(f.deletedIDs, taskID)
+// DeleteEmbeddingDocument stores one in-memory delete call.
+func (f *fakeTaskSearchIndex) DeleteEmbeddingDocument(_ context.Context, subjectType EmbeddingSubjectType, subjectID string) error {
+	f.deletedSubjectType = append(f.deletedSubjectType, subjectType)
+	f.deletedSubjectIDs = append(f.deletedSubjectIDs, subjectID)
 	return nil
 }
 
-// SearchTaskEmbeddings returns configured semantic match rows.
-func (f *fakeTaskSearchIndex) SearchTaskEmbeddings(_ context.Context, in TaskEmbeddingSearchInput) ([]TaskEmbeddingMatch, error) {
+// SearchEmbeddingDocuments returns configured semantic match rows.
+func (f *fakeTaskSearchIndex) SearchEmbeddingDocuments(_ context.Context, in EmbeddingSearchInput) ([]EmbeddingSearchMatch, error) {
 	f.searchIn = in
 	if f.searchErr != nil {
 		return nil, f.searchErr
 	}
-	out := make([]TaskEmbeddingMatch, 0, len(f.searchRows))
+	out := make([]EmbeddingSearchMatch, 0, len(f.searchRows))
 	for _, row := range f.searchRows {
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// fakeEmbeddingLifecycleStore captures lifecycle operations for service tests.
+type fakeEmbeddingLifecycleStore struct {
+	enqueues         map[string]EmbeddingRecord
+	inputs           []EmbeddingEnqueueInput
+	summarySequence  []EmbeddingSummary
+	summaryCallCount int
+	recoverCalls     int
+	recoveredCount   int
+	recoverErr       error
+}
+
+// newFakeEmbeddingLifecycleStore constructs one in-memory lifecycle stub.
+func newFakeEmbeddingLifecycleStore() *fakeEmbeddingLifecycleStore {
+	return &fakeEmbeddingLifecycleStore{
+		enqueues: map[string]EmbeddingRecord{},
+	}
+}
+
+// EnqueueEmbedding records one durable enqueue request.
+func (f *fakeEmbeddingLifecycleStore) EnqueueEmbedding(_ context.Context, in EmbeddingEnqueueInput) (EmbeddingRecord, error) {
+	record := EmbeddingRecord{
+		SubjectType:        in.SubjectType,
+		SubjectID:          strings.TrimSpace(in.SubjectID),
+		ProjectID:          strings.TrimSpace(in.ProjectID),
+		ContentHashDesired: strings.TrimSpace(in.ContentHash),
+		ModelProvider:      strings.TrimSpace(in.ModelProvider),
+		ModelName:          strings.TrimSpace(in.ModelName),
+		ModelDimensions:    in.ModelDimensions,
+		ModelSignature:     strings.TrimSpace(in.ModelSignature),
+		Status:             EmbeddingLifecyclePending,
+		MaxAttempts:        in.MaxAttempts,
+	}
+	f.inputs = append(f.inputs, in)
+	f.enqueues[f.embeddingKey(in.SubjectType, in.SubjectID)] = record
+	return record, nil
+}
+
+// DeleteEmbeddingSubject removes one lifecycle row from the in-memory store.
+func (f *fakeEmbeddingLifecycleStore) DeleteEmbeddingSubject(_ context.Context, subjectType EmbeddingSubjectType, subjectID string) error {
+	delete(f.enqueues, f.embeddingKey(subjectType, subjectID))
+	return nil
+}
+
+// ListEmbeddings lists lifecycle rows that satisfy the requested filters.
+func (f *fakeEmbeddingLifecycleStore) ListEmbeddings(_ context.Context, filter EmbeddingListFilter) ([]EmbeddingRecord, error) {
+	out := make([]EmbeddingRecord, 0, len(f.enqueues))
+	for _, record := range f.enqueues {
+		if filter.SubjectType != "" && record.SubjectType != filter.SubjectType {
+			continue
+		}
+		if len(filter.ProjectIDs) > 0 && !containsString(filter.ProjectIDs, record.ProjectID) {
+			continue
+		}
+		if len(filter.SubjectIDs) > 0 && !containsString(filter.SubjectIDs, record.SubjectID) {
+			continue
+		}
+		if len(filter.Statuses) > 0 && !containsEmbeddingStatus(filter.Statuses, record.Status) {
+			continue
+		}
+		out = append(out, record)
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// SummarizeEmbeddings aggregates lifecycle counts for the requested filter.
+func (f *fakeEmbeddingLifecycleStore) SummarizeEmbeddings(ctx context.Context, filter EmbeddingListFilter) (EmbeddingSummary, error) {
+	if len(f.summarySequence) > 0 {
+		idx := min(f.summaryCallCount, len(f.summarySequence)-1)
+		f.summaryCallCount++
+		summary := f.summarySequence[idx]
+		if summary.SubjectType == "" {
+			summary.SubjectType = filter.SubjectType
+		}
+		if summary.ProjectIDs == nil {
+			summary.ProjectIDs = append([]string(nil), filter.ProjectIDs...)
+		}
+		return summary, nil
+	}
+	rows, err := f.ListEmbeddings(ctx, filter)
+	if err != nil {
+		return EmbeddingSummary{}, err
+	}
+	summary := EmbeddingSummary{
+		SubjectType: filter.SubjectType,
+		ProjectIDs:  append([]string(nil), filter.ProjectIDs...),
+	}
+	for _, row := range rows {
+		switch row.Status {
+		case EmbeddingLifecyclePending:
+			summary.PendingCount++
+		case EmbeddingLifecycleRunning:
+			summary.RunningCount++
+		case EmbeddingLifecycleReady:
+			summary.ReadyCount++
+		case EmbeddingLifecycleFailed:
+			summary.FailedCount++
+		case EmbeddingLifecycleStale:
+			summary.StaleCount++
+		}
+	}
+	return summary, nil
+}
+
+// ClaimEmbeddings returns no claimed work for service-layer tests.
+func (f *fakeEmbeddingLifecycleStore) ClaimEmbeddings(_ context.Context, _ EmbeddingClaimInput) ([]EmbeddingRecord, error) {
+	return nil, nil
+}
+
+// HeartbeatEmbedding is a no-op for service-layer tests.
+func (f *fakeEmbeddingLifecycleStore) HeartbeatEmbedding(_ context.Context, _ EmbeddingHeartbeatInput) error {
+	return nil
+}
+
+// MarkEmbeddingSuccess updates one in-memory row to ready.
+func (f *fakeEmbeddingLifecycleStore) MarkEmbeddingSuccess(_ context.Context, in EmbeddingSuccessInput) (EmbeddingRecord, error) {
+	record := f.enqueues[f.embeddingKey(in.SubjectType, in.SubjectID)]
+	record.Status = EmbeddingLifecycleReady
+	record.ContentHashIndexed = in.ContentHash
+	f.enqueues[f.embeddingKey(in.SubjectType, in.SubjectID)] = record
+	return record, nil
+}
+
+// MarkEmbeddingFailure updates one in-memory row to failed.
+func (f *fakeEmbeddingLifecycleStore) MarkEmbeddingFailure(_ context.Context, in EmbeddingFailureInput) (EmbeddingRecord, error) {
+	record := f.enqueues[f.embeddingKey(in.SubjectType, in.SubjectID)]
+	record.Status = EmbeddingLifecycleFailed
+	record.LastErrorSummary = in.ErrorSummary
+	f.enqueues[f.embeddingKey(in.SubjectType, in.SubjectID)] = record
+	return record, nil
+}
+
+// RecoverExpiredEmbeddingClaims reports recovered rows for service-layer tests.
+func (f *fakeEmbeddingLifecycleStore) RecoverExpiredEmbeddingClaims(_ context.Context, _ time.Time) ([]EmbeddingRecord, error) {
+	f.recoverCalls++
+	if f.recoverErr != nil {
+		return nil, f.recoverErr
+	}
+	out := make([]EmbeddingRecord, 0, f.recoveredCount)
+	for idx := 0; idx < f.recoveredCount; idx++ {
+		out = append(out, EmbeddingRecord{
+			SubjectType: EmbeddingSubjectTypeWorkItem,
+			SubjectID:   fmt.Sprintf("recovered-%d", idx+1),
+			Status:      EmbeddingLifecyclePending,
+		})
+	}
+	return out, nil
+}
+
+// MarkEmbeddingsStaleByModel marks rows stale when their stored model signature differs from runtime.
+func (f *fakeEmbeddingLifecycleStore) MarkEmbeddingsStaleByModel(_ context.Context, in EmbeddingStaleByModelInput) ([]EmbeddingRecord, error) {
+	out := make([]EmbeddingRecord, 0)
+	for key, record := range f.enqueues {
+		if record.SubjectType != in.SubjectType {
+			continue
+		}
+		if strings.TrimSpace(record.ModelSignature) == strings.TrimSpace(in.ModelSignature) {
+			continue
+		}
+		record.Status = EmbeddingLifecycleStale
+		record.StaleReason = in.Reason
+		record.ModelSignature = in.ModelSignature
+		f.enqueues[key] = record
+		out = append(out, record)
+	}
+	return out, nil
+}
+
+// embeddingKey builds one stable in-memory lifecycle row key.
+func (f *fakeEmbeddingLifecycleStore) embeddingKey(subjectType EmbeddingSubjectType, subjectID string) string {
+	return string(subjectType) + "::" + strings.TrimSpace(subjectID)
+}
+
+// seedReadyTaskEmbedding stores ready lifecycle rows for the provided tasks.
+func seedReadyTaskEmbeddings(lifecycle *fakeEmbeddingLifecycleStore, projectID string, tasks ...domain.Task) {
+	if lifecycle == nil {
+		return
+	}
+	for _, task := range tasks {
+		lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeWorkItem, task.ID)] = EmbeddingRecord{
+			SubjectType:        EmbeddingSubjectTypeWorkItem,
+			SubjectID:          task.ID,
+			ProjectID:          projectID,
+			Status:             EmbeddingLifecycleReady,
+			ContentHashDesired: hashEmbeddingContent(buildTaskEmbeddingContent(task)),
+			ContentHashIndexed: hashEmbeddingContent(buildTaskEmbeddingContent(task)),
+		}
+	}
+}
+
+// seedReadyThreadContextEmbeddings stores ready lifecycle rows for the provided comment targets.
+func seedReadyThreadContextEmbeddings(lifecycle *fakeEmbeddingLifecycleStore, projectID string, targets ...domain.CommentTarget) {
+	if lifecycle == nil {
+		return
+	}
+	for _, target := range targets {
+		subjectID := BuildThreadContextSubjectID(target)
+		lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeThreadContext, subjectID)] = EmbeddingRecord{
+			SubjectType:        EmbeddingSubjectTypeThreadContext,
+			SubjectID:          subjectID,
+			ProjectID:          projectID,
+			Status:             EmbeddingLifecycleReady,
+			ContentHashDesired: hashEmbeddingContent(subjectID),
+			ContentHashIndexed: hashEmbeddingContent(subjectID),
+		}
+	}
+}
+
+// newSecondWaveEmbeddingService seeds one fake-repo service used by second-wave app-layer embeddings tests.
+func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() string) (*Service, *fakeRepo, *fakeEmbeddingLifecycleStore, domain.Project, domain.Column, domain.Task) {
+	t.Helper()
+
+	repo := newFakeRepo()
+	project, err := domain.NewProject("p-second-wave", "Second Wave", "Project description", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	project.Metadata = domain.ProjectMetadata{
+		Tags:              []string{"embeddings", "docs"},
+		StandardsMarkdown: "Follow the documented review path.",
+	}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := domain.NewColumn("c-second-wave", project.ID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(context.Background(), column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:          "t-second-wave",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Title:       "Ship thread-context search",
+		Description: "Tune semantic retrieval",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	lifecycle := newFakeEmbeddingLifecycleStore()
+
+	svc := NewService(repo, idGen, func() time.Time { return now }, ServiceConfig{
+		EmbeddingLifecycle: lifecycle,
+		EmbeddingRuntime: EmbeddingRuntimeConfig{
+			Enabled:        true,
+			Provider:       "deterministic",
+			Model:          "hash-bow-v1",
+			Dimensions:     32,
+			ModelSignature: BuildEmbeddingModelSignature("deterministic", "hash-bow-v1", "", 32),
+			MaxAttempts:    5,
+		},
+	})
+	return svc, repo, lifecycle, project, column, task
+}
+
+// mustDeterministicEmbeddingGenerator returns one deterministic embedding generator for second-wave search tests.
+func mustDeterministicEmbeddingGenerator(t *testing.T, dims int64) EmbeddingGenerator {
+	t.Helper()
+
+	gen, err := fantasyembed.New(context.Background(), fantasyembed.Config{
+		Provider:   "deterministic",
+		Model:      "hash-bow-v1",
+		Dimensions: dims,
+	})
+	if err != nil {
+		t.Fatalf("fantasyembed.New() error = %v", err)
+	}
+	return gen
+}
+
+// containsString reports whether one trimmed string list contains the requested value.
+func containsString(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// containsEmbeddingStatus reports whether one lifecycle status slice contains the requested status.
+func containsEmbeddingStatus(values []EmbeddingLifecycleStatus, target EmbeddingLifecycleStatus) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // CreateProject creates project.
@@ -360,10 +663,13 @@ func (f *fakeRepo) ListTasks(_ context.Context, projectID string, includeArchive
 
 // DeleteTask deletes task.
 func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
-	if _, ok := f.tasks[id]; !ok {
+	task, ok := f.tasks[id]
+	if !ok {
 		return ErrNotFound
 	}
 	delete(f.tasks, id)
+	targetKey := task.ProjectID + "|" + string(snapshotCommentTargetTypeForTask(task)) + "|" + task.ID
+	delete(f.comments, targetKey)
 	return nil
 }
 
@@ -379,6 +685,37 @@ func (f *fakeRepo) CreateComment(ctx context.Context, comment domain.Comment) er
 func (f *fakeRepo) ListCommentsByTarget(_ context.Context, target domain.CommentTarget) ([]domain.Comment, error) {
 	key := target.ProjectID + "|" + string(target.TargetType) + "|" + target.TargetID
 	return append([]domain.Comment(nil), f.comments[key]...), nil
+}
+
+// ListCommentTargets lists distinct comment targets for one project.
+func (f *fakeRepo) ListCommentTargets(_ context.Context, projectID string) ([]domain.CommentTarget, error) {
+	projectID = strings.TrimSpace(projectID)
+	out := make([]domain.CommentTarget, 0, len(f.comments))
+	for key, comments := range f.comments {
+		if len(comments) == 0 {
+			continue
+		}
+		parts := strings.Split(key, "|")
+		if len(parts) != 3 || parts[0] != projectID {
+			continue
+		}
+		target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+			ProjectID:  parts[0],
+			TargetType: domain.CommentTargetType(parts[1]),
+			TargetID:   parts[2],
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, target)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TargetType != out[j].TargetType {
+			return out[i].TargetType < out[j].TargetType
+		}
+		return out[i].TargetID < out[j].TargetID
+	})
+	return out, nil
 }
 
 // CreateAttentionItem creates one attention item row.
@@ -1761,8 +2098,8 @@ func TestSearchTaskMatchesRejectsInvalidOptions(t *testing.T) {
 	}
 }
 
-// TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex verifies task writes refresh semantic index rows.
-func TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex(t *testing.T) {
+// TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle verifies task writes enqueue durable lifecycle work.
+func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1770,11 +2107,17 @@ func TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.1, 0.2, 0.3}}}
-	searchIndex := &fakeTaskSearchIndex{}
+	lifecycle := newFakeEmbeddingLifecycleStore()
 	svc := NewService(repo, func() string { return "t1" }, func() time.Time { return now }, ServiceConfig{
-		EmbeddingGenerator: embedder,
-		SearchIndex:        searchIndex,
+		EmbeddingLifecycle: lifecycle,
+		EmbeddingRuntime: EmbeddingRuntimeConfig{
+			Enabled:        true,
+			Provider:       "fantasy",
+			Model:          "mini",
+			Dimensions:     3,
+			ModelSignature: BuildEmbeddingModelSignature("fantasy", "mini", "", 3),
+			MaxAttempts:    5,
+		},
 	})
 
 	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
@@ -1796,10 +2139,10 @@ func TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
-	if len(searchIndex.upserts) != 1 {
-		t.Fatalf("expected 1 upsert after create, got %d", len(searchIndex.upserts))
+	if len(lifecycle.inputs) != 1 {
+		t.Fatalf("expected 1 enqueue after create, got %d", len(lifecycle.inputs))
 	}
-	content := searchIndex.upserts[0].Content
+	content := buildTaskEmbeddingContent(created)
 	for _, want := range []string{
 		created.Title,
 		"Finalize ranking",
@@ -1810,11 +2153,14 @@ func TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex(t *testing.T) {
 		"weight tuning may regress lexical ranking",
 	} {
 		if !strings.Contains(content, want) {
-			t.Fatalf("upsert content missing %q: %q", want, content)
+			t.Fatalf("embedding content missing %q: %q", want, content)
 		}
 	}
+	if lifecycle.inputs[0].ContentHash != hashEmbeddingContent(content) {
+		t.Fatalf("create content hash = %q, want %q", lifecycle.inputs[0].ContentHash, hashEmbeddingContent(content))
+	}
 
-	_, err = svc.UpdateTask(context.Background(), UpdateTaskInput{
+	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
 		TaskID:      created.ID,
 		Title:       "Ship hybrid search",
 		Description: created.Description,
@@ -1826,11 +2172,21 @@ func TestServiceCreateAndUpdateTaskRefreshEmbeddingIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask() error = %v", err)
 	}
-	if len(searchIndex.upserts) != 2 {
-		t.Fatalf("expected second upsert after update, got %d", len(searchIndex.upserts))
+	if len(lifecycle.inputs) != 2 {
+		t.Fatalf("expected second enqueue after update, got %d", len(lifecycle.inputs))
 	}
-	if searchIndex.upserts[0].ContentHash == searchIndex.upserts[1].ContentHash {
-		t.Fatalf("expected content hash change after title update, both were %q", searchIndex.upserts[0].ContentHash)
+	if lifecycle.inputs[0].ContentHash == lifecycle.inputs[1].ContentHash {
+		t.Fatalf("expected content hash change after title update, both were %q", lifecycle.inputs[0].ContentHash)
+	}
+	if len(lifecycle.enqueues) != 1 {
+		t.Fatalf("expected one tracked lifecycle row, got %d", len(lifecycle.enqueues))
+	}
+	row := lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeWorkItem, created.ID)]
+	if row.Status != EmbeddingLifecyclePending {
+		t.Fatalf("status = %s, want pending", row.Status)
+	}
+	if row.ContentHashDesired != hashEmbeddingContent(buildTaskEmbeddingContent(updated)) {
+		t.Fatalf("desired content hash = %q, want %q", row.ContentHashDesired, hashEmbeddingContent(buildTaskEmbeddingContent(updated)))
 	}
 }
 
@@ -1863,26 +2219,30 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 	repo.tasks[t2.ID] = t2
 
 	searchIndex := &fakeTaskSearchIndex{
-		searchRows: []TaskEmbeddingMatch{
-			{TaskID: "t2", Similarity: 0.93},
-			{TaskID: "t1", Similarity: 0.22},
+		searchRows: []EmbeddingSearchMatch{
+			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.93},
+			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t1", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t1", Similarity: 0.22},
 		},
 	}
 	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.7, 0.1, 0.3}}}
+	lifecycle := newFakeEmbeddingLifecycleStore()
+	seedReadyTaskEmbeddings(lifecycle, project.ID, t1, t2)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
 		SearchIndex:        searchIndex,
+		EmbeddingLifecycle: lifecycle,
 	})
 
-	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
 		ProjectID: project.ID,
 		Query:     "semantic query",
 		Mode:      SearchModeSemantic,
 		Limit:     10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches() error = %v", err)
+		t.Fatalf("SearchTasks() error = %v", err)
 	}
+	matches := result.Matches
 	if len(matches) != 2 {
 		t.Fatalf("semantic mode rows = %d, want 2", len(matches))
 	}
@@ -1891,6 +2251,15 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 	}
 	if len(searchIndex.searchIn.ProjectIDs) != 1 || searchIndex.searchIn.ProjectIDs[0] != project.ID {
 		t.Fatalf("semantic project filter = %#v, want [%s]", searchIndex.searchIn.ProjectIDs, project.ID)
+	}
+	if result.RequestedMode != SearchModeSemantic || result.EffectiveMode != SearchModeSemantic {
+		t.Fatalf("search modes = requested %q effective %q, want semantic/semantic", result.RequestedMode, result.EffectiveMode)
+	}
+	if !result.SemanticAvailable {
+		t.Fatal("expected semantic search to be available")
+	}
+	if !matches[0].UsedSemantic || matches[0].SemanticScore <= 0 {
+		t.Fatalf("expected top semantic match metadata, got %#v", matches[0])
 	}
 }
 
@@ -1924,23 +2293,36 @@ func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
 
 	embedder := &fakeEmbeddingGenerator{err: errors.New("embedding unavailable")}
 	searchIndex := &fakeTaskSearchIndex{
-		searchRows: []TaskEmbeddingMatch{{TaskID: "t2", Similarity: 0.99}},
+		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.99}},
 	}
+	lifecycle := newFakeEmbeddingLifecycleStore()
+	seedReadyTaskEmbeddings(lifecycle, project.ID, keywordTask, otherTask)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
 		SearchIndex:        searchIndex,
+		EmbeddingLifecycle: lifecycle,
 	})
 
-	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
 		ProjectID: project.ID,
 		Query:     "server",
 		Mode:      SearchModeSemantic,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches() error = %v", err)
+		t.Fatalf("SearchTasks() error = %v", err)
 	}
+	matches := result.Matches
 	if len(matches) != 1 || matches[0].Task.ID != keywordTask.ID {
 		t.Fatalf("semantic fallback rows = %#v, want only %q", matches, keywordTask.ID)
+	}
+	if result.RequestedMode != SearchModeSemantic || result.EffectiveMode != SearchModeKeyword {
+		t.Fatalf("search modes = requested %q effective %q, want semantic/keyword", result.RequestedMode, result.EffectiveMode)
+	}
+	if result.FallbackReason != "query_embedding_failed" {
+		t.Fatalf("fallback reason = %q, want query_embedding_failed", result.FallbackReason)
+	}
+	if result.SemanticAvailable {
+		t.Fatal("expected semantic search availability to be false after embed failure")
 	}
 }
 
@@ -1973,16 +2355,19 @@ func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.
 	repo.tasks[t2.ID] = t2
 
 	searchIndex := &fakeTaskSearchIndex{
-		searchRows: []TaskEmbeddingMatch{
-			{TaskID: "t1", Similarity: 0.93},
-			{TaskID: "t2", Similarity: 0.85},
-			{TaskID: "t1", Similarity: 0.10},
+		searchRows: []EmbeddingSearchMatch{
+			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t1", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t1", Similarity: 0.93},
+			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.85},
+			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t1", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t1", Similarity: 0.10},
 		},
 	}
 	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.4, 0.2, 0.9}}}
+	lifecycle := newFakeEmbeddingLifecycleStore()
+	seedReadyTaskEmbeddings(lifecycle, project.ID, t1, t2)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
 		SearchIndex:        searchIndex,
+		EmbeddingLifecycle: lifecycle,
 	})
 
 	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
@@ -2032,7 +2417,7 @@ func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
 
 	embedder := &fakeEmbeddingGenerator{err: errors.New("embedding unavailable")}
 	searchIndex := &fakeTaskSearchIndex{
-		searchRows: []TaskEmbeddingMatch{{TaskID: "t2", Similarity: 0.99}},
+		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.99}},
 	}
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
@@ -2169,6 +2554,304 @@ func TestUpdateProject(t *testing.T) {
 	}
 	if updated.Metadata.Owner != "team-tillsyn" || len(updated.Metadata.Tags) != 1 || updated.Metadata.Tags[0] != "go" {
 		t.Fatalf("unexpected metadata %#v", updated.Metadata)
+	}
+}
+
+// TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings verifies project documents and thread-context subjects are queued on the real sqlite store.
+func TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings(t *testing.T) {
+	now := time.Date(2026, 3, 29, 12, 30, 0, 0, time.UTC)
+	svc, repo, lifecycle, project, _, task := newSecondWaveEmbeddingService(t, now, func() string {
+		return "comment-second-wave"
+	})
+
+	updated, err := svc.UpdateProject(context.Background(), UpdateProjectInput{
+		ProjectID:   project.ID,
+		Name:        "Second Wave",
+		Description: "Project description refreshed for project-document indexing.",
+		Metadata: domain.ProjectMetadata{
+			Tags:              []string{"embeddings", "docs", "threads"},
+			StandardsMarkdown: "Keep project docs and thread context searchable.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateProject() error = %v", err)
+	}
+	comment, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		Summary:      "Thread context note",
+		BodyMarkdown: "Latency budget belongs in thread context.",
+	})
+	if err != nil {
+		t.Fatalf("CreateComment() error = %v", err)
+	}
+
+	if len(lifecycle.inputs) != 2 {
+		t.Fatalf("expected 2 lifecycle enqueue inputs, got %d", len(lifecycle.inputs))
+	}
+	if lifecycle.inputs[0].SubjectType != EmbeddingSubjectTypeProjectDocument {
+		t.Fatalf("first enqueue subject type = %s, want project_document", lifecycle.inputs[0].SubjectType)
+	}
+	if lifecycle.inputs[1].SubjectType != EmbeddingSubjectTypeThreadContext {
+		t.Fatalf("second enqueue subject type = %s, want thread_context", lifecycle.inputs[1].SubjectType)
+	}
+	projectRow := lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeProjectDocument, project.ID)]
+	if projectRow.SubjectID != project.ID {
+		t.Fatalf("project_document subject_id = %q, want %q", projectRow.SubjectID, project.ID)
+	}
+	if projectRow.Status != EmbeddingLifecyclePending {
+		t.Fatalf("project_document status = %s, want pending", projectRow.Status)
+	}
+	if projectRow.ContentHashDesired != hashEmbeddingContent(buildProjectDocumentEmbeddingContent(updated)) {
+		t.Fatalf("project_document content hash = %q, want %q", projectRow.ContentHashDesired, hashEmbeddingContent(buildProjectDocumentEmbeddingContent(updated)))
+	}
+	threadRow := lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeThreadContext, BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	}))]
+	wantThreadID := BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	})
+	if threadRow.SubjectID != wantThreadID {
+		t.Fatalf("thread_context subject_id = %q, want %q", threadRow.SubjectID, wantThreadID)
+	}
+	if threadRow.Status != EmbeddingLifecyclePending {
+		t.Fatalf("thread_context status = %s, want pending", threadRow.Status)
+	}
+	comments, err := repo.ListCommentsByTarget(context.Background(), domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListCommentsByTarget() error = %v", err)
+	}
+	wantThreadContent := buildThreadContextEmbeddingContent(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	}, task.Title, task.Description, comments)
+	if threadRow.ContentHashDesired != hashEmbeddingContent(wantThreadContent) {
+		t.Fatalf("thread_context content hash = %q, want %q", threadRow.ContentHashDesired, hashEmbeddingContent(wantThreadContent))
+	}
+	if comment.BodyMarkdown == "" {
+		t.Fatal("expected comment body to be persisted")
+	}
+	if got := len(lifecycle.enqueues); got != 2 {
+		t.Fatalf("expected 2 lifecycle rows, got %d", got)
+	}
+}
+
+// TestSearchTaskMatchesSemanticUsesThreadContextDocuments verifies comment language can rank work items through thread-context documents.
+func TestSearchTaskMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
+	now := time.Date(2026, 3, 29, 13, 0, 0, 0, time.UTC)
+	ids := []string{"comment-a", "comment-b"}
+	nextID := 0
+	svc, repo, lifecycle, project, column, taskA := newSecondWaveEmbeddingService(t, now, func() string {
+		id := ids[nextID]
+		nextID++
+		return id
+	})
+	taskB, err := domain.NewTask(domain.TaskInput{
+		ID:          "t-thread-b",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    1,
+		Title:       "Release checklist",
+		Description: "Keep updates terse.",
+		Priority:    domain.PriorityLow,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(context.Background(), taskB); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	svc.embeddingGenerator = mustDeterministicEmbeddingGenerator(t, 32)
+	searchIndex := &fakeTaskSearchIndex{
+		searchRows: []EmbeddingSearchMatch{
+			{
+				SubjectType:      EmbeddingSubjectTypeThreadContext,
+				SubjectID:        BuildThreadContextSubjectID(domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskA.ID}),
+				SearchTargetType: EmbeddingSearchTargetTypeWorkItem,
+				SearchTargetID:   taskA.ID,
+				Similarity:       0.93,
+			},
+			{
+				SubjectType:      EmbeddingSubjectTypeThreadContext,
+				SubjectID:        BuildThreadContextSubjectID(domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskB.ID}),
+				SearchTargetType: EmbeddingSearchTargetTypeWorkItem,
+				SearchTargetID:   taskB.ID,
+				Similarity:       0.24,
+			},
+		},
+	}
+	svc.searchIndex = searchIndex
+
+	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     taskA.ID,
+		Summary:      "Latency budget",
+		BodyMarkdown: "Latency budget needs attention before launch.",
+	}); err != nil {
+		t.Fatalf("CreateComment(task A) error = %v", err)
+	}
+	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     taskB.ID,
+		Summary:      "Release checklist",
+		BodyMarkdown: "Release checklist stays small and routine.",
+	}); err != nil {
+		t.Fatalf("CreateComment(task B) error = %v", err)
+	}
+	seedReadyThreadContextEmbeddings(lifecycle, project.ID,
+		domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskA.ID},
+		domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskB.ID},
+	)
+
+	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Query:     "latency budget",
+		Mode:      SearchModeSemantic,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("SearchTasks() error = %v", err)
+	}
+	if result.RequestedMode != SearchModeSemantic || result.EffectiveMode != SearchModeSemantic {
+		t.Fatalf("search modes = requested %q effective %q, want semantic/semantic", result.RequestedMode, result.EffectiveMode)
+	}
+	if !result.SemanticAvailable {
+		t.Fatal("expected semantic search to be available")
+	}
+	if len(result.Matches) != 2 {
+		t.Fatalf("expected 2 semantic matches, got %d", len(result.Matches))
+	}
+	if result.Matches[0].Task.ID != taskA.ID || result.Matches[1].Task.ID != taskB.ID {
+		t.Fatalf("unexpected semantic ordering %#v", []string{result.Matches[0].Task.ID, result.Matches[1].Task.ID})
+	}
+	if result.Matches[0].EmbeddingSubjectType != EmbeddingSubjectTypeThreadContext {
+		t.Fatalf("top match subject type = %q, want thread_context", result.Matches[0].EmbeddingSubjectType)
+	}
+	if result.Matches[0].EmbeddingSubjectID != BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   taskA.ID,
+	}) {
+		t.Fatalf("top match subject id = %q, want thread-context subject id for task A", result.Matches[0].EmbeddingSubjectID)
+	}
+	if !result.Matches[0].UsedSemantic || result.Matches[0].SemanticScore <= 0 {
+		t.Fatalf("expected top semantic metadata, got %#v", result.Matches[0])
+	}
+}
+
+// TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets verifies real-db reindex/backfill covers project docs and comment targets.
+func TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets(t *testing.T) {
+	now := time.Date(2026, 3, 29, 13, 30, 0, 0, time.UTC)
+	ids := []string{"comment-project", "comment-task"}
+	nextID := 0
+	svc, _, lifecycle, project, _, task := newSecondWaveEmbeddingService(t, now, func() string {
+		id := ids[nextID]
+		nextID++
+		return id
+	})
+
+	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     project.ID,
+		Summary:      "Project note",
+		BodyMarkdown: "Project thread for docs and standards.",
+	}); err != nil {
+		t.Fatalf("CreateComment(project) error = %v", err)
+	}
+	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		Summary:      "Task note",
+		BodyMarkdown: "Task thread for retrieval coverage.",
+	}); err != nil {
+		t.Fatalf("CreateComment(task) error = %v", err)
+	}
+	lifecycle.inputs = nil
+
+	result, err := svc.ReindexEmbeddings(context.Background(), ReindexEmbeddingsInput{
+		ProjectID: project.ID,
+		Wait:      false,
+	})
+	if err != nil {
+		t.Fatalf("ReindexEmbeddings() error = %v", err)
+	}
+	if len(result.TargetProjects) != 1 || result.TargetProjects[0] != project.ID {
+		t.Fatalf("target projects = %#v, want [%s]", result.TargetProjects, project.ID)
+	}
+	if result.ScannedCount != 4 || result.QueuedCount != 4 {
+		t.Fatalf("reindex result = %#v, want 4 scanned and 4 queued", result)
+	}
+
+	if len(lifecycle.inputs) != 4 {
+		t.Fatalf("expected 4 lifecycle enqueue inputs, got %d", len(lifecycle.inputs))
+	}
+	types := map[EmbeddingSubjectType]int{}
+	for _, input := range lifecycle.inputs {
+		types[input.SubjectType]++
+	}
+	if types[EmbeddingSubjectTypeProjectDocument] != 1 {
+		t.Fatalf("project_document enqueues = %d, want 1", types[EmbeddingSubjectTypeProjectDocument])
+	}
+	if types[EmbeddingSubjectTypeWorkItem] != 1 {
+		t.Fatalf("work_item enqueues = %d, want 1", types[EmbeddingSubjectTypeWorkItem])
+	}
+	if types[EmbeddingSubjectTypeThreadContext] != 2 {
+		t.Fatalf("thread_context enqueues = %d, want 2", types[EmbeddingSubjectTypeThreadContext])
+	}
+	wantProjectThread := BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeProject,
+		TargetID:   project.ID,
+	})
+	wantTaskThread := BuildThreadContextSubjectID(domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   task.ID,
+	})
+	seenProjectThread := false
+	seenTaskThread := false
+	seenProjectDocument := false
+	seenWorkItem := false
+	for key, record := range lifecycle.enqueues {
+		if record.ProjectID != project.ID {
+			t.Fatalf("unexpected project id in lifecycle row %q: %#v", key, record)
+		}
+		switch record.SubjectType {
+		case EmbeddingSubjectTypeProjectDocument:
+			seenProjectDocument = record.SubjectID == project.ID
+		case EmbeddingSubjectTypeWorkItem:
+			seenWorkItem = record.SubjectID == task.ID
+		case EmbeddingSubjectTypeThreadContext:
+			switch record.SubjectID {
+			case wantProjectThread:
+				seenProjectThread = true
+			case wantTaskThread:
+				seenTaskThread = true
+			}
+		}
+	}
+	if !seenProjectDocument {
+		t.Fatal("expected project_document lifecycle row to be present")
+	}
+	if !seenWorkItem {
+		t.Fatal("expected work_item lifecycle row to be present")
+	}
+	if !seenProjectThread || !seenTaskThread {
+		t.Fatalf("expected both thread-context rows to be present (project=%v task=%v)", seenProjectThread, seenTaskThread)
 	}
 }
 

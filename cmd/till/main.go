@@ -16,7 +16,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
 	"github.com/google/uuid"
@@ -439,6 +438,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	importOpts := importCommandOptions{}
 	captureStateOpts := captureStateCommandOptions{view: string(app.CaptureStateViewSummary)}
+	embeddingsStatusOpts := embeddingsStatusCommandOptions{limit: 100}
+	embeddingsReindexOpts := embeddingsReindexCommandOptions{
+		waitTimeout:      30 * time.Second,
+		waitPollInterval: 2 * time.Second,
+	}
 	kindListOpts := kindListCommandOptions{}
 	kindUpsertOpts := kindUpsertCommandOptions{}
 	kindAllowlistOpts := kindAllowlistCommandOptions{}
@@ -460,7 +464,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateProjectBindOpts, templateProjectBindingOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateProjectBindOpts, templateProjectBindingOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -677,6 +681,46 @@ in order rather than relying on remembered setup steps.
 	projectDiscoverCmd.Flags().StringVar(&projectDiscoverOpts.projectID, "project-id", "", "Project identifier")
 	projectDiscoverCmd.Flags().BoolVar(&projectDiscoverOpts.includeArchived, "include-archived", false, "Include archived projects")
 	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd, projectDiscoverCmd)
+
+	embeddingsCmd := &cobra.Command{
+		Use:   "embeddings",
+		Short: "Inspect and operate the background embeddings lifecycle",
+		Long: strings.TrimSpace(`
+Inspect persistent embeddings lifecycle state, view pending/failed/stale rows,
+and trigger explicit backfill or reindex operations without blocking normal
+task mutations.
+`),
+		Args: cobra.NoArgs,
+	}
+	embeddingsStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show embeddings lifecycle health and row inventory",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "embeddings.status")
+		},
+	}
+	embeddingsStatusCmd.Flags().StringVar(&embeddingsStatusOpts.projectID, "project-id", "", "Project identifier")
+	embeddingsStatusCmd.Flags().BoolVar(&embeddingsStatusOpts.crossProject, "cross-project", false, "Inspect embeddings state across all projects")
+	embeddingsStatusCmd.Flags().BoolVar(&embeddingsStatusOpts.includeArchived, "include-archived", false, "Include archived projects when resolving scope")
+	embeddingsStatusCmd.Flags().StringSliceVar(&embeddingsStatusOpts.statuses, "status", nil, "Optional lifecycle status filter (pending|running|ready|failed|stale)")
+	embeddingsStatusCmd.Flags().IntVar(&embeddingsStatusOpts.limit, "limit", embeddingsStatusOpts.limit, "Maximum lifecycle rows to print")
+	embeddingsReindexCmd := &cobra.Command{
+		Use:   "reindex",
+		Short: "Enqueue or force one explicit embeddings backfill/reindex",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "embeddings.reindex")
+		},
+	}
+	embeddingsReindexCmd.Flags().StringVar(&embeddingsReindexOpts.projectID, "project-id", "", "Project identifier")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.crossProject, "cross-project", false, "Reindex embeddings across all projects")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.includeArchived, "include-archived", false, "Include archived projects and work items in the reindex scope")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.force, "force", false, "Force ready rows back into the queue even when hashes already match")
+	embeddingsReindexCmd.Flags().BoolVar(&embeddingsReindexOpts.wait, "wait", false, "Wait for the requested scope to reach a steady lifecycle state")
+	embeddingsReindexCmd.Flags().DurationVar(&embeddingsReindexOpts.waitTimeout, "wait-timeout", embeddingsReindexOpts.waitTimeout, "Maximum time to wait for steady state when --wait is set")
+	embeddingsReindexCmd.Flags().DurationVar(&embeddingsReindexOpts.waitPollInterval, "wait-poll-interval", embeddingsReindexOpts.waitPollInterval, "Polling interval while waiting for steady state")
+	embeddingsCmd.AddCommand(embeddingsStatusCmd, embeddingsReindexCmd)
 
 	captureStateCmd := &cobra.Command{
 		Use:   "capture-state",
@@ -1429,7 +1473,8 @@ as a positional argument.
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, captureStateCmd, kindCmd, templateCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, templateCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -1455,54 +1500,26 @@ func mustMarkFlagHidden(cmd *cobra.Command, name string) {
 
 // writeVersion writes the current CLI version to stdout.
 func writeVersion(stdout io.Writer) error {
-	if _, err := fmt.Fprintf(stdout, "till %s\n", version); err != nil {
-		return fmt.Errorf("write version output: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, "Till Version", [][2]string{
+		{"app", "till"},
+		{"version", version},
+	})
 }
 
-// writePathsOutput renders resolved paths using Fang-aligned styling.
+// writePathsOutput renders resolved paths in one structured laslig key/value view.
 func writePathsOutput(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
-	if !supportsStyledOutputFunc(stdout) {
-		return writePathsPlain(stdout, opts, resolvedPaths, rootDir, logDir)
-	}
-
-	isDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
-	colors := fang.DefaultColorScheme(lipgloss.LightDark(isDark))
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colors.Title)
-	keyStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colors.Flag)
-	valueStyle := lipgloss.NewStyle().
-		Foreground(colors.Description)
-
 	rows := buildPathsRows(opts, resolvedPaths, rootDir, logDir)
-
-	maxKeyWidth := 0
+	pairs := make([][2]string, 0, len(rows))
 	for _, row := range rows {
-		if len(row.key) > maxKeyWidth {
-			maxKeyWidth = len(row.key)
+		pairs = append(pairs, [2]string{row.key, row.value})
+	}
+	if supportsStyledOutputFunc(stdout) {
+		if err := writeCLIKVWithPrinter(newStyledCLIPrinter(stdout), "Resolved Paths", pairs); err != nil {
+			return fmt.Errorf("write styled paths output: %w", err)
 		}
+		return nil
 	}
-
-	lines := make([]string, 0, len(rows)+1)
-	lines = append(lines, titleStyle.Render("Resolved Paths"))
-	for _, row := range rows {
-		paddedKey := fmt.Sprintf("%-*s:", maxKeyWidth, row.key)
-		line := lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			keyStyle.Render(paddedKey),
-			"  ",
-			valueStyle.Render(row.value),
-		)
-		lines = append(lines, line)
-	}
-	if _, err := fmt.Fprintln(stdout, strings.Join(lines, "\n")); err != nil {
-		return fmt.Errorf("write paths output: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, "Resolved Paths", pairs)
 }
 
 // buildPathsRows returns the stable key/value rows used by both plain and styled output.
@@ -1521,16 +1538,6 @@ func buildPathsRows(opts rootCommandOptions, resolvedPaths resolvedRuntimePaths,
 		{key: "logs", value: logDir},
 		{key: "dev_mode", value: fmt.Sprintf("%t", opts.devMode)},
 	}
-}
-
-// writePathsPlain renders resolved paths in stable key/value text for scripts.
-func writePathsPlain(stdout io.Writer, opts rootCommandOptions, resolvedPaths resolvedRuntimePaths, rootDir, logDir string) error {
-	for _, row := range buildPathsRows(opts, resolvedPaths, rootDir, logDir) {
-		if _, err := fmt.Fprintf(stdout, "%s: %s\n", row.key, row.value); err != nil {
-			return fmt.Errorf("write paths %s output: %w", row.key, err)
-		}
-	}
-	return nil
 }
 
 // resolvedRuntimePaths stores CLI runtime config/db path decisions for one command.
@@ -1644,10 +1651,11 @@ func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
 	if created {
 		msg = "created dev config"
 	}
-	if _, err := fmt.Fprintf(stdout, "%s: %s\n", msg, shellEscapePath(configPath)); err != nil {
-		return fmt.Errorf("write init-dev-config output: %w", err)
-	}
-	return nil
+	return writeCLIKV(stdout, "Dev Config", [][2]string{
+		{"status", msg},
+		{"config path", shellEscapePath(configPath)},
+		{"logging level", "debug"},
+	})
 }
 
 // shellEscapePath returns a POSIX-shell-escaped path token suitable for direct paste.
@@ -1790,6 +1798,8 @@ func executeCommandFlow(
 	projectShowOpts projectShowCommandOptions,
 	projectDiscoverOpts projectReadinessCommandOptions,
 	captureStateOpts captureStateCommandOptions,
+	embeddingsStatusOpts embeddingsStatusCommandOptions,
+	embeddingsReindexOpts embeddingsReindexCommandOptions,
 	kindListOpts kindListCommandOptions,
 	kindUpsertOpts kindUpsertCommandOptions,
 	kindAllowlistOpts kindAllowlistCommandOptions,
@@ -1944,6 +1954,21 @@ func executeCommandFlow(
 	}
 	logger.Info("autent service ready", "db_path", cfg.Database.Path, "table_prefix", autentauth.DefaultTablePrefix)
 
+	embeddingRuntimeCfg, err := buildEmbeddingRuntimeConfig(cfg, rootOpts.appName, command)
+	if err != nil {
+		logger.Error("embeddings runtime config invalid", "err", err)
+		return fmt.Errorf("build embeddings runtime config: %w", err)
+	}
+
+	var embeddingLifecycle app.EmbeddingLifecycleStore
+	if lifecycle, ok := any(repo).(app.EmbeddingLifecycleStore); ok {
+		embeddingLifecycle = lifecycle
+	}
+	var embeddingSearchIndex app.EmbeddingSearchIndex
+	if idx, ok := any(repo).(app.EmbeddingSearchIndex); ok {
+		embeddingSearchIndex = idx
+	}
+
 	var embeddingGenerator app.EmbeddingGenerator
 	if cfg.Embeddings.Enabled {
 		generator, err := fantasyembed.New(ctx, fantasyembed.Config{
@@ -1960,6 +1985,27 @@ func executeCommandFlow(
 			logger.Info("embeddings runtime enabled", "provider", cfg.Embeddings.Provider, "model", cfg.Embeddings.Model, "query_top_k", cfg.Embeddings.QueryTopK)
 		}
 	}
+	if err := app.PrepareEmbeddingsLifecycle(ctx, embeddingLifecycle, embeddingRuntimeCfg); err != nil {
+		logger.Error("embeddings lifecycle prepare failed", "err", err)
+		return fmt.Errorf("prepare embeddings lifecycle: %w", err)
+	}
+	if cfg.Embeddings.Enabled {
+		switch {
+		case embeddingLifecycle == nil:
+			logger.Warn("embeddings lifecycle store unavailable; semantic status tracking remains disabled")
+		case embeddingGenerator == nil:
+			logger.Warn("embeddings worker not started; queued states remain observable until provider setup succeeds")
+		case embeddingSearchIndex == nil:
+			logger.Warn("embeddings worker not started; task search index is unavailable")
+		default:
+			go func() {
+				if err := app.NewEmbeddingWorker(repo, embeddingLifecycle, embeddingGenerator, embeddingSearchIndex, nil, embeddingRuntimeCfg).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Warn("embeddings worker stopped", "err", err)
+				}
+			}()
+			logger.Info("embeddings worker ready", "worker_id", embeddingRuntimeCfg.WorkerID, "poll_interval", embeddingRuntimeCfg.PollInterval.String(), "claim_ttl", embeddingRuntimeCfg.ClaimTTL.String(), "max_attempts", embeddingRuntimeCfg.MaxAttempts)
+		}
+	}
 
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode:        app.DeleteMode(cfg.Delete.DefaultMode),
@@ -1968,6 +2014,9 @@ func executeCommandFlow(
 		AuthBackend:              authSvc,
 		LiveWaitBroker:           liveWaitBroker,
 		EmbeddingGenerator:       embeddingGenerator,
+		SearchIndex:              embeddingSearchIndex,
+		EmbeddingLifecycle:       embeddingLifecycle,
+		EmbeddingRuntime:         embeddingRuntimeCfg,
 		SearchLexicalWeight:      cfg.Embeddings.LexicalWeight,
 		SearchSemanticWeight:     cfg.Embeddings.SemanticWeight,
 		SearchSemanticCandidates: cfg.Embeddings.QueryTopK,
@@ -2124,6 +2173,22 @@ func executeCommandFlow(
 			return fmt.Errorf("run project discover command: %w", err)
 		}
 		logger.Info("command flow complete", "command", "project.discover")
+		return nil
+	case "embeddings.status":
+		logger.Info("command flow start", "command", "embeddings.status")
+		if err := runEmbeddingsStatus(ctx, svc, embeddingsStatusOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "embeddings.status", "err", err)
+			return fmt.Errorf("run embeddings status command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "embeddings.status")
+		return nil
+	case "embeddings.reindex":
+		logger.Info("command flow start", "command", "embeddings.reindex")
+		if err := runEmbeddingsReindex(ctx, svc, cfg, embeddingsReindexOpts, stdout); err != nil {
+			logger.Error("command flow failed", "command", "embeddings.reindex", "err", err)
+			return fmt.Errorf("run embeddings reindex command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "embeddings.reindex")
 		return nil
 	case "capture-state":
 		logger.Info("command flow start", "command", "capture-state")
@@ -2437,19 +2502,9 @@ func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts iss
 	if err != nil {
 		return fmt.Errorf("issue auth session: %w", err)
 	}
-	payload, err := json.MarshalIndent(struct {
-		SessionID     string    `json:"session_id"`
-		SessionSecret string    `json:"session_secret"`
-		PrincipalID   string    `json:"principal_id"`
-		PrincipalType string    `json:"principal_type"`
-		PrincipalName string    `json:"principal_name"`
-		ClientID      string    `json:"client_id"`
-		ClientType    string    `json:"client_type"`
-		ClientName    string    `json:"client_name"`
-		ExpiresAt     time.Time `json:"expires_at"`
-	}{
+	return writeAuthSessionDetailHuman(stdout, authSessionPayloadJSON{
 		SessionID:     issued.Session.ID,
-		SessionSecret: issued.Secret,
+		State:         "active",
 		PrincipalID:   principalID,
 		PrincipalType: strings.TrimSpace(opts.principalType),
 		PrincipalName: firstNonEmpty(strings.TrimSpace(opts.principalName), principalID),
@@ -2457,14 +2512,7 @@ func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts iss
 		ClientType:    strings.TrimSpace(opts.clientType),
 		ClientName:    firstNonEmpty(strings.TrimSpace(opts.clientName), strings.TrimSpace(opts.clientID)),
 		ExpiresAt:     issued.Session.ExpiresAt.UTC(),
-	}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode issued auth session: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "%s\n", payload); err != nil {
-		return fmt.Errorf("write issued auth session: %w", err)
-	}
-	return nil
+	}, issued.Secret)
 }
 
 // runAuthRevokeSession revokes one local auth session.
@@ -2480,22 +2528,15 @@ func runAuthRevokeSession(ctx context.Context, auth *autentauth.Service, opts re
 	if err != nil {
 		return fmt.Errorf("revoke auth session: %w", err)
 	}
-	payload, err := json.MarshalIndent(struct {
-		SessionID        string     `json:"session_id"`
-		RevokedAt        *time.Time `json:"revoked_at,omitempty"`
-		RevocationReason string     `json:"revocation_reason,omitempty"`
-	}{
+	return writeAuthSessionDetailHuman(stdout, authSessionPayloadJSON{
 		SessionID:        session.ID,
+		State:            "revoked",
+		PrincipalID:      session.PrincipalID,
+		ClientID:         session.ClientID,
+		ExpiresAt:        session.ExpiresAt.UTC(),
 		RevokedAt:        session.RevokedAt,
 		RevocationReason: session.RevocationReason,
-	}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode revoked auth session: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "%s\n", payload); err != nil {
-		return fmt.Errorf("write revoked auth session: %w", err)
-	}
-	return nil
+	}, "")
 }
 
 // runCaptureState captures one summary-first recovery snapshot and writes it as stable JSON.
@@ -2608,7 +2649,7 @@ func runKindAllowlistSet(ctx context.Context, svc *app.Service, cfg config.Confi
 	})
 }
 
-// runTemplateLibraryList lists template libraries and writes them as stable JSON.
+// runTemplateLibraryList lists template libraries and writes them in a human-readable operator view.
 func runTemplateLibraryList(ctx context.Context, svc *app.Service, opts templateLibraryListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2621,10 +2662,10 @@ func runTemplateLibraryList(ctx context.Context, svc *app.Service, opts template
 	if err != nil {
 		return fmt.Errorf("list template libraries: %w", err)
 	}
-	return writeJSON(stdout, libraries)
+	return writeTemplateLibraryList(stdout, libraries)
 }
 
-// runTemplateLibraryShow loads one template library and writes it as stable JSON.
+// runTemplateLibraryShow loads one template library and writes it in a human-readable operator view.
 func runTemplateLibraryShow(ctx context.Context, svc *app.Service, opts templateLibraryShowCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2637,10 +2678,10 @@ func runTemplateLibraryShow(ctx context.Context, svc *app.Service, opts template
 	if err != nil {
 		return fmt.Errorf("get template library: %w", err)
 	}
-	return writeJSON(stdout, library)
+	return writeTemplateLibraryDetail(stdout, library)
 }
 
-// runTemplateLibraryUpsert creates or updates one template library from the JSON CLI transport.
+// runTemplateLibraryUpsert creates or updates one template library from the JSON CLI transport and writes a human-readable result.
 func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.Config, opts templateLibraryUpsertCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2693,10 +2734,10 @@ func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.
 	if err != nil {
 		return fmt.Errorf("upsert template library: %w", err)
 	}
-	return writeJSON(stdout, library)
+	return writeTemplateLibraryDetail(stdout, library)
 }
 
-// runTemplateProjectBind binds one project to one approved template library.
+// runTemplateProjectBind binds one project to one approved template library and writes a human-readable operator view.
 func runTemplateProjectBind(ctx context.Context, svc *app.Service, cfg config.Config, opts templateProjectBindCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2720,10 +2761,10 @@ func runTemplateProjectBind(ctx context.Context, svc *app.Service, cfg config.Co
 	if err != nil {
 		return fmt.Errorf("bind project template library: %w", err)
 	}
-	return writeJSON(stdout, binding)
+	return writeProjectTemplateBindingDetail(stdout, binding)
 }
 
-// runTemplateProjectBinding loads one project's active template-library binding.
+// runTemplateProjectBinding loads one project's active template-library binding and writes a human-readable operator view.
 func runTemplateProjectBinding(ctx context.Context, svc *app.Service, opts templateProjectBindingCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2736,10 +2777,10 @@ func runTemplateProjectBinding(ctx context.Context, svc *app.Service, opts templ
 	if err != nil {
 		return fmt.Errorf("get project template binding: %w", err)
 	}
-	return writeJSON(stdout, binding)
+	return writeProjectTemplateBindingDetail(stdout, binding)
 }
 
-// runTemplateContractShow loads one generated-node contract snapshot and writes it as stable JSON.
+// runTemplateContractShow loads one generated-node contract snapshot and writes it in a human-readable operator view.
 func runTemplateContractShow(ctx context.Context, svc *app.Service, opts templateContractShowCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2752,7 +2793,7 @@ func runTemplateContractShow(ctx context.Context, svc *app.Service, opts templat
 	if err != nil {
 		return fmt.Errorf("get node contract snapshot: %w", err)
 	}
-	return writeJSON(stdout, snapshot)
+	return writeNodeContractSnapshotDetail(stdout, snapshot)
 }
 
 // runLeaseList lists capability leases and writes them in a human-readable operator view.
@@ -2775,7 +2816,7 @@ func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOp
 	return writeCoordinationLeaseList(stdout, time.Now().UTC(), leases)
 }
 
-// runLeaseIssue issues one capability lease and writes it as stable JSON.
+// runLeaseIssue issues one capability lease and writes it in a human-readable operator view.
 func runLeaseIssue(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseIssueCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2802,10 +2843,10 @@ func runLeaseIssue(ctx context.Context, svc *app.Service, cfg config.Config, opt
 	if err != nil {
 		return fmt.Errorf("issue capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseHeartbeat refreshes one capability lease heartbeat and writes it as stable JSON.
+// runLeaseHeartbeat refreshes one capability lease heartbeat and writes it in a human-readable operator view.
 func runLeaseHeartbeat(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseHeartbeatCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2818,10 +2859,10 @@ func runLeaseHeartbeat(ctx context.Context, svc *app.Service, cfg config.Config,
 	if err != nil {
 		return fmt.Errorf("heartbeat capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseRenew renews one capability lease and writes it as stable JSON.
+// runLeaseRenew renews one capability lease and writes it in a human-readable operator view.
 func runLeaseRenew(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRenewCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2835,10 +2876,10 @@ func runLeaseRenew(ctx context.Context, svc *app.Service, cfg config.Config, opt
 	if err != nil {
 		return fmt.Errorf("renew capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseRevoke revokes one capability lease and writes it as stable JSON.
+// runLeaseRevoke revokes one capability lease and writes it in a human-readable operator view.
 func runLeaseRevoke(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRevokeCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2851,10 +2892,10 @@ func runLeaseRevoke(ctx context.Context, svc *app.Service, cfg config.Config, op
 	if err != nil {
 		return fmt.Errorf("revoke capability lease: %w", err)
 	}
-	return writeJSON(stdout, capabilityLeasePayload(lease))
+	return writeCoordinationLeaseDetail(stdout, time.Now().UTC(), lease)
 }
 
-// runLeaseRevokeAll revokes every capability lease within one scope and writes a JSON summary.
+// runLeaseRevokeAll revokes every capability lease within one scope and writes a human-readable summary.
 func runLeaseRevokeAll(ctx context.Context, svc *app.Service, cfg config.Config, opts leaseRevokeAllCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2871,15 +2912,16 @@ func runLeaseRevokeAll(ctx context.Context, svc *app.Service, cfg config.Config,
 	}); err != nil {
 		return fmt.Errorf("revoke all capability leases: %w", err)
 	}
-	return writeJSON(stdout, leaseRevokeAllPayloadJSON{
-		ProjectID: strings.TrimSpace(opts.projectID),
-		ScopeType: strings.TrimSpace(opts.scopeType),
-		ScopeID:   strings.TrimSpace(opts.scopeID),
-		Reason:    strings.TrimSpace(opts.reason),
-	})
+	return writeCoordinationLeaseRevocationSummary(
+		stdout,
+		strings.TrimSpace(opts.projectID),
+		domain.CapabilityScopeType(strings.TrimSpace(opts.scopeType)),
+		strings.TrimSpace(opts.scopeID),
+		strings.TrimSpace(opts.reason),
+	)
 }
 
-// runHandoffCreate creates one durable handoff and writes it as stable JSON.
+// runHandoffCreate creates one durable handoff and writes it in a human-readable operator view.
 func runHandoffCreate(ctx context.Context, svc *app.Service, cfg config.Config, opts handoffCreateCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2914,7 +2956,7 @@ func runHandoffCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	if err != nil {
 		return fmt.Errorf("create handoff: %w", err)
 	}
-	return writeJSON(stdout, handoffPayload(handoff))
+	return writeCoordinationHandoffDetail(stdout, handoff)
 }
 
 // runHandoffGet returns one durable handoff in a human-readable operator view.
@@ -2953,7 +2995,7 @@ func runHandoffList(ctx context.Context, svc *app.Service, opts handoffListComma
 	return writeCoordinationHandoffList(stdout, handoffs)
 }
 
-// runHandoffUpdate updates one durable handoff and writes it as stable JSON.
+// runHandoffUpdate updates one durable handoff and writes it in a human-readable operator view.
 func runHandoffUpdate(ctx context.Context, svc *app.Service, cfg config.Config, opts handoffUpdateCommandOptions, stdout io.Writer) error {
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
@@ -2980,7 +3022,7 @@ func runHandoffUpdate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	if err != nil {
 		return fmt.Errorf("update handoff: %w", err)
 	}
-	return writeJSON(stdout, handoffPayload(handoff))
+	return writeCoordinationHandoffDetail(stdout, handoff)
 }
 
 // runAuthRequestCreate creates one persisted auth request and mirrors it into notifications.
@@ -3012,7 +3054,7 @@ func runAuthRequestCreate(ctx context.Context, svc *app.Service, cfg config.Conf
 	if err != nil {
 		return fmt.Errorf("create auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(request, ""))
 }
 
 // parseCLIContinuationJSON validates one optional CLI continuation JSON object string.
@@ -3176,7 +3218,7 @@ func runAuthRequestApprove(ctx context.Context, svc *app.Service, cfg config.Con
 	if err != nil {
 		return fmt.Errorf("approve auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(approved.Request, approved.SessionSecret))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(approved.Request, approved.SessionSecret))
 }
 
 // runAuthRequestDeny denies one pending auth request.
@@ -3194,7 +3236,7 @@ func runAuthRequestDeny(ctx context.Context, svc *app.Service, cfg config.Config
 	if err != nil {
 		return fmt.Errorf("deny auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(request, ""))
 }
 
 // runAuthRequestCancel cancels one pending auth request.
@@ -3212,7 +3254,7 @@ func runAuthRequestCancel(ctx context.Context, svc *app.Service, cfg config.Conf
 	if err != nil {
 		return fmt.Errorf("cancel auth request: %w", err)
 	}
-	return writeJSON(stdout, authRequestPayload(request, ""))
+	return writeAuthRequestResultHuman(stdout, authRequestPayload(request, ""))
 }
 
 // runAuthSessionList returns caller-safe auth-session inventory in a human-readable operator view.
@@ -3247,7 +3289,7 @@ func runAuthSessionValidate(ctx context.Context, svc *app.Service, opts sessionV
 	if err != nil {
 		return fmt.Errorf("validate auth session: %w", err)
 	}
-	return writeJSON(stdout, authSessionPayload(validated.Session))
+	return writeAuthSessionDetailHuman(stdout, authSessionPayload(validated.Session), "")
 }
 
 // runAuthSessionRevoke revokes one auth session through the app-facing backend.
@@ -3259,7 +3301,7 @@ func runAuthSessionRevoke(ctx context.Context, svc *app.Service, opts revokeSess
 	if err != nil {
 		return fmt.Errorf("revoke auth session: %w", err)
 	}
-	return writeJSON(stdout, authSessionPayload(session))
+	return writeAuthSessionDetailHuman(stdout, authSessionPayload(session), "")
 }
 
 // runExport runs the requested command flow.
@@ -3457,61 +3499,6 @@ type kindAllowlistPayloadJSON struct {
 	KindIDs   []string `json:"kind_ids"`
 }
 
-// capabilityLeasePayloadJSON stores JSON-friendly capability lease output fields.
-type capabilityLeasePayloadJSON struct {
-	InstanceID                string     `json:"instance_id"`
-	LeaseToken                string     `json:"lease_token,omitempty"`
-	AgentName                 string     `json:"agent_name"`
-	ProjectID                 string     `json:"project_id"`
-	ScopeType                 string     `json:"scope_type"`
-	ScopeID                   string     `json:"scope_id"`
-	Role                      string     `json:"role"`
-	ParentInstanceID          string     `json:"parent_instance_id,omitempty"`
-	AllowEqualScopeDelegation bool       `json:"allow_equal_scope_delegation,omitempty"`
-	IssuedAt                  time.Time  `json:"issued_at"`
-	ExpiresAt                 time.Time  `json:"expires_at"`
-	HeartbeatAt               time.Time  `json:"heartbeat_at"`
-	RevokedAt                 *time.Time `json:"revoked_at,omitempty"`
-	RevokedReason             string     `json:"revoked_reason,omitempty"`
-}
-
-// leaseRevokeAllPayloadJSON stores JSON-friendly revoke-all output fields.
-type leaseRevokeAllPayloadJSON struct {
-	ProjectID string `json:"project_id"`
-	ScopeType string `json:"scope_type"`
-	ScopeID   string `json:"scope_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-}
-
-// handoffPayloadJSON stores JSON-friendly handoff output fields.
-type handoffPayloadJSON struct {
-	ID              string     `json:"id"`
-	ProjectID       string     `json:"project_id"`
-	BranchID        string     `json:"branch_id,omitempty"`
-	ScopeType       string     `json:"scope_type"`
-	ScopeID         string     `json:"scope_id"`
-	SourceRole      string     `json:"source_role,omitempty"`
-	TargetBranchID  string     `json:"target_branch_id,omitempty"`
-	TargetScopeType string     `json:"target_scope_type,omitempty"`
-	TargetScopeID   string     `json:"target_scope_id,omitempty"`
-	TargetRole      string     `json:"target_role,omitempty"`
-	Status          string     `json:"status"`
-	Summary         string     `json:"summary"`
-	NextAction      string     `json:"next_action,omitempty"`
-	MissingEvidence []string   `json:"missing_evidence,omitempty"`
-	RelatedRefs     []string   `json:"related_refs,omitempty"`
-	CreatedByActor  string     `json:"created_by_actor"`
-	CreatedByType   string     `json:"created_by_type"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedByActor  string     `json:"updated_by_actor"`
-	UpdatedByType   string     `json:"updated_by_type"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	ResolvedByActor string     `json:"resolved_by_actor,omitempty"`
-	ResolvedByType  string     `json:"resolved_by_type,omitempty"`
-	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
-	ResolutionNote  string     `json:"resolution_note,omitempty"`
-}
-
 // authRequestPayloadJSON stores JSON-friendly auth-request output fields.
 type authRequestPayloadJSON struct {
 	ID                     string     `json:"id"`
@@ -3681,57 +3668,6 @@ func kindDefinitionPayload(kind domain.KindDefinition) kindDefinitionPayloadJSON
 		CreatedAt:           kind.CreatedAt.UTC(),
 		UpdatedAt:           kind.UpdatedAt.UTC(),
 		ArchivedAt:          kind.ArchivedAt,
-	}
-}
-
-// capabilityLeasePayload maps one capability lease into stable CLI JSON output.
-func capabilityLeasePayload(lease domain.CapabilityLease) capabilityLeasePayloadJSON {
-	return capabilityLeasePayloadJSON{
-		InstanceID:                lease.InstanceID,
-		LeaseToken:                lease.LeaseToken,
-		AgentName:                 lease.AgentName,
-		ProjectID:                 lease.ProjectID,
-		ScopeType:                 string(lease.ScopeType),
-		ScopeID:                   lease.ScopeID,
-		Role:                      string(lease.Role),
-		ParentInstanceID:          lease.ParentInstanceID,
-		AllowEqualScopeDelegation: lease.AllowEqualScopeDelegation,
-		IssuedAt:                  lease.IssuedAt.UTC(),
-		ExpiresAt:                 lease.ExpiresAt.UTC(),
-		HeartbeatAt:               lease.HeartbeatAt.UTC(),
-		RevokedAt:                 lease.RevokedAt,
-		RevokedReason:             lease.RevokedReason,
-	}
-}
-
-// handoffPayload maps one durable handoff into stable CLI JSON output.
-func handoffPayload(handoff domain.Handoff) handoffPayloadJSON {
-	return handoffPayloadJSON{
-		ID:              handoff.ID,
-		ProjectID:       handoff.ProjectID,
-		BranchID:        handoff.BranchID,
-		ScopeType:       string(handoff.ScopeType),
-		ScopeID:         handoff.ScopeID,
-		SourceRole:      handoff.SourceRole,
-		TargetBranchID:  handoff.TargetBranchID,
-		TargetScopeType: string(handoff.TargetScopeType),
-		TargetScopeID:   handoff.TargetScopeID,
-		TargetRole:      handoff.TargetRole,
-		Status:          string(handoff.Status),
-		Summary:         handoff.Summary,
-		NextAction:      handoff.NextAction,
-		MissingEvidence: append([]string(nil), handoff.MissingEvidence...),
-		RelatedRefs:     append([]string(nil), handoff.RelatedRefs...),
-		CreatedByActor:  handoff.CreatedByActor,
-		CreatedByType:   string(handoff.CreatedByType),
-		CreatedAt:       handoff.CreatedAt.UTC(),
-		UpdatedByActor:  handoff.UpdatedByActor,
-		UpdatedByType:   string(handoff.UpdatedByType),
-		UpdatedAt:       handoff.UpdatedAt.UTC(),
-		ResolvedByActor: handoff.ResolvedByActor,
-		ResolvedByType:  string(handoff.ResolvedByType),
-		ResolvedAt:      handoff.ResolvedAt,
-		ResolutionNote:  handoff.ResolutionNote,
 	}
 }
 
