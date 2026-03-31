@@ -4,42 +4,6 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
-## Checkpoint 2026-03-30: Help Placeholder Rendering Fix
-
-Objective:
-- keep angle-bracket placeholder examples such as `<project-id>` and fix the styled help renderer so later flags stay consistently highlighted instead of being downgraded after placeholder tokens.
-
-Context7:
-1. `/websites/pkg_go_dev_github_com_spf13_cobra` reviewed before the renderer change for:
-   - custom help interception via Cobra,
-   - and safe help/usage rendering without changing command semantics -> PASS.
-2. `/charmbracelet/fang` had already been reviewed during the earlier help parity work and the local renderer keeps Fang only for palette reuse while bypassing its placeholder-misclassifying example tokenizer.
-3. After the first focused CLI test failure, `/websites/pkg_go_dev_github_com_spf13_cobra` was refreshed again before the next edit -> PASS.
-
-Implementation summary:
-1. Added one local help renderer in `cmd/till/help_render.go` and routed explicit `--help` / `-h` invocations through it before `fang.Execute(...)`.
-2. Kept the existing operator convention for ids and paths:
-   - help examples still use angle-bracket placeholders such as `<project-id>`, `<agent-name>`, and `<request-id>`,
-   - rather than replacing them with fake ids or shell-awkward alternatives.
-3. Fixed the placeholder rendering bug by tokenizing examples locally:
-   - placeholder values remain ordinary arguments,
-   - later flags remain flags,
-   - and long example lines stay intact instead of being clipped into ellipses.
-4. Added focused CLI tests in `cmd/till/help_render_test.go` for:
-   - placeholder token classification,
-   - and full example-line preservation in live help output.
-
-Validation:
-1. `mage test-pkg ./cmd/till` -> PASS.
-2. `mage build` -> PASS.
-3. `./till lease issue --help` -> PASS.
-4. `./till auth request create --help` -> PASS.
-
-Current status:
-1. Placeholder-style ids remain the best-practice operator convention for help/examples in this CLI.
-2. The local help renderer now preserves those placeholders without breaking later flag highlighting or truncating long examples.
-3. Full repo validation is the remaining step before commit.
-
 ## Checkpoint 2026-03-30: Help Example Placeholder Cleanup
 
 Objective:
