@@ -932,11 +932,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.get_project_template_binding",
 		"till.get_node_contract_snapshot",
 		"till.list_capability_leases",
-		"till.issue_capability_lease",
-		"till.heartbeat_capability_lease",
-		"till.renew_capability_lease",
-		"till.revoke_capability_lease",
-		"till.revoke_all_capability_leases",
+		"till.capability_lease",
 		"till.create_comment",
 		"till.list_comments_by_target",
 		"till.create_handoff",
@@ -1056,11 +1052,11 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.get_project_template_binding", args: map[string]any{"project_id": "p1"}},
 		{name: "till.get_node_contract_snapshot", args: map[string]any{"node_id": "task-qa-1"}},
 		{name: "till.list_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project", "include_revoked": true}},
-		{name: "till.issue_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
-		{name: "till.heartbeat_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"})},
-		{name: "till.renew_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
-		{name: "till.revoke_capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"agent_instance_id": "inst-1"})},
-		{name: "till.revoke_all_capability_leases", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "scope_type": "project"})},
+		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "issue", "project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
+		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "heartbeat", "agent_instance_id": "inst-1", "lease_token": "tok-1"})},
+		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "renew", "agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
+		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "revoke", "agent_instance_id": "inst-1"})},
+		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "revoke_all", "project_id": "p1", "scope_type": "project"})},
 		{name: "till.create_comment", args: mergeArgs(validSessionArgs(), map[string]any{
 			"project_id":        "p1",
 			"target_type":       "task",
@@ -1115,6 +1111,76 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		}
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("tool %q returned isError=true: %#v", tc.name, callResp.Result)
+		}
+	}
+}
+
+// TestHandlerExpandedLeaseToolVisibility verifies the reduced lease surface is default and legacy aliases are opt-in.
+func TestHandlerExpandedLeaseToolVisibility(t *testing.T) {
+	t.Parallel()
+
+	collectToolNames := func(t *testing.T, cfg Config) []string {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(cfg, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/list",
+		})
+		toolsRaw, ok := toolsResp.Result["tools"].([]any)
+		if !ok {
+			t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+		}
+		toolNames := make([]string, 0, len(toolsRaw))
+		for _, toolRaw := range toolsRaw {
+			toolMap, ok := toolRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := toolMap["name"].(string)
+			toolNames = append(toolNames, name)
+		}
+		return toolNames
+	}
+
+	defaultTools := collectToolNames(t, Config{})
+	if !slices.Contains(defaultTools, "till.capability_lease") {
+		t.Fatalf("default surface missing till.capability_lease: %#v", defaultTools)
+	}
+	for _, legacy := range []string{
+		"till.issue_capability_lease",
+		"till.heartbeat_capability_lease",
+		"till.renew_capability_lease",
+		"till.revoke_capability_lease",
+		"till.revoke_all_capability_leases",
+	} {
+		if slices.Contains(defaultTools, legacy) {
+			t.Fatalf("unexpected legacy lease tool %q in default surface: %#v", legacy, defaultTools)
+		}
+	}
+
+	legacyTools := collectToolNames(t, Config{ExposeLegacyLeaseTools: true})
+	for _, required := range []string{
+		"till.capability_lease",
+		"till.issue_capability_lease",
+		"till.heartbeat_capability_lease",
+		"till.renew_capability_lease",
+		"till.revoke_capability_lease",
+		"till.revoke_all_capability_leases",
+	} {
+		if !slices.Contains(legacyTools, required) {
+			t.Fatalf("legacy lease mode missing %q: %#v", required, legacyTools)
 		}
 	}
 }
@@ -1949,6 +2015,107 @@ func TestHandlerExpandedCreateProjectPassesTemplateLibraryID(t *testing.T) {
 	}
 	if got := service.lastCreateProjectReq.Kind; got != "go-service" {
 		t.Fatalf("create_project kind = %q, want go-service", got)
+	}
+}
+
+// TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope verifies global/bootstrap admin tools authorize against a rooted project scope.
+func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		tool          string
+		args          map[string]any
+		wantNamespace string
+		wantProjectID string
+	}{
+		{
+			name: "create project uses global sentinel scope",
+			tool: "till.create_project",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"name":              "Project One",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
+			wantProjectID: domain.AuthRequestGlobalProjectID,
+		},
+		{
+			name: "upsert kind definition uses global sentinel scope",
+			tool: "till.upsert_kind_definition",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"id":         "go-project",
+				"applies_to": []any{"project"},
+			}),
+			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
+			wantProjectID: domain.AuthRequestGlobalProjectID,
+		},
+		{
+			name: "global template library uses global sentinel scope",
+			tool: "till.upsert_template_library",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"library": map[string]any{
+					"id":     "go-defaults",
+					"scope":  "global",
+					"name":   "Go Defaults",
+					"status": "approved",
+				},
+			}),
+			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
+			wantProjectID: domain.AuthRequestGlobalProjectID,
+		},
+		{
+			name: "project template library stays rooted to its project",
+			tool: "till.upsert_template_library",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"library": map[string]any{
+					"id":         "go-defaults-p1",
+					"scope":      "project",
+					"project_id": "p1",
+					"name":       "Go Defaults P1",
+					"status":     "draft",
+				},
+			}),
+			wantNamespace: "project:p1",
+			wantProjectID: "p1",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			service := &stubExpandedService{
+				stubCaptureStateReader: stubCaptureStateReader{
+					captureState: common.CaptureState{StateHash: "abc123"},
+				},
+				stubMutationAuthorizer: stubMutationAuthorizer{},
+			}
+			handler, err := NewHandler(Config{}, service, nil)
+			if err != nil {
+				t.Fatalf("NewHandler() error = %v", err)
+			}
+
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+			_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, tc.tool, tc.args))
+			if isError, _ := callResp.Result["isError"].(bool); isError {
+				t.Fatalf("%s returned isError=true: %#v", tc.tool, callResp.Result)
+			}
+			if got := service.lastAuthRequest.Namespace; got != tc.wantNamespace {
+				t.Fatalf("%s namespace = %q, want %q", tc.tool, got, tc.wantNamespace)
+			}
+			if got := service.lastAuthRequest.Context["project_id"]; got != tc.wantProjectID {
+				t.Fatalf("%s context project_id = %q, want %q", tc.tool, got, tc.wantProjectID)
+			}
+			if got := service.lastAuthRequest.Context["scope_type"]; got != string(domain.ScopeLevelProject) {
+				t.Fatalf("%s context scope_type = %q, want %q", tc.tool, got, domain.ScopeLevelProject)
+			}
+			if got := service.lastAuthRequest.Context["scope_id"]; got != tc.wantProjectID {
+				t.Fatalf("%s context scope_id = %q, want %q", tc.tool, got, tc.wantProjectID)
+			}
+		})
 	}
 }
 

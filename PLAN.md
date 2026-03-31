@@ -1133,7 +1133,15 @@ Current auth-critical MCP tools that appear misaligned with the `autent` approve
 8. `till.heartbeat_capability_lease`
 9. `till.renew_capability_lease`
 10. `till.revoke_capability_lease`
-11. These are the currently known tools whose MCP auth inputs still look shaped for the older resource-id-first model rather than the new path-first model.
+11. These are the currently known tools whose MCP auth inputs still look shaped for the older resource-id-first model rather than the new path-first model:
+   - `till.create_project`
+   - `till.upsert_kind_definition`
+   - `till.upsert_template_library`
+12. Those remaining tools are the important projectless/global admin edge of the surface:
+   - project bootstrap,
+   - kind catalog mutation,
+   - and template-library mutation.
+13. They do not fit cleanly into the current by-id project lookup model because approved-path validation still expects a rooted scope tuple, even for global approvals.
 
 Current auth-critical MCP tools that look aligned or closer to aligned:
 1. `till.create_task`
@@ -1147,6 +1155,7 @@ Current auth-critical MCP tools that look aligned or closer to aligned:
 9. These tools either:
    - already pass project-rooted auth context explicitly,
    - or pass enough project-scoped data that the current approved-path model can evaluate them correctly.
+10. The previous auth cleanup intentionally got the rooted project/scope families into better shape first, but it did not fully close the remaining global admin/bootstrap mutation path.
 
 Why the current MCP surface now needs rationalization beyond the auth fix:
 1. The current tool set is too wide for agent ergonomics:
@@ -1180,13 +1189,21 @@ Planning direction for a cleaner MCP surface:
    - any future tool family must make the project/scope auth context explicit,
    - or reuse one shared resolver that can derive it deterministically,
    - so the same migration bug cannot reappear tool-by-tool.
-7. Do not commit to the final reduced MCP tool map yet.
-8. First produce:
+7. Before broader noun-family reduction, explicitly close the remaining global admin/bootstrap auth gap:
+   - `till.create_project`
+   - `till.upsert_kind_definition`
+   - `till.upsert_template_library`
+   - and any future projectless/global operator flow should reuse the same rooted auth-context helper with the `__global__` sentinel project scope.
+8. Do not commit to the final reduced MCP tool map yet.
+9. First produce:
    - the full surface inventory,
    - the auth alignment matrix,
    - the noun-family consolidation candidates,
    - and the cross-surface test matrix.
-9. Only after that inventory is accepted should implementation start on the actual surface reduction.
+10. Implementation can proceed in parallel for correctness-critical gaps that are already well understood:
+   - especially auth-context normalization drift on global admin/bootstrap mutations,
+   - because those bugs block dogfood setup and distort any later MCP ergonomics evaluation.
+11. Only after that inventory is accepted should implementation start on the broader surface reduction.
 
 Locked naming and model clarifications from the current planning pass:
 1. Do not use `till.task` as the future family name for `branch|phase|task|subtask`.
@@ -1241,6 +1258,11 @@ Implementation scope lock for the next fix wave:
    - remove orphaned old-shape auth-context code,
    - and prove the live `C5` path plus adjacent by-id mutation families.
 4. The future MCP surface reduction remains planned immediately after the auth cleanup is green and collaboratively rerun.
+5. Checkpoint 2026-03-31:
+   - the auth cleanup is now green locally,
+   - the first real surface-reduction slice has started with lease visibility,
+   - default MCP registration now exposes `till.capability_lease` plus `till.list_capability_leases`,
+   - and the older flat lease mutation tool names remain available only behind an explicit legacy config switch for compatibility testing.
 
 Wave contract for the current implementation/QA pass:
 1. The primary implementation seam is shared mutation-auth context normalization below individual MCP tools:
