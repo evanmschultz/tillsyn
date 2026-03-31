@@ -75,8 +75,8 @@ github.com/evanmschultz/autent v0.1.1 h1:87xDBT/fKLfkJi6Wy/ePN+VVIYaGFmCcbTtQDU0
 github.com/evanmschultz/autent v0.1.1/go.mod h1:jZgt3LR0R6C3Xik4rRk1kFtLj3k0rrx2TVZKv4UlRRo=
 github.com/evanmschultz/fantasy v0.0.0-20260219222711-d1be5103494b h1:XjFlVxiXEHkvfGoBeAskdPAs25o7LwNro2B8USOgu6E=
 github.com/evanmschultz/fantasy v0.0.0-20260219222711-d1be5103494b/go.mod h1:vpR/vcgCtKZ5SWHNbW/5c1b+DMDNNO15j+t/evoQb/4=
-github.com/evanmschultz/laslig v0.2.1 h1:oxC3YxefyH5G69Ma+qck6++rXrVZlTeP2pjxZ9HByQE=
-github.com/evanmschultz/laslig v0.2.1/go.mod h1:4+qYxQTo7ar8F6aLZCtwonxmjpmf4JrnVwCPQrhOOAU=
+github.com/evanmschultz/laslig v0.2.2 h1:4PHfsZd4Q1alMKjvlky/dJOI6tzrmqWcW22Gh37/mww=
+github.com/evanmschultz/laslig v0.2.2/go.mod h1:4+qYxQTo7ar8F6aLZCtwonxmjpmf4JrnVwCPQrhOOAU=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/go-json-experiment/json v0.0.0-20251027170946-4849db3c2f7e h1:Lf/gRkoycfOBPa42vU2bbgPurFong6zXeFtPoxholzU=

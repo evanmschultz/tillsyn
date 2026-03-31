@@ -68,6 +68,34 @@ Current status:
 3. CLI help text now uses shell-safe uppercase metavars instead of angle-bracket placeholders.
 4. The remaining visual behavior now comes from Fang's native wrapping/styling rather than a local help pipeline fork.
 
+## Checkpoint 2026-03-30: Wrap Fang Help Examples + Upgrade Laslig
+
+Objective:
+- make Fang-backed help examples wrap cleanly instead of clipping with ellipses, and move the repo from `laslig v0.2.1` to `v0.2.2` without regressing the repo's existing Mage spinner behavior.
+
+Context7:
+1. `/charmbracelet/fang` reviewed before the wrap fix to confirm Fang truncates overlong example lines inside codeblocks and that explicit continuation lines are the lowest-risk way to preserve the native help renderer -> PASS.
+2. Context7 coverage for `laslig` remained unavailable, so the fallback source before the dependency update was the cached upstream module docs and GitHub release/tag metadata for `v0.2.2`.
+
+Implementation summary:
+1. Converted overlong CLI examples in `cmd/till/main.go` and `cmd/till/help.go` to explicit multi-line shell continuations with trailing `\` so Fang renders wrapped examples instead of truncating them.
+2. Kept `help.go` as the effective source for overlapping command help, while also wrapping the `main.go`-only auth/project examples that still feed runtime help directly.
+3. Upgraded `github.com/evanmschultz/laslig` from `v0.2.1` to `v0.2.2`.
+4. Updated `magefile.go` to disable the new `gotestout` live activity footer:
+   - the repo already has an outer Mage spinner,
+   - so `gotestout.ActivityOff` keeps the upgraded dependency from rendering duplicate progress activity.
+
+Validation:
+1. `mage ci` -> PASS.
+2. `./till lease issue --help` -> PASS.
+3. `./till auth request create --help` -> PASS.
+
+Current status:
+1. Fang help rendering remains the only help path.
+2. The previously clipped auth/lease examples now wrap as explicit continuations.
+3. The repo now uses `laslig v0.2.2`.
+4. Mage keeps the existing spinner UX without a second nested test-activity footer.
+
 ## Checkpoint 2026-03-30: Laslig v0.2.1 Upgrade + CLI/Mage Progress Spinners
 
 Objective:

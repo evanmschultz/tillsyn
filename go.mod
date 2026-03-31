@@ -60,7 +60,7 @@ require (
 	github.com/charmbracelet/log v0.4.2
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260216111343-536eb63c1f4c
 	github.com/evanmschultz/autent v0.1.1
-	github.com/evanmschultz/laslig v0.2.1
+	github.com/evanmschultz/laslig v0.2.2
 	github.com/google/uuid v1.6.0
 	github.com/ncruces/go-sqlite3 v0.23.3
 	github.com/pelletier/go-toml/v2 v2.2.4
