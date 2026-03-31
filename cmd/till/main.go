@@ -386,6 +386,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if stderr == nil {
 		stderr = io.Discard
 	}
+	args = normalizeHelpInvocationArgs(args)
 
 	rootOpts := rootCommandOptions{
 		appName: "tillsyn",
@@ -468,8 +469,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	rootCmd := &cobra.Command{
-		Use:           "till",
-		Short:         "Local-first planning TUI with stdio MCP and HTTP adapters",
+		Use:   "till",
+		Short: "Local-first planning TUI with stdio MCP and HTTP adapters",
+		Long: strings.TrimSpace(`
+Run Tillsyn as an interactive local-first planning workspace, an stdio MCP
+runtime, or an HTTP API + streamable MCP service.
+
+Use the bare till command to open the TUI. Use subcommands when you need stable
+operator flows for projects, auth/session lifecycle, leases, handoffs,
+template-library contracts, snapshot transport, or embeddings operations.
+`),
+		Example: strings.Join([]string{
+			"  till",
+			"  till project list",
+			"  till project create --name Inbox",
+			"  till template library list --scope global --status approved",
+			"  till embeddings status --cross-project",
+			"  till mcp",
+			"  till serve --http 127.0.0.1:4848",
+		}, "\n"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -489,7 +507,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	serveCmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start HTTP API and streamable HTTP MCP endpoints",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Start the long-running Tillsyn server process with both the HTTP API and the
+streamable HTTP MCP endpoint enabled.
+
+Use this when a browser client, remote MCP client, or another local process
+needs to talk to one persistent runtime instead of invoking 'till mcp' over
+stdio.
+`),
+		Example: strings.Join([]string{
+			"  till serve",
+			"  till serve --http 127.0.0.1:4848",
+			"  till serve --http 127.0.0.1:4848 --api-endpoint /api --mcp-endpoint /mcp",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "serve")
 		},
@@ -501,7 +532,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Start raw MCP over stdio for local integrations",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Start the raw stdio MCP runtime for local agent integrations.
+
+Use this when one local MCP-capable client should speak directly to Tillsyn
+over stdin/stdout instead of the HTTP server surface.
+`),
+		Example: strings.Join([]string{
+			"  till mcp",
+			"  till --db /tmp/tillsyn.db --config /tmp/tillsyn.toml mcp",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "mcp")
 		},
@@ -690,12 +731,30 @@ Inspect persistent embeddings lifecycle state, view pending/failed/stale rows,
 and trigger explicit backfill or reindex operations without blocking normal
 task mutations.
 `),
+		Example: strings.Join([]string{
+			"  till embeddings status --cross-project",
+			"  till embeddings status --project-id p1 --status failed",
+			"  till embeddings reindex --project-id p1 --wait",
+		}, "\n"),
 		Args: cobra.NoArgs,
 	}
 	embeddingsStatusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show embeddings lifecycle health and row inventory",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Show embeddings runtime health, lifecycle summary counts, and row-level
+inventory for one project or for all projects.
+
+Use this first when semantic search seems stale, when a backfill appears stuck,
+or after a reindex request so you can see whether rows are pending, running,
+ready, failed, or stale.
+`),
+		Example: strings.Join([]string{
+			"  till embeddings status --project-id p1",
+			"  till embeddings status --cross-project",
+			"  till embeddings status --project-id p1 --status failed --status stale",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "embeddings.status")
 		},
@@ -708,7 +767,20 @@ task mutations.
 	embeddingsReindexCmd := &cobra.Command{
 		Use:   "reindex",
 		Short: "Enqueue or force one explicit embeddings backfill/reindex",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Enqueue one explicit embeddings reindex or backfill request for one project or
+for all projects.
+
+Use --wait when you want this operator command to stay attached until the chosen
+scope reaches a steady lifecycle state, or pair it with 'till embeddings
+status' for manual progress inspection.
+`),
+		Example: strings.Join([]string{
+			"  till embeddings reindex --project-id p1",
+			"  till embeddings reindex --project-id p1 --force",
+			"  till embeddings reindex --cross-project --wait --wait-timeout 30s",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "embeddings.reindex")
 		},
@@ -754,12 +826,27 @@ Inspect kind definitions and project allowlists. Template-library workflow
 contracts now live under the dedicated template commands rather than the kind
 registry path.
 `),
+		Example: strings.Join([]string{
+			"  till kind list",
+			"  till kind upsert --id qa-check --display-name \"QA Check\" --applies-to subtask",
+			"  till kind allowlist list --project-id p1",
+		}, "\n"),
 		Args: cobra.NoArgs,
 	}
 	kindListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List kind definitions",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+List every stored kind definition in deterministic order.
+
+Use this to discover valid kind ids before project creation, task creation, or
+template authoring. Add --include-archived when auditing historical kinds.
+`),
+		Example: strings.Join([]string{
+			"  till kind list",
+			"  till kind list --include-archived",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "kind.list")
 		},
@@ -768,7 +855,19 @@ registry path.
 	kindUpsertCmd := &cobra.Command{
 		Use:   "upsert",
 		Short: "Create or update one kind definition",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Create or update one kind definition in the kind registry.
+
+Use this for structural kind metadata such as id, display name, applies-to
+scope, parent-scope rules, and optional payload schema. Template-library
+workflow contracts do not live here anymore. The hidden '--template-json' flag
+remains compatibility-only and should not be used for new work.
+`),
+		Example: strings.Join([]string{
+			"  till kind upsert --id research-task --display-name \"Research Task\" --applies-to task",
+			"  till kind upsert --id qa-check --display-name \"QA Check\" --applies-to subtask --allowed-parent-scopes task --payload-schema-json '{\"type\":\"object\"}'",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "kind.upsert")
 		},
@@ -787,12 +886,29 @@ registry path.
 	kindAllowlistCmd := &cobra.Command{
 		Use:   "allowlist",
 		Short: "Inspect and update a project's explicit kind allowlist",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Inspect or replace the explicit kind allowlist for one project.
+
+Use this when a project should permit only a curated subset of registered kinds
+instead of every globally known kind definition.
+`),
+		Example: strings.Join([]string{
+			"  till kind allowlist list --project-id p1",
+			"  till kind allowlist set --project-id p1 --kind-id build-task --kind-id qa-check",
+		}, "\n"),
+		Args: cobra.NoArgs,
 	}
 	kindAllowlistListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List one project's allowed kind ids",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+List the explicit kind allowlist for one project.
+
+Use this before changing template libraries or project-scoped workflow rules so
+you know which node kinds are currently permitted inside the project.
+`),
+		Example: "  till kind allowlist list --project-id p1",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "kind.allowlist.list")
 		},
@@ -801,7 +917,18 @@ registry path.
 	kindAllowlistSetCmd := &cobra.Command{
 		Use:   "set",
 		Short: "Replace one project's allowed kind ids",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Replace the explicit kind allowlist for one project with the provided set of
+kind ids.
+
+This is a replace operation, not an additive patch. Re-supply the full desired
+allowlist each time.
+`),
+		Example: strings.Join([]string{
+			"  till kind allowlist set --project-id p1 --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist set --project-id p1 --kind-id research-task",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "kind.allowlist.set")
 		},
@@ -819,17 +946,47 @@ Inspect SQLite-backed template libraries, bind approved libraries to projects,
 and inspect generated node-contract snapshots. JSON is the stable CLI/MCP
 transport for template-library specs while SQLite remains the source of truth.
 `),
+		Example: strings.Join([]string{
+			"  till template library list --scope global --status approved",
+			"  till template project bind --project-id p1 --library-id go-defaults",
+			"  till template contract show --node-id task-123",
+		}, "\n"),
 		Args: cobra.NoArgs,
 	}
 	templateLibraryCmd := &cobra.Command{
 		Use:   "library",
 		Short: "Inspect and upsert template libraries",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Inspect template-library inventory and upsert library specs through the stable
+JSON transport seam.
+
+Use this command group for library-level operations. Project binding lives under
+'till template project' and generated-node contract inspection lives under
+'till template contract'.
+`),
+		Example: strings.Join([]string{
+			"  till template library list --scope global --status approved",
+			"  till template library show --library-id go-defaults",
+			"  till template library upsert --spec-json '{\"id\":\"go-defaults\",...}'",
+		}, "\n"),
+		Args: cobra.NoArgs,
 	}
 	templateLibraryListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List template libraries",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+List template libraries in deterministic order with optional scope, project, and
+status filters.
+
+Use this to discover candidate libraries before binding one to a project or
+inspecting it in detail.
+`),
+		Example: strings.Join([]string{
+			"  till template library list",
+			"  till template library list --scope global --status approved",
+			"  till template library list --scope project --project-id p1",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.library.list")
 		},
@@ -840,7 +997,14 @@ transport for template-library specs while SQLite remains the source of truth.
 	templateLibraryShowCmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show one template library",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Show one template library with its node templates and child-rule contract table.
+
+Use this when you need to audit what generated work, actor ownership, and
+completion blockers a library will apply.
+`),
+		Example: "  till template library show --library-id go-defaults",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.library.show")
 		},
@@ -854,6 +1018,10 @@ Create or update one template library from a JSON object. This is a temporary
 operator seam; SQLite remains the source of truth and richer TUI authoring is
 planned separately.
 `),
+		Example: strings.Join([]string{
+			"  till template library upsert --spec-json '{\"id\":\"go-defaults\",\"scope\":\"global\",\"name\":\"Go Defaults\",\"status\":\"approved\",\"node_templates\":[]}'",
+			"  till template library upsert --spec-json \"$(cat go-defaults.json)\"",
+		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.library.upsert")
@@ -866,12 +1034,27 @@ planned separately.
 	templateProjectCmd := &cobra.Command{
 		Use:   "project",
 		Short: "Bind projects to template libraries",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Bind projects to approved template libraries and inspect the currently active
+binding for one project.
+`),
+		Example: strings.Join([]string{
+			"  till template project bind --project-id p1 --library-id go-defaults",
+			"  till template project binding --project-id p1",
+		}, "\n"),
+		Args: cobra.NoArgs,
 	}
 	templateProjectBindCmd := &cobra.Command{
 		Use:   "bind",
 		Short: "Bind one project to one approved template library",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Bind one project to one approved template library.
+
+Use this after reviewing a library with 'till template library show' so the
+project will resolve future generated work from that library.
+`),
+		Example: "  till template project bind --project-id p1 --library-id go-defaults",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.project.bind")
 		},
@@ -881,7 +1064,14 @@ planned separately.
 	templateProjectBindingCmd := &cobra.Command{
 		Use:   "binding",
 		Short: "Show one project's active template-library binding",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Show the currently active template-library binding for one project.
+
+Use this to confirm which library is in force before creating new generated
+work or comparing project behavior with the global library inventory.
+`),
+		Example: "  till template project binding --project-id p1",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.project.binding")
 		},
@@ -892,12 +1082,27 @@ planned separately.
 	templateContractCmd := &cobra.Command{
 		Use:   "contract",
 		Short: "Inspect generated node-contract snapshots",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Inspect stored generated-node contract snapshots.
+
+These snapshots are the truthful runtime record of who owns a generated node,
+who may edit or complete it, and whether it blocks parent or containing-scope
+completion.
+`),
+		Example: "  till template contract show --node-id task-123",
+		Args:    cobra.NoArgs,
 	}
 	templateContractShowCmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show one generated node-contract snapshot",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Show one generated node-contract snapshot by node id.
+
+Use this to confirm the stored workflow contract on an already-generated node
+instead of re-reading the source library and guessing how old work was resolved.
+`),
+		Example: "  till template contract show --node-id task-123",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.contract.show")
 		},
@@ -913,12 +1118,28 @@ planned separately.
 Inspect scoped capability leases, issue new ones, and rotate or revoke them.
 This is the CLI surface for orchestrator and agent recovery state.
 `),
+		Example: strings.Join([]string{
+			"  till lease list --project-id p1",
+			"  till lease issue --project-id p1 --agent-name Builder --role builder",
+			"  till lease revoke-all --project-id p1 --reason reset",
+		}, "\n"),
 		Args: cobra.NoArgs,
 	}
 	leaseListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List capability leases for one project scope",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+List capability leases for one project scope, optionally including revoked rows.
+
+Use this to see which agent instances currently hold scoped authority before
+issuing a new lease or cleaning up abandoned runtime state.
+`),
+		Example: strings.Join([]string{
+			"  till lease list --project-id p1",
+			"  till lease list --project-id p1 --scope-type task --scope-id task-123",
+			"  till lease list --project-id p1 --include-revoked",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.list")
 		},
@@ -930,7 +1151,17 @@ This is the CLI surface for orchestrator and agent recovery state.
 	leaseIssueCmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Issue one capability lease",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Issue one scoped capability lease for an agent instance.
+
+Use this when the orchestrator or operator needs to grant explicit scoped work
+authority to a builder, qa, or orchestrator agent for one project path.
+`),
+		Example: strings.Join([]string{
+			"  till lease issue --project-id p1 --agent-name Builder --role builder",
+			"  till lease issue --project-id p1 --scope-type task --scope-id task-123 --agent-name QA --role qa --requested-ttl 30m",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.issue")
 		},
@@ -948,7 +1179,14 @@ This is the CLI surface for orchestrator and agent recovery state.
 	leaseHeartbeatCmd := &cobra.Command{
 		Use:   "heartbeat",
 		Short: "Refresh one capability lease heartbeat",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Refresh the heartbeat on one active capability lease.
+
+Use this from long-running agent flows to keep one issued lease alive while
+work is still in progress.
+`),
+		Example: "  till lease heartbeat --agent-instance-id agent-123 --lease-token lease-token-abc",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.heartbeat")
 		},
@@ -960,7 +1198,14 @@ This is the CLI surface for orchestrator and agent recovery state.
 	leaseRenewCmd := &cobra.Command{
 		Use:   "renew",
 		Short: "Renew one capability lease",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Renew one capability lease with a new requested TTL.
+
+Use this when work remains valid but the original lease lifetime is too short
+and you want an explicit renewal record instead of only heartbeats.
+`),
+		Example: "  till lease renew --agent-instance-id agent-123 --lease-token lease-token-abc --ttl 30m",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.renew")
 		},
@@ -973,7 +1218,14 @@ This is the CLI surface for orchestrator and agent recovery state.
 	leaseRevokeCmd := &cobra.Command{
 		Use:   "revoke",
 		Short: "Revoke one capability lease",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Revoke one capability lease by agent instance id.
+
+Use this to clean up abandoned or superseded agent authority when a lease
+should no longer permit mutations.
+`),
+		Example: "  till lease revoke --agent-instance-id agent-123 --reason operator_revoke",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.revoke")
 		},
@@ -984,7 +1236,17 @@ This is the CLI surface for orchestrator and agent recovery state.
 	leaseRevokeAllCmd := &cobra.Command{
 		Use:   "revoke-all",
 		Short: "Revoke every lease in one project scope",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Revoke every lease in one project scope in a single operator action.
+
+Use this during recovery or reset flows when an entire project, branch, phase,
+or task scope should be cleared of active leases.
+`),
+		Example: strings.Join([]string{
+			"  till lease revoke-all --project-id p1 --reason reset",
+			"  till lease revoke-all --project-id p1 --scope-type task --scope-id task-123 --reason operator_recover",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.revoke-all")
 		},
@@ -1002,12 +1264,27 @@ This is the CLI surface for orchestrator and agent recovery state.
 Inspect and manage durable, structured handoffs that keep humans and agents
 aligned across planning, execution, and recovery.
 `),
+		Example: strings.Join([]string{
+			"  till handoff list --project-id p1",
+			"  till handoff create --project-id p1 --summary \"QA ready\" --source-role builder --target-role qa",
+			"  till handoff update --handoff-id handoff-123 --summary \"QA approved\" --status accepted",
+		}, "\n"),
 		Args: cobra.NoArgs,
 	}
 	handoffCreateCmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create one durable handoff",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Create one durable structured handoff between humans or agents.
+
+Use this when work needs to move across roles or scopes with an explicit summary,
+next action, missing evidence list, and related references.
+`),
+		Example: strings.Join([]string{
+			"  till handoff create --project-id p1 --summary \"QA ready for review\" --source-role builder --target-role qa",
+			"  till handoff create --project-id p1 --scope-type task --scope-id task-123 --summary \"Need product decision\" --target-role orchestrator --missing-evidence decision-log",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "handoff.create")
 		},
@@ -1029,7 +1306,14 @@ aligned across planning, execution, and recovery.
 	handoffGetCmd := &cobra.Command{
 		Use:   "get",
 		Short: "Show one durable handoff",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Show one durable handoff by handoff id.
+
+Use this when following up on a previously created handoff or when auditing the
+current structured summary and next-action fields.
+`),
+		Example: "  till handoff get --handoff-id handoff-123",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "handoff.get")
 		},
@@ -1039,7 +1323,17 @@ aligned across planning, execution, and recovery.
 	handoffListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List durable handoffs for one scope",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+List durable handoffs for one scope in deterministic order.
+
+Use the project, branch, scope, and status filters to focus on the specific
+handoff lane you need to review.
+`),
+		Example: strings.Join([]string{
+			"  till handoff list --project-id p1",
+			"  till handoff list --project-id p1 --scope-type task --scope-id task-123 --status pending",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "handoff.list")
 		},
@@ -1053,7 +1347,17 @@ aligned across planning, execution, and recovery.
 	handoffUpdateCmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update one durable handoff",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Update one existing durable handoff.
+
+Use this to move the status forward, adjust target routing, or replace the
+structured summary/next-action payload as new evidence arrives.
+`),
+		Example: strings.Join([]string{
+			"  till handoff update --handoff-id handoff-123 --summary \"QA approved\" --status accepted",
+			"  till handoff update --handoff-id handoff-123 --summary \"Need more logs\" --missing-evidence runtime-log --resolution-note \"waiting on reproduction\"",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "handoff.update")
 		},
@@ -1408,7 +1712,19 @@ as a positional argument.
 	exportCmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export a snapshot JSON payload",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Export a snapshot JSON payload for projects, work graph state, and template
+library contract data.
+
+Use this for backup, migration, debugging, or moving one local state bundle
+between machines or worktrees.
+`),
+		Example: strings.Join([]string{
+			"  till export --out snapshot.json",
+			"  till export --out -",
+			"  till export --out snapshot.json --include-archived",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "export")
 		},
@@ -1419,7 +1735,17 @@ as a positional argument.
 	importCmd := &cobra.Command{
 		Use:   "import",
 		Short: "Import a snapshot JSON payload",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Import a snapshot JSON payload back into the runtime store.
+
+Use this to restore or transfer projects, work items, template libraries,
+bindings, and generated-node contract snapshots from a prior export.
+`),
+		Example: strings.Join([]string{
+			"  till import --in snapshot.json",
+			"  till import --in -",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "import")
 		},
@@ -1429,7 +1755,19 @@ as a positional argument.
 	pathsCmd := &cobra.Command{
 		Use:   "paths",
 		Short: "Print resolved runtime root/config/database/log paths",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Print the resolved runtime paths for the active app name, config path, database
+path, and log directory.
+
+Use this when debugging which config or database a CLI invocation will touch,
+especially in dev mode or when overriding paths through flags or environment.
+`),
+		Example: strings.Join([]string{
+			"  till paths",
+			"  till --dev paths",
+			"  till --db /tmp/tillsyn.db --config /tmp/tillsyn.toml paths",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if rootOpts.showVersion {
 				return writeVersion(stdout)
@@ -1467,14 +1805,24 @@ as a positional argument.
 	initDevConfigCmd := &cobra.Command{
 		Use:   "init-dev-config",
 		Short: "Create the dev config file and enforce [logging] level = \"debug\"",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Create the dev config file from the checked-in example when missing, then force
+the local dev logging level to debug.
+
+Use this when bootstrapping a fresh local workstation or when you want the repo
+default development config file restored quickly.
+`),
+		Example: strings.Join([]string{
+			"  till init-dev-config",
+			"  till --app tillsyn init-dev-config",
+		}, "\n"),
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runInitDevConfig(stdout, rootOpts)
 		},
 	}
-
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, templateCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
