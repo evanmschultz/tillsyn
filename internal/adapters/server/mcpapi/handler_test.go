@@ -501,11 +501,15 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 	for _, required := range []string{
 		"till.capture_state",
 		"till.list_attention_items",
-		"till.raise_attention_item",
-		"till.resolve_attention_item",
+		"till.attention_item",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
+		}
+	}
+	for _, legacy := range []string{"till.raise_attention_item", "till.resolve_attention_item"} {
+		if slices.Contains(toolNames, legacy) {
+			t.Fatalf("unexpected legacy attention tool %q in default surface: %#v", legacy, toolNames)
 		}
 	}
 }
@@ -557,8 +561,8 @@ func TestHandlerRegistersAuthRequestToolsWhenAvailable(t *testing.T) {
 	}
 }
 
-// TestHandlerRaiseAttentionToolSchemaGuidance verifies markdown-rich summary/details guidance on raise_attention_item args.
-func TestHandlerRaiseAttentionToolSchemaGuidance(t *testing.T) {
+// TestHandlerAttentionItemToolSchemaGuidance verifies markdown-rich summary/details guidance on attention_item raise args.
+func TestHandlerAttentionItemToolSchemaGuidance(t *testing.T) {
 	capture := &stubCaptureStateReader{
 		captureState: common.CaptureState{
 			StateHash: "abc123",
@@ -581,7 +585,7 @@ func TestHandlerRaiseAttentionToolSchemaGuidance(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
 	}
-	schema := findToolSchemaByName(t, toolsRaw, "till.raise_attention_item")
+	schema := findToolSchemaByName(t, toolsRaw, "till.attention_item")
 	summaryDesc := schemaStringPropertyDescription(t, schema, "summary")
 	if !strings.Contains(strings.ToLower(summaryDesc), "markdown-rich") {
 		t.Fatalf("summary description = %q, want markdown-rich guidance", summaryDesc)
@@ -1069,7 +1073,8 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		t.Fatalf("list state = %q, want open", attention.lastList.State)
 	}
 
-	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.raise_attention_item", mergeArgs(validSessionArgs(), map[string]any{
+	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.attention_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":            "raise",
 		"project_id":           "p1",
 		"scope_type":           "project",
 		"scope_id":             "p1",
@@ -1109,7 +1114,8 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		t.Fatalf("raise actor_id = %q, want agent-1", got)
 	}
 
-	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.resolve_attention_item", mergeArgs(validSessionArgs(), map[string]any{
+	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.attention_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "resolve",
 		"id":                "a1",
 		"reason":            "approved",
 		"agent_instance_id": "inst-1",

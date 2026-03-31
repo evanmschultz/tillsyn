@@ -1262,7 +1262,11 @@ Implementation scope lock for the next fix wave:
    - the auth cleanup is now green locally,
    - the first real surface-reduction slice has started with lease visibility,
    - default MCP registration now exposes `till.capability_lease` plus `till.list_capability_leases`,
-   - and the older flat lease mutation tool names remain available only behind an explicit legacy config switch for compatibility testing.
+   - the next coordination slice is now green locally as well,
+   - default MCP registration now exposes `till.handoff` plus `till.get_handoff` / `till.list_handoffs`,
+   - default MCP registration now exposes `till.attention_item` plus `till.list_attention_items`,
+   - the older flat lease mutation tool names remain available only behind an explicit legacy config switch for compatibility testing,
+   - and the older flat handoff/attention mutation tool names remain available only behind the same style of explicit legacy config switch for compatibility testing.
 
 Wave contract for the current implementation/QA pass:
 1. The primary implementation seam is shared mutation-auth context normalization below individual MCP tools:
