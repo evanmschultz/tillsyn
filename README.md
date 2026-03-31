@@ -128,6 +128,11 @@ Current auth note:
   - use global approved agent sessions for template-library admin and `till.create_project`;
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.create_task`;
   - do not treat the global-to-project auth split as a runtime bug.
+- Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
+- Policy direction for the unified `plan_item` surface:
+  - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
+  - humans remain allowed to perform those transitions;
+  - destructive or terminal cleanup actions such as delete, hard cleanup, and final archive remain more restricted and should not default to agent autonomy.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.claim_auth_request` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.

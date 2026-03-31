@@ -31,6 +31,10 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
 - Template ownership is by actor kind, not by a pre-known specific agent principal.
 - Both QA subtasks should use actor kind `qa`.
 - The stricter rule "two different QA principals must complete the two QA passes" is deferred to a later policy wave.
+- Policy direction for the unified `plan_item` surface:
+  - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
+  - humans should remain allowed to perform those transitions;
+  - delete/hard cleanup should remain human-only, and archive/final terminal transitions should stay more restricted than ordinary active-state moves.
 
 ### Auth / Scope Model
 
@@ -40,6 +44,7 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - branch/phase/task-scoped auth should be used when the runtime can prove the narrower path.
 - Agents and operators should not treat the global-to-project auth split as a bug.
 - After creating a project with global auth, the next normal step is to claim or reuse a project-scoped session before creating guarded in-project work.
+- Guarded agent lease identity should match the authenticated agent principal id; human-readable display names are attribution data, not the lease-match key.
 
 ### Standards / Repo Expectations
 

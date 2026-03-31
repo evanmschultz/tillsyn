@@ -22,6 +22,7 @@ type stubExpandedService struct {
 	lastCreateTaskReq        common.CreateTaskRequest
 	lastUpdateTaskReq        common.UpdateTaskRequest
 	lastRestoreTaskReq       common.RestoreTaskRequest
+	lastIssueLeaseReq        common.IssueCapabilityLeaseRequest
 	lastListLeaseReq         common.ListCapabilityLeasesRequest
 	lastCreateCommentReq     common.CreateCommentRequest
 	lastListCommentReq       common.ListCommentsByTargetRequest
@@ -592,13 +593,14 @@ func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID 
 }
 
 // IssueCapabilityLease returns one deterministic lease row.
-func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, _ common.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, in common.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+	s.lastIssueLeaseReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(time.Hour)
 	return domain.CapabilityLease{
 		InstanceID:  "inst-1",
 		LeaseToken:  "tok-1",
-		AgentName:   "agent-1",
+		AgentName:   strings.TrimSpace(in.AgentName),
 		ProjectID:   "p1",
 		ScopeType:   domain.CapabilityScopeProject,
 		ScopeID:     "p1",
@@ -1769,8 +1771,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("update_task actor_type = %q, want agent", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "Agent Session One" {
-		t.Fatalf("update_task agent_name = %q, want Agent Session One", got)
+	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "agent-session-1" {
+		t.Fatalf("update_task agent_name = %q, want agent-session-1", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "agent-session-1" {
 		t.Fatalf("update_task actor_id = %q, want agent-session-1", got)
@@ -1873,8 +1875,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	if got := service.lastRestoreTaskReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("restore_task actor_type = %q, want agent", got)
 	}
-	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "Agent Session One" {
-		t.Fatalf("restore_task agent_name = %q, want Agent Session One", got)
+	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "agent-session-1" {
+		t.Fatalf("restore_task agent_name = %q, want agent-session-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.AgentInstanceID; got != "agent-1" {
 		t.Fatalf("restore_task agent_instance_id = %q, want agent-1", got)
@@ -1884,6 +1886,22 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	}
 	if got := service.lastRestoreTaskReq.Actor.OverrideToken; got != "override-1" {
 		t.Fatalf("restore_task override_token = %q, want override-1", got)
+	}
+
+	_, issueLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3014, "till.capability_lease", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":   "issue",
+		"project_id":  "p1",
+		"scope_type":  "project",
+		"role":        "orchestrator",
+		"agent_name":  "caller-supplied-display-name",
+		"scope_id":    "p1",
+		"lease_token": "",
+	})))
+	if isError, _ := issueLeaseResp.Result["isError"].(bool); isError {
+		t.Fatalf("capability_lease issue returned isError=true: %#v", issueLeaseResp.Result)
+	}
+	if got := service.lastIssueLeaseReq.AgentName; got != "agent-session-1" {
+		t.Fatalf("capability_lease issue agent_name = %q, want agent-session-1", got)
 	}
 }
 

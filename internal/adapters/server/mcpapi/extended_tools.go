@@ -83,7 +83,9 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_name, agent_instance_id, and lease_token are required for authenticated agent mutations")
 	}
 
-	actor.AgentName = firstNonEmptyString(caller.PrincipalName, caller.PrincipalID)
+	// Lease identity must stay tied to the stable principal id; display name remains
+	// available separately through ActorName for audit-friendly attribution.
+	actor.AgentName = firstNonEmptyString(caller.PrincipalID, caller.PrincipalName)
 	actor.AgentInstanceID = guard.AgentInstanceID
 	actor.LeaseToken = guard.LeaseToken
 	actor.OverrideToken = guard.OverrideToken
@@ -172,7 +174,7 @@ func handleCapabilityLeaseMutation(
 		if agentName == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
 		}
-		if _, err := authorizeMCPMutation(
+		caller, err := authorizeMCPMutation(
 			ctx,
 			pickMutationAuthorizer(leases),
 			mcpSessionAuthArgs{SessionID: args.SessionID, SessionSecret: args.SessionSecret},
@@ -186,8 +188,12 @@ func handleCapabilityLeaseMutation(
 				"scope_id":   scopeID,
 				"role":       role,
 			},
-		); err != nil {
+		)
+		if err != nil {
 			return toolResultFromError(err), nil
+		}
+		if caller.PrincipalType == domain.ActorTypeAgent {
+			agentName = firstNonEmptyString(caller.PrincipalID, caller.PrincipalName)
 		}
 		lease, err := leases.IssueCapabilityLease(ctx, common.IssueCapabilityLeaseRequest{
 			ProjectID:                 projectID,
