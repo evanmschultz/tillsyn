@@ -95,7 +95,7 @@ Current MCP/runtime direction:
   - bootstrap guidance: `till.get_bootstrap_guide`
   - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
   - projects: `till.list_projects`, `till.project`
-  - tasks/work graph: `till.list_tasks`, `till.create_task`, `till.update_task`, `till.move_task`, `till.delete_task`, `till.restore_task`, `till.reparent_task`, `till.list_child_tasks`, `till.search_task_matches`
+  - tasks/work graph: `till.list_tasks`, `till.plan_item`, `till.list_child_tasks`, `till.search_task_matches`
   - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
   - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.list_project_allowed_kinds`
@@ -108,7 +108,7 @@ Current MCP/runtime direction:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
     - `till.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
     - `till.create_comment` fails closed when the target does not exist in the referenced project;
-    - `till.update_task` title-only updates preserve existing priority when `priority` is omitted.
+    - `till.plan_item(operation=update)` title-only updates preserve existing priority when `priority` is omitted.
 
 Current auth note:
 - Normal TUI users should not need to manually issue themselves auth sessions for routine TUI use.
@@ -126,12 +126,14 @@ Current auth note:
 - MCP requesters can now also withdraw their own pending requests through `till.cancel_auth_request` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
-  - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.create_task`;
+  - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
   - do not treat the global-to-project auth split as a runtime bug.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
 - Default surface note:
   - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
+  - `till.plan_item` now owns plan-item mutations such as create, update, move, delete, restore, and reparent;
   - the older flat project mutation tools remain available only behind an explicit legacy-project-tools config switch for compatibility testing.
+  - the older flat task mutation tools remain available only behind an explicit legacy-plan-item-tools config switch for compatibility testing.
 - Policy direction for the unified `plan_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans remain allowed to perform those transitions;

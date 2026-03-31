@@ -44,7 +44,9 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - branch/phase/task-scoped auth should be used when the runtime can prove the narrower path.
 - Default MCP surface note:
   - `till.project` is the preferred project-root mutation family for create, update, template bind, and allowed-kinds updates;
+  - `till.plan_item` is the preferred plan-item mutation family for create, update, move, delete, restore, and reparent;
   - the older flat project mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
+  - the older flat task mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
 - Agents and operators should not treat the global-to-project auth split as a bug.
 - After creating a project with global auth, the next normal step is to claim or reuse a project-scoped session before creating guarded in-project work.
 - Guarded agent lease identity should match the authenticated agent principal id; human-readable display names are attribution data, not the lease-match key.
@@ -347,7 +349,6 @@ The executing agent should verify all of the following through MCP-visible state
 ## Deferred / Not In Scope Yet
 
 - Enforcing that `QA PASS 1` and `QA PASS 2` must be completed by two distinct QA principals.
-- The future MCP noun-family refactor from `task`-heavy naming to `plan_item`.
 - Final default `enabled_tools` cleanup for the Tillsyn MCP server.
 - Archive/delete policy changes beyond the current accepted temporary behavior.
 - The exact expanded JSON object for the full `PLAN` / `BUILD` / `CLOSEOUT` / `BRANCH CLEANUP` lifecycle contract and project-setup/onboarding contract.
