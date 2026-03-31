@@ -32,6 +32,15 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
 - Both QA subtasks should use actor kind `qa`.
 - The stricter rule "two different QA principals must complete the two QA passes" is deferred to a later policy wave.
 
+### Auth / Scope Model
+
+- This behavior is expected and desired:
+  - global agent auth is for global catalog admin, template-library admin, and project creation/binding;
+  - project-scoped agent auth is for guarded mutations inside that project;
+  - branch/phase/task-scoped auth should be used when the runtime can prove the narrower path.
+- Agents and operators should not treat the global-to-project auth split as a bug.
+- After creating a project with global auth, the next normal step is to claim or reuse a project-scoped session before creating guarded in-project work.
+
 ### Standards / Repo Expectations
 
 The Go standards payload should reflect how `tillsyn` itself is organized:
@@ -74,6 +83,106 @@ That phase should be:
 - `editable_by_actor_kinds = ["builder", "orchestrator"]`
 - `completable_by_actor_kinds = ["builder", "human"]`
 - `required_for_parent_done = true`
+
+### Lifecycle Contract
+
+For normal branch/work execution inside an existing Go project, the default-go lifecycle should be:
+
+- `PLAN`
+- `BUILD`
+- `CLOSEOUT`
+- `BRANCH CLEANUP`
+
+`PROJECT SETUP` is project-only work. It is not part of every branch lane. Use it only when bootstrapping a new project or onboarding an existing repo into Tillsyn.
+
+The intended operator flow is:
+
+- create or confirm a `PLAN` phase first;
+- if the branch/phase already exists because the work is obvious, create the branch/phase and immediately use the `PLAN` phase to fill out the full task tree before broad implementation starts;
+- do not treat ad-hoc building without a populated `PLAN` phase as the preferred path.
+
+### Project-Only Setup Contract
+
+New projects should get one setup phase before normal work begins:
+
+- `PROJECT SETUP`
+
+That phase should cover at least:
+
+- template fit review with the human;
+- Hylla ingest-mode decision with the human:
+  - `structural_only`
+  - `embeddings_only`
+  - `full_enrichment`
+- initial Hylla ingest or refresh;
+- git vs Hylla freshness confirmation for the intended ref;
+- project metadata / standards lock;
+- creation of the first `PLAN` phase.
+
+Existing-project onboarding should use the same setup contract. It should also confirm whether the currently bound template still matches the project's needs and discuss template updates with the human before changing the workflow contract.
+
+### Plan-Phase Contract
+
+Every branch/work lane should get one `PLAN` phase before `BUILD`.
+
+The `PLAN` phase should cover at least:
+
+- Hylla-first code understanding;
+- Context7 and `go doc` research before implementation;
+- scope confirmation with the human;
+- detailed build-task and subtask creation for the upcoming `BUILD` phase;
+- validation-plan definition;
+- branch/worktree setup planning when needed;
+- closeout and cleanup expectations defined up front.
+
+### Build-Phase Contract
+
+The `BUILD` phase holds the actual implementation tasks.
+
+Each concrete implementation task should normally be a `build-task`, so it auto-generates:
+
+- `QA PASS 1`
+- `QA PASS 2`
+
+### Closeout-Phase Contract
+
+Each build lane should get one `CLOSEOUT` phase after `BUILD`.
+
+That phase should include tasks for at least:
+
+- all required `mage` tests/checks passing;
+- local commit recorded;
+- Hylla artifact ingested or refreshed and confirmed current to git;
+- QA sweep 1 across completed work, using the done tasks plus Hylla-backed code understanding;
+- QA sweep 2 across completed work, using the done tasks plus Hylla-backed code understanding;
+- human review;
+- orchestrator + human collaborative testing;
+- push / PR / handoff readiness.
+
+### Branch-Cleanup Contract
+
+Each branch/work lane should end with one `BRANCH CLEANUP` phase.
+
+That phase should include at least:
+
+- confirm closeout work completed truthfully;
+- remove linked worktree when the lane is done;
+- remove the branch when it is no longer needed;
+- remove the lane-specific `gopls` MCP entry;
+- rerun `codex mcp list` and confirm the stale MCP server is gone;
+- any other cleanup required by the bare-repo `AGENTS.md` worktree rules.
+
+### Branch-Setup Contract
+
+When a new branch/worktree lane is created, the branch setup work should be tracked explicitly before `BUILD`.
+
+That setup work should cover at least:
+
+- create a visible sibling worktree from the bare control repo;
+- use the exact worktree path, not `.tmp/`, unless the human explicitly points at a legacy `.tmp` lane;
+- add one unique `gopls` MCP server entry for that worktree in the bare-root Codex config;
+- rerun `codex mcp list` and confirm the new server is visible;
+- create or confirm the `PLAN` phase for that branch lane.
 
 ### Task-Level Behavior
 
@@ -161,11 +270,7 @@ Both QA subtasks should be:
 
 ## Initial Dogfood Phase
 
-Inside `TILLSYN`, create this first phase:
-
-- `MCP TOOL SURFACE RATIONALIZATION`
-
-Under that phase, create these initial `build-task` items:
+Inside the generated `IMPLEMENTATION TRACK` phase, create these initial `build-task` items:
 
 - `FIX TILLSYN MCP DISCOVERY`
 - `LOCK DEFAULT ENABLED TOOLS`
@@ -189,25 +294,28 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
 
 1. Verify current runtime state through MCP.
 2. Confirm `TEST_PROJECT` exists only as a test project and that `TILLSYN` does not already exist.
-3. Upsert these kinds:
+3. Obtain or confirm the expected auth scope:
+   - use global approved agent auth for kind/template-library admin and project creation/binding;
+   - after `TILLSYN` exists, use project-scoped approved agent auth for guarded in-project mutations.
+4. Upsert these kinds:
    - `go-project`
    - `implementation-phase`
    - `build-task`
    - `qa-check`
-4. Upsert the global template library `default-go`.
-5. Create `TILLSYN` with:
+5. Upsert the global template library `default-go`.
+6. Create `TILLSYN` with:
    - `kind = "go-project"`
    - the locked description above
    - the standards payload in the template metadata defaults
-6. Bind `default-go` during project creation if the current MCP/project-create path supports it.
+7. Bind `default-go` during project creation if the current MCP/project-create path supports it.
    - If create-time bind is not exposed cleanly in the live MCP session, create the project and then bind the template immediately afterward.
-7. Confirm the project-level template generated:
+8. Confirm the project-level template generated:
    - `IMPLEMENTATION TRACK`
-8. Under that phase, create the initial build tasks listed above.
-9. For each build task, confirm the template-generated subtasks appear:
+9. Under that phase, create the initial build tasks listed above.
+10. For each build task, confirm the template-generated subtasks appear:
    - `QA PASS 1`
    - `QA PASS 2`
-10. Confirm the generated QA subtasks carry the expected node contract:
+11. Confirm the generated QA subtasks carry the expected node contract:
    - `responsible_actor_kind = "qa"`
    - `editable_by_actor_kinds = ["qa"]`
    - `completable_by_actor_kinds = ["qa", "human"]`
@@ -234,6 +342,8 @@ The executing agent should verify all of the following through MCP-visible state
 - The future MCP noun-family refactor from `task`-heavy naming to `plan_item`.
 - Final default `enabled_tools` cleanup for the Tillsyn MCP server.
 - Archive/delete policy changes beyond the current accepted temporary behavior.
+- The exact expanded JSON object for the full `PLAN` / `BUILD` / `CLOSEOUT` / `BRANCH CLEANUP` lifecycle contract and project-setup/onboarding contract.
+- Final project-local template override/update behavior for already-created projects such as `TILLSYN`.
 
 ## Handoff Prompt For A Fresh Agent
 
@@ -247,12 +357,15 @@ Prompt:
 Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/evanschultz/Documents/Code/hylla/tillsyn/main/TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md first and treat it as the setup contract. Then:
 
 1. Verify current runtime state through MCP only.
-2. Upsert kinds `go-project`, `implementation-phase`, `build-task`, and `qa-check`.
-3. Upsert the approved global template library `default-go` exactly as specified in the markdown file.
-4. Create project `TILLSYN` in all caps as kind `go-project`, using the locked description and standards.
-5. Bind `default-go` during project creation if possible, otherwise bind immediately after creation.
-6. Confirm the template generated `IMPLEMENTATION TRACK`.
-7. Under that phase, create these build-task items:
+2. Use the expected auth scopes:
+   - global approved agent auth for kind/template-library admin and project creation/binding;
+   - project-scoped approved agent auth for guarded in-project mutations after the project exists.
+3. Upsert kinds `go-project`, `implementation-phase`, `build-task`, and `qa-check`.
+4. Upsert the approved global template library `default-go` exactly as specified in the markdown file.
+5. Create project `TILLSYN` in all caps as kind `go-project`, using the locked description and standards.
+6. Bind `default-go` during project creation if possible, otherwise bind immediately after creation.
+7. Confirm the template generated `IMPLEMENTATION TRACK`.
+8. Under that phase, create these build-task items:
    - FIX TILLSYN MCP DISCOVERY
    - LOCK DEFAULT ENABLED TOOLS
    - RENAME MCP NOUNS TO PLAN_ITEM FAMILY
@@ -263,8 +376,8 @@ Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/ev
    - REDUCE LEASE TOOL VISIBILITY
    - ALIGN README WITH MCP SURFACE
    - ALIGN BOOTSTRAP GUIDE WITH MCP SURFACE
-8. Verify each build-task auto-generated `QA PASS 1` and `QA PASS 2`.
-9. Verify the generated QA subtasks have the expected node contract.
+9. Verify each build-task auto-generated `QA PASS 1` and `QA PASS 2`.
+10. Verify the generated QA subtasks have the expected node contract.
 
 Do not use CLI mutation commands. Report exact MCP results, any schema mismatches, and any missing tool/path needed to complete the setup.
 ```

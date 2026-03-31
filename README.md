@@ -15,7 +15,7 @@ Current scope:
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
-Concurrent local branch/worktree workflow: `WORKTREE_WORKFLOW.md`
+Local branch/worktree workflow expectations are documented in `AGENTS.md`.
 
 Local dogfood repo layout note:
 - the bare control repo lives one directory above this checkout,
@@ -61,6 +61,10 @@ Implemented now:
 - Legacy kind-template compatibility paths still exist for create-time defaults and generated work when no template library is selected or when no matching bound node template exists.
 - Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, truthful completion gates, `system` audit provenance for generated nodes, and explicit global-to-project adopt/apply flows instead of silent backfill; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
 - Project creation can now optionally bind one approved global template library at create time, so project-scoped template defaults and root generated work start from the template-library model instead of the legacy kind-template path when the operator chooses that path.
+- The intended auth model is now explicit:
+  - global agent auth is for global catalog admin, template-library admin, and project creation/binding;
+  - project-scoped agent auth is for guarded mutations inside that project;
+  - narrower branch/phase/task auth should be used when the runtime can prove that path.
 - Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots so generated workflow contracts round-trip with the work graph instead of being flattened back to legacy defaults.
 - Current template-library enforcement slice is active for generated nodes:
   - create-child under a generated parent,
@@ -92,12 +96,13 @@ Current MCP/runtime direction:
   - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
   - projects: `till.list_projects`, `till.create_project`, `till.update_project`
   - tasks/work graph: `till.list_tasks`, `till.create_task`, `till.update_task`, `till.move_task`, `till.delete_task`, `till.restore_task`, `till.reparent_task`, `till.list_child_tasks`, `till.search_task_matches`
-  - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.raise_attention_item`, `till.resolve_attention_item`
+  - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
   - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.set_project_allowed_kinds`, `till.list_project_allowed_kinds`
   - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.bind_project_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
-  - capability leases: `till.issue_capability_lease`, `till.heartbeat_capability_lease`, `till.renew_capability_lease`, `till.revoke_capability_lease`, `till.revoke_all_capability_leases`
+  - capability leases: `till.list_capability_leases`, `till.capability_lease`
   - comments: `till.create_comment`, `till.list_comments_by_target`
+  - handoffs: `till.handoff`, `till.get_handoff`, `till.list_handoffs`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
@@ -119,6 +124,10 @@ Current auth note:
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`; for delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
 - MCP requesters can now also withdraw their own pending requests through `till.cancel_auth_request` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
+- Expected scoped-auth workflow:
+  - use global approved agent sessions for template-library admin and `till.create_project`;
+  - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.create_task`;
+  - do not treat the global-to-project auth split as a runtime bug.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.claim_auth_request` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
@@ -139,6 +148,10 @@ Template-library operator examples:
   - assign each generated node to a responsible actor kind,
   - restrict edit/complete actions per actor kind,
   - and mark specific generated nodes as required blockers for parent or containing-scope completion.
+- Current default-go workflow direction:
+  - `PROJECT SETUP` is project-only onboarding work for new or adopted projects,
+  - normal branch/work execution should flow through `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
+  - and the preferred operator flow is to create or confirm `PLAN` before broad implementation begins.
 - Example shape:
   - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
 - CLI examples:
