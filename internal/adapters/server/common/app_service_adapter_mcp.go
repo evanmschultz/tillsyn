@@ -18,7 +18,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	}
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
-		Summary:       "No project context exists yet. If you already have an approved session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token stored in continuation_json before continuing.",
+		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token stored in continuation_json before continuing.",
 		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment/handoff coordination, pre-session auth requests, summary-first recovery context, and SQLite-backed template libraries for generated workflow contracts.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
@@ -31,9 +31,10 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"Instruction/bootstrap guidance for README plus optional external agent-policy and skill alignment",
 		},
 		NextSteps: []string{
-			"If this session is already approved, create a project with till.create_project",
+			"If this session is already approved for global work, create a project with till.create_project",
 			"If it is not approved yet, create an auth request with till.create_auth_request and put the requester-owned resume_token in continuation_json",
 			"After approval, claim the request with till.claim_auth_request, then create the project with till.create_project",
+			"After the project exists, claim or reuse a project-scoped approved session before guarded in-project mutations such as till.create_task",
 			"If the project should use workflow contracts, inspect approved template libraries with till.list_template_libraries and bind one with till.bind_project_template_library before creating level-scoped work",
 			"Use till.create_comment and till.create_handoff inside Tillsyn for human-agent or agent-agent coordination instead of pushing that discussion back into ad-hoc markdown files",
 			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
@@ -49,9 +50,9 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"till.create_project",
 			"till.list_template_libraries",
 			"till.bind_project_template_library",
-			"till.create_comment",
-			"till.create_handoff",
 			"till.create_task",
+			"till.create_comment",
+			"till.handoff",
 			"till.capture_state",
 		},
 		RoadmapNotice: "Import/export transport-closure and advanced conflict tooling remain roadmap-only for this wave.",

@@ -234,7 +234,7 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if guide.WhatTillsynIs == "" || len(guide.Recommended) == 0 {
 		t.Fatalf("GetBootstrapGuide() = %#v, want populated guidance", guide)
 	}
-	if guide.Summary == "" || !strings.Contains(guide.Summary, "approved session") || !strings.Contains(guide.Summary, "auth request") {
+	if guide.Summary == "" || !strings.Contains(guide.Summary, "approved global agent session") || !strings.Contains(guide.Summary, "auth request") {
 		t.Fatalf("GetBootstrapGuide() summary = %q, want auth-aware bootstrap guidance", guide.Summary)
 	}
 	if len(guide.NextSteps) < 4 {
