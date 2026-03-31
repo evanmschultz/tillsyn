@@ -8909,3 +8909,48 @@ Edits:
 Validation:
 1. `test_not_applicable`
    - docs-only guidance update; no code, workflow, or Justfile behavior changed.
+
+### 2026-03-31: Live MCP Lease Identity Mismatch And Hylla Refresh
+
+Objective:
+- continue the post-restart live MCP dogfood proof for `TILLSYN`, fix the remaining guarded in-project mutation blocker, and keep the docs aligned with the intended scoped-auth and future `plan_item` policy model.
+
+Investigation:
+1. Verified the live MCP runtime after restart through Tillsyn MCP only:
+   - `TILLSYN` still exists as kind `go-project`,
+   - `default-go` remains bound,
+   - `IMPLEMENTATION TRACK` remains present,
+   - the old project-scoped lease row was still visible in inventory.
+2. Retried `till.create_task` under the visible project-scoped lease and got the same guard failure:
+   - `guardrail_failed: create task: guardrail violation`
+   - `mutation lease is invalid`
+3. Revoked the stale visible lease and issued a brand new project-scoped lease on the same approved project session.
+4. Retried the exact same `till.create_task` call with the brand new lease and still got `mutation lease is invalid`.
+5. Refreshed Hylla against the current clean `main` worktree:
+   - `git -C main rev-parse HEAD` -> `0b78d3bdc8d48e4f0026c3e33b20982fdf05564d`
+   - `git -C main status --short` -> clean
+   - `hylla.ingest(... commit=0b78d3bdc8d48e4f0026c3e33b20982fdf05564d ...)` was rejected because that exact commit is already ingested for the branch lineage, confirming the graph is current.
+6. Hylla + local code trace isolated the mismatch:
+   - `IssueCapabilityLease` persists whatever `agent_name` the MCP request supplies.
+   - `buildAuthenticatedMutationActor` rebuilt the mutation guard with `caller.PrincipalName` preferred over `caller.PrincipalID`.
+   - live lease issuance used agent identity `codex-live-setup`, while guarded mutations reconstructed `Codex Live Setup`.
+   - `CapabilityLease.MatchesIdentity` compares the stored `agent_name` and `lease_token`, so the display-name-vs-principal-id drift caused a false invalid-lease rejection.
+
+Implementation:
+1. `internal/adapters/server/mcpapi/extended_tools.go`
+   - normalized guarded mutation `AgentName` to prefer the authenticated agent principal id over display name,
+   - normalized `till.capability_lease(operation=issue)` to root agent-session lease identity in the authenticated principal id rather than a free-form caller display string.
+2. `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - captured lease-issue requests in the MCP stub,
+   - updated actor-tuple expectations so guarded mutations use principal-id lease identity but keep display names for attribution,
+   - added regression coverage for `till.capability_lease` issue to ensure agent-authenticated issuance ignores a mismatching caller-supplied display string.
+3. `README.md`
+   - documented that guarded lease identity is principal-id rooted and that display names are attribution-only,
+   - recorded the agreed policy direction that responsible actor kinds should move their own work through ordinary active states while destructive/final cleanup remains more restricted.
+4. `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+   - mirrored the same lease-identity clarification and future `plan_item` state-transition policy direction.
+
+Next step:
+1. Run targeted MCP/server tests and `mage ci`.
+2. Rebuild/restart if needed and rerun the live `TILLSYN` in-project `create_task` proof.
+3. If the live task creation succeeds, finish the initial build-task population and generated QA/node-contract verification before returning to the broader `plan_item` surface reduction.
