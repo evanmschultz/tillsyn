@@ -53,6 +53,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Never use dependency-fetch bypasses (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
 - Never delete files or directories without explicit user approval.
 - Never run commands outside this repository root: `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
+- For live-runtime dogfooding, project setup, auth setup, and operator workflow validation, use MCP surfaces by default instead of direct CLI commands unless the user explicitly asks to validate the CLI.
 - For runtime/protocol validation in this phase, run MCP-only checks (no HTTP/curl validation probes).
 - It is allowed to `mage build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
