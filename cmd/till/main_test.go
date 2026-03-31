@@ -553,7 +553,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "auth",
 			args: []string{"auth", "--help"},
-			want: []string{"till auth", "request", "session", "issue-session", "session revoke --session-id", "projects/<project-id-a>,<project-id-b>...", "global"},
+			want: []string{"till auth", "request", "session", "issue-session", "session revoke --session-id", "projects/PROJECT_ID_A,PROJECT_ID_B...", "global"},
 		},
 		{
 			name: "project",
@@ -583,7 +583,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "auth request",
 			args: []string{"auth", "request", "--help"},
-			want: []string{"till auth request", "create", "approve", "project/<project-id>", "projects/<project-id-a>,<project-id-b>...", "global"},
+			want: []string{"till auth request", "create", "approve", "project/PROJECT_ID", "projects/PROJECT_ID_A,PROJECT_ID_B...", "global"},
 		},
 		{
 			name: "auth request list",
@@ -598,7 +598,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "auth request create",
 			args: []string{"auth", "request", "create", "--help"},
-			want: []string{"till auth request create", "--path", "--principal-id", "--principal-role", "--continuation-json", "resume_token", "projects/<project-id-a>,<project-id-b>", "global", "next step"},
+			want: []string{"till auth request create", "--path", "--principal-id", "--principal-role", "--continuation-json", "resume_token", "projects/PROJECT_ID_A,PROJECT_ID_B", "global", "next step"},
 		},
 		{
 			name: "auth request approve",
@@ -860,7 +860,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 				for _, forbidden := range []string{
 					"--project-id p1",
 					"project/p1",
-					"projects/<project-id>,<project-id>...",
+					"projects/PROJECT_ID,PROJECT_ID...",
 					"review-agent",
 					"qa-agent",
 					"orchestration-agent",

@@ -129,7 +129,7 @@ func TestWriteProjectReadiness(t *testing.T) {
 		"open_project_handoffs",
 		"1",
 		"Next Step",
-		"till lease issue --project-id p1 --role builder --agent-name <agent-name>",
+		"till lease issue --project-id p1 --role builder --agent-name AGENT_NAME",
 		"An active orchestrator session is visible",
 	} {
 		if !strings.Contains(got, want) {
@@ -253,7 +253,7 @@ func TestRequireProjectIDGuidesDiscovery(t *testing.T) {
 		t.Fatal("expected missing project id error")
 	}
 	got := err.Error()
-	for _, want := range []string{"--project-id is required", "till project list", "till project discover --project-id", "till project discover <project-id>", "till project create --name", "till project create \"Example Project\""} {
+	for _, want := range []string{"--project-id is required", "till project list", "till project discover --project-id", "till project discover PROJECT_ID", "till project create --name", "till project create \"Example Project\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project-id guidance, got %q", want, got)
 		}
@@ -408,7 +408,7 @@ func TestProjectReadinessNextStep(t *testing.T) {
 		},
 		{
 			name:             "request agent session next when none are active",
-			wantCommandParts: []string{"till auth request create", "--path project/p1", "--principal-id <agent-id>", "--principal-type agent", "--principal-role orchestrator", "--client-id <client-id>", "--client-type mcp-stdio"},
+			wantCommandParts: []string{"till auth request create", "--path project/p1", "--principal-id AGENT_ID", "--principal-type agent", "--principal-role orchestrator", "--client-id CLIENT_ID", "--client-type mcp-stdio"},
 			wantReason:       "No active orchestrator session is visible",
 		},
 		{
@@ -420,7 +420,7 @@ func TestProjectReadinessNextStep(t *testing.T) {
 		{
 			name:               "lease after orchestrator session",
 			activeOrchestrator: 1,
-			wantCommandParts:   []string{"till lease issue", "--project-id p1", "--role builder", "--agent-name <agent-name>"},
+			wantCommandParts:   []string{"till lease issue", "--project-id p1", "--role builder", "--agent-name AGENT_NAME"},
 			wantReason:         "issue the project lease",
 		},
 		{

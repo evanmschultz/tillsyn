@@ -17,7 +17,7 @@ Context7:
 Implementation summary:
 1. Replaced the remaining opaque help-example ids in CLI help surfaces:
    - `p1`-style project ids were already gone,
-   - and this slice removed `review-agent`, `qa-agent`, `orchestration-agent`, `builder-1`, `qa-1`, `orchestrator-1`, and `resume-123` from operator-facing help/examples in favor of placeholder-style values such as `<principal-id>`, `<agent-name>`, and `<resume-token>`.
+   - and this slice removed `review-agent`, `qa-agent`, `orchestration-agent`, `builder-1`, `qa-1`, `orchestrator-1`, and `resume-123` from operator-facing help/examples in favor of stable metavars such as `PRINCIPAL_ID`, `AGENT_NAME`, and `RESUME_TOKEN`.
 2. Tightened template-library help examples so the transport examples read generically:
    - `--library-id <library-id>`,
    - and `$(cat /tmp/template-library.json)` instead of a hard-coded sample file name.
@@ -30,9 +30,43 @@ Validation:
 2. `mage ci` -> PASS.
 
 Current status:
-1. Help content is being tightened toward placeholder-first examples and clearer concise flag wording.
+1. Help content is being tightened toward uppercase-metavar examples and clearer concise flag wording.
 2. Runtime behavior is unchanged; this is operator-surface cleanup only.
-3. Rebuilt `./till` now shows the new placeholder-style examples and clearer lease-issue flag wording in the live help output.
+3. Rebuilt `./till` now shows the new shell-safe metavar examples and clearer lease-issue flag wording in the live help output.
+
+## Checkpoint 2026-03-30: Revert Help Renderer Workaround
+
+Objective:
+- remove the custom help-renderer workaround, keep Fang in charge of help output, and make every example shell-safe by replacing angle-bracket placeholders with uppercase metavars.
+
+Context7:
+1. `/charmbracelet/fang` reviewed before the cleanup to confirm Fang remains the intended styled-help path and that the lower-risk fix is example-token normalization rather than replacing the help pipeline -> PASS.
+
+Implementation summary:
+1. Reverted the temporary custom help renderer commit so explicit help output once again flows through Fang and Cobra without a local bypass.
+2. Replaced angle-bracket placeholders throughout the CLI help surfaces and operator guidance strings with uppercase metavars such as:
+   - `PROJECT_ID`,
+   - `REQUEST_ID`,
+   - `LIBRARY_ID`,
+   - `AGENT_NAME`,
+   - and `SESSION_ID`.
+3. Updated the related CLI tests and readiness/hint strings so the new metavar convention is consistent in:
+   - command examples,
+   - long help text,
+   - flag descriptions,
+   - and project-readiness next-step guidance.
+
+Validation:
+1. `mage test-pkg ./cmd/till` -> PASS.
+2. `mage ci` -> PASS.
+3. `./till lease issue --help` -> PASS.
+4. `./till auth request create --help` -> PASS.
+
+Current status:
+1. The custom renderer workaround is gone.
+2. Fang remains the only help renderer.
+3. CLI help text now uses shell-safe uppercase metavars instead of angle-bracket placeholders.
+4. The remaining visual behavior now comes from Fang's native wrapping/styling rather than a local help pipeline fork.
 
 ## Checkpoint 2026-03-30: Laslig v0.2.1 Upgrade + CLI/Mage Progress Spinners
 

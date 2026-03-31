@@ -501,7 +501,7 @@ template-library contracts, snapshot transport, or embeddings operations.
 	rootCmd.PersistentFlags().StringVar(&rootOpts.configPath, "config", "", "Path to config TOML")
 	rootCmd.PersistentFlags().StringVar(&rootOpts.dbPath, "db", "", "Path to sqlite database")
 	rootCmd.PersistentFlags().StringVar(&rootOpts.appName, "app", rootOpts.appName, "Application name for config/data path resolution")
-	rootCmd.PersistentFlags().BoolVar(&rootOpts.devMode, "dev", rootOpts.devMode, "Use dev mode paths (<app>-dev)")
+	rootCmd.PersistentFlags().BoolVar(&rootOpts.devMode, "dev", rootOpts.devMode, "Use dev mode paths (APP-dev)")
 	rootCmd.PersistentFlags().BoolVar(&rootOpts.showVersion, "version", false, "Show version")
 
 	serveCmd := &cobra.Command{
@@ -563,19 +563,19 @@ subcommands are the primary operator UX.
 Omit --project-id on list commands to inspect global inventory across all
 projects. Add --project-id to narrow requests or sessions to one project.
 Request paths may be:
-- project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
-- projects/<project-id-a>,<project-id-b>...
+- project/PROJECT_ID[/branch/BRANCH_ID[/phase/PHASE_ID...]]
+- projects/PROJECT_ID_A,PROJECT_ID_B...
 - global
 Only orchestrators may request projects/... or global scope.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/<project-id> --principal-id <builder-principal-id> --principal-type agent --principal-role builder --client-id <client-id> --client-type mcp-stdio --reason \"local MCP review\"",
-			"  till auth request create --path projects/<project-id-a>,<project-id-b> --principal-id <orchestrator-principal-id> --principal-type agent --principal-role orchestrator --client-id <client-id> --client-type mcp-stdio --reason \"multi-project orchestration\"",
-			"  till auth request list --project-id <project-id> --state pending",
+			"  till auth request create --path project/PROJECT_ID --principal-id BUILDER_PRINCIPAL_ID --principal-type agent --principal-role builder --client-id CLIENT_ID --client-type mcp-stdio --reason \"local MCP review\"",
+			"  till auth request create --path projects/PROJECT_ID_A,PROJECT_ID_B --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"  till auth request list --project-id PROJECT_ID --state pending",
 			"  till auth request list --state approved",
-			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
+			"  till auth request approve --request-id REQUEST_ID --note \"approved for dogfood\"",
 			"  till auth session list --state active",
-			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
+			"  till auth session revoke --session-id SESSION_ID --reason operator_revoke",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -589,14 +589,14 @@ defaults, inspect one project in a human-readable detail view, or bridge one
 project into auth/session/lease/handoff setup with a readiness summary.
 
 Next step: use till project list to find an id, till project discover
---project-id <project-id> to see the next collaboration step, or till project
+--project-id PROJECT_ID to see the next collaboration step, or till project
 create to add one.
 `),
 		Example: strings.Join([]string{
 			"  till project list",
 			"  till project create --name Inbox --description \"Local execution inbox\"",
-			"  till project show --project-id <project-id>",
-			"  till project discover --project-id <project-id>",
+			"  till project show --project-id PROJECT_ID",
+			"  till project discover --project-id PROJECT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -607,7 +607,7 @@ create to add one.
 List projects in a human-readable table with names first and ids visible for
 copy/paste into scoped commands.
 
-Next step: use till project discover --project-id <project-id> to inspect one
+Next step: use till project discover --project-id PROJECT_ID to inspect one
 project and see the collaboration-readiness bridge, or till project create to
 add a new one.
 `),
@@ -632,14 +632,14 @@ metadata defaults from flags or --metadata-json.
 The name may be passed either as --name or as one positional argument.
 
 Next step: use till project list to confirm the new record, or till project
-discover --project-id <project-id> to inspect the collaboration-readiness
+discover --project-id PROJECT_ID to inspect the collaboration-readiness
 bridge after creation.
 `),
 		Example: strings.Join([]string{
 			"  till project create --name Inbox --description \"Local execution inbox\" --owner \"Platform\" --tag dogfood",
 			"  till project create Inbox",
 			"  till project create --name \"Go Migration\" --kind project --homepage https://example.invalid",
-			"  till project create --name \"Go Service\" --template-library-id <library-id>",
+			"  till project create --name \"Go Service\" --template-library-id LIBRARY_ID",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -673,12 +673,12 @@ The project id may be passed either as --project-id or as one positional
 argument.
 
 Next step: after inspecting the project, use till project discover --project-id
-<project-id> to see the auth/session/lease/handoff bridge, or return to till
+PROJECT_ID to see the auth/session/lease/handoff bridge, or return to till
 project list to choose another record.
 `),
 		Example: strings.Join([]string{
-			"  till project show --project-id <project-id>",
-			"  till project show <project-id>",
+			"  till project show --project-id PROJECT_ID",
+			"  till project show PROJECT_ID",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -706,8 +706,8 @@ Next step: after reading the readiness summary, follow the recommended command
 in order rather than relying on remembered setup steps.
 `),
 		Example: strings.Join([]string{
-			"  till project discover --project-id <project-id>",
-			"  till project discover <project-id>",
+			"  till project discover --project-id PROJECT_ID",
+			"  till project discover PROJECT_ID",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -733,8 +733,8 @@ task mutations.
 `),
 		Example: strings.Join([]string{
 			"  till embeddings status --cross-project",
-			"  till embeddings status --project-id <project-id> --status failed",
-			"  till embeddings reindex --project-id <project-id> --wait",
+			"  till embeddings status --project-id PROJECT_ID --status failed",
+			"  till embeddings reindex --project-id PROJECT_ID --wait",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -750,9 +750,9 @@ or after a reindex request so you can see whether rows are pending, running,
 ready, failed, or stale.
 `),
 		Example: strings.Join([]string{
-			"  till embeddings status --project-id <project-id>",
+			"  till embeddings status --project-id PROJECT_ID",
 			"  till embeddings status --cross-project",
-			"  till embeddings status --project-id <project-id> --status failed --status stale",
+			"  till embeddings status --project-id PROJECT_ID --status failed --status stale",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -776,8 +776,8 @@ scope reaches a steady lifecycle state, or pair it with 'till embeddings
 status' for manual progress inspection.
 `),
 		Example: strings.Join([]string{
-			"  till embeddings reindex --project-id <project-id>",
-			"  till embeddings reindex --project-id <project-id> --force",
+			"  till embeddings reindex --project-id PROJECT_ID",
+			"  till embeddings reindex --project-id PROJECT_ID --force",
 			"  till embeddings reindex --cross-project --wait --wait-timeout 30s",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -805,8 +805,8 @@ Next step: inspect the returned JSON for the scope path, state hash, work
 overview, attention overview, and follow-up pointers.
 `),
 		Example: strings.Join([]string{
-			"  till capture-state --project-id <project-id>",
-			"  till capture-state --project-id <project-id> --scope-type branch --scope-id <branch-id> --view full",
+			"  till capture-state --project-id PROJECT_ID",
+			"  till capture-state --project-id PROJECT_ID --scope-type branch --scope-id BRANCH_ID --view full",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -829,7 +829,7 @@ registry path.
 		Example: strings.Join([]string{
 			"  till kind list",
 			"  till kind upsert --id qa-check --display-name \"QA Check\" --applies-to subtask",
-			"  till kind allowlist list --project-id <project-id>",
+			"  till kind allowlist list --project-id PROJECT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -893,8 +893,8 @@ Use this when a project should permit only a curated subset of registered kinds
 instead of every globally known kind definition.
 `),
 		Example: strings.Join([]string{
-			"  till kind allowlist list --project-id <project-id>",
-			"  till kind allowlist set --project-id <project-id> --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist list --project-id PROJECT_ID",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -907,7 +907,7 @@ List the explicit kind allowlist for one project.
 Use this before changing template libraries or project-scoped workflow rules so
 you know which node kinds are currently permitted inside the project.
 `),
-		Example: "  till kind allowlist list --project-id <project-id>",
+		Example: "  till kind allowlist list --project-id PROJECT_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "kind.allowlist.list")
@@ -925,8 +925,8 @@ This is a replace operation, not an additive patch. Re-supply the full desired
 allowlist each time.
 `),
 		Example: strings.Join([]string{
-			"  till kind allowlist set --project-id <project-id> --kind-id build-task --kind-id qa-check",
-			"  till kind allowlist set --project-id <project-id> --kind-id research-task",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id research-task",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -948,8 +948,8 @@ transport for template-library specs while SQLite remains the source of truth.
 `),
 		Example: strings.Join([]string{
 			"  till template library list --scope global --status approved",
-			"  till template project bind --project-id <project-id> --library-id <library-id>",
-			"  till template contract show --node-id <task-id>",
+			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
+			"  till template contract show --node-id TASK_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -966,8 +966,8 @@ Use this command group for library-level operations. Project binding lives under
 `),
 		Example: strings.Join([]string{
 			"  till template library list --scope global --status approved",
-			"  till template library show --library-id <library-id>",
-			"  till template library upsert --spec-json '{\"id\":\"<library-id>\",...}'",
+			"  till template library show --library-id LIBRARY_ID",
+			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",...}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -984,7 +984,7 @@ inspecting it in detail.
 		Example: strings.Join([]string{
 			"  till template library list",
 			"  till template library list --scope global --status approved",
-			"  till template library list --scope project --project-id <project-id>",
+			"  till template library list --scope project --project-id PROJECT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1003,7 +1003,7 @@ Show one template library with its node templates and child-rule contract table.
 Use this when you need to audit what generated work, actor ownership, and
 completion blockers a library will apply.
 `),
-		Example: "  till template library show --library-id <library-id>",
+		Example: "  till template library show --library-id LIBRARY_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.library.show")
@@ -1019,7 +1019,7 @@ operator seam; SQLite remains the source of truth and richer TUI authoring is
 planned separately.
 `),
 		Example: strings.Join([]string{
-			"  till template library upsert --spec-json '{\"id\":\"<library-id>\",\"scope\":\"global\",\"name\":\"Go Defaults\",\"status\":\"approved\",\"node_templates\":[]}'",
+			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",\"scope\":\"global\",\"name\":\"Go Defaults\",\"status\":\"approved\",\"node_templates\":[]}'",
 			"  till template library upsert --spec-json \"$(cat /tmp/template-library.json)\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1039,8 +1039,8 @@ Bind projects to approved template libraries and inspect the currently active
 binding for one project.
 `),
 		Example: strings.Join([]string{
-			"  till template project bind --project-id <project-id> --library-id <library-id>",
-			"  till template project binding --project-id <project-id>",
+			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
+			"  till template project binding --project-id PROJECT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1053,7 +1053,7 @@ Bind one project to one approved template library.
 Use this after reviewing a library with 'till template library show' so the
 project will resolve future generated work from that library.
 `),
-		Example: "  till template project bind --project-id <project-id> --library-id <library-id>",
+		Example: "  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.project.bind")
@@ -1070,7 +1070,7 @@ Show the currently active template-library binding for one project.
 Use this to confirm which library is in force before creating new generated
 work or comparing project behavior with the global library inventory.
 `),
-		Example: "  till template project binding --project-id <project-id>",
+		Example: "  till template project binding --project-id PROJECT_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.project.binding")
@@ -1089,7 +1089,7 @@ These snapshots are the truthful runtime record of who owns a generated node,
 who may edit or complete it, and whether it blocks parent or containing-scope
 completion.
 `),
-		Example: "  till template contract show --node-id <task-id>",
+		Example: "  till template contract show --node-id TASK_ID",
 		Args:    cobra.NoArgs,
 	}
 	templateContractShowCmd := &cobra.Command{
@@ -1101,7 +1101,7 @@ Show one generated node-contract snapshot by node id.
 Use this to confirm the stored workflow contract on an already-generated node
 instead of re-reading the source library and guessing how old work was resolved.
 `),
-		Example: "  till template contract show --node-id <task-id>",
+		Example: "  till template contract show --node-id TASK_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.contract.show")
@@ -1119,9 +1119,9 @@ Inspect scoped capability leases, issue new ones, and rotate or revoke them.
 This is the CLI surface for orchestrator and agent recovery state.
 `),
 		Example: strings.Join([]string{
-			"  till lease list --project-id <project-id>",
-			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role builder",
-			"  till lease revoke-all --project-id <project-id> --reason reset",
+			"  till lease list --project-id PROJECT_ID",
+			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
+			"  till lease revoke-all --project-id PROJECT_ID --reason reset",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1135,9 +1135,9 @@ Use this to see which agent instances currently hold scoped authority before
 issuing a new lease or cleaning up abandoned runtime state.
 `),
 		Example: strings.Join([]string{
-			"  till lease list --project-id <project-id>",
-			"  till lease list --project-id <project-id> --scope-type task --scope-id <task-id>",
-			"  till lease list --project-id <project-id> --include-revoked",
+			"  till lease list --project-id PROJECT_ID",
+			"  till lease list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
+			"  till lease list --project-id PROJECT_ID --include-revoked",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1158,8 +1158,8 @@ Use this when the orchestrator or operator needs to grant explicit scoped work
 authority to a builder, qa, or orchestrator agent for one project path.
 `),
 		Example: strings.Join([]string{
-			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role builder",
-			"  till lease issue --project-id <project-id> --scope-type task --scope-id <task-id> --agent-name <agent-name> --role qa --requested-ttl 30m",
+			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
+			"  till lease issue --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --agent-name AGENT_NAME --role qa --requested-ttl 30m",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1185,7 +1185,7 @@ Refresh the heartbeat on one active capability lease.
 Use this from long-running agent flows to keep one issued lease alive while
 work is still in progress.
 `),
-		Example: "  till lease heartbeat --agent-instance-id <agent-instance-id> --lease-token <lease-token>",
+		Example: "  till lease heartbeat --agent-instance-id AGENT_INSTANCE_ID --lease-token LEASE_TOKEN",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.heartbeat")
@@ -1204,7 +1204,7 @@ Renew one capability lease with a new requested TTL.
 Use this when work remains valid but the original lease lifetime is too short
 and you want an explicit renewal record instead of only heartbeats.
 `),
-		Example: "  till lease renew --agent-instance-id <agent-instance-id> --lease-token <lease-token> --ttl 30m",
+		Example: "  till lease renew --agent-instance-id AGENT_INSTANCE_ID --lease-token LEASE_TOKEN --ttl 30m",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.renew")
@@ -1224,7 +1224,7 @@ Revoke one capability lease by agent instance id.
 Use this to clean up abandoned or superseded agent authority when a lease
 should no longer permit mutations.
 `),
-		Example: "  till lease revoke --agent-instance-id <agent-instance-id> --reason operator_revoke",
+		Example: "  till lease revoke --agent-instance-id AGENT_INSTANCE_ID --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.revoke")
@@ -1243,8 +1243,8 @@ Use this during recovery or reset flows when an entire project, branch, phase,
 or task scope should be cleared of active leases.
 `),
 		Example: strings.Join([]string{
-			"  till lease revoke-all --project-id <project-id> --reason reset",
-			"  till lease revoke-all --project-id <project-id> --scope-type task --scope-id <task-id> --reason operator_recover",
+			"  till lease revoke-all --project-id PROJECT_ID --reason reset",
+			"  till lease revoke-all --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --reason operator_recover",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1265,9 +1265,9 @@ Inspect and manage durable, structured handoffs that keep humans and agents
 aligned across planning, execution, and recovery.
 `),
 		Example: strings.Join([]string{
-			"  till handoff list --project-id <project-id>",
-			"  till handoff create --project-id <project-id> --summary \"QA ready\" --source-role builder --target-role qa",
-			"  till handoff update --handoff-id <handoff-id> --summary \"QA approved\" --status accepted",
+			"  till handoff list --project-id PROJECT_ID",
+			"  till handoff create --project-id PROJECT_ID --summary \"QA ready\" --source-role builder --target-role qa",
+			"  till handoff update --handoff-id HANDOFF_ID --summary \"QA approved\" --status accepted",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1281,8 +1281,8 @@ Use this when work needs to move across roles or scopes with an explicit summary
 next action, missing evidence list, and related references.
 `),
 		Example: strings.Join([]string{
-			"  till handoff create --project-id <project-id> --summary \"QA ready for review\" --source-role builder --target-role qa",
-			"  till handoff create --project-id <project-id> --scope-type task --scope-id <task-id> --summary \"Need product decision\" --target-role orchestrator --missing-evidence decision-log",
+			"  till handoff create --project-id PROJECT_ID --summary \"QA ready for review\" --source-role builder --target-role qa",
+			"  till handoff create --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --summary \"Need product decision\" --target-role orchestrator --missing-evidence decision-log",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1312,7 +1312,7 @@ Show one durable handoff by handoff id.
 Use this when following up on a previously created handoff or when auditing the
 current structured summary and next-action fields.
 `),
-		Example: "  till handoff get --handoff-id <handoff-id>",
+		Example: "  till handoff get --handoff-id HANDOFF_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "handoff.get")
@@ -1330,8 +1330,8 @@ Use the project, branch, scope, and status filters to focus on the specific
 handoff lane you need to review.
 `),
 		Example: strings.Join([]string{
-			"  till handoff list --project-id <project-id>",
-			"  till handoff list --project-id <project-id> --scope-type task --scope-id <task-id> --status pending",
+			"  till handoff list --project-id PROJECT_ID",
+			"  till handoff list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --status pending",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1354,8 +1354,8 @@ Use this to move the status forward, adjust target routing, or replace the
 structured summary/next-action payload as new evidence arrives.
 `),
 		Example: strings.Join([]string{
-			"  till handoff update --handoff-id <handoff-id> --summary \"QA approved\" --status accepted",
-			"  till handoff update --handoff-id <handoff-id> --summary \"Need more logs\" --missing-evidence runtime-log --resolution-note \"waiting on reproduction\"",
+			"  till handoff update --handoff-id HANDOFF_ID --summary \"QA approved\" --status accepted",
+			"  till handoff update --handoff-id HANDOFF_ID --summary \"Need more logs\" --missing-evidence runtime-log --resolution-note \"waiting on reproduction\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1384,8 +1384,8 @@ structured summary/next-action payload as new evidence arrives.
 		Long: strings.TrimSpace(`
 Create and resolve persisted auth requests tied to one explicit scope path.
 Supported --path forms are:
-- project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
-- projects/<project-id-a>,<project-id-b>...
+- project/PROJECT_ID[/branch/BRANCH_ID[/phase/PHASE_ID...]]
+- projects/PROJECT_ID_A,PROJECT_ID_B...
 - global
 
 Only orchestrators may request projects/... or global scope.
@@ -1395,9 +1395,9 @@ use approve, deny, or cancel to move it to a terminal state. Omit --project-id
 on request list for global inventory, or add it to focus on one project.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/<project-id> --principal-id <principal-id> --principal-type agent --client-id <client-id> --client-type mcp-stdio --reason \"manual MCP review\"",
-			"  till auth request list --project-id <project-id> --state pending",
-			"  till auth request show --request-id <request-id>",
+			"  till auth request create --path project/PROJECT_ID --principal-id PRINCIPAL_ID --principal-type agent --client-id CLIENT_ID --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request list --project-id PROJECT_ID --state pending",
+			"  till auth request show --request-id REQUEST_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1409,8 +1409,8 @@ on request list for global inventory, or add it to focus on one project.
 Create one persisted auth request for a specific principal, client, and
 scope path. The request remains pending until it is approved, denied,
 canceled, or times out. Supported --path forms are:
-- project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
-- projects/<project-id-a>,<project-id-b>...
+- project/PROJECT_ID[/branch/BRANCH_ID[/phase/PHASE_ID...]]
+- projects/PROJECT_ID_A,PROJECT_ID_B...
 - global
 
 Optional --principal-role distinguishes agent-shaped requests:
@@ -1421,25 +1421,25 @@ Optional --continuation-json stores client resume metadata so the requesting
 surface can continue cleanly after approval. Include a requester-owned
 resume_token when the requesting MCP client will later claim the result.
 
-Next step: use till auth request show --request-id <request-id> or till auth
+Next step: use till auth request show --request-id REQUEST_ID or till auth
 request list --state pending to inspect the stored request, then resolve it with
 approve, deny, or cancel.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/<project-id> --principal-id <builder-principal-id> --principal-type agent --principal-role builder --client-id <client-id> --client-type mcp-stdio --reason \"manual MCP review\"",
-			"  till auth request create --path project/<project-id> --principal-id <qa-principal-id> --principal-type agent --principal-role qa --client-id <client-id> --client-type mcp-stdio --reason \"qa review\"",
-			"  till auth request create --path project/<project-id> --principal-id <orchestrator-principal-id> --principal-type agent --principal-role orchestrator --client-id <client-id> --client-type mcp-stdio --reason \"orchestrator review\"",
-			"  till auth request create --path projects/<project-id-a>,<project-id-b> --principal-id <orchestrator-principal-id> --principal-type agent --principal-role orchestrator --client-id <client-id> --client-type mcp-stdio --reason \"multi-project orchestration\"",
-			"  till auth request create --path global --principal-id <orchestrator-principal-id> --principal-type agent --principal-role orchestrator --client-id <client-id> --client-type mcp-stdio --reason \"general orchestration\"",
-			"  till auth request create --path project/<project-id>/branch/<branch-id>/phase/<phase-id> --principal-id <user-id> --principal-type user --client-id <client-id> --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
-			"  till auth request create --path project/<project-id> --principal-id <builder-principal-id> --principal-type agent --principal-role builder --client-id <client-id> --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"<resume-token>\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/<project-id>\"}'",
+			"  till auth request create --path project/PROJECT_ID --principal-id BUILDER_PRINCIPAL_ID --principal-type agent --principal-role builder --client-id CLIENT_ID --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/PROJECT_ID --principal-id QA_PRINCIPAL_ID --principal-type agent --principal-role qa --client-id CLIENT_ID --client-type mcp-stdio --reason \"qa review\"",
+			"  till auth request create --path project/PROJECT_ID --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --client-type mcp-stdio --reason \"orchestrator review\"",
+			"  till auth request create --path projects/PROJECT_ID_A,PROJECT_ID_B --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"  till auth request create --path global --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --client-type mcp-stdio --reason \"general orchestration\"",
+			"  till auth request create --path project/PROJECT_ID/branch/BRANCH_ID/phase/PHASE_ID --principal-id USER_ID --principal-type user --client-id CLIENT_ID --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
+			"  till auth request create --path project/PROJECT_ID --principal-id BUILDER_PRINCIPAL_ID --principal-type agent --principal-role builder --client-id CLIENT_ID --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"RESUME_TOKEN\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/PROJECT_ID\"}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.create")
 		},
 	}
-	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id-a>,<project-id-b>... | global")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/PROJECT_ID[/branch/BRANCH_ID[/phase/PHASE_ID...]] | projects/PROJECT_ID_A,PROJECT_ID_B... | global")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalID, "principal-id", "", "Stable requester identifier")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalType, "principal-type", requestCreateOpts.principalType, "Principal type (user|agent|service)")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalRole, "principal-role", "", "Optional agent role (orchestrator|builder|qa)")
@@ -1462,13 +1462,13 @@ approve, deny, or cancel.
 		Long: strings.TrimSpace(`
 List persisted auth requests in deterministic newest-first order.
 
-Next step: use till auth request show --request-id <request-id> to inspect one
+Next step: use till auth request show --request-id REQUEST_ID to inspect one
 row in detail, then resolve it with approve, deny, or cancel. Omit --project-id
 for global inventory or add it to focus on one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth request list",
-			"  till auth request list --project-id <project-id> --state pending",
+			"  till auth request list --project-id PROJECT_ID --state pending",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1493,7 +1493,7 @@ Next step: if the request is still pending, resolve it with till auth request
 approve, deny, or cancel. If it is already approved, validate or revoke the
 issued session through till auth session subcommands.
 `),
-		Example: "  till auth request show --request-id <request-id>",
+		Example: "  till auth request show --request-id REQUEST_ID",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.show")
@@ -1517,12 +1517,12 @@ Next step: if the requester supplied continuation metadata with a resume_token,
 the requesting MCP client should claim the result through till.claim_auth_request
 using the original request_id and resume_token. Shell handoff of session_id and
 session_secret remains a fallback only. Use till auth request show --request-id
-<request-id> to inspect the approved record, including requested vs approved path
+REQUEST_ID to inspect the approved record, including requested vs approved path
 and TTL fields, without re-printing the secret.
 `),
 		Example: strings.Join([]string{
-			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
-			"  till auth request approve --request-id <request-id> --path project/<project-id>/branch/<branch-id> --ttl 2h --note \"limited branch review\"",
+			"  till auth request approve --request-id REQUEST_ID --note \"approved for dogfood\"",
+			"  till auth request approve --request-id REQUEST_ID --path project/PROJECT_ID/branch/BRANCH_ID --ttl 2h --note \"limited branch review\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1541,10 +1541,10 @@ and TTL fields, without re-printing the secret.
 		Long: strings.TrimSpace(`
 Deny one pending auth request and record an operator-visible note.
 
-Next step: use till auth request show --request-id <request-id> to verify the
+Next step: use till auth request show --request-id REQUEST_ID to verify the
 stored terminal state.
 `),
-		Example: "  till auth request deny --request-id <request-id> --note \"outside current scope\"",
+		Example: "  till auth request deny --request-id REQUEST_ID --note \"outside current scope\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.deny")
@@ -1560,10 +1560,10 @@ stored terminal state.
 		Long: strings.TrimSpace(`
 Cancel one pending auth request before it is approved or denied.
 
-Next step: use till auth request show --request-id <request-id> to verify the
+Next step: use till auth request show --request-id REQUEST_ID to verify the
 stored terminal state.
 `),
-		Example: "  till auth request cancel --request-id <request-id> --note \"superseded by a new request\"",
+		Example: "  till auth request cancel --request-id REQUEST_ID --note \"superseded by a new request\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.cancel")
@@ -1584,8 +1584,8 @@ for global inventory, or add it to narrow active auth to one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth session list --state active",
-			"  till auth session validate --session-id <session-id> --session-secret <session-secret>",
-			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
+			"  till auth session validate --session-id SESSION_ID --session-secret SESSION_SECRET",
+			"  till auth session revoke --session-id SESSION_ID --reason operator_revoke",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1604,8 +1604,8 @@ to verify one specific credential pair, or use revoke to rotate it.
 `),
 		Example: strings.Join([]string{
 			"  till auth session list",
-			"  till auth session list --project-id <project-id> --state active",
-			"  till auth session list --state active --principal-id <principal-id>",
+			"  till auth session list --project-id PROJECT_ID --state active",
+			"  till auth session list --state active --principal-id PRINCIPAL_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1627,9 +1627,9 @@ Validate one session_id and session_secret pair and return caller-safe identity
 details for the credential.
 
 Next step: if the session is valid, use it with MCP mutation calls. If it is no
-longer needed, revoke it with till auth session revoke --session-id <session-id>.
+longer needed, revoke it with till auth session revoke --session-id SESSION_ID.
 `),
-		Example: "  till auth session validate --session-id <session-id> --session-secret <session-secret>",
+		Example: "  till auth session validate --session-id SESSION_ID --session-secret SESSION_SECRET",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.session.validate")
@@ -1649,7 +1649,7 @@ Revoke one autent-backed session.
 This command requires the --session-id flag; it does not accept the session id
 as a positional argument.
 `),
-		Example: "  till auth session revoke --session-id <session-id> --reason operator_revoke",
+		Example: "  till auth session revoke --session-id SESSION_ID --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.session.revoke")
@@ -1673,7 +1673,7 @@ session_secret.
 Next step: pass the returned session_id and session_secret to the requesting MCP
 client, or validate the pair with till auth session validate.
 `),
-		Example: "  till auth issue-session --principal-id <principal-id> --principal-type agent --client-id <client-id> --client-type mcp-stdio",
+		Example: "  till auth issue-session --principal-id PRINCIPAL_ID --principal-type agent --client-id CLIENT_ID --client-type mcp-stdio",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.issue-session")
@@ -1698,7 +1698,7 @@ till auth session revoke for the primary session lifecycle UX.
 This command requires the --session-id flag; it does not accept the session id
 as a positional argument.
 `),
-		Example: "  till auth revoke-session --session-id <session-id> --reason operator_revoke",
+		Example: "  till auth revoke-session --session-id SESSION_ID --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.revoke-session")

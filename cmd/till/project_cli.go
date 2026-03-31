@@ -16,7 +16,7 @@ import (
 
 // projectDiscoveryError returns a discoverability hint for missing project ids.
 func projectDiscoveryError(command string) error {
-	return fmt.Errorf("--project-id is required for %s; run till project list to discover a project id, then run till project discover --project-id <project-id> (or till project discover <project-id>) to review collaboration readiness, or run till project create --name \"Example Project\" (or till project create \"Example Project\") to create one", command)
+	return fmt.Errorf("--project-id is required for %s; run till project list to discover a project id, then run till project discover --project-id PROJECT_ID (or till project discover PROJECT_ID) to review collaboration readiness, or run till project create --name \"Example Project\" (or till project create \"Example Project\") to create one", command)
 }
 
 // resolveProjectNameInput accepts either --name or one positional project name.
@@ -336,9 +336,9 @@ func projectReadinessNextStep(projectID string, pendingRequests []domain.AuthReq
 	case len(pendingRequests) > 1:
 		return fmt.Sprintf("till auth request list --project-id %s --state pending", projectID), "Multiple pending auth requests are visible; inspect them and then approve or deny the right one before issuing a session, lease, or handoff."
 	case activeOrchestratorSessions == 0:
-		return fmt.Sprintf("till auth request create --path project/%s --principal-id <agent-id> --principal-type agent --principal-role orchestrator --client-id <client-id> --client-type mcp-stdio --reason %q", projectID, "project collaboration setup"), "No active orchestrator session is visible for this project yet; request and approve one before issuing a project lease."
+		return fmt.Sprintf("till auth request create --path project/%s --principal-id AGENT_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --client-type mcp-stdio --reason %q", projectID, "project collaboration setup"), "No active orchestrator session is visible for this project yet; request and approve one before issuing a project lease."
 	case leases == 0:
-		return fmt.Sprintf("till lease issue --project-id %s --role builder --agent-name <agent-name>", projectID), "An active orchestrator session is visible, so issue the project lease before creating the first handoff."
+		return fmt.Sprintf("till lease issue --project-id %s --role builder --agent-name AGENT_NAME", projectID), "An active orchestrator session is visible, so issue the project lease before creating the first handoff."
 	case openHandoffs == 0:
 		return fmt.Sprintf("till handoff create --project-id %s --summary %q --source-role builder --target-role qa", projectID, "project collaboration handoff"), "A session and lease are visible, so create the first handoff when the collaboration needs a durable checkpoint."
 	default:
