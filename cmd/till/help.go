@@ -64,8 +64,8 @@ Start raw MCP over stdio when you want the direct local operator path.
 	"till embeddings": {
 		Example: []string{
 			"  till embeddings status --cross-project",
-			"  till embeddings status --project-id <project-id> --status failed",
-			"  till embeddings reindex --project-id <project-id>",
+			"  till embeddings status --project-id PROJECT_ID --status failed",
+			"  till embeddings reindex --project-id PROJECT_ID",
 			"  till embeddings reindex --cross-project --wait",
 		},
 	},
@@ -77,10 +77,10 @@ Use this to inspect pending, running, ready, failed, or stale embedding rows
 for projects, project documents, work items, and thread-context material.
 `),
 		Example: []string{
-			"  till embeddings status --project-id <project-id>",
+			"  till embeddings status --project-id PROJECT_ID",
 			"  till embeddings status --cross-project",
-			"  till embeddings status --project-id <project-id> --status failed --status stale",
-			"  till embeddings status --project-id <project-id> --limit 20",
+			"  till embeddings status --project-id PROJECT_ID --status failed --status stale",
+			"  till embeddings status --project-id PROJECT_ID --limit 20",
 		},
 	},
 	"till embeddings reindex": {
@@ -91,10 +91,10 @@ Use this after enabling embeddings, changing providers/models, or when the
 status view shows stale or failed lifecycle rows that need a fresh pass.
 `),
 		Example: []string{
-			"  till embeddings reindex --project-id <project-id>",
-			"  till embeddings reindex --project-id <project-id> --force",
+			"  till embeddings reindex --project-id PROJECT_ID",
+			"  till embeddings reindex --project-id PROJECT_ID --force",
 			"  till embeddings reindex --cross-project --include-archived",
-			"  till embeddings reindex --project-id <project-id> --wait --wait-timeout 30s",
+			"  till embeddings reindex --project-id PROJECT_ID --wait --wait-timeout 30s",
 		},
 	},
 	"till kind": {
@@ -107,8 +107,8 @@ registry.
 		Example: []string{
 			"  till kind list",
 			"  till kind upsert --id research-task --display-name \"Research Task\" --applies-to task",
-			"  till kind allowlist list --project-id <project-id>",
-			"  till kind allowlist set --project-id <project-id> --kind-id task --kind-id research-task",
+			"  till kind allowlist list --project-id PROJECT_ID",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id research-task",
 		},
 	},
 	"till kind list": {
@@ -150,8 +150,8 @@ Use this when a project needs tighter kind governance than the global registry
 alone provides.
 `),
 		Example: []string{
-			"  till kind allowlist list --project-id <project-id>",
-			"  till kind allowlist set --project-id <project-id> --kind-id task --kind-id qa-check",
+			"  till kind allowlist list --project-id PROJECT_ID",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id qa-check",
 		},
 	},
 	"till kind allowlist list": {
@@ -165,7 +165,7 @@ Check this before changing template libraries or other project-level workflow
 rules.
 `),
 		Example: []string{
-			"  till kind allowlist list --project-id <project-id>",
+			"  till kind allowlist list --project-id PROJECT_ID",
 		},
 	},
 	"till kind allowlist set": {
@@ -176,16 +176,16 @@ This is a replace operation. Pass every allowed kind id you want to
 keep in the resulting project policy.
 `),
 		Example: []string{
-			"  till kind allowlist set --project-id <project-id> --kind-id task --kind-id subtask",
-			"  till kind allowlist set --project-id <project-id> --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id subtask",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",
 		},
 	},
 	"till template": {
 		Example: []string{
 			"  till template library list --scope global --status approved",
-			"  till template library show --library-id <library-id>",
-			"  till template project bind --project-id <project-id> --library-id <library-id>",
-			"  till template contract show --node-id <task-id>",
+			"  till template library show --library-id LIBRARY_ID",
+			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
+			"  till template contract show --node-id TASK_ID",
 		},
 	},
 	"till template library": {
@@ -197,8 +197,8 @@ complete permissions, and truthful completion gates.
 `),
 		Example: []string{
 			"  till template library list --scope global --status approved",
-			"  till template library show --library-id <library-id>",
-			"  till template library upsert --spec-json '{\"id\":\"<library-id>\",...}'",
+			"  till template library show --library-id LIBRARY_ID",
+			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",...}'",
 		},
 	},
 	"till template library list": {
@@ -211,7 +211,7 @@ to inspect project-local or draft inventory.
 		Example: []string{
 			"  till template library list",
 			"  till template library list --scope global --status approved",
-			"  till template library list --scope project --project-id <project-id>",
+			"  till template library list --scope project --project-id PROJECT_ID",
 		},
 	},
 	"till template library show": {
@@ -223,12 +223,12 @@ responsible actor kinds, blocker rules, and the child-rule contract table before
 binding the library.
 `),
 		Example: []string{
-			"  till template library show --library-id <library-id>",
+			"  till template library show --library-id LIBRARY_ID",
 		},
 	},
 	"till template library upsert": {
 		Example: []string{
-			"  till template library upsert --spec-json '{\"id\":\"<library-id>\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
+			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
 			"  till template library upsert --spec-json \"$(cat /tmp/template-library.json)\"",
 		},
 	},
@@ -240,8 +240,8 @@ Use this when project creation did not already bind a library or when you need
 to confirm which library currently governs generated workflow contracts.
 `),
 		Example: []string{
-			"  till template project bind --project-id <project-id> --library-id <library-id>",
-			"  till template project binding --project-id <project-id>",
+			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
+			"  till template project binding --project-id PROJECT_ID",
 		},
 	},
 	"till template project bind": {
@@ -252,7 +252,7 @@ The binding becomes the project-level source for future generated workflow
 contracts. Existing nodes keep their stored snapshots.
 `),
 		Example: []string{
-			"  till template project bind --project-id <project-id> --library-id <library-id>",
+			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
 		},
 	},
 	"till template project binding": {
@@ -263,7 +263,7 @@ Use this to confirm which approved library currently governs generated work for
 future create-time template resolution.
 `),
 		Example: []string{
-			"  till template project binding --project-id <project-id>",
+			"  till template project binding --project-id PROJECT_ID",
 		},
 	},
 	"till template contract": {
@@ -276,7 +276,7 @@ were applied when generated work was created.
 This is the truthful runtime record for already-generated work.
 `),
 		Example: []string{
-			"  till template contract show --node-id <task-id>",
+			"  till template contract show --node-id TASK_ID",
 		},
 	},
 	"till template contract show": {
@@ -288,15 +288,15 @@ edit and complete permissions, and whether the generated node blocks parent or
 containing-scope completion.
 `),
 		Example: []string{
-			"  till template contract show --node-id <task-id>",
+			"  till template contract show --node-id TASK_ID",
 		},
 	},
 	"till lease": {
 		Example: []string{
-			"  till lease list --project-id <project-id>",
-			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role builder",
-			"  till lease renew --agent-instance-id <agent-instance-id> --lease-token <lease-token> --ttl 30m",
-			"  till lease revoke-all --project-id <project-id> --reason operator_reset",
+			"  till lease list --project-id PROJECT_ID",
+			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
+			"  till lease renew --agent-instance-id AGENT_INSTANCE_ID --lease-token LEASE_TOKEN --ttl 30m",
+			"  till lease revoke-all --project-id PROJECT_ID --reason operator_reset",
 		},
 	},
 	"till lease list": {
@@ -307,9 +307,9 @@ Use this to inspect active or revoked actor assignments before issuing a new
 lease or investigating stale orchestration state.
 `),
 		Example: []string{
-			"  till lease list --project-id <project-id>",
-			"  till lease list --project-id <project-id> --scope-type task --scope-id <task-id>",
-			"  till lease list --project-id <project-id> --include-revoked",
+			"  till lease list --project-id PROJECT_ID",
+			"  till lease list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
+			"  till lease list --project-id PROJECT_ID --include-revoked",
 		},
 	},
 	"till lease issue": {
@@ -320,9 +320,9 @@ Use this when an orchestrator or operator needs to assign execution authority
 for a project, branch, phase, task, or subtask scope.
 `),
 		Example: []string{
-			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role builder",
-			"  till lease issue --project-id <project-id> --scope-type task --scope-id <task-id> --agent-name <agent-name> --role qa --requested-ttl 30m",
-			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role orchestrator --allow-equal-scope-delegation",
+			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
+			"  till lease issue --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --agent-name AGENT_NAME --role qa --requested-ttl 30m",
+			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role orchestrator --allow-equal-scope-delegation",
 		},
 	},
 	"till lease heartbeat": {
@@ -332,7 +332,7 @@ Refresh the heartbeat timestamp for one existing lease.
 Agents use this to prove liveness while holding scoped capability authority.
 `),
 		Example: []string{
-			"  till lease heartbeat --agent-instance-id <agent-instance-id> --lease-token <lease-token>",
+			"  till lease heartbeat --agent-instance-id AGENT_INSTANCE_ID --lease-token LEASE_TOKEN",
 		},
 	},
 	"till lease renew": {
@@ -343,7 +343,7 @@ Use this when valid work is still in progress and the current lease should stay
 active rather than being reissued.
 `),
 		Example: []string{
-			"  till lease renew --agent-instance-id <agent-instance-id> --lease-token <lease-token> --ttl 30m",
+			"  till lease renew --agent-instance-id AGENT_INSTANCE_ID --lease-token LEASE_TOKEN --ttl 30m",
 		},
 	},
 	"till lease revoke": {
@@ -354,7 +354,7 @@ Use this to invalidate a single agent lease during recovery, reassignment, or
 operator intervention.
 `),
 		Example: []string{
-			"  till lease revoke --agent-instance-id <agent-instance-id> --reason operator_reset",
+			"  till lease revoke --agent-instance-id AGENT_INSTANCE_ID --reason operator_reset",
 		},
 	},
 	"till lease revoke-all": {
@@ -365,16 +365,16 @@ Use this for broad recovery when a whole branch, phase, or project needs lease
 state reset before work resumes.
 `),
 		Example: []string{
-			"  till lease revoke-all --project-id <project-id> --reason operator_reset",
-			"  till lease revoke-all --project-id <project-id> --scope-type branch --scope-id <branch-id> --reason branch_recovery",
+			"  till lease revoke-all --project-id PROJECT_ID --reason operator_reset",
+			"  till lease revoke-all --project-id PROJECT_ID --scope-type branch --scope-id BRANCH_ID --reason branch_recovery",
 		},
 	},
 	"till handoff": {
 		Example: []string{
-			"  till handoff create --project-id <project-id> --summary \"Builder blocked on QA\"",
-			"  till handoff get --handoff-id <handoff-id>",
-			"  till handoff list --project-id <project-id> --status open",
-			"  till handoff update --handoff-id <handoff-id> --summary \"QA resumed\"",
+			"  till handoff create --project-id PROJECT_ID --summary \"Builder blocked on QA\"",
+			"  till handoff get --handoff-id HANDOFF_ID",
+			"  till handoff list --project-id PROJECT_ID --status open",
+			"  till handoff update --handoff-id HANDOFF_ID --summary \"QA resumed\"",
 		},
 	},
 	"till handoff create": {
@@ -385,9 +385,9 @@ Use handoffs when simple comments are not enough and the next owner needs an
 explicit summary, target scope, next action, or missing-evidence checklist.
 `),
 		Example: []string{
-			"  till handoff create --project-id <project-id> --summary \"Builder blocked on QA\"",
-			"  till handoff create --project-id <project-id> --scope-type task --scope-id <task-id> --source-role builder --target-role qa --next-action \"re-run verification\"",
-			"  till handoff create --project-id <project-id> --summary \"Need review\" --missing-evidence test-output --related-ref <task-id>",
+			"  till handoff create --project-id PROJECT_ID --summary \"Builder blocked on QA\"",
+			"  till handoff create --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --source-role builder --target-role qa --next-action \"re-run verification\"",
+			"  till handoff create --project-id PROJECT_ID --summary \"Need review\" --missing-evidence test-output --related-ref TASK_ID",
 		},
 	},
 	"till handoff get": {
@@ -398,7 +398,7 @@ Use this when a handoff reference appears in comments, summaries, or audit
 views and you need the full structured state.
 `),
 		Example: []string{
-			"  till handoff get --handoff-id <handoff-id>",
+			"  till handoff get --handoff-id HANDOFF_ID",
 		},
 	},
 	"till handoff list": {
@@ -409,9 +409,9 @@ Use filters to narrow by project, branch, scope type, scope id, or handoff
 status when reviewing collaboration state.
 `),
 		Example: []string{
-			"  till handoff list --project-id <project-id>",
-			"  till handoff list --project-id <project-id> --scope-type task --scope-id <task-id>",
-			"  till handoff list --project-id <project-id> --status open --status accepted --limit 20",
+			"  till handoff list --project-id PROJECT_ID",
+			"  till handoff list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
+			"  till handoff list --project-id PROJECT_ID --status open --status accepted --limit 20",
 		},
 	},
 	"till handoff update": {
@@ -422,9 +422,9 @@ Use this to move the handoff forward, adjust target scope or role, revise the
 summary, or record a final resolution note.
 `),
 		Example: []string{
-			"  till handoff update --handoff-id <handoff-id> --summary \"QA resumed\"",
-			"  till handoff update --handoff-id <handoff-id> --status accepted --target-role builder",
-			"  till handoff update --handoff-id <handoff-id> --summary \"Complete\" --resolution-note \"validated and closed\"",
+			"  till handoff update --handoff-id HANDOFF_ID --summary \"QA resumed\"",
+			"  till handoff update --handoff-id HANDOFF_ID --status accepted --target-role builder",
+			"  till handoff update --handoff-id HANDOFF_ID --summary \"Complete\" --resolution-note \"validated and closed\"",
 		},
 	},
 	"till export": {

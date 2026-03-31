@@ -197,7 +197,7 @@ func writeEmbeddingStatus(stdout io.Writer, runtimeOperational bool, projectIDs 
 			stdout,
 			"Embeddings Inventory",
 			"No matching embedding lifecycle rows.",
-			"Next step: till embeddings reindex --project-id <project-id> --wait",
+			"Next step: till embeddings reindex --project-id PROJECT_ID --wait",
 		)
 	}
 
