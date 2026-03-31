@@ -8954,3 +8954,38 @@ Next step:
 1. Run targeted MCP/server tests and `mage ci`.
 2. Rebuild/restart if needed and rerun the live `TILLSYN` in-project `create_task` proof.
 3. If the live task creation succeeds, finish the initial build-task population and generated QA/node-contract verification before returning to the broader `plan_item` surface reduction.
+
+### 2026-03-31: MCP Project-Root Mutation Family Reduction
+
+Objective:
+- reduce the default project-root MCP mutation surface after the lease-identity fix, while keeping compatibility aliases available behind an explicit config flag.
+
+Implementation:
+1. Added default `till.project` mutation family with:
+   - `operation=create`
+   - `operation=update`
+   - `operation=bind_template`
+   - `operation=set_allowed_kinds`
+2. Kept project reads explicit:
+   - `till.list_projects`
+   - `till.list_project_allowed_kinds`
+   - `till.get_project_template_binding`
+3. Added `ExposeLegacyProjectTools` to MCP/server config so the older flat project-root mutation tools remain opt-in for compatibility testing:
+   - `till.create_project`
+   - `till.update_project`
+   - `till.bind_project_template_library`
+   - `till.set_project_allowed_kinds`
+4. Updated the default-surface docs:
+   - `README.md`
+   - `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+   to describe `till.project` as the preferred project-root mutation family and the older flat names as compatibility aliases only.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (71 tests).
+2. `mage ci` -> PASS (1107 tests total, package coverage gate passed).
+3. `internal/adapters/server/mcpapi` coverage after this slice: 71.2%.
+
+Next step:
+1. Restart the MCP runtime when ready so the live surface reflects `till.project`.
+2. Finish the live `TILLSYN` dogfood flow.
+3. Then continue the broader `plan_item` family reduction.

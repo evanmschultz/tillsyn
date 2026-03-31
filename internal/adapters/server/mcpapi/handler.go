@@ -22,6 +22,7 @@ type Config struct {
 	EndpointPath                  string
 	ExposeLegacyLeaseTools        bool
 	ExposeLegacyCoordinationTools bool
+	ExposeLegacyProjectTools      bool
 }
 
 // Handler wraps one stateless MCP streamable HTTP handler.
@@ -48,7 +49,13 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	registerAuthRequestTools(mcpSrv, pickAuthRequestService(captureState, attention))
 	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
 	registerInstructionsTool(mcpSrv)
-	registerProjectTools(mcpSrv, pickProjectService(captureState, attention))
+	registerProjectTools(
+		mcpSrv,
+		pickProjectService(captureState, attention),
+		pickKindCatalogService(captureState, attention),
+		pickTemplateLibraryService(captureState, attention),
+		cfg.ExposeLegacyProjectTools,
+	)
 	registerTaskTools(
 		mcpSrv,
 		pickTaskService(captureState, attention),
@@ -56,8 +63,8 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		pickEmbeddingsService(captureState, attention),
 		pickChangeFeedService(captureState, attention),
 	)
-	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
-	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention))
+	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention), cfg.ExposeLegacyProjectTools)
+	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention), cfg.ExposeLegacyProjectTools)
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), cfg.ExposeLegacyLeaseTools)
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
 	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention), cfg.ExposeLegacyCoordinationTools)

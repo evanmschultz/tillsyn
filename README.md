@@ -94,12 +94,12 @@ Current MCP/runtime direction:
   - instructions: `till.get_instructions`
   - bootstrap guidance: `till.get_bootstrap_guide`
   - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
-  - projects: `till.list_projects`, `till.create_project`, `till.update_project`
+  - projects: `till.list_projects`, `till.project`
   - tasks/work graph: `till.list_tasks`, `till.create_task`, `till.update_task`, `till.move_task`, `till.delete_task`, `till.restore_task`, `till.reparent_task`, `till.list_child_tasks`, `till.search_task_matches`
   - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
-  - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.set_project_allowed_kinds`, `till.list_project_allowed_kinds`
-  - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.bind_project_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
+  - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.list_project_allowed_kinds`
+  - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
   - capability leases: `till.list_capability_leases`, `till.capability_lease`
   - comments: `till.create_comment`, `till.list_comments_by_target`
   - handoffs: `till.handoff`, `till.get_handoff`, `till.list_handoffs`
@@ -125,10 +125,13 @@ Current auth note:
 - MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`; for delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
 - MCP requesters can now also withdraw their own pending requests through `till.cancel_auth_request` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
 - Expected scoped-auth workflow:
-  - use global approved agent sessions for template-library admin and `till.create_project`;
+  - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.create_task`;
   - do not treat the global-to-project auth split as a runtime bug.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
+- Default surface note:
+  - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
+  - the older flat project mutation tools remain available only behind an explicit legacy-project-tools config switch for compatibility testing.
 - Policy direction for the unified `plan_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans remain allowed to perform those transitions;
@@ -161,6 +164,7 @@ Template-library operator examples:
   - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
+  - `till.project(operation=create, name="Go Service", kind="go-service", template_library_id="go-defaults", ...)`
   - `till template library list --scope global --status approved`
   - `till template library show --library-id go-defaults`
   - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-pass-1","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 1","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-pass-2","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 2","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`

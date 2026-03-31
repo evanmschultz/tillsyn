@@ -633,8 +633,7 @@ func TestHandlerRegistersProjectToolsWhenAvailable(t *testing.T) {
 	for _, required := range []string{
 		"till.capture_state",
 		"till.list_projects",
-		"till.create_project",
-		"till.update_project",
+		"till.project",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
