@@ -110,7 +110,7 @@ Current auth note:
 - `till auth request create|list|show|approve|deny|cancel` and `till auth session list|validate|revoke` are now active for dogfood/operator use.
 - Auth request scopes now support:
   - `project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]`,
-  - `projects/<project-id>,<project-id>...`,
+  - `projects/<project-id-a>,<project-id-b>...`,
   - `global`;
   with multi-project/general scope reserved for orchestrators.
 - TUI auth-request notifications route to focused-project vs global panels, and `enter` opens auth review directly instead of a generic thread fallback.
@@ -146,9 +146,9 @@ Template-library operator examples:
   - `till template library list --scope global --status approved`
   - `till template library show --library-id go-defaults`
   - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-pass-1","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 1","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-pass-2","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 2","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
-  - `till template project bind --project-id p1 --library-id go-defaults`
-  - `till template project binding --project-id p1`
-  - `till template contract show --node-id task-qa-1`
+  - `till template project bind --project-id <project-id> --library-id go-defaults`
+  - `till template project binding --project-id <project-id>`
+  - `till template contract show --node-id <node-id>`
 - Kind catalog note:
   - `till kind` is now the node-kind registry/allowlist surface.
   - template-library workflow contracts should be created and inspected through `till template`, the TUI project form, or MCP JSON transport instead of the legacy kind-template seam.

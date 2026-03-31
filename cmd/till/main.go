@@ -564,18 +564,18 @@ Omit --project-id on list commands to inspect global inventory across all
 projects. Add --project-id to narrow requests or sessions to one project.
 Request paths may be:
 - project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
-- projects/<project-id>,<project-id>...
+- projects/<project-id-a>,<project-id-b>...
 - global
 Only orchestrators may request projects/... or global scope.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
-			"  till auth request create --path projects/p1,p2 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
-			"  till auth request list --project-id p1 --state pending",
+			"  till auth request create --path project/<project-id> --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"local MCP review\"",
+			"  till auth request create --path projects/<project-id-a>,<project-id-b> --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"  till auth request list --project-id <project-id> --state pending",
 			"  till auth request list --state approved",
-			"  till auth request approve --request-id req-123 --note \"approved for dogfood\"",
+			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
 			"  till auth session list --state active",
-			"  till auth session revoke --session-id sess-123 --reason operator_revoke",
+			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -595,8 +595,8 @@ create to add one.
 		Example: strings.Join([]string{
 			"  till project list",
 			"  till project create --name Inbox --description \"Local execution inbox\"",
-			"  till project show --project-id p1",
-			"  till project discover --project-id p1",
+			"  till project show --project-id <project-id>",
+			"  till project discover --project-id <project-id>",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -677,8 +677,8 @@ Next step: after inspecting the project, use till project discover --project-id
 project list to choose another record.
 `),
 		Example: strings.Join([]string{
-			"  till project show --project-id p1",
-			"  till project show p1",
+			"  till project show --project-id <project-id>",
+			"  till project show <project-id>",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -706,8 +706,8 @@ Next step: after reading the readiness summary, follow the recommended command
 in order rather than relying on remembered setup steps.
 `),
 		Example: strings.Join([]string{
-			"  till project discover --project-id p1",
-			"  till project discover p1",
+			"  till project discover --project-id <project-id>",
+			"  till project discover <project-id>",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -733,8 +733,8 @@ task mutations.
 `),
 		Example: strings.Join([]string{
 			"  till embeddings status --cross-project",
-			"  till embeddings status --project-id p1 --status failed",
-			"  till embeddings reindex --project-id p1 --wait",
+			"  till embeddings status --project-id <project-id> --status failed",
+			"  till embeddings reindex --project-id <project-id> --wait",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -750,9 +750,9 @@ or after a reindex request so you can see whether rows are pending, running,
 ready, failed, or stale.
 `),
 		Example: strings.Join([]string{
-			"  till embeddings status --project-id p1",
+			"  till embeddings status --project-id <project-id>",
 			"  till embeddings status --cross-project",
-			"  till embeddings status --project-id p1 --status failed --status stale",
+			"  till embeddings status --project-id <project-id> --status failed --status stale",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -776,8 +776,8 @@ scope reaches a steady lifecycle state, or pair it with 'till embeddings
 status' for manual progress inspection.
 `),
 		Example: strings.Join([]string{
-			"  till embeddings reindex --project-id p1",
-			"  till embeddings reindex --project-id p1 --force",
+			"  till embeddings reindex --project-id <project-id>",
+			"  till embeddings reindex --project-id <project-id> --force",
 			"  till embeddings reindex --cross-project --wait --wait-timeout 30s",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -805,8 +805,8 @@ Next step: inspect the returned JSON for the scope path, state hash, work
 overview, attention overview, and follow-up pointers.
 `),
 		Example: strings.Join([]string{
-			"  till capture-state --project-id p1",
-			"  till capture-state --project-id p1 --scope-type branch --scope-id branch-1 --view full",
+			"  till capture-state --project-id <project-id>",
+			"  till capture-state --project-id <project-id> --scope-type branch --scope-id <branch-id> --view full",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -829,7 +829,7 @@ registry path.
 		Example: strings.Join([]string{
 			"  till kind list",
 			"  till kind upsert --id qa-check --display-name \"QA Check\" --applies-to subtask",
-			"  till kind allowlist list --project-id p1",
+			"  till kind allowlist list --project-id <project-id>",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -893,8 +893,8 @@ Use this when a project should permit only a curated subset of registered kinds
 instead of every globally known kind definition.
 `),
 		Example: strings.Join([]string{
-			"  till kind allowlist list --project-id p1",
-			"  till kind allowlist set --project-id p1 --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist list --project-id <project-id>",
+			"  till kind allowlist set --project-id <project-id> --kind-id build-task --kind-id qa-check",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -907,7 +907,7 @@ List the explicit kind allowlist for one project.
 Use this before changing template libraries or project-scoped workflow rules so
 you know which node kinds are currently permitted inside the project.
 `),
-		Example: "  till kind allowlist list --project-id p1",
+		Example: "  till kind allowlist list --project-id <project-id>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "kind.allowlist.list")
@@ -925,8 +925,8 @@ This is a replace operation, not an additive patch. Re-supply the full desired
 allowlist each time.
 `),
 		Example: strings.Join([]string{
-			"  till kind allowlist set --project-id p1 --kind-id build-task --kind-id qa-check",
-			"  till kind allowlist set --project-id p1 --kind-id research-task",
+			"  till kind allowlist set --project-id <project-id> --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist set --project-id <project-id> --kind-id research-task",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -948,8 +948,8 @@ transport for template-library specs while SQLite remains the source of truth.
 `),
 		Example: strings.Join([]string{
 			"  till template library list --scope global --status approved",
-			"  till template project bind --project-id p1 --library-id go-defaults",
-			"  till template contract show --node-id task-123",
+			"  till template project bind --project-id <project-id> --library-id go-defaults",
+			"  till template contract show --node-id <task-id>",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -984,7 +984,7 @@ inspecting it in detail.
 		Example: strings.Join([]string{
 			"  till template library list",
 			"  till template library list --scope global --status approved",
-			"  till template library list --scope project --project-id p1",
+			"  till template library list --scope project --project-id <project-id>",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1039,8 +1039,8 @@ Bind projects to approved template libraries and inspect the currently active
 binding for one project.
 `),
 		Example: strings.Join([]string{
-			"  till template project bind --project-id p1 --library-id go-defaults",
-			"  till template project binding --project-id p1",
+			"  till template project bind --project-id <project-id> --library-id go-defaults",
+			"  till template project binding --project-id <project-id>",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1053,7 +1053,7 @@ Bind one project to one approved template library.
 Use this after reviewing a library with 'till template library show' so the
 project will resolve future generated work from that library.
 `),
-		Example: "  till template project bind --project-id p1 --library-id go-defaults",
+		Example: "  till template project bind --project-id <project-id> --library-id go-defaults",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.project.bind")
@@ -1070,7 +1070,7 @@ Show the currently active template-library binding for one project.
 Use this to confirm which library is in force before creating new generated
 work or comparing project behavior with the global library inventory.
 `),
-		Example: "  till template project binding --project-id p1",
+		Example: "  till template project binding --project-id <project-id>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.project.binding")
@@ -1089,7 +1089,7 @@ These snapshots are the truthful runtime record of who owns a generated node,
 who may edit or complete it, and whether it blocks parent or containing-scope
 completion.
 `),
-		Example: "  till template contract show --node-id task-123",
+		Example: "  till template contract show --node-id <task-id>",
 		Args:    cobra.NoArgs,
 	}
 	templateContractShowCmd := &cobra.Command{
@@ -1101,7 +1101,7 @@ Show one generated node-contract snapshot by node id.
 Use this to confirm the stored workflow contract on an already-generated node
 instead of re-reading the source library and guessing how old work was resolved.
 `),
-		Example: "  till template contract show --node-id task-123",
+		Example: "  till template contract show --node-id <task-id>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "template.contract.show")
@@ -1119,9 +1119,9 @@ Inspect scoped capability leases, issue new ones, and rotate or revoke them.
 This is the CLI surface for orchestrator and agent recovery state.
 `),
 		Example: strings.Join([]string{
-			"  till lease list --project-id p1",
-			"  till lease issue --project-id p1 --agent-name Builder --role builder",
-			"  till lease revoke-all --project-id p1 --reason reset",
+			"  till lease list --project-id <project-id>",
+			"  till lease issue --project-id <project-id> --agent-name Builder --role builder",
+			"  till lease revoke-all --project-id <project-id> --reason reset",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1135,9 +1135,9 @@ Use this to see which agent instances currently hold scoped authority before
 issuing a new lease or cleaning up abandoned runtime state.
 `),
 		Example: strings.Join([]string{
-			"  till lease list --project-id p1",
-			"  till lease list --project-id p1 --scope-type task --scope-id task-123",
-			"  till lease list --project-id p1 --include-revoked",
+			"  till lease list --project-id <project-id>",
+			"  till lease list --project-id <project-id> --scope-type task --scope-id <task-id>",
+			"  till lease list --project-id <project-id> --include-revoked",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1158,8 +1158,8 @@ Use this when the orchestrator or operator needs to grant explicit scoped work
 authority to a builder, qa, or orchestrator agent for one project path.
 `),
 		Example: strings.Join([]string{
-			"  till lease issue --project-id p1 --agent-name Builder --role builder",
-			"  till lease issue --project-id p1 --scope-type task --scope-id task-123 --agent-name QA --role qa --requested-ttl 30m",
+			"  till lease issue --project-id <project-id> --agent-name Builder --role builder",
+			"  till lease issue --project-id <project-id> --scope-type task --scope-id <task-id> --agent-name QA --role qa --requested-ttl 30m",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1173,7 +1173,7 @@ authority to a builder, qa, or orchestrator agent for one project path.
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.agentName, "agent-name", "", "Agent display name")
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.agentInstanceID, "agent-instance-id", "", "Optional agent instance identifier")
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.parentInstanceID, "parent-instance-id", "", "Optional parent lease instance identifier")
-	leaseIssueCmd.Flags().BoolVar(&leaseIssueOpts.allowEqualScopeDelegation, "allow-equal-scope-delegation", false, "Allow equal-scope delegation")
+	leaseIssueCmd.Flags().BoolVar(&leaseIssueOpts.allowEqualScopeDelegation, "allow-equal-scope-delegation", false, "Permit delegation within the same scope")
 	leaseIssueCmd.Flags().DurationVar(&leaseIssueOpts.requestedTTL, "requested-ttl", leaseIssueOpts.requestedTTL, "Requested lease TTL")
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.overrideToken, "override-token", "", "Optional override token")
 	leaseHeartbeatCmd := &cobra.Command{
@@ -1185,7 +1185,7 @@ Refresh the heartbeat on one active capability lease.
 Use this from long-running agent flows to keep one issued lease alive while
 work is still in progress.
 `),
-		Example: "  till lease heartbeat --agent-instance-id agent-123 --lease-token lease-token-abc",
+		Example: "  till lease heartbeat --agent-instance-id <agent-instance-id> --lease-token <lease-token>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.heartbeat")
@@ -1204,7 +1204,7 @@ Renew one capability lease with a new requested TTL.
 Use this when work remains valid but the original lease lifetime is too short
 and you want an explicit renewal record instead of only heartbeats.
 `),
-		Example: "  till lease renew --agent-instance-id agent-123 --lease-token lease-token-abc --ttl 30m",
+		Example: "  till lease renew --agent-instance-id <agent-instance-id> --lease-token <lease-token> --ttl 30m",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.renew")
@@ -1224,7 +1224,7 @@ Revoke one capability lease by agent instance id.
 Use this to clean up abandoned or superseded agent authority when a lease
 should no longer permit mutations.
 `),
-		Example: "  till lease revoke --agent-instance-id agent-123 --reason operator_revoke",
+		Example: "  till lease revoke --agent-instance-id <agent-instance-id> --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "lease.revoke")
@@ -1243,8 +1243,8 @@ Use this during recovery or reset flows when an entire project, branch, phase,
 or task scope should be cleared of active leases.
 `),
 		Example: strings.Join([]string{
-			"  till lease revoke-all --project-id p1 --reason reset",
-			"  till lease revoke-all --project-id p1 --scope-type task --scope-id task-123 --reason operator_recover",
+			"  till lease revoke-all --project-id <project-id> --reason reset",
+			"  till lease revoke-all --project-id <project-id> --scope-type task --scope-id <task-id> --reason operator_recover",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1265,9 +1265,9 @@ Inspect and manage durable, structured handoffs that keep humans and agents
 aligned across planning, execution, and recovery.
 `),
 		Example: strings.Join([]string{
-			"  till handoff list --project-id p1",
-			"  till handoff create --project-id p1 --summary \"QA ready\" --source-role builder --target-role qa",
-			"  till handoff update --handoff-id handoff-123 --summary \"QA approved\" --status accepted",
+			"  till handoff list --project-id <project-id>",
+			"  till handoff create --project-id <project-id> --summary \"QA ready\" --source-role builder --target-role qa",
+			"  till handoff update --handoff-id <handoff-id> --summary \"QA approved\" --status accepted",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1281,8 +1281,8 @@ Use this when work needs to move across roles or scopes with an explicit summary
 next action, missing evidence list, and related references.
 `),
 		Example: strings.Join([]string{
-			"  till handoff create --project-id p1 --summary \"QA ready for review\" --source-role builder --target-role qa",
-			"  till handoff create --project-id p1 --scope-type task --scope-id task-123 --summary \"Need product decision\" --target-role orchestrator --missing-evidence decision-log",
+			"  till handoff create --project-id <project-id> --summary \"QA ready for review\" --source-role builder --target-role qa",
+			"  till handoff create --project-id <project-id> --scope-type task --scope-id <task-id> --summary \"Need product decision\" --target-role orchestrator --missing-evidence decision-log",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1312,7 +1312,7 @@ Show one durable handoff by handoff id.
 Use this when following up on a previously created handoff or when auditing the
 current structured summary and next-action fields.
 `),
-		Example: "  till handoff get --handoff-id handoff-123",
+		Example: "  till handoff get --handoff-id <handoff-id>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "handoff.get")
@@ -1330,8 +1330,8 @@ Use the project, branch, scope, and status filters to focus on the specific
 handoff lane you need to review.
 `),
 		Example: strings.Join([]string{
-			"  till handoff list --project-id p1",
-			"  till handoff list --project-id p1 --scope-type task --scope-id task-123 --status pending",
+			"  till handoff list --project-id <project-id>",
+			"  till handoff list --project-id <project-id> --scope-type task --scope-id <task-id> --status pending",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1354,8 +1354,8 @@ Use this to move the status forward, adjust target routing, or replace the
 structured summary/next-action payload as new evidence arrives.
 `),
 		Example: strings.Join([]string{
-			"  till handoff update --handoff-id handoff-123 --summary \"QA approved\" --status accepted",
-			"  till handoff update --handoff-id handoff-123 --summary \"Need more logs\" --missing-evidence runtime-log --resolution-note \"waiting on reproduction\"",
+			"  till handoff update --handoff-id <handoff-id> --summary \"QA approved\" --status accepted",
+			"  till handoff update --handoff-id <handoff-id> --summary \"Need more logs\" --missing-evidence runtime-log --resolution-note \"waiting on reproduction\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1385,7 +1385,7 @@ structured summary/next-action payload as new evidence arrives.
 Create and resolve persisted auth requests tied to one explicit scope path.
 Supported --path forms are:
 - project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
-- projects/<project-id>,<project-id>...
+- projects/<project-id-a>,<project-id-b>...
 - global
 
 Only orchestrators may request projects/... or global scope.
@@ -1395,9 +1395,9 @@ use approve, deny, or cancel to move it to a terminal state. Omit --project-id
 on request list for global inventory, or add it to focus on one project.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
-			"  till auth request list --project-id p1 --state pending",
-			"  till auth request show --request-id req-123",
+			"  till auth request create --path project/<project-id> --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request list --project-id <project-id> --state pending",
+			"  till auth request show --request-id <request-id>",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1410,7 +1410,7 @@ Create one persisted auth request for a specific principal, client, and
 scope path. The request remains pending until it is approved, denied,
 canceled, or times out. Supported --path forms are:
 - project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]]
-- projects/<project-id>,<project-id>...
+- projects/<project-id-a>,<project-id-b>...
 - global
 
 Optional --principal-role distinguishes agent-shaped requests:
@@ -1421,25 +1421,25 @@ Optional --continuation-json stores client resume metadata so the requesting
 surface can continue cleanly after approval. Include a requester-owned
 resume_token when the requesting MCP client will later claim the result.
 
-Next step: use till auth request show --request-id req-123 or till auth
+Next step: use till auth request show --request-id <request-id> or till auth
 request list --state pending to inspect the stored request, then resolve it with
 approve, deny, or cancel.
 `),
 		Example: strings.Join([]string{
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
-			"  till auth request create --path project/p1 --principal-id qa-agent --principal-type agent --principal-role qa --client-id till-mcp-stdio --client-type mcp-stdio --reason \"qa review\"",
-			"  till auth request create --path project/p1 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"orchestrator review\"",
-			"  till auth request create --path projects/p1,p2 --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"  till auth request create --path project/<project-id> --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"manual MCP review\"",
+			"  till auth request create --path project/<project-id> --principal-id qa-agent --principal-type agent --principal-role qa --client-id till-mcp-stdio --client-type mcp-stdio --reason \"qa review\"",
+			"  till auth request create --path project/<project-id> --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"orchestrator review\"",
+			"  till auth request create --path projects/<project-id-a>,<project-id-b> --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"multi-project orchestration\"",
 			"  till auth request create --path global --principal-id orchestration-agent --principal-type agent --principal-role orchestrator --client-id till-mcp-stdio --client-type mcp-stdio --reason \"general orchestration\"",
-			"  till auth request create --path project/p1/branch/branch-1/phase/phase-a --principal-id review-user --principal-type user --client-id till-tui --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
-			"  till auth request create --path project/p1 --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"resume-123\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/p1\"}'",
+			"  till auth request create --path project/<project-id>/branch/<branch-id>/phase/<phase-id> --principal-id review-user --principal-type user --client-id till-tui --client-type tui --ttl 2h --timeout 30m --reason \"branch-focused review\"",
+			"  till auth request create --path project/<project-id> --principal-id review-agent --principal-type agent --principal-role builder --client-id till-mcp-stdio --client-type mcp-stdio --reason \"resume after approval\" --continuation-json '{\"resume_token\":\"resume-123\",\"resume_tool\":\"till.claim_auth_request\",\"resume_path\":\"project/<project-id>\"}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.create")
 		},
 	}
-	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")
+	requestCreateCmd.Flags().StringVar(&requestCreateOpts.path, "path", "", "Required auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id-a>,<project-id-b>... | global")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalID, "principal-id", "", "Principal identifier")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalType, "principal-type", requestCreateOpts.principalType, "Principal type (user|agent|service)")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalRole, "principal-role", "", "Optional agent role (orchestrator|builder|qa)")
@@ -1462,13 +1462,13 @@ approve, deny, or cancel.
 		Long: strings.TrimSpace(`
 List persisted auth requests in deterministic newest-first order.
 
-Next step: use till auth request show --request-id req-123 to inspect one
+Next step: use till auth request show --request-id <request-id> to inspect one
 row in detail, then resolve it with approve, deny, or cancel. Omit --project-id
 for global inventory or add it to focus on one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth request list",
-			"  till auth request list --project-id p1 --state pending",
+			"  till auth request list --project-id <project-id> --state pending",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1493,7 +1493,7 @@ Next step: if the request is still pending, resolve it with till auth request
 approve, deny, or cancel. If it is already approved, validate or revoke the
 issued session through till auth session subcommands.
 `),
-		Example: "  till auth request show --request-id req-123",
+		Example: "  till auth request show --request-id <request-id>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.show")
@@ -1517,12 +1517,12 @@ Next step: if the requester supplied continuation metadata with a resume_token,
 the requesting MCP client should claim the result through till.claim_auth_request
 using the original request_id and resume_token. Shell handoff of session_id and
 session_secret remains a fallback only. Use till auth request show --request-id
-req-123 to inspect the approved record, including requested vs approved path
+<request-id> to inspect the approved record, including requested vs approved path
 and TTL fields, without re-printing the secret.
 `),
 		Example: strings.Join([]string{
-			"  till auth request approve --request-id req-123 --note \"approved for dogfood\"",
-			"  till auth request approve --request-id req-123 --path project/p1/branch/branch-1 --ttl 2h --note \"limited branch review\"",
+			"  till auth request approve --request-id <request-id> --note \"approved for dogfood\"",
+			"  till auth request approve --request-id <request-id> --path project/<project-id>/branch/<branch-id> --ttl 2h --note \"limited branch review\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1541,10 +1541,10 @@ and TTL fields, without re-printing the secret.
 		Long: strings.TrimSpace(`
 Deny one pending auth request and record an operator-visible note.
 
-Next step: use till auth request show --request-id req-123 to verify the
+Next step: use till auth request show --request-id <request-id> to verify the
 stored terminal state.
 `),
-		Example: "  till auth request deny --request-id req-123 --note \"outside current scope\"",
+		Example: "  till auth request deny --request-id <request-id> --note \"outside current scope\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.deny")
@@ -1560,10 +1560,10 @@ stored terminal state.
 		Long: strings.TrimSpace(`
 Cancel one pending auth request before it is approved or denied.
 
-Next step: use till auth request show --request-id req-123 to verify the
+Next step: use till auth request show --request-id <request-id> to verify the
 stored terminal state.
 `),
-		Example: "  till auth request cancel --request-id req-123 --note \"superseded by a new request\"",
+		Example: "  till auth request cancel --request-id <request-id> --note \"superseded by a new request\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.request.cancel")
@@ -1584,8 +1584,8 @@ for global inventory, or add it to narrow active auth to one project.
 `),
 		Example: strings.Join([]string{
 			"  till auth session list --state active",
-			"  till auth session validate --session-id sess-123 --session-secret secret-abc",
-			"  till auth session revoke --session-id sess-123 --reason operator_revoke",
+			"  till auth session validate --session-id <session-id> --session-secret <session-secret>",
+			"  till auth session revoke --session-id <session-id> --reason operator_revoke",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1604,7 +1604,7 @@ to verify one specific credential pair, or use revoke to rotate it.
 `),
 		Example: strings.Join([]string{
 			"  till auth session list",
-			"  till auth session list --project-id p1 --state active",
+			"  till auth session list --project-id <project-id> --state active",
 			"  till auth session list --state active --principal-id review-agent",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1627,9 +1627,9 @@ Validate one session_id and session_secret pair and return caller-safe identity
 details for the credential.
 
 Next step: if the session is valid, use it with MCP mutation calls. If it is no
-longer needed, revoke it with till auth session revoke --session-id sess-123.
+longer needed, revoke it with till auth session revoke --session-id <session-id>.
 `),
-		Example: "  till auth session validate --session-id sess-123 --session-secret secret-abc",
+		Example: "  till auth session validate --session-id <session-id> --session-secret <session-secret>",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.session.validate")
@@ -1649,7 +1649,7 @@ Revoke one autent-backed session.
 This command requires the --session-id flag; it does not accept the session id
 as a positional argument.
 `),
-		Example: "  till auth session revoke --session-id sess-123 --reason operator_revoke",
+		Example: "  till auth session revoke --session-id <session-id> --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.session.revoke")
@@ -1698,7 +1698,7 @@ till auth session revoke for the primary session lifecycle UX.
 This command requires the --session-id flag; it does not accept the session id
 as a positional argument.
 `),
-		Example: "  till auth revoke-session --session-id sess-123 --reason operator_revoke",
+		Example: "  till auth revoke-session --session-id <session-id> --reason operator_revoke",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFlow(cmd.Context(), "auth.revoke-session")
@@ -2371,6 +2371,16 @@ func executeCommandFlow(
 	})
 	logger.Debug("application service initialized", "default_delete_mode", cfg.Delete.DefaultMode)
 
+	runOneShotCommand := func(name, errorSummary string, fn func() error) error {
+		logger.Info("command flow start", "command", name)
+		if err := withCLIProgress(stderr, commandProgressLabel(name), fn); err != nil {
+			logger.Error("command flow failed", "command", name, "err", err)
+			return fmt.Errorf("run %s command: %w", errorSummary, err)
+		}
+		logger.Info("command flow complete", "command", name)
+		return nil
+	}
+
 	switch command {
 	case "":
 		logger.Info("command flow start", "command", "tui")
@@ -2403,325 +2413,165 @@ func executeCommandFlow(
 		logger.Info("command flow complete", "command", "mcp", "transport", "stdio")
 		return nil
 	case "auth.issue-session":
-		logger.Info("command flow start", "command", "auth.issue-session")
-		if err := runAuthIssueSession(ctx, authSvc, issueSessionOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.issue-session", "err", err)
-			return fmt.Errorf("run auth issue-session command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.issue-session")
-		return nil
+		return runOneShotCommand("auth.issue-session", "auth issue-session", func() error {
+			return runAuthIssueSession(ctx, authSvc, issueSessionOpts, stdout)
+		})
 	case "auth.request.create":
-		logger.Info("command flow start", "command", "auth.request.create")
-		if err := runAuthRequestCreate(ctx, svc, cfg, requestCreateOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.request.create", "err", err)
-			return fmt.Errorf("run auth request create command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.request.create")
-		return nil
+		return runOneShotCommand("auth.request.create", "auth request create", func() error {
+			return runAuthRequestCreate(ctx, svc, cfg, requestCreateOpts, stdout)
+		})
 	case "auth.request.list":
-		logger.Info("command flow start", "command", "auth.request.list")
-		if err := runAuthRequestList(ctx, svc, requestListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.request.list", "err", err)
-			return fmt.Errorf("run auth request list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.request.list")
-		return nil
+		return runOneShotCommand("auth.request.list", "auth request list", func() error {
+			return runAuthRequestList(ctx, svc, requestListOpts, stdout)
+		})
 	case "auth.request.show":
-		logger.Info("command flow start", "command", "auth.request.show")
-		if err := runAuthRequestShow(ctx, svc, requestShowOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.request.show", "err", err)
-			return fmt.Errorf("run auth request show command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.request.show")
-		return nil
+		return runOneShotCommand("auth.request.show", "auth request show", func() error {
+			return runAuthRequestShow(ctx, svc, requestShowOpts, stdout)
+		})
 	case "auth.request.approve":
-		logger.Info("command flow start", "command", "auth.request.approve")
-		if err := runAuthRequestApprove(ctx, svc, cfg, requestApproveOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.request.approve", "err", err)
-			return fmt.Errorf("run auth request approve command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.request.approve")
-		return nil
+		return runOneShotCommand("auth.request.approve", "auth request approve", func() error {
+			return runAuthRequestApprove(ctx, svc, cfg, requestApproveOpts, stdout)
+		})
 	case "auth.request.deny":
-		logger.Info("command flow start", "command", "auth.request.deny")
-		if err := runAuthRequestDeny(ctx, svc, cfg, requestDenyOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.request.deny", "err", err)
-			return fmt.Errorf("run auth request deny command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.request.deny")
-		return nil
+		return runOneShotCommand("auth.request.deny", "auth request deny", func() error {
+			return runAuthRequestDeny(ctx, svc, cfg, requestDenyOpts, stdout)
+		})
 	case "auth.request.cancel":
-		logger.Info("command flow start", "command", "auth.request.cancel")
-		if err := runAuthRequestCancel(ctx, svc, cfg, requestCancelOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.request.cancel", "err", err)
-			return fmt.Errorf("run auth request cancel command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.request.cancel")
-		return nil
+		return runOneShotCommand("auth.request.cancel", "auth request cancel", func() error {
+			return runAuthRequestCancel(ctx, svc, cfg, requestCancelOpts, stdout)
+		})
 	case "auth.session.list":
-		logger.Info("command flow start", "command", "auth.session.list")
-		if err := runAuthSessionList(ctx, svc, sessionListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.session.list", "err", err)
-			return fmt.Errorf("run auth session list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.session.list")
-		return nil
+		return runOneShotCommand("auth.session.list", "auth session list", func() error {
+			return runAuthSessionList(ctx, svc, sessionListOpts, stdout)
+		})
 	case "auth.session.validate":
-		logger.Info("command flow start", "command", "auth.session.validate")
-		if err := runAuthSessionValidate(ctx, svc, sessionValidateOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.session.validate", "err", err)
-			return fmt.Errorf("run auth session validate command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.session.validate")
-		return nil
+		return runOneShotCommand("auth.session.validate", "auth session validate", func() error {
+			return runAuthSessionValidate(ctx, svc, sessionValidateOpts, stdout)
+		})
 	case "auth.session.revoke":
-		logger.Info("command flow start", "command", "auth.session.revoke")
-		if err := runAuthSessionRevoke(ctx, svc, revokeSessionOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.session.revoke", "err", err)
-			return fmt.Errorf("run auth session revoke command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.session.revoke")
-		return nil
+		return runOneShotCommand("auth.session.revoke", "auth session revoke", func() error {
+			return runAuthSessionRevoke(ctx, svc, revokeSessionOpts, stdout)
+		})
 	case "auth.revoke-session":
-		logger.Info("command flow start", "command", "auth.revoke-session")
-		if err := runAuthRevokeSession(ctx, authSvc, revokeSessionOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "auth.revoke-session", "err", err)
-			return fmt.Errorf("run auth revoke-session command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "auth.revoke-session")
-		return nil
+		return runOneShotCommand("auth.revoke-session", "auth revoke-session", func() error {
+			return runAuthRevokeSession(ctx, authSvc, revokeSessionOpts, stdout)
+		})
 	case "project.list":
-		logger.Info("command flow start", "command", "project.list")
-		if err := runProjectList(ctx, svc, cfg, projectListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "project.list", "err", err)
-			return fmt.Errorf("run project list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "project.list")
-		return nil
+		return runOneShotCommand("project.list", "project list", func() error {
+			return runProjectList(ctx, svc, cfg, projectListOpts, stdout)
+		})
 	case "project.create":
-		logger.Info("command flow start", "command", "project.create")
-		if err := runProjectCreate(ctx, svc, cfg, projectCreateOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "project.create", "err", err)
-			return fmt.Errorf("run project create command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "project.create")
-		return nil
+		return runOneShotCommand("project.create", "project create", func() error {
+			return runProjectCreate(ctx, svc, cfg, projectCreateOpts, stdout)
+		})
 	case "project.show":
-		logger.Info("command flow start", "command", "project.show")
-		if err := runProjectShow(ctx, svc, cfg, projectShowOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "project.show", "err", err)
-			return fmt.Errorf("run project show command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "project.show")
-		return nil
+		return runOneShotCommand("project.show", "project show", func() error {
+			return runProjectShow(ctx, svc, cfg, projectShowOpts, stdout)
+		})
 	case "project.discover":
-		logger.Info("command flow start", "command", "project.discover")
-		if err := runProjectDiscover(ctx, svc, cfg, projectDiscoverOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "project.discover", "err", err)
-			return fmt.Errorf("run project discover command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "project.discover")
-		return nil
+		return runOneShotCommand("project.discover", "project discover", func() error {
+			return runProjectDiscover(ctx, svc, cfg, projectDiscoverOpts, stdout)
+		})
 	case "embeddings.status":
-		logger.Info("command flow start", "command", "embeddings.status")
-		if err := runEmbeddingsStatus(ctx, svc, embeddingsStatusOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "embeddings.status", "err", err)
-			return fmt.Errorf("run embeddings status command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "embeddings.status")
-		return nil
+		return runOneShotCommand("embeddings.status", "embeddings status", func() error {
+			return runEmbeddingsStatus(ctx, svc, embeddingsStatusOpts, stdout)
+		})
 	case "embeddings.reindex":
-		logger.Info("command flow start", "command", "embeddings.reindex")
-		if err := runEmbeddingsReindex(ctx, svc, cfg, embeddingsReindexOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "embeddings.reindex", "err", err)
-			return fmt.Errorf("run embeddings reindex command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "embeddings.reindex")
-		return nil
+		return runOneShotCommand("embeddings.reindex", "embeddings reindex", func() error {
+			return runEmbeddingsReindex(ctx, svc, cfg, embeddingsReindexOpts, stdout)
+		})
 	case "capture-state":
-		logger.Info("command flow start", "command", "capture-state")
-		if err := runCaptureState(ctx, svc, authSvc, captureStateOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "capture-state", "err", err)
-			return fmt.Errorf("run capture-state command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "capture-state")
-		return nil
+		return runOneShotCommand("capture-state", "capture-state", func() error {
+			return runCaptureState(ctx, svc, authSvc, captureStateOpts, stdout)
+		})
 	case "kind.list":
-		logger.Info("command flow start", "command", "kind.list")
-		if err := runKindList(ctx, svc, kindListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "kind.list", "err", err)
-			return fmt.Errorf("run kind list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "kind.list")
-		return nil
+		return runOneShotCommand("kind.list", "kind list", func() error {
+			return runKindList(ctx, svc, kindListOpts, stdout)
+		})
 	case "kind.upsert":
-		logger.Info("command flow start", "command", "kind.upsert")
-		if err := runKindUpsert(ctx, svc, cfg, kindUpsertOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "kind.upsert", "err", err)
-			return fmt.Errorf("run kind upsert command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "kind.upsert")
-		return nil
+		return runOneShotCommand("kind.upsert", "kind upsert", func() error {
+			return runKindUpsert(ctx, svc, cfg, kindUpsertOpts, stdout)
+		})
 	case "kind.allowlist.list":
-		logger.Info("command flow start", "command", "kind.allowlist.list")
-		if err := runKindAllowlistList(ctx, svc, kindAllowlistOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "kind.allowlist.list", "err", err)
-			return fmt.Errorf("run kind allowlist list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "kind.allowlist.list")
-		return nil
+		return runOneShotCommand("kind.allowlist.list", "kind allowlist list", func() error {
+			return runKindAllowlistList(ctx, svc, kindAllowlistOpts, stdout)
+		})
 	case "kind.allowlist.set":
-		logger.Info("command flow start", "command", "kind.allowlist.set")
-		if err := runKindAllowlistSet(ctx, svc, cfg, kindAllowlistOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "kind.allowlist.set", "err", err)
-			return fmt.Errorf("run kind allowlist set command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "kind.allowlist.set")
-		return nil
+		return runOneShotCommand("kind.allowlist.set", "kind allowlist set", func() error {
+			return runKindAllowlistSet(ctx, svc, cfg, kindAllowlistOpts, stdout)
+		})
 	case "template.library.list":
-		logger.Info("command flow start", "command", "template.library.list")
-		if err := runTemplateLibraryList(ctx, svc, templateLibraryListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "template.library.list", "err", err)
-			return fmt.Errorf("run template library list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "template.library.list")
-		return nil
+		return runOneShotCommand("template.library.list", "template library list", func() error {
+			return runTemplateLibraryList(ctx, svc, templateLibraryListOpts, stdout)
+		})
 	case "template.library.show":
-		logger.Info("command flow start", "command", "template.library.show")
-		if err := runTemplateLibraryShow(ctx, svc, templateLibraryShowOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "template.library.show", "err", err)
-			return fmt.Errorf("run template library show command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "template.library.show")
-		return nil
+		return runOneShotCommand("template.library.show", "template library show", func() error {
+			return runTemplateLibraryShow(ctx, svc, templateLibraryShowOpts, stdout)
+		})
 	case "template.library.upsert":
-		logger.Info("command flow start", "command", "template.library.upsert")
-		if err := runTemplateLibraryUpsert(ctx, svc, cfg, templateLibraryUpsertOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "template.library.upsert", "err", err)
-			return fmt.Errorf("run template library upsert command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "template.library.upsert")
-		return nil
+		return runOneShotCommand("template.library.upsert", "template library upsert", func() error {
+			return runTemplateLibraryUpsert(ctx, svc, cfg, templateLibraryUpsertOpts, stdout)
+		})
 	case "template.project.bind":
-		logger.Info("command flow start", "command", "template.project.bind")
-		if err := runTemplateProjectBind(ctx, svc, cfg, templateProjectBindOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "template.project.bind", "err", err)
-			return fmt.Errorf("run template project bind command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "template.project.bind")
-		return nil
+		return runOneShotCommand("template.project.bind", "template project bind", func() error {
+			return runTemplateProjectBind(ctx, svc, cfg, templateProjectBindOpts, stdout)
+		})
 	case "template.project.binding":
-		logger.Info("command flow start", "command", "template.project.binding")
-		if err := runTemplateProjectBinding(ctx, svc, templateProjectBindingOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "template.project.binding", "err", err)
-			return fmt.Errorf("run template project binding command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "template.project.binding")
-		return nil
+		return runOneShotCommand("template.project.binding", "template project binding", func() error {
+			return runTemplateProjectBinding(ctx, svc, templateProjectBindingOpts, stdout)
+		})
 	case "template.contract.show":
-		logger.Info("command flow start", "command", "template.contract.show")
-		if err := runTemplateContractShow(ctx, svc, templateContractShowOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "template.contract.show", "err", err)
-			return fmt.Errorf("run template contract show command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "template.contract.show")
-		return nil
+		return runOneShotCommand("template.contract.show", "template contract show", func() error {
+			return runTemplateContractShow(ctx, svc, templateContractShowOpts, stdout)
+		})
 	case "lease.list":
-		logger.Info("command flow start", "command", "lease.list")
-		if err := runLeaseList(ctx, svc, leaseListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "lease.list", "err", err)
-			return fmt.Errorf("run lease list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "lease.list")
-		return nil
+		return runOneShotCommand("lease.list", "lease list", func() error {
+			return runLeaseList(ctx, svc, leaseListOpts, stdout)
+		})
 	case "lease.issue":
-		logger.Info("command flow start", "command", "lease.issue")
-		if err := runLeaseIssue(ctx, svc, cfg, leaseIssueOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "lease.issue", "err", err)
-			return fmt.Errorf("run lease issue command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "lease.issue")
-		return nil
+		return runOneShotCommand("lease.issue", "lease issue", func() error {
+			return runLeaseIssue(ctx, svc, cfg, leaseIssueOpts, stdout)
+		})
 	case "lease.heartbeat":
-		logger.Info("command flow start", "command", "lease.heartbeat")
-		if err := runLeaseHeartbeat(ctx, svc, cfg, leaseHeartbeatOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "lease.heartbeat", "err", err)
-			return fmt.Errorf("run lease heartbeat command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "lease.heartbeat")
-		return nil
+		return runOneShotCommand("lease.heartbeat", "lease heartbeat", func() error {
+			return runLeaseHeartbeat(ctx, svc, cfg, leaseHeartbeatOpts, stdout)
+		})
 	case "lease.renew":
-		logger.Info("command flow start", "command", "lease.renew")
-		if err := runLeaseRenew(ctx, svc, cfg, leaseRenewOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "lease.renew", "err", err)
-			return fmt.Errorf("run lease renew command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "lease.renew")
-		return nil
+		return runOneShotCommand("lease.renew", "lease renew", func() error {
+			return runLeaseRenew(ctx, svc, cfg, leaseRenewOpts, stdout)
+		})
 	case "lease.revoke":
-		logger.Info("command flow start", "command", "lease.revoke")
-		if err := runLeaseRevoke(ctx, svc, cfg, leaseRevokeOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "lease.revoke", "err", err)
-			return fmt.Errorf("run lease revoke command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "lease.revoke")
-		return nil
+		return runOneShotCommand("lease.revoke", "lease revoke", func() error {
+			return runLeaseRevoke(ctx, svc, cfg, leaseRevokeOpts, stdout)
+		})
 	case "lease.revoke-all":
-		logger.Info("command flow start", "command", "lease.revoke-all")
-		if err := runLeaseRevokeAll(ctx, svc, cfg, leaseRevokeAllOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "lease.revoke-all", "err", err)
-			return fmt.Errorf("run lease revoke-all command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "lease.revoke-all")
-		return nil
+		return runOneShotCommand("lease.revoke-all", "lease revoke-all", func() error {
+			return runLeaseRevokeAll(ctx, svc, cfg, leaseRevokeAllOpts, stdout)
+		})
 	case "handoff.create":
-		logger.Info("command flow start", "command", "handoff.create")
-		if err := runHandoffCreate(ctx, svc, cfg, handoffCreateOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "handoff.create", "err", err)
-			return fmt.Errorf("run handoff create command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "handoff.create")
-		return nil
+		return runOneShotCommand("handoff.create", "handoff create", func() error {
+			return runHandoffCreate(ctx, svc, cfg, handoffCreateOpts, stdout)
+		})
 	case "handoff.get":
-		logger.Info("command flow start", "command", "handoff.get")
-		if err := runHandoffGet(ctx, svc, handoffGetOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "handoff.get", "err", err)
-			return fmt.Errorf("run handoff get command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "handoff.get")
-		return nil
+		return runOneShotCommand("handoff.get", "handoff get", func() error {
+			return runHandoffGet(ctx, svc, handoffGetOpts, stdout)
+		})
 	case "handoff.list":
-		logger.Info("command flow start", "command", "handoff.list")
-		if err := runHandoffList(ctx, svc, handoffListOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "handoff.list", "err", err)
-			return fmt.Errorf("run handoff list command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "handoff.list")
-		return nil
+		return runOneShotCommand("handoff.list", "handoff list", func() error {
+			return runHandoffList(ctx, svc, handoffListOpts, stdout)
+		})
 	case "handoff.update":
-		logger.Info("command flow start", "command", "handoff.update")
-		if err := runHandoffUpdate(ctx, svc, cfg, handoffUpdateOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "handoff.update", "err", err)
-			return fmt.Errorf("run handoff update command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "handoff.update")
-		return nil
+		return runOneShotCommand("handoff.update", "handoff update", func() error {
+			return runHandoffUpdate(ctx, svc, cfg, handoffUpdateOpts, stdout)
+		})
 	case "export":
-		logger.Info("command flow start", "command", "export")
-		if err := runExport(ctx, svc, exportOpts, stdout); err != nil {
-			logger.Error("command flow failed", "command", "export", "err", err)
-			return fmt.Errorf("run export command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "export")
-		return nil
+		return runOneShotCommand("export", "export", func() error {
+			return runExport(ctx, svc, exportOpts, stdout)
+		})
 	case "import":
-		logger.Info("command flow start", "command", "import")
-		if err := runImport(ctx, svc, importOpts); err != nil {
-			logger.Error("command flow failed", "command", "import", "err", err)
-			return fmt.Errorf("run import command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "import")
-		return nil
+		return runOneShotCommand("import", "import", func() error {
+			return runImport(ctx, svc, importOpts)
+		})
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
