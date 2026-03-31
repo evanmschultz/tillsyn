@@ -75,7 +75,7 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		RequestedTTL:     "2h",
 		Timeout:          "30m",
 		Reason:           "manual MCP review",
-		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.create_task","resume":{"path":"project/p1","attempt":1}}`,
+		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.plan_item","resume":{"path":"project/p1","attempt":1}}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
@@ -157,7 +157,7 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		ClientType:        "mcp-stdio",
 		RequestedTTL:      "4h",
 		Reason:            "continuation claim",
-		ContinuationJSON:  `{"resume_token":"resume-123","resume_tool":"till.create_task"}`,
+		ContinuationJSON:  `{"resume_token":"resume-123","resume_tool":"till.plan_item"}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest(continuation) error = %v", err)

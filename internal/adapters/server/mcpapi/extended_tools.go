@@ -801,13 +801,14 @@ func registerProjectTools(
 	}
 }
 
-// registerTaskTools registers list/search/create/update/mutation task tools.
+// registerTaskTools registers task reads plus the reduced plan-item mutation family.
 func registerTaskTools(
 	srv *mcpserver.MCPServer,
 	tasks common.TaskService,
 	search common.SearchService,
 	embeddings common.EmbeddingsService,
 	changes common.ChangeFeedService,
+	exposeLegacyPlanItemTools bool,
 ) {
 	if tasks != nil {
 		srv.AddTool(
@@ -834,56 +835,50 @@ func registerTaskTools(
 			},
 		)
 
-		srv.AddTool(
-			mcp.NewTool(
-				"till.create_task",
-				mcp.WithDescription("Create one task/work-item (branch|phase|task|subtask via scope/kind)."),
-				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-				mcp.WithString("column_id", mcp.Required(), mcp.Description("Column identifier")),
-				mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-				mcp.WithString("parent_id", mcp.Description("Optional parent task id")),
-				mcp.WithString("kind", mcp.Description("Kind identifier")),
-				mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
-				mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
-				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
-				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
-				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
-				mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					ProjectID       string              `json:"project_id"`
-					ParentID        string              `json:"parent_id"`
-					Kind            string              `json:"kind"`
-					Scope           string              `json:"scope"`
-					ColumnID        string              `json:"column_id"`
-					Title           string              `json:"title"`
-					Description     string              `json:"description"`
-					Priority        string              `json:"priority"`
-					DueAt           string              `json:"due_at"`
-					Labels          []string            `json:"labels"`
-					Metadata        domain.TaskMetadata `json:"metadata"`
-					SessionID       string              `json:"session_id"`
-					SessionSecret   string              `json:"session_secret"`
-					AgentInstanceID string              `json:"agent_instance_id"`
-					LeaseToken      string              `json:"lease_token"`
-					OverrideToken   string              `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
-				if strings.TrimSpace(args.ProjectID) == "" {
+		handlePlanItemMutation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
+			var args struct {
+				Operation       string               `json:"operation"`
+				ProjectID       string               `json:"project_id"`
+				ParentID        string               `json:"parent_id"`
+				Kind            string               `json:"kind"`
+				Scope           string               `json:"scope"`
+				ColumnID        string               `json:"column_id"`
+				Title           string               `json:"title"`
+				Description     string               `json:"description"`
+				Priority        string               `json:"priority"`
+				DueAt           string               `json:"due_at"`
+				Labels          []string             `json:"labels"`
+				Metadata        *domain.TaskMetadata `json:"metadata"`
+				TaskID          string               `json:"task_id"`
+				ToColumnID      string               `json:"to_column_id"`
+				Position        *int                 `json:"position"`
+				Mode            string               `json:"mode"`
+				SessionID       string               `json:"session_id"`
+				SessionSecret   string               `json:"session_secret"`
+				AgentInstanceID string               `json:"agent_instance_id"`
+				LeaseToken      string               `json:"lease_token"`
+				OverrideToken   string               `json:"override_token"`
+			}
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			operation := strings.TrimSpace(fixedOperation)
+			if operation == "" {
+				operation = strings.TrimSpace(args.Operation)
+			}
+
+			switch operation {
+			case "create":
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 				}
-				if strings.TrimSpace(args.ColumnID) == "" {
+				columnID := strings.TrimSpace(args.ColumnID)
+				if columnID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "column_id" not found`), nil
 				}
-				if strings.TrimSpace(args.Title) == "" {
+				title := strings.TrimSpace(args.Title)
+				if title == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
@@ -894,13 +889,13 @@ func registerTaskTools(
 						SessionSecret: args.SessionSecret,
 					},
 					"create_task",
-					"project:"+strings.TrimSpace(args.ProjectID),
+					"project:"+projectID,
 					"task",
 					"new",
 					map[string]string{
-						"project_id": strings.TrimSpace(args.ProjectID),
+						"project_id": projectID,
 						"parent_id":  strings.TrimSpace(args.ParentID),
-						"column_id":  strings.TrimSpace(args.ColumnID),
+						"column_id":  columnID,
 						"scope":      strings.TrimSpace(args.Scope),
 					},
 				)
@@ -915,6 +910,10 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
+				var metadata domain.TaskMetadata
+				if args.Metadata != nil {
+					metadata = *args.Metadata
+				}
 				task, err := tasks.CreateTask(ctx, common.CreateTaskRequest{
 					ProjectID:   args.ProjectID,
 					ParentID:    args.ParentID,
@@ -926,7 +925,7 @@ func registerTaskTools(
 					Priority:    args.Priority,
 					DueAt:       args.DueAt,
 					Labels:      append([]string(nil), args.Labels...),
-					Metadata:    args.Metadata,
+					Metadata:    metadata,
 					Actor:       actor,
 				})
 				if err != nil {
@@ -934,51 +933,16 @@ func registerTaskTools(
 				}
 				result, err := mcp.NewToolResultJSON(task)
 				if err != nil {
-					return nil, fmt.Errorf("encode create_task result: %w", err)
+					return nil, fmt.Errorf("encode %s create result: %w", toolLabel, err)
 				}
 				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.update_task",
-				mcp.WithDescription("Update one task/work-item."),
-				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-				mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-				mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
-				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
-				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
-				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
-				mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					TaskID          string               `json:"task_id"`
-					Title           string               `json:"title"`
-					Description     string               `json:"description"`
-					Priority        string               `json:"priority"`
-					DueAt           string               `json:"due_at"`
-					Labels          []string             `json:"labels"`
-					Metadata        *domain.TaskMetadata `json:"metadata"`
-					SessionID       string               `json:"session_id"`
-					SessionSecret   string               `json:"session_secret"`
-					AgentInstanceID string               `json:"agent_instance_id"`
-					LeaseToken      string               `json:"lease_token"`
-					OverrideToken   string               `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
-				if strings.TrimSpace(args.TaskID) == "" {
+			case "update":
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
 				}
-				if strings.TrimSpace(args.Title) == "" {
+				title := strings.TrimSpace(args.Title)
+				if title == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
@@ -991,8 +955,8 @@ func registerTaskTools(
 					"update_task",
 					"tillsyn",
 					"task",
-					strings.TrimSpace(args.TaskID),
-					map[string]string{"task_id": strings.TrimSpace(args.TaskID)},
+					taskID,
+					map[string]string{"task_id": taskID},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1020,39 +984,10 @@ func registerTaskTools(
 				}
 				result, err := mcp.NewToolResultJSON(task)
 				if err != nil {
-					return nil, fmt.Errorf("encode update_task result: %w", err)
+					return nil, fmt.Errorf("encode %s update result: %w", toolLabel, err)
 				}
 				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.move_task",
-				mcp.WithDescription("Move one task/work-item to another column/position."),
-				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-				mcp.WithString("to_column_id", mcp.Required(), mcp.Description("Destination column identifier")),
-				mcp.WithNumber("position", mcp.Required(), mcp.Description("Destination position")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					TaskID          string `json:"task_id"`
-					ToColumnID      string `json:"to_column_id"`
-					Position        int    `json:"position"`
-					SessionID       string `json:"session_id"`
-					SessionSecret   string `json:"session_secret"`
-					AgentInstanceID string `json:"agent_instance_id"`
-					LeaseToken      string `json:"lease_token"`
-					OverrideToken   string `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
+			case "move":
 				taskID := strings.TrimSpace(args.TaskID)
 				if taskID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
@@ -1060,6 +995,9 @@ func registerTaskTools(
 				toColumnID := strings.TrimSpace(args.ToColumnID)
 				if toColumnID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "to_column_id" not found`), nil
+				}
+				if args.Position == nil {
+					return mcp.NewToolResultError(`invalid_request: required argument "position" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
 					ctx,
@@ -1088,7 +1026,7 @@ func registerTaskTools(
 				task, err := tasks.MoveTask(ctx, common.MoveTaskRequest{
 					TaskID:     taskID,
 					ToColumnID: toColumnID,
-					Position:   args.Position,
+					Position:   *args.Position,
 					Actor:      actor,
 				})
 				if err != nil {
@@ -1096,37 +1034,10 @@ func registerTaskTools(
 				}
 				result, err := mcp.NewToolResultJSON(task)
 				if err != nil {
-					return nil, fmt.Errorf("encode move_task result: %w", err)
+					return nil, fmt.Errorf("encode %s move result: %w", toolLabel, err)
 				}
 				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.delete_task",
-				mcp.WithDescription("Delete one task/work-item (archive or hard)."),
-				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-				mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					TaskID          string `json:"task_id"`
-					Mode            string `json:"mode"`
-					SessionID       string `json:"session_id"`
-					SessionSecret   string `json:"session_secret"`
-					AgentInstanceID string `json:"agent_instance_id"`
-					LeaseToken      string `json:"lease_token"`
-					OverrideToken   string `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
+			case "delete":
 				taskID := strings.TrimSpace(args.TaskID)
 				if taskID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
@@ -1168,35 +1079,10 @@ func registerTaskTools(
 					"mode":    args.Mode,
 				})
 				if err != nil {
-					return nil, fmt.Errorf("encode delete_task result: %w", err)
+					return nil, fmt.Errorf("encode %s delete result: %w", toolLabel, err)
 				}
 				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.restore_task",
-				mcp.WithDescription("Restore one archived task/work-item."),
-				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					TaskID          string `json:"task_id"`
-					SessionID       string `json:"session_id"`
-					SessionSecret   string `json:"session_secret"`
-					AgentInstanceID string `json:"agent_instance_id"`
-					LeaseToken      string `json:"lease_token"`
-					OverrideToken   string `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
+			case "restore":
 				taskID := strings.TrimSpace(args.TaskID)
 				if taskID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
@@ -1234,37 +1120,10 @@ func registerTaskTools(
 				}
 				result, err := mcp.NewToolResultJSON(task)
 				if err != nil {
-					return nil, fmt.Errorf("encode restore_task result: %w", err)
+					return nil, fmt.Errorf("encode %s restore result: %w", toolLabel, err)
 				}
 				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.reparent_task",
-				mcp.WithDescription("Change parent relationship for one task/work-item."),
-				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-				mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					TaskID          string `json:"task_id"`
-					ParentID        string `json:"parent_id"`
-					SessionID       string `json:"session_id"`
-					SessionSecret   string `json:"session_secret"`
-					AgentInstanceID string `json:"agent_instance_id"`
-					LeaseToken      string `json:"lease_token"`
-					OverrideToken   string `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
+			case "reparent":
 				taskID := strings.TrimSpace(args.TaskID)
 				if taskID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
@@ -1303,11 +1162,162 @@ func registerTaskTools(
 				}
 				result, err := mcp.NewToolResultJSON(task)
 				if err != nil {
-					return nil, fmt.Errorf("encode reparent_task result: %w", err)
+					return nil, fmt.Errorf("encode %s reparent result: %w", toolLabel, err)
 				}
 				return result, nil
+			default:
+				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
+			}
+		}
+
+		srv.AddTool(
+			mcp.NewTool(
+				"till.plan_item",
+				mcp.WithDescription("Mutate one plan-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=create|update|move|delete|restore|reparent."),
+				mcp.WithString("operation", mcp.Required(), mcp.Description("Plan-item mutation operation"), mcp.Enum("create", "update", "move", "delete", "restore", "reparent")),
+				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=create")),
+				mcp.WithString("task_id", mcp.Description("Plan-item identifier. Required for operation=update|move|delete|restore|reparent")),
+				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
+				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
+				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
+				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
+				mcp.WithString("parent_id", mcp.Description("Optional parent plan-item id for operation=create or new parent id for operation=reparent")),
+				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
+				mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+				mcp.WithString("description", mcp.Description("Plan-item details in markdown-rich text")),
+				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
+				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
+				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
+				mcp.WithObject("metadata", mcp.Description("Optional plan-item metadata object")),
+				mcp.WithString("mode", mcp.Description("archive|hard for operation=delete"), mcp.Enum("archive", "hard")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+				mcp.WithString("override_token", mcp.Description("Optional override token")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return handlePlanItemMutation(ctx, req, "plan_item", "")
 			},
 		)
+
+		if exposeLegacyPlanItemTools {
+			srv.AddTool(
+				mcp.NewTool(
+					"till.create_task",
+					mcp.WithDescription("Create one task/work-item (legacy alias for till.plan_item operation=create)."),
+					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+					mcp.WithString("column_id", mcp.Required(), mcp.Description("Column identifier")),
+					mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
+					mcp.WithString("parent_id", mcp.Description("Optional parent task id")),
+					mcp.WithString("kind", mcp.Description("Kind identifier")),
+					mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+					mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
+					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
+					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
+					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
+					mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
+					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+					mcp.WithString("override_token", mcp.Description("Optional override token")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemMutation(ctx, req, "create_task", "create")
+				},
+			)
+
+			srv.AddTool(
+				mcp.NewTool(
+					"till.update_task",
+					mcp.WithDescription("Update one task/work-item (legacy alias for till.plan_item operation=update)."),
+					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
+					mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
+					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
+					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
+					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
+					mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
+					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+					mcp.WithString("override_token", mcp.Description("Optional override token")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemMutation(ctx, req, "update_task", "update")
+				},
+			)
+
+			srv.AddTool(
+				mcp.NewTool(
+					"till.move_task",
+					mcp.WithDescription("Move one task/work-item to another column/position (legacy alias for till.plan_item operation=move)."),
+					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithString("to_column_id", mcp.Required(), mcp.Description("Destination column identifier")),
+					mcp.WithNumber("position", mcp.Required(), mcp.Description("Destination position")),
+					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+					mcp.WithString("override_token", mcp.Description("Optional override token")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemMutation(ctx, req, "move_task", "move")
+				},
+			)
+
+			srv.AddTool(
+				mcp.NewTool(
+					"till.delete_task",
+					mcp.WithDescription("Delete one task/work-item (archive or hard; legacy alias for till.plan_item operation=delete)."),
+					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
+					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+					mcp.WithString("override_token", mcp.Description("Optional override token")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemMutation(ctx, req, "delete_task", "delete")
+				},
+			)
+
+			srv.AddTool(
+				mcp.NewTool(
+					"till.restore_task",
+					mcp.WithDescription("Restore one archived task/work-item (legacy alias for till.plan_item operation=restore)."),
+					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+					mcp.WithString("override_token", mcp.Description("Optional override token")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemMutation(ctx, req, "restore_task", "restore")
+				},
+			)
+
+			srv.AddTool(
+				mcp.NewTool(
+					"till.reparent_task",
+					mcp.WithDescription("Change parent relationship for one task/work-item (legacy alias for till.plan_item operation=reparent)."),
+					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
+					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+					mcp.WithString("override_token", mcp.Description("Optional override token")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemMutation(ctx, req, "reparent_task", "reparent")
+				},
+			)
+		}
 
 		srv.AddTool(
 			mcp.NewTool(

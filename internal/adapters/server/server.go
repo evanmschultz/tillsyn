@@ -30,6 +30,7 @@ type Config struct {
 	ExposeLegacyLeaseTools        bool
 	ExposeLegacyCoordinationTools bool
 	ExposeLegacyProjectTools      bool
+	ExposeLegacyPlanItemTools     bool
 }
 
 // Dependencies defines app-facing adapters required by server transports.
@@ -56,6 +57,7 @@ func NewHandler(cfg Config, deps Dependencies) (http.Handler, Config, error) {
 			ExposeLegacyLeaseTools:        normalizedCfg.ExposeLegacyLeaseTools,
 			ExposeLegacyCoordinationTools: normalizedCfg.ExposeLegacyCoordinationTools,
 			ExposeLegacyProjectTools:      normalizedCfg.ExposeLegacyProjectTools,
+			ExposeLegacyPlanItemTools:     normalizedCfg.ExposeLegacyPlanItemTools,
 		},
 		deps.CaptureState,
 		deps.Attention,
@@ -140,6 +142,7 @@ func RunStdio(ctx context.Context, cfg Config, deps Dependencies) error {
 			ExposeLegacyLeaseTools:        normalizedCfg.ExposeLegacyLeaseTools,
 			ExposeLegacyCoordinationTools: normalizedCfg.ExposeLegacyCoordinationTools,
 			ExposeLegacyProjectTools:      normalizedCfg.ExposeLegacyProjectTools,
+			ExposeLegacyPlanItemTools:     normalizedCfg.ExposeLegacyPlanItemTools,
 		},
 		deps.CaptureState,
 		deps.Attention,

@@ -8989,3 +8989,44 @@ Next step:
 1. Restart the MCP runtime when ready so the live surface reflects `till.project`.
 2. Finish the live `TILLSYN` dogfood flow.
 3. Then continue the broader `plan_item` family reduction.
+
+### 2026-03-31: MCP Plan-Item Mutation Family Reduction
+
+Objective:
+- reduce the default branch|phase|task|subtask mutation surface after the project-root slice, while keeping compatibility aliases available behind an explicit config flag.
+
+Implementation:
+1. Added default `till.plan_item` mutation family with:
+   - `operation=create`
+   - `operation=update`
+   - `operation=move`
+   - `operation=delete`
+   - `operation=restore`
+   - `operation=reparent`
+2. Kept plan-item reads explicit:
+   - `till.list_tasks`
+   - `till.list_child_tasks`
+   - `till.search_task_matches`
+3. Added `ExposeLegacyPlanItemTools` to MCP/server config so the older flat task mutation tools remain opt-in for compatibility testing:
+   - `till.create_task`
+   - `till.update_task`
+   - `till.move_task`
+   - `till.delete_task`
+   - `till.restore_task`
+   - `till.reparent_task`
+4. Updated the default-surface docs and bootstrap guidance:
+   - `README.md`
+   - `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+   - `internal/adapters/server/common/app_service_adapter_mcp.go`
+   to describe `till.plan_item` as the preferred plan-item mutation family and the older flat task names as compatibility aliases only.
+5. Kept the existing auth-action names (`create_task`, `update_task`, and so on) under the hood for this slice so current auth/policy behavior stays stable while the transport surface is reduced.
+
+Validation:
+1. Pending this slice's focused MCP/server test rerun.
+2. Pending this slice's full `mage ci` rerun.
+
+Next step:
+1. Run focused MCP/server tests and `mage ci`.
+2. Commit and push this slice.
+3. Restart the MCP runtime when ready so the live surface reflects `till.plan_item`.
+4. Resume the live `TILLSYN` dogfood proof with the patched runtime.

@@ -910,12 +910,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.claim_auth_request",
 		"till.cancel_auth_request",
 		"till.list_tasks",
-		"till.create_task",
-		"till.update_task",
-		"till.move_task",
-		"till.delete_task",
-		"till.restore_task",
-		"till.reparent_task",
+		"till.plan_item",
 		"till.list_child_tasks",
 		"till.search_task_matches",
 		"till.get_embeddings_status",
@@ -988,37 +983,43 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.claim_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio"}},
 		{name: "till.cancel_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio", "resolution_note": "superseded"}},
 		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
-		{name: "till.create_task", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
 			"project_id":        "p1",
 			"column_id":         "c1",
 			"title":             "Task One",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.update_task", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
 			"task_id":           "t1",
 			"title":             "Task One Updated",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.move_task", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "move",
 			"task_id":           "t1",
 			"to_column_id":      "c2",
 			"position":          1,
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.delete_task", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "delete",
 			"task_id":           "t1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.restore_task", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "restore",
 			"task_id":           "t1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.reparent_task", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "reparent",
 			"task_id":           "t1",
 			"parent_id":         "parent-1",
 			"agent_instance_id": "inst-1",
@@ -1324,6 +1325,180 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	} {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy project mode missing %q: %#v", required, legacyTools)
+		}
+	}
+}
+
+// TestHandlerExpandedPlanItemToolVisibility verifies reduced plan-item mutations are default and legacy task aliases are opt-in.
+func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
+	t.Parallel()
+
+	collectToolNames := func(t *testing.T, cfg Config) []string {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(cfg, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/list",
+		})
+		toolsRaw, ok := toolsResp.Result["tools"].([]any)
+		if !ok {
+			t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+		}
+		toolNames := make([]string, 0, len(toolsRaw))
+		for _, toolRaw := range toolsRaw {
+			toolMap, ok := toolRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := toolMap["name"].(string)
+			toolNames = append(toolNames, name)
+		}
+		return toolNames
+	}
+
+	defaultTools := collectToolNames(t, Config{})
+	if !slices.Contains(defaultTools, "till.plan_item") {
+		t.Fatalf("default plan-item surface missing till.plan_item: %#v", defaultTools)
+	}
+	for _, legacy := range []string{
+		"till.create_task",
+		"till.update_task",
+		"till.move_task",
+		"till.delete_task",
+		"till.restore_task",
+		"till.reparent_task",
+	} {
+		if slices.Contains(defaultTools, legacy) {
+			t.Fatalf("unexpected legacy task tool %q in default surface: %#v", legacy, defaultTools)
+		}
+	}
+
+	legacyTools := collectToolNames(t, Config{ExposeLegacyPlanItemTools: true})
+	for _, required := range []string{
+		"till.plan_item",
+		"till.create_task",
+		"till.update_task",
+		"till.move_task",
+		"till.delete_task",
+		"till.restore_task",
+		"till.reparent_task",
+	} {
+		if !slices.Contains(legacyTools, required) {
+			t.Fatalf("legacy plan-item mode missing %q: %#v", required, legacyTools)
+		}
+	}
+}
+
+// TestHandlerExpandedLegacyPlanItemMutationAliases verifies the legacy task mutation aliases still execute when enabled.
+func TestHandlerExpandedLegacyPlanItemMutationAliases(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{
+			authCaller: domain.AuthenticatedCaller{
+				PrincipalID:   "agent-session-1",
+				PrincipalName: "Agent Session One",
+				PrincipalType: domain.ActorTypeAgent,
+				SessionID:     "sess-1",
+			},
+		},
+	}
+	handler, err := NewHandler(Config{ExposeLegacyPlanItemTools: true}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	callCases := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{
+			name: "create_task",
+			tool: "till.create_task",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"project_id":        "p1",
+				"column_id":         "c1",
+				"title":             "Task One",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+		{
+			name: "update_task",
+			tool: "till.update_task",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"task_id":           "t1",
+				"title":             "Task One Updated",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+		{
+			name: "move_task",
+			tool: "till.move_task",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"task_id":           "t1",
+				"to_column_id":      "c2",
+				"position":          1,
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+		{
+			name: "delete_task",
+			tool: "till.delete_task",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"task_id":           "t1",
+				"mode":              "archive",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+		{
+			name: "restore_task",
+			tool: "till.restore_task",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"task_id":           "t1",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+		{
+			name: "reparent_task",
+			tool: "till.reparent_task",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"task_id":           "t1",
+				"parent_id":         "parent-1",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+	}
+
+	for idx, tc := range callCases {
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3300+idx, tc.tool, tc.args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("%s returned isError=true: %#v", tc.name, callResp.Result)
 		}
 	}
 }
@@ -1893,7 +2068,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.create_task", mergeArgs(validSessionArgs(), map[string]any{
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "create",
 		"project_id":        "p1",
 		"column_id":         "c1",
 		"title":             "Task One",
@@ -1901,38 +2077,39 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
-		t.Fatalf("create_task returned isError=true: %#v", createResp.Result)
+		t.Fatalf("plan_item create returned isError=true: %#v", createResp.Result)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("create_task actor_type = %q, want agent", got)
+		t.Fatalf("plan_item create actor_type = %q, want agent", got)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("create_task actor_id = %q, want agent-session-1", got)
+		t.Fatalf("plan_item create actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("create_task actor_name = %q, want Agent Session One", got)
+		t.Fatalf("plan_item create actor_name = %q, want Agent Session One", got)
 	}
 
-	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.update_task", mergeArgs(validSessionArgs(), map[string]any{
+	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "update",
 		"task_id":           "t1",
 		"title":             "Task One Updated",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := updateResp.Result["isError"].(bool); isError {
-		t.Fatalf("update_task returned isError=true: %#v", updateResp.Result)
+		t.Fatalf("plan_item update returned isError=true: %#v", updateResp.Result)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("update_task actor_type = %q, want agent", got)
+		t.Fatalf("plan_item update actor_type = %q, want agent", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "agent-session-1" {
-		t.Fatalf("update_task agent_name = %q, want agent-session-1", got)
+		t.Fatalf("plan_item update agent_name = %q, want agent-session-1", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("update_task actor_id = %q, want agent-session-1", got)
+		t.Fatalf("plan_item update actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("update_task actor_name = %q, want Agent Session One", got)
+		t.Fatalf("plan_item update actor_name = %q, want Agent Session One", got)
 	}
 
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", mergeArgs(validSessionArgs(), map[string]any{
@@ -2017,29 +2194,30 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		t.Fatalf("handoff update actor_name = %q, want Agent Session One", got)
 	}
 
-	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", mergeArgs(validSessionArgs(), map[string]any{
+	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "restore",
 		"task_id":           "t1",
 		"agent_instance_id": "agent-1",
 		"lease_token":       "lease-1",
 		"override_token":    "override-1",
 	})))
 	if isError, _ := restoreResp.Result["isError"].(bool); isError {
-		t.Fatalf("restore_task returned isError=true: %#v", restoreResp.Result)
+		t.Fatalf("plan_item restore returned isError=true: %#v", restoreResp.Result)
 	}
 	if got := service.lastRestoreTaskReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("restore_task actor_type = %q, want agent", got)
+		t.Fatalf("plan_item restore actor_type = %q, want agent", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "agent-session-1" {
-		t.Fatalf("restore_task agent_name = %q, want agent-session-1", got)
+		t.Fatalf("plan_item restore agent_name = %q, want agent-session-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.AgentInstanceID; got != "agent-1" {
-		t.Fatalf("restore_task agent_instance_id = %q, want agent-1", got)
+		t.Fatalf("plan_item restore agent_instance_id = %q, want agent-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.LeaseToken; got != "lease-1" {
-		t.Fatalf("restore_task lease_token = %q, want lease-1", got)
+		t.Fatalf("plan_item restore lease_token = %q, want lease-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.OverrideToken; got != "override-1" {
-		t.Fatalf("restore_task override_token = %q, want override-1", got)
+		t.Fatalf("plan_item restore override_token = %q, want override-1", got)
 	}
 
 	_, issueLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3014, "till.capability_lease", mergeArgs(validSessionArgs(), map[string]any{
@@ -2075,7 +2253,8 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	missingSessionHTTPResp, missingSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.create_task", map[string]any{
+	missingSessionHTTPResp, missingSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.plan_item", map[string]any{
+		"operation":  "create",
 		"project_id": "p1",
 		"column_id":  "c1",
 		"title":      "missing session mutation",
@@ -2101,7 +2280,8 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		SessionID:     "sess-1",
 	}
 
-	guardedUserHTTPResp, guardedUserResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.create_task", mergeArgs(validSessionArgs(), map[string]any{
+	guardedUserHTTPResp, guardedUserResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "create",
 		"project_id":        "p1",
 		"column_id":         "c1",
 		"title":             "guarded user mutation",
@@ -2128,7 +2308,8 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		PrincipalType: domain.ActorTypeAgent,
 		SessionID:     "sess-1",
 	}
-	missingLeaseHTTPResp, missingLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4012, "till.create_task", map[string]any{
+	missingLeaseHTTPResp, missingLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4012, "till.plan_item", map[string]any{
+		"operation":      "create",
 		"project_id":     "p1",
 		"column_id":      "c1",
 		"title":          "missing lease mutation",
