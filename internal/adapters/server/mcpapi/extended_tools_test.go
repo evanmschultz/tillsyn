@@ -935,10 +935,9 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.capability_lease",
 		"till.create_comment",
 		"till.list_comments_by_target",
-		"till.create_handoff",
+		"till.handoff",
 		"till.get_handoff",
 		"till.list_handoffs",
-		"till.update_handoff",
 	}
 	for _, toolName := range requiredTools {
 		found := false
@@ -1067,7 +1066,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
-		{name: "till.create_handoff", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
 			"project_id":        "p1",
 			"branch_id":         "branch-1",
 			"scope_type":        "task",
@@ -1087,7 +1087,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		})},
 		{name: "till.get_handoff", args: map[string]any{"handoff_id": "handoff-1"}},
 		{name: "till.list_handoffs", args: map[string]any{"project_id": "p1", "branch_id": "branch-1", "scope_type": "task", "scope_id": "task-1", "statuses": []any{"waiting"}, "limit": 10}},
-		{name: "till.update_handoff", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
 			"handoff_id":        "handoff-1",
 			"status":            "resolved",
 			"source_role":       "builder",
@@ -1181,6 +1182,77 @@ func TestHandlerExpandedLeaseToolVisibility(t *testing.T) {
 	} {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy lease mode missing %q: %#v", required, legacyTools)
+		}
+	}
+}
+
+// TestHandlerExpandedCoordinationToolVisibility verifies reduced coordination mutations are default and legacy aliases are opt-in.
+func TestHandlerExpandedCoordinationToolVisibility(t *testing.T) {
+	t.Parallel()
+
+	collectToolNames := func(t *testing.T, cfg Config) []string {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(cfg, service, &stubAttentionService{})
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/list",
+		})
+		toolsRaw, ok := toolsResp.Result["tools"].([]any)
+		if !ok {
+			t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+		}
+		toolNames := make([]string, 0, len(toolsRaw))
+		for _, toolRaw := range toolsRaw {
+			toolMap, ok := toolRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := toolMap["name"].(string)
+			toolNames = append(toolNames, name)
+		}
+		return toolNames
+	}
+
+	defaultTools := collectToolNames(t, Config{})
+	for _, required := range []string{"till.attention_item", "till.handoff"} {
+		if !slices.Contains(defaultTools, required) {
+			t.Fatalf("default coordination surface missing %q: %#v", required, defaultTools)
+		}
+	}
+	for _, legacy := range []string{
+		"till.raise_attention_item",
+		"till.resolve_attention_item",
+		"till.create_handoff",
+		"till.update_handoff",
+	} {
+		if slices.Contains(defaultTools, legacy) {
+			t.Fatalf("unexpected legacy coordination tool %q in default surface: %#v", legacy, defaultTools)
+		}
+	}
+
+	legacyTools := collectToolNames(t, Config{ExposeLegacyCoordinationTools: true})
+	for _, required := range []string{
+		"till.attention_item",
+		"till.handoff",
+		"till.raise_attention_item",
+		"till.resolve_attention_item",
+		"till.create_handoff",
+		"till.update_handoff",
+	} {
+		if !slices.Contains(legacyTools, required) {
+			t.Fatalf("legacy coordination mode missing %q: %#v", required, legacyTools)
 		}
 	}
 }
@@ -1732,7 +1804,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		t.Fatalf("create_comment summary = %q, want Thread summary", got)
 	}
 
-	_, createHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3012, "till.create_handoff", mergeArgs(validSessionArgs(), map[string]any{
+	_, createHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3012, "till.handoff", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "create",
 		"project_id":        "p1",
 		"branch_id":         "branch-1",
 		"scope_type":        "task",
@@ -1748,19 +1821,20 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-handoff",
 	})))
 	if isError, _ := createHandoffResp.Result["isError"].(bool); isError {
-		t.Fatalf("create_handoff returned isError=true: %#v", createHandoffResp.Result)
+		t.Fatalf("handoff create returned isError=true: %#v", createHandoffResp.Result)
 	}
 	if got := service.lastCreateHandoffReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("create_handoff actor_type = %q, want agent", got)
+		t.Fatalf("handoff create actor_type = %q, want agent", got)
 	}
 	if got := service.lastCreateHandoffReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("create_handoff actor_id = %q, want agent-session-1", got)
+		t.Fatalf("handoff create actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastCreateHandoffReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("create_handoff actor_name = %q, want Agent Session One", got)
+		t.Fatalf("handoff create actor_name = %q, want Agent Session One", got)
 	}
 
-	_, updateHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3013, "till.update_handoff", mergeArgs(validSessionArgs(), map[string]any{
+	_, updateHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3013, "till.handoff", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "update",
 		"handoff_id":        "handoff-1",
 		"status":            "resolved",
 		"source_role":       "builder",
@@ -1775,16 +1849,16 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-handoff",
 	})))
 	if isError, _ := updateHandoffResp.Result["isError"].(bool); isError {
-		t.Fatalf("update_handoff returned isError=true: %#v", updateHandoffResp.Result)
+		t.Fatalf("handoff update returned isError=true: %#v", updateHandoffResp.Result)
 	}
 	if got := service.lastUpdateHandoffReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("update_handoff actor_type = %q, want agent", got)
+		t.Fatalf("handoff update actor_type = %q, want agent", got)
 	}
 	if got := service.lastUpdateHandoffReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("update_handoff actor_id = %q, want agent-session-1", got)
+		t.Fatalf("handoff update actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastUpdateHandoffReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("update_handoff actor_name = %q, want Agent Session One", got)
+		t.Fatalf("handoff update actor_name = %q, want Agent Session One", got)
 	}
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", mergeArgs(validSessionArgs(), map[string]any{

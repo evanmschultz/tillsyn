@@ -22,12 +22,13 @@ const defaultShutdownTimeout = 5 * time.Second
 
 // Config defines serve-mode endpoint configuration.
 type Config struct {
-	HTTPBind               string
-	APIEndpoint            string
-	MCPEndpoint            string
-	ServerName             string
-	ServerVersion          string
-	ExposeLegacyLeaseTools bool
+	HTTPBind                      string
+	APIEndpoint                   string
+	MCPEndpoint                   string
+	ServerName                    string
+	ServerVersion                 string
+	ExposeLegacyLeaseTools        bool
+	ExposeLegacyCoordinationTools bool
 }
 
 // Dependencies defines app-facing adapters required by server transports.
@@ -48,10 +49,11 @@ func NewHandler(cfg Config, deps Dependencies) (http.Handler, Config, error) {
 
 	mcpHandler, err := mcpapi.NewHandler(
 		mcpapi.Config{
-			ServerName:             normalizedCfg.ServerName,
-			ServerVersion:          normalizedCfg.ServerVersion,
-			EndpointPath:           normalizedCfg.MCPEndpoint,
-			ExposeLegacyLeaseTools: normalizedCfg.ExposeLegacyLeaseTools,
+			ServerName:                    normalizedCfg.ServerName,
+			ServerVersion:                 normalizedCfg.ServerVersion,
+			EndpointPath:                  normalizedCfg.MCPEndpoint,
+			ExposeLegacyLeaseTools:        normalizedCfg.ExposeLegacyLeaseTools,
+			ExposeLegacyCoordinationTools: normalizedCfg.ExposeLegacyCoordinationTools,
 		},
 		deps.CaptureState,
 		deps.Attention,
@@ -130,10 +132,11 @@ func RunStdio(ctx context.Context, cfg Config, deps Dependencies) error {
 	}
 	return mcpapi.ServeStdio(
 		mcpapi.Config{
-			ServerName:             normalizedCfg.ServerName,
-			ServerVersion:          normalizedCfg.ServerVersion,
-			EndpointPath:           normalizedCfg.MCPEndpoint,
-			ExposeLegacyLeaseTools: normalizedCfg.ExposeLegacyLeaseTools,
+			ServerName:                    normalizedCfg.ServerName,
+			ServerVersion:                 normalizedCfg.ServerVersion,
+			EndpointPath:                  normalizedCfg.MCPEndpoint,
+			ExposeLegacyLeaseTools:        normalizedCfg.ExposeLegacyLeaseTools,
+			ExposeLegacyCoordinationTools: normalizedCfg.ExposeLegacyCoordinationTools,
 		},
 		deps.CaptureState,
 		deps.Attention,

@@ -17,10 +17,11 @@ import (
 
 // Config captures MCP transport configuration.
 type Config struct {
-	ServerName             string
-	ServerVersion          string
-	EndpointPath           string
-	ExposeLegacyLeaseTools bool
+	ServerName                    string
+	ServerVersion                 string
+	EndpointPath                  string
+	ExposeLegacyLeaseTools        bool
+	ExposeLegacyCoordinationTools bool
 }
 
 // Handler wraps one stateless MCP streamable HTTP handler.
@@ -42,7 +43,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	)
 	registerCaptureStateTool(mcpSrv, captureState)
 	if attention != nil {
-		registerAttentionTools(mcpSrv, attention)
+		registerAttentionTools(mcpSrv, attention, cfg.ExposeLegacyCoordinationTools)
 	}
 	registerAuthRequestTools(mcpSrv, pickAuthRequestService(captureState, attention))
 	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
@@ -59,7 +60,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention))
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), cfg.ExposeLegacyLeaseTools)
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
-	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention))
+	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention), cfg.ExposeLegacyCoordinationTools)
 	return mcpSrv, cfg, nil
 }
 
@@ -383,8 +384,26 @@ func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState common.Capt
 	)
 }
 
+type attentionItemMutationArgs struct {
+	Operation          string `json:"operation"`
+	ProjectID          string `json:"project_id"`
+	ScopeType          string `json:"scope_type"`
+	ScopeID            string `json:"scope_id"`
+	Kind               string `json:"kind"`
+	Summary            string `json:"summary"`
+	BodyMarkdown       string `json:"body_markdown"`
+	RequiresUserAction bool   `json:"requires_user_action"`
+	ID                 string `json:"id"`
+	Reason             string `json:"reason"`
+	SessionID          string `json:"session_id"`
+	SessionSecret      string `json:"session_secret"`
+	AgentInstanceID    string `json:"agent_instance_id"`
+	LeaseToken         string `json:"lease_token"`
+	OverrideToken      string `json:"override_token"`
+}
+
 // registerAttentionTools registers optional attention list/raise/resolve tools.
-func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService) {
+func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService, exposeLegacyCoordinationTools bool) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_attention_items",
@@ -420,6 +439,45 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 
 	srv.AddTool(
 		mcp.NewTool(
+			"till.attention_item",
+			mcp.WithDescription("Create or resolve one attention item."),
+			mcp.WithString("operation",
+				mcp.Required(),
+				mcp.Enum("raise", "resolve"),
+				mcp.Description("Attention item mutation operation"),
+			),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=raise")),
+			mcp.WithString("scope_type", mcp.Description("Scope type. Required for operation=raise")),
+			mcp.WithString("scope_id", mcp.Description("Scope identifier. Required for operation=raise")),
+			mcp.WithString("kind", mcp.Description("Attention kind. Required for operation=raise")),
+			mcp.WithString("summary", mcp.Description("Markdown-rich summary for quick triage. Required for operation=raise")),
+			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context when operation=raise")),
+			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action when operation=raise")),
+			mcp.WithString("id", mcp.Description("Attention item id. Required for operation=resolve")),
+			mcp.WithString("reason", mcp.Description("Resolution reason when operation=resolve")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
+			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
+			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args attentionItemMutationArgs
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			return handleAttentionItemMutation(ctx, attention, args)
+		},
+	)
+
+	if exposeLegacyCoordinationTools {
+		registerLegacyAttentionMutationTools(srv, attention)
+	}
+}
+
+func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention common.AttentionService) {
+	srv.AddTool(
+		mcp.NewTool(
 			"till.raise_attention_item",
 			mcp.WithDescription("Create a new attention item with markdown-rich summary/details for a project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
@@ -436,89 +494,12 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				ProjectID          string `json:"project_id"`
-				ScopeType          string `json:"scope_type"`
-				ScopeID            string `json:"scope_id"`
-				Kind               string `json:"kind"`
-				Summary            string `json:"summary"`
-				BodyMarkdown       string `json:"body_markdown"`
-				RequiresUserAction bool   `json:"requires_user_action"`
-				SessionID          string `json:"session_id"`
-				SessionSecret      string `json:"session_secret"`
-				AgentInstanceID    string `json:"agent_instance_id"`
-				LeaseToken         string `json:"lease_token"`
-				OverrideToken      string `json:"override_token"`
-			}
+			var args attentionItemMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			projectID := strings.TrimSpace(args.ProjectID)
-			if projectID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
-			}
-			scopeType := strings.TrimSpace(args.ScopeType)
-			if scopeType == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
-			}
-			scopeID := strings.TrimSpace(args.ScopeID)
-			if scopeID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "scope_id" not found`), nil
-			}
-			kind := strings.TrimSpace(args.Kind)
-			if kind == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "kind" not found`), nil
-			}
-			summary := strings.TrimSpace(args.Summary)
-			if summary == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "summary" not found`), nil
-			}
-			caller, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(attention),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"raise_attention_item",
-				"project:"+projectID,
-				"attention_item",
-				scopeID,
-				map[string]string{
-					"project_id": projectID,
-					"scope_type": scopeType,
-					"scope_id":   scopeID,
-				},
-			)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
-				AgentInstanceID: args.AgentInstanceID,
-				LeaseToken:      args.LeaseToken,
-				OverrideToken:   args.OverrideToken,
-			})
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			item, err := attention.RaiseAttentionItem(ctx, common.RaiseAttentionItemRequest{
-				ProjectID:          projectID,
-				ScopeType:          scopeType,
-				ScopeID:            scopeID,
-				Kind:               kind,
-				Summary:            summary,
-				BodyMarkdown:       strings.TrimSpace(args.BodyMarkdown),
-				RequiresUserAction: args.RequiresUserAction,
-				Actor:              actor,
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(item)
-			if err != nil {
-				return nil, fmt.Errorf("encode raise_attention_item result: %w", err)
-			}
-			return result, nil
+			args.Operation = "raise"
+			return handleAttentionItemMutation(ctx, attention, args)
 		},
 	)
 
@@ -535,61 +516,131 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				ID              string `json:"id"`
-				Reason          string `json:"reason"`
-				SessionID       string `json:"session_id"`
-				SessionSecret   string `json:"session_secret"`
-				AgentInstanceID string `json:"agent_instance_id"`
-				LeaseToken      string `json:"lease_token"`
-				OverrideToken   string `json:"override_token"`
-			}
+			var args attentionItemMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			itemID := strings.TrimSpace(args.ID)
-			if itemID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
-			}
-			caller, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(attention),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"resolve_attention_item",
-				"tillsyn",
-				"attention_item",
-				itemID,
-				map[string]string{"attention_id": itemID},
-			)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
-				AgentInstanceID: args.AgentInstanceID,
-				LeaseToken:      args.LeaseToken,
-				OverrideToken:   args.OverrideToken,
-			})
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			item, err := attention.ResolveAttentionItem(ctx, common.ResolveAttentionItemRequest{
-				ID:     itemID,
-				Reason: strings.TrimSpace(args.Reason),
-				Actor:  actor,
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(item)
-			if err != nil {
-				return nil, fmt.Errorf("encode resolve_attention_item result: %w", err)
-			}
-			return result, nil
+			args.Operation = "resolve"
+			return handleAttentionItemMutation(ctx, attention, args)
 		},
 	)
+}
+
+func handleAttentionItemMutation(ctx context.Context, attention common.AttentionService, args attentionItemMutationArgs) (*mcp.CallToolResult, error) {
+	operation := strings.TrimSpace(args.Operation)
+	switch operation {
+	case "raise":
+		projectID := strings.TrimSpace(args.ProjectID)
+		if projectID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+		}
+		scopeType := strings.TrimSpace(args.ScopeType)
+		if scopeType == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
+		}
+		scopeID := strings.TrimSpace(args.ScopeID)
+		if scopeID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "scope_id" not found`), nil
+		}
+		kind := strings.TrimSpace(args.Kind)
+		if kind == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "kind" not found`), nil
+		}
+		summary := strings.TrimSpace(args.Summary)
+		if summary == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "summary" not found`), nil
+		}
+		caller, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(attention),
+			mcpSessionAuthArgs{
+				SessionID:     args.SessionID,
+				SessionSecret: args.SessionSecret,
+			},
+			"raise_attention_item",
+			"project:"+projectID,
+			"attention_item",
+			scopeID,
+			map[string]string{
+				"project_id": projectID,
+				"scope_type": scopeType,
+				"scope_id":   scopeID,
+			},
+		)
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+			AgentInstanceID: args.AgentInstanceID,
+			LeaseToken:      args.LeaseToken,
+			OverrideToken:   args.OverrideToken,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		item, err := attention.RaiseAttentionItem(ctx, common.RaiseAttentionItemRequest{
+			ProjectID:          projectID,
+			ScopeType:          scopeType,
+			ScopeID:            scopeID,
+			Kind:               kind,
+			Summary:            summary,
+			BodyMarkdown:       strings.TrimSpace(args.BodyMarkdown),
+			RequiresUserAction: args.RequiresUserAction,
+			Actor:              actor,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(item)
+		if err != nil {
+			return nil, fmt.Errorf("encode attention_item raise result: %w", err)
+		}
+		return result, nil
+	case "resolve":
+		itemID := strings.TrimSpace(args.ID)
+		if itemID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
+		}
+		caller, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(attention),
+			mcpSessionAuthArgs{
+				SessionID:     args.SessionID,
+				SessionSecret: args.SessionSecret,
+			},
+			"resolve_attention_item",
+			"tillsyn",
+			"attention_item",
+			itemID,
+			map[string]string{"attention_id": itemID},
+		)
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+			AgentInstanceID: args.AgentInstanceID,
+			LeaseToken:      args.LeaseToken,
+			OverrideToken:   args.OverrideToken,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		item, err := attention.ResolveAttentionItem(ctx, common.ResolveAttentionItemRequest{
+			ID:     itemID,
+			Reason: strings.TrimSpace(args.Reason),
+			Actor:  actor,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(item)
+		if err != nil {
+			return nil, fmt.Errorf("encode attention_item resolve result: %w", err)
+		}
+		return result, nil
+	default:
+		return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
+	}
 }
 
 // toolResultFromError maps service errors into MCP-visible tool errors.

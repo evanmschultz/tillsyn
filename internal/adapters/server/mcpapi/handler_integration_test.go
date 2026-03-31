@@ -275,7 +275,8 @@ func TestHandlerAttentionMutationPersistsAuthenticatedAttribution(t *testing.T) 
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.raise_attention_item", map[string]any{
+	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.attention_item", map[string]any{
+		"operation":            "raise",
 		"project_id":           projectID,
 		"scope_type":           "project",
 		"scope_id":             projectID,
@@ -307,7 +308,8 @@ func TestHandlerAttentionMutationPersistsAuthenticatedAttribution(t *testing.T) 
 		t.Fatalf("created_by_type = %q, want user", createdByType)
 	}
 
-	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.resolve_attention_item", map[string]any{
+	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.attention_item", map[string]any{
+		"operation":      "resolve",
 		"id":             raiseID,
 		"reason":         "approved",
 		"session_id":     issued.Session.ID,
@@ -343,7 +345,8 @@ func TestHandlerUpdateHandoffResolvesApprovedPathContext(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(22, "till.update_handoff", map[string]any{
+	_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(22, "till.handoff", map[string]any{
+		"operation":       "update",
 		"handoff_id":      fixture.handoffID,
 		"status":          "resolved",
 		"summary":         "resolved handoff",
@@ -387,7 +390,8 @@ func TestHandlerUpdateHandoffOutOfScopeApprovedPathDenied(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(23, "till.update_handoff", map[string]any{
+	_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(23, "till.handoff", map[string]any{
+		"operation":       "update",
 		"handoff_id":      fixture.outOfScopeHandoffID,
 		"status":          "resolved",
 		"summary":         "should fail",
