@@ -231,7 +231,7 @@ Start the secondary HTTP/API + HTTP MCP server:
 
 Dogfood auth request/session commands:
 ```bash
-./till auth request create --path project/<project-id> --principal-id review-agent --principal-type agent --client-id till-mcp-stdio --reason "dogfood request"
+./till auth request create --path project/<project-id> --principal-id <principal-id> --principal-type agent --client-id <client-id> --reason "dogfood request"
 ./till auth request approve --request-id <request-id> --note "approved for dogfood"
 ./till auth session validate --session-id <session-id> --session-secret <session-secret>
 ./till auth session revoke --session-id <session-id> --reason operator_revoke
@@ -243,9 +243,9 @@ Dogfood MCP continuation pattern:
   "tool": "till.create_auth_request",
   "arguments": {
     "path": "project/<project-id>",
-    "principal_id": "review-agent",
+    "principal_id": "<principal-id>",
     "principal_type": "agent",
-    "client_id": "till-mcp-stdio",
+    "client_id": "<client-id>",
     "reason": "dogfood request",
     "continuation_json": "{\"resume_token\":\"opaque-requester-token\",\"resume_tool\":\"till.raise_attention_item\"}"
   }
