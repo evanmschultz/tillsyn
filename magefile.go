@@ -326,9 +326,6 @@ func runGoTestCapture(args ...string) (string, gotestout.Summary, error) {
 	summary, renderErr := gotestout.Render(os.Stdout, stream, gotestout.Options{
 		Policy: mageOutputPolicy(),
 		View:   gotestout.ViewCompact,
-		Activity: gotestout.ActivityOptions{
-			Mode: gotestout.ActivityOff,
-		},
 	})
 	waitErr := cmd.Wait()
 
