@@ -161,12 +161,10 @@ func authScopeContextFromTaskLineage(projectID string, scopeType domain.ScopeLev
 	}
 
 	// The auth path model only narrows below project once a branch root exists.
-	if out.BranchID == "" && (scopeType == domain.ScopeLevelTask || scopeType == domain.ScopeLevelSubtask) {
+	if out.BranchID == "" && (scopeType == domain.ScopeLevelPhase || scopeType == domain.ScopeLevelTask || scopeType == domain.ScopeLevelSubtask) {
 		out.ScopeType = domain.ScopeLevelProject
 		out.ScopeID = projectID
-	}
-	if out.ScopeType == domain.ScopeLevelPhase && out.BranchID == "" {
-		return AuthScopeContext{}, domain.ErrInvalidScopeID
+		out.PhaseIDs = nil
 	}
 	return out, nil
 }
