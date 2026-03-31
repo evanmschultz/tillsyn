@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/evanmschultz/laslig"
 	"github.com/evanmschultz/laslig/gotestout"
@@ -72,24 +73,7 @@ func TestGoldenUpdate() error {
 // Build compiles the local till binary at `./till`.
 func Build() error {
 	printer := newMagePrinter()
-	if err := printer.StatusLine(laslig.StatusLine{
-		Level:  laslig.NoticeInfoLevel,
-		Text:   "Building till",
-		Detail: "./cmd/till",
-	}); err != nil {
-		return fmt.Errorf("write build start: %w", err)
-	}
-	if err := runCommand("go", "build", localBuildVCSFlag, "-o", "./till", "./cmd/till"); err != nil {
-		return err
-	}
-	if err := printer.StatusLine(laslig.StatusLine{
-		Level:  laslig.NoticeSuccessLevel,
-		Text:   "Built till",
-		Detail: "./cmd/till",
-	}); err != nil {
-		return fmt.Errorf("write build success: %w", err)
-	}
-	return nil
+	return runCommandWithProgress(printer, "Building till from ./cmd/till", "Built till from ./cmd/till", "go", "build", localBuildVCSFlag, "-o", "./till", "./cmd/till")
 }
 
 // Run executes till directly from source.
@@ -143,11 +127,14 @@ func runStage(printer *laslig.Printer, title string, fn func() error) error {
 
 // verifySources ensures the required automation and CLI entrypoint sources are still tracked.
 func verifySources() error {
-	return runCommand("git", "ls-files", "--error-unmatch", "magefile.go", "cmd/till/main.go", "cmd/till/main_test.go")
+	printer := newMagePrinter()
+	_, err := captureCommandWithProgress(printer, "Verifying tracked sources", "Verified tracked sources", "git", "ls-files", "--error-unmatch", "magefile.go", "cmd/till/main.go", "cmd/till/main_test.go")
+	return err
 }
 
 // formatCheck reports tracked Go files that still need gofmt.
 func formatCheck() error {
+	printer := newMagePrinter()
 	files, err := trackedGoFiles()
 	if err != nil {
 		return err
@@ -155,7 +142,7 @@ func formatCheck() error {
 	if len(files) == 0 {
 		return nil
 	}
-	out, err := captureCommand("gofmt", append([]string{"-l"}, files...)...)
+	out, err := captureCommandWithProgress(printer, "Checking Go formatting", "Checked Go formatting", "gofmt", append([]string{"-l"}, files...)...)
 	if err != nil {
 		return err
 	}
@@ -211,7 +198,8 @@ func coverage() error {
 
 // trackedGoFiles returns all tracked Go files in stable git order.
 func trackedGoFiles() ([]string, error) {
-	out, err := captureCommand("git", "ls-files", "*.go")
+	printer := newMagePrinter()
+	out, err := captureCommandWithProgress(printer, "Listing tracked Go files", "Listed tracked Go files", "git", "ls-files", "*.go")
 	if err != nil {
 		return nil, err
 	}
@@ -325,18 +313,90 @@ func runGoTestCapture(args ...string) (string, gotestout.Summary, error) {
 		return "", gotestout.Summary{}, fmt.Errorf("start go test: %w", err)
 	}
 
+	printer := newMagePrinter()
+	spinner := startMageSpinner(printer, "Running go test "+strings.Join(args, " "))
+
 	var raw bytes.Buffer
-	summary, renderErr := gotestout.Render(os.Stdout, io.TeeReader(stdout, &raw), gotestout.Options{
+	stream := &spinnerHandoffReader{
+		reader: io.TeeReader(stdout, &raw),
+		onFirstOutput: func() {
+			stopMageSpinner(spinner, "Test stream detected", laslig.NoticeSuccessLevel)
+		},
+	}
+	summary, renderErr := gotestout.Render(os.Stdout, stream, gotestout.Options{
 		Policy: mageOutputPolicy(),
 		View:   gotestout.ViewCompact,
 	})
 	waitErr := cmd.Wait()
 
 	if renderErr != nil {
+		stopMageSpinner(spinner, "Rendering test output failed", laslig.NoticeErrorLevel)
 		return "", gotestout.Summary{}, fmt.Errorf("render go test output: %w", renderErr)
 	}
 	if waitErr != nil {
+		stopMageSpinner(spinner, "go test failed", laslig.NoticeErrorLevel)
 		return raw.String(), summary, fmt.Errorf("go %s: %w", strings.Join(cmdArgs, " "), waitErr)
 	}
+	stopMageSpinner(spinner, "Tests complete", laslig.NoticeSuccessLevel)
 	return raw.String(), summary, nil
+}
+
+// spinnerHandoffReader stops one spinner when the wrapped stream emits its first payload bytes.
+type spinnerHandoffReader struct {
+	reader        io.Reader
+	onFirstOutput func()
+	once          sync.Once
+}
+
+// Read proxies one read and triggers the handoff callback on the first non-empty chunk.
+func (r *spinnerHandoffReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 && r.onFirstOutput != nil {
+		r.once.Do(r.onFirstOutput)
+	}
+	return n, err
+}
+
+// runCommandWithProgress renders one transient spinner while a command stays quiet.
+func runCommandWithProgress(printer *laslig.Printer, startText, successText, name string, args ...string) error {
+	spinner := startMageSpinner(printer, startText)
+	err := runCommand(name, args...)
+	if err != nil {
+		stopMageSpinner(spinner, startText+" failed", laslig.NoticeErrorLevel)
+		return err
+	}
+	stopMageSpinner(spinner, successText, laslig.NoticeSuccessLevel)
+	return nil
+}
+
+// captureCommandWithProgress renders one transient spinner while a captured command stays quiet.
+func captureCommandWithProgress(printer *laslig.Printer, startText, successText, name string, args ...string) (string, error) {
+	spinner := startMageSpinner(printer, startText)
+	out, err := captureCommand(name, args...)
+	if err != nil {
+		stopMageSpinner(spinner, startText+" failed", laslig.NoticeErrorLevel)
+		return "", err
+	}
+	stopMageSpinner(spinner, successText, laslig.NoticeSuccessLevel)
+	return out, nil
+}
+
+// startMageSpinner starts one transient spinner when printer output supports it.
+func startMageSpinner(printer *laslig.Printer, text string) *laslig.Spinner {
+	if printer == nil {
+		return nil
+	}
+	spinner := printer.NewSpinner()
+	if err := spinner.Start(text); err != nil {
+		return nil
+	}
+	return spinner
+}
+
+// stopMageSpinner stops one transient spinner when it was started successfully.
+func stopMageSpinner(spinner *laslig.Spinner, message string, level laslig.NoticeLevel) {
+	if spinner == nil {
+		return
+	}
+	_ = spinner.Stop(message, level)
 }

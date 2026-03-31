@@ -4,6 +4,58 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
+## Checkpoint 2026-03-30: Laslig v0.2.1 Upgrade + CLI/Mage Progress Spinners
+
+Objective:
+- bump Tillsyn onto the latest published `laslig` release and add visible progress feedback to long-running operator paths without corrupting JSON/plain command output.
+
+Context7:
+1. `resolve-library-id` for `github.com/evanmschultz/laslig` did not return a matching library id, so Context7 was unavailable for this dependency lookup.
+2. Fallback source recorded before code edits:
+   - upstream `laslig` release metadata via `gh api repos/evanmschultz/laslig/releases/latest`,
+   - upstream tagged source for `v0.2.1` via GitHub API (`README.md`, `spinner.go`, `policy.go`, and the Mage-style example),
+   - plus the locally cached module source at `/Users/evanschultz/go/pkg/mod/github.com/evanmschultz/laslig@v0.2.1`.
+
+Implementation summary:
+1. Bumped `github.com/evanmschultz/laslig` from `v0.1.1` to `v0.2.1`.
+2. Added one shared CLI progress helper in `cmd/till`:
+   - spinner output is stderr-only,
+   - styled-terminal-only,
+   - and delayed slightly so very fast commands do not flash.
+3. Routed one-shot CLI commands through that helper so human operators now get progress feedback for command families such as:
+   - auth request/session actions,
+   - project list/create/show/discover,
+   - embeddings status/reindex,
+   - capture-state,
+   - kind/template/lease/handoff operations,
+   - and export/import.
+4. Kept machine-safe output intact:
+   - command payloads still write to stdout,
+   - progress writes to stderr only,
+   - so JSON/plain stdout surfaces are not polluted by spinner records.
+5. Added Mage-side progress coverage:
+   - tracked-source verification,
+   - tracked-Go-file discovery,
+   - gofmt checks,
+   - binary build,
+   - and `go test -json` now show a spinner while the command is quiet.
+6. Implemented the recommended handoff for tests:
+   - Mage shows a spinner until the first `go test -json` bytes arrive,
+   - then stops the spinner before `gotestout` renders the live package stream.
+7. Added focused CLI progress tests so the new helper is covered for both:
+   - non-styled writers,
+   - and forced styled output in tests.
+
+Validation:
+1. `go mod tidy` -> PASS.
+2. `mage test-pkg ./cmd/till` -> PASS.
+3. `mage ci` -> PASS.
+
+Current status:
+1. Tillsyn now uses `laslig v0.2.1`.
+2. Mage and long-running one-shot CLI commands now show active progress feedback for human operators.
+3. JSON/plain command output remains stable because progress stays on stderr and only activates on styled terminals.
+
 ## Checkpoint 2026-03-30: CLI Help Parity Hardening + Legacy Kind Inventory
 
 Objective:
