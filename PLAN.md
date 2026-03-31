@@ -4,6 +4,36 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
+## Checkpoint 2026-03-30: Help Example Placeholder Cleanup
+
+Objective:
+- remove the remaining opaque sample ids from operator-facing help/examples and make the most ambiguous lease/auth flag wording clearer without changing command behavior.
+
+Context7:
+1. `/spf13/cobra` reviewed before the help cleanup for:
+   - concise `Short`/`Long`/`Example` usage,
+   - and keeping help output readable while examples stay deterministic -> PASS.
+
+Implementation summary:
+1. Replaced the remaining opaque help-example ids in CLI help surfaces:
+   - `p1`-style project ids were already gone,
+   - and this slice removed `review-agent`, `qa-agent`, `orchestration-agent`, `builder-1`, `qa-1`, `orchestrator-1`, and `resume-123` from operator-facing help/examples in favor of placeholder-style values such as `<principal-id>`, `<agent-name>`, and `<resume-token>`.
+2. Tightened template-library help examples so the transport examples read generically:
+   - `--library-id <library-id>`,
+   - and `$(cat /tmp/template-library.json)` instead of a hard-coded sample file name.
+3. Improved one terse lease flag description that was too close to the flag name itself:
+   - `--allow-equal-scope-delegation` now explains the behavior as delegation without narrowing scope.
+4. Added a help regression check so the old opaque sample identifiers fail the test suite if they reappear.
+
+Validation:
+1. `mage test-pkg ./cmd/till` -> PASS.
+2. `mage ci` -> PASS.
+
+Current status:
+1. Help content is being tightened toward placeholder-first examples and clearer concise flag wording.
+2. Runtime behavior is unchanged; this is operator-surface cleanup only.
+3. Rebuilt `./till` now shows the new placeholder-style examples and clearer lease-issue flag wording in the live help output.
+
 ## Checkpoint 2026-03-30: Laslig v0.2.1 Upgrade + CLI/Mage Progress Spinners
 
 Objective:

@@ -183,8 +183,8 @@ keep in the resulting project policy.
 	"till template": {
 		Example: []string{
 			"  till template library list --scope global --status approved",
-			"  till template library show --library-id go-defaults",
-			"  till template project bind --project-id <project-id> --library-id go-defaults",
+			"  till template library show --library-id <library-id>",
+			"  till template project bind --project-id <project-id> --library-id <library-id>",
 			"  till template contract show --node-id <task-id>",
 		},
 	},
@@ -197,8 +197,8 @@ complete permissions, and truthful completion gates.
 `),
 		Example: []string{
 			"  till template library list --scope global --status approved",
-			"  till template library show --library-id go-defaults",
-			"  till template library upsert --spec-json '{\"id\":\"go-defaults\",...}'",
+			"  till template library show --library-id <library-id>",
+			"  till template library upsert --spec-json '{\"id\":\"<library-id>\",...}'",
 		},
 	},
 	"till template library list": {
@@ -223,13 +223,13 @@ responsible actor kinds, blocker rules, and the child-rule contract table before
 binding the library.
 `),
 		Example: []string{
-			"  till template library show --library-id go-defaults",
+			"  till template library show --library-id <library-id>",
 		},
 	},
 	"till template library upsert": {
 		Example: []string{
-			"  till template library upsert --spec-json '{\"id\":\"go-defaults\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
-			"  till template library upsert --spec-json \"$(cat /tmp/go-defaults.json)\"",
+			"  till template library upsert --spec-json '{\"id\":\"<library-id>\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
+			"  till template library upsert --spec-json \"$(cat /tmp/template-library.json)\"",
 		},
 	},
 	"till template project": {
@@ -240,7 +240,7 @@ Use this when project creation did not already bind a library or when you need
 to confirm which library currently governs generated workflow contracts.
 `),
 		Example: []string{
-			"  till template project bind --project-id <project-id> --library-id go-defaults",
+			"  till template project bind --project-id <project-id> --library-id <library-id>",
 			"  till template project binding --project-id <project-id>",
 		},
 	},
@@ -252,7 +252,7 @@ The binding becomes the project-level source for future generated workflow
 contracts. Existing nodes keep their stored snapshots.
 `),
 		Example: []string{
-			"  till template project bind --project-id <project-id> --library-id go-defaults",
+			"  till template project bind --project-id <project-id> --library-id <library-id>",
 		},
 	},
 	"till template project binding": {
@@ -294,7 +294,7 @@ containing-scope completion.
 	"till lease": {
 		Example: []string{
 			"  till lease list --project-id <project-id>",
-			"  till lease issue --project-id <project-id> --agent-name builder-1 --role builder",
+			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role builder",
 			"  till lease renew --agent-instance-id <agent-instance-id> --lease-token <lease-token> --ttl 30m",
 			"  till lease revoke-all --project-id <project-id> --reason operator_reset",
 		},
@@ -320,9 +320,9 @@ Use this when an orchestrator or operator needs to assign execution authority
 for a project, branch, phase, task, or subtask scope.
 `),
 		Example: []string{
-			"  till lease issue --project-id <project-id> --agent-name builder-1 --role builder",
-			"  till lease issue --project-id <project-id> --scope-type task --scope-id <task-id> --agent-name qa-1 --role qa --requested-ttl 30m",
-			"  till lease issue --project-id <project-id> --agent-name orchestrator-1 --role orchestrator --allow-equal-scope-delegation",
+			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role builder",
+			"  till lease issue --project-id <project-id> --scope-type task --scope-id <task-id> --agent-name <agent-name> --role qa --requested-ttl 30m",
+			"  till lease issue --project-id <project-id> --agent-name <agent-name> --role orchestrator --allow-equal-scope-delegation",
 		},
 	},
 	"till lease heartbeat": {
@@ -354,7 +354,7 @@ Use this to invalidate a single agent lease during recovery, reassignment, or
 operator intervention.
 `),
 		Example: []string{
-			"  till lease revoke --agent-instance-id builder-1 --reason operator_reset",
+			"  till lease revoke --agent-instance-id <agent-instance-id> --reason operator_reset",
 		},
 	},
 	"till lease revoke-all": {

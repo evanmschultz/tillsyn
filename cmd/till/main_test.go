@@ -703,7 +703,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "template library upsert",
 			args: []string{"template", "library", "upsert", "--help"},
-			want: []string{"till template library upsert", "--spec-json", "sqlite remains the source of truth", "$(cat /tmp/go-defaults.json)"},
+			want: []string{"till template library upsert", "--spec-json", "sqlite remains the source of truth", "$(cat /tmp/template-library.json)"},
 		},
 		{
 			name: "template project",
@@ -855,6 +855,24 @@ func TestRunSubcommandHelp(t *testing.T) {
 				for _, want := range tc.want {
 					if !strings.Contains(output, strings.ToLower(want)) {
 						t.Fatalf("expected %q in output, got %q", want, out.String())
+					}
+				}
+				for _, forbidden := range []string{
+					"--project-id p1",
+					"project/p1",
+					"projects/<project-id>,<project-id>...",
+					"review-agent",
+					"qa-agent",
+					"orchestration-agent",
+					"review-user",
+					"builder-1",
+					"qa-1",
+					"orchestrator-1",
+					"resume-123",
+					"$(cat /tmp/go-defaults.json)",
+				} {
+					if strings.Contains(output, forbidden) {
+						t.Fatalf("did not expect legacy opaque example %q in output %q", forbidden, out.String())
 					}
 				}
 			}
