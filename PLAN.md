@@ -4,6 +4,50 @@ Created: 2026-02-21
 Updated: 2026-03-30
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
+## Checkpoint 2026-03-30: CLI Help Parity Hardening + Legacy Kind Inventory
+
+Objective:
+- make `till`, subcommands, and leaf commands render one consistent help surface across `--help`, `-h`, `help`, and `h`, and capture the remaining legacy kind-template cleanup inventory without removing it yet.
+
+Context7:
+1. `/websites/pkg_go_dev_github_com_spf13_cobra` reviewed before help changes for:
+   - help-command behavior,
+   - help/alias consistency,
+   - and safe argument normalization before Cobra parsing -> PASS.
+2. After the first `mage test-pkg ./cmd/till` failure, `/websites/pkg_go_dev_github_com_spf13_cobra` was refreshed again before the next edit -> PASS.
+3. `/websites/pkg_go_dev_go1_25_3` reviewed before the tiny coverage-follow-up tests for:
+   - standard `testing` package patterns,
+   - and stable `gofmt` expectations -> PASS.
+
+Implementation summary:
+1. Fixed the broken help hook:
+   - restored the missing `installHelpAliases(...)` symbol so `cmd/till` builds again,
+   - but switched the real parity behavior to argument normalization instead of hidden command-tree mutation.
+2. Added one help-path normalizer:
+   - trailing `help` and `h` now rewrite to `--help` before Cobra parses args,
+   - so root, group, and leaf commands all render the exact same help output across all four forms.
+3. Tightened operator help content:
+   - fixed the invalid template-library upsert example,
+   - added the missing root `project create` example,
+   - and sharpened the `kind` help family so the structural-vs-template split is clearer.
+4. Added small internal-app helper coverage tests so the repo-wide coverage floor remains green after the help/test changes.
+5. Completed a read-only legacy kind-template inventory across runtime/storage and transport seams:
+   - active runtime fallback still exists in `internal/app/service.go`, `internal/app/kind_capability.go`, and hybrid validation in `internal/app/template_library.go`,
+   - snapshot transport compatibility remains in `internal/app/snapshot.go`,
+   - storage compatibility remains in `internal/adapters/storage/sqlite/repo.go`,
+   - and transport/docs leakage still exists in `cmd/till/main.go`, MCP kind-definition surfaces, `README.md`, `PLAN.md`, and `TEMPLATING_DESIGN_MEMO.md`.
+6. No legacy cleanup was started in this slice; this was inventory only.
+
+Validation:
+1. `mage test-pkg ./cmd/till` -> PASS.
+2. `mage test-pkg ./internal/app` -> PASS.
+3. `mage ci` -> PASS.
+
+Current status:
+1. CLI help parity is now exact for `--help`, `-h`, `help`, and `h`.
+2. The current help tree is buildable again and operator examples are stronger on the most visible template/kind paths.
+3. The remaining legacy-kind cleanup list is now explicit, but untouched.
+
 ## Checkpoint 2026-03-30: Template Workflow Contract MVP Merge
 
 Objective:

@@ -496,18 +496,32 @@ func TestRunInvalidFlag(t *testing.T) {
 
 // TestRunRootHelp verifies root help output returns usage without error.
 func TestRunRootHelp(t *testing.T) {
-	var out strings.Builder
-	err := run(context.Background(), []string{"--help"}, &out, io.Discard)
-	if err != nil {
-		t.Fatalf("run(--help) error = %v", err)
-	}
-	output := strings.ToLower(out.String())
-	if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
-		t.Fatalf("expected root usage output, got %q", out.String())
-	}
-	for _, want := range []string{"serve", "mcp", "auth", "project", "capture-state", "kind", "lease", "handoff", "export", "import", "paths", "init-dev-config"} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("expected %q command in root help, got %q", want, out.String())
+	forms := [][]string{{"--help"}, {"-h"}, {"help"}, {"h"}}
+	var reference string
+	for _, form := range forms {
+		var out strings.Builder
+		err := run(context.Background(), form, &out, io.Discard)
+		if err != nil {
+			t.Fatalf("run(%v) error = %v", form, err)
+		}
+		if reference == "" {
+			reference = out.String()
+		} else if out.String() != reference {
+			t.Fatalf("root help mismatch for %v\n--- want ---\n%s\n--- got ---\n%s", form, reference, out.String())
+		}
+		output := strings.ToLower(out.String())
+		if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
+			t.Fatalf("expected root usage output, got %q", out.String())
+		}
+		for _, want := range []string{"serve", "mcp", "auth", "project", "embeddings", "capture-state", "kind", "template", "lease", "handoff", "export", "import", "paths", "init-dev-config"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("expected %q command in root help, got %q", want, out.String())
+			}
+		}
+		for _, want := range []string{"till project create --name inbox", "till template library list", "till embeddings status"} {
+			if !strings.Contains(output, strings.ToLower(want)) {
+				t.Fatalf("expected %q in root help examples, got %q", want, out.String())
+			}
 		}
 	}
 }
@@ -572,6 +586,16 @@ func TestRunSubcommandHelp(t *testing.T) {
 			want: []string{"till auth request", "create", "approve", "project/<project-id>", "projects/<project-id>,<project-id>...", "global"},
 		},
 		{
+			name: "auth request list",
+			args: []string{"auth", "request", "list", "--help"},
+			want: []string{"till auth request list", "--project-id", "--state", "--limit"},
+		},
+		{
+			name: "auth request show",
+			args: []string{"auth", "request", "show", "--help"},
+			want: []string{"till auth request show", "--request-id", "issued_session_id", "auth session"},
+		},
+		{
 			name: "auth request create",
 			args: []string{"auth", "request", "create", "--help"},
 			want: []string{"till auth request create", "--path", "--principal-id", "--principal-role", "--continuation-json", "resume_token", "projects/p1,p2", "global", "next step"},
@@ -580,6 +604,16 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "auth request approve",
 			args: []string{"auth", "request", "approve", "--help"},
 			want: []string{"till auth request approve", "--path", "--ttl", "claim_auth_request", "resume_token", "projects/...", "global", "approved record"},
+		},
+		{
+			name: "auth request deny",
+			args: []string{"auth", "request", "deny", "--help"},
+			want: []string{"till auth request deny", "--request-id", "--note", "terminal state"},
+		},
+		{
+			name: "auth request cancel",
+			args: []string{"auth", "request", "cancel", "--help"},
+			want: []string{"till auth request cancel", "--request-id", "--note", "terminal state"},
 		},
 		{
 			name: "auth session",
@@ -595,6 +629,11 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "auth session revoke",
 			args: []string{"auth", "session", "revoke", "--help"},
 			want: []string{"till auth session revoke", "--session-id", "does not accept the session id"},
+		},
+		{
+			name: "auth session validate",
+			args: []string{"auth", "session", "validate", "--help"},
+			want: []string{"till auth session validate", "--session-id", "--session-secret", "use it with mcp mutation calls"},
 		},
 		{
 			name: "auth issue-session",
@@ -614,12 +653,17 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "kind",
 			args: []string{"kind", "--help"},
-			want: []string{"till kind", "list", "upsert", "allowlist"},
+			want: []string{"till kind", "list", "upsert", "allowlist", "template-library workflow contracts"},
+		},
+		{
+			name: "kind list",
+			args: []string{"kind", "list", "--help"},
+			want: []string{"till kind list", "--include-archived", "discover valid kind ids"},
 		},
 		{
 			name: "kind upsert",
 			args: []string{"kind", "upsert", "--help"},
-			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--payload-schema-json"},
+			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--payload-schema-json", "compatibility-only"},
 		},
 		{
 			name: "kind allowlist",
@@ -627,14 +671,79 @@ func TestRunSubcommandHelp(t *testing.T) {
 			want: []string{"till kind allowlist", "list", "set"},
 		},
 		{
+			name: "kind allowlist list",
+			args: []string{"kind", "allowlist", "list", "--help"},
+			want: []string{"till kind allowlist list", "--project-id", "template libraries", "project"},
+		},
+		{
+			name: "kind allowlist set",
+			args: []string{"kind", "allowlist", "set", "--help"},
+			want: []string{"till kind allowlist set", "--project-id", "--kind-id", "replace operation"},
+		},
+		{
 			name: "template",
 			args: []string{"template", "--help"},
 			want: []string{"till template", "library", "project", "contract"},
 		},
 		{
+			name: "template library",
+			args: []string{"template", "library", "--help"},
+			want: []string{"till template library", "list", "show", "upsert"},
+		},
+		{
+			name: "template library list",
+			args: []string{"template", "library", "list", "--help"},
+			want: []string{"till template library list", "--scope", "--project-id", "--status"},
+		},
+		{
+			name: "template library show",
+			args: []string{"template", "library", "show", "--help"},
+			want: []string{"till template library show", "--library-id", "child-rule contract table"},
+		},
+		{
 			name: "template library upsert",
 			args: []string{"template", "library", "upsert", "--help"},
-			want: []string{"till template library upsert", "--spec-json", "JSON"},
+			want: []string{"till template library upsert", "--spec-json", "sqlite remains the source of truth", "$(cat /tmp/go-defaults.json)"},
+		},
+		{
+			name: "template project",
+			args: []string{"template", "project", "--help"},
+			want: []string{"till template project", "bind", "binding"},
+		},
+		{
+			name: "template project bind",
+			args: []string{"template", "project", "bind", "--help"},
+			want: []string{"till template project bind", "--project-id", "--library-id", "approved template library"},
+		},
+		{
+			name: "template project binding",
+			args: []string{"template", "project", "binding", "--help"},
+			want: []string{"till template project binding", "--project-id", "active template-library binding"},
+		},
+		{
+			name: "template contract",
+			args: []string{"template", "contract", "--help"},
+			want: []string{"till template contract", "show", "truthful runtime record"},
+		},
+		{
+			name: "template contract show",
+			args: []string{"template", "contract", "show", "--help"},
+			want: []string{"till template contract show", "--node-id", "generated node-contract snapshot"},
+		},
+		{
+			name: "embeddings",
+			args: []string{"embeddings", "--help"},
+			want: []string{"till embeddings", "status", "reindex"},
+		},
+		{
+			name: "embeddings status",
+			args: []string{"embeddings", "status", "--help"},
+			want: []string{"till embeddings status", "--project-id", "--cross-project", "--status", "--limit"},
+		},
+		{
+			name: "embeddings reindex",
+			args: []string{"embeddings", "reindex", "--help"},
+			want: []string{"till embeddings reindex", "--project-id", "--cross-project", "--force", "--wait"},
 		},
 		{
 			name: "lease",
@@ -642,9 +751,34 @@ func TestRunSubcommandHelp(t *testing.T) {
 			want: []string{"till lease", "list", "issue", "heartbeat", "renew", "revoke", "revoke-all"},
 		},
 		{
+			name: "lease list",
+			args: []string{"lease", "list", "--help"},
+			want: []string{"till lease list", "--project-id", "--scope-type", "--include-revoked"},
+		},
+		{
 			name: "lease issue",
 			args: []string{"lease", "issue", "--help"},
 			want: []string{"till lease issue", "--project-id", "--agent-name", "--role", "--requested-ttl"},
+		},
+		{
+			name: "lease heartbeat",
+			args: []string{"lease", "heartbeat", "--help"},
+			want: []string{"till lease heartbeat", "--agent-instance-id", "--lease-token"},
+		},
+		{
+			name: "lease renew",
+			args: []string{"lease", "renew", "--help"},
+			want: []string{"till lease renew", "--agent-instance-id", "--lease-token", "--ttl"},
+		},
+		{
+			name: "lease revoke",
+			args: []string{"lease", "revoke", "--help"},
+			want: []string{"till lease revoke", "--agent-instance-id", "--reason"},
+		},
+		{
+			name: "lease revoke-all",
+			args: []string{"lease", "revoke-all", "--help"},
+			want: []string{"till lease revoke-all", "--project-id", "--scope-type", "--reason"},
 		},
 		{
 			name: "handoff",
@@ -657,6 +791,21 @@ func TestRunSubcommandHelp(t *testing.T) {
 			want: []string{"till handoff create", "--project-id", "--summary", "--source-role", "--target-role"},
 		},
 		{
+			name: "handoff get",
+			args: []string{"handoff", "get", "--help"},
+			want: []string{"till handoff get", "--handoff-id"},
+		},
+		{
+			name: "handoff list",
+			args: []string{"handoff", "list", "--help"},
+			want: []string{"till handoff list", "--project-id", "--scope-type", "--status", "--limit"},
+		},
+		{
+			name: "handoff update",
+			args: []string{"handoff", "update", "--help"},
+			want: []string{"till handoff update", "--handoff-id", "--summary", "--resolution-note"},
+		},
+		{
 			name: "export",
 			args: []string{"export", "--help"},
 			want: []string{"till export", "--out", "--include-archived"},
@@ -667,24 +816,46 @@ func TestRunSubcommandHelp(t *testing.T) {
 			want: []string{"till import", "--in"},
 		},
 		{
+			name: "paths",
+			args: []string{"paths", "--help"},
+			want: []string{"till paths", "--dev", "--db", "--config", "resolved runtime paths"},
+		},
+		{
 			name: "init-dev-config",
 			args: []string{"init-dev-config", "--help"},
 			want: []string{"till init-dev-config", "create the dev config file"},
 		},
 	}
+	forms := []string{"--help", "-h", "help", "h"}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			var out strings.Builder
-			err := run(context.Background(), tc.args, &out, io.Discard)
-			if err != nil {
-				t.Fatalf("run(%s --help) error = %v", tc.name, err)
-			}
-			output := strings.ToLower(out.String())
-			for _, want := range tc.want {
-				if !strings.Contains(output, strings.ToLower(want)) {
-					t.Fatalf("expected %q in output, got %q", want, out.String())
+			baseArgs := tc.args[:len(tc.args)-1]
+			var reference string
+			for _, form := range forms {
+				args := append(append([]string(nil), baseArgs...), form)
+				var out strings.Builder
+				err := run(context.Background(), args, &out, io.Discard)
+				if err != nil {
+					t.Fatalf("run(%v) error = %v", args, err)
+				}
+				if reference == "" {
+					reference = out.String()
+				} else if out.String() != reference {
+					t.Fatalf("help output mismatch for %v\n--- want ---\n%s\n--- got ---\n%s", args, reference, out.String())
+				}
+				output := strings.ToLower(out.String())
+				if !strings.Contains(output, "usage") {
+					t.Fatalf("expected usage section in output, got %q", out.String())
+				}
+				if !strings.Contains(output, "examples") {
+					t.Fatalf("expected examples section in output, got %q", out.String())
+				}
+				for _, want := range tc.want {
+					if !strings.Contains(output, strings.ToLower(want)) {
+						t.Fatalf("expected %q in output, got %q", want, out.String())
+					}
 				}
 			}
 		})
