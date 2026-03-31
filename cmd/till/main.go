@@ -1823,9 +1823,6 @@ default development config file restored quickly.
 	}
 	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, templateCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	applyCommandHelp(rootCmd)
-	if isHelpInvocation(args) {
-		return executeHelpCommand(ctx, rootCmd, args, stdout)
-	}
 	return fang.Execute(
 		ctx,
 		rootCmd,
