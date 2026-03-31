@@ -138,8 +138,11 @@ not be used for new work.
 `),
 		Example: []string{
 			"  till kind upsert --id go-service --display-name \"Go Service\" --applies-to project",
-			"  till kind upsert --id build-task --display-name \"Build Task\" --applies-to task --allowed-parent-scopes project --allowed-parent-scopes phase",
-			"  till kind upsert --id qa-check --display-name \"QA Check\" --applies-to subtask --payload-schema-json '{\"type\":\"object\"}'",
+			"  till kind upsert --id build-task --display-name \"Build Task\" \\",
+			"    --applies-to task --allowed-parent-scopes project \\",
+			"    --allowed-parent-scopes phase",
+			"  till kind upsert --id qa-check --display-name \"QA Check\" \\",
+			"    --applies-to subtask --payload-schema-json '{\"type\":\"object\"}'",
 		},
 	},
 	"till kind allowlist": {
@@ -228,7 +231,8 @@ binding the library.
 	},
 	"till template library upsert": {
 		Example: []string{
-			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
+			"  till template library upsert --spec-json \\",
+			"    '{\"id\":\"LIBRARY_ID\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
 			"  till template library upsert --spec-json \"$(cat /tmp/template-library.json)\"",
 		},
 	},
@@ -295,7 +299,8 @@ containing-scope completion.
 		Example: []string{
 			"  till lease list --project-id PROJECT_ID",
 			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
-			"  till lease renew --agent-instance-id AGENT_INSTANCE_ID --lease-token LEASE_TOKEN --ttl 30m",
+			"  till lease renew --agent-instance-id AGENT_INSTANCE_ID \\",
+			"    --lease-token LEASE_TOKEN --ttl 30m",
 			"  till lease revoke-all --project-id PROJECT_ID --reason operator_reset",
 		},
 	},
@@ -321,8 +326,11 @@ for a project, branch, phase, task, or subtask scope.
 `),
 		Example: []string{
 			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
-			"  till lease issue --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --agent-name AGENT_NAME --role qa --requested-ttl 30m",
-			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role orchestrator --allow-equal-scope-delegation",
+			"  till lease issue --project-id PROJECT_ID --scope-type task \\",
+			"    --scope-id TASK_ID --agent-name AGENT_NAME --role qa \\",
+			"    --requested-ttl 30m",
+			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME \\",
+			"    --role orchestrator --allow-equal-scope-delegation",
 		},
 	},
 	"till lease heartbeat": {
@@ -366,12 +374,14 @@ state reset before work resumes.
 `),
 		Example: []string{
 			"  till lease revoke-all --project-id PROJECT_ID --reason operator_reset",
-			"  till lease revoke-all --project-id PROJECT_ID --scope-type branch --scope-id BRANCH_ID --reason branch_recovery",
+			"  till lease revoke-all --project-id PROJECT_ID --scope-type branch \\",
+			"    --scope-id BRANCH_ID --reason branch_recovery",
 		},
 	},
 	"till handoff": {
 		Example: []string{
-			"  till handoff create --project-id PROJECT_ID --summary \"Builder blocked on QA\"",
+			"  till handoff create --project-id PROJECT_ID \\",
+			"    --summary \"Builder blocked on QA\"",
 			"  till handoff get --handoff-id HANDOFF_ID",
 			"  till handoff list --project-id PROJECT_ID --status open",
 			"  till handoff update --handoff-id HANDOFF_ID --summary \"QA resumed\"",
@@ -385,9 +395,14 @@ Use handoffs when simple comments are not enough and the next owner needs an
 explicit summary, target scope, next action, or missing-evidence checklist.
 `),
 		Example: []string{
-			"  till handoff create --project-id PROJECT_ID --summary \"Builder blocked on QA\"",
-			"  till handoff create --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --source-role builder --target-role qa --next-action \"re-run verification\"",
-			"  till handoff create --project-id PROJECT_ID --summary \"Need review\" --missing-evidence test-output --related-ref TASK_ID",
+			"  till handoff create --project-id PROJECT_ID \\",
+			"    --summary \"Builder blocked on QA\"",
+			"  till handoff create --project-id PROJECT_ID --scope-type task \\",
+			"    --scope-id TASK_ID --source-role builder --target-role qa \\",
+			"    --next-action \"re-run verification\"",
+			"  till handoff create --project-id PROJECT_ID \\",
+			"    --summary \"Need review\" --missing-evidence test-output \\",
+			"    --related-ref TASK_ID",
 		},
 	},
 	"till handoff get": {
@@ -411,7 +426,8 @@ status when reviewing collaboration state.
 		Example: []string{
 			"  till handoff list --project-id PROJECT_ID",
 			"  till handoff list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
-			"  till handoff list --project-id PROJECT_ID --status open --status accepted --limit 20",
+			"  till handoff list --project-id PROJECT_ID --status open \\",
+			"    --status accepted --limit 20",
 		},
 	},
 	"till handoff update": {
@@ -424,7 +440,8 @@ summary, or record a final resolution note.
 		Example: []string{
 			"  till handoff update --handoff-id HANDOFF_ID --summary \"QA resumed\"",
 			"  till handoff update --handoff-id HANDOFF_ID --status accepted --target-role builder",
-			"  till handoff update --handoff-id HANDOFF_ID --summary \"Complete\" --resolution-note \"validated and closed\"",
+			"  till handoff update --handoff-id HANDOFF_ID \\",
+			"    --summary \"Complete\" --resolution-note \"validated and closed\"",
 		},
 	},
 	"till export": {
