@@ -17,9 +17,10 @@ import (
 
 // Config captures MCP transport configuration.
 type Config struct {
-	ServerName    string
-	ServerVersion string
-	EndpointPath  string
+	ServerName             string
+	ServerVersion          string
+	EndpointPath           string
+	ExposeLegacyLeaseTools bool
 }
 
 // Handler wraps one stateless MCP streamable HTTP handler.
@@ -56,7 +57,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	)
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
 	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention))
-	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention))
+	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), cfg.ExposeLegacyLeaseTools)
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
 	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention))
 	return mcpSrv, cfg, nil

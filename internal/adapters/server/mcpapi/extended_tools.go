@@ -101,6 +101,247 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+// buildProjectRootedMutationAuthScope normalizes project/global admin mutations onto one rooted project scope.
+func buildProjectRootedMutationAuthScope(projectID string, authContext map[string]string) (string, map[string]string) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		projectID = domain.AuthRequestGlobalProjectID
+	}
+	normalized := make(map[string]string, len(authContext)+3)
+	for key, value := range authContext {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		normalized[key] = value
+	}
+	normalized["project_id"] = projectID
+	normalized["scope_type"] = string(domain.ScopeLevelProject)
+	normalized["scope_id"] = projectID
+	return "project:" + projectID, normalized
+}
+
+// capabilityLeaseMutationArgs stores the shared mutation payload for lease lifecycle operations.
+type capabilityLeaseMutationArgs struct {
+	Operation                 string `json:"operation"`
+	ProjectID                 string `json:"project_id"`
+	ScopeType                 string `json:"scope_type"`
+	ScopeID                   string `json:"scope_id"`
+	Role                      string `json:"role"`
+	AgentName                 string `json:"agent_name"`
+	AgentInstanceID           string `json:"agent_instance_id"`
+	ParentInstanceID          string `json:"parent_instance_id"`
+	AllowEqualScopeDelegation bool   `json:"allow_equal_scope_delegation"`
+	RequestedTTLSeconds       int    `json:"requested_ttl_seconds"`
+	OverrideToken             string `json:"override_token"`
+	LeaseToken                string `json:"lease_token"`
+	TTLSeconds                int    `json:"ttl_seconds"`
+	Reason                    string `json:"reason"`
+	SessionID                 string `json:"session_id"`
+	SessionSecret             string `json:"session_secret"`
+}
+
+// handleCapabilityLeaseMutation routes one lease lifecycle operation through the shared tool surface.
+func handleCapabilityLeaseMutation(
+	ctx context.Context,
+	leases common.CapabilityLeaseService,
+	args capabilityLeaseMutationArgs,
+) (*mcp.CallToolResult, error) {
+	projectID := strings.TrimSpace(args.ProjectID)
+	scopeType := strings.TrimSpace(args.ScopeType)
+	scopeID := strings.TrimSpace(args.ScopeID)
+	role := strings.TrimSpace(args.Role)
+	agentName := strings.TrimSpace(args.AgentName)
+	instanceID := strings.TrimSpace(args.AgentInstanceID)
+	leaseToken := strings.TrimSpace(args.LeaseToken)
+	reason := strings.TrimSpace(args.Reason)
+	operation := strings.TrimSpace(args.Operation)
+
+	switch operation {
+	case "issue":
+		if projectID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+		}
+		if scopeType == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
+		}
+		if role == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "role" not found`), nil
+		}
+		if agentName == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
+		}
+		if _, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(leases),
+			mcpSessionAuthArgs{SessionID: args.SessionID, SessionSecret: args.SessionSecret},
+			"issue_capability_lease",
+			"project:"+projectID,
+			"capability_lease",
+			firstNonEmptyString(scopeID, projectID),
+			map[string]string{
+				"project_id": projectID,
+				"scope_type": scopeType,
+				"scope_id":   scopeID,
+				"role":       role,
+			},
+		); err != nil {
+			return toolResultFromError(err), nil
+		}
+		lease, err := leases.IssueCapabilityLease(ctx, common.IssueCapabilityLeaseRequest{
+			ProjectID:                 projectID,
+			ScopeType:                 scopeType,
+			ScopeID:                   args.ScopeID,
+			Role:                      role,
+			AgentName:                 agentName,
+			AgentInstanceID:           args.AgentInstanceID,
+			ParentInstanceID:          args.ParentInstanceID,
+			AllowEqualScopeDelegation: args.AllowEqualScopeDelegation,
+			RequestedTTLSeconds:       args.RequestedTTLSeconds,
+			OverrideToken:             args.OverrideToken,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(lease)
+		if err != nil {
+			return nil, fmt.Errorf("encode capability_lease issue result: %w", err)
+		}
+		return result, nil
+	case "heartbeat":
+		if instanceID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+		}
+		if leaseToken == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
+		}
+		if _, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(leases),
+			mcpSessionAuthArgs{SessionID: args.SessionID, SessionSecret: args.SessionSecret},
+			"heartbeat_capability_lease",
+			"tillsyn",
+			"capability_lease",
+			instanceID,
+			map[string]string{"agent_instance_id": instanceID},
+		); err != nil {
+			return toolResultFromError(err), nil
+		}
+		lease, err := leases.HeartbeatCapabilityLease(ctx, common.HeartbeatCapabilityLeaseRequest{
+			AgentInstanceID: instanceID,
+			LeaseToken:      leaseToken,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(lease)
+		if err != nil {
+			return nil, fmt.Errorf("encode capability_lease heartbeat result: %w", err)
+		}
+		return result, nil
+	case "renew":
+		if instanceID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+		}
+		if leaseToken == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
+		}
+		if _, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(leases),
+			mcpSessionAuthArgs{SessionID: args.SessionID, SessionSecret: args.SessionSecret},
+			"renew_capability_lease",
+			"tillsyn",
+			"capability_lease",
+			instanceID,
+			map[string]string{"agent_instance_id": instanceID},
+		); err != nil {
+			return toolResultFromError(err), nil
+		}
+		lease, err := leases.RenewCapabilityLease(ctx, common.RenewCapabilityLeaseRequest{
+			AgentInstanceID: instanceID,
+			LeaseToken:      leaseToken,
+			TTLSeconds:      args.TTLSeconds,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(lease)
+		if err != nil {
+			return nil, fmt.Errorf("encode capability_lease renew result: %w", err)
+		}
+		return result, nil
+	case "revoke":
+		if instanceID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+		}
+		if _, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(leases),
+			mcpSessionAuthArgs{SessionID: args.SessionID, SessionSecret: args.SessionSecret},
+			"revoke_capability_lease",
+			"tillsyn",
+			"capability_lease",
+			instanceID,
+			map[string]string{"agent_instance_id": instanceID},
+		); err != nil {
+			return toolResultFromError(err), nil
+		}
+		lease, err := leases.RevokeCapabilityLease(ctx, common.RevokeCapabilityLeaseRequest{
+			AgentInstanceID: instanceID,
+			Reason:          reason,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(lease)
+		if err != nil {
+			return nil, fmt.Errorf("encode capability_lease revoke result: %w", err)
+		}
+		return result, nil
+	case "revoke_all":
+		if projectID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+		}
+		if scopeType == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
+		}
+		if _, err := authorizeMCPMutation(
+			ctx,
+			pickMutationAuthorizer(leases),
+			mcpSessionAuthArgs{SessionID: args.SessionID, SessionSecret: args.SessionSecret},
+			"revoke_all_capability_leases",
+			"project:"+projectID,
+			"capability_lease",
+			firstNonEmptyString(scopeID, projectID),
+			map[string]string{"project_id": projectID, "scope_type": scopeType},
+		); err != nil {
+			return toolResultFromError(err), nil
+		}
+		if err := leases.RevokeAllCapabilityLeases(ctx, common.RevokeAllCapabilityLeasesRequest{
+			ProjectID: projectID,
+			ScopeType: scopeType,
+			ScopeID:   args.ScopeID,
+			Reason:    args.Reason,
+		}); err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(map[string]any{
+			"updated":    true,
+			"project_id": projectID,
+			"scope_type": scopeType,
+			"scope_id":   args.ScopeID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode capability_lease revoke_all result: %w", err)
+		}
+		return result, nil
+	default:
+		return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
+	}
+}
+
 // registerBootstrapTool registers the onboarding guidance tool for empty-instance flows.
 func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuideReader) {
 	if guide == nil {
@@ -184,6 +425,9 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			if strings.TrimSpace(args.Name) == "" {
 				return mcp.NewToolResultError(`invalid_request: required argument "name" not found`), nil
 			}
+			namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
+				"name": strings.TrimSpace(args.Name),
+			})
 			caller, err := authorizeMCPMutation(
 				ctx,
 				pickMutationAuthorizer(projects),
@@ -192,10 +436,10 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 					SessionSecret: args.SessionSecret,
 				},
 				"create_project",
-				"tillsyn",
+				namespace,
 				"project",
 				"new",
-				map[string]string{"name": strings.TrimSpace(args.Name)},
+				authContext,
 			)
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -1092,6 +1336,9 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			if len(args.AppliesTo) == 0 {
 				return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
 			}
+			namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
+				"kind_id": strings.TrimSpace(args.ID),
+			})
 			if _, err := authorizeMCPMutation(
 				ctx,
 				pickMutationAuthorizer(kinds),
@@ -1100,10 +1347,10 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 					SessionSecret: args.SessionSecret,
 				},
 				"upsert_kind_definition",
-				"tillsyn",
+				namespace,
 				"kind_definition",
 				strings.TrimSpace(args.ID),
-				map[string]string{"kind_id": strings.TrimSpace(args.ID)},
+				authContext,
 			); err != nil {
 				return toolResultFromError(err), nil
 			}
@@ -1285,6 +1532,9 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 			if resourceID == "" {
 				resourceID = "new"
 			}
+			namespace, authContext := buildProjectRootedMutationAuthScope(strings.TrimSpace(args.Library.ProjectID), map[string]string{
+				"library_id": resourceID,
+			})
 			caller, err := authorizeMCPMutation(
 				ctx,
 				pickMutationAuthorizer(templates),
@@ -1293,10 +1543,10 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 					SessionSecret: args.SessionSecret,
 				},
 				"upsert_template_library",
-				"tillsyn",
+				namespace,
 				"template_library",
 				resourceID,
-				map[string]string{"project_id": strings.TrimSpace(args.Library.ProjectID)},
+				authContext,
 			)
 			if err != nil {
 				return toolResultFromError(err), nil
@@ -1423,8 +1673,8 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 	)
 }
 
-// registerCapabilityLeaseTools registers lease issue/heartbeat/renew/revoke tools.
-func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService) {
+// registerCapabilityLeaseTools registers lease visibility and lifecycle tools.
+func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService, exposeLegacyLeaseTools bool) {
 	if leases == nil {
 		return
 	}
@@ -1462,6 +1712,40 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
+			"till.capability_lease",
+			mcp.WithDescription("Mutate one capability lease lifecycle. Use operation=issue|heartbeat|renew|revoke|revoke_all."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Lease mutation operation"), mcp.Enum("issue", "heartbeat", "renew", "revoke", "revoke_all")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=issue|revoke_all")),
+			mcp.WithString("scope_type", mcp.Description("project|branch|phase|task|subtask. Required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for project scope; otherwise used by operation=issue|revoke_all")),
+			mcp.WithString("role", mcp.Description("orchestrator|builder|qa. Required for operation=issue"), mcp.Enum("orchestrator", "builder", "qa")),
+			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Required for operation=issue")),
+			mcp.WithString("agent_instance_id", mcp.Description("Agent instance identifier. Required for operation=heartbeat|renew|revoke and optional for operation=issue")),
+			mcp.WithString("parent_instance_id", mcp.Description("Optional parent lease instance id for operation=issue")),
+			mcp.WithBoolean("allow_equal_scope_delegation", mcp.Description("Allow equal-scope delegation for operation=issue")),
+			mcp.WithNumber("requested_ttl_seconds", mcp.Description("Optional TTL in seconds for operation=issue")),
+			mcp.WithString("override_token", mcp.Description("Optional orchestrator overlap override token for operation=issue")),
+			mcp.WithString("lease_token", mcp.Description("Lease token. Required for operation=heartbeat|renew")),
+			mcp.WithNumber("ttl_seconds", mcp.Description("Optional renewal TTL in seconds for operation=renew")),
+			mcp.WithString("reason", mcp.Description("Optional revocation reason for operation=revoke|revoke_all")),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args capabilityLeaseMutationArgs
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			return handleCapabilityLeaseMutation(ctx, leases, args)
+		},
+	)
+
+	if !exposeLegacyLeaseTools {
+		return
+	}
+
+	srv.AddTool(
+		mcp.NewTool(
 			"till.issue_capability_lease",
 			mcp.WithDescription("Issue one capability lease."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
@@ -1495,62 +1779,21 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			projectID := strings.TrimSpace(args.ProjectID)
-			if projectID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
-			}
-			scopeType := strings.TrimSpace(args.ScopeType)
-			if scopeType == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
-			}
-			role := strings.TrimSpace(args.Role)
-			if role == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "role" not found`), nil
-			}
-			agentName := strings.TrimSpace(args.AgentName)
-			if agentName == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
-			}
-			if _, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(leases),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"issue_capability_lease",
-				"project:"+projectID,
-				"capability_lease",
-				firstNonEmptyString(strings.TrimSpace(args.ScopeID), projectID),
-				map[string]string{
-					"project_id": projectID,
-					"scope_type": scopeType,
-					"scope_id":   strings.TrimSpace(args.ScopeID),
-					"role":       role,
-				},
-			); err != nil {
-				return toolResultFromError(err), nil
-			}
-			lease, err := leases.IssueCapabilityLease(ctx, common.IssueCapabilityLeaseRequest{
-				ProjectID:                 projectID,
-				ScopeType:                 scopeType,
+			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
+				Operation:                 "issue",
+				ProjectID:                 args.ProjectID,
+				ScopeType:                 args.ScopeType,
 				ScopeID:                   args.ScopeID,
-				Role:                      role,
-				AgentName:                 agentName,
+				Role:                      args.Role,
+				AgentName:                 args.AgentName,
 				AgentInstanceID:           args.AgentInstanceID,
 				ParentInstanceID:          args.ParentInstanceID,
 				AllowEqualScopeDelegation: args.AllowEqualScopeDelegation,
 				RequestedTTLSeconds:       args.RequestedTTLSeconds,
 				OverrideToken:             args.OverrideToken,
+				SessionID:                 args.SessionID,
+				SessionSecret:             args.SessionSecret,
 			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(lease)
-			if err != nil {
-				return nil, fmt.Errorf("encode issue_capability_lease result: %w", err)
-			}
-			return result, nil
 		},
 	)
 
@@ -1573,41 +1816,13 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			instanceID := strings.TrimSpace(args.AgentInstanceID)
-			if instanceID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
-			}
-			leaseToken := strings.TrimSpace(args.LeaseToken)
-			if leaseToken == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
-			}
-			if _, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(leases),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"heartbeat_capability_lease",
-				"tillsyn",
-				"capability_lease",
-				instanceID,
-				map[string]string{"agent_instance_id": instanceID},
-			); err != nil {
-				return toolResultFromError(err), nil
-			}
-			lease, err := leases.HeartbeatCapabilityLease(ctx, common.HeartbeatCapabilityLeaseRequest{
-				AgentInstanceID: instanceID,
-				LeaseToken:      leaseToken,
+			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
+				Operation:       "heartbeat",
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
+				SessionID:       args.SessionID,
+				SessionSecret:   args.SessionSecret,
 			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(lease)
-			if err != nil {
-				return nil, fmt.Errorf("encode heartbeat_capability_lease result: %w", err)
-			}
-			return result, nil
 		},
 	)
 
@@ -1632,42 +1847,14 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			instanceID := strings.TrimSpace(args.AgentInstanceID)
-			if instanceID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
-			}
-			leaseToken := strings.TrimSpace(args.LeaseToken)
-			if leaseToken == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
-			}
-			if _, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(leases),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"renew_capability_lease",
-				"tillsyn",
-				"capability_lease",
-				instanceID,
-				map[string]string{"agent_instance_id": instanceID},
-			); err != nil {
-				return toolResultFromError(err), nil
-			}
-			lease, err := leases.RenewCapabilityLease(ctx, common.RenewCapabilityLeaseRequest{
-				AgentInstanceID: instanceID,
-				LeaseToken:      leaseToken,
+			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
+				Operation:       "renew",
+				AgentInstanceID: args.AgentInstanceID,
+				LeaseToken:      args.LeaseToken,
 				TTLSeconds:      args.TTLSeconds,
+				SessionID:       args.SessionID,
+				SessionSecret:   args.SessionSecret,
 			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(lease)
-			if err != nil {
-				return nil, fmt.Errorf("encode renew_capability_lease result: %w", err)
-			}
-			return result, nil
 		},
 	)
 
@@ -1690,37 +1877,13 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			instanceID := strings.TrimSpace(args.AgentInstanceID)
-			if instanceID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
-			}
-			if _, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(leases),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"revoke_capability_lease",
-				"tillsyn",
-				"capability_lease",
-				instanceID,
-				map[string]string{"agent_instance_id": instanceID},
-			); err != nil {
-				return toolResultFromError(err), nil
-			}
-			lease, err := leases.RevokeCapabilityLease(ctx, common.RevokeCapabilityLeaseRequest{
-				AgentInstanceID: instanceID,
+			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
+				Operation:       "revoke",
+				AgentInstanceID: args.AgentInstanceID,
 				Reason:          args.Reason,
+				SessionID:       args.SessionID,
+				SessionSecret:   args.SessionSecret,
 			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(lease)
-			if err != nil {
-				return nil, fmt.Errorf("encode revoke_capability_lease result: %w", err)
-			}
-			return result, nil
 		},
 	)
 
@@ -1747,47 +1910,15 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			projectID := strings.TrimSpace(args.ProjectID)
-			if projectID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
-			}
-			scopeType := strings.TrimSpace(args.ScopeType)
-			if scopeType == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "scope_type" not found`), nil
-			}
-			if _, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(leases),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"revoke_all_capability_leases",
-				"project:"+projectID,
-				"capability_lease",
-				firstNonEmptyString(strings.TrimSpace(args.ScopeID), projectID),
-				map[string]string{"project_id": projectID, "scope_type": scopeType},
-			); err != nil {
-				return toolResultFromError(err), nil
-			}
-			if err := leases.RevokeAllCapabilityLeases(ctx, common.RevokeAllCapabilityLeasesRequest{
-				ProjectID: projectID,
-				ScopeType: scopeType,
-				ScopeID:   args.ScopeID,
-				Reason:    args.Reason,
-			}); err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{
-				"updated":    true,
-				"project_id": projectID,
-				"scope_type": scopeType,
-				"scope_id":   args.ScopeID,
+			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
+				Operation:     "revoke_all",
+				ProjectID:     args.ProjectID,
+				ScopeType:     args.ScopeType,
+				ScopeID:       args.ScopeID,
+				Reason:        args.Reason,
+				SessionID:     args.SessionID,
+				SessionSecret: args.SessionSecret,
 			})
-			if err != nil {
-				return nil, fmt.Errorf("encode revoke_all_capability_leases result: %w", err)
-			}
-			return result, nil
 		},
 	)
 }
