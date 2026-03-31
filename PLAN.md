@@ -81,9 +81,7 @@ Implementation summary:
 1. Converted overlong CLI examples in `cmd/till/main.go` and `cmd/till/help.go` to explicit multi-line shell continuations with trailing `\` so Fang renders wrapped examples instead of truncating them.
 2. Kept `help.go` as the effective source for overlapping command help, while also wrapping the `main.go`-only auth/project examples that still feed runtime help directly.
 3. Upgraded `github.com/evanmschultz/laslig` from `v0.2.1` to `v0.2.2`.
-4. Updated `magefile.go` to disable the new `gotestout` live activity footer:
-   - the repo already has an outer Mage spinner,
-   - so `gotestout.ActivityOff` keeps the upgraded dependency from rendering duplicate progress activity.
+4. Left `gotestout` activity on its native default auto behavior so the upgraded dependency can decide when to show its own live footer in styled human output.
 
 Validation:
 1. `mage ci` -> PASS.
@@ -94,7 +92,7 @@ Current status:
 1. Fang help rendering remains the only help path.
 2. The previously clipped auth/lease examples now wrap as explicit continuations.
 3. The repo now uses `laslig v0.2.2`.
-4. Mage keeps the existing spinner UX without a second nested test-activity footer.
+4. Mage now uses the dependency's native auto activity behavior rather than a repo-local override.
 
 ## Checkpoint 2026-03-30: Laslig v0.2.1 Upgrade + CLI/Mage Progress Spinners
 
