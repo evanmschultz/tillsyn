@@ -903,8 +903,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.get_bootstrap_guide",
 		"till.get_instructions",
 		"till.list_projects",
-		"till.create_project",
-		"till.update_project",
+		"till.project",
 		"till.create_auth_request",
 		"till.list_auth_requests",
 		"till.get_auth_request",
@@ -925,12 +924,12 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.get_project_dependency_rollup",
 		"till.list_kind_definitions",
 		"till.upsert_kind_definition",
-		"till.set_project_allowed_kinds",
+		"till.project",
 		"till.list_project_allowed_kinds",
 		"till.list_template_libraries",
 		"till.get_template_library",
 		"till.upsert_template_library",
-		"till.bind_project_template_library",
+		"till.project",
 		"till.get_project_template_binding",
 		"till.get_node_contract_snapshot",
 		"till.list_capability_leases",
@@ -961,12 +960,14 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.get_bootstrap_guide", args: map[string]any{}},
 		{name: "till.get_instructions", args: map[string]any{"include_markdown": false}},
 		{name: "till.list_projects", args: map[string]any{"include_archived": true}},
-		{name: "till.create_project", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
 			"name":              "Project One",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.update_project", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
 			"project_id":        "p1",
 			"name":              "Project One Updated",
 			"agent_instance_id": "inst-1",
@@ -1029,7 +1030,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
 		{name: "till.list_kind_definitions", args: map[string]any{}},
 		{name: "till.upsert_kind_definition", args: mergeArgs(validSessionArgs(), map[string]any{"id": "phase", "applies_to": []any{"phase"}})},
-		{name: "till.set_project_allowed_kinds", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}})},
+		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "task"}})},
 		{name: "till.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
 		{name: "till.list_template_libraries", args: map[string]any{"scope": "global", "status": "approved"}},
 		{name: "till.get_template_library", args: map[string]any{"library_id": "go-defaults"}},
@@ -1049,7 +1050,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 				},
 			},
 		})},
-		{name: "till.bind_project_template_library", args: mergeArgs(validSessionArgs(), map[string]any{"project_id": "p1", "library_id": "go-defaults"})},
+		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "bind_template", "project_id": "p1", "template_library_id": "go-defaults"})},
 		{name: "till.get_project_template_binding", args: map[string]any{"project_id": "p1"}},
 		{name: "till.get_node_contract_snapshot", args: map[string]any{"node_id": "task-qa-1"}},
 		{name: "till.list_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project", "include_revoked": true}},
@@ -1256,6 +1257,159 @@ func TestHandlerExpandedCoordinationToolVisibility(t *testing.T) {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy coordination mode missing %q: %#v", required, legacyTools)
 		}
+	}
+}
+
+// TestHandlerExpandedProjectToolVisibility verifies reduced project mutations are default and legacy aliases are opt-in.
+func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
+	t.Parallel()
+
+	collectToolNames := func(t *testing.T, cfg Config) []string {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(cfg, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/list",
+		})
+		toolsRaw, ok := toolsResp.Result["tools"].([]any)
+		if !ok {
+			t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+		}
+		toolNames := make([]string, 0, len(toolsRaw))
+		for _, toolRaw := range toolsRaw {
+			toolMap, ok := toolRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := toolMap["name"].(string)
+			toolNames = append(toolNames, name)
+		}
+		return toolNames
+	}
+
+	defaultTools := collectToolNames(t, Config{})
+	if !slices.Contains(defaultTools, "till.project") {
+		t.Fatalf("default project surface missing till.project: %#v", defaultTools)
+	}
+	for _, legacy := range []string{
+		"till.create_project",
+		"till.update_project",
+		"till.set_project_allowed_kinds",
+		"till.bind_project_template_library",
+	} {
+		if slices.Contains(defaultTools, legacy) {
+			t.Fatalf("unexpected legacy project tool %q in default surface: %#v", legacy, defaultTools)
+		}
+	}
+
+	legacyTools := collectToolNames(t, Config{ExposeLegacyProjectTools: true})
+	for _, required := range []string{
+		"till.project",
+		"till.create_project",
+		"till.update_project",
+		"till.set_project_allowed_kinds",
+		"till.bind_project_template_library",
+	} {
+		if !slices.Contains(legacyTools, required) {
+			t.Fatalf("legacy project mode missing %q: %#v", required, legacyTools)
+		}
+	}
+}
+
+// TestHandlerExpandedLegacyProjectMutationAliases verifies the legacy project-root mutation aliases still execute when enabled.
+func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{
+			authCaller: domain.AuthenticatedCaller{
+				PrincipalID:   "agent-session-1",
+				PrincipalName: "Agent Session One",
+				PrincipalType: domain.ActorTypeAgent,
+				SessionID:     "sess-1",
+			},
+		},
+	}
+	handler, err := NewHandler(Config{ExposeLegacyProjectTools: true}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	callCases := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{
+			name: "create_project",
+			tool: "till.create_project",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"name":                "Project One",
+				"kind":                "go-service",
+				"template_library_id": "go-defaults",
+				"agent_instance_id":   "inst-1",
+				"lease_token":         "tok-1",
+			}),
+		},
+		{
+			name: "update_project",
+			tool: "till.update_project",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"project_id":        "p1",
+				"name":              "Project One Updated",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}),
+		},
+		{
+			name: "set_project_allowed_kinds",
+			tool: "till.set_project_allowed_kinds",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"project_id": "p1",
+				"kind_ids":   []any{"phase", "task"},
+			}),
+		},
+		{
+			name: "bind_project_template_library",
+			tool: "till.bind_project_template_library",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"project_id": "p1",
+				"library_id": "go-defaults",
+			}),
+		},
+	}
+
+	for idx, tc := range callCases {
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(1400+idx, tc.tool, tc.args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("%s returned isError=true: %#v", tc.name, callResp.Result)
+		}
+	}
+
+	if got := service.lastCreateProjectReq.TemplateLibraryID; got != "go-defaults" {
+		t.Fatalf("legacy create_project template_library_id = %q, want go-defaults", got)
+	}
+	if got := service.lastBindTemplateReq.LibraryID; got != "go-defaults" {
+		t.Fatalf("legacy bind_project_template_library library_id = %q, want go-defaults", got)
 	}
 }
 
@@ -2064,8 +2218,9 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(201, "till.create_project", map[string]any{
-		"name": 123,
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(201, "till.project", map[string]any{
+		"operation": "create",
+		"name":      123,
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); !isError {
 		t.Fatalf("isError = %v, want true", callResp.Result["isError"])
@@ -2075,7 +2230,7 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedCreateProjectPassesTemplateLibraryID verifies the MCP create_project tool forwards template-library selection.
+// TestHandlerExpandedCreateProjectPassesTemplateLibraryID verifies the MCP project tool forwards template-library selection.
 func TestHandlerExpandedCreateProjectPassesTemplateLibraryID(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
@@ -2092,7 +2247,8 @@ func TestHandlerExpandedCreateProjectPassesTemplateLibraryID(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(202, "till.create_project", mergeArgs(validSessionArgs(), map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(202, "till.project", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":           "create",
 		"name":                "Project One",
 		"kind":                "go-service",
 		"template_library_id": "go-defaults",
@@ -2123,8 +2279,9 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 	}{
 		{
 			name: "create project uses global sentinel scope",
-			tool: "till.create_project",
+			tool: "till.project",
 			args: mergeArgs(validSessionArgs(), map[string]any{
+				"operation":         "create",
 				"name":              "Project One",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
@@ -2260,7 +2417,8 @@ func TestHandlerExpandedMutationAuthErrorsMap(t *testing.T) {
 			defer server.Close()
 			_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-			_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(1201, "till.create_project", mergeArgs(validSessionArgs(), map[string]any{
+			_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(1201, "till.project", mergeArgs(validSessionArgs(), map[string]any{
+				"operation":         "create",
 				"name":              "Project One",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "lease-1",

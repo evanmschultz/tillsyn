@@ -42,6 +42,9 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - global agent auth is for global catalog admin, template-library admin, and project creation/binding;
   - project-scoped agent auth is for guarded mutations inside that project;
   - branch/phase/task-scoped auth should be used when the runtime can prove the narrower path.
+- Default MCP surface note:
+  - `till.project` is the preferred project-root mutation family for create, update, template bind, and allowed-kinds updates;
+  - the older flat project mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
 - Agents and operators should not treat the global-to-project auth split as a bug.
 - After creating a project with global auth, the next normal step is to claim or reuse a project-scoped session before creating guarded in-project work.
 - Guarded agent lease identity should match the authenticated agent principal id; human-readable display names are attribution data, not the lease-match key.
