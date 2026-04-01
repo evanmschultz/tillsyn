@@ -41,9 +41,11 @@ type stubExpandedService struct {
 	lastListKindsArchived    bool
 	lastUpsertKindReq        common.UpsertKindDefinitionRequest
 	lastSetAllowedKindsReq   common.SetProjectAllowedKindsRequest
+	lastEnsureBuiltinReq     common.EnsureBuiltinTemplateLibraryRequest
 	lastUpsertTemplateReq    common.UpsertTemplateLibraryRequest
 	lastBindTemplateReq      common.BindProjectTemplateLibraryRequest
 	lastGetTemplateID        string
+	lastGetBuiltinTemplateID string
 	lastGetTemplateBindingID string
 	lastGetNodeContractID    string
 	lastSearchTasksReq       common.SearchTasksRequest
@@ -589,6 +591,47 @@ func (s *stubExpandedService) GetTemplateLibrary(_ context.Context, libraryID st
 	return rows[0], nil
 }
 
+// GetBuiltinTemplateLibraryStatus returns one deterministic builtin template lifecycle view.
+func (s *stubExpandedService) GetBuiltinTemplateLibraryStatus(_ context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
+	s.lastGetBuiltinTemplateID = strings.TrimSpace(libraryID)
+	return domain.BuiltinTemplateLibraryStatus{
+		LibraryID:             firstNonEmptyString(strings.TrimSpace(libraryID), "default-go"),
+		Name:                  "Default Go",
+		BuiltinSource:         "builtin://tillsyn/default-go",
+		BuiltinVersion:        "2026-04-01.1",
+		BuiltinRevisionDigest: "builtin-digest",
+		RequiredKindIDs:       []domain.KindID{"build-task", "go-project", "implementation-phase", "qa-check"},
+		State:                 domain.BuiltinTemplateLibraryStateCurrent,
+		Installed:             true,
+		InstalledLibraryName:  "Default Go",
+		InstalledStatus:       domain.TemplateLibraryStatusApproved,
+		InstalledRevision:     3,
+		InstalledDigest:       "builtin-digest",
+		InstalledBuiltin:      true,
+	}, nil
+}
+
+// EnsureBuiltinTemplateLibrary returns one deterministic builtin ensure result.
+func (s *stubExpandedService) EnsureBuiltinTemplateLibrary(_ context.Context, in common.EnsureBuiltinTemplateLibraryRequest) (domain.BuiltinTemplateLibraryEnsureResult, error) {
+	s.lastEnsureBuiltinReq = in
+	status, _ := s.GetBuiltinTemplateLibraryStatus(context.Background(), in.LibraryID)
+	return domain.BuiltinTemplateLibraryEnsureResult{
+		Library: domain.TemplateLibrary{
+			ID:             status.LibraryID,
+			Name:           status.Name,
+			Scope:          domain.TemplateLibraryScopeGlobal,
+			Status:         domain.TemplateLibraryStatusApproved,
+			BuiltinManaged: true,
+			BuiltinSource:  status.BuiltinSource,
+			BuiltinVersion: status.BuiltinVersion,
+			Revision:       status.InstalledRevision,
+			RevisionDigest: status.BuiltinRevisionDigest,
+		},
+		Status:  status,
+		Changed: true,
+	}, nil
+}
+
 // UpsertTemplateLibrary returns one deterministic updated template-library row.
 func (s *stubExpandedService) UpsertTemplateLibrary(_ context.Context, in common.UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error) {
 	s.lastUpsertTemplateReq = in
@@ -1079,6 +1122,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.project", args: map[string]any{"operation": "list_allowed_kinds", "project_id": "p1"}},
 		{name: "till.template", args: map[string]any{"operation": "list", "scope": "global", "status": "approved"}},
 		{name: "till.template", args: map[string]any{"operation": "get", "library_id": "go-defaults"}},
+		{name: "till.template", args: map[string]any{"operation": "get_builtin_status", "library_id": "default-go"}},
+		{name: "till.template", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "ensure_builtin", "library_id": "default-go"})},
 		{name: "till.template", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation": "upsert",
 			"library": map[string]any{

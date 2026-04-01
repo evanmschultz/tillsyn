@@ -187,6 +187,10 @@ Current implementation direction for this contract:
 - template-library rows should carry explicit revision/provenance metadata;
 - project bindings should pin a bound revision and a bound library snapshot for stable future generation;
 - binding reads should expose whether the project is current or has an update available;
+- builtin lifecycle status and explicit install/refresh should be available through both:
+  - `till template builtin status|ensure`; and
+  - `till.template(operation=get_builtin_status|ensure_builtin)`;
+- explicit builtin ensure should fail loudly when required kinds are still missing instead of silently installing a partial contract;
 - explicit reapply may use the existing bind/update path as long as it remains visibly dev-approved and drift-aware.
 
 ### Plan-Phase Contract

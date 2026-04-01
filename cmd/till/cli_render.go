@@ -120,6 +120,10 @@ func commandProgressLabel(command string) string {
 		return "Loading template library"
 	case "template.library.upsert":
 		return "Upserting template library"
+	case "template.builtin.status":
+		return "Loading builtin template status"
+	case "template.builtin.ensure":
+		return "Ensuring builtin template"
 	case "template.project.bind":
 		return "Binding project template"
 	case "template.project.binding":

@@ -204,11 +204,15 @@ Template-library operator examples:
   - template libraries now carry revision/provenance metadata,
   - project bindings pin a bound library snapshot plus the bound revision instead of following the mutable latest library row,
   - binding reads now surface drift/current state against the latest approved library revision,
+  - builtin `default-go` lifecycle state is now surfaced explicitly as missing/current/update-available,
+  - builtin install/refresh now has an explicit ensure path rather than relying on ad-hoc generic upserts,
   - and explicit reapply currently uses the existing bind flow against the latest approved library rather than a separate new verb.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till.project(operation=create, name="Go Service", kind="go-service", template_library_id="go-defaults", ...)`
   - `till template library list --scope global --status approved`
+  - `till template builtin status --library-id default-go`
+  - `till template builtin ensure --library-id default-go`
   - `till template library show --library-id go-defaults`
   - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-pass-1","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 1","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-pass-2","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 2","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
   - `till template project bind --project-id <project-id> --library-id go-defaults`

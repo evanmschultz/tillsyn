@@ -9532,3 +9532,65 @@ Notes:
 Next step:
 1. Add the explicit builtin default-go install/refresh workflow on top of the new revision substrate.
 2. Add dev-facing migration-review actions for existing template-owned nodes, using the now-pinned binding snapshot as the comparison base.
+
+### 2026-04-01: Builtin Default-Go Install And Refresh Workflow
+
+Objective:
+- add the explicit builtin default-go lifecycle status/install/refresh path on top of the new revision-pinning substrate without broadening into migration-review yet.
+
+Implementation:
+1. Added explicit builtin lifecycle domain types:
+   - builtin template install/drift state,
+   - builtin ensure result payload.
+2. Added app-level builtin lifecycle operations in `internal/app/template_library_builtin.go`:
+   - `GetBuiltinTemplateLibraryStatus`
+   - `EnsureBuiltinTemplateLibrary`
+3. Locked the builtin implementation to the current supported builtin library:
+   - `default-go`
+   - builtin source `builtin://tillsyn/default-go`
+   - explicit builtin version string
+   - the exact current template contract from `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+4. Builtin status now reports:
+   - `missing`
+   - `current`
+   - `update_available`
+   plus required/missing kind prerequisites and installed revision metadata.
+5. Explicit builtin ensure now:
+   - validates required kinds first,
+   - fails loudly when prerequisite kinds are missing,
+   - and installs or refreshes the builtin library through the normal template-library upsert path with audit attribution.
+6. Exposed the lifecycle through the reduced family surfaces:
+   - `till.template(operation=get_builtin_status)`
+   - `till.template(operation=ensure_builtin)`
+   - `till template builtin status`
+   - `till template builtin ensure`
+7. Updated operator docs to describe the new explicit builtin lifecycle surfaces.
+
+Tests added/updated:
+1. `internal/app/template_library_test.go`
+   - missing status coverage
+   - successful explicit ensure coverage
+   - update-available drift detection coverage
+2. `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`
+   - real-stack coverage for common adapter builtin status/ensure wrappers
+3. `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - reduced MCP template-family coverage for builtin status/ensure operations
+4. `cmd/till/template_builtin_cli_test.go`
+   - CLI render coverage for builtin status/ensure output
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (175 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+3. `mage test-pkg ./cmd/till` -> PASS (217 tests).
+4. `mage test-pkg ./internal/adapters/server/common` -> PASS (97 tests).
+5. `mage ci` -> PASS (1124 tests total, coverage gate passed, build passed).
+
+Live-runtime note:
+1. The current Codex session can still call the existing `till.template` tool, but its in-session schema has not picked up the new `get_builtin_status|ensure_builtin` operations yet.
+2. A client/runtime refresh is therefore required before live MCP parity can be completed for the new builtin lifecycle operations.
+
+Next step:
+1. Commit and push this builtin lifecycle slice.
+2. Refresh the MCP client/runtime so the current session sees the new `till.template` operation schema.
+3. Run the live MCP parity pass for builtin status/ensure.
+4. Then move on to the dev-facing migration-review/reapply slice.

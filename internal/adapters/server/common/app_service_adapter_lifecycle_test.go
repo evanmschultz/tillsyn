@@ -349,6 +349,51 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	}
 }
 
+// TestAppServiceAdapterBuiltinTemplateLifecycle verifies builtin template status and ensure wrappers over the real app service stack.
+func TestAppServiceAdapterBuiltinTemplateLifecycle(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	status, err := fixture.adapter.GetBuiltinTemplateLibraryStatus(ctx, "default-go")
+	if err != nil {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() error = %v", err)
+	}
+	if status.State != domain.BuiltinTemplateLibraryStateMissing {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() state = %q, want missing", status.State)
+	}
+	for _, spec := range []app.CreateKindDefinitionInput{
+		{ID: "go-project", DisplayName: "Go Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
+		{ID: "implementation-phase", DisplayName: "Implementation Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+	} {
+		if _, err := fixture.svc.UpsertKindDefinition(ctx, spec); err != nil {
+			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)
+		}
+	}
+	authCtx := app.WithAuthenticatedCaller(ctx, domain.AuthenticatedCaller{
+		PrincipalID:   "dev-1",
+		PrincipalName: "Dev One",
+		PrincipalType: domain.ActorTypeUser,
+	})
+	result, err := fixture.adapter.EnsureBuiltinTemplateLibrary(authCtx, EnsureBuiltinTemplateLibraryRequest{
+		LibraryID: "default-go",
+	})
+	if err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("EnsureBuiltinTemplateLibrary() changed = false, want true")
+	}
+	if result.Status.State != domain.BuiltinTemplateLibraryStateCurrent {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() state = %q, want current", result.Status.State)
+	}
+	if result.Library.ID != "default-go" || !result.Library.BuiltinManaged {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() library = %#v, want builtin default-go", result.Library)
+	}
+}
+
 // TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs verifies MCP-facing embeddings inventory rejects bad filters and hidden archived scope.
 func TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs(t *testing.T) {
 	t.Parallel()
