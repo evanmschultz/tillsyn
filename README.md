@@ -208,9 +208,10 @@ Template-library operator examples:
   - builtin install/refresh now has an explicit ensure path rather than relying on ad-hoc generic upserts,
   - project reapply preview is now surfaced explicitly before adoption,
   - existing-node migration approvals are now available through MCP/CLI as an explicit per-item or `approve all` action against the drift preview,
-  - TUI project edit now treats saving the same drifted library as an intentional reapply for future generated work,
+  - TUI project edit now routes same-library drifted saves through a dedicated migration-review screen before rebinding,
+  - that review screen shows drift summary, proposed existing-node migrations, per-item selection, `approve all`, and explicit skip,
   - explicit reapply still uses the existing bind flow against the latest approved library rather than a separate new verb,
-  - and the richer TUI migration-review screen is still the remaining UX follow-through on top of that MCP/CLI approval path.
+  - and the remaining follow-through has shifted from missing TUI reapply UX to broader dogfood hardening and live parity on the refreshed runtime.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till.project(operation=create, name="Go Service", kind="go-service", template_library_id="go-defaults", ...)`

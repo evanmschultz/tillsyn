@@ -9752,3 +9752,64 @@ Next step:
    - `till.project(operation=preview_template_reapply, ...)`
    - `till.project(operation=approve_template_migrations, ...)`
 3. Then move on to the remaining TUI migration-review UX follow-through or the next locked dogfood slice, depending on what the live MCP pass exposes.
+
+### 2026-04-01: TUI Pre-Bind Template Migration Review
+
+Objective:
+- land the missing TUI follow-through so same-library drifted project saves no longer jump straight to rebind and instead route through the explicit migration-review contract before future generated work adopts the latest revision.
+
+Implementation:
+1. Extended the TUI service seam with the already-landed app operations:
+   - `GetProjectTemplateReapplyPreview`
+   - `ApproveProjectTemplateMigrations`
+2. Added a dedicated `modeTemplateMigrationReview` full-page surface in `internal/tui/model.go` with staged project-save state.
+3. Changed edit-project submit behavior for the same-library `update_available` path:
+   - instead of rebinding immediately,
+   - the TUI now loads the drift preview first,
+   - and only finalizes the project update/bind after the dev explicitly approves selected nodes, approves all eligible nodes, or skips existing-node migration.
+4. Kept the sequencing aligned with the locked contract:
+   - `UpdateProject`
+   - optional `ApproveProjectTemplateMigrations`
+   - `BindProjectTemplateLibrary`
+   - then reload.
+5. Added operator-visible review content:
+   - drift summary,
+   - default-change summary,
+   - changed child-rule summary,
+   - eligible vs ineligible generated-node rows,
+   - per-item selection,
+   - `approve all`,
+   - and explicit skip.
+6. Updated the project-form hint copy so the TUI now accurately explains that save opens migration review before rebinding.
+7. Updated canonical docs to reflect the landed TUI state:
+   - `README.md`
+   - `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+
+Tests added/updated:
+1. `internal/tui/model_test.go`
+   - drifted same-library save opens the review surface
+   - approving selected migrations completes update + approval + bind
+   - skipping existing-node migrations still completes the future-generation rebind
+   - same-library drift with no review candidates still auto-continues through bind
+
+Validation:
+1. Context7 was retried before code changes and again after the first test failure; both timed out, so package-local TUI/app code plus the locked docs were recorded as the fallback source.
+2. `gofmt -w internal/tui/model.go internal/tui/model_test.go` -> PASS.
+3. `mage test-pkg ./internal/tui` initial run -> FAIL (one skip-status wording assertion).
+4. Re-ran Context7 per repo policy, recorded the fallback again when it timed out, fixed the assertion, and reran.
+5. `mage test-pkg ./internal/tui` final run -> PASS (301 tests).
+
+Next step:
+1. Run `mage ci`.
+2. If green, commit/push this TUI slice and watch the new remote run to completion.
+3. After the next MCP refresh, run live parity on the new TUI-adjacent behavior where it matters:
+   - `till.project(operation=preview_template_reapply, ...)`
+   - `till.project(operation=approve_template_migrations, ...)`
+4. Then move on to the next locked dogfood slices:
+   - live drift/reapply E2E closeout,
+   - scoped-auth choreography and bounded delegation,
+   - mentions/notifications/inbox,
+   - broader wait/notify reuse beyond auth,
+   - scoped `get_instructions` expansion,
+   - later bootstrap collapse,
+   - final collaborative dogfood retest and closeout.

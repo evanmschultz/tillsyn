@@ -39,10 +39,12 @@ type fakeService struct {
 	kindDefinitions         []domain.KindDefinition
 	templateLibraries       []domain.TemplateLibrary
 	projectBindings         map[string]domain.ProjectTemplateBinding
+	projectReapplyPreviews  map[string]domain.ProjectTemplateReapplyPreview
 	nodeContracts           map[string]domain.NodeContractSnapshot
 	lastCreateProject       app.CreateProjectInput
 	lastUpdateProject       app.UpdateProjectInput
 	lastBindProjectTemplate app.BindProjectTemplateLibraryInput
+	lastApproveMigrations   app.ApproveProjectTemplateMigrationsInput
 	lastAuthRequestFilter   domain.AuthRequestListFilter
 	lastAuthSessionFilter   app.AuthSessionFilter
 	lastCapabilityLeases    app.ListCapabilityLeasesInput
@@ -92,6 +94,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		authRequests:            map[string]domain.AuthRequest{},
 		authSessions:            []app.AuthSession{},
 		projectBindings:         map[string]domain.ProjectTemplateBinding{},
+		projectReapplyPreviews:  map[string]domain.ProjectTemplateReapplyPreview{},
 		nodeContracts:           map[string]domain.NodeContractSnapshot{},
 		rollups:                 map[string]domain.DependencyRollup{},
 		changeEvents:            map[string][]domain.ChangeEvent{},
@@ -144,6 +147,15 @@ func (f *fakeService) GetProjectTemplateBinding(_ context.Context, projectID str
 		return domain.ProjectTemplateBinding{}, app.ErrNotFound
 	}
 	return binding, nil
+}
+
+// GetProjectTemplateReapplyPreview returns one staged project drift preview when present.
+func (f *fakeService) GetProjectTemplateReapplyPreview(_ context.Context, projectID string) (domain.ProjectTemplateReapplyPreview, error) {
+	preview, ok := f.projectReapplyPreviews[strings.TrimSpace(projectID)]
+	if !ok {
+		return domain.ProjectTemplateReapplyPreview{}, app.ErrNotFound
+	}
+	return preview, nil
 }
 
 // GetNodeContractSnapshot returns one generated-node contract snapshot when present.
@@ -220,6 +232,67 @@ func (f *fakeService) CreateComment(_ context.Context, in app.CreateCommentInput
 	key := commentThreadKey(comment.ProjectID, comment.TargetType, comment.TargetID)
 	f.comments[key] = append(f.comments[key], comment)
 	return comment, nil
+}
+
+// ApproveProjectTemplateMigrations records one explicit migration-approval request.
+func (f *fakeService) ApproveProjectTemplateMigrations(_ context.Context, in app.ApproveProjectTemplateMigrationsInput) (domain.ProjectTemplateMigrationApprovalResult, error) {
+	if f.err != nil {
+		return domain.ProjectTemplateMigrationApprovalResult{}, f.err
+	}
+	f.lastApproveMigrations = in
+	preview, ok := f.projectReapplyPreviews[strings.TrimSpace(in.ProjectID)]
+	if !ok {
+		return domain.ProjectTemplateMigrationApprovalResult{}, app.ErrNotFound
+	}
+	selected := map[string]struct{}{}
+	if in.ApproveAll {
+		for _, candidate := range preview.MigrationCandidates {
+			if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
+				selected[strings.TrimSpace(candidate.TaskID)] = struct{}{}
+			}
+		}
+	} else {
+		for _, taskID := range in.TaskIDs {
+			selected[strings.TrimSpace(taskID)] = struct{}{}
+		}
+	}
+	approvals := make([]domain.ProjectTemplateMigrationApproval, 0, len(selected))
+	remaining := make([]domain.ProjectTemplateMigrationCandidate, 0, len(preview.MigrationCandidates))
+	remainingEligible := 0
+	remainingIneligible := 0
+	for _, candidate := range preview.MigrationCandidates {
+		taskID := strings.TrimSpace(candidate.TaskID)
+		if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
+			if _, ok := selected[taskID]; ok {
+				approvals = append(approvals, domain.ProjectTemplateMigrationApproval{
+					TaskID:      taskID,
+					Title:       candidate.Title,
+					ChangeKinds: append([]string(nil), candidate.ChangeKinds...),
+					NewTitle:    candidate.Title + " REVIEW",
+				})
+				continue
+			}
+			remainingEligible++
+		} else {
+			remainingIneligible++
+		}
+		remaining = append(remaining, candidate)
+	}
+	preview.MigrationCandidates = remaining
+	preview.EligibleMigrationCount = remainingEligible
+	preview.IneligibleMigrationCount = remainingIneligible
+	f.projectReapplyPreviews[strings.TrimSpace(in.ProjectID)] = preview
+	return domain.ProjectTemplateMigrationApprovalResult{
+		ProjectID:                preview.ProjectID,
+		LibraryID:                preview.LibraryID,
+		LibraryName:              preview.LibraryName,
+		DriftStatus:              preview.DriftStatus,
+		ApprovedAll:              in.ApproveAll,
+		Approvals:                approvals,
+		AppliedCount:             len(approvals),
+		RemainingEligibleCount:   remainingEligible,
+		RemainingIneligibleCount: remainingIneligible,
+	}, nil
 }
 
 // ListCommentsByTarget lists comments for one concrete comment target.
@@ -15027,6 +15100,14 @@ func TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary(t *testing.T
 		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
 		LatestRevision: 3,
 	}
+	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
+		ProjectID:      project.ID,
+		LibraryID:      library.ID,
+		LibraryName:    library.Name,
+		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
+		BoundRevision:  2,
+		LatestRevision: 3,
+	}
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('M'))
@@ -15035,7 +15116,7 @@ func TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary(t *testing.T
 	}
 	lines, _ := m.projectFormBodyLines(96, lipgloss.NewStyle(), lipgloss.Color("62"))
 	rendered := strings.Join(lines, "\n")
-	if !strings.Contains(rendered, "save reapplies the latest approved revision for future generated work") {
+	if !strings.Contains(rendered, "save opens migration review before rebinding future generated work") {
 		t.Fatalf("expected reapply hint in project form, got\n%s", rendered)
 	}
 
@@ -15046,6 +15127,180 @@ func TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary(t *testing.T
 	}
 	if got := svc.lastBindProjectTemplate.LibraryID; got != library.ID {
 		t.Fatalf("BindProjectTemplateLibrary() library = %q, want %q", got, library.ID)
+	}
+}
+
+// TestModelEditProjectDriftedTemplateOpensMigrationReview verifies drifted same-library saves open the TUI review step before rebinding.
+func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
+	now := time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID:      project.ID,
+		LibraryID:      library.ID,
+		LibraryName:    library.Name,
+		BoundRevision:  2,
+		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
+		LatestRevision: 3,
+	}
+	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
+		ProjectID:              project.ID,
+		LibraryID:              library.ID,
+		LibraryName:            library.Name,
+		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
+		BoundRevision:          2,
+		LatestRevision:         3,
+		ReviewRequired:         true,
+		EligibleMigrationCount: 1,
+		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
+			{
+				TaskID:            "qa-1",
+				Title:             "QA PASS 1",
+				Scope:             domain.KindAppliesToTask,
+				Kind:              domain.WorkKindTask,
+				LifecycleState:    domain.StateTodo,
+				SourceChildRuleID: "qa-pass-1",
+				Status:            domain.ProjectTemplateReapplyCandidateEligible,
+				ChangeKinds:       []string{"title", "description"},
+			},
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('M'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if m.mode != modeTemplateMigrationReview {
+		t.Fatalf("expected template migration review mode, got %v", m.mode)
+	}
+	lines, _ := m.templateMigrationReviewBodyLines(96, lipgloss.NewStyle(), lipgloss.NewStyle().Bold(true))
+	rendered := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"template drift",
+		"existing-node migrations",
+		"QA PASS 1",
+		"approve selected",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected migration review to contain %q, got\n%s", want, rendered)
+		}
+	}
+}
+
+// TestModelTemplateMigrationReviewApproveSelectedCompletesSave verifies review approval applies migrations before rebinding.
+func TestModelTemplateMigrationReviewApproveSelectedCompletesSave(t *testing.T) {
+	now := time.Date(2026, 4, 1, 15, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID:      project.ID,
+		LibraryID:      library.ID,
+		LibraryName:    library.Name,
+		BoundRevision:  2,
+		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
+		LatestRevision: 3,
+	}
+	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
+		ProjectID:              project.ID,
+		LibraryID:              library.ID,
+		LibraryName:            library.Name,
+		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
+		BoundRevision:          2,
+		LatestRevision:         3,
+		ReviewRequired:         true,
+		EligibleMigrationCount: 1,
+		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
+			{
+				TaskID:            "qa-1",
+				Title:             "QA PASS 1",
+				Scope:             domain.KindAppliesToTask,
+				Kind:              domain.WorkKindTask,
+				LifecycleState:    domain.StateTodo,
+				SourceChildRuleID: "qa-pass-1",
+				Status:            domain.ProjectTemplateReapplyCandidateEligible,
+				ChangeKinds:       []string{"title", "description"},
+			},
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('M'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, keyRune(' '))
+	m = applyMsg(t, m, keyRune('a'))
+
+	if got := svc.lastUpdateProject.ProjectID; got != project.ID {
+		t.Fatalf("UpdateProject() project = %q, want %q", got, project.ID)
+	}
+	if got := svc.lastApproveMigrations.ProjectID; got != project.ID {
+		t.Fatalf("ApproveProjectTemplateMigrations() project = %q, want %q", got, project.ID)
+	}
+	if got := svc.lastApproveMigrations.TaskIDs; !reflect.DeepEqual(got, []string{"qa-1"}) {
+		t.Fatalf("ApproveProjectTemplateMigrations() task_ids = %#v, want [qa-1]", got)
+	}
+	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
+		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
+	}
+	if got := svc.lastBindProjectTemplate.LibraryID; got != library.ID {
+		t.Fatalf("BindProjectTemplateLibrary() library = %q, want %q", got, library.ID)
+	}
+}
+
+// TestModelTemplateMigrationReviewSkipContinuesReapply verifies the TUI can continue without approving existing-node migrations.
+func TestModelTemplateMigrationReviewSkipContinuesReapply(t *testing.T) {
+	now := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID:      project.ID,
+		LibraryID:      library.ID,
+		LibraryName:    library.Name,
+		BoundRevision:  2,
+		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
+		LatestRevision: 3,
+	}
+	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
+		ProjectID:              project.ID,
+		LibraryID:              library.ID,
+		LibraryName:            library.Name,
+		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
+		BoundRevision:          2,
+		LatestRevision:         3,
+		ReviewRequired:         true,
+		EligibleMigrationCount: 1,
+		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
+			{
+				TaskID:            "qa-1",
+				Title:             "QA PASS 1",
+				Scope:             domain.KindAppliesToTask,
+				Kind:              domain.WorkKindTask,
+				LifecycleState:    domain.StateTodo,
+				SourceChildRuleID: "qa-pass-1",
+				Status:            domain.ProjectTemplateReapplyCandidateEligible,
+				ChangeKinds:       []string{"title"},
+			},
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('M'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, keyRune('s'))
+
+	if got := svc.lastApproveMigrations.ProjectID; got != "" {
+		t.Fatalf("ApproveProjectTemplateMigrations() project = %q, want empty on skip", got)
+	}
+	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
+		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
+	}
+	if !strings.Contains(m.status, "existing-node migrations skipped") {
+		t.Fatalf("expected skip status, got %q", m.status)
 	}
 }
 
