@@ -583,6 +583,7 @@ type TemplateLibraryService interface {
 	UpsertTemplateLibrary(context.Context, UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error)
 	BindProjectTemplateLibrary(context.Context, BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error)
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	GetProjectTemplateReapplyPreview(context.Context, string) (domain.ProjectTemplateReapplyPreview, error)
 	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 }
 

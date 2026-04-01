@@ -12330,8 +12330,10 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		description := vals["description"]
 		projectID := m.editingProjectID
 		currentTemplateLibraryID := ""
+		currentTemplateLibraryDrift := ""
 		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
 			currentTemplateLibraryID = binding.LibraryID
+			currentTemplateLibraryDrift = strings.TrimSpace(binding.DriftStatus)
 		}
 		projectOp := "update"
 		if isAdd || projectID == "" {
@@ -12394,7 +12396,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				}); err != nil {
 					return actionMsg{err: err}
 				}
-			case templateLibraryID != "" && templateLibraryID != currentTemplateLibraryID:
+			case templateLibraryID != "" && (templateLibraryID != currentTemplateLibraryID || currentTemplateLibraryDrift == domain.ProjectTemplateBindingDriftUpdateAvailable):
 				if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
 					ProjectID:        project.ID,
 					LibraryID:        templateLibraryID,
@@ -17921,6 +17923,10 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
 		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
 			lines = append(lines, hintStyle.Render("active_binding: "+m.templateBindingSummary(binding)))
+			if domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value()) == domain.NormalizeTemplateLibraryID(binding.LibraryID) &&
+				strings.TrimSpace(binding.DriftStatus) == domain.ProjectTemplateBindingDriftUpdateAvailable {
+				lines = append(lines, hintStyle.Render("save reapplies the latest approved revision for future generated work; existing nodes stay unchanged"))
+			}
 		} else {
 			lines = append(lines, hintStyle.Render("active_binding: -"))
 		}

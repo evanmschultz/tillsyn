@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,6 +333,284 @@ func TestGetBuiltinTemplateLibraryStatusDetectsUpdateAvailable(t *testing.T) {
 	}
 	if !status.Installed {
 		t.Fatal("status.Installed = false, want true")
+	}
+}
+
+// TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes verifies drift preview surfaces changed rules and conservative eligible migration candidates.
+func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Template Preview", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1",
+				DescriptionTemplate:     "Verify the original contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev1) error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        "go-defaults",
+		BoundByActorID:   "dev-1",
+		BoundByActorName: "Dev",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Implement preview",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	var generated domain.Task
+	for _, task := range repo.tasks {
+		if task.ParentID == parent.ID {
+			generated = task
+			break
+		}
+	}
+	if generated.ID == "" {
+		t.Fatal("expected generated QA child task")
+	}
+	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1 REVIEW",
+				DescriptionTemplate:     "Verify the latest contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev2) error = %v", err)
+	}
+
+	preview, err := svc.GetProjectTemplateReapplyPreview(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectTemplateReapplyPreview() error = %v", err)
+	}
+	if preview.DriftStatus != domain.ProjectTemplateBindingDriftUpdateAvailable {
+		t.Fatalf("preview.DriftStatus = %q, want update_available", preview.DriftStatus)
+	}
+	if got := len(preview.ChildRuleChanges); got != 1 {
+		t.Fatalf("len(preview.ChildRuleChanges) = %d, want 1", got)
+	}
+	if got := preview.ChildRuleChanges[0].ChangeKinds; !slices.Equal(got, []string{"title", "description", "editable_by"}) {
+		t.Fatalf("preview.ChildRuleChanges[0].ChangeKinds = %#v, want title+description+editable_by", got)
+	}
+	if got := preview.EligibleMigrationCount; got != 1 {
+		t.Fatalf("preview.EligibleMigrationCount = %d, want 1", got)
+	}
+	if got := preview.IneligibleMigrationCount; got != 0 {
+		t.Fatalf("preview.IneligibleMigrationCount = %d, want 0", got)
+	}
+	if len(preview.MigrationCandidates) != 1 || preview.MigrationCandidates[0].TaskID != generated.ID {
+		t.Fatalf("preview.MigrationCandidates = %#v, want generated child %q", preview.MigrationCandidates, generated.ID)
+	}
+	if preview.MigrationCandidates[0].Status != domain.ProjectTemplateReapplyCandidateEligible {
+		t.Fatalf("preview.MigrationCandidates[0].Status = %q, want eligible", preview.MigrationCandidates[0].Status)
+	}
+}
+
+// TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible verifies non-system edits block automatic migration eligibility.
+func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 1, 11, 30, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Template Preview", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1",
+				DescriptionTemplate:     "Verify the original contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev1) error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        "go-defaults",
+		BoundByActorID:   "dev-1",
+		BoundByActorName: "Dev",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Implement preview",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	var generated domain.Task
+	for _, task := range repo.tasks {
+		if task.ParentID == parent.ID {
+			generated = task
+			break
+		}
+	}
+	if generated.ID == "" {
+		t.Fatal("expected generated QA child task")
+	}
+	if _, err := svc.UpdateTask(ctx, UpdateTaskInput{
+		TaskID:        generated.ID,
+		Title:         generated.Title,
+		Description:   generated.Description,
+		Priority:      generated.Priority,
+		DueAt:         generated.DueAt,
+		Labels:        generated.Labels,
+		Metadata:      &generated.Metadata,
+		UpdatedBy:     "dev-2",
+		UpdatedByName: "Dev Two",
+		UpdatedType:   domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("UpdateTask() error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1 REVIEW",
+				DescriptionTemplate:     "Verify the latest contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev2) error = %v", err)
+	}
+
+	preview, err := svc.GetProjectTemplateReapplyPreview(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectTemplateReapplyPreview() error = %v", err)
+	}
+	if got := preview.EligibleMigrationCount; got != 0 {
+		t.Fatalf("preview.EligibleMigrationCount = %d, want 0", got)
+	}
+	if got := preview.IneligibleMigrationCount; got != 1 {
+		t.Fatalf("preview.IneligibleMigrationCount = %d, want 1", got)
+	}
+	if len(preview.MigrationCandidates) != 1 {
+		t.Fatalf("len(preview.MigrationCandidates) = %d, want 1", len(preview.MigrationCandidates))
+	}
+	if preview.MigrationCandidates[0].Status != domain.ProjectTemplateReapplyCandidateIneligible {
+		t.Fatalf("preview.MigrationCandidates[0].Status = %q, want ineligible", preview.MigrationCandidates[0].Status)
+	}
+	if got := preview.MigrationCandidates[0].Reason; !strings.Contains(got, "updated since generation") {
+		t.Fatalf("preview.MigrationCandidates[0].Reason = %q, want updated since generation", got)
 	}
 }
 

@@ -394,6 +394,114 @@ func TestAppServiceAdapterBuiltinTemplateLifecycle(t *testing.T) {
 	}
 }
 
+// TestAppServiceAdapterProjectTemplateReapplyPreview verifies the common adapter surfaces project reapply preview data from the real app stack.
+func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	project, err := fixture.svc.CreateProject(ctx, "Template Preview", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := fixture.svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := fixture.svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1",
+				DescriptionTemplate:     "Verify the original contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev1) error = %v", err)
+	}
+	if _, err := fixture.svc.BindProjectTemplateLibrary(ctx, app.BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        "go-defaults",
+		BoundByActorID:   "dev-1",
+		BoundByActorName: "Dev",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	if _, err := fixture.svc.CreateTask(ctx, app.CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Implement preview",
+		Priority:  domain.PriorityMedium,
+	}); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if _, err := fixture.svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1 REVIEW",
+				DescriptionTemplate:     "Verify the latest contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev2) error = %v", err)
+	}
+
+	preview, err := fixture.adapter.GetProjectTemplateReapplyPreview(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectTemplateReapplyPreview() error = %v", err)
+	}
+	if preview.DriftStatus != domain.ProjectTemplateBindingDriftUpdateAvailable {
+		t.Fatalf("GetProjectTemplateReapplyPreview() drift = %q, want update_available", preview.DriftStatus)
+	}
+	if preview.EligibleMigrationCount != 1 || len(preview.ChildRuleChanges) != 1 {
+		t.Fatalf("GetProjectTemplateReapplyPreview() = %#v, want one eligible candidate and one rule change", preview)
+	}
+}
+
 // TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs verifies MCP-facing embeddings inventory rejects bad filters and hidden archived scope.
 func TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs(t *testing.T) {
 	t.Parallel()

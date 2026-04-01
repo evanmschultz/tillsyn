@@ -9523,6 +9523,25 @@ Validation:
 2. `mage test-pkg ./internal/adapters/storage/sqlite` -> PASS (67 tests).
 3. `mage test-pkg ./internal/tui` -> PASS (297 tests).
 4. `mage test-pkg ./cmd/till` -> PASS (215 tests).
+5. `mage test-pkg ./internal/adapters/server/common` -> PASS (97 tests).
+6. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+7. `mage ci` -> PASS (1124 tests, coverage gate passed, build passed).
+
+Remote CI:
+1. Initial push `7eaefa6` triggered run `23843820903`, which failed remote formatting checks on:
+   - `cmd/till/template_builtin_cli_test.go`
+   - `internal/app/template_library_builtin.go`
+   - `internal/domain/builtin_template_library.go`
+2. Ran `gofmt -w` on the three flagged files, re-ran `mage ci` locally, and pushed follow-up commit `dea2648` (`fix(ci): format builtin lifecycle files`).
+3. Follow-up run `23843983031` finished fully green:
+   - `ci (ubuntu-latest)` -> PASS
+   - `ci (macos-latest)` -> PASS
+   - `ci (windows-latest)` -> PASS
+   - `release snapshot check` -> PASS
+
+Current status:
+1. The builtin `default-go` lifecycle slice is landed locally and remotely.
+2. Next checkpoint is live MCP parity for the new `till.template(operation=get_builtin_status|ensure_builtin)` operations after confirming this Codex session sees the refreshed runtime schema.
 5. `mage test-pkg ./internal/adapters/server/...` -> PASS (227 tests across 4 packages; 1 package with no tests).
 6. `mage ci` -> PASS (1118 tests total, coverage gate passed, build passed).
 
@@ -9601,3 +9620,64 @@ Next step:
 2. Refresh the MCP client/runtime so the current session sees the new `till.template` operation schema.
 3. Run the live MCP parity pass for builtin status/ensure.
 4. Then move on to the dev-facing migration-review/reapply slice.
+
+### 2026-04-01: Project Template Reapply Preview And TUI Same-Library Reapply
+
+Objective:
+- add the first explicit dev-facing reapply review step on top of revision-pinned bindings without silently mutating existing generated nodes.
+
+Implementation:
+1. Added a computed project reapply preview model in the domain/app layers:
+   - project-level default drift,
+   - changed child-rule contracts between the bound snapshot and latest approved library revision,
+   - conservative migration-review candidates for already-generated nodes.
+2. Kept the migration eligibility check intentionally strict:
+   - node must still be template-system-created,
+   - node must still be template-system-updated,
+   - task title/description must still match the bound rule,
+   - stored node-contract fields must still match the bound revision.
+3. Exposed the preview through the reduced family surfaces without adding a new tool:
+   - MCP: `till.project(operation=preview_template_reapply, project_id=...)`
+   - CLI: `till template project preview --project-id PROJECT_ID`
+4. Fixed the TUI edit-project flow so saving a project with the same selected library now counts as an intentional reapply when the active binding drift is `update_available`.
+5. Added a TUI hint in the project form so the dev can see that save will adopt the latest approved revision for future generated work while leaving existing generated nodes unchanged.
+6. Updated canonical docs to record the new preview/reapply operator path:
+   - `README.md`
+   - `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+
+Tests added/updated:
+1. `internal/app/template_library_test.go`
+   - eligible generated-node preview coverage
+   - modified generated-node ineligible coverage
+2. `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`
+   - real-stack adapter coverage for project reapply preview
+3. `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - reduced MCP project-family coverage for `preview_template_reapply`
+4. `internal/tui/model_test.go`
+   - TUI same-library drifted save coverage
+   - project-form reapply hint coverage
+5. `cmd/till/main_test.go`
+   - command help coverage for `template project preview`
+   - CLI preview command coverage
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (177 tests).
+2. `mage test-pkg ./internal/adapters/server/common` -> PASS (98 tests).
+3. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+4. `mage test-pkg ./internal/tui` -> PASS (298 tests).
+5. `mage test-pkg ./cmd/till` -> PASS (218 tests).
+6. `mage ci` initial run -> FAIL (`gofmt` required for `internal/adapters/server/mcpapi/extended_tools_test.go`).
+7. Re-ran Context7 after the failure per repo policy, applied `gofmt -w` to the touched Go files, and reran `mage ci`.
+8. `mage ci` final run -> PASS (1129 tests total, coverage gate passed, build passed).
+
+Live-runtime note:
+1. This slice adds one new project-family operation to the MCP tool schema:
+   - `till.project(operation=preview_template_reapply, ...)`
+2. The current Codex session will likely need an MCP client/runtime refresh before that new operation is callable live here, even though the code and local tests are green.
+
+Next step:
+1. Commit and push this reapply-preview slice.
+2. Watch the new GitHub Actions run to green.
+3. Refresh the MCP runtime/client if needed so the new project-family operation is visible in-session.
+4. Run live parity on `preview_template_reapply`.
+5. Then move on to the later explicit per-item migration approval / `approve all` workflow for existing template-owned nodes.

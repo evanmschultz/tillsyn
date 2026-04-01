@@ -47,6 +47,7 @@ type stubExpandedService struct {
 	lastGetTemplateID        string
 	lastGetBuiltinTemplateID string
 	lastGetTemplateBindingID string
+	lastGetTemplatePreviewID string
 	lastGetNodeContractID    string
 	lastSearchTasksReq       common.SearchTasksRequest
 	lastEmbeddingsStatusReq  common.EmbeddingsStatusRequest
@@ -676,6 +677,35 @@ func (s *stubExpandedService) GetProjectTemplateBinding(_ context.Context, proje
 	}, nil
 }
 
+// GetProjectTemplateReapplyPreview returns one deterministic project reapply preview.
+func (s *stubExpandedService) GetProjectTemplateReapplyPreview(_ context.Context, projectID string) (domain.ProjectTemplateReapplyPreview, error) {
+	s.lastGetTemplatePreviewID = strings.TrimSpace(projectID)
+	return domain.ProjectTemplateReapplyPreview{
+		ProjectID:              strings.TrimSpace(projectID),
+		LibraryID:              "go-defaults",
+		LibraryName:            "Go Defaults",
+		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
+		BoundRevision:          2,
+		LatestRevision:         3,
+		EligibleMigrationCount: 1,
+		ReviewRequired:         true,
+		ChildRuleChanges: []domain.ProjectTemplateChildRuleChange{{
+			NodeTemplateID:        "build-task-template",
+			NodeTemplateName:      "Build Task",
+			ChildRuleID:           "qa-pass-1",
+			ChangeKinds:           []string{"title", "editable_by"},
+			PreviousTitleTemplate: "QA PASS 1",
+			CurrentTitleTemplate:  "QA PASS 1 REVIEW",
+		}},
+		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{{
+			TaskID:      "task-qa-1",
+			Title:       "QA PASS 1",
+			Status:      domain.ProjectTemplateReapplyCandidateEligible,
+			ChangeKinds: []string{"title", "editable_by"},
+		}},
+	}, nil
+}
+
 // GetNodeContractSnapshot returns one deterministic node-contract snapshot.
 func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
 	s.lastGetNodeContractID = strings.TrimSpace(nodeID)
@@ -1143,6 +1173,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		})},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "bind_template", "project_id": "p1", "template_library_id": "go-defaults"})},
 		{name: "till.project", args: map[string]any{"operation": "get_template_binding", "project_id": "p1"}},
+		{name: "till.project", args: map[string]any{"operation": "preview_template_reapply", "project_id": "p1"}},
 		{name: "till.template", args: map[string]any{"operation": "get_node_contract", "node_id": "task-qa-1"}},
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
 		{name: "till.embeddings", args: map[string]any{"operation": "reindex", "project_id": "p1", "wait": true}},
