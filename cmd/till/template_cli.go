@@ -25,6 +25,7 @@ func writeTemplateLibraryList(stdout io.Writer, libraries []domain.TemplateLibra
 		rows = append(rows, []string{
 			firstNonEmptyTrimmed(library.Name, library.ID),
 			firstNonEmptyTrimmed(library.ID, "-"),
+			fmt.Sprintf("%d", max(library.Revision, 1)),
 			firstNonEmptyTrimmed(string(library.Scope), "-"),
 			firstNonEmptyTrimmed(library.ProjectID, "-"),
 			firstNonEmptyTrimmed(string(library.Status), "-"),
@@ -35,7 +36,7 @@ func writeTemplateLibraryList(stdout io.Writer, libraries []domain.TemplateLibra
 	return writeCLITable(
 		stdout,
 		"Template Libraries",
-		[]string{"NAME", "LIBRARY ID", "SCOPE", "PROJECT", "STATUS", "SOURCE", "NODE TEMPLATES"},
+		[]string{"NAME", "LIBRARY ID", "REV", "SCOPE", "PROJECT", "STATUS", "SOURCE", "NODE TEMPLATES"},
 		rows,
 		"No template libraries found.",
 	)
@@ -50,6 +51,10 @@ func writeTemplateLibraryDetail(stdout io.Writer, library domain.TemplateLibrary
 		{"scope", firstNonEmptyTrimmed(string(library.Scope), "-")},
 		{"project", firstNonEmptyTrimmed(library.ProjectID, "-")},
 		{"status", firstNonEmptyTrimmed(string(library.Status), "-")},
+		{"revision", fmt.Sprintf("%d", max(library.Revision, 1))},
+		{"builtin managed", yesNo(library.BuiltinManaged)},
+		{"builtin source", firstNonEmptyTrimmed(library.BuiltinSource, "-")},
+		{"builtin version", firstNonEmptyTrimmed(library.BuiltinVersion, "-")},
 		{"source library", firstNonEmptyTrimmed(library.SourceLibraryID, "-")},
 		{"description", firstNonEmptyTrimmed(compactText(library.Description), "-")},
 		{"node templates", fmt.Sprintf("%d", len(library.NodeTemplates))},
@@ -76,6 +81,10 @@ func writeProjectTemplateBindingDetail(stdout io.Writer, binding domain.ProjectT
 	return writeCLIKV(stdout, "Project Template Binding", [][2]string{
 		{"project id", firstNonEmptyTrimmed(binding.ProjectID, "-")},
 		{"library id", firstNonEmptyTrimmed(binding.LibraryID, "-")},
+		{"library name", firstNonEmptyTrimmed(binding.LibraryName, "-")},
+		{"bound revision", fmt.Sprintf("%d", max(binding.BoundRevision, 1))},
+		{"drift status", firstNonEmptyTrimmed(binding.DriftStatus, "-")},
+		{"latest revision", firstNonEmptyTrimmed(renderOptionalPositiveInt(binding.LatestRevision), "-")},
 		{"bound by", templateAuditActorLabel(binding.BoundByActorName, binding.BoundByActorID, binding.BoundByActorType)},
 		{"bound at", formatAuthTime(binding.BoundAt)},
 	})
@@ -98,6 +107,13 @@ func writeNodeContractSnapshotDetail(stdout io.Writer, snapshot domain.NodeContr
 		{"required for containing done", yesNo(snapshot.RequiredForContainingDone)},
 		{"created at", formatAuthTime(snapshot.CreatedAt)},
 	})
+}
+
+func renderOptionalPositiveInt(v int) string {
+	if v <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", v)
 }
 
 func writeTemplateNodeTemplateTable(printer *laslig.Printer, nodeTemplates []domain.NodeTemplate) error {

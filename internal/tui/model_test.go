@@ -15025,8 +15025,12 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 	}, now)
 	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
 	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID: project.ID,
-		LibraryID: "go-defaults",
+		ProjectID:      project.ID,
+		LibraryID:      "go-defaults",
+		LibraryName:    "Go Defaults",
+		BoundRevision:  2,
+		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
+		LatestRevision: 3,
 	}
 	svc.nodeContracts[task.ID] = domain.NodeContractSnapshot{
 		NodeID:                    task.ID,
@@ -15048,6 +15052,8 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 	for _, want := range []string{
 		"template contract:",
 		"project_library: go-defaults",
+		"project_library_revision: 2",
+		"project_library_drift: update_available",
 		"source_library: go-defaults",
 		"source_node_template: build-template",
 		"source_child_rule: qa-pass-1",

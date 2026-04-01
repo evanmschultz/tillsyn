@@ -339,6 +339,11 @@ func (r *Repository) migrate(ctx context.Context) error {
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			source_library_id TEXT,
+			builtin_managed INTEGER NOT NULL DEFAULT 0,
+			builtin_source TEXT NOT NULL DEFAULT '',
+			builtin_version TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1,
+			revision_digest TEXT NOT NULL DEFAULT '',
 			created_by_actor_id TEXT NOT NULL DEFAULT '',
 			created_by_actor_name TEXT NOT NULL DEFAULT '',
 			created_by_actor_type TEXT NOT NULL DEFAULT 'user',
@@ -404,6 +409,11 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS project_template_bindings (
 			project_id TEXT PRIMARY KEY,
 			library_id TEXT NOT NULL,
+			library_name TEXT NOT NULL DEFAULT '',
+			bound_revision INTEGER NOT NULL DEFAULT 1,
+			bound_revision_digest TEXT NOT NULL DEFAULT '',
+			bound_library_updated_at TEXT NOT NULL DEFAULT '',
+			bound_library_snapshot_json TEXT NOT NULL DEFAULT '',
 			bound_by_actor_id TEXT NOT NULL DEFAULT '',
 			bound_by_actor_name TEXT NOT NULL DEFAULT '',
 			bound_by_actor_type TEXT NOT NULL DEFAULT 'user',
@@ -630,6 +640,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
 			return fmt.Errorf("migrate sqlite auth_requests: %w", err)
 		}
+	}
+	if err := r.migrateTemplateLifecycle(ctx); err != nil {
+		return err
 	}
 	if err := r.migrateTaskActorNames(ctx); err != nil {
 		return err
@@ -979,10 +992,128 @@ func (r *Repository) ensureCommentIndexes(ctx context.Context) error {
 	return nil
 }
 
+func (r *Repository) migrateTemplateLifecycle(ctx context.Context) error {
+	alterStatements := []string{
+		`ALTER TABLE template_libraries ADD COLUMN builtin_managed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE template_libraries ADD COLUMN builtin_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE template_libraries ADD COLUMN builtin_version TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE template_libraries ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE template_libraries ADD COLUMN revision_digest TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE project_template_bindings ADD COLUMN library_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE project_template_bindings ADD COLUMN bound_revision INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE project_template_bindings ADD COLUMN bound_revision_digest TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE project_template_bindings ADD COLUMN bound_library_updated_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE project_template_bindings ADD COLUMN bound_library_snapshot_json TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range alterStatements {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("migrate sqlite template lifecycle: %w", err)
+		}
+	}
+	if err := r.backfillTemplateLibraryRevisions(ctx); err != nil {
+		return err
+	}
+	if err := r.backfillProjectTemplateBindingSnapshots(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Repository) backfillTemplateLibraryRevisions(ctx context.Context) error {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM template_libraries ORDER BY id ASC`)
+	if err != nil {
+		return fmt.Errorf("migrate sqlite list template libraries for revision backfill: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("migrate sqlite scan template library id: %w", err)
+		}
+		ids = append(ids, domain.NormalizeTemplateLibraryID(id))
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate sqlite iterate template library ids: %w", err)
+	}
+	for _, id := range ids {
+		library, err := r.GetTemplateLibrary(ctx, id)
+		if err != nil {
+			return fmt.Errorf("migrate sqlite load template library %q: %w", id, err)
+		}
+		revision := max(library.Revision, 1)
+		digest := strings.TrimSpace(library.RevisionDigest)
+		if digest == "" {
+			digest = library.RevisionFingerprint()
+		}
+		if digest == "" {
+			return fmt.Errorf("migrate sqlite compute template library digest for %q", id)
+		}
+		if _, err := r.db.ExecContext(ctx, `
+			UPDATE template_libraries
+			SET revision = ?, revision_digest = ?
+			WHERE id = ?
+		`, revision, digest, id); err != nil {
+			return fmt.Errorf("migrate sqlite backfill template library revision for %q: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func (r *Repository) backfillProjectTemplateBindingSnapshots(ctx context.Context) error {
+	rows, err := r.db.QueryContext(ctx, `SELECT project_id FROM project_template_bindings ORDER BY project_id ASC`)
+	if err != nil {
+		return fmt.Errorf("migrate sqlite list project template bindings for snapshot backfill: %w", err)
+	}
+	defer rows.Close()
+
+	var projectIDs []string
+	for rows.Next() {
+		var projectID string
+		if err := rows.Scan(&projectID); err != nil {
+			return fmt.Errorf("migrate sqlite scan project binding id: %w", err)
+		}
+		projectIDs = append(projectIDs, strings.TrimSpace(projectID))
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate sqlite iterate project template binding ids: %w", err)
+	}
+	for _, projectID := range projectIDs {
+		binding, err := r.GetProjectTemplateBinding(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("migrate sqlite load project template binding for %q: %w", projectID, err)
+		}
+		library, err := r.GetTemplateLibrary(ctx, binding.LibraryID)
+		if err != nil {
+			return fmt.Errorf("migrate sqlite load bound template library %q for project %q: %w", binding.LibraryID, projectID, err)
+		}
+		if binding.LibraryName == "" {
+			binding.LibraryName = library.Name
+		}
+		if binding.BoundRevision == 0 {
+			binding.BoundRevision = max(library.Revision, 1)
+		}
+		if binding.BoundRevisionDigest == "" {
+			binding.BoundRevisionDigest = library.RevisionDigest
+		}
+		if binding.BoundLibraryUpdatedAt.IsZero() {
+			binding.BoundLibraryUpdatedAt = library.UpdatedAt.UTC()
+		}
+		if binding.BoundLibrarySnapshot == nil {
+			binding.BoundLibrarySnapshot = &library
+		}
+		if err := r.UpsertProjectTemplateBinding(ctx, binding); err != nil {
+			return fmt.Errorf("migrate sqlite backfill project template binding snapshot for %q: %w", projectID, err)
+		}
+	}
+	return nil
+}
+
 // tableHasColumn reports whether one table currently contains a named column.
 func (r *Repository) tableHasColumn(ctx context.Context, tableName, columnName string) (bool, error) {
 	switch strings.TrimSpace(tableName) {
-	case "comments", "change_events":
+	case "comments", "change_events", "template_libraries", "project_template_bindings":
 	default:
 		return false, fmt.Errorf("unsupported sqlite table for schema introspection %q", tableName)
 	}
@@ -1504,11 +1635,12 @@ func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.T
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO template_libraries(
 			id, scope, project_id, name, description, status, source_library_id,
+			builtin_managed, builtin_source, builtin_version, revision, revision_digest,
 			created_by_actor_id, created_by_actor_name, created_by_actor_type,
 			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
 			approved_by_actor_type, approved_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			scope = excluded.scope,
 			project_id = excluded.project_id,
@@ -1516,6 +1648,11 @@ func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.T
 			description = excluded.description,
 			status = excluded.status,
 			source_library_id = excluded.source_library_id,
+			builtin_managed = excluded.builtin_managed,
+			builtin_source = excluded.builtin_source,
+			builtin_version = excluded.builtin_version,
+			revision = excluded.revision,
+			revision_digest = excluded.revision_digest,
 			created_by_actor_id = excluded.created_by_actor_id,
 			created_by_actor_name = excluded.created_by_actor_name,
 			created_by_actor_type = excluded.created_by_actor_type,
@@ -1533,6 +1670,11 @@ func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.T
 		strings.TrimSpace(library.Description),
 		string(domain.NormalizeTemplateLibraryStatus(library.Status)),
 		nullableString(library.SourceLibraryID),
+		boolToInt(library.BuiltinManaged),
+		strings.TrimSpace(library.BuiltinSource),
+		strings.TrimSpace(library.BuiltinVersion),
+		max(library.Revision, 1),
+		strings.TrimSpace(library.RevisionDigest),
 		strings.TrimSpace(library.CreatedByActorID),
 		strings.TrimSpace(library.CreatedByActorName),
 		normalizeOptionalActorType(library.CreatedByActorType),
@@ -1620,6 +1762,7 @@ func (r *Repository) GetTemplateLibrary(ctx context.Context, libraryID string) (
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			id, scope, project_id, name, description, status, source_library_id,
+			builtin_managed, builtin_source, builtin_version, revision, revision_digest,
 			created_by_actor_id, created_by_actor_name, created_by_actor_type,
 			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
 			approved_by_actor_type, approved_at
@@ -1643,6 +1786,7 @@ func (r *Repository) ListTemplateLibraries(ctx context.Context, filter domain.Te
 	query := `
 		SELECT
 			id, scope, project_id, name, description, status, source_library_id,
+			builtin_managed, builtin_source, builtin_version, revision, revision_digest,
 			created_by_actor_id, created_by_actor_name, created_by_actor_type,
 			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
 			approved_by_actor_type, approved_at
@@ -1691,13 +1835,23 @@ func (r *Repository) ListTemplateLibraries(ctx context.Context, filter domain.Te
 
 // UpsertProjectTemplateBinding sets the active template-library binding for one project.
 func (r *Repository) UpsertProjectTemplateBinding(ctx context.Context, binding domain.ProjectTemplateBinding) error {
-	_, err := r.db.ExecContext(ctx, `
+	boundLibrarySnapshotJSON, err := marshalTemplateLibrarySnapshot(binding.BoundLibrarySnapshot)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO project_template_bindings(
-			project_id, library_id, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
+			project_id, library_id, library_name, bound_revision, bound_revision_digest, bound_library_updated_at,
+			bound_library_snapshot_json, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(project_id) DO UPDATE SET
 			library_id = excluded.library_id,
+			library_name = excluded.library_name,
+			bound_revision = excluded.bound_revision,
+			bound_revision_digest = excluded.bound_revision_digest,
+			bound_library_updated_at = excluded.bound_library_updated_at,
+			bound_library_snapshot_json = excluded.bound_library_snapshot_json,
 			bound_by_actor_id = excluded.bound_by_actor_id,
 			bound_by_actor_name = excluded.bound_by_actor_name,
 			bound_by_actor_type = excluded.bound_by_actor_type,
@@ -1705,6 +1859,11 @@ func (r *Repository) UpsertProjectTemplateBinding(ctx context.Context, binding d
 	`,
 		strings.TrimSpace(binding.ProjectID),
 		domain.NormalizeTemplateLibraryID(binding.LibraryID),
+		strings.TrimSpace(binding.LibraryName),
+		max(binding.BoundRevision, 1),
+		strings.TrimSpace(binding.BoundRevisionDigest),
+		ts(binding.BoundLibraryUpdatedAt),
+		boundLibrarySnapshotJSON,
 		strings.TrimSpace(binding.BoundByActorID),
 		strings.TrimSpace(binding.BoundByActorName),
 		normalizeOptionalActorType(binding.BoundByActorType),
@@ -1716,7 +1875,8 @@ func (r *Repository) UpsertProjectTemplateBinding(ctx context.Context, binding d
 // GetProjectTemplateBinding loads one project's active template-library binding.
 func (r *Repository) GetProjectTemplateBinding(ctx context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT project_id, library_id, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
+		SELECT project_id, library_id, library_name, bound_revision, bound_revision_digest, bound_library_updated_at,
+			bound_library_snapshot_json, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
 		FROM project_template_bindings
 		WHERE project_id = ?
 	`, strings.TrimSpace(projectID))
@@ -3286,6 +3446,105 @@ func marshalTemplateTaskMetadata(defaults *domain.TaskMetadata) (string, error) 
 	return string(raw), nil
 }
 
+func marshalTemplateLibrarySnapshot(library *domain.TemplateLibrary) (string, error) {
+	if library == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(library)
+	if err != nil {
+		return "", fmt.Errorf("encode template library snapshot: %w", err)
+	}
+	return string(raw), nil
+}
+
+func unmarshalTemplateLibrarySnapshot(raw string) *domain.TemplateLibrary {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var library domain.TemplateLibrary
+	if err := json.Unmarshal([]byte(raw), &library); err != nil {
+		return nil
+	}
+	normalized, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:                  library.ID,
+		Scope:               library.Scope,
+		ProjectID:           library.ProjectID,
+		Name:                library.Name,
+		Description:         library.Description,
+		Status:              library.Status,
+		SourceLibraryID:     library.SourceLibraryID,
+		BuiltinManaged:      library.BuiltinManaged,
+		BuiltinSource:       library.BuiltinSource,
+		BuiltinVersion:      library.BuiltinVersion,
+		Revision:            max(library.Revision, 1),
+		RevisionDigest:      library.RevisionDigest,
+		CreatedByActorID:    library.CreatedByActorID,
+		CreatedByActorName:  library.CreatedByActorName,
+		CreatedByActorType:  library.CreatedByActorType,
+		ApprovedByActorID:   library.ApprovedByActorID,
+		ApprovedByActorName: library.ApprovedByActorName,
+		ApprovedByActorType: library.ApprovedByActorType,
+		ApprovedAt:          library.ApprovedAt,
+		NodeTemplates:       nodeTemplateInputsFromDomain(library.NodeTemplates),
+	}, library.UpdatedAt)
+	if err != nil {
+		return nil
+	}
+	normalized.CreatedAt = library.CreatedAt.UTC()
+	normalized.UpdatedAt = library.UpdatedAt.UTC()
+	normalized.Revision = max(library.Revision, 1)
+	if strings.TrimSpace(normalized.RevisionDigest) == "" {
+		normalized.RevisionDigest = normalized.RevisionFingerprint()
+	}
+	return &normalized
+}
+
+func nodeTemplateInputsFromDomain(in []domain.NodeTemplate) []domain.NodeTemplateInput {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.NodeTemplateInput, 0, len(in))
+	for _, nodeTemplate := range in {
+		input := domain.NodeTemplateInput{
+			ID:                  nodeTemplate.ID,
+			ScopeLevel:          nodeTemplate.ScopeLevel,
+			NodeKindID:          nodeTemplate.NodeKindID,
+			DisplayName:         nodeTemplate.DisplayName,
+			DescriptionMarkdown: nodeTemplate.DescriptionMarkdown,
+		}
+		if nodeTemplate.ProjectMetadataDefaults != nil {
+			projectDefaults := *nodeTemplate.ProjectMetadataDefaults
+			input.ProjectMetadataDefaults = &projectDefaults
+		}
+		if nodeTemplate.TaskMetadataDefaults != nil {
+			taskDefaults := *nodeTemplate.TaskMetadataDefaults
+			input.TaskMetadataDefaults = &taskDefaults
+		}
+		if len(nodeTemplate.ChildRules) > 0 {
+			input.ChildRules = make([]domain.TemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
+			for _, childRule := range nodeTemplate.ChildRules {
+				input.ChildRules = append(input.ChildRules, domain.TemplateChildRuleInput{
+					ID:                        childRule.ID,
+					Position:                  childRule.Position,
+					ChildScopeLevel:           childRule.ChildScopeLevel,
+					ChildKindID:               childRule.ChildKindID,
+					TitleTemplate:             childRule.TitleTemplate,
+					DescriptionTemplate:       childRule.DescriptionTemplate,
+					ResponsibleActorKind:      childRule.ResponsibleActorKind,
+					EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
+					CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
+					OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
+					RequiredForParentDone:     childRule.RequiredForParentDone,
+					RequiredForContainingDone: childRule.RequiredForContainingDone,
+				})
+			}
+		}
+		out = append(out, input)
+	}
+	return out
+}
+
 // insertTemplateActorKinds persists one template child-rule actor-kind list.
 func insertTemplateActorKinds(ctx context.Context, execer execerContext, table, libraryID, nodeTemplateID, childRuleID string, actorKinds []domain.TemplateActorKind) error {
 	for _, actorKind := range actorKinds {
@@ -3751,6 +4010,7 @@ func scanTemplateLibrary(s scanner) (domain.TemplateLibrary, error) {
 		projectIDRaw         sql.NullString
 		statusRaw            string
 		sourceLibraryIDRaw   sql.NullString
+		builtinManagedRaw    int
 		createdActorTypeRaw  string
 		createdRaw           string
 		updatedRaw           string
@@ -3765,6 +4025,11 @@ func scanTemplateLibrary(s scanner) (domain.TemplateLibrary, error) {
 		&library.Description,
 		&statusRaw,
 		&sourceLibraryIDRaw,
+		&builtinManagedRaw,
+		&library.BuiltinSource,
+		&library.BuiltinVersion,
+		&library.Revision,
+		&library.RevisionDigest,
 		&library.CreatedByActorID,
 		&library.CreatedByActorName,
 		&createdActorTypeRaw,
@@ -3785,6 +4050,9 @@ func scanTemplateLibrary(s scanner) (domain.TemplateLibrary, error) {
 	library.ProjectID = strings.TrimSpace(projectIDRaw.String)
 	library.Status = domain.NormalizeTemplateLibraryStatus(domain.TemplateLibraryStatus(statusRaw))
 	library.SourceLibraryID = domain.NormalizeTemplateLibraryID(sourceLibraryIDRaw.String)
+	library.BuiltinManaged = builtinManagedRaw != 0
+	library.Revision = max(library.Revision, 1)
+	library.RevisionDigest = strings.TrimSpace(library.RevisionDigest)
 	library.CreatedByActorType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(createdActorTypeRaw)))
 	library.CreatedAt = parseTS(createdRaw)
 	library.UpdatedAt = parseTS(updatedRaw)
@@ -3796,13 +4064,20 @@ func scanTemplateLibrary(s scanner) (domain.TemplateLibrary, error) {
 // scanProjectTemplateBinding decodes one project_template_bindings row.
 func scanProjectTemplateBinding(s scanner) (domain.ProjectTemplateBinding, error) {
 	var (
-		binding      domain.ProjectTemplateBinding
-		actorTypeRaw string
-		boundAtRaw   string
+		binding                  domain.ProjectTemplateBinding
+		actorTypeRaw             string
+		boundLibraryUpdatedAtRaw string
+		boundLibrarySnapshotJSON string
+		boundAtRaw               string
 	)
 	if err := s.Scan(
 		&binding.ProjectID,
 		&binding.LibraryID,
+		&binding.LibraryName,
+		&binding.BoundRevision,
+		&binding.BoundRevisionDigest,
+		&boundLibraryUpdatedAtRaw,
+		&boundLibrarySnapshotJSON,
 		&binding.BoundByActorID,
 		&binding.BoundByActorName,
 		&actorTypeRaw,
@@ -3814,6 +4089,10 @@ func scanProjectTemplateBinding(s scanner) (domain.ProjectTemplateBinding, error
 		return domain.ProjectTemplateBinding{}, err
 	}
 	binding.LibraryID = domain.NormalizeTemplateLibraryID(binding.LibraryID)
+	binding.BoundRevision = max(binding.BoundRevision, 1)
+	binding.BoundRevisionDigest = strings.TrimSpace(binding.BoundRevisionDigest)
+	binding.BoundLibraryUpdatedAt = parseTS(boundLibraryUpdatedAtRaw)
+	binding.BoundLibrarySnapshot = unmarshalTemplateLibrarySnapshot(boundLibrarySnapshotJSON)
 	if normalized := normalizeOptionalActorType(domain.ActorType(actorTypeRaw)); normalized != "" {
 		binding.BoundByActorType = domain.ActorType(normalized)
 	} else {

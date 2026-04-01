@@ -897,6 +897,9 @@ func (a *AppServiceAdapter) UpsertTemplateLibrary(ctx context.Context, in Upsert
 		Description:     strings.TrimSpace(in.Description),
 		Status:          in.Status,
 		SourceLibraryID: strings.TrimSpace(in.SourceLibraryID),
+		BuiltinManaged:  in.BuiltinManaged,
+		BuiltinSource:   strings.TrimSpace(in.BuiltinSource),
+		BuiltinVersion:  strings.TrimSpace(in.BuiltinVersion),
 		NodeTemplates:   nodeTemplates,
 	})
 	if err != nil {

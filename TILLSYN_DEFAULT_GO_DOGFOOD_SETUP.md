@@ -125,8 +125,8 @@ New projects should get one setup phase before normal work begins:
 
 That phase should cover at least:
 
-- template fit review with the human;
-- Hylla ingest-mode decision with the human:
+- template fit review with the dev;
+- Hylla ingest-mode decision with the dev:
   - `structural_only`
   - `embeddings_only`
   - `full_enrichment`
@@ -135,7 +135,59 @@ That phase should cover at least:
 - project metadata / standards lock;
 - creation of the first `PLAN` phase.
 
-Existing-project onboarding should use the same setup contract. It should also confirm whether the currently bound template still matches the project's needs and discuss template updates with the human before changing the workflow contract.
+Existing-project onboarding should use the same setup contract. It should also confirm whether the currently bound template still matches the project's needs and discuss template updates with the dev before changing the workflow contract.
+
+### Default-Go Lifecycle Management
+
+`default-go` should be treated as a builtin-managed approved global template library, not as a one-shot bootstrap artifact.
+
+The lifecycle contract should be:
+
+- install `default-go` when missing;
+- refresh it explicitly when the repo-backed builtin definition changes;
+- keep provenance metadata clear enough to explain whether the installed library is current or drifted from the builtin source;
+- keep approval state explicit rather than silently mutating libraries in the background;
+- preserve existing project bindings until a dev explicitly chooses to reapply or upgrade them.
+
+Refreshing the library definition is allowed to update the library row and its provenance metadata. It is not allowed to silently rewrite already-created project state.
+
+### Project-Template Update / Reapply Contract
+
+If `default-go` changes later, bound projects should stay stable until a dev explicitly reapplies or upgrades the binding.
+
+That reapply path should be available through both:
+
+- the TUI; and
+- MCP/CLI surfaces.
+
+The reapply flow should:
+
+- show that the bound library changed;
+- show which project-level defaults and generated-node contracts would change;
+- let the dev approve the new binding intentionally instead of silently adopting it.
+
+After a dev-approved reapply:
+
+- future generated nodes may use the newly approved contract immediately;
+- existing generated nodes must not be silently rewritten;
+- existing template-owned nodes may be proposed for migration only when the runtime can still prove they are template-owned and unmodified.
+
+Migration review should be a first-class dev approval flow:
+
+- the dev should be able to approve individual migrations;
+- the dev should also have an explicit `approve all` option in the TUI and CLI/MCP-facing operator flow;
+- the orchestrator may prepare, explain, or queue those migration proposals, but final approval remains with the dev.
+- the TUI presentation should use the normal Tillsyn interaction model and existing React-style component language so template review feels like ordinary review/approval work instead of a separate admin console.
+- the operator flow should stay simple: drift summary first, then proposed migrations, then per-item approve/skip plus `approve all` when the dev wants bulk adoption.
+
+The goal for MVP is explicit adoption with no silent drift, not automatic bulk rewriting of live project work.
+
+Current implementation direction for this contract:
+
+- template-library rows should carry explicit revision/provenance metadata;
+- project bindings should pin a bound revision and a bound library snapshot for stable future generation;
+- binding reads should expose whether the project is current or has an update available;
+- explicit reapply may use the existing bind/update path as long as it remains visibly dev-approved and drift-aware.
 
 ### Plan-Phase Contract
 
@@ -145,7 +197,7 @@ The `PLAN` phase should cover at least:
 
 - Hylla-first code understanding;
 - Context7 and `go doc` research before implementation;
-- scope confirmation with the human;
+- scope confirmation with the dev;
 - detailed build-task and subtask creation for the upcoming `BUILD` phase;
 - validation-plan definition;
 - branch/worktree setup planning when needed;
@@ -171,8 +223,8 @@ That phase should include tasks for at least:
 - Hylla artifact ingested or refreshed and confirmed current to git;
 - QA sweep 1 across completed work, using the done tasks plus Hylla-backed code understanding;
 - QA sweep 2 across completed work, using the done tasks plus Hylla-backed code understanding;
-- human review;
-- orchestrator + human collaborative testing;
+- dev review;
+- orchestrator + dev collaborative testing;
 - push / PR / handoff readiness.
 
 ### Branch-Cleanup Contract
@@ -195,7 +247,7 @@ When a new branch/worktree lane is created, the branch setup work should be trac
 That setup work should cover at least:
 
 - create a visible sibling worktree from the bare control repo;
-- use the exact worktree path, not `.tmp/`, unless the human explicitly points at a legacy `.tmp` lane;
+- use the exact worktree path, not `.tmp/`, unless the dev explicitly points at a legacy `.tmp` lane;
 - add one unique `gopls` MCP server entry for that worktree in the bare-root Codex config;
 - rerun `codex mcp list` and confirm the new server is visible;
 - create or confirm the `PLAN` phase for that branch lane.
@@ -358,7 +410,7 @@ The executing agent should verify all of the following through MCP-visible state
 - Final default `enabled_tools` cleanup for the Tillsyn MCP server.
 - Archive/delete policy changes beyond the current accepted temporary behavior.
 - The exact expanded JSON object for the full `PLAN` / `BUILD` / `CLOSEOUT` / `BRANCH CLEANUP` lifecycle contract and project-setup/onboarding contract.
-- Final project-local template override/update behavior for already-created projects such as `TILLSYN`.
+- Exact final field-by-field payload shape for the migration-review queue and lifecycle export objects.
 
 ## Handoff Prompt For A Fresh Agent
 

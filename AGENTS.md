@@ -28,6 +28,7 @@ You are a senior Go dev. YOU ALWAYS:
 - After pushing a change that is meant to fix or validate CI, run `gh run watch --exit-status` on the new GitHub Actions run and do not claim CI passes until the remote run finishes green.
 - Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
+- When running approved `gh` commands such as `gh run ...`, invoke `gh` directly instead of wrapping it in extra `/bin/zsh -lc` layers unless the user explicitly asks for shell composition that requires it.
 - Use `git` for core local repository operations such as status, diff, add, commit, branch, and merge-base inspection, unless the current conversation explicitly requires a `gh`-specific workflow.
 - Do not use the GitHub web UI for repository operations when `gh` can perform the same task.
 - Use Conventional Commits for all commit messages.

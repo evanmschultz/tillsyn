@@ -2,6 +2,9 @@ package domain
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -29,6 +32,13 @@ const (
 	TemplateLibraryStatusArchived TemplateLibraryStatus = "archived"
 )
 
+// ProjectTemplateBindingDrift values describe whether one project binding is current with the latest library revision.
+const (
+	ProjectTemplateBindingDriftCurrent         = "current"
+	ProjectTemplateBindingDriftUpdateAvailable = "update_available"
+	ProjectTemplateBindingDriftLibraryMissing  = "library_missing"
+)
+
 // TemplateActorKind identifies the workflow actor kind referenced by template rules.
 type TemplateActorKind string
 
@@ -50,6 +60,11 @@ type TemplateLibrary struct {
 	Description         string                `json:"description,omitempty"`
 	Status              TemplateLibraryStatus `json:"status"`
 	SourceLibraryID     string                `json:"source_library_id,omitempty"`
+	BuiltinManaged      bool                  `json:"builtin_managed,omitempty"`
+	BuiltinSource       string                `json:"builtin_source,omitempty"`
+	BuiltinVersion      string                `json:"builtin_version,omitempty"`
+	Revision            int                   `json:"revision"`
+	RevisionDigest      string                `json:"revision_digest,omitempty"`
 	CreatedByActorID    string                `json:"created_by_actor_id,omitempty"`
 	CreatedByActorName  string                `json:"created_by_actor_name,omitempty"`
 	CreatedByActorType  ActorType             `json:"created_by_actor_type,omitempty"`
@@ -94,12 +109,21 @@ type TemplateChildRule struct {
 
 // ProjectTemplateBinding stores the active template-library binding for one project.
 type ProjectTemplateBinding struct {
-	ProjectID        string    `json:"project_id"`
-	LibraryID        string    `json:"library_id"`
-	BoundByActorID   string    `json:"bound_by_actor_id,omitempty"`
-	BoundByActorName string    `json:"bound_by_actor_name,omitempty"`
-	BoundByActorType ActorType `json:"bound_by_actor_type,omitempty"`
-	BoundAt          time.Time `json:"bound_at"`
+	ProjectID              string           `json:"project_id"`
+	LibraryID              string           `json:"library_id"`
+	LibraryName            string           `json:"library_name,omitempty"`
+	BoundRevision          int              `json:"bound_revision"`
+	BoundRevisionDigest    string           `json:"bound_revision_digest,omitempty"`
+	BoundLibraryUpdatedAt  time.Time        `json:"bound_library_updated_at"`
+	DriftStatus            string           `json:"drift_status,omitempty"`
+	LatestRevision         int              `json:"latest_revision,omitempty"`
+	LatestRevisionDigest   string           `json:"latest_revision_digest,omitempty"`
+	LatestLibraryUpdatedAt *time.Time       `json:"latest_library_updated_at,omitempty"`
+	BoundByActorID         string           `json:"bound_by_actor_id,omitempty"`
+	BoundByActorName       string           `json:"bound_by_actor_name,omitempty"`
+	BoundByActorType       ActorType        `json:"bound_by_actor_type,omitempty"`
+	BoundAt                time.Time        `json:"bound_at"`
+	BoundLibrarySnapshot   *TemplateLibrary `json:"bound_library_snapshot,omitempty"`
 }
 
 // TemplateLibraryFilter stores listing criteria for template-library queries.
@@ -136,6 +160,11 @@ type TemplateLibraryInput struct {
 	Description         string
 	Status              TemplateLibraryStatus
 	SourceLibraryID     string
+	BuiltinManaged      bool
+	BuiltinSource       string
+	BuiltinVersion      string
+	Revision            int
+	RevisionDigest      string
 	CreatedByActorID    string
 	CreatedByActorName  string
 	CreatedByActorType  ActorType
@@ -176,11 +205,16 @@ type TemplateChildRuleInput struct {
 
 // ProjectTemplateBindingInput stores write-time values for constructing one project binding.
 type ProjectTemplateBindingInput struct {
-	ProjectID        string
-	LibraryID        string
-	BoundByActorID   string
-	BoundByActorName string
-	BoundByActorType ActorType
+	ProjectID             string
+	LibraryID             string
+	LibraryName           string
+	BoundRevision         int
+	BoundRevisionDigest   string
+	BoundLibraryUpdatedAt *time.Time
+	BoundByActorID        string
+	BoundByActorName      string
+	BoundByActorType      ActorType
+	BoundLibrarySnapshot  *TemplateLibrary
 }
 
 // NodeContractSnapshotInput stores write-time values for constructing one node-contract snapshot.
@@ -297,6 +331,11 @@ func NewTemplateLibrary(in TemplateLibraryInput, now time.Time) (TemplateLibrary
 		Description:         strings.TrimSpace(in.Description),
 		Status:              in.Status,
 		SourceLibraryID:     NormalizeTemplateLibraryID(in.SourceLibraryID),
+		BuiltinManaged:      in.BuiltinManaged,
+		BuiltinSource:       strings.TrimSpace(in.BuiltinSource),
+		BuiltinVersion:      strings.TrimSpace(in.BuiltinVersion),
+		Revision:            max(in.Revision, 1),
+		RevisionDigest:      strings.TrimSpace(in.RevisionDigest),
 		CreatedByActorID:    strings.TrimSpace(in.CreatedByActorID),
 		CreatedByActorName:  strings.TrimSpace(in.CreatedByActorName),
 		CreatedByActorType:  createdType,
@@ -347,13 +386,22 @@ func NewProjectTemplateBinding(in ProjectTemplateBindingInput, now time.Time) (P
 	if actorType == "" {
 		actorType = ActorTypeUser
 	}
+	boundLibraryUpdatedAt := now.UTC()
+	if in.BoundLibraryUpdatedAt != nil && !in.BoundLibraryUpdatedAt.IsZero() {
+		boundLibraryUpdatedAt = in.BoundLibraryUpdatedAt.UTC()
+	}
 	return ProjectTemplateBinding{
-		ProjectID:        projectID,
-		LibraryID:        libraryID,
-		BoundByActorID:   strings.TrimSpace(in.BoundByActorID),
-		BoundByActorName: strings.TrimSpace(in.BoundByActorName),
-		BoundByActorType: actorType,
-		BoundAt:          now.UTC(),
+		ProjectID:             projectID,
+		LibraryID:             libraryID,
+		LibraryName:           strings.TrimSpace(in.LibraryName),
+		BoundRevision:         max(in.BoundRevision, 1),
+		BoundRevisionDigest:   strings.TrimSpace(in.BoundRevisionDigest),
+		BoundLibraryUpdatedAt: boundLibraryUpdatedAt,
+		BoundByActorID:        strings.TrimSpace(in.BoundByActorID),
+		BoundByActorName:      strings.TrimSpace(in.BoundByActorName),
+		BoundByActorType:      actorType,
+		BoundAt:               now.UTC(),
+		BoundLibrarySnapshot:  cloneOptionalTemplateLibrary(in.BoundLibrarySnapshot),
 	}, nil
 }
 
@@ -407,6 +455,41 @@ func (l TemplateLibrary) FindNodeTemplate(scope KindAppliesTo, kindID KindID) (N
 		}
 	}
 	return NodeTemplate{}, false
+}
+
+// RevisionFingerprint returns one stable digest input for logical template-library revisions.
+func (l TemplateLibrary) RevisionFingerprint() string {
+	canonical := struct {
+		ID              string                `json:"id"`
+		Scope           TemplateLibraryScope  `json:"scope"`
+		ProjectID       string                `json:"project_id,omitempty"`
+		Name            string                `json:"name"`
+		Description     string                `json:"description,omitempty"`
+		Status          TemplateLibraryStatus `json:"status"`
+		SourceLibraryID string                `json:"source_library_id,omitempty"`
+		BuiltinManaged  bool                  `json:"builtin_managed,omitempty"`
+		BuiltinSource   string                `json:"builtin_source,omitempty"`
+		BuiltinVersion  string                `json:"builtin_version,omitempty"`
+		NodeTemplates   []NodeTemplate        `json:"node_templates"`
+	}{
+		ID:              NormalizeTemplateLibraryID(l.ID),
+		Scope:           NormalizeTemplateLibraryScope(l.Scope),
+		ProjectID:       strings.TrimSpace(l.ProjectID),
+		Name:            strings.TrimSpace(l.Name),
+		Description:     strings.TrimSpace(l.Description),
+		Status:          NormalizeTemplateLibraryStatus(l.Status),
+		SourceLibraryID: NormalizeTemplateLibraryID(l.SourceLibraryID),
+		BuiltinManaged:  l.BuiltinManaged,
+		BuiltinSource:   strings.TrimSpace(l.BuiltinSource),
+		BuiltinVersion:  strings.TrimSpace(l.BuiltinVersion),
+		NodeTemplates:   cloneNodeTemplates(l.NodeTemplates),
+	}
+	raw, err := json.Marshal(canonical)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // newNodeTemplate validates and normalizes one nested node template.
@@ -532,6 +615,54 @@ func normalizeTemplateActorKinds(in []TemplateActorKind, fallback TemplateActorK
 	sort.Slice(out, func(i, j int) bool {
 		return out[i] < out[j]
 	})
+	return out
+}
+
+func cloneTemplateLibrary(in TemplateLibrary) TemplateLibrary {
+	out := in
+	out.NodeTemplates = cloneNodeTemplates(in.NodeTemplates)
+	out.ApprovedAt = normalizeTemplateNullableTS(in.ApprovedAt)
+	if in.ApprovedAt != nil {
+		ts := in.ApprovedAt.UTC()
+		out.ApprovedAt = &ts
+	}
+	return out
+}
+
+func cloneOptionalTemplateLibrary(in *TemplateLibrary) *TemplateLibrary {
+	if in == nil {
+		return nil
+	}
+	cloned := cloneTemplateLibrary(*in)
+	return &cloned
+}
+
+func cloneNodeTemplates(in []NodeTemplate) []NodeTemplate {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]NodeTemplate, 0, len(in))
+	for _, nodeTemplate := range in {
+		copied := nodeTemplate
+		if nodeTemplate.ProjectMetadataDefaults != nil {
+			projectDefaults := *nodeTemplate.ProjectMetadataDefaults
+			copied.ProjectMetadataDefaults = &projectDefaults
+		}
+		if nodeTemplate.TaskMetadataDefaults != nil {
+			taskDefaults := *nodeTemplate.TaskMetadataDefaults
+			copied.TaskMetadataDefaults = &taskDefaults
+		}
+		if len(nodeTemplate.ChildRules) > 0 {
+			copied.ChildRules = make([]TemplateChildRule, 0, len(nodeTemplate.ChildRules))
+			for _, childRule := range nodeTemplate.ChildRules {
+				childCopy := childRule
+				childCopy.EditableByActorKinds = append([]TemplateActorKind(nil), childRule.EditableByActorKinds...)
+				childCopy.CompletableByActorKinds = append([]TemplateActorKind(nil), childRule.CompletableByActorKinds...)
+				copied.ChildRules = append(copied.ChildRules, childCopy)
+			}
+		}
+		out = append(out, copied)
+	}
 	return out
 }
 

@@ -292,6 +292,9 @@ type UpsertTemplateLibraryRequest struct {
 	Description     string                       `json:"description,omitempty"`
 	Status          domain.TemplateLibraryStatus `json:"status"`
 	SourceLibraryID string                       `json:"source_library_id,omitempty"`
+	BuiltinManaged  bool                         `json:"builtin_managed,omitempty"`
+	BuiltinSource   string                       `json:"builtin_source,omitempty"`
+	BuiltinVersion  string                       `json:"builtin_version,omitempty"`
 	NodeTemplates   []UpsertNodeTemplateRequest  `json:"node_templates,omitempty"`
 }
 
