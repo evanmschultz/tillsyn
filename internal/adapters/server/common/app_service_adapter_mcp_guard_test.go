@@ -134,3 +134,31 @@ func TestWithMutationGuardContext(t *testing.T) {
 		})
 	}
 }
+
+// TestWithMutationGuardContextAllowUnguardedAgent validates the narrow project-create
+// exception for approved agent sessions without a lease tuple.
+func TestWithMutationGuardContextAllowUnguardedAgent(t *testing.T) {
+	t.Parallel()
+
+	gotCtx, gotActorType, err := withMutationGuardContextAllowUnguardedAgent(context.Background(), ActorLeaseTuple{
+		ActorID:   "agent-1",
+		ActorName: "Agent One",
+		ActorType: string(domain.ActorTypeAgent),
+	}, true)
+	if err != nil {
+		t.Fatalf("withMutationGuardContextAllowUnguardedAgent() unexpected error: %v", err)
+	}
+	if gotActorType != domain.ActorTypeAgent {
+		t.Fatalf("withMutationGuardContextAllowUnguardedAgent() actor type = %q, want %q", gotActorType, domain.ActorTypeAgent)
+	}
+	if _, hasGuard := app.MutationGuardFromContext(gotCtx); hasGuard {
+		t.Fatal("withMutationGuardContextAllowUnguardedAgent() unexpectedly attached a mutation guard")
+	}
+	caller, ok := app.AuthenticatedCallerFromContext(gotCtx)
+	if !ok {
+		t.Fatal("withMutationGuardContextAllowUnguardedAgent() missing authenticated caller")
+	}
+	if caller.PrincipalID != "agent-1" {
+		t.Fatalf("authenticated caller principal_id = %q, want agent-1", caller.PrincipalID)
+	}
+}

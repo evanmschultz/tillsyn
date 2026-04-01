@@ -32,25 +32,21 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 		},
 		NextSteps: []string{
 			"If this session is already approved for global work, create a project with till.project(operation=create)",
-			"If it is not approved yet, create an auth request with till.create_auth_request and put the requester-owned resume_token in continuation_json",
-			"After approval, claim the request with till.claim_auth_request, then create the project with till.project(operation=create)",
+			"If it is not approved yet, create an auth request with till.auth_request(operation=create) and put the requester-owned resume_token in continuation_json",
+			"After approval, claim the request with till.auth_request(operation=claim), then create the project with till.project(operation=create)",
 			"After the project exists, claim or reuse a project-scoped approved session before guarded in-project mutations such as till.plan_item(operation=create)",
-			"If the project should use workflow contracts, inspect approved template libraries with till.list_template_libraries and bind one with till.project(operation=bind_template) before creating level-scoped work",
-			"Use till.create_comment and till.handoff inside Tillsyn for human-agent or agent-agent coordination instead of pushing that discussion back into ad-hoc markdown files",
+			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
+			"Use till.comment(operation=create) and till.handoff inside Tillsyn for human-agent or agent-agent coordination instead of pushing that discussion back into ad-hoc markdown files",
 			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
 			"Call till.capture_state to reorient and continue safely",
 		},
 		Recommended: []string{
 			"till.get_instructions",
-			"till.list_projects",
-			"till.create_auth_request",
-			"till.list_auth_requests",
-			"till.get_auth_request",
-			"till.claim_auth_request",
+			"till.auth_request",
 			"till.project",
-			"till.list_template_libraries",
+			"till.template",
 			"till.plan_item",
-			"till.create_comment",
+			"till.comment",
 			"till.handoff",
 			"till.capture_state",
 		},
@@ -216,7 +212,7 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 	if a == nil || a.service == nil {
 		return domain.Project{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
+	ctx, actorType, err := withMutationGuardContextAllowUnguardedAgent(ctx, in.Actor, true)
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -1453,6 +1449,13 @@ func parseOptionalRFC3339(raw string) (*time.Time, error) {
 
 // withMutationGuardContext validates actor tuple semantics and optionally attaches lease guard context.
 func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (context.Context, domain.ActorType, error) {
+	return withMutationGuardContextAllowUnguardedAgent(ctx, actor, false)
+}
+
+// withMutationGuardContextAllowUnguardedAgent validates actor tuple semantics and
+// optionally permits agent session identity without a lease guard tuple for
+// global-admin mutations such as project creation.
+func withMutationGuardContextAllowUnguardedAgent(ctx context.Context, actor ActorLeaseTuple, allowUnguardedAgent bool) (context.Context, domain.ActorType, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1470,6 +1473,9 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 		return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple: %w", ErrInvalidCaptureStateRequest)
 	}
 	if actorType != domain.ActorTypeUser || hasGuardTuple {
+		if allowUnguardedAgent && actorType == domain.ActorTypeAgent && !hasGuardTuple {
+			goto attachIdentity
+		}
 		if agentName == "" || agentInstanceID == "" || leaseToken == "" {
 			return nil, "", fmt.Errorf("agent_name, agent_instance_id, and lease_token are required for non-user or guarded mutations: %w", ErrInvalidCaptureStateRequest)
 		}
@@ -1480,6 +1486,7 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 			OverrideToken:   overrideToken,
 		})
 	}
+attachIdentity:
 	hasIdentityInput := strings.TrimSpace(actor.ActorID) != "" ||
 		strings.TrimSpace(actor.ActorName) != "" ||
 		agentName != "" ||

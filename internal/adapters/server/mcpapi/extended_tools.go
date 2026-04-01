@@ -57,7 +57,7 @@ func authorizeMCPMutation(
 }
 
 // buildAuthenticatedMutationActor converts one authenticated caller plus optional guard tuple into the app adapter actor contract.
-func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mcpMutationGuardArgs) (common.ActorLeaseTuple, error) {
+func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mcpMutationGuardArgs, allowUnguardedAgent bool) (common.ActorLeaseTuple, error) {
 	caller = domain.NormalizeAuthenticatedCaller(caller)
 	if caller.IsZero() {
 		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: authenticated caller is required for mutating MCP tools")
@@ -77,6 +77,9 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 		if hasGuardTuple {
 			return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: guarded mutation tuple requires an authenticated agent session")
 		}
+		return actor, nil
+	}
+	if allowUnguardedAgent && !hasGuardTuple {
 		return actor, nil
 	}
 	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
@@ -489,7 +492,7 @@ func registerProjectTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, true)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -539,7 +542,7 @@ func registerProjectTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -799,7 +802,7 @@ func registerProjectTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -879,7 +882,7 @@ func registerProjectTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1074,7 +1077,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1133,7 +1136,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1187,7 +1190,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1234,7 +1237,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1276,7 +1279,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1321,7 +1324,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -1362,7 +1365,7 @@ func registerTaskTools(
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -2442,7 +2445,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 					AgentInstanceID: args.AgentInstanceID,
 					LeaseToken:      args.LeaseToken,
 					OverrideToken:   args.OverrideToken,
-				})
+				}, false)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
