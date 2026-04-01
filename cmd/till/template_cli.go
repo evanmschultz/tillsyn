@@ -76,6 +76,42 @@ func writeTemplateLibraryDetail(stdout io.Writer, library domain.TemplateLibrary
 	return nil
 }
 
+// writeBuiltinTemplateLibraryStatusDetail renders one builtin template lifecycle summary in a stable human-readable view.
+func writeBuiltinTemplateLibraryStatusDetail(stdout io.Writer, status domain.BuiltinTemplateLibraryStatus) error {
+	return writeCLIKV(stdout, "Builtin Template Library", [][2]string{
+		{"library id", firstNonEmptyTrimmed(status.LibraryID, "-")},
+		{"name", firstNonEmptyTrimmed(status.Name, "-")},
+		{"state", firstNonEmptyTrimmed(string(status.State), "-")},
+		{"builtin source", firstNonEmptyTrimmed(status.BuiltinSource, "-")},
+		{"builtin version", firstNonEmptyTrimmed(status.BuiltinVersion, "-")},
+		{"builtin digest", firstNonEmptyTrimmed(status.BuiltinRevisionDigest, "-")},
+		{"required kinds", renderKindIDs(status.RequiredKindIDs)},
+		{"missing kinds", renderKindIDs(status.MissingKindIDs)},
+		{"installed", yesNo(status.Installed)},
+		{"installed name", firstNonEmptyTrimmed(status.InstalledLibraryName, "-")},
+		{"installed status", firstNonEmptyTrimmed(string(status.InstalledStatus), "-")},
+		{"installed revision", firstNonEmptyTrimmed(renderOptionalPositiveInt(status.InstalledRevision), "-")},
+		{"installed digest", firstNonEmptyTrimmed(status.InstalledDigest, "-")},
+		{"installed builtin", yesNo(status.InstalledBuiltin)},
+		{"installed updated at", formatAuthOptionalTime(status.InstalledUpdatedAt)},
+	})
+}
+
+// writeBuiltinTemplateLibraryEnsureDetail renders one explicit builtin ensure result plus the resulting status.
+func writeBuiltinTemplateLibraryEnsureDetail(stdout io.Writer, result domain.BuiltinTemplateLibraryEnsureResult) error {
+	printer := newCLIPrinter(stdout)
+	if err := writeCLIKVWithPrinter(printer, "Builtin Template Ensure", [][2]string{
+		{"changed", yesNo(result.Changed)},
+		{"library id", firstNonEmptyTrimmed(result.Library.ID, "-")},
+		{"revision", firstNonEmptyTrimmed(renderOptionalPositiveInt(result.Library.Revision), "-")},
+		{"status", firstNonEmptyTrimmed(string(result.Library.Status), "-")},
+		{"builtin version", firstNonEmptyTrimmed(result.Library.BuiltinVersion, "-")},
+	}); err != nil {
+		return err
+	}
+	return writeBuiltinTemplateLibraryStatusDetail(stdout, result.Status)
+}
+
 // writeProjectTemplateBindingDetail renders one project binding in a stable human-readable detail block.
 func writeProjectTemplateBindingDetail(stdout io.Writer, binding domain.ProjectTemplateBinding) error {
 	return writeCLIKV(stdout, "Project Template Binding", [][2]string{
@@ -114,6 +150,17 @@ func renderOptionalPositiveInt(v int) string {
 		return ""
 	}
 	return fmt.Sprintf("%d", v)
+}
+
+func renderKindIDs(kindIDs []domain.KindID) string {
+	if len(kindIDs) == 0 {
+		return "-"
+	}
+	values := make([]string, 0, len(kindIDs))
+	for _, kindID := range kindIDs {
+		values = append(values, string(kindID))
+	}
+	return renderAuthStringList(values)
 }
 
 func writeTemplateNodeTemplateTable(printer *laslig.Printer, nodeTemplates []domain.NodeTemplate) error {

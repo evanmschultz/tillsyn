@@ -152,6 +152,16 @@ type templateLibraryUpsertCommandOptions struct {
 	specJSON string
 }
 
+// templateBuiltinStatusCommandOptions stores builtin template status flag values.
+type templateBuiltinStatusCommandOptions struct {
+	libraryID string
+}
+
+// templateBuiltinEnsureCommandOptions stores builtin template ensure flag values.
+type templateBuiltinEnsureCommandOptions struct {
+	libraryID string
+}
+
 // templateProjectBindCommandOptions stores template project bind flag values.
 type templateProjectBindCommandOptions struct {
 	projectID string
@@ -450,6 +460,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	templateLibraryListOpts := templateLibraryListCommandOptions{}
 	templateLibraryShowOpts := templateLibraryShowCommandOptions{}
 	templateLibraryUpsertOpts := templateLibraryUpsertCommandOptions{}
+	templateBuiltinStatusOpts := templateBuiltinStatusCommandOptions{libraryID: "default-go"}
+	templateBuiltinEnsureOpts := templateBuiltinEnsureCommandOptions{libraryID: "default-go"}
 	templateProjectBindOpts := templateProjectBindCommandOptions{}
 	templateProjectBindingOpts := templateProjectBindingCommandOptions{}
 	templateContractShowOpts := templateContractShowCommandOptions{}
@@ -465,7 +477,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateProjectBindOpts, templateProjectBindingOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateBuiltinStatusOpts, templateBuiltinEnsureOpts, templateProjectBindOpts, templateProjectBindingOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -1041,6 +1053,49 @@ planned separately.
 	mustMarkFlagRequired(templateLibraryUpsertCmd, "spec-json")
 	templateLibraryCmd.AddCommand(templateLibraryListCmd, templateLibraryShowCmd, templateLibraryUpsertCmd)
 
+	templateBuiltinCmd := &cobra.Command{
+		Use:   "builtin",
+		Short: "Inspect and refresh builtin template libraries",
+		Long: strings.TrimSpace(`
+Inspect builtin-managed template library lifecycle state and explicitly install
+or refresh the locked builtin definition when the runtime contract changes.
+`),
+		Example: strings.Join([]string{
+			"  till template builtin status",
+			"  till template builtin ensure --library-id default-go",
+		}, "\n"),
+		Args: cobra.NoArgs,
+	}
+	templateBuiltinStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show builtin template install and drift state",
+		Long: strings.TrimSpace(`
+Show whether the supported builtin template library is installed, current, or
+behind the builtin contract embedded in this build.
+`),
+		Example: "  till template builtin status --library-id default-go",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.builtin.status")
+		},
+	}
+	templateBuiltinStatusCmd.Flags().StringVar(&templateBuiltinStatusOpts.libraryID, "library-id", "default-go", "Builtin template library identifier")
+	templateBuiltinEnsureCmd := &cobra.Command{
+		Use:   "ensure",
+		Short: "Install or refresh one builtin template library",
+		Long: strings.TrimSpace(`
+Install the supported builtin template library when missing or refresh it
+explicitly when the embedded builtin contract changed.
+`),
+		Example: "  till template builtin ensure --library-id default-go",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.builtin.ensure")
+		},
+	}
+	templateBuiltinEnsureCmd.Flags().StringVar(&templateBuiltinEnsureOpts.libraryID, "library-id", "default-go", "Builtin template library identifier")
+	templateBuiltinCmd.AddCommand(templateBuiltinStatusCmd, templateBuiltinEnsureCmd)
+
 	templateProjectCmd := &cobra.Command{
 		Use:   "project",
 		Short: "Bind projects to template libraries",
@@ -1119,7 +1174,7 @@ instead of re-reading the source library and guessing how old work was resolved.
 	}
 	templateContractShowCmd.Flags().StringVar(&templateContractShowOpts.nodeID, "node-id", "", "Generated node identifier")
 	templateContractCmd.AddCommand(templateContractShowCmd)
-	templateCmd.AddCommand(templateLibraryCmd, templateProjectCmd, templateContractCmd)
+	templateCmd.AddCommand(templateLibraryCmd, templateBuiltinCmd, templateProjectCmd, templateContractCmd)
 
 	leaseCmd := &cobra.Command{
 		Use:   "lease",
@@ -2203,6 +2258,8 @@ func executeCommandFlow(
 	templateLibraryListOpts templateLibraryListCommandOptions,
 	templateLibraryShowOpts templateLibraryShowCommandOptions,
 	templateLibraryUpsertOpts templateLibraryUpsertCommandOptions,
+	templateBuiltinStatusOpts templateBuiltinStatusCommandOptions,
+	templateBuiltinEnsureOpts templateBuiltinEnsureCommandOptions,
 	templateProjectBindOpts templateProjectBindCommandOptions,
 	templateProjectBindingOpts templateProjectBindingCommandOptions,
 	templateContractShowOpts templateContractShowCommandOptions,
@@ -2560,6 +2617,14 @@ func executeCommandFlow(
 	case "template.library.upsert":
 		return runOneShotCommand("template.library.upsert", "template library upsert", func() error {
 			return runTemplateLibraryUpsert(ctx, svc, cfg, templateLibraryUpsertOpts, stdout)
+		})
+	case "template.builtin.status":
+		return runOneShotCommand("template.builtin.status", "template builtin status", func() error {
+			return runTemplateBuiltinStatus(ctx, svc, templateBuiltinStatusOpts, stdout)
+		})
+	case "template.builtin.ensure":
+		return runOneShotCommand("template.builtin.ensure", "template builtin ensure", func() error {
+			return runTemplateBuiltinEnsure(ctx, svc, cfg, templateBuiltinEnsureOpts, stdout)
 		})
 	case "template.project.bind":
 		return runOneShotCommand("template.project.bind", "template project bind", func() error {
@@ -2985,6 +3050,36 @@ func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.
 		return fmt.Errorf("upsert template library: %w", err)
 	}
 	return writeTemplateLibraryDetail(stdout, library)
+}
+
+// runTemplateBuiltinStatus loads one builtin template lifecycle status view and writes a human-readable result.
+func runTemplateBuiltinStatus(ctx context.Context, svc *app.Service, opts templateBuiltinStatusCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	status, err := svc.GetBuiltinTemplateLibraryStatus(ctx, strings.TrimSpace(opts.libraryID))
+	if err != nil {
+		return fmt.Errorf("get builtin template status: %w", err)
+	}
+	return writeBuiltinTemplateLibraryStatusDetail(stdout, status)
+}
+
+// runTemplateBuiltinEnsure installs or refreshes one builtin template library explicitly and writes a human-readable result.
+func runTemplateBuiltinEnsure(ctx context.Context, svc *app.Service, cfg config.Config, opts templateBuiltinEnsureCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	result, err := svc.EnsureBuiltinTemplateLibrary(ctx, app.EnsureBuiltinTemplateLibraryInput{
+		LibraryID: strings.TrimSpace(opts.libraryID),
+		ActorID:   cliMutationActorID(cfg),
+		ActorName: strings.TrimSpace(cfg.Identity.DisplayName),
+		ActorType: cliMutationActorType(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("ensure builtin template library: %w", err)
+	}
+	return writeBuiltinTemplateLibraryEnsureDetail(stdout, result)
 }
 
 // runTemplateProjectBind binds one project to one approved template library and writes a human-readable operator view.

@@ -1,0 +1,337 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/hylla/tillsyn/internal/domain"
+)
+
+const (
+	defaultGoBuiltinLibraryID      = "default-go"
+	defaultGoBuiltinLibraryName    = "Default Go"
+	defaultGoBuiltinLibrarySource  = "builtin://tillsyn/default-go"
+	defaultGoBuiltinLibraryVersion = "2026-04-01.1"
+)
+
+// EnsureBuiltinTemplateLibraryInput stores one explicit builtin install or refresh request.
+type EnsureBuiltinTemplateLibraryInput struct {
+	LibraryID         string
+	ActorID           string
+	ActorName         string
+	ActorType         domain.ActorType
+}
+
+// GetBuiltinTemplateLibraryStatus returns install and drift state for one supported builtin library.
+func (s *Service) GetBuiltinTemplateLibraryStatus(ctx context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
+	spec, err := builtinTemplateLibrarySpec(strings.TrimSpace(libraryID), builtinTemplateActor{})
+	if err != nil {
+		return domain.BuiltinTemplateLibraryStatus{}, err
+	}
+	status := domain.BuiltinTemplateLibraryStatus{
+		LibraryID:             spec.ID,
+		Name:                  spec.Name,
+		BuiltinSource:         spec.BuiltinSource,
+		BuiltinVersion:        spec.BuiltinVersion,
+		RequiredKindIDs:       builtinTemplateRequiredKinds(spec),
+		State:                 domain.BuiltinTemplateLibraryStateMissing,
+		BuiltinRevisionDigest: builtinTemplateRevisionDigest(spec),
+	}
+	status.MissingKindIDs, err = s.builtinTemplateMissingKinds(ctx, status.RequiredKindIDs)
+	if err != nil {
+		return domain.BuiltinTemplateLibraryStatus{}, err
+	}
+
+	library, err := s.repo.GetTemplateLibrary(ctx, spec.ID)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return status, nil
+	case err != nil:
+		return domain.BuiltinTemplateLibraryStatus{}, err
+	}
+
+	status.Installed = true
+	status.InstalledLibraryName = firstNonEmptyTrimmed(library.Name, library.ID)
+	status.InstalledStatus = library.Status
+	status.InstalledRevision = max(library.Revision, 1)
+	status.InstalledDigest = strings.TrimSpace(library.RevisionDigest)
+	status.InstalledBuiltin = library.BuiltinManaged
+	if !library.UpdatedAt.IsZero() {
+		ts := library.UpdatedAt.UTC()
+		status.InstalledUpdatedAt = &ts
+	}
+
+	if status.InstalledDigest == status.BuiltinRevisionDigest {
+		status.State = domain.BuiltinTemplateLibraryStateCurrent
+	} else {
+		status.State = domain.BuiltinTemplateLibraryStateUpdateAvailable
+	}
+	return status, nil
+}
+
+// EnsureBuiltinTemplateLibrary installs or refreshes one supported builtin library explicitly.
+func (s *Service) EnsureBuiltinTemplateLibrary(ctx context.Context, in EnsureBuiltinTemplateLibraryInput) (domain.BuiltinTemplateLibraryEnsureResult, error) {
+	actor := builtinTemplateActor{
+		ID:   strings.TrimSpace(in.ActorID),
+		Name: strings.TrimSpace(in.ActorName),
+		Type: normalizeActorTypeInput(in.ActorType),
+	}
+	spec, err := builtinTemplateLibrarySpec(strings.TrimSpace(in.LibraryID), actor)
+	if err != nil {
+		return domain.BuiltinTemplateLibraryEnsureResult{}, err
+	}
+	requiredKinds := builtinTemplateRequiredKinds(spec)
+	missingKinds, err := s.builtinTemplateMissingKinds(ctx, requiredKinds)
+	if err != nil {
+		return domain.BuiltinTemplateLibraryEnsureResult{}, err
+	}
+	if len(missingKinds) > 0 {
+		values := make([]string, 0, len(missingKinds))
+		for _, kindID := range missingKinds {
+			values = append(values, string(kindID))
+		}
+		return domain.BuiltinTemplateLibraryEnsureResult{}, fmt.Errorf("%w: builtin template %q requires kinds [%s]", domain.ErrKindNotFound, spec.ID, strings.Join(values, ", "))
+	}
+
+	changed := true
+	existing, err := s.repo.GetTemplateLibrary(ctx, spec.ID)
+	switch {
+	case err == nil:
+		changed = existing.RevisionFingerprint() != builtinTemplateRevisionDigest(spec)
+	case errors.Is(err, ErrNotFound):
+	default:
+		return domain.BuiltinTemplateLibraryEnsureResult{}, err
+	}
+
+	library, err := s.UpsertTemplateLibrary(ctx, spec)
+	if err != nil {
+		return domain.BuiltinTemplateLibraryEnsureResult{}, err
+	}
+	status, err := s.GetBuiltinTemplateLibraryStatus(ctx, spec.ID)
+	if err != nil {
+		return domain.BuiltinTemplateLibraryEnsureResult{}, err
+	}
+	return domain.BuiltinTemplateLibraryEnsureResult{
+		Library: library,
+		Status:  status,
+		Changed: changed,
+	}, nil
+}
+
+// builtinTemplateActor stores audit identity used for explicit builtin library ensure operations.
+type builtinTemplateActor struct {
+	ID   string
+	Name string
+	Type domain.ActorType
+}
+
+// builtinTemplateLibrarySpec returns the supported builtin library spec as one ordinary upsert input.
+func builtinTemplateLibrarySpec(libraryID string, actor builtinTemplateActor) (UpsertTemplateLibraryInput, error) {
+	switch domain.NormalizeTemplateLibraryID(libraryID) {
+	case "", defaultGoBuiltinLibraryID:
+		return defaultGoBuiltinTemplateLibrarySpec(actor), nil
+	default:
+		return UpsertTemplateLibraryInput{}, fmt.Errorf("%w: unsupported builtin template library %q", domain.ErrInvalidTemplateLibrary, strings.TrimSpace(libraryID))
+	}
+}
+
+// builtinTemplateRequiredKinds returns every kind referenced by one builtin template spec.
+func builtinTemplateRequiredKinds(spec UpsertTemplateLibraryInput) []domain.KindID {
+	seen := map[domain.KindID]struct{}{}
+	kinds := make([]domain.KindID, 0)
+	for _, nodeTemplate := range spec.NodeTemplates {
+		if _, ok := seen[nodeTemplate.NodeKindID]; !ok && nodeTemplate.NodeKindID != "" {
+			seen[nodeTemplate.NodeKindID] = struct{}{}
+			kinds = append(kinds, nodeTemplate.NodeKindID)
+		}
+		for _, childRule := range nodeTemplate.ChildRules {
+			if _, ok := seen[childRule.ChildKindID]; !ok && childRule.ChildKindID != "" {
+				seen[childRule.ChildKindID] = struct{}{}
+				kinds = append(kinds, childRule.ChildKindID)
+			}
+		}
+	}
+	slices.Sort(kinds)
+	return kinds
+}
+
+// builtinTemplateRevisionDigest normalizes one builtin spec into the same logical revision digest used for stored libraries.
+func builtinTemplateRevisionDigest(spec UpsertTemplateLibraryInput) string {
+	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
+		ID:                  spec.ID,
+		Scope:               spec.Scope,
+		ProjectID:           spec.ProjectID,
+		Name:                spec.Name,
+		Description:         spec.Description,
+		Status:              spec.Status,
+		SourceLibraryID:     spec.SourceLibraryID,
+		BuiltinManaged:      spec.BuiltinManaged,
+		BuiltinSource:       spec.BuiltinSource,
+		BuiltinVersion:      spec.BuiltinVersion,
+		CreatedByActorID:    firstNonEmptyTrimmed(spec.CreatedByActorID, templateSystemActorID),
+		CreatedByActorName:  firstNonEmptyTrimmed(spec.CreatedByActorName, templateSystemActorName),
+		CreatedByActorType:  firstActorType(spec.CreatedByActorType, domain.ActorTypeSystem),
+		ApprovedByActorID:   firstNonEmptyTrimmed(spec.ApprovedByActorID, templateSystemActorID),
+		ApprovedByActorName: firstNonEmptyTrimmed(spec.ApprovedByActorName, templateSystemActorName),
+		ApprovedByActorType: firstActorType(spec.ApprovedByActorType, domain.ActorTypeSystem),
+		NodeTemplates:       builtinTemplateNodeInputs(spec.NodeTemplates),
+	}, time.Now().UTC())
+	if err != nil {
+		return ""
+	}
+	return library.RevisionFingerprint()
+}
+
+// builtinTemplateNodeInputs converts builtin upsert node templates into domain constructor inputs for digest calculation.
+func builtinTemplateNodeInputs(nodeTemplates []UpsertNodeTemplateInput) []domain.NodeTemplateInput {
+	out := make([]domain.NodeTemplateInput, 0, len(nodeTemplates))
+	for _, nodeTemplate := range nodeTemplates {
+		childRules := make([]domain.TemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
+		for _, childRule := range nodeTemplate.ChildRules {
+			childRules = append(childRules, domain.TemplateChildRuleInput{
+				ID:                        childRule.ID,
+				Position:                  childRule.Position,
+				ChildScopeLevel:           childRule.ChildScopeLevel,
+				ChildKindID:               childRule.ChildKindID,
+				TitleTemplate:             childRule.TitleTemplate,
+				DescriptionTemplate:       childRule.DescriptionTemplate,
+				ResponsibleActorKind:      childRule.ResponsibleActorKind,
+				EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
+				CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
+				OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
+				RequiredForParentDone:     childRule.RequiredForParentDone,
+				RequiredForContainingDone: childRule.RequiredForContainingDone,
+			})
+		}
+		out = append(out, domain.NodeTemplateInput{
+			ID:                      nodeTemplate.ID,
+			ScopeLevel:              nodeTemplate.ScopeLevel,
+			NodeKindID:              nodeTemplate.NodeKindID,
+			DisplayName:             nodeTemplate.DisplayName,
+			DescriptionMarkdown:     nodeTemplate.DescriptionMarkdown,
+			ProjectMetadataDefaults: nodeTemplate.ProjectMetadataDefaults,
+			TaskMetadataDefaults:    nodeTemplate.TaskMetadataDefaults,
+			ChildRules:              childRules,
+		})
+	}
+	return out
+}
+
+// builtinTemplateMissingKinds reports which required kinds are not currently defined.
+func (s *Service) builtinTemplateMissingKinds(ctx context.Context, requiredKinds []domain.KindID) ([]domain.KindID, error) {
+	missing := make([]domain.KindID, 0)
+	for _, kindID := range requiredKinds {
+		if _, err := s.repo.GetKindDefinition(ctx, kindID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				missing = append(missing, kindID)
+				continue
+			}
+			return nil, err
+		}
+	}
+	return missing, nil
+}
+
+// defaultGoBuiltinTemplateLibrarySpec returns the locked builtin default-go library contract.
+func defaultGoBuiltinTemplateLibrarySpec(actor builtinTemplateActor) UpsertTemplateLibraryInput {
+	actorID := firstNonEmptyTrimmed(actor.ID, templateSystemActorID)
+	actorName := firstNonEmptyTrimmed(actor.Name, templateSystemActorName)
+	actorType := firstActorType(actor.Type, domain.ActorTypeSystem)
+	return UpsertTemplateLibraryInput{
+		ID:                  defaultGoBuiltinLibraryID,
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                defaultGoBuiltinLibraryName,
+		Status:              domain.TemplateLibraryStatusApproved,
+		BuiltinManaged:      true,
+		BuiltinSource:       defaultGoBuiltinLibrarySource,
+		BuiltinVersion:      defaultGoBuiltinLibraryVersion,
+		CreatedByActorID:    actorID,
+		CreatedByActorName:  actorName,
+		CreatedByActorType:  actorType,
+		ApprovedByActorID:   actorID,
+		ApprovedByActorName: actorName,
+		ApprovedByActorType: actorType,
+		NodeTemplates: []UpsertNodeTemplateInput{
+			{
+				ID:         "go-project-template",
+				ScopeLevel: domain.KindAppliesToProject,
+				NodeKindID: domain.KindID("go-project"),
+				DisplayName: "Go Project",
+				ProjectMetadataDefaults: &domain.ProjectMetadata{
+					Owner:             "Evan",
+					StandardsMarkdown: defaultGoBuiltinStandardsMarkdown(),
+				},
+				ChildRules: []UpsertTemplateChildRuleInput{
+					{
+						ID:                      "implementation-track",
+						Position:                1,
+						ChildScopeLevel:         domain.KindAppliesToPhase,
+						ChildKindID:             domain.KindID("implementation-phase"),
+						TitleTemplate:           "IMPLEMENTATION TRACK",
+						DescriptionTemplate:     "Primary implementation and verification phase for the project.",
+						ResponsibleActorKind:    domain.TemplateActorKindBuilder,
+						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindOrchestrator},
+						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
+						RequiredForParentDone:   true,
+					},
+				},
+			},
+			{
+				ID:          "build-task-template",
+				ScopeLevel:  domain.KindAppliesToTask,
+				NodeKindID:  domain.KindID("build-task"),
+				DisplayName: "Build Task",
+				ChildRules: []UpsertTemplateChildRuleInput{
+					{
+						ID:                      "qa-pass-1",
+						Position:                1,
+						ChildScopeLevel:         domain.KindAppliesToSubtask,
+						ChildKindID:             domain.KindID("qa-check"),
+						TitleTemplate:           "QA PASS 1",
+						DescriptionTemplate:     "First QA pass for the parent build task.",
+						ResponsibleActorKind:    domain.TemplateActorKindQA,
+						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+						RequiredForParentDone:   true,
+					},
+					{
+						ID:                      "qa-pass-2",
+						Position:                2,
+						ChildScopeLevel:         domain.KindAppliesToSubtask,
+						ChildKindID:             domain.KindID("qa-check"),
+						TitleTemplate:           "QA PASS 2",
+						DescriptionTemplate:     "Second QA pass for the parent build task.",
+						ResponsibleActorKind:    domain.TemplateActorKindQA,
+						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+						RequiredForParentDone:   true,
+					},
+				},
+			},
+		},
+	}
+}
+
+// defaultGoBuiltinStandardsMarkdown returns the locked default-go standards payload from the dogfood contract.
+func defaultGoBuiltinStandardsMarkdown() string {
+	return strings.Join([]string{
+		"- Bare control repo with visible sibling worktrees.",
+		"- One dedicated `gopls` MCP server per active worktree.",
+		"- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.",
+		"- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.",
+		"- MCP-first dogfooding for runtime and operator workflows.",
+		"- `mage` is the canonical build/test gate.",
+		"- Laslig styling for all Mage functions and CLI output.",
+		"- Fang for help and CLI command surfaces.",
+		"- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.",
+		"- GitHub Actions CI and release snapshot checks must stay green.",
+		"- No ad-hoc `.codex/` directories inside worktrees.",
+		"- Follow `AGENTS.md` workflow and worktree rules.",
+		"- Comments and handoffs are the coordination layer.",
+		"- Template-generated QA blockers must be completed truthfully before done.",
+	}, "\n")
+}

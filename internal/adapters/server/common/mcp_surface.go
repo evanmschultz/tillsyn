@@ -298,6 +298,11 @@ type UpsertTemplateLibraryRequest struct {
 	NodeTemplates   []UpsertNodeTemplateRequest  `json:"node_templates,omitempty"`
 }
 
+// EnsureBuiltinTemplateLibraryRequest stores transport input for one explicit builtin install or refresh.
+type EnsureBuiltinTemplateLibraryRequest struct {
+	LibraryID string `json:"library_id,omitempty"`
+}
+
 // BindProjectTemplateLibraryRequest stores transport input for project-to-library binding.
 type BindProjectTemplateLibraryRequest struct {
 	ProjectID string `json:"project_id"`
@@ -573,6 +578,8 @@ type KindCatalogService interface {
 type TemplateLibraryService interface {
 	ListTemplateLibraries(context.Context, ListTemplateLibrariesRequest) ([]domain.TemplateLibrary, error)
 	GetTemplateLibrary(context.Context, string) (domain.TemplateLibrary, error)
+	GetBuiltinTemplateLibraryStatus(context.Context, string) (domain.BuiltinTemplateLibraryStatus, error)
+	EnsureBuiltinTemplateLibrary(context.Context, EnsureBuiltinTemplateLibraryRequest) (domain.BuiltinTemplateLibraryEnsureResult, error)
 	UpsertTemplateLibrary(context.Context, UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error)
 	BindProjectTemplateLibrary(context.Context, BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error)
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)

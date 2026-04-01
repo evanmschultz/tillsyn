@@ -1925,16 +1925,16 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 	srv.AddTool(
 		mcp.NewTool(
 			"till.template",
-			mcp.WithDescription("Inspect or mutate template libraries and realized node contracts. Use operation=list|get|upsert|get_node_contract."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("list", "get", "upsert", "get_node_contract")),
+			mcp.WithDescription("Inspect or mutate template libraries and realized node contracts. Use operation=list|get|get_builtin_status|ensure_builtin|upsert|get_node_contract."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("list", "get", "get_builtin_status", "ensure_builtin", "upsert", "get_node_contract")),
 			mcp.WithString("scope", mcp.Description("Optional template-library scope filter"), mcp.Enum("global", "project", "draft")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
 			mcp.WithString("status", mcp.Description("Optional template-library status filter"), mcp.Enum("draft", "approved", "archived")),
-			mcp.WithString("library_id", mcp.Description("Template library identifier. Required for operation=get")),
+			mcp.WithString("library_id", mcp.Description("Template library identifier. Required for operation=get and optional for builtin status/ensure; defaults to default-go")),
 			mcp.WithObject("library", mcp.Description("Template library object. Required for operation=upsert")),
 			mcp.WithString("node_id", mcp.Description("Generated node identifier. Required for operation=get_node_contract")),
-			mcp.WithString("session_id", mcp.Description("Required for operation=upsert. "+mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Description("Required for operation=upsert. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for operation=ensure_builtin|upsert. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=ensure_builtin|upsert. "+mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			switch strings.TrimSpace(req.GetString("operation", "")) {
@@ -1964,6 +1964,51 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 				result, err := mcp.NewToolResultJSON(library)
 				if err != nil {
 					return nil, fmt.Errorf("encode template get result: %w", err)
+				}
+				return result, nil
+			case "get_builtin_status":
+				status, err := templates.GetBuiltinTemplateLibraryStatus(ctx, req.GetString("library_id", ""))
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(status)
+				if err != nil {
+					return nil, fmt.Errorf("encode template get_builtin_status result: %w", err)
+				}
+				return result, nil
+			case "ensure_builtin":
+				libraryID := strings.TrimSpace(req.GetString("library_id", ""))
+				resourceID := firstNonEmptyString(libraryID, "default-go")
+				namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
+					"library_id": resourceID,
+					"builtin":    "true",
+				})
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(templates),
+					mcpSessionAuthArgs{
+						SessionID:     req.GetString("session_id", ""),
+						SessionSecret: req.GetString("session_secret", ""),
+					},
+					"ensure_builtin_template_library",
+					namespace,
+					"template_library",
+					resourceID,
+					authContext,
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				ctx = app.WithAuthenticatedCaller(ctx, caller)
+				ensureResult, err := templates.EnsureBuiltinTemplateLibrary(ctx, common.EnsureBuiltinTemplateLibraryRequest{
+					LibraryID: libraryID,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(ensureResult)
+				if err != nil {
+					return nil, fmt.Errorf("encode template ensure_builtin result: %w", err)
 				}
 				return result, nil
 			case "upsert":

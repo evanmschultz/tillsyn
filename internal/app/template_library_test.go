@@ -234,6 +234,121 @@ func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
 	}
 }
 
+// TestGetBuiltinTemplateLibraryStatusMissing verifies builtin lifecycle status reports a missing install and missing kind prerequisites.
+func TestGetBuiltinTemplateLibraryStatusMissing(t *testing.T) {
+	ctx := context.Background()
+	svc := newDeterministicService(newFakeRepo(), time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
+
+	status, err := svc.GetBuiltinTemplateLibraryStatus(ctx, "default-go")
+	if err != nil {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() error = %v", err)
+	}
+	if status.State != domain.BuiltinTemplateLibraryStateMissing {
+		t.Fatalf("status.State = %q, want missing", status.State)
+	}
+	if status.Installed {
+		t.Fatal("status.Installed = true, want false")
+	}
+	if got, want := len(status.RequiredKindIDs), 4; got != want {
+		t.Fatalf("len(status.RequiredKindIDs) = %d, want %d", got, want)
+	}
+	if got, want := len(status.MissingKindIDs), 4; got != want {
+		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
+	}
+}
+
+// TestEnsureBuiltinTemplateLibraryInstallsDefaultGo verifies the supported builtin library installs explicitly once required kinds exist.
+func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := newDeterministicService(repo, time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
+	seedBuiltinTemplateKinds(t, ctx, svc)
+
+	result, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-go",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("result.Changed = false, want true")
+	}
+	if result.Status.State != domain.BuiltinTemplateLibraryStateCurrent {
+		t.Fatalf("result.Status.State = %q, want current", result.Status.State)
+	}
+	if len(result.Status.MissingKindIDs) != 0 {
+		t.Fatalf("result.Status.MissingKindIDs = %#v, want none", result.Status.MissingKindIDs)
+	}
+	if !result.Library.BuiltinManaged {
+		t.Fatal("result.Library.BuiltinManaged = false, want true")
+	}
+	if result.Library.BuiltinSource != defaultGoBuiltinLibrarySource {
+		t.Fatalf("result.Library.BuiltinSource = %q, want %q", result.Library.BuiltinSource, defaultGoBuiltinLibrarySource)
+	}
+	if result.Library.BuiltinVersion != defaultGoBuiltinLibraryVersion {
+		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, defaultGoBuiltinLibraryVersion)
+	}
+	if got, want := len(result.Library.NodeTemplates), 2; got != want {
+		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
+	}
+	loaded, err := svc.GetTemplateLibrary(ctx, "default-go")
+	if err != nil {
+		t.Fatalf("GetTemplateLibrary() error = %v", err)
+	}
+	if !loaded.BuiltinManaged {
+		t.Fatal("loaded.BuiltinManaged = false, want true")
+	}
+}
+
+// TestGetBuiltinTemplateLibraryStatusDetectsUpdateAvailable verifies status reports update availability when the installed library predates builtin provenance metadata.
+func TestGetBuiltinTemplateLibraryStatusDetectsUpdateAvailable(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := newDeterministicService(repo, time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
+	seedBuiltinTemplateKinds(t, ctx, svc)
+
+	spec := defaultGoBuiltinTemplateLibrarySpec(builtinTemplateActor{
+		ID:   "dev-1",
+		Name: "Dev",
+		Type: domain.ActorTypeUser,
+	})
+	spec.BuiltinManaged = false
+	spec.BuiltinSource = ""
+	spec.BuiltinVersion = ""
+	if _, err := svc.UpsertTemplateLibrary(ctx, spec); err != nil {
+		t.Fatalf("UpsertTemplateLibrary() error = %v", err)
+	}
+
+	status, err := svc.GetBuiltinTemplateLibraryStatus(ctx, "default-go")
+	if err != nil {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() error = %v", err)
+	}
+	if status.State != domain.BuiltinTemplateLibraryStateUpdateAvailable {
+		t.Fatalf("status.State = %q, want update_available", status.State)
+	}
+	if !status.Installed {
+		t.Fatal("status.Installed = false, want true")
+	}
+}
+
+// seedBuiltinTemplateKinds installs the builtin default-go prerequisite kinds used by lifecycle tests.
+func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
+	t.Helper()
+	for _, spec := range []CreateKindDefinitionInput{
+		{ID: "go-project", DisplayName: "Go Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
+		{ID: "implementation-phase", DisplayName: "Implementation Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+	} {
+		if _, err := svc.UpsertKindDefinition(ctx, spec); err != nil {
+			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)
+		}
+	}
+}
+
 // TestUnbindProjectTemplateLibrary verifies project bindings can be removed cleanly for TUI edit flows.
 func TestUnbindProjectTemplateLibrary(t *testing.T) {
 	ctx := context.Background()

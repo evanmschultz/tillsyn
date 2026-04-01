@@ -854,6 +854,36 @@ func (a *AppServiceAdapter) GetTemplateLibrary(ctx context.Context, libraryID st
 	return library, nil
 }
 
+// GetBuiltinTemplateLibraryStatus loads one builtin template library lifecycle status view.
+func (a *AppServiceAdapter) GetBuiltinTemplateLibraryStatus(ctx context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
+	if a == nil || a.service == nil {
+		return domain.BuiltinTemplateLibraryStatus{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	status, err := a.service.GetBuiltinTemplateLibraryStatus(ctx, strings.TrimSpace(libraryID))
+	if err != nil {
+		return domain.BuiltinTemplateLibraryStatus{}, mapAppError("get builtin template library status", err)
+	}
+	return status, nil
+}
+
+// EnsureBuiltinTemplateLibrary installs or refreshes one supported builtin template library explicitly.
+func (a *AppServiceAdapter) EnsureBuiltinTemplateLibrary(ctx context.Context, in EnsureBuiltinTemplateLibraryRequest) (domain.BuiltinTemplateLibraryEnsureResult, error) {
+	if a == nil || a.service == nil {
+		return domain.BuiltinTemplateLibraryEnsureResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	caller, _ := app.AuthenticatedCallerFromContext(ctx)
+	result, err := a.service.EnsureBuiltinTemplateLibrary(ctx, app.EnsureBuiltinTemplateLibraryInput{
+		LibraryID: strings.TrimSpace(in.LibraryID),
+		ActorID:   caller.PrincipalID,
+		ActorName: caller.PrincipalName,
+		ActorType: caller.PrincipalType,
+	})
+	if err != nil {
+		return domain.BuiltinTemplateLibraryEnsureResult{}, mapAppError("ensure builtin template library", err)
+	}
+	return result, nil
+}
+
 // UpsertTemplateLibrary creates or updates one template library.
 func (a *AppServiceAdapter) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error) {
 	if a == nil || a.service == nil {
