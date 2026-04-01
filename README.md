@@ -87,6 +87,8 @@ Still in progress for this dogfood wave:
 
 Current MCP/runtime direction:
 - `capture_state` is a summary-first recovery surface for level-scoped workflows.
+- `till.get_bootstrap_guide` is the lightweight runtime next-step surface for empty-instance and pre-approval flows.
+- `till.get_instructions` is the embedded-doc and operator-policy surface; it returns selected markdown docs plus agent-facing recommendations, not per-project runtime state and not a machine-readable schema browser for every tool.
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - MCP mutation auth is session-first.
 - transport-level lease/scope request contracts remain secondary local workflow guardrails for non-user mutations.
@@ -143,6 +145,9 @@ Current auth note:
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
+- Open guidance question:
+  - we still need to decide whether `till.get_bootstrap_guide` should remain a dedicated lightweight tool or collapse into `till.get_instructions(topic=bootstrap|workflow)` later;
+  - the current split is intentional for now because bootstrap is runtime-generated minimal next-step guidance, while instructions is broader embedded-doc retrieval and recommendation payloads.
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
