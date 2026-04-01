@@ -6051,6 +6051,24 @@ func (m Model) templateLibraryName(libraryID string) string {
 	return ""
 }
 
+func (m Model) templateBindingSummary(binding domain.ProjectTemplateBinding) string {
+	label := m.templateLibraryDisplayLabel(binding.LibraryID, firstNonEmptyTrimmed(binding.LibraryName, m.templateLibraryName(binding.LibraryID)))
+	if binding.LibraryID == "" {
+		return "-"
+	}
+	parts := []string{label}
+	if binding.BoundRevision > 0 {
+		parts = append(parts, fmt.Sprintf("rev:%d", binding.BoundRevision))
+	}
+	if drift := strings.TrimSpace(binding.DriftStatus); drift != "" {
+		parts = append(parts, "drift:"+drift)
+	}
+	if binding.LatestRevision > 0 && binding.LatestRevision != binding.BoundRevision {
+		parts = append(parts, fmt.Sprintf("latest:%d", binding.LatestRevision))
+	}
+	return strings.Join(parts, " • ")
+}
+
 // approvedTemplateLibraryPickerItems builds the ordered approved-library rows for the project form picker.
 func (m Model) approvedTemplateLibraryPickerItems() []templateLibraryPickerItem {
 	items := []templateLibraryPickerItem{{
@@ -17902,7 +17920,7 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	renderProjectInput("template_library", projectFieldTemplateLibrary)
 	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
 		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
-			lines = append(lines, hintStyle.Render("active_binding: "+m.templateLibraryDisplayLabel(binding.LibraryID, m.templateLibraryName(binding.LibraryID))))
+			lines = append(lines, hintStyle.Render("active_binding: "+m.templateBindingSummary(binding)))
 		} else {
 			lines = append(lines, hintStyle.Render("active_binding: -"))
 		}
@@ -18017,8 +18035,16 @@ func (m Model) taskInfoBodyLines(task domain.Task, boxWidth, contentWidth int, h
 	projectLibraryID := "-"
 	if binding, ok := m.activeProjectTemplateBinding(task.ProjectID); ok {
 		projectLibraryID = binding.LibraryID
+		lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
+		if binding.BoundRevision > 0 {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("project_library_revision: %d", binding.BoundRevision)))
+		}
+		if drift := strings.TrimSpace(binding.DriftStatus); drift != "" {
+			lines = append(lines, hintStyle.Render("project_library_drift: "+drift))
+		}
+	} else {
+		lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
 	}
-	lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
 	if snapshot, ok := m.taskNodeContracts[task.ID]; ok {
 		lines = append(lines, hintStyle.Render("source_library: "+fallbackText(strings.TrimSpace(snapshot.SourceLibraryID), "-")))
 		lines = append(lines, hintStyle.Render("source_node_template: "+fallbackText(strings.TrimSpace(snapshot.SourceNodeTemplateID), "-")))

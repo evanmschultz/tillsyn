@@ -1212,7 +1212,9 @@ func snapshotTemplateLibraryFromDomain(library domain.TemplateLibrary) domain.Te
 
 // snapshotProjectTemplateBindingFromDomain copies one project binding into snapshot form.
 func snapshotProjectTemplateBindingFromDomain(binding domain.ProjectTemplateBinding) domain.ProjectTemplateBinding {
-	return binding
+	out := binding
+	out.BoundLibrarySnapshot = cloneOptionalSnapshotTemplateLibrary(binding.BoundLibrarySnapshot)
+	return out
 }
 
 // snapshotNodeContractFromDomain copies one node-contract snapshot into snapshot form.
@@ -1296,6 +1298,11 @@ func normalizeSnapshotTemplateLibrary(library domain.TemplateLibrary) (domain.Te
 		Description:         library.Description,
 		Status:              library.Status,
 		SourceLibraryID:     library.SourceLibraryID,
+		BuiltinManaged:      library.BuiltinManaged,
+		BuiltinSource:       library.BuiltinSource,
+		BuiltinVersion:      library.BuiltinVersion,
+		Revision:            max(library.Revision, 1),
+		RevisionDigest:      library.RevisionDigest,
 		CreatedByActorID:    library.CreatedByActorID,
 		CreatedByActorName:  library.CreatedByActorName,
 		CreatedByActorType:  library.CreatedByActorType,
@@ -1347,6 +1354,10 @@ func normalizeSnapshotTemplateLibrary(library domain.TemplateLibrary) (domain.Te
 	normalized.CreatedAt = library.CreatedAt.UTC()
 	normalized.UpdatedAt = library.UpdatedAt.UTC()
 	normalized.ApprovedAt = cloneTimePtr(library.ApprovedAt)
+	normalized.Revision = max(library.Revision, 1)
+	if strings.TrimSpace(normalized.RevisionDigest) == "" {
+		normalized.RevisionDigest = normalized.RevisionFingerprint()
+	}
 	return normalized, nil
 }
 
@@ -1356,17 +1367,34 @@ func normalizeSnapshotProjectTemplateBinding(binding domain.ProjectTemplateBindi
 		return domain.ProjectTemplateBinding{}, fmt.Errorf("bound_at is required")
 	}
 	normalized, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
-		ProjectID:        binding.ProjectID,
-		LibraryID:        binding.LibraryID,
-		BoundByActorID:   binding.BoundByActorID,
-		BoundByActorName: binding.BoundByActorName,
-		BoundByActorType: binding.BoundByActorType,
+		ProjectID:             binding.ProjectID,
+		LibraryID:             binding.LibraryID,
+		LibraryName:           binding.LibraryName,
+		BoundRevision:         max(binding.BoundRevision, 1),
+		BoundRevisionDigest:   binding.BoundRevisionDigest,
+		BoundLibraryUpdatedAt: cloneTimePtr(&binding.BoundLibraryUpdatedAt),
+		BoundByActorID:        binding.BoundByActorID,
+		BoundByActorName:      binding.BoundByActorName,
+		BoundByActorType:      binding.BoundByActorType,
+		BoundLibrarySnapshot:  cloneOptionalSnapshotTemplateLibrary(binding.BoundLibrarySnapshot),
 	}, binding.BoundAt)
 	if err != nil {
 		return domain.ProjectTemplateBinding{}, err
 	}
 	normalized.BoundAt = binding.BoundAt.UTC()
+	normalized.DriftStatus = strings.TrimSpace(binding.DriftStatus)
+	normalized.LatestRevision = max(binding.LatestRevision, 0)
+	normalized.LatestRevisionDigest = strings.TrimSpace(binding.LatestRevisionDigest)
+	normalized.LatestLibraryUpdatedAt = cloneTimePtr(binding.LatestLibraryUpdatedAt)
 	return normalized, nil
+}
+
+func cloneOptionalSnapshotTemplateLibrary(in *domain.TemplateLibrary) *domain.TemplateLibrary {
+	if in == nil {
+		return nil
+	}
+	cloned := snapshotTemplateLibraryFromDomain(*in)
+	return &cloned
 }
 
 // normalizeSnapshotNodeContract validates and normalizes one imported node-contract snapshot.

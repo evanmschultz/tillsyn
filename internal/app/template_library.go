@@ -25,6 +25,9 @@ type UpsertTemplateLibraryInput struct {
 	Description         string
 	Status              domain.TemplateLibraryStatus
 	SourceLibraryID     string
+	BuiltinManaged      bool
+	BuiltinSource       string
+	BuiltinVersion      string
 	CreatedByActorID    string
 	CreatedByActorName  string
 	CreatedByActorType  domain.ActorType
@@ -193,6 +196,9 @@ func (s *Service) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLi
 		Description:         in.Description,
 		Status:              in.Status,
 		SourceLibraryID:     in.SourceLibraryID,
+		BuiltinManaged:      in.BuiltinManaged,
+		BuiltinSource:       in.BuiltinSource,
+		BuiltinVersion:      in.BuiltinVersion,
 		CreatedByActorID:    firstNonEmptyTrimmed(in.CreatedByActorID, resolvedActor.ActorID),
 		CreatedByActorName:  firstNonEmptyTrimmed(in.CreatedByActorName, resolvedActor.ActorName, in.CreatedByActorID),
 		CreatedByActorType:  normalizeActorTypeInput(firstActorType(in.CreatedByActorType, resolvedActor.ActorType)),
@@ -205,6 +211,10 @@ func (s *Service) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLi
 	if err != nil {
 		return domain.TemplateLibrary{}, err
 	}
+	library.RevisionDigest = library.RevisionFingerprint()
+	if library.RevisionDigest == "" {
+		return domain.TemplateLibrary{}, domain.ErrInvalidTemplateLibrary
+	}
 
 	existing, getErr := s.repo.GetTemplateLibrary(ctx, library.ID)
 	switch {
@@ -213,8 +223,13 @@ func (s *Service) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLi
 		library.CreatedByActorID = existing.CreatedByActorID
 		library.CreatedByActorName = existing.CreatedByActorName
 		library.CreatedByActorType = existing.CreatedByActorType
+		library.Revision = max(existing.Revision, 1)
+		if strings.TrimSpace(existing.RevisionDigest) != "" && existing.RevisionDigest != library.RevisionDigest {
+			library.Revision++
+		}
 		library.UpdatedAt = now.UTC()
 	case errors.Is(getErr, ErrNotFound):
+		library.Revision = max(library.Revision, 1)
 		if hasResolvedActor && library.CreatedByActorID == "" {
 			library.CreatedByActorID = resolvedActor.ActorID
 			library.CreatedByActorName = resolvedActor.ActorName
@@ -250,11 +265,16 @@ func (s *Service) BindProjectTemplateLibrary(ctx context.Context, in BindProject
 	}
 	now := s.clock()
 	binding, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
-		ProjectID:        projectID,
-		LibraryID:        library.ID,
-		BoundByActorID:   in.BoundByActorID,
-		BoundByActorName: in.BoundByActorName,
-		BoundByActorType: in.BoundByActorType,
+		ProjectID:             projectID,
+		LibraryID:             library.ID,
+		LibraryName:           library.Name,
+		BoundRevision:         max(library.Revision, 1),
+		BoundRevisionDigest:   library.RevisionDigest,
+		BoundLibraryUpdatedAt: &library.UpdatedAt,
+		BoundByActorID:        in.BoundByActorID,
+		BoundByActorName:      in.BoundByActorName,
+		BoundByActorType:      in.BoundByActorType,
+		BoundLibrarySnapshot:  &library,
 	}, now)
 	if err != nil {
 		return domain.ProjectTemplateBinding{}, err
@@ -262,7 +282,7 @@ func (s *Service) BindProjectTemplateLibrary(ctx context.Context, in BindProject
 	if err := s.repo.UpsertProjectTemplateBinding(ctx, binding); err != nil {
 		return domain.ProjectTemplateBinding{}, err
 	}
-	return binding, nil
+	return s.enrichProjectTemplateBinding(ctx, binding)
 }
 
 // GetProjectTemplateBinding loads the active binding for one project.
@@ -271,7 +291,11 @@ func (s *Service) GetProjectTemplateBinding(ctx context.Context, projectID strin
 	if projectID == "" {
 		return domain.ProjectTemplateBinding{}, domain.ErrInvalidID
 	}
-	return s.repo.GetProjectTemplateBinding(ctx, projectID)
+	binding, err := s.repo.GetProjectTemplateBinding(ctx, projectID)
+	if err != nil {
+		return domain.ProjectTemplateBinding{}, err
+	}
+	return s.enrichProjectTemplateBinding(ctx, binding)
 }
 
 // UnbindProjectTemplateLibrary removes the active template-library binding for one project.
@@ -327,15 +351,58 @@ func (s *Service) resolveBoundNodeTemplate(ctx context.Context, projectID string
 		}
 		return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, err
 	}
-	library, err := s.repo.GetTemplateLibrary(ctx, binding.LibraryID)
-	if err != nil {
-		return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, err
+	library := domain.TemplateLibrary{}
+	if binding.BoundLibrarySnapshot != nil {
+		library = *binding.BoundLibrarySnapshot
+	}
+	if library.ID == "" {
+		library, err = s.repo.GetTemplateLibrary(ctx, binding.LibraryID)
+		if err != nil {
+			return domain.TemplateLibrary{}, domain.NodeTemplate{}, false, err
+		}
 	}
 	nodeTemplate, ok := library.FindNodeTemplate(scope, kindID)
 	if !ok {
 		return library, domain.NodeTemplate{}, false, nil
 	}
 	return library, nodeTemplate, true, nil
+}
+
+func (s *Service) enrichProjectTemplateBinding(ctx context.Context, binding domain.ProjectTemplateBinding) (domain.ProjectTemplateBinding, error) {
+	if binding.LibraryName == "" && binding.BoundLibrarySnapshot != nil {
+		binding.LibraryName = binding.BoundLibrarySnapshot.Name
+	}
+	latest, err := s.repo.GetTemplateLibrary(ctx, binding.LibraryID)
+	switch {
+	case err == nil:
+		binding.LatestRevision = max(latest.Revision, 1)
+		binding.LatestRevisionDigest = latest.RevisionDigest
+		ts := latest.UpdatedAt.UTC()
+		binding.LatestLibraryUpdatedAt = &ts
+		if binding.LibraryName == "" {
+			binding.LibraryName = latest.Name
+		}
+		if binding.BoundRevision == binding.LatestRevision && strings.TrimSpace(binding.BoundRevisionDigest) == strings.TrimSpace(binding.LatestRevisionDigest) {
+			binding.DriftStatus = domain.ProjectTemplateBindingDriftCurrent
+		} else {
+			binding.DriftStatus = domain.ProjectTemplateBindingDriftUpdateAvailable
+		}
+	case errors.Is(err, ErrNotFound):
+		binding.DriftStatus = domain.ProjectTemplateBindingDriftLibraryMissing
+	default:
+		return domain.ProjectTemplateBinding{}, err
+	}
+	if binding.BoundRevision == 0 {
+		binding.BoundRevision = 1
+	}
+	if binding.BoundLibraryUpdatedAt.IsZero() {
+		if binding.BoundLibrarySnapshot != nil && !binding.BoundLibrarySnapshot.UpdatedAt.IsZero() {
+			binding.BoundLibraryUpdatedAt = binding.BoundLibrarySnapshot.UpdatedAt.UTC()
+		} else if binding.LatestLibraryUpdatedAt != nil {
+			binding.BoundLibraryUpdatedAt = binding.LatestLibraryUpdatedAt.UTC()
+		}
+	}
+	return binding, nil
 }
 
 // mergeTaskMetadataWithNodeTemplate applies task defaults from one node template at create time.

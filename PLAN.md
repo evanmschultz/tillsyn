@@ -9444,3 +9444,91 @@ Next step:
 1. Run focused mage package gates for the touched common/mcpapi packages.
 2. Run `mage ci`.
 3. Re-check the live project/auth parity paths on the rebuilt runtime.
+
+### 2026-04-01: Default-Go Lifecycle And Reapply Consensus Folded Into Canonical Docs
+
+Objective:
+- confirm the earlier default-go workflow/template consensus was not lost and fold the locked lifecycle + reapply decisions into the canonical docs before implementation.
+
+Findings:
+1. The detailed default-go workflow design is still present in the repo; it was not lost.
+2. The most concrete current sources are:
+   - `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` for the project setup, branch setup, `PLAN` / `BUILD` / `CLOSEOUT` / `BRANCH CLEANUP`, generated QA work, and the initial `TILLSYN` dogfood tree.
+   - `TEMPLATING_DESIGN_MEMO.md` for the broader template-library / binding / node-contract model.
+   - `README.md` for the top-level runtime and operator-facing contract summary.
+3. The main missing gap was not design loss; it was that the canonical docs still underspecified the explicit lifecycle-management and project-reapply behavior for `default-go`.
+
+Consensus folded into docs:
+1. `default-go` is a builtin-managed approved global template library, not a one-shot bootstrap artifact.
+2. Library refresh/install is explicit and auditable.
+3. Existing bound projects stay stable until a dev explicitly reapplies or upgrades the binding.
+4. TUI and MCP/CLI should both expose that reapply path.
+5. Reapply must show the binding/library drift plus the affected project defaults and generated-node contracts before apply.
+6. Future generated nodes may adopt the new contract after dev approval.
+7. Existing generated nodes must not be silently rewritten.
+8. Existing template-owned and still-unmodified nodes may be proposed for migration, but only through explicit dev approval.
+9. Dev approval needs both per-item approval and an explicit `approve all` path; orchestrator help is allowed, final approval remains with the dev.
+10. The review UX should use the normal Tillsyn interaction model and existing React-style/TUI component language instead of a separate template-admin UI.
+
+Documentation updates:
+1. `README.md`
+   - expanded the default-go section to point at the full lifecycle contract and to document the explicit lifecycle-management, reapply direction, and review-UI expectation.
+2. `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+   - added a dedicated `Default-Go Lifecycle Management` section.
+   - added a dedicated `Project-Template Update / Reapply Contract` section.
+   - locked the simple migration-review interaction model.
+   - reduced the deferred list so template-update behavior is no longer described as unresolved product direction.
+
+Validation:
+1. Docs-only update; no `mage` run was needed for this checkpoint.
+
+Next step:
+1. Implement the `default-go` lifecycle visibility/refresh/reapply surfaces against the now-documented contract.
+2. Keep the remaining ambiguity discussion limited to exact UI presentation and migration-review ergonomics, not the already-locked product behavior.
+
+### 2026-04-01: Default-Go Revision Pinning And Drift Visibility
+
+Objective:
+- implement the first executable slice of the default-go lifecycle/reapply contract so bound projects stop silently following mutable template-library rows.
+
+Implementation:
+1. Added revision/provenance fields to template libraries:
+   - builtin-managed/source/version metadata,
+   - logical revision number,
+   - stable revision digest derived from the normalized library contract.
+2. Changed project template bindings to pin:
+   - bound library name,
+   - bound revision and digest,
+   - bound library updated timestamp,
+   - a bound library snapshot used for future template resolution.
+3. Updated template resolution so bound projects resolve node templates from the pinned binding snapshot instead of always reading the latest mutable library row.
+4. Updated binding reads to enrich drift visibility:
+   - `current`
+   - `update_available`
+   - `library_missing`
+   with latest revision metadata attached when available.
+5. Kept the explicit reapply path on the existing bind operation:
+   - rebinding to the same approved library now means "adopt the latest approved revision intentionally",
+   - without introducing a new MCP noun or a separate semantic verb yet.
+6. Added SQLite migration/backfill support:
+   - template-library revision/provenance columns,
+   - binding snapshot/revision columns,
+   - idempotent backfill for existing libraries and bindings.
+7. Surfaced the new state in operator views:
+   - TUI project/task template sections now show bound revision and drift summary,
+   - CLI template-library and project-binding views now show revision/drift metadata.
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (172 tests).
+2. `mage test-pkg ./internal/adapters/storage/sqlite` -> PASS (67 tests).
+3. `mage test-pkg ./internal/tui` -> PASS (297 tests).
+4. `mage test-pkg ./cmd/till` -> PASS (215 tests).
+5. `mage test-pkg ./internal/adapters/server/...` -> PASS (227 tests across 4 packages; 1 package with no tests).
+6. `mage ci` -> PASS (1118 tests total, coverage gate passed, build passed).
+
+Notes:
+1. Running multiple `mage` package targets in parallel is not safe here because Mage compiles helper files in-place; rerun them sequentially.
+
+Next step:
+1. Add the explicit builtin default-go install/refresh workflow on top of the new revision substrate.
+2. Add dev-facing migration-review actions for existing template-owned nodes, using the now-pinned binding snapshot as the comparison base.

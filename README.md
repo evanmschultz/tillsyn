@@ -183,9 +183,28 @@ Template-library operator examples:
 - Current default-go workflow direction:
   - `PROJECT SETUP` is project-only onboarding work for new or adopted projects,
   - normal branch/work execution should flow through `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
-  - and the preferred operator flow is to create or confirm `PLAN` before broad implementation begins.
+  - the preferred operator flow is to create or confirm `PLAN` before broad implementation begins,
+  - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`.
 - Example shape:
   - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
+- Default-go lifecycle management direction:
+  - `default-go` should be treated as a builtin-managed template library rather than a one-off bootstrap artifact,
+  - refresh/install should be explicit and auditable,
+  - the runtime should be able to show whether the builtin library is missing, current, or drifted from the repo-backed builtin source,
+  - and refreshing the library definition must not silently rewrite already-bound project state.
+- Project-template update/reapply direction:
+  - if `default-go` or another bound approved library changes later, existing projects should stay stable until a dev explicitly reapplies or upgrades the binding,
+  - TUI and MCP/CLI should both expose that reapply path,
+  - the reapply flow should show what changed in project defaults and generated-node contracts before apply,
+  - future generated nodes may start using the newly approved contract after that explicit reapply,
+  - existing generated nodes must not be silently rewritten,
+  - any migration of existing template-owned nodes should be surfaced as dev-approved action-required work with both per-item approval and an explicit `approve all` affordance,
+  - and the review UI should use the normal TUI/React-style component language already used elsewhere in Tillsyn rather than inventing a separate template-admin presentation model.
+- Current lifecycle implementation status:
+  - template libraries now carry revision/provenance metadata,
+  - project bindings pin a bound library snapshot plus the bound revision instead of following the mutable latest library row,
+  - binding reads now surface drift/current state against the latest approved library revision,
+  - and explicit reapply currently uses the existing bind flow against the latest approved library rather than a separate new verb.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till.project(operation=create, name="Go Service", kind="go-service", template_library_id="go-defaults", ...)`

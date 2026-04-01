@@ -2976,6 +2976,9 @@ func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.
 		Description:     strings.TrimSpace(spec.Description),
 		Status:          spec.Status,
 		SourceLibraryID: strings.TrimSpace(spec.SourceLibraryID),
+		BuiltinManaged:  spec.BuiltinManaged,
+		BuiltinSource:   strings.TrimSpace(spec.BuiltinSource),
+		BuiltinVersion:  strings.TrimSpace(spec.BuiltinVersion),
 		NodeTemplates:   nodeTemplates,
 	})
 	if err != nil {
