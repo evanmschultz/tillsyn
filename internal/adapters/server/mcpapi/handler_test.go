@@ -458,7 +458,7 @@ func TestHandlerRegistersCaptureStateTool(t *testing.T) {
 	if !slices.Contains(toolNames, "till.capture_state") {
 		t.Fatalf("tool list missing till.capture_state: %#v", toolNames)
 	}
-	if slices.Contains(toolNames, "till.list_attention_items") {
+	if slices.Contains(toolNames, "till.attention_item") {
 		t.Fatalf("unexpected attention tool without attention service: %#v", toolNames)
 	}
 }
@@ -500,7 +500,6 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 	}
 	for _, required := range []string{
 		"till.capture_state",
-		"till.list_attention_items",
 		"till.attention_item",
 	} {
 		if !slices.Contains(toolNames, required) {
@@ -1048,7 +1047,8 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.list_attention_items", map[string]any{
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.attention_item", map[string]any{
+		"operation":  "list",
 		"project_id": "p1",
 		"scope_type": "project",
 		"scope_id":   "p1",
@@ -1737,7 +1737,8 @@ func TestHandlerAttentionToolCallErrorMapping(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.list_attention_items", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.attention_item", map[string]any{
+		"operation":  "list",
 		"project_id": "p1",
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); !isError {

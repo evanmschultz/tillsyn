@@ -398,6 +398,7 @@ type attentionItemMutationArgs struct {
 	ProjectID          string `json:"project_id"`
 	ScopeType          string `json:"scope_type"`
 	ScopeID            string `json:"scope_id"`
+	State              string `json:"state"`
 	Kind               string `json:"kind"`
 	Summary            string `json:"summary"`
 	BodyMarkdown       string `json:"body_markdown"`
@@ -415,57 +416,25 @@ type attentionItemMutationArgs struct {
 func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService, exposeLegacyCoordinationTools bool) {
 	srv.AddTool(
 		mcp.NewTool(
-			"till.list_attention_items",
-			mcp.WithDescription("List attention items for a project scope."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Description("Scope type")),
-			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
-			mcp.WithString("state", mcp.Description("Filter by state")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			items, err := attention.ListAttentionItems(ctx, common.ListAttentionItemsRequest{
-				ProjectID: projectID,
-				ScopeType: req.GetString("scope_type", ""),
-				ScopeID:   req.GetString("scope_id", ""),
-				State:     req.GetString("state", ""),
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{
-				"items": items,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_attention_items result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
 			"till.attention_item",
-			mcp.WithDescription("Create or resolve one attention item."),
+			mcp.WithDescription("Create, resolve, or list attention items."),
 			mcp.WithString("operation",
 				mcp.Required(),
-				mcp.Enum("raise", "resolve"),
-				mcp.Description("Attention item mutation operation"),
+				mcp.Enum("list", "raise", "resolve"),
+				mcp.Description("Attention item operation"),
 			),
-			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=raise")),
-			mcp.WithString("scope_type", mcp.Description("Scope type. Required for operation=raise")),
-			mcp.WithString("scope_id", mcp.Description("Scope identifier. Required for operation=raise")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|raise")),
+			mcp.WithString("scope_type", mcp.Description("Scope type. Optional for operation=list and required for operation=raise")),
+			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and required for operation=raise")),
+			mcp.WithString("state", mcp.Description("Filter by state when operation=list")),
 			mcp.WithString("kind", mcp.Description("Attention kind. Required for operation=raise")),
 			mcp.WithString("summary", mcp.Description("Markdown-rich summary for quick triage. Required for operation=raise")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context when operation=raise")),
 			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action when operation=raise")),
 			mcp.WithString("id", mcp.Description("Attention item id. Required for operation=resolve")),
 			mcp.WithString("reason", mcp.Description("Resolution reason when operation=resolve")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for operation=raise|resolve. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=raise|resolve. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
@@ -480,8 +449,30 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 	)
 
 	if exposeLegacyCoordinationTools {
+		registerLegacyAttentionListTool(srv, attention)
 		registerLegacyAttentionMutationTools(srv, attention)
 	}
+}
+
+func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.AttentionService) {
+	srv.AddTool(
+		mcp.NewTool(
+			"till.list_attention_items",
+			mcp.WithDescription("List attention items for a project scope."),
+			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+			mcp.WithString("scope_type", mcp.Description("Scope type")),
+			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
+			mcp.WithString("state", mcp.Description("Filter by state")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args attentionItemMutationArgs
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			args.Operation = "list"
+			return handleAttentionItemMutation(ctx, attention, args)
+		},
+	)
 }
 
 func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention common.AttentionService) {
@@ -538,6 +529,25 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 func handleAttentionItemMutation(ctx context.Context, attention common.AttentionService, args attentionItemMutationArgs) (*mcp.CallToolResult, error) {
 	operation := strings.TrimSpace(args.Operation)
 	switch operation {
+	case "list":
+		projectID := strings.TrimSpace(args.ProjectID)
+		if projectID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+		}
+		items, err := attention.ListAttentionItems(ctx, common.ListAttentionItemsRequest{
+			ProjectID: projectID,
+			ScopeType: strings.TrimSpace(args.ScopeType),
+			ScopeID:   strings.TrimSpace(args.ScopeID),
+			State:     strings.TrimSpace(args.State),
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(map[string]any{"items": items})
+		if err != nil {
+			return nil, fmt.Errorf("encode attention_item list result: %w", err)
+		}
+		return result, nil
 	case "raise":
 		projectID := strings.TrimSpace(args.ProjectID)
 		if projectID == "" {

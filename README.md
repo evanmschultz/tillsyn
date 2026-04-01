@@ -98,17 +98,17 @@ Current MCP/runtime direction:
   - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
   - projects: `till.list_projects`, `till.project`
   - tasks/work graph: `till.list_tasks`, `till.plan_item`, `till.list_child_tasks`, `till.search_task_matches`
-  - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.attention_item`
+  - capture/attention: `till.capture_state`, `till.attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
   - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.list_project_allowed_kinds`
   - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
-  - capability leases: `till.list_capability_leases`, `till.capability_lease`
+  - capability leases: `till.capability_lease`
   - comments: `till.create_comment`, `till.list_comments_by_target`
-  - handoffs: `till.handoff`, `till.get_handoff`, `till.list_handoffs`
+  - handoffs: `till.handoff`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
-    - `till.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
+    - `till.capability_lease(operation=revoke_all)` fails closed on invalid/unknown scope tuples;
     - `till.create_comment` fails closed when the target does not exist in the referenced project;
     - `till.plan_item(operation=update)` title-only updates preserve existing priority when `priority` is omitted.
 
@@ -278,7 +278,7 @@ Dogfood MCP continuation pattern:
     "principal_type": "agent",
     "client_id": "<client-id>",
     "reason": "dogfood request",
-    "continuation_json": "{\"resume_token\":\"opaque-requester-token\",\"resume_tool\":\"till.raise_attention_item\"}"
+    "continuation_json": "{\"resume_token\":\"opaque-requester-token\",\"resume_tool\":\"till.attention_item\"}"
   }
 }
 ```
