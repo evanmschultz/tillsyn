@@ -1,8 +1,40 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-30
+Updated: 2026-03-31
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
+
+## Checkpoint 2026-03-31: Windows Resource Picker Test Stabilization
+
+Objective:
+- fix the Windows-only `internal/tui` CI failure on `TestModelResourcePickerAttachFromEdit` without changing the intended task-resource picker behavior.
+
+Context7:
+1. `/golang/go/go1.26.0` reviewed before edits for the standard-library filesystem/path semantics involved in picker-entry enumeration and cross-platform path handling.
+
+Investigation notes:
+1. Verified the condensed native MCP surface is callable in this session with `till.get_bootstrap_guide`; no stdio fallback is needed for later runtime dogfooding.
+2. Reconfirmed the failing GitHub Actions run `23829409074` via `gh run view 23829409074 --log-failed`:
+   - failing job: `ci (windows-latest)`,
+   - failing test: `github.com/hylla/tillsyn/internal/tui :: TestModelResourcePickerAttachFromEdit`,
+   - failure: expected `local_file`, got `local_dir`.
+3. Reviewed `magefile.go`, `internal/tui/model.go`, and `internal/tui/model_test.go` before the fix.
+4. Checked for recent local dev logs under `.tillsyn/log/`; none were present in this worktree during the test-only investigation.
+5. Local baseline before edits: `mage test-pkg ./internal/tui` -> PASS.
+
+Implementation summary:
+1. Stabilized `TestModelResourcePickerAttachFromEdit` so it navigates until the picker is actually highlighting `notes.md` before pressing enter, instead of assuming one `down` always lands on the file after directories across platforms.
+2. Kept the assertion focused on the real behavior under test:
+   - attaching the selected file from edit mode stages one `project_root`-relative `local_file` reference.
+
+Current status:
+1. Local validation passed:
+   - `mage test-pkg ./internal/tui` -> PASS.
+   - `mage ci` -> PASS.
+2. Next step is commit/push for this isolated fix slice and `gh run watch --exit-status` on the resulting remote run.
+3. After remote CI is green, resume the next planned work:
+   - comment-family consolidation,
+   - plus direct MCP regression checks against the condensed default tool surface now that native `till_*` bindings are available in-session.
 
 ## Checkpoint 2026-03-30: Help Example Placeholder Cleanup
 
