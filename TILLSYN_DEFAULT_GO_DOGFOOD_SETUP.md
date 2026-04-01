@@ -198,8 +198,8 @@ Current implementation direction for this contract:
   - `till.template(operation=get_builtin_status|ensure_builtin)`;
 - explicit builtin ensure should fail loudly when required kinds are still missing instead of silently installing a partial contract;
 - explicit reapply may use the existing bind/update path as long as it remains visibly dev-approved and drift-aware;
-- in the TUI, saving a project with the same selected drifted library should count as that intentional reapply for future generated work rather than requiring a fake library-id change.
-- the richer TUI migration-review queue is still a remaining UX slice on top of the now-landed MCP/CLI approval path.
+- in the TUI, saving a project with the same selected drifted library should open a drift summary + migration-review step before rebinding future generated work.
+- that TUI review step should expose per-item selection, explicit `approve all`, and explicit skip for existing generated nodes while preserving dev approval as the final gate.
 
 ### Plan-Phase Contract
 

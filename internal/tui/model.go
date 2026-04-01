@@ -45,9 +45,11 @@ type Service interface {
 	ListCapabilityLeases(context.Context, app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error)
 	ListHandoffs(context.Context, app.ListHandoffsInput) ([]domain.Handoff, error)
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	GetProjectTemplateReapplyPreview(context.Context, string) (domain.ProjectTemplateReapplyPreview, error)
 	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
+	ApproveProjectTemplateMigrations(context.Context, app.ApproveProjectTemplateMigrationsInput) (domain.ProjectTemplateMigrationApprovalResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
 	RevokeAuthSession(context.Context, string, string) (app.AuthSession, error)
 	RevokeCapabilityLease(context.Context, app.RevokeCapabilityLeaseInput) (domain.CapabilityLease, error)
@@ -130,6 +132,7 @@ const (
 	modeHighlightColor
 	modeBootstrapSettings
 	modeDependencyInspector
+	modeTemplateMigrationReview
 	modeDescriptionEditor
 	modeThread
 )
@@ -381,6 +384,18 @@ type labelInheritanceSources struct {
 type dependencyCandidate struct {
 	Match app.TaskMatch
 	Path  string
+}
+
+// pendingProjectTemplateReview stores one staged project save that is waiting on TUI migration review.
+type pendingProjectTemplateReview struct {
+	ProjectID                string
+	Name                     string
+	Description              string
+	Kind                     domain.KindID
+	Metadata                 domain.ProjectMetadata
+	RootPath                 string
+	TemplateLibraryID        string
+	CurrentTemplateLibraryID string
 }
 
 // confirmAction describes a pending confirmation action.
@@ -763,6 +778,11 @@ type Model struct {
 	projectFormInputs              []textinput.Model
 	projectFormFocus               int
 	projectFormDescription         string
+	templateMigrationReviewPreview *domain.ProjectTemplateReapplyPreview
+	templateMigrationReviewDraft   *pendingProjectTemplateReview
+	templateMigrationReviewLoading bool
+	templateMigrationReviewIndex   int
+	templateMigrationReviewPicked  map[string]struct{}
 	kindDefinitions                []domain.KindDefinition
 	templateLibraries              []domain.TemplateLibrary
 	currentProjectTemplateBinding  *domain.ProjectTemplateBinding
@@ -1085,6 +1105,13 @@ type bootstrapSettingsSavedMsg struct {
 	err    error
 }
 
+// projectTemplateReviewLoadedMsg carries the staged reapply preview used by the TUI migration-review surface.
+type projectTemplateReviewLoadedMsg struct {
+	draft   pendingProjectTemplateReview
+	preview domain.ProjectTemplateReapplyPreview
+	err     error
+}
+
 // threadLoadedMsg carries comments loaded for one thread target.
 type threadLoadedMsg struct {
 	target   domain.CommentTarget
@@ -1264,6 +1291,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		allowedLabelProject:            map[string][]string{},
 		searchRoots:                    []string{},
 		projectRoots:                   map[string]string{},
+		templateMigrationReviewPicked:  map[string]struct{}{},
 		identityDisplayName:            "tillsyn-user",
 		identityActorID:                "tillsyn-user",
 		identityDefaultActorType:       string(domain.ActorTypeUser),
@@ -1706,6 +1734,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmd, m.loadData)
 		}
 		return m, m.loadData
+
+	case projectTemplateReviewLoadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.mode = modeEditProject
+			m.status = "template reapply review unavailable"
+			m.templateMigrationReviewLoading = false
+			m.templateMigrationReviewPreview = nil
+			m.templateMigrationReviewDraft = nil
+			m.templateMigrationReviewPicked = map[string]struct{}{}
+			m.templateMigrationReviewIndex = 0
+			return m, nil
+		}
+		m.err = nil
+		m.templateMigrationReviewLoading = false
+		m.mode = modeTemplateMigrationReview
+		m.templateMigrationReviewDraft = &msg.draft
+		preview := msg.preview
+		m.templateMigrationReviewPreview = &preview
+		m.templateMigrationReviewIndex = 0
+		m.templateMigrationReviewPicked = map[string]struct{}{}
+		if !preview.ReviewRequired && len(preview.MigrationCandidates) == 0 {
+			return m.applyProjectTemplateReviewDecision(false, false)
+		}
+		if preview.EligibleMigrationCount > 0 {
+			m.status = "review template migrations"
+		} else {
+			m.status = "review template drift"
+		}
+		return m, nil
 
 	case actionMsg:
 		if msg.err != nil {
@@ -4761,6 +4819,207 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	}
 	m.syncProjectFormDescriptionDisplay()
 	return m.focusProjectFormField(0)
+}
+
+// clearProjectTemplateMigrationReview resets staged TUI migration-review state.
+func (m *Model) clearProjectTemplateMigrationReview() {
+	if m == nil {
+		return
+	}
+	m.templateMigrationReviewPreview = nil
+	m.templateMigrationReviewDraft = nil
+	m.templateMigrationReviewLoading = false
+	m.templateMigrationReviewIndex = 0
+	m.templateMigrationReviewPicked = map[string]struct{}{}
+}
+
+// resetProjectFormState clears staged project-form state after save/cancel.
+func (m *Model) resetProjectFormState() {
+	if m == nil {
+		return
+	}
+	m.projectFormInputs = nil
+	m.projectFormFocus = 0
+	m.projectFormDescription = ""
+	m.editingProjectID = ""
+}
+
+// startProjectTemplateMigrationReview loads one drift preview before finalizing an edit-project reapply.
+func (m *Model) startProjectTemplateMigrationReview(draft pendingProjectTemplateReview) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.mode = modeTemplateMigrationReview
+	m.templateMigrationReviewLoading = true
+	m.templateMigrationReviewDraft = &draft
+	m.templateMigrationReviewPreview = nil
+	m.templateMigrationReviewIndex = 0
+	m.templateMigrationReviewPicked = map[string]struct{}{}
+	m.status = "loading template reapply review..."
+	return func() tea.Msg {
+		preview, err := m.svc.GetProjectTemplateReapplyPreview(context.Background(), draft.ProjectID)
+		return projectTemplateReviewLoadedMsg{
+			draft:   draft,
+			preview: preview,
+			err:     err,
+		}
+	}
+}
+
+// templateMigrationReviewCandidates returns the staged preview candidates for the active review surface.
+func (m Model) templateMigrationReviewCandidates() []domain.ProjectTemplateMigrationCandidate {
+	if m.templateMigrationReviewPreview == nil {
+		return nil
+	}
+	return m.templateMigrationReviewPreview.MigrationCandidates
+}
+
+// selectedTemplateMigrationReviewCandidate returns the currently highlighted migration-review candidate.
+func (m Model) selectedTemplateMigrationReviewCandidate() (domain.ProjectTemplateMigrationCandidate, bool) {
+	candidates := m.templateMigrationReviewCandidates()
+	if len(candidates) == 0 {
+		return domain.ProjectTemplateMigrationCandidate{}, false
+	}
+	idx := clamp(m.templateMigrationReviewIndex, 0, len(candidates)-1)
+	return candidates[idx], true
+}
+
+// templateMigrationSelectionIDs returns selected eligible candidate ids in stable preview order.
+func (m Model) templateMigrationSelectionIDs() []string {
+	candidates := m.templateMigrationReviewCandidates()
+	if len(candidates) == 0 || len(m.templateMigrationReviewPicked) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m.templateMigrationReviewPicked))
+	for _, candidate := range candidates {
+		taskID := strings.TrimSpace(candidate.TaskID)
+		if taskID == "" {
+			continue
+		}
+		if _, ok := m.templateMigrationReviewPicked[taskID]; ok {
+			out = append(out, taskID)
+		}
+	}
+	return out
+}
+
+// toggleTemplateMigrationSelection toggles one eligible candidate in the staged migration-review selection.
+func (m *Model) toggleTemplateMigrationSelection(taskID string) {
+	if m == nil {
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	if m.templateMigrationReviewPicked == nil {
+		m.templateMigrationReviewPicked = map[string]struct{}{}
+	}
+	if _, ok := m.templateMigrationReviewPicked[taskID]; ok {
+		delete(m.templateMigrationReviewPicked, taskID)
+		return
+	}
+	m.templateMigrationReviewPicked[taskID] = struct{}{}
+}
+
+// applyProjectTemplateReviewDecision finalizes one staged project edit after the operator reviews template drift.
+func (m Model) applyProjectTemplateReviewDecision(approveAll, approveSelected bool) (tea.Model, tea.Cmd) {
+	draft := m.templateMigrationReviewDraft
+	if draft == nil {
+		m.status = "template reapply review unavailable"
+		return m, nil
+	}
+	selectedTaskIDs := m.templateMigrationSelectionIDs()
+	if approveSelected && len(selectedTaskIDs) == 0 {
+		m.status = "select one or more eligible nodes, approve all, or skip"
+		return m, nil
+	}
+	applyMigrationApproval := approveAll || approveSelected
+	approvalInput := app.ApproveProjectTemplateMigrationsInput{
+		ProjectID:      draft.ProjectID,
+		ApproveAll:     approveAll,
+		TaskIDs:        selectedTaskIDs,
+		ApprovedBy:     m.threadActorID(),
+		ApprovedByName: m.threadActorName(),
+		ApprovedByType: m.threadActorType(),
+	}
+	staged := *draft
+	m.mode = modeNone
+	m.resetProjectFormState()
+	m.clearProjectTemplateMigrationReview()
+	m.status = "saving project..."
+	return m, func() tea.Msg {
+		project, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
+			ProjectID:     staged.ProjectID,
+			Name:          staged.Name,
+			Description:   staged.Description,
+			Kind:          staged.Kind,
+			Metadata:      staged.Metadata,
+			UpdatedBy:     m.threadActorID(),
+			UpdatedByName: m.threadActorName(),
+			UpdatedType:   m.threadActorType(),
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		appliedCount := 0
+		if applyMigrationApproval {
+			result, err := m.svc.ApproveProjectTemplateMigrations(context.Background(), approvalInput)
+			if err != nil {
+				return actionMsg{err: err}
+			}
+			appliedCount = result.AppliedCount
+		}
+		switch {
+		case staged.TemplateLibraryID == "" && staged.CurrentTemplateLibraryID != "":
+			if err := m.svc.UnbindProjectTemplateLibrary(context.Background(), app.UnbindProjectTemplateLibraryInput{
+				ProjectID: project.ID,
+			}); err != nil {
+				return actionMsg{err: err}
+			}
+		case staged.TemplateLibraryID != "" && staged.TemplateLibraryID != staged.CurrentTemplateLibraryID:
+			if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
+				ProjectID:        project.ID,
+				LibraryID:        staged.TemplateLibraryID,
+				BoundByActorID:   m.threadActorID(),
+				BoundByActorName: m.threadActorName(),
+				BoundByActorType: m.threadActorType(),
+			}); err != nil {
+				return actionMsg{err: err}
+			}
+		case staged.TemplateLibraryID != "":
+			if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
+				ProjectID:        project.ID,
+				LibraryID:        staged.TemplateLibraryID,
+				BoundByActorID:   m.threadActorID(),
+				BoundByActorName: m.threadActorName(),
+				BoundByActorType: m.threadActorType(),
+			}); err != nil {
+				return actionMsg{err: err}
+			}
+		}
+		if m.saveProjectRoot != nil {
+			if err := m.saveProjectRoot(project.Slug, staged.RootPath); err != nil {
+				return actionMsg{err: err}
+			}
+		}
+		status := "project updated"
+		switch {
+		case approveAll:
+			status = fmt.Sprintf("project updated • approved all eligible migrations (%d applied)", appliedCount)
+		case approveSelected:
+			status = fmt.Sprintf("project updated • approved %d template migrations", appliedCount)
+		case staged.TemplateLibraryID != "" && staged.TemplateLibraryID == staged.CurrentTemplateLibraryID:
+			status = "project updated • existing-node migrations skipped"
+		}
+		return actionMsg{
+			status:          status,
+			reload:          true,
+			projectID:       project.ID,
+			projectRootSlug: project.Slug,
+			projectRootPath: staged.RootPath,
+		}
+	}
 }
 
 // startTaskForm starts task form.
@@ -11770,10 +12029,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
-			m.projectFormInputs = nil
-			m.projectFormFocus = 0
-			m.projectFormDescription = ""
-			m.editingProjectID = ""
+			m.resetProjectFormState()
+			m.clearProjectTemplateMigrationReview()
 			m.status = "cancelled"
 			return m, nil
 		case msg.String() == "ctrl+r" && m.projectFormFocus == projectFieldRootPath:
@@ -11816,6 +12073,88 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.projectFormInputs[m.projectFormFocus], cmd = m.projectFormInputs[m.projectFormFocus].Update(msg)
 			_ = scrubTextInputTerminalArtifacts(&m.projectFormInputs[m.projectFormFocus])
 			return m, cmd
+		}
+	}
+
+	if m.mode == modeTemplateMigrationReview {
+		if m.templateMigrationReviewLoading {
+			switch {
+			case msg.Code == tea.KeyEscape || msg.String() == "esc":
+				m.mode = modeEditProject
+				m.templateMigrationReviewLoading = false
+				m.templateMigrationReviewPreview = nil
+				m.templateMigrationReviewDraft = nil
+				m.templateMigrationReviewPicked = map[string]struct{}{}
+				m.templateMigrationReviewIndex = 0
+				m.status = "template reapply review cancelled"
+				return m, nil
+			default:
+				return m, nil
+			}
+		}
+		switch {
+		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			m.mode = modeEditProject
+			m.clearProjectTemplateMigrationReview()
+			m.status = "template reapply review cancelled"
+			return m, nil
+		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown" || msg.String() == "ctrl+d":
+			m.taskInfoBody.ScrollDown(max(1, m.taskInfoBody.Height()/2))
+			return m, nil
+		case msg.Code == tea.KeyPgUp || msg.String() == "pgup" || msg.String() == "ctrl+u":
+			m.taskInfoBody.ScrollUp(max(1, m.taskInfoBody.Height()/2))
+			return m, nil
+		case msg.String() == "home":
+			m.taskInfoBody.GotoTop()
+			return m, nil
+		case msg.String() == "end":
+			m.taskInfoBody.GotoBottom()
+			return m, nil
+		case msg.String() == "j" || msg.String() == "down":
+			if len(m.templateMigrationReviewCandidates()) == 0 {
+				m.taskInfoBody.ScrollDown(1)
+				return m, nil
+			}
+			if m.templateMigrationReviewIndex < len(m.templateMigrationReviewCandidates())-1 {
+				m.templateMigrationReviewIndex++
+			}
+			m.taskInfoBody.ScrollDown(1)
+			return m, nil
+		case msg.String() == "k" || msg.String() == "up":
+			if len(m.templateMigrationReviewCandidates()) == 0 {
+				m.taskInfoBody.ScrollUp(1)
+				return m, nil
+			}
+			if m.templateMigrationReviewIndex > 0 {
+				m.templateMigrationReviewIndex--
+			}
+			m.taskInfoBody.ScrollUp(1)
+			return m, nil
+		case msg.String() == " " || msg.String() == "space" || msg.Code == tea.KeyEnter || msg.String() == "enter":
+			candidate, ok := m.selectedTemplateMigrationReviewCandidate()
+			if !ok {
+				m.status = "no migration candidates"
+				return m, nil
+			}
+			if candidate.Status != domain.ProjectTemplateReapplyCandidateEligible {
+				m.status = firstNonEmptyTrimmed(candidate.Reason, "candidate is not eligible")
+				return m, nil
+			}
+			m.toggleTemplateMigrationSelection(candidate.TaskID)
+			if _, ok := m.templateMigrationReviewPicked[strings.TrimSpace(candidate.TaskID)]; ok {
+				m.status = "migration selected"
+			} else {
+				m.status = "migration unselected"
+			}
+			return m, nil
+		case msg.String() == "a":
+			return m.applyProjectTemplateReviewDecision(false, true)
+		case msg.String() == "A" || msg.String() == "shift+a":
+			return m.applyProjectTemplateReviewDecision(true, false)
+		case msg.String() == "s":
+			return m.applyProjectTemplateReviewDecision(false, false)
+		default:
+			return m, nil
 		}
 	}
 
@@ -12341,12 +12680,10 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		m.traceFormControlCharacterGuard("project", projectOp, "name", name)
 		m.traceFormControlCharacterGuard("project", projectOp, "description", description)
-		m.mode = modeNone
-		m.projectFormInputs = nil
-		m.projectFormFocus = 0
-		m.projectFormDescription = ""
-		m.editingProjectID = ""
 		if isAdd || projectID == "" {
+			m.mode = modeNone
+			m.resetProjectFormState()
+			m.clearProjectTemplateMigrationReview()
 			return m, func() tea.Msg {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
 					Name:              name,
@@ -12375,6 +12712,24 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		if templateLibraryID != "" &&
+			templateLibraryID == currentTemplateLibraryID &&
+			currentTemplateLibraryDrift == domain.ProjectTemplateBindingDriftUpdateAvailable {
+			draft := pendingProjectTemplateReview{
+				ProjectID:                projectID,
+				Name:                     name,
+				Description:              description,
+				Kind:                     kindID,
+				Metadata:                 metadata,
+				RootPath:                 rootPath,
+				TemplateLibraryID:        templateLibraryID,
+				CurrentTemplateLibraryID: currentTemplateLibraryID,
+			}
+			return m, m.startProjectTemplateMigrationReview(draft)
+		}
+		m.mode = modeNone
+		m.resetProjectFormState()
+		m.clearProjectTemplateMigrationReview()
 		return m, func() tea.Msg {
 			project, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
 				ProjectID:     projectID,
@@ -13697,6 +14052,15 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 		m.syncTaskInfoDetailsViewport(task)
 		m.syncTaskInfoBodyViewport(task)
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.taskInfoBody.ScrollUp(3)
+		case tea.MouseWheelDown:
+			m.taskInfoBody.ScrollDown(3)
+		}
+		return m, nil
+	}
+	if m.mode == modeTemplateMigrationReview {
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			m.taskInfoBody.ScrollUp(3)
@@ -17925,7 +18289,7 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 			lines = append(lines, hintStyle.Render("active_binding: "+m.templateBindingSummary(binding)))
 			if domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value()) == domain.NormalizeTemplateLibraryID(binding.LibraryID) &&
 				strings.TrimSpace(binding.DriftStatus) == domain.ProjectTemplateBindingDriftUpdateAvailable {
-				lines = append(lines, hintStyle.Render("save reapplies the latest approved revision for future generated work; existing nodes stay unchanged"))
+				lines = append(lines, hintStyle.Render("save opens migration review before rebinding future generated work; existing nodes need approve/skip"))
 			}
 		} else {
 			lines = append(lines, hintStyle.Render("active_binding: -"))
@@ -17967,6 +18331,141 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 		}
 	}
 
+	return resolveViewportFocus(lines)
+}
+
+// templateMigrationReviewBodyLines renders the dedicated pre-bind migration-review surface for drifted project templates.
+func (m Model) templateMigrationReviewBodyLines(contentWidth int, hintStyle, accentStyle lipgloss.Style) ([]string, int) {
+	lines := []string{}
+	if m.templateMigrationReviewLoading {
+		lines = append(lines,
+			accentStyle.Render("loading drift preview"),
+			hintStyle.Render("checking project defaults, changed child rules, and eligible generated nodes..."),
+		)
+		return lines, -1
+	}
+	preview := m.templateMigrationReviewPreview
+	if preview == nil {
+		lines = append(lines,
+			accentStyle.Render("template reapply review unavailable"),
+			hintStyle.Render("press esc to return to project edit"),
+		)
+		return lines, -1
+	}
+
+	lines = append(lines, accentStyle.Render("template drift"))
+	lines = append(lines, hintStyle.Render(fmt.Sprintf(
+		"library: %s • bound revision: %d • latest revision: %d • drift: %s",
+		firstNonEmptyTrimmed(preview.LibraryName, preview.LibraryID, "-"),
+		preview.BoundRevision,
+		preview.LatestRevision,
+		firstNonEmptyTrimmed(preview.DriftStatus, "-"),
+	)))
+	lines = append(lines, hintStyle.Render("future generated work will adopt the latest approved revision after you continue"))
+	lines = append(lines, "")
+	lines = append(lines, accentStyle.Render("review summary"))
+	lines = append(lines, hintStyle.Render(fmt.Sprintf(
+		"default changes: %d • changed child rules: %d • eligible nodes: %d • ineligible nodes: %d",
+		len(preview.ProjectDefaultChanges),
+		len(preview.ChildRuleChanges),
+		preview.EligibleMigrationCount,
+		preview.IneligibleMigrationCount,
+	)))
+	lines = append(lines, hintStyle.Render(fmt.Sprintf("selected for approval: %d", len(m.templateMigrationSelectionIDs()))))
+
+	if len(preview.ProjectDefaultChanges) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, accentStyle.Render("project default changes"))
+		limit := min(5, len(preview.ProjectDefaultChanges))
+		for idx := 0; idx < limit; idx++ {
+			change := preview.ProjectDefaultChanges[idx]
+			lines = append(lines, hintStyle.Render(fmt.Sprintf(
+				"- %s: %s -> %s",
+				change.Field,
+				truncate(firstNonEmptyTrimmed(change.Previous, "-"), max(12, contentWidth/3)),
+				truncate(firstNonEmptyTrimmed(change.Current, "-"), max(12, contentWidth/3)),
+			)))
+		}
+		if len(preview.ProjectDefaultChanges) > limit {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more default changes", len(preview.ProjectDefaultChanges)-limit)))
+		}
+	}
+
+	if len(preview.ChildRuleChanges) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, accentStyle.Render("changed child rules"))
+		limit := min(5, len(preview.ChildRuleChanges))
+		for idx := 0; idx < limit; idx++ {
+			change := preview.ChildRuleChanges[idx]
+			lines = append(lines, hintStyle.Render(fmt.Sprintf(
+				"- %s / %s • %s",
+				firstNonEmptyTrimmed(change.NodeTemplateName, change.NodeTemplateID, "-"),
+				firstNonEmptyTrimmed(change.ChildRuleID, "-"),
+				firstNonEmptyTrimmed(strings.Join(change.ChangeKinds, ", "), "details changed"),
+			)))
+		}
+		if len(preview.ChildRuleChanges) > limit {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more changed child rules", len(preview.ChildRuleChanges)-limit)))
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, accentStyle.Render("existing-node migrations"))
+	if len(preview.MigrationCandidates) == 0 {
+		lines = append(lines, hintStyle.Render("(no existing generated nodes need migration review)"))
+		lines = append(lines, hintStyle.Render("s continues and reapplies only for future generated work"))
+		return resolveViewportFocus(lines)
+	}
+
+	start, end := windowBounds(len(preview.MigrationCandidates), m.templateMigrationReviewIndex, 7)
+	for idx := start; idx < end; idx++ {
+		candidate := preview.MigrationCandidates[idx]
+		cursor := "  "
+		if idx == m.templateMigrationReviewIndex {
+			cursor = "> "
+		}
+		check := "[ ]"
+		switch candidate.Status {
+		case domain.ProjectTemplateReapplyCandidateEligible:
+			if _, ok := m.templateMigrationReviewPicked[strings.TrimSpace(candidate.TaskID)]; ok {
+				check = "[x]"
+			}
+		default:
+			check = "[-]"
+		}
+		stateText := lifecycleStateLabel(candidate.LifecycleState)
+		if stateText == "-" {
+			stateText = firstNonEmptyTrimmed(string(candidate.LifecycleState), "-")
+		}
+		row := fmt.Sprintf(
+			"%s%s %s • %s • %s • %s",
+			cursor,
+			check,
+			truncate(firstNonEmptyTrimmed(candidate.Title, candidate.TaskID), max(20, contentWidth-36)),
+			firstNonEmptyTrimmed(string(candidate.Scope), "-"),
+			firstNonEmptyTrimmed(string(candidate.Kind), "-"),
+			stateText,
+		)
+		if idx == m.templateMigrationReviewIndex {
+			row = markViewportFocus(row)
+			row = accentStyle.Render(row)
+		}
+		lines = append(lines, row)
+		meta := []string{
+			"rule: " + firstNonEmptyTrimmed(candidate.SourceChildRuleID, "-"),
+			"changes: " + firstNonEmptyTrimmed(strings.Join(candidate.ChangeKinds, ", "), "-"),
+		}
+		if candidate.Status != domain.ProjectTemplateReapplyCandidateEligible {
+			meta = append(meta, "blocked: "+firstNonEmptyTrimmed(candidate.Reason, "ineligible"))
+		}
+		lines = append(lines, hintStyle.Render("   "+truncate(strings.Join(meta, " • "), max(24, contentWidth))))
+	}
+	if len(preview.MigrationCandidates) > end-start {
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("showing %d-%d of %d", start+1, end, len(preview.MigrationCandidates))))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("space/enter toggle • a approve selected • A approve all • s skip existing nodes • esc return to edit"))
 	return resolveViewportFocus(lines)
 }
 
@@ -18695,7 +19194,7 @@ func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 // isFullPageNodeMode reports whether the current mode should render as a full-page node surface.
 func isFullPageNodeMode(mode inputMode) bool {
 	switch mode {
-	case modeTaskInfo, modeAddTask, modeEditTask, modeAddProject, modeEditProject:
+	case modeTaskInfo, modeAddTask, modeEditTask, modeAddProject, modeEditProject, modeTemplateMigrationReview:
 		return true
 	default:
 		return false
@@ -18736,6 +19235,16 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("i", "edit desc"),
 			helpBinding("r", "pick path"),
 			helpBinding("esc", "cancel"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeTemplateMigrationReview:
+		short := []key.Binding{
+			helpBinding("space", "toggle"),
+			helpBinding("a", "approve sel"),
+			helpBinding("A", "approve all"),
+			helpBinding("s", "skip"),
+			helpBinding("esc", "back"),
 			helpBinding("?", "help"),
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
@@ -19049,6 +19558,20 @@ func (m Model) renderFullPageNodeModeView() tea.View {
 		bodyViewport.SetYOffset(prevYOffset)
 		ensureViewportLineVisible(&bodyViewport, focusLine)
 		surface := renderNodeModalViewport(accent, muted, metrics.boxWidth, title, "", fullPageScrollStatus(bodyViewport), bodyViewport)
+		return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
+	case modeTemplateMigrationReview:
+		metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, "Template Migration Review", "review drift before reapply", fullPageScrollStatus(m.taskInfoBody))
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		bodyLines, focusLine := m.templateMigrationReviewBodyLines(metrics.contentWidth, hintStyle, accentStyle)
+		bodyViewport := m.taskInfoBody
+		prevYOffset := bodyViewport.YOffset()
+		bodyViewport.SetWidth(metrics.contentWidth)
+		bodyViewport.SetHeight(max(1, metrics.bodyHeight))
+		bodyViewport.SetContent(strings.Join(bodyLines, "\n"))
+		bodyViewport.SetYOffset(prevYOffset)
+		ensureViewportLineVisible(&bodyViewport, focusLine)
+		surface := renderNodeModalViewport(accent, muted, metrics.boxWidth, "Template Migration Review", "review drift before reapply", fullPageScrollStatus(bodyViewport), bodyViewport)
 		return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 	default:
 		return tea.NewView("")
@@ -20570,6 +21093,8 @@ func (m Model) modeLabel() string {
 		return "bootstrap"
 	case modeDependencyInspector:
 		return "deps"
+	case modeTemplateMigrationReview:
+		return "template-migration-review"
 	case modeDescriptionEditor:
 		return "description-editor"
 	case modeThread:
@@ -20647,6 +21172,8 @@ func (m Model) modePrompt() string {
 		return "bootstrap settings: tab focus, r browse/add default path, d clear path, enter save"
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
+	case modeTemplateMigrationReview:
+		return "template migration review: space selects, a approves selected, A approves all, s skips existing nodes, esc returns to edit"
 	case modeDescriptionEditor:
 		return "description editor: tab preview/edit, ctrl+s saves current draft, esc cancel"
 	case modeThread:
