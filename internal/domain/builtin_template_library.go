@@ -33,7 +33,7 @@ type BuiltinTemplateLibraryStatus struct {
 
 // BuiltinTemplateLibraryEnsureResult stores the outcome of one explicit builtin install or refresh.
 type BuiltinTemplateLibraryEnsureResult struct {
-	Library TemplateLibrary            `json:"library"`
+	Library TemplateLibrary              `json:"library"`
 	Status  BuiltinTemplateLibraryStatus `json:"status"`
-	Changed bool                       `json:"changed"`
+	Changed bool                         `json:"changed"`
 }

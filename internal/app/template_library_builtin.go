@@ -20,10 +20,10 @@ const (
 
 // EnsureBuiltinTemplateLibraryInput stores one explicit builtin install or refresh request.
 type EnsureBuiltinTemplateLibraryInput struct {
-	LibraryID         string
-	ActorID           string
-	ActorName         string
-	ActorType         domain.ActorType
+	LibraryID string
+	ActorID   string
+	ActorName string
+	ActorType domain.ActorType
 }
 
 // GetBuiltinTemplateLibraryStatus returns install and drift state for one supported builtin library.
@@ -257,9 +257,9 @@ func defaultGoBuiltinTemplateLibrarySpec(actor builtinTemplateActor) UpsertTempl
 		ApprovedByActorType: actorType,
 		NodeTemplates: []UpsertNodeTemplateInput{
 			{
-				ID:         "go-project-template",
-				ScopeLevel: domain.KindAppliesToProject,
-				NodeKindID: domain.KindID("go-project"),
+				ID:          "go-project-template",
+				ScopeLevel:  domain.KindAppliesToProject,
+				NodeKindID:  domain.KindID("go-project"),
 				DisplayName: "Go Project",
 				ProjectMetadataDefaults: &domain.ProjectMetadata{
 					Owner:             "Evan",

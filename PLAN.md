@@ -9585,6 +9585,13 @@ Validation:
 4. `mage test-pkg ./internal/adapters/server/common` -> PASS (97 tests).
 5. `mage ci` -> PASS (1124 tests total, coverage gate passed, build passed).
 
+Remote CI follow-up:
+1. Initial push commit `7eaefa6` failed remotely on all CI runners due to `gofmt` drift in:
+   - `cmd/till/template_builtin_cli_test.go`
+   - `internal/app/template_library_builtin.go`
+   - `internal/domain/builtin_template_library.go`
+2. Applied `gofmt -w` to those files locally and reran `mage ci` -> PASS before the follow-up push.
+
 Live-runtime note:
 1. The current Codex session can still call the existing `till.template` tool, but its in-session schema has not picked up the new `get_builtin_status|ensure_builtin` operations yet.
 2. A client/runtime refresh is therefore required before live MCP parity can be completed for the new builtin lifecycle operations.
