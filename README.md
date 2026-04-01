@@ -148,6 +148,8 @@ Current auth note:
 - Open guidance question:
   - we still need to decide whether `till.get_bootstrap_guide` should remain a dedicated lightweight tool or collapse into `till.get_instructions(topic=bootstrap|workflow)` later;
   - the current split is intentional for now because bootstrap is runtime-generated minimal next-step guidance, while instructions is broader embedded-doc retrieval and recommendation payloads.
+  - if we do collapse bootstrap later, `till.get_instructions` should grow into a scoped explanation tool with inputs such as optional `project_id`, `template_library_id`, `kind_id`, and `node_id`;
+  - `kind_id` alone will not be enough for every explanation, because global catalog meaning, project-scoped usage, template-scoped usage, and one concrete node contract can differ.
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.

@@ -9050,3 +9050,27 @@ Clarification:
 3. Open design question:
    - we still need to decide whether bootstrap should remain its own tool or later collapse into `till.get_instructions(topic=bootstrap|workflow)`,
    - but the split is intentional for now because bootstrap is runtime-generated minimal next-step guidance while instructions is broader embedded-doc retrieval.
+4. Follow-up design direction after the remaining MCP/tooling slices are complete:
+   - prefer collapsing bootstrap into a broader `till.get_instructions` surface,
+   - but only after `till.get_instructions` evolves from embedded-doc retrieval into a scoped explanation tool.
+5. Intended future scoped explanation inputs:
+   - `topic=bootstrap`
+   - `topic=workflow`
+   - optional `project_id`
+   - optional `template_library_id`
+   - optional `kind_id`
+   - optional `node_id` when the goal is to explain one concrete node rather than retrieve raw state.
+6. Important scope rule:
+   - `kind_id` alone is not sufficient for every explanation because kind meaning can vary across the global kind catalog, one project's allowed/used kinds, one template library's child rules, and one concrete generated node.
+   - likely precedence model:
+     - bare `kind_id` explains the catalog definition,
+     - `project_id + kind_id` explains project-scoped usage,
+     - `template_library_id + kind_id` explains template-scoped usage,
+     - `node_id` explains the realized contract and why that concrete node exists.
+7. Required underlying work before that consolidation can land:
+   - build a resolver that can join project binding, template-library rows, kind definitions, child-rule usage, and node-contract snapshots,
+   - define a stable explanation payload shape instead of returning only markdown docs,
+   - decide precedence rules when multiple scope selectors are present,
+   - and confirm whether current generation provenance is sufficient to explain why one node was created or whether additional provenance/state must be stored first.
+8. This is intentionally deferred until after the remaining live dogfood proof and MCP surface-reduction slices:
+   - do not silently fold `get_bootstrap_guide` into `get_instructions` until the explanation layer exists.
