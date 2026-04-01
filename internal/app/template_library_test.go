@@ -471,6 +471,154 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 	}
 }
 
+// TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes verifies explicit migration approval rewrites the task and stored node contract.
+func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 1, 11, 10, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Template Approval", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1",
+				DescriptionTemplate:     "Verify the original contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev1) error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        "go-defaults",
+		BoundByActorID:   "dev-1",
+		BoundByActorName: "Dev",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Implement preview",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	var generated domain.Task
+	for _, task := range repo.tasks {
+		if task.ParentID == parent.ID {
+			generated = task
+			break
+		}
+	}
+	if generated.ID == "" {
+		t.Fatal("expected generated QA child task")
+	}
+	originalSnapshot := repo.nodeContracts[generated.ID]
+	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1 REVIEW",
+				DescriptionTemplate:     "Verify the latest contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev2) error = %v", err)
+	}
+
+	result, err := svc.ApproveProjectTemplateMigrations(ctx, ApproveProjectTemplateMigrationsInput{
+		ProjectID:      project.ID,
+		TaskIDs:        []string{generated.ID},
+		ApprovedBy:     "dev-2",
+		ApprovedByName: "Dev Two",
+		ApprovedByType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("ApproveProjectTemplateMigrations() error = %v", err)
+	}
+	if result.AppliedCount != 1 || len(result.Approvals) != 1 {
+		t.Fatalf("ApproveProjectTemplateMigrations() = %#v, want one applied migration", result)
+	}
+	updatedTask := repo.tasks[generated.ID]
+	if updatedTask.Title != "QA PASS 1 REVIEW" {
+		t.Fatalf("updated task title = %q, want QA PASS 1 REVIEW", updatedTask.Title)
+	}
+	if updatedTask.Description != "Verify the latest contract" {
+		t.Fatalf("updated task description = %q, want latest contract", updatedTask.Description)
+	}
+	if updatedTask.UpdatedByActor != "dev-2" {
+		t.Fatalf("updated task actor = %q, want dev-2", updatedTask.UpdatedByActor)
+	}
+	updatedSnapshot := repo.nodeContracts[generated.ID]
+	if !slices.Equal(updatedSnapshot.EditableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindOrchestrator, domain.TemplateActorKindQA}) {
+		t.Fatalf("updated snapshot editable kinds = %#v, want orchestrator+qa", updatedSnapshot.EditableByActorKinds)
+	}
+	if !updatedSnapshot.CreatedAt.Equal(originalSnapshot.CreatedAt) {
+		t.Fatalf("updated snapshot created_at = %v, want preserved %v", updatedSnapshot.CreatedAt, originalSnapshot.CreatedAt)
+	}
+	preview, err := svc.GetProjectTemplateReapplyPreview(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectTemplateReapplyPreview() error = %v", err)
+	}
+	if preview.EligibleMigrationCount != 0 {
+		t.Fatalf("preview.EligibleMigrationCount = %d, want 0 after approval", preview.EligibleMigrationCount)
+	}
+}
+
 // TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible verifies non-system edits block automatic migration eligibility.
 func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t *testing.T) {
 	ctx := context.Background()

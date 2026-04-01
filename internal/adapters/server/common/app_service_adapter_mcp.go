@@ -981,6 +981,30 @@ func (a *AppServiceAdapter) GetProjectTemplateReapplyPreview(ctx context.Context
 	return preview, nil
 }
 
+// ApproveProjectTemplateMigrations applies the latest approved child-rule contract to selected eligible generated nodes.
+func (a *AppServiceAdapter) ApproveProjectTemplateMigrations(ctx context.Context, in ApproveProjectTemplateMigrationsRequest) (domain.ProjectTemplateMigrationApprovalResult, error) {
+	if a == nil || a.service == nil {
+		return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
+	if err != nil {
+		return domain.ProjectTemplateMigrationApprovalResult{}, err
+	}
+	actorID, actorName := deriveMutationActorIdentity(in.Actor)
+	result, err := a.service.ApproveProjectTemplateMigrations(ctx, app.ApproveProjectTemplateMigrationsInput{
+		ProjectID:      strings.TrimSpace(in.ProjectID),
+		TaskIDs:        append([]string(nil), in.TaskIDs...),
+		ApproveAll:     in.ApproveAll,
+		ApprovedBy:     actorID,
+		ApprovedByName: actorName,
+		ApprovedByType: actorType,
+	})
+	if err != nil {
+		return domain.ProjectTemplateMigrationApprovalResult{}, mapAppError("approve project template migrations", err)
+	}
+	return result, nil
+}
+
 // GetNodeContractSnapshot loads one generated-node contract snapshot.
 func (a *AppServiceAdapter) GetNodeContractSnapshot(ctx context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
 	if a == nil || a.service == nil {

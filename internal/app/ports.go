@@ -28,6 +28,7 @@ type Repository interface {
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
 	DeleteProjectTemplateBinding(context.Context, string) error
 	CreateNodeContractSnapshot(context.Context, domain.NodeContractSnapshot) error
+	UpdateNodeContractSnapshot(context.Context, domain.NodeContractSnapshot) error
 	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 
 	CreateColumn(context.Context, domain.Column) error

@@ -584,6 +584,12 @@ func (f *fakeRepo) CreateNodeContractSnapshot(_ context.Context, snapshot domain
 	return nil
 }
 
+// UpdateNodeContractSnapshot stores one node-contract snapshot update.
+func (f *fakeRepo) UpdateNodeContractSnapshot(_ context.Context, snapshot domain.NodeContractSnapshot) error {
+	f.nodeContracts[strings.TrimSpace(snapshot.NodeID)] = snapshot
+	return nil
+}
+
 // GetNodeContractSnapshot returns one node-contract snapshot.
 func (f *fakeRepo) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
 	snapshot, ok := f.nodeContracts[strings.TrimSpace(nodeID)]

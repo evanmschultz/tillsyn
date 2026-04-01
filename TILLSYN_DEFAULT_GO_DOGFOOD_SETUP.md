@@ -190,12 +190,16 @@ Current implementation direction for this contract:
 - project reapply preview should be explicit and drift-aware before adoption:
   - `till template project preview --project-id PROJECT_ID`;
   - `till.project(operation=preview_template_reapply, project_id=...)`;
+- explicit existing-node migration approval should be available through both:
+  - `till template project approve-migrations --project-id PROJECT_ID --task-id TASK_ID|--all`; and
+  - `till.project(operation=approve_template_migrations, project_id=..., task_ids=[...]|approve_all=true)`;
 - builtin lifecycle status and explicit install/refresh should be available through both:
   - `till template builtin status|ensure`; and
   - `till.template(operation=get_builtin_status|ensure_builtin)`;
 - explicit builtin ensure should fail loudly when required kinds are still missing instead of silently installing a partial contract;
 - explicit reapply may use the existing bind/update path as long as it remains visibly dev-approved and drift-aware;
 - in the TUI, saving a project with the same selected drifted library should count as that intentional reapply for future generated work rather than requiring a fake library-id change.
+- the richer TUI migration-review queue is still a remaining UX slice on top of the now-landed MCP/CLI approval path.
 
 ### Plan-Phase Contract
 

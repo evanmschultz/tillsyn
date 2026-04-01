@@ -207,8 +207,10 @@ Template-library operator examples:
   - builtin `default-go` lifecycle state is now surfaced explicitly as missing/current/update-available,
   - builtin install/refresh now has an explicit ensure path rather than relying on ad-hoc generic upserts,
   - project reapply preview is now surfaced explicitly before adoption,
+  - existing-node migration approvals are now available through MCP/CLI as an explicit per-item or `approve all` action against the drift preview,
   - TUI project edit now treats saving the same drifted library as an intentional reapply for future generated work,
-  - and explicit reapply still uses the existing bind flow against the latest approved library rather than a separate new verb.
+  - explicit reapply still uses the existing bind flow against the latest approved library rather than a separate new verb,
+  - and the richer TUI migration-review screen is still the remaining UX follow-through on top of that MCP/CLI approval path.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
   - `till.project(operation=create, name="Go Service", kind="go-service", template_library_id="go-defaults", ...)`
@@ -220,6 +222,7 @@ Template-library operator examples:
   - `till template project bind --project-id <project-id> --library-id go-defaults`
   - `till template project binding --project-id <project-id>`
   - `till template project preview --project-id <project-id>`
+  - `till template project approve-migrations --project-id <project-id> --all`
   - `till template contract show --node-id <node-id>`
 - Kind catalog note:
   - `till kind` is now the node-kind registry/allowlist surface.

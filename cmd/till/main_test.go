@@ -708,7 +708,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "template project",
 			args: []string{"template", "project", "--help"},
-			want: []string{"till template project", "bind", "binding", "preview"},
+			want: []string{"till template project", "bind", "binding", "preview", "approve-migrations"},
 		},
 		{
 			name: "template project bind",
@@ -724,6 +724,11 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "template project preview",
 			args: []string{"template", "project", "preview", "--help"},
 			want: []string{"till template project preview", "--project-id", "migration-review candidates"},
+		},
+		{
+			name: "template project approve-migrations",
+			args: []string{"template", "project", "approve-migrations", "--help"},
+			want: []string{"till template project approve-migrations", "--project-id", "--task-id", "--all"},
 		},
 		{
 			name: "template contract",
@@ -2205,6 +2210,172 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	}
 	if got := extractCLIKVValue(t, contractOutput, "responsible actor"); got != "qa" {
 		t.Fatalf("template contract responsible actor = %q, want qa", got)
+	}
+}
+
+// TestRunTemplateProjectApproveMigrations verifies the CLI can approve all eligible existing-node migrations on a drifted project.
+func TestRunTemplateProjectApproveMigrations(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	defer func() {
+		_ = repo.Close()
+	}()
+	now := time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC)
+	nextID := 0
+	svc := app.NewService(repo, func() string {
+		nextID++
+		return fmt.Sprintf("cli-template-%d", nextID)
+	}, func() time.Time { return now }, app.ServiceConfig{})
+	project, err := domain.NewProject("p1", "Project One", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(context.Background(), column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := svc.UpsertTemplateLibrary(context.Background(), app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1",
+				DescriptionTemplate:     "Verify the original contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev1) error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        "go-defaults",
+		BoundByActorID:   "dev-1",
+		BoundByActorName: "Dev",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	parent, err := svc.CreateTask(context.Background(), app.CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Implement preview",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	tasks, err := svc.ListTasks(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	var generated domain.Task
+	for _, task := range tasks {
+		if task.ParentID == parent.ID {
+			generated = task
+			break
+		}
+	}
+	if generated.ID == "" {
+		t.Fatal("expected generated QA task")
+	}
+	if _, err := svc.UpsertTemplateLibrary(context.Background(), app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1 REVIEW",
+				DescriptionTemplate:     "Verify the latest contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev2) error = %v", err)
+	}
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "project", "approve-migrations",
+		"--project-id", "p1",
+		"--all",
+	}, &out, io.Discard); err != nil {
+		t.Fatalf("run(template project approve-migrations) error = %v", err)
+	}
+	output := out.String()
+	if got := extractCLIKVValue(t, output, "project id"); got != "p1" {
+		t.Fatalf("template project approve-migrations project = %q, want p1", got)
+	}
+	if got := extractCLIKVValue(t, output, "applied count"); got != "1" {
+		t.Fatalf("template project approve-migrations applied count = %q, want 1", got)
+	}
+	if !strings.Contains(output, "QA PASS 1 REVIEW") {
+		t.Fatalf("expected updated title in approve-migrations output, got %q", output)
+	}
+
+	updatedTask, err := repo.GetTask(context.Background(), generated.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if updatedTask.Title != "QA PASS 1 REVIEW" {
+		t.Fatalf("updated task title = %q, want QA PASS 1 REVIEW", updatedTask.Title)
 	}
 }
 
