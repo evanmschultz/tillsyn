@@ -548,11 +548,7 @@ func TestHandlerRegistersAuthRequestToolsWhenAvailable(t *testing.T) {
 		toolNames = append(toolNames, name)
 	}
 	for _, required := range []string{
-		"till.create_auth_request",
-		"till.list_auth_requests",
-		"till.get_auth_request",
-		"till.claim_auth_request",
-		"till.cancel_auth_request",
+		"till.auth_request",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
@@ -631,7 +627,6 @@ func TestHandlerRegistersProjectToolsWhenAvailable(t *testing.T) {
 	}
 	for _, required := range []string{
 		"till.capture_state",
-		"till.list_projects",
 		"till.project",
 	} {
 		if !slices.Contains(toolNames, required) {
@@ -666,7 +661,8 @@ func TestHandlerProjectToolCall(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.list_projects", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.project", map[string]any{
+		"operation":        "list",
 		"include_archived": true,
 	}))
 	structured := toolResultStructured(t, callResp.Result)
@@ -1259,7 +1255,8 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.create_auth_request", map[string]any{
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", map[string]any{
+		"operation":           "create",
 		"path":                "project/p1",
 		"principal_id":        "review-agent",
 		"principal_type":      "agent",
@@ -1306,7 +1303,8 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 		t.Fatalf("CreateAuthRequest() continuation_json = %q, want resume payload", got)
 	}
 
-	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.list_auth_requests", map[string]any{
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.auth_request", map[string]any{
+		"operation":  "list",
 		"project_id": "p1",
 		"state":      "pending",
 		"limit":      10,
@@ -1323,7 +1321,8 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 		t.Fatalf("ListAuthRequests() state = %q, want pending", got)
 	}
 
-	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.get_auth_request", map[string]any{
+	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.auth_request", map[string]any{
+		"operation":  "get",
 		"request_id": "req-1",
 	}))
 	getStructured := toolResultStructured(t, getResp.Result)
@@ -1340,7 +1339,8 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 		t.Fatalf("get auth request leaked continuation = %#v, want omitted", getStructured["continuation"])
 	}
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(5, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(5, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
 		"principal_id": "review-agent",
@@ -1386,7 +1386,8 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 		t.Fatalf("ClaimAuthRequest() wait_timeout = %q, want 30s", got)
 	}
 
-	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.cancel_auth_request", map[string]any{
+	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.auth_request", map[string]any{
+		"operation":       "cancel",
 		"request_id":      "req-1",
 		"resume_token":    "resume-1",
 		"principal_id":    "review-agent",
@@ -1451,7 +1452,8 @@ func TestHandlerClaimAuthRequestWaitingPayload(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-2",
 		"resume_token": "resume-2",
 		"principal_id": "review-agent",
@@ -1491,7 +1493,8 @@ func TestHandlerCancelAuthRequestRequiresRequesterArgs(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9, "till.cancel_auth_request", map[string]any{
+	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9, "till.auth_request", map[string]any{
+		"operation":    "cancel",
 		"request_id":   "req-1",
 		"principal_id": "review-agent",
 		"client_id":    "till-mcp-stdio",
@@ -1522,7 +1525,8 @@ func TestHandlerCancelAuthRequestRejectsRequesterMismatch(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(10, "till.cancel_auth_request", map[string]any{
+	_, cancelResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(10, "till.auth_request", map[string]any{
+		"operation":    "cancel",
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
 		"principal_id": "other-agent",
@@ -1554,7 +1558,8 @@ func TestHandlerClaimAuthRequestErrorMapping(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-1",
 		"resume_token": "wrong-token",
 		"principal_id": "review-agent",
@@ -1585,7 +1590,8 @@ func TestHandlerClaimAuthRequestRejectsNegativeWaitTimeout(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
 		"principal_id": "review-agent",
@@ -1621,7 +1627,8 @@ func TestHandlerClaimAuthRequestRejectsRequesterMismatch(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(8, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(8, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
 		"principal_id": "other-agent",
@@ -1653,7 +1660,8 @@ func TestHandlerClaimAuthRequestRequesterMismatchMapping(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
 		"principal_id": "other-agent",
@@ -1703,7 +1711,8 @@ func TestHandlerClaimAuthRequestWaitingResult(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.claim_auth_request", map[string]any{
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(6, "till.auth_request", map[string]any{
+		"operation":    "claim",
 		"request_id":   "req-1",
 		"resume_token": "resume-1",
 		"principal_id": "review-agent",

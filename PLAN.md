@@ -4,6 +4,63 @@ Created: 2026-02-21
 Updated: 2026-03-31
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
+## Checkpoint 2026-03-31: Freeze MCP Family Surface
+
+Objective:
+- finish the full MCP surface-reduction/refinement slice in one pass so the default tool inventory can stabilize before the next runtime/session restart and parity/E2E dogfood pass.
+
+Context7:
+1. `/mark3labs/mcp-go` reviewed before the slice for operation-based tool schemas, required-argument handling, enum guidance, and structured JSON tool results.
+2. After the first MCP adapter test failure, `/mark3labs/mcp-go` was re-checked before the next edit for combined-tool schema expectations and JSON result handling.
+
+Implementation summary:
+1. Consolidated the auth-request surface into `till.auth_request(operation=create|list|get|claim|cancel)`.
+2. Expanded `till.project` to own the default project-root reads/admin paths in addition to mutations:
+   - `list`,
+   - `create`,
+   - `update`,
+   - `bind_template`,
+   - `get_template_binding`,
+   - `set_allowed_kinds`,
+   - `list_allowed_kinds`,
+   - `list_change_events`,
+   - `get_dependency_rollup`.
+3. Consolidated the remaining default admin/read families:
+   - `till.kind(operation=list|upsert)`,
+   - `till.template(operation=list|get|upsert|get_node_contract)`,
+   - `till.embeddings(operation=status|reindex)`,
+   - `till.comment(operation=create|list)`.
+4. Left `till.capture_state`, `till.capability_lease`, `till.attention_item`, `till.handoff`, `till.plan_item`, `till.get_bootstrap_guide`, and `till.get_instructions` as distinct families rather than collapsing unrelated nouns into a mega-tool.
+5. Updated the MCP adapter tests to the frozen family-tool shape and removed the old flat default-tool expectations from the current surface tests.
+6. Updated the default-surface docs in `README.md` and `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`.
+
+Current frozen default surface:
+1. `till.get_bootstrap_guide`
+2. `till.get_instructions`
+3. `till.auth_request`
+4. `till.project`
+5. `till.plan_item`
+6. `till.kind`
+7. `till.template`
+8. `till.embeddings`
+9. `till.capability_lease`
+10. `till.capture_state`
+11. `till.attention_item`
+12. `till.comment`
+13. `till.handoff`
+
+Validation so far:
+1. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+2. `mage ci` -> PASS.
+3. The frozen default surface drops the active default count from 28 tools to 13 tools while preserving the same family coverage.
+4. Coverage gate recovery:
+   - first `mage ci` rerun failed only on formatting, then after `gofmt` the second `mage ci` rerun failed only on `internal/adapters/server/mcpapi` coverage at `66.9%`,
+   - added explicit legacy project/template/kind alias coverage,
+   - final `mage ci` raised `internal/adapters/server/mcpapi` to `70.5%` and cleared the repo-wide gate.
+
+Next step:
+1. Commit and push the frozen-surface slice, watch the new GitHub Actions run to green, then tell the human to restart the MCP runtime/Codex session once so the new family tools become visible for parity and E2E validation.
+
 ## Checkpoint 2026-03-31: Windows Resource Picker Test Stabilization
 
 Objective:
@@ -31,10 +88,29 @@ Current status:
 1. Local validation passed:
    - `mage test-pkg ./internal/tui` -> PASS.
    - `mage ci` -> PASS.
-2. Next step is commit/push for this isolated fix slice and `gh run watch --exit-status` on the resulting remote run.
-3. After remote CI is green, resume the next planned work:
-   - comment-family consolidation,
-   - plus direct MCP regression checks against the condensed default tool surface now that native `till_*` bindings are available in-session.
+2. Slice shipped:
+   - commit `09c8dac` (`test(tui): stabilize resource picker attachment selection`) pushed to `origin/main`.
+3. Remote validation passed:
+   - `gh run watch --exit-status 23830427978` -> PASS,
+   - including `ci (windows-latest)` and `release snapshot check`.
+4. Direct MCP read-surface smoke in this session is also coherent against live `TILLSYN` data:
+   - `till.list_projects`,
+   - `till.get_project_template_binding`,
+   - `till.list_template_libraries(scope=global,status=approved)`,
+   - `till.list_kind_definitions`,
+   - `till.list_project_allowed_kinds`,
+   - `till.plan_item(operation=search|list)`,
+   - `till.get_node_contract_snapshot`,
+   - `till.capture_state`,
+   - `till.capability_lease(operation=list)`,
+   - `till.handoff(operation=list)`,
+   - `till.attention_item(operation=list)`,
+   - `till.list_comments_by_target`,
+   - `till.list_project_change_events`,
+   - `till.get_embeddings_status`,
+   - and bounded `till.get_instructions`.
+5. Next planned implementation slice remains:
+   - comment-family consolidation.
 
 ## Checkpoint 2026-03-30: Help Example Placeholder Cleanup
 
