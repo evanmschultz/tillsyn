@@ -830,31 +830,7 @@ func registerTaskTools(
 	exposeLegacyPlanItemTools bool,
 ) {
 	if tasks != nil {
-		srv.AddTool(
-			mcp.NewTool(
-				"till.list_tasks",
-				mcp.WithDescription("List tasks/work-items for one project."),
-				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-				mcp.WithBoolean("include_archived", mcp.Description("Include archived tasks")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				projectID, err := req.RequireString("project_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				rows, err := tasks.ListTasks(ctx, projectID, req.GetBool("include_archived", false))
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(map[string]any{"tasks": rows})
-				if err != nil {
-					return nil, fmt.Errorf("encode list_tasks result: %w", err)
-				}
-				return result, nil
-			},
-		)
-
-		handlePlanItemMutation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
+		handlePlanItemOperation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
 			var args struct {
 				Operation       string               `json:"operation"`
 				ProjectID       string               `json:"project_id"`
@@ -871,6 +847,19 @@ func registerTaskTools(
 				TaskID          string               `json:"task_id"`
 				ToColumnID      string               `json:"to_column_id"`
 				Position        *int                 `json:"position"`
+				State           string               `json:"state"`
+				IncludeArchived bool                 `json:"include_archived"`
+				Query           string               `json:"query"`
+				CrossProject    bool                 `json:"cross_project"`
+				States          []string             `json:"states"`
+				Levels          []string             `json:"levels"`
+				Kinds           []string             `json:"kinds"`
+				LabelsAny       []string             `json:"labels_any"`
+				LabelsAll       []string             `json:"labels_all"`
+				SearchMode      string               `json:"search_mode"`
+				Sort            string               `json:"sort"`
+				Limit           *int                 `json:"limit"`
+				Offset          *int                 `json:"offset"`
 				Mode            string               `json:"mode"`
 				SessionID       string               `json:"session_id"`
 				SessionSecret   string               `json:"session_secret"`
@@ -887,6 +876,83 @@ func registerTaskTools(
 			}
 
 			switch operation {
+			case "get":
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				}
+				task, err := tasks.GetTask(ctx, taskID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(task)
+				if err != nil {
+					return nil, fmt.Errorf("encode %s get result: %w", toolLabel, err)
+				}
+				return result, nil
+			case "list":
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				includeArchived := args.IncludeArchived
+				parentID := strings.TrimSpace(args.ParentID)
+				if parentID != "" {
+					rows, err := tasks.ListChildTasks(ctx, projectID, parentID, includeArchived)
+					if err != nil {
+						return toolResultFromError(err), nil
+					}
+					result, err := mcp.NewToolResultJSON(map[string]any{"tasks": rows})
+					if err != nil {
+						return nil, fmt.Errorf("encode %s list child result: %w", toolLabel, err)
+					}
+					return result, nil
+				}
+				rows, err := tasks.ListTasks(ctx, projectID, includeArchived)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"tasks": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode %s list result: %w", toolLabel, err)
+				}
+				return result, nil
+			case "search":
+				if search == nil {
+					return mcp.NewToolResultError("invalid_request: search service is unavailable"), nil
+				}
+				searchMode := strings.TrimSpace(args.SearchMode)
+				if searchMode == "" {
+					searchMode = strings.TrimSpace(req.GetString("mode", ""))
+				}
+				searchReq := common.SearchTasksRequest{
+					ProjectID:       strings.TrimSpace(args.ProjectID),
+					Query:           strings.TrimSpace(args.Query),
+					CrossProject:    args.CrossProject,
+					IncludeArchived: args.IncludeArchived,
+					States:          append([]string(nil), args.States...),
+					Levels:          append([]string(nil), args.Levels...),
+					Kinds:           append([]string(nil), args.Kinds...),
+					LabelsAny:       append([]string(nil), args.LabelsAny...),
+					LabelsAll:       append([]string(nil), args.LabelsAll...),
+					Mode:            searchMode,
+					Sort:            strings.TrimSpace(args.Sort),
+				}
+				if args.Limit != nil {
+					searchReq.Limit = *args.Limit
+				}
+				if args.Offset != nil {
+					searchReq.Offset = *args.Offset
+				}
+				resultPayload, err := search.SearchTasks(ctx, searchReq)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(resultPayload)
+				if err != nil {
+					return nil, fmt.Errorf("encode %s search result: %w", toolLabel, err)
+				}
+				return result, nil
 			case "create":
 				projectID := strings.TrimSpace(args.ProjectID)
 				if projectID == "" {
@@ -1056,6 +1122,52 @@ func registerTaskTools(
 					return nil, fmt.Errorf("encode %s move result: %w", toolLabel, err)
 				}
 				return result, nil
+			case "move_state":
+				taskID := strings.TrimSpace(args.TaskID)
+				if taskID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				}
+				state := strings.TrimSpace(args.State)
+				if state == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "state" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"move_task_state",
+					"tillsyn",
+					"task",
+					taskID,
+					map[string]string{"task_id": taskID, "state": state},
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				task, err := tasks.MoveTaskState(ctx, common.MoveTaskStateRequest{
+					TaskID: taskID,
+					State:  state,
+					Actor:  actor,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(task)
+				if err != nil {
+					return nil, fmt.Errorf("encode %s move_state result: %w", toolLabel, err)
+				}
+				return result, nil
 			case "delete":
 				taskID := strings.TrimSpace(args.TaskID)
 				if taskID == "" {
@@ -1192,15 +1304,16 @@ func registerTaskTools(
 		srv.AddTool(
 			mcp.NewTool(
 				"till.plan_item",
-				mcp.WithDescription("Mutate one plan-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=create|update|move|delete|restore|reparent."),
-				mcp.WithString("operation", mcp.Required(), mcp.Description("Plan-item mutation operation"), mcp.Enum("create", "update", "move", "delete", "restore", "reparent")),
-				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=create")),
-				mcp.WithString("task_id", mcp.Description("Plan-item identifier. Required for operation=update|move|delete|restore|reparent")),
+				mcp.WithDescription("Read or mutate one plan-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."),
+				mcp.WithString("operation", mcp.Required(), mcp.Description("Plan-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
+				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create and optional for operation=search")),
+				mcp.WithString("task_id", mcp.Description("Plan-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
 				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
 				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
+				mcp.WithString("state", mcp.Description("Lifecycle state target for operation=move_state (for example: todo|in_progress|done)")),
 				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
-				mcp.WithString("parent_id", mcp.Description("Optional parent plan-item id for operation=create or new parent id for operation=reparent")),
+				mcp.WithString("parent_id", mcp.Description("Optional parent plan-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
 				mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 				mcp.WithString("description", mcp.Description("Plan-item details in markdown-rich text")),
@@ -1208,19 +1321,43 @@ func registerTaskTools(
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
 				mcp.WithObject("metadata", mcp.Description("Optional plan-item metadata object")),
+				mcp.WithBoolean("include_archived", mcp.Description("Include archived plan-items for operation=list|search")),
+				mcp.WithString("query", mcp.Description("Search query for operation=search")),
+				mcp.WithBoolean("cross_project", mcp.Description("Search across all projects for operation=search")),
+				mcp.WithArray("states", mcp.Description("Optional state filter for operation=search"), mcp.WithStringItems()),
+				mcp.WithArray("levels", mcp.Description("Optional level/scope filter for operation=search"), mcp.WithStringItems()),
+				mcp.WithArray("kinds", mcp.Description("Optional kind filter for operation=search"), mcp.WithStringItems()),
+				mcp.WithArray("labels_any", mcp.Description("Optional labels-any filter for operation=search"), mcp.WithStringItems()),
+				mcp.WithArray("labels_all", mcp.Description("Optional labels-all filter for operation=search"), mcp.WithStringItems()),
+				mcp.WithString("search_mode", mcp.Description("keyword|semantic|hybrid (default hybrid; semantic/hybrid fall back to keyword when embeddings/vector search is unavailable)"), mcp.Enum("keyword", "semantic", "hybrid")),
+				mcp.WithString("sort", mcp.Description("rank_desc|title_asc|created_at_desc|updated_at_desc (default rank_desc)"), mcp.Enum("rank_desc", "title_asc", "created_at_desc", "updated_at_desc")),
+				mcp.WithNumber("limit", mcp.Description("Optional maximum rows for operation=search (default 50, max 200)"), mcp.DefaultNumber(50), mcp.Min(0), mcp.Max(200)),
+				mcp.WithNumber("offset", mcp.Description("Optional row offset for operation=search (default 0, must be >= 0)"), mcp.DefaultNumber(0), mcp.Min(0)),
 				mcp.WithString("mode", mcp.Description("archive|hard for operation=delete"), mcp.Enum("archive", "hard")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("session_id", mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Description(mcpMutationSessionSecretDescription)),
 				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return handlePlanItemMutation(ctx, req, "plan_item", "")
+				return handlePlanItemOperation(ctx, req, "plan_item", "")
 			},
 		)
 
 		if exposeLegacyPlanItemTools {
+			srv.AddTool(
+				mcp.NewTool(
+					"till.list_tasks",
+					mcp.WithDescription("List tasks/work-items for one project (legacy alias for till.plan_item operation=list)."),
+					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+					mcp.WithBoolean("include_archived", mcp.Description("Include archived tasks")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemOperation(ctx, req, "list_tasks", "list")
+				},
+			)
+
 			srv.AddTool(
 				mcp.NewTool(
 					"till.create_task",
@@ -1243,7 +1380,7 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description("Optional override token")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemMutation(ctx, req, "create_task", "create")
+					return handlePlanItemOperation(ctx, req, "create_task", "create")
 				},
 			)
 
@@ -1265,7 +1402,7 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description("Optional override token")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemMutation(ctx, req, "update_task", "update")
+					return handlePlanItemOperation(ctx, req, "update_task", "update")
 				},
 			)
 
@@ -1283,7 +1420,7 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description("Optional override token")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemMutation(ctx, req, "move_task", "move")
+					return handlePlanItemOperation(ctx, req, "move_task", "move")
 				},
 			)
 
@@ -1300,7 +1437,7 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description("Optional override token")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemMutation(ctx, req, "delete_task", "delete")
+					return handlePlanItemOperation(ctx, req, "delete_task", "delete")
 				},
 			)
 
@@ -1316,7 +1453,7 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description("Optional override token")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemMutation(ctx, req, "restore_task", "restore")
+					return handlePlanItemOperation(ctx, req, "restore_task", "restore")
 				},
 			)
 
@@ -1333,97 +1470,44 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description("Optional override token")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemMutation(ctx, req, "reparent_task", "reparent")
+					return handlePlanItemOperation(ctx, req, "reparent_task", "reparent")
+				},
+			)
+			srv.AddTool(
+				mcp.NewTool(
+					"till.list_child_tasks",
+					mcp.WithDescription("List child tasks for a parent scope (legacy alias for till.plan_item operation=list with parent_id)."),
+					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+					mcp.WithString("parent_id", mcp.Required(), mcp.Description("Parent task identifier")),
+					mcp.WithBoolean("include_archived", mcp.Description("Include archived child rows")),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemOperation(ctx, req, "list_child_tasks", "list")
+				},
+			)
+			srv.AddTool(
+				mcp.NewTool(
+					"till.search_task_matches",
+					mcp.WithDescription("Search task/work-item matches by query, mode, sort, filters, and scope (legacy alias for till.plan_item operation=search)."),
+					mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project queries")),
+					mcp.WithString("query", mcp.Description("Search query")),
+					mcp.WithBoolean("cross_project", mcp.Description("Search across all projects")),
+					mcp.WithBoolean("include_archived", mcp.Description("Include archived projects/items")),
+					mcp.WithArray("states", mcp.Description("Optional state filter"), mcp.WithStringItems()),
+					mcp.WithArray("levels", mcp.Description("Optional level/scope filter"), mcp.WithStringItems()),
+					mcp.WithArray("kinds", mcp.Description("Optional kind filter"), mcp.WithStringItems()),
+					mcp.WithArray("labels_any", mcp.Description("Optional labels-any filter (matches when any listed label is present)"), mcp.WithStringItems()),
+					mcp.WithArray("labels_all", mcp.Description("Optional labels-all filter (matches only when all listed labels are present)"), mcp.WithStringItems()),
+					mcp.WithString("mode", mcp.Description("keyword|semantic|hybrid (default hybrid; semantic/hybrid fall back to keyword when embeddings/vector search is unavailable)"), mcp.Enum("keyword", "semantic", "hybrid")),
+					mcp.WithString("sort", mcp.Description("rank_desc|title_asc|created_at_desc|updated_at_desc (default rank_desc)"), mcp.Enum("rank_desc", "title_asc", "created_at_desc", "updated_at_desc")),
+					mcp.WithNumber("limit", mcp.Description("Optional maximum rows (default 50, max 200)"), mcp.DefaultNumber(50), mcp.Min(0), mcp.Max(200)),
+					mcp.WithNumber("offset", mcp.Description("Optional row offset (default 0, must be >= 0)"), mcp.DefaultNumber(0), mcp.Min(0)),
+				),
+				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return handlePlanItemOperation(ctx, req, "search_task_matches", "search")
 				},
 			)
 		}
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.list_child_tasks",
-				mcp.WithDescription("List child tasks for a parent scope."),
-				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-				mcp.WithString("parent_id", mcp.Required(), mcp.Description("Parent task identifier")),
-				mcp.WithBoolean("include_archived", mcp.Description("Include archived child rows")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				projectID, err := req.RequireString("project_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				parentID, err := req.RequireString("parent_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				rows, err := tasks.ListChildTasks(ctx, projectID, parentID, req.GetBool("include_archived", false))
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(map[string]any{"tasks": rows})
-				if err != nil {
-					return nil, fmt.Errorf("encode list_child_tasks result: %w", err)
-				}
-				return result, nil
-			},
-		)
-	}
-
-	if search != nil {
-		srv.AddTool(
-			mcp.NewTool(
-				"till.search_task_matches",
-				mcp.WithDescription("Search task/work-item matches by query, mode, sort, filters, and scope."),
-				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project queries")),
-				mcp.WithString("query", mcp.Description("Search query")),
-				mcp.WithBoolean("cross_project", mcp.Description("Search across all projects")),
-				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects/items")),
-				mcp.WithArray("states", mcp.Description("Optional state filter"), mcp.WithStringItems()),
-				mcp.WithArray("levels", mcp.Description("Optional level/scope filter"), mcp.WithStringItems()),
-				mcp.WithArray("kinds", mcp.Description("Optional kind filter"), mcp.WithStringItems()),
-				mcp.WithArray("labels_any", mcp.Description("Optional labels-any filter (matches when any listed label is present)"), mcp.WithStringItems()),
-				mcp.WithArray("labels_all", mcp.Description("Optional labels-all filter (matches only when all listed labels are present)"), mcp.WithStringItems()),
-				mcp.WithString("mode", mcp.Description("keyword|semantic|hybrid (default hybrid; semantic/hybrid fall back to keyword when embeddings/vector search is unavailable)"), mcp.Enum("keyword", "semantic", "hybrid")),
-				mcp.WithString("sort", mcp.Description("rank_desc|title_asc|created_at_desc|updated_at_desc (default rank_desc)"), mcp.Enum("rank_desc", "title_asc", "created_at_desc", "updated_at_desc")),
-				mcp.WithNumber(
-					"limit",
-					mcp.Description("Optional maximum rows (default 50, max 200)"),
-					mcp.DefaultNumber(50),
-					mcp.Min(0),
-					mcp.Max(200),
-				),
-				mcp.WithNumber(
-					"offset",
-					mcp.Description("Optional row offset (default 0, must be >= 0)"),
-					mcp.DefaultNumber(0),
-					mcp.Min(0),
-				),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				resultPayload, err := search.SearchTasks(ctx, common.SearchTasksRequest{
-					ProjectID:       req.GetString("project_id", ""),
-					Query:           req.GetString("query", ""),
-					CrossProject:    req.GetBool("cross_project", false),
-					IncludeArchived: req.GetBool("include_archived", false),
-					States:          req.GetStringSlice("states", nil),
-					Levels:          req.GetStringSlice("levels", nil),
-					Kinds:           req.GetStringSlice("kinds", nil),
-					LabelsAny:       req.GetStringSlice("labels_any", nil),
-					LabelsAll:       req.GetStringSlice("labels_all", nil),
-					Mode:            req.GetString("mode", ""),
-					Sort:            req.GetString("sort", ""),
-					Limit:           req.GetInt("limit", 0),
-					Offset:          req.GetInt("offset", 0),
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(resultPayload)
-				if err != nil {
-					return nil, fmt.Errorf("encode search_task_matches result: %w", err)
-				}
-				return result, nil
-			},
-		)
 	}
 
 	if embeddings != nil {

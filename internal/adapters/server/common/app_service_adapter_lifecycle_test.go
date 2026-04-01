@@ -128,6 +128,13 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask(parent) error = %v", err)
 	}
+	gotTask, err := fixture.adapter.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if gotTask.ID != task.ID {
+		t.Fatalf("GetTask() id = %q, want %q", gotTask.ID, task.ID)
+	}
 	task, err = fixture.adapter.UpdateTask(ctx, UpdateTaskRequest{
 		TaskID:      task.ID,
 		Title:       "Parent task updated",
@@ -139,17 +146,19 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTask() error = %v", err)
 	}
-	task, err = fixture.adapter.MoveTask(ctx, MoveTaskRequest{
-		TaskID:     task.ID,
-		ToColumnID: done.ID,
-		Position:   0,
-		Actor:      actor,
+	task, err = fixture.adapter.MoveTaskState(ctx, MoveTaskStateRequest{
+		TaskID: task.ID,
+		State:  "done",
+		Actor:  actor,
 	})
 	if err != nil {
-		t.Fatalf("MoveTask() error = %v", err)
+		t.Fatalf("MoveTaskState() error = %v", err)
 	}
 	if task.ColumnID != done.ID {
-		t.Fatalf("MoveTask() column_id = %q, want %q", task.ColumnID, done.ID)
+		t.Fatalf("MoveTaskState() column_id = %q, want %q", task.ColumnID, done.ID)
+	}
+	if task.LifecycleState != domain.StateDone {
+		t.Fatalf("MoveTaskState() lifecycle_state = %q, want %q", task.LifecycleState, domain.StateDone)
 	}
 
 	child, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{

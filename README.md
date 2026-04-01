@@ -97,7 +97,7 @@ Current MCP/runtime direction:
   - bootstrap guidance: `till.get_bootstrap_guide`
   - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
   - projects: `till.list_projects`, `till.project`
-  - tasks/work graph: `till.list_tasks`, `till.plan_item`, `till.list_child_tasks`, `till.search_task_matches`
+  - tasks/work graph: `till.plan_item`
   - capture/attention: `till.capture_state`, `till.attention_item`
   - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
   - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.list_project_allowed_kinds`
@@ -133,13 +133,26 @@ Current auth note:
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
 - Default surface note:
   - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
-  - `till.plan_item` now owns plan-item mutations such as create, update, move, delete, restore, and reparent;
+  - `till.plan_item` now owns plan-item reads and mutations such as get, list, search, create, update, move, move_state, delete, restore, and reparent;
   - the older flat project mutation tools remain available only behind an explicit legacy-project-tools config switch for compatibility testing.
-  - the older flat task mutation tools remain available only behind an explicit legacy-plan-item-tools config switch for compatibility testing.
+  - the older flat task read/mutation tools remain available only behind an explicit legacy-plan-item-tools config switch for compatibility testing.
 - Policy direction for the unified `plan_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans remain allowed to perform those transitions;
+  - `till.plan_item(operation=move_state)` is the preferred contract-aware state-transition shape for policy-gated forward and backward workflow movement;
+  - builders should not gain unrestricted power over terminal cleanup just because they can progress their own work, and QA/orchestrator/human transitions should still be gated by stored policy and scope;
   - destructive or terminal cleanup actions such as delete, hard cleanup, and final archive remain more restricted and should not default to agent autonomy.
+- Comment-family direction:
+  - comments should not be folded into `till.plan_item`; they are a separate coordination/threading type.
+  - the next comment-family shape should be `till.comment(operation=create|list)`.
+  - comments should stay append-only by default in the first family pass; agent comment editing is intentionally deferred so the coordination log remains trustworthy.
+  - comments should be allowed anywhere inside the caller's approved scope subtree, which means parallel/sibling commenting is fine when the approved scope already covers both nodes.
+  - if a caller does not hold scope broad enough for the affected sibling/parallel node, the preferred escalation path is still handoff or attention rather than silently widening comment reach.
+- Mentions/notifications direction:
+  - mentions are still desirable, but as a later routed-notification slice rather than part of the current reduction wave.
+  - actor-kind or role-style mention targets such as `@human`, `@orchestrator`, `@qa`, and `@builder` are the preferred starting point.
+  - the current cross-process wake path is only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
+  - the product direction is still that important routed notifications should be automatic and not require every agent to remember a manual polling tool, but that inbox/wake model is a later dedicated slice.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.claim_auth_request` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
