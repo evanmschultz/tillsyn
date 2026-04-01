@@ -309,6 +309,14 @@ type BindProjectTemplateLibraryRequest struct {
 	LibraryID string `json:"library_id"`
 }
 
+// ApproveProjectTemplateMigrationsRequest stores transport input for one explicit existing-node migration approval request.
+type ApproveProjectTemplateMigrationsRequest struct {
+	ProjectID  string   `json:"project_id"`
+	TaskIDs    []string `json:"task_ids,omitempty"`
+	ApproveAll bool     `json:"approve_all,omitempty"`
+	Actor      ActorLeaseTuple
+}
+
 // IssueCapabilityLeaseRequest stores transport input for lease issuance.
 type IssueCapabilityLeaseRequest struct {
 	ProjectID                 string
@@ -584,6 +592,7 @@ type TemplateLibraryService interface {
 	BindProjectTemplateLibrary(context.Context, BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error)
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
 	GetProjectTemplateReapplyPreview(context.Context, string) (domain.ProjectTemplateReapplyPreview, error)
+	ApproveProjectTemplateMigrations(context.Context, ApproveProjectTemplateMigrationsRequest) (domain.ProjectTemplateMigrationApprovalResult, error)
 	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 }
 

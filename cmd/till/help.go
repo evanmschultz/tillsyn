@@ -248,6 +248,7 @@ to confirm which library currently governs generated workflow contracts.
 			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
 			"  till template project binding --project-id PROJECT_ID",
 			"  till template project preview --project-id PROJECT_ID",
+			"  till template project approve-migrations --project-id PROJECT_ID --all",
 		},
 	},
 	"till template project bind": {
@@ -281,6 +282,18 @@ Use this before intentionally rebinding the same approved library revision.
 `),
 		Example: []string{
 			"  till template project preview --project-id PROJECT_ID",
+		},
+	},
+	"till template project approve-migrations": {
+		Long: strings.TrimSpace(`
+Approve selected or all eligible generated-node migrations for one project.
+
+Use this after reviewing drift so the dev can explicitly adopt changed child
+rule contracts for existing generated nodes.
+`),
+		Example: []string{
+			"  till template project approve-migrations --project-id PROJECT_ID --task-id TASK_ID",
+			"  till template project approve-migrations --project-id PROJECT_ID --all",
 		},
 	},
 	"till template contract": {

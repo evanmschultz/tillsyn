@@ -18,46 +18,47 @@ import (
 type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
-	lastCreateProjectReq     common.CreateProjectRequest
-	lastListProjectsArchived bool
-	lastGetTaskID            string
-	lastListTasksProjectID   string
-	lastListTasksArchived    bool
-	lastListChildProjectID   string
-	lastListChildParentID    string
-	lastListChildArchived    bool
-	lastCreateTaskReq        common.CreateTaskRequest
-	lastUpdateTaskReq        common.UpdateTaskRequest
-	lastMoveTaskStateReq     common.MoveTaskStateRequest
-	lastRestoreTaskReq       common.RestoreTaskRequest
-	lastIssueLeaseReq        common.IssueCapabilityLeaseRequest
-	lastListLeaseReq         common.ListCapabilityLeasesRequest
-	lastCreateCommentReq     common.CreateCommentRequest
-	lastListCommentReq       common.ListCommentsByTargetRequest
-	lastCreateHandoffReq     common.CreateHandoffRequest
-	lastUpdateHandoffReq     common.UpdateHandoffRequest
-	lastListHandoffsReq      common.ListHandoffsRequest
-	lastListTemplateReq      common.ListTemplateLibrariesRequest
-	lastListKindsArchived    bool
-	lastUpsertKindReq        common.UpsertKindDefinitionRequest
-	lastSetAllowedKindsReq   common.SetProjectAllowedKindsRequest
-	lastEnsureBuiltinReq     common.EnsureBuiltinTemplateLibraryRequest
-	lastUpsertTemplateReq    common.UpsertTemplateLibraryRequest
-	lastBindTemplateReq      common.BindProjectTemplateLibraryRequest
-	lastGetTemplateID        string
-	lastGetBuiltinTemplateID string
-	lastGetTemplateBindingID string
-	lastGetTemplatePreviewID string
-	lastGetNodeContractID    string
-	lastSearchTasksReq       common.SearchTasksRequest
-	lastEmbeddingsStatusReq  common.EmbeddingsStatusRequest
-	lastEmbeddingsReindexReq common.ReindexEmbeddingsRequest
-	lastCreateAuthRequestReq common.CreateAuthRequestRequest
-	lastListAuthRequestsReq  common.ListAuthRequestsRequest
-	lastGetAuthRequestID     string
-	lastGetHandoffID         string
-	lastClaimAuthRequestReq  common.ClaimAuthRequestRequest
-	lastCancelAuthRequestReq common.CancelAuthRequestRequest
+	lastCreateProjectReq             common.CreateProjectRequest
+	lastListProjectsArchived         bool
+	lastGetTaskID                    string
+	lastListTasksProjectID           string
+	lastListTasksArchived            bool
+	lastListChildProjectID           string
+	lastListChildParentID            string
+	lastListChildArchived            bool
+	lastCreateTaskReq                common.CreateTaskRequest
+	lastUpdateTaskReq                common.UpdateTaskRequest
+	lastMoveTaskStateReq             common.MoveTaskStateRequest
+	lastRestoreTaskReq               common.RestoreTaskRequest
+	lastIssueLeaseReq                common.IssueCapabilityLeaseRequest
+	lastListLeaseReq                 common.ListCapabilityLeasesRequest
+	lastCreateCommentReq             common.CreateCommentRequest
+	lastListCommentReq               common.ListCommentsByTargetRequest
+	lastCreateHandoffReq             common.CreateHandoffRequest
+	lastUpdateHandoffReq             common.UpdateHandoffRequest
+	lastListHandoffsReq              common.ListHandoffsRequest
+	lastListTemplateReq              common.ListTemplateLibrariesRequest
+	lastListKindsArchived            bool
+	lastUpsertKindReq                common.UpsertKindDefinitionRequest
+	lastSetAllowedKindsReq           common.SetProjectAllowedKindsRequest
+	lastEnsureBuiltinReq             common.EnsureBuiltinTemplateLibraryRequest
+	lastUpsertTemplateReq            common.UpsertTemplateLibraryRequest
+	lastBindTemplateReq              common.BindProjectTemplateLibraryRequest
+	lastApproveTemplateMigrationsReq common.ApproveProjectTemplateMigrationsRequest
+	lastGetTemplateID                string
+	lastGetBuiltinTemplateID         string
+	lastGetTemplateBindingID         string
+	lastGetTemplatePreviewID         string
+	lastGetNodeContractID            string
+	lastSearchTasksReq               common.SearchTasksRequest
+	lastEmbeddingsStatusReq          common.EmbeddingsStatusRequest
+	lastEmbeddingsReindexReq         common.ReindexEmbeddingsRequest
+	lastCreateAuthRequestReq         common.CreateAuthRequestRequest
+	lastListAuthRequestsReq          common.ListAuthRequestsRequest
+	lastGetAuthRequestID             string
+	lastGetHandoffID                 string
+	lastClaimAuthRequestReq          common.ClaimAuthRequestRequest
+	lastCancelAuthRequestReq         common.CancelAuthRequestRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -706,6 +707,26 @@ func (s *stubExpandedService) GetProjectTemplateReapplyPreview(_ context.Context
 	}, nil
 }
 
+// ApproveProjectTemplateMigrations returns one deterministic migration-approval result.
+func (s *stubExpandedService) ApproveProjectTemplateMigrations(_ context.Context, in common.ApproveProjectTemplateMigrationsRequest) (domain.ProjectTemplateMigrationApprovalResult, error) {
+	s.lastApproveTemplateMigrationsReq = in
+	return domain.ProjectTemplateMigrationApprovalResult{
+		ProjectID:              strings.TrimSpace(in.ProjectID),
+		LibraryID:              "go-defaults",
+		LibraryName:            "Go Defaults",
+		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
+		ApprovedAll:            in.ApproveAll,
+		AppliedCount:           max(1, len(in.TaskIDs)),
+		RemainingEligibleCount: 0,
+		Approvals: []domain.ProjectTemplateMigrationApproval{{
+			TaskID:      "task-qa-1",
+			Title:       "QA PASS 1",
+			ChangeKinds: []string{"title", "editable_by"},
+			NewTitle:    "QA PASS 1 REVIEW",
+		}},
+	}, nil
+}
+
 // GetNodeContractSnapshot returns one deterministic node-contract snapshot.
 func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
 	s.lastGetNodeContractID = strings.TrimSpace(nodeID)
@@ -1174,6 +1195,13 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "bind_template", "project_id": "p1", "template_library_id": "go-defaults"})},
 		{name: "till.project", args: map[string]any{"operation": "get_template_binding", "project_id": "p1"}},
 		{name: "till.project", args: map[string]any{"operation": "preview_template_reapply", "project_id": "p1"}},
+		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "approve_template_migrations",
+			"project_id":        "p1",
+			"task_ids":          []any{"task-qa-1"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})},
 		{name: "till.template", args: map[string]any{"operation": "get_node_contract", "node_id": "task-qa-1"}},
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
 		{name: "till.embeddings", args: map[string]any{"operation": "reindex", "project_id": "p1", "wait": true}},
@@ -1241,6 +1269,12 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("tool %q returned isError=true: %#v", tc.name, callResp.Result)
 		}
+	}
+	if got := service.lastApproveTemplateMigrationsReq.ProjectID; got != "p1" {
+		t.Fatalf("approve_template_migrations project_id = %q, want p1", got)
+	}
+	if got := service.lastApproveTemplateMigrationsReq.TaskIDs; !slices.Equal(got, []string{"task-qa-1"}) {
+		t.Fatalf("approve_template_migrations task_ids = %#v, want [task-qa-1]", got)
 	}
 }
 

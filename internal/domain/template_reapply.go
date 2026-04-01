@@ -57,6 +57,15 @@ type ProjectTemplateMigrationCandidate struct {
 	ChangeKinds          []string                              `json:"change_kinds,omitempty"`
 }
 
+// ProjectTemplateMigrationApproval stores one generated node that was explicitly approved for migration.
+type ProjectTemplateMigrationApproval struct {
+	TaskID      string   `json:"task_id"`
+	Title       string   `json:"title"`
+	ChangeKinds []string `json:"change_kinds,omitempty"`
+	NewTitle    string   `json:"new_title,omitempty"`
+	NewBody     string   `json:"new_body,omitempty"`
+}
+
 // ProjectTemplateReapplyPreview stores one project's current drift and explicit migration-review preview.
 type ProjectTemplateReapplyPreview struct {
 	ProjectID                string                              `json:"project_id"`
@@ -73,4 +82,17 @@ type ProjectTemplateReapplyPreview struct {
 	EligibleMigrationCount   int                                 `json:"eligible_migration_count"`
 	IneligibleMigrationCount int                                 `json:"ineligible_migration_count"`
 	ReviewRequired           bool                                `json:"review_required"`
+}
+
+// ProjectTemplateMigrationApprovalResult stores one explicit migration-approval outcome.
+type ProjectTemplateMigrationApprovalResult struct {
+	ProjectID                string                             `json:"project_id"`
+	LibraryID                string                             `json:"library_id"`
+	LibraryName              string                             `json:"library_name,omitempty"`
+	DriftStatus              string                             `json:"drift_status,omitempty"`
+	ApprovedAll              bool                               `json:"approved_all,omitempty"`
+	Approvals                []ProjectTemplateMigrationApproval `json:"approvals,omitempty"`
+	AppliedCount             int                                `json:"applied_count"`
+	RemainingEligibleCount   int                                `json:"remaining_eligible_count"`
+	RemainingIneligibleCount int                                `json:"remaining_ineligible_count"`
 }

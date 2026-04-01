@@ -502,6 +502,148 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 	}
 }
 
+// TestAppServiceAdapterApproveProjectTemplateMigrations verifies the common adapter applies eligible existing-node migrations.
+func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	project, err := fixture.svc.CreateProject(ctx, "Template Approval", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := fixture.svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	if _, err := fixture.svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1",
+				DescriptionTemplate:     "Verify the original contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev1) error = %v", err)
+	}
+	if _, err := fixture.svc.BindProjectTemplateLibrary(ctx, app.BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        "go-defaults",
+		BoundByActorID:   "dev-1",
+		BoundByActorName: "Dev",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	parent, err := fixture.svc.CreateTask(ctx, app.CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Implement preview",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	tasks, err := fixture.svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	var generated domain.Task
+	for _, task := range tasks {
+		if task.ParentID == parent.ID {
+			generated = task
+			break
+		}
+	}
+	if generated.ID == "" {
+		t.Fatal("expected generated QA child task")
+	}
+	if _, err := fixture.svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "dev-1",
+		CreatedByActorName:  "Dev",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "dev-1",
+		ApprovedByActorName: "Dev",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []app.UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ChildRules: []app.UpsertTemplateChildRuleInput{{
+				ID:                      "qa-check",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToSubtask,
+				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				TitleTemplate:           "QA PASS 1 REVIEW",
+				DescriptionTemplate:     "Verify the latest contract",
+				ResponsibleActorKind:    domain.TemplateActorKindQA,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+				RequiredForParentDone:   true,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpsertTemplateLibrary(rev2) error = %v", err)
+	}
+
+	result, err := fixture.adapter.ApproveProjectTemplateMigrations(ctx, ApproveProjectTemplateMigrationsRequest{
+		ProjectID: project.ID,
+		TaskIDs:   []string{generated.ID},
+		Actor: ActorLeaseTuple{
+			ActorID:   "dev-2",
+			ActorName: "Dev Two",
+			ActorType: string(domain.ActorTypeUser),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApproveProjectTemplateMigrations() error = %v", err)
+	}
+	if result.AppliedCount != 1 {
+		t.Fatalf("ApproveProjectTemplateMigrations() = %#v, want one applied migration", result)
+	}
+	updatedTask, err := fixture.svc.GetTask(ctx, generated.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if updatedTask.Title != "QA PASS 1 REVIEW" {
+		t.Fatalf("updated task title = %q, want QA PASS 1 REVIEW", updatedTask.Title)
+	}
+	snapshot, err := fixture.svc.GetNodeContractSnapshot(ctx, generated.ID)
+	if err != nil {
+		t.Fatalf("GetNodeContractSnapshot() error = %v", err)
+	}
+	if !slices.Equal(snapshot.EditableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindOrchestrator, domain.TemplateActorKindQA}) {
+		t.Fatalf("snapshot.EditableByActorKinds = %#v, want orchestrator+qa", snapshot.EditableByActorKinds)
+	}
+}
+
 // TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs verifies MCP-facing embeddings inventory rejects bad filters and hidden archived scope.
 func TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs(t *testing.T) {
 	t.Parallel()

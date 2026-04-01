@@ -178,6 +178,13 @@ type templateProjectPreviewCommandOptions struct {
 	projectID string
 }
 
+// templateProjectApproveMigrationsCommandOptions stores existing-node migration approval flag values.
+type templateProjectApproveMigrationsCommandOptions struct {
+	projectID  string
+	taskIDs    []string
+	approveAll bool
+}
+
 // templateContractShowCommandOptions stores node-contract lookup values.
 type templateContractShowCommandOptions struct {
 	nodeID string
@@ -470,6 +477,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	templateProjectBindOpts := templateProjectBindCommandOptions{}
 	templateProjectBindingOpts := templateProjectBindingCommandOptions{}
 	templateProjectPreviewOpts := templateProjectPreviewCommandOptions{}
+	templateProjectApproveMigrationsOpts := templateProjectApproveMigrationsCommandOptions{}
 	templateContractShowOpts := templateContractShowCommandOptions{}
 	leaseListOpts := leaseListCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
 	leaseIssueOpts := leaseIssueCommandOptions{scopeType: string(domain.CapabilityScopeProject), role: string(domain.CapabilityRoleBuilder), requestedTTL: 8 * time.Hour}
@@ -483,7 +491,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateBuiltinStatusOpts, templateBuiltinEnsureOpts, templateProjectBindOpts, templateProjectBindingOpts, templateProjectPreviewOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateBuiltinStatusOpts, templateBuiltinEnsureOpts, templateProjectBindOpts, templateProjectBindingOpts, templateProjectPreviewOpts, templateProjectApproveMigrationsOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -1166,7 +1174,29 @@ review what changed without silently rewriting live work.
 		},
 	}
 	templateProjectPreviewCmd.Flags().StringVar(&templateProjectPreviewOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd, templateProjectPreviewCmd)
+	templateProjectApproveMigrationsCmd := &cobra.Command{
+		Use:   "approve-migrations",
+		Short: "Approve existing-node template migrations for one project",
+		Long: strings.TrimSpace(`
+Approve selected or all eligible existing generated-node migrations for one
+project against the latest approved template library revision.
+
+Use this after previewing drift so the dev can explicitly adopt changed child
+rule contracts for already-generated nodes without silently rewriting work.
+`),
+		Example: strings.Join([]string{
+			"  till template project approve-migrations --project-id PROJECT_ID --task-id TASK_ID",
+			"  till template project approve-migrations --project-id PROJECT_ID --all",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.project.approve-migrations")
+		},
+	}
+	templateProjectApproveMigrationsCmd.Flags().StringVar(&templateProjectApproveMigrationsOpts.projectID, "project-id", "", "Project identifier")
+	templateProjectApproveMigrationsCmd.Flags().StringArrayVar(&templateProjectApproveMigrationsOpts.taskIDs, "task-id", nil, "Eligible generated node id to migrate (repeatable)")
+	templateProjectApproveMigrationsCmd.Flags().BoolVar(&templateProjectApproveMigrationsOpts.approveAll, "all", false, "Approve all eligible migration candidates")
+	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd, templateProjectPreviewCmd, templateProjectApproveMigrationsCmd)
 
 	templateContractCmd := &cobra.Command{
 		Use:   "contract",
@@ -2287,6 +2317,7 @@ func executeCommandFlow(
 	templateProjectBindOpts templateProjectBindCommandOptions,
 	templateProjectBindingOpts templateProjectBindingCommandOptions,
 	templateProjectPreviewOpts templateProjectPreviewCommandOptions,
+	templateProjectApproveMigrationsOpts templateProjectApproveMigrationsCommandOptions,
 	templateContractShowOpts templateContractShowCommandOptions,
 	leaseListOpts leaseListCommandOptions,
 	leaseIssueOpts leaseIssueCommandOptions,
@@ -2662,6 +2693,10 @@ func executeCommandFlow(
 	case "template.project.preview":
 		return runOneShotCommand("template.project.preview", "template project preview", func() error {
 			return runTemplateProjectPreview(ctx, svc, templateProjectPreviewOpts, stdout)
+		})
+	case "template.project.approve-migrations":
+		return runOneShotCommand("template.project.approve-migrations", "template project approve-migrations", func() error {
+			return runTemplateProjectApproveMigrations(ctx, svc, cfg, templateProjectApproveMigrationsOpts, stdout)
 		})
 	case "template.contract.show":
 		return runOneShotCommand("template.contract.show", "template contract show", func() error {
@@ -3168,6 +3203,36 @@ func runTemplateProjectPreview(ctx context.Context, svc *app.Service, opts templ
 		return fmt.Errorf("get project template reapply preview: %w", err)
 	}
 	return writeProjectTemplateReapplyPreviewDetail(stdout, preview)
+}
+
+// runTemplateProjectApproveMigrations approves selected or all eligible existing-node template migrations.
+func runTemplateProjectApproveMigrations(ctx context.Context, svc *app.Service, cfg config.Config, opts templateProjectApproveMigrationsCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	projectID := strings.TrimSpace(opts.projectID)
+	if err := requireProjectID("template project approve-migrations", projectID); err != nil {
+		return err
+	}
+	if opts.approveAll && len(opts.taskIDs) > 0 {
+		return fmt.Errorf("--task-id and --all cannot be combined")
+	}
+	if !opts.approveAll && len(opts.taskIDs) == 0 {
+		return fmt.Errorf("--task-id or --all is required")
+	}
+	result, err := svc.ApproveProjectTemplateMigrations(ctx, app.ApproveProjectTemplateMigrationsInput{
+		ProjectID:      projectID,
+		TaskIDs:        append([]string(nil), opts.taskIDs...),
+		ApproveAll:     opts.approveAll,
+		ApprovedBy:     cliMutationActorID(cfg),
+		ApprovedByName: strings.TrimSpace(cfg.Identity.DisplayName),
+		ApprovedByType: cliMutationActorType(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("approve project template migrations: %w", err)
+	}
+	return writeProjectTemplateMigrationApprovalResultDetail(stdout, result)
 }
 
 // runTemplateContractShow loads one generated-node contract snapshot and writes it in a human-readable operator view.

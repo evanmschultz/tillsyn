@@ -151,6 +151,42 @@ func writeProjectTemplateReapplyPreviewDetail(stdout io.Writer, preview domain.P
 	return writeProjectTemplateMigrationCandidateTable(printer, preview.MigrationCandidates)
 }
 
+// writeProjectTemplateMigrationApprovalResultDetail renders one explicit migration-approval result in a stable human-readable view.
+func writeProjectTemplateMigrationApprovalResultDetail(stdout io.Writer, result domain.ProjectTemplateMigrationApprovalResult) error {
+	printer := newCLIPrinter(stdout)
+	if err := writeCLIKVWithPrinter(printer, "Project Template Migration Approval", [][2]string{
+		{"project id", firstNonEmptyTrimmed(result.ProjectID, "-")},
+		{"library id", firstNonEmptyTrimmed(result.LibraryID, "-")},
+		{"library name", firstNonEmptyTrimmed(result.LibraryName, "-")},
+		{"drift status", firstNonEmptyTrimmed(result.DriftStatus, "-")},
+		{"approved all", yesNo(result.ApprovedAll)},
+		{"applied count", firstNonEmptyTrimmed(renderOptionalPositiveInt(result.AppliedCount), "0")},
+		{"remaining eligible", firstNonEmptyTrimmed(renderOptionalPositiveInt(result.RemainingEligibleCount), "0")},
+		{"remaining ineligible", firstNonEmptyTrimmed(renderOptionalPositiveInt(result.RemainingIneligibleCount), "0")},
+	}); err != nil {
+		return err
+	}
+	if len(result.Approvals) == 0 {
+		return writeCLIPanelWithPrinter(printer, "Approved Migrations", "No template migrations were applied.", "")
+	}
+	rows := make([][]string, 0, len(result.Approvals))
+	for _, approval := range result.Approvals {
+		rows = append(rows, []string{
+			firstNonEmptyTrimmed(approval.Title, approval.TaskID, "-"),
+			firstNonEmptyTrimmed(approval.TaskID, "-"),
+			firstNonEmptyTrimmed(renderAuthStringList(approval.ChangeKinds), "-"),
+			firstNonEmptyTrimmed(compactText(approval.NewTitle), "-"),
+		})
+	}
+	return writeCLITableWithPrinter(
+		printer,
+		"Approved Migrations",
+		[]string{"TASK", "TASK ID", "CHANGES", "NEW TITLE"},
+		rows,
+		"No template migrations were applied.",
+	)
+}
+
 // writeNodeContractSnapshotDetail renders one generated-node contract snapshot in a stable human-readable detail block.
 func writeNodeContractSnapshotDetail(stdout io.Writer, snapshot domain.NodeContractSnapshot) error {
 	return writeCLIKV(stdout, "Node Contract", [][2]string{

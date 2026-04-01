@@ -9674,10 +9674,81 @@ Live-runtime note:
 1. This slice adds one new project-family operation to the MCP tool schema:
    - `till.project(operation=preview_template_reapply, ...)`
 2. The current Codex session will likely need an MCP client/runtime refresh before that new operation is callable live here, even though the code and local tests are green.
+3. After the next MCP refresh, live read-side parity succeeded across the reduced 13-tool surface:
+   - `till.get_bootstrap_guide`
+   - `till.get_instructions`
+   - `till.project(operation=list|get_template_binding|preview_template_reapply|list_change_events|get_dependency_rollup|list_allowed_kinds)`
+   - `till.template(operation=list|get_builtin_status)`
+   - `till.kind(operation=list)`
+   - `till.plan_item(operation=search)`
+   - `till.capture_state`
+   - `till.capability_lease(operation=list)`
+   - `till.handoff(operation=list)`
+   - `till.attention_item(operation=list)`
+   - `till.comment(operation=list)`
+   - `till.auth_request(operation=list)`
+   - `till.embeddings(operation=status)`
+4. Key live result for the new slice:
+   - `till.project(operation=preview_template_reapply, project_id=TILLSYN)` returned the expected stable/current preview with `drift_status="current"` and no migration candidates on the current bound revision.
+5. No code changes were required from that post-refresh read-side parity sweep.
 
 Next step:
-1. Commit and push this reapply-preview slice.
-2. Watch the new GitHub Actions run to green.
-3. Refresh the MCP runtime/client if needed so the new project-family operation is visible in-session.
-4. Run live parity on `preview_template_reapply`.
-5. Then move on to the later explicit per-item migration approval / `approve all` workflow for existing template-owned nodes.
+1. Finish or re-run targeted live mutation-side parity where the new behavior matters:
+   - explicit builtin ensure on the refreshed MCP runtime,
+   - explicit project bind/rebind after drift exists,
+   - later per-item migration approval workflow once it exists.
+2. Then move on to the later explicit per-item migration approval / `approve all` workflow for existing template-owned nodes.
+
+### 2026-04-01: Existing-Node Template Migration Approval (MCP/CLI First)
+
+Objective:
+- land the first explicit dev-approval mutation path for existing generated nodes so reapply preview can turn into a real migration action instead of staying read-only.
+
+Implementation:
+1. Added explicit migration-approval result types in the domain layer so operator surfaces can report which generated nodes were actually updated.
+2. Added an app-layer approval mutation in `internal/app/template_reapply.go`:
+   - validates the project is currently drifted with `update_available`,
+   - selects either explicit `task_ids` or every eligible candidate for `approve_all`,
+   - fails closed on ineligible or stale task ids,
+   - rewrites the selected task title/description to the latest approved child-rule contract,
+   - rewrites the stored node-contract snapshot to the latest approved rule contract,
+   - preserves the original snapshot creation timestamp,
+   - and refreshes embeddings/thread context for the migrated nodes.
+3. Added a real repository update seam for generated node-contract snapshots:
+   - `UpdateNodeContractSnapshot` on the app repository port,
+   - fake repo support for app tests,
+   - SQLite implementation that upserts the snapshot row and replaces the editor/completer actor-kind allowlists transactionally.
+4. Exposed the approval path through the reduced family surfaces without adding a new MCP tool:
+   - MCP: `till.project(operation=approve_template_migrations, project_id=..., task_ids=[...]|approve_all=true)`
+   - CLI: `till template project approve-migrations --project-id PROJECT_ID --task-id TASK_ID|--all`
+5. Kept project binding/reapply for future generated work on the existing bind/save path:
+   - this slice updates existing eligible generated nodes only,
+   - while the already-landed bind/save flow still handles future generated work.
+6. Updated canonical docs to reflect the landed state:
+   - MCP/CLI migration approval is now implemented,
+   - richer TUI migration-review UI remains the next UX follow-through slice.
+
+Tests added/updated:
+1. `internal/app/template_library_test.go`
+   - explicit migration approval updates task text and stored node contract
+2. `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`
+   - real-stack common adapter coverage for migration approval
+3. `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - reduced MCP project-family coverage for `approve_template_migrations`
+4. `cmd/till/main_test.go`
+   - command help coverage for `template project approve-migrations`
+   - CLI end-to-end coverage for approving all eligible migrations on a drifted project
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (178 tests).
+2. `mage test-pkg ./internal/adapters/storage/sqlite` -> PASS (67 tests).
+3. `mage test-pkg ./internal/adapters/server/common` -> PASS (99 tests).
+4. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+5. `mage test-pkg ./cmd/till` -> PASS (220 tests).
+
+Next step:
+1. Run `mage ci`.
+2. If green, refresh MCP runtime/client and run live parity on:
+   - `till.project(operation=preview_template_reapply, ...)`
+   - `till.project(operation=approve_template_migrations, ...)`
+3. Then move on to the remaining TUI migration-review UX follow-through or the next locked dogfood slice, depending on what the live MCP pass exposes.

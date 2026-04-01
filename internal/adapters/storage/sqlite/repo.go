@@ -1974,6 +1974,65 @@ func (r *Repository) GetNodeContractSnapshot(ctx context.Context, nodeID string)
 	return snapshot, nil
 }
 
+// UpdateNodeContractSnapshot upserts one generated-node contract snapshot and replaces the actor-kind allowlists.
+func (r *Repository) UpdateNodeContractSnapshot(ctx context.Context, snapshot domain.NodeContractSnapshot) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO node_contract_snapshots(
+			node_id, project_id, source_library_id, source_node_template_id, source_child_rule_id,
+			created_by_actor_id, created_by_actor_type, responsible_actor_kind, orchestrator_may_complete,
+			required_for_parent_done, required_for_containing_done, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(node_id) DO UPDATE SET
+			project_id = excluded.project_id,
+			source_library_id = excluded.source_library_id,
+			source_node_template_id = excluded.source_node_template_id,
+			source_child_rule_id = excluded.source_child_rule_id,
+			created_by_actor_id = excluded.created_by_actor_id,
+			created_by_actor_type = excluded.created_by_actor_type,
+			responsible_actor_kind = excluded.responsible_actor_kind,
+			orchestrator_may_complete = excluded.orchestrator_may_complete,
+			required_for_parent_done = excluded.required_for_parent_done,
+			required_for_containing_done = excluded.required_for_containing_done,
+			created_at = excluded.created_at
+	`,
+		strings.TrimSpace(snapshot.NodeID),
+		strings.TrimSpace(snapshot.ProjectID),
+		domain.NormalizeTemplateLibraryID(snapshot.SourceLibraryID),
+		domain.NormalizeTemplateLibraryID(snapshot.SourceNodeTemplateID),
+		domain.NormalizeTemplateLibraryID(snapshot.SourceChildRuleID),
+		strings.TrimSpace(snapshot.CreatedByActorID),
+		normalizeOptionalActorType(snapshot.CreatedByActorType),
+		string(domain.NormalizeTemplateActorKind(snapshot.ResponsibleActorKind)),
+		boolToInt(snapshot.OrchestratorMayComplete),
+		boolToInt(snapshot.RequiredForParentDone),
+		boolToInt(snapshot.RequiredForContainingDone),
+		ts(snapshot.CreatedAt),
+	)
+	if err != nil {
+		return err
+	}
+	for _, table := range []string{"node_contract_editor_kinds", "node_contract_completer_kinds"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE node_id = ?`, strings.TrimSpace(snapshot.NodeID)); err != nil {
+			return err
+		}
+	}
+	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_editor_kinds", snapshot.NodeID, snapshot.EditableByActorKinds); err != nil {
+		return err
+	}
+	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_completer_kinds", snapshot.NodeID, snapshot.CompletableByActorKinds); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // CreateColumn creates column.
 func (r *Repository) CreateColumn(ctx context.Context, c domain.Column) error {
 	_, err := r.db.ExecContext(ctx, `
