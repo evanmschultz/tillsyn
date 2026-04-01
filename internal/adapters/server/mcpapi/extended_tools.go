@@ -130,6 +130,7 @@ type capabilityLeaseMutationArgs struct {
 	ProjectID                 string `json:"project_id"`
 	ScopeType                 string `json:"scope_type"`
 	ScopeID                   string `json:"scope_id"`
+	IncludeRevoked            bool   `json:"include_revoked"`
 	Role                      string `json:"role"`
 	AgentName                 string `json:"agent_name"`
 	AgentInstanceID           string `json:"agent_instance_id"`
@@ -161,6 +162,24 @@ func handleCapabilityLeaseMutation(
 	operation := strings.TrimSpace(args.Operation)
 
 	switch operation {
+	case "list":
+		if projectID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+		}
+		leasesRows, err := leases.ListCapabilityLeases(ctx, common.ListCapabilityLeasesRequest{
+			ProjectID:      projectID,
+			ScopeType:      scopeType,
+			ScopeID:        scopeID,
+			IncludeRevoked: args.IncludeRevoked,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(map[string]any{"leases": leasesRows})
+		if err != nil {
+			return nil, fmt.Errorf("encode capability_lease list result: %w", err)
+		}
+		return result, nil
 	case "issue":
 		if projectID == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
@@ -1944,43 +1963,13 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"till.list_capability_leases",
-			mcp.WithDescription("List active or historical capability leases for one project scope."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Description("Optional scope level filter"), mcp.Enum(common.SupportedScopeTypes()...)),
-			mcp.WithString("scope_id", mcp.Description("Optional scope identifier; defaults to the project id for project scope")),
-			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			leasesRows, err := leases.ListCapabilityLeases(ctx, common.ListCapabilityLeasesRequest{
-				ProjectID:      projectID,
-				ScopeType:      req.GetString("scope_type", ""),
-				ScopeID:        req.GetString("scope_id", ""),
-				IncludeRevoked: req.GetBool("include_revoked", false),
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{"leases": leasesRows})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_capability_leases result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
 			"till.capability_lease",
-			mcp.WithDescription("Mutate one capability lease lifecycle. Use operation=issue|heartbeat|renew|revoke|revoke_all."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Lease mutation operation"), mcp.Enum("issue", "heartbeat", "renew", "revoke", "revoke_all")),
-			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=issue|revoke_all")),
-			mcp.WithString("scope_type", mcp.Description("project|branch|phase|task|subtask. Required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
-			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for project scope; otherwise used by operation=issue|revoke_all")),
+			mcp.WithDescription("List or mutate capability lease lifecycle state. Use operation=list|issue|heartbeat|renew|revoke|revoke_all."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Capability lease operation"), mcp.Enum("list", "issue", "heartbeat", "renew", "revoke", "revoke_all")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|issue|revoke_all")),
+			mcp.WithString("scope_type", mcp.Description("project|branch|phase|task|subtask. Optional for operation=list; required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and for project scope; otherwise used by operation=issue|revoke_all")),
+			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases when operation=list")),
 			mcp.WithString("role", mcp.Description("orchestrator|builder|qa. Required for operation=issue"), mcp.Enum("orchestrator", "builder", "qa")),
 			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Required for operation=issue")),
 			mcp.WithString("agent_instance_id", mcp.Description("Agent instance identifier. Required for operation=heartbeat|renew|revoke and optional for operation=issue")),
@@ -1991,8 +1980,8 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("lease_token", mcp.Description("Lease token. Required for operation=heartbeat|renew")),
 			mcp.WithNumber("ttl_seconds", mcp.Description("Optional renewal TTL in seconds for operation=renew")),
 			mcp.WithString("reason", mcp.Description("Optional revocation reason for operation=revoke|revoke_all")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for operation=issue|heartbeat|renew|revoke|revoke_all. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=issue|heartbeat|renew|revoke|revoke_all. "+mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
@@ -2003,10 +1992,34 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 		},
 	)
 
-	if !exposeLegacyLeaseTools {
-		return
+	if exposeLegacyLeaseTools {
+		registerLegacyCapabilityLeaseReadTool(srv, leases)
+		registerLegacyCapabilityLeaseMutationTools(srv, leases)
 	}
+}
 
+func registerLegacyCapabilityLeaseReadTool(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService) {
+	srv.AddTool(
+		mcp.NewTool(
+			"till.list_capability_leases",
+			mcp.WithDescription("List active or historical capability leases for one project scope."),
+			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+			mcp.WithString("scope_type", mcp.Description("Optional scope level filter"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_id", mcp.Description("Optional scope identifier; defaults to the project id for project scope")),
+			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args capabilityLeaseMutationArgs
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			args.Operation = "list"
+			return handleCapabilityLeaseMutation(ctx, leases, args)
+		},
+	)
+}
+
+func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.issue_capability_lease",
@@ -2025,38 +2038,12 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				ProjectID                 string `json:"project_id"`
-				ScopeType                 string `json:"scope_type"`
-				ScopeID                   string `json:"scope_id"`
-				Role                      string `json:"role"`
-				AgentName                 string `json:"agent_name"`
-				AgentInstanceID           string `json:"agent_instance_id"`
-				ParentInstanceID          string `json:"parent_instance_id"`
-				AllowEqualScopeDelegation bool   `json:"allow_equal_scope_delegation"`
-				RequestedTTLSeconds       int    `json:"requested_ttl_seconds"`
-				OverrideToken             string `json:"override_token"`
-				SessionID                 string `json:"session_id"`
-				SessionSecret             string `json:"session_secret"`
-			}
+			var args capabilityLeaseMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
-				Operation:                 "issue",
-				ProjectID:                 args.ProjectID,
-				ScopeType:                 args.ScopeType,
-				ScopeID:                   args.ScopeID,
-				Role:                      args.Role,
-				AgentName:                 args.AgentName,
-				AgentInstanceID:           args.AgentInstanceID,
-				ParentInstanceID:          args.ParentInstanceID,
-				AllowEqualScopeDelegation: args.AllowEqualScopeDelegation,
-				RequestedTTLSeconds:       args.RequestedTTLSeconds,
-				OverrideToken:             args.OverrideToken,
-				SessionID:                 args.SessionID,
-				SessionSecret:             args.SessionSecret,
-			})
+			args.Operation = "issue"
+			return handleCapabilityLeaseMutation(ctx, leases, args)
 		},
 	)
 
@@ -2070,22 +2057,12 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				AgentInstanceID string `json:"agent_instance_id"`
-				LeaseToken      string `json:"lease_token"`
-				SessionID       string `json:"session_id"`
-				SessionSecret   string `json:"session_secret"`
-			}
+			var args capabilityLeaseMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
-				Operation:       "heartbeat",
-				AgentInstanceID: args.AgentInstanceID,
-				LeaseToken:      args.LeaseToken,
-				SessionID:       args.SessionID,
-				SessionSecret:   args.SessionSecret,
-			})
+			args.Operation = "heartbeat"
+			return handleCapabilityLeaseMutation(ctx, leases, args)
 		},
 	)
 
@@ -2100,24 +2077,12 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				AgentInstanceID string `json:"agent_instance_id"`
-				LeaseToken      string `json:"lease_token"`
-				TTLSeconds      int    `json:"ttl_seconds"`
-				SessionID       string `json:"session_id"`
-				SessionSecret   string `json:"session_secret"`
-			}
+			var args capabilityLeaseMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
-				Operation:       "renew",
-				AgentInstanceID: args.AgentInstanceID,
-				LeaseToken:      args.LeaseToken,
-				TTLSeconds:      args.TTLSeconds,
-				SessionID:       args.SessionID,
-				SessionSecret:   args.SessionSecret,
-			})
+			args.Operation = "renew"
+			return handleCapabilityLeaseMutation(ctx, leases, args)
 		},
 	)
 
@@ -2131,22 +2096,12 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				AgentInstanceID string `json:"agent_instance_id"`
-				Reason          string `json:"reason"`
-				SessionID       string `json:"session_id"`
-				SessionSecret   string `json:"session_secret"`
-			}
+			var args capabilityLeaseMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
-				Operation:       "revoke",
-				AgentInstanceID: args.AgentInstanceID,
-				Reason:          args.Reason,
-				SessionID:       args.SessionID,
-				SessionSecret:   args.SessionSecret,
-			})
+			args.Operation = "revoke"
+			return handleCapabilityLeaseMutation(ctx, leases, args)
 		},
 	)
 
@@ -2162,26 +2117,12 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				ProjectID     string `json:"project_id"`
-				ScopeType     string `json:"scope_type"`
-				ScopeID       string `json:"scope_id"`
-				Reason        string `json:"reason"`
-				SessionID     string `json:"session_id"`
-				SessionSecret string `json:"session_secret"`
-			}
+			var args capabilityLeaseMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
-			return handleCapabilityLeaseMutation(ctx, leases, capabilityLeaseMutationArgs{
-				Operation:     "revoke_all",
-				ProjectID:     args.ProjectID,
-				ScopeType:     args.ScopeType,
-				ScopeID:       args.ScopeID,
-				Reason:        args.Reason,
-				SessionID:     args.SessionID,
-				SessionSecret: args.SessionSecret,
-			})
+			args.Operation = "revoke_all"
+			return handleCapabilityLeaseMutation(ctx, leases, args)
 		},
 	)
 }

@@ -9032,6 +9032,47 @@ Next step:
 2. Resume the live `TILLSYN` dogfood proof with the patched runtime.
 3. Decide the next reduction wave for read/query tools after the live proof is green.
 
+### 2026-03-31: Coordination And Lease Read Consolidation
+
+Objective:
+- reduce the default MCP read surface for families that already have a clear family tool, without collapsing unrelated query shapes into one generic read tool.
+
+Implementation:
+1. Folded attention reads into `till.attention_item`:
+   - added `operation=list`,
+   - kept `operation=raise|resolve`,
+   - and made the session fields operation-scoped instead of schema-required for every call.
+2. Folded handoff reads into `till.handoff`:
+   - added `operation=get|list`,
+   - kept `operation=create|update`,
+   - and kept write auth validation explicit per operation.
+3. Folded lease reads into `till.capability_lease`:
+   - added `operation=list`,
+   - kept `operation=issue|heartbeat|renew|revoke|revoke_all`,
+   - and kept mutation auth/session requirements on the write paths only.
+4. Kept the older family read names as compatibility aliases only behind the existing legacy switches:
+   - `till.list_attention_items`
+   - `till.get_handoff`
+   - `till.list_handoffs`
+   - `till.list_capability_leases`
+5. Deliberately left comments and broader project/plan-item reads alone in this slice:
+   - `till.create_comment` / `till.list_comments_by_target` stay separate for now,
+   - `till.list_projects`, `till.list_tasks`, `till.list_child_tasks`, and `till.search_task_matches` also stay explicit while we decide the final read/query philosophy.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (73 tests).
+2. Default-surface expectations now require:
+   - `till.attention_item`
+   - `till.handoff`
+   - `till.capability_lease`
+   and fail if the older family read aliases appear without legacy mode.
+3. Compatibility expectations now require those older read aliases only when the corresponding legacy switch is enabled.
+
+Next step:
+1. Run the broader server/common package checks and `mage ci`.
+2. Commit and push this slice on its own.
+3. Restart the MCP runtime and spot-check that the default tool list drops the standalone family read tools.
+
 ### 2026-03-31: Bootstrap Vs Instructions Clarification
 
 Objective:

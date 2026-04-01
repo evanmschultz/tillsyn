@@ -927,13 +927,10 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.project",
 		"till.get_project_template_binding",
 		"till.get_node_contract_snapshot",
-		"till.list_capability_leases",
 		"till.capability_lease",
 		"till.create_comment",
 		"till.list_comments_by_target",
 		"till.handoff",
-		"till.get_handoff",
-		"till.list_handoffs",
 	}
 	for _, toolName := range requiredTools {
 		found := false
@@ -1054,7 +1051,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "bind_template", "project_id": "p1", "template_library_id": "go-defaults"})},
 		{name: "till.get_project_template_binding", args: map[string]any{"project_id": "p1"}},
 		{name: "till.get_node_contract_snapshot", args: map[string]any{"node_id": "task-qa-1"}},
-		{name: "till.list_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project", "include_revoked": true}},
+		{name: "till.capability_lease", args: map[string]any{"operation": "list", "project_id": "p1", "scope_type": "project", "include_revoked": true}},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "issue", "project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "heartbeat", "agent_instance_id": "inst-1", "lease_token": "tok-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "renew", "agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
@@ -1089,8 +1086,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.get_handoff", args: map[string]any{"handoff_id": "handoff-1"}},
-		{name: "till.list_handoffs", args: map[string]any{"project_id": "p1", "branch_id": "branch-1", "scope_type": "task", "scope_id": "task-1", "statuses": []any{"waiting"}, "limit": 10}},
+		{name: "till.handoff", args: map[string]any{"operation": "get", "handoff_id": "handoff-1"}},
+		{name: "till.handoff", args: map[string]any{"operation": "list", "project_id": "p1", "branch_id": "branch-1", "scope_type": "task", "scope_id": "task-1", "statuses": []any{"waiting"}, "limit": 10}},
 		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
 			"handoff_id":        "handoff-1",
@@ -1163,6 +1160,9 @@ func TestHandlerExpandedLeaseToolVisibility(t *testing.T) {
 	if !slices.Contains(defaultTools, "till.capability_lease") {
 		t.Fatalf("default surface missing till.capability_lease: %#v", defaultTools)
 	}
+	if slices.Contains(defaultTools, "till.list_capability_leases") {
+		t.Fatalf("unexpected legacy lease read tool in default surface: %#v", defaultTools)
+	}
 	for _, legacy := range []string{
 		"till.issue_capability_lease",
 		"till.heartbeat_capability_lease",
@@ -1178,6 +1178,7 @@ func TestHandlerExpandedLeaseToolVisibility(t *testing.T) {
 	legacyTools := collectToolNames(t, Config{ExposeLegacyLeaseTools: true})
 	for _, required := range []string{
 		"till.capability_lease",
+		"till.list_capability_leases",
 		"till.issue_capability_lease",
 		"till.heartbeat_capability_lease",
 		"till.renew_capability_lease",
@@ -1235,6 +1236,11 @@ func TestHandlerExpandedCoordinationToolVisibility(t *testing.T) {
 			t.Fatalf("default coordination surface missing %q: %#v", required, defaultTools)
 		}
 	}
+	for _, legacyRead := range []string{"till.list_attention_items", "till.get_handoff", "till.list_handoffs"} {
+		if slices.Contains(defaultTools, legacyRead) {
+			t.Fatalf("unexpected legacy coordination read tool %q in default surface: %#v", legacyRead, defaultTools)
+		}
+	}
 	for _, legacy := range []string{
 		"till.raise_attention_item",
 		"till.resolve_attention_item",
@@ -1250,6 +1256,9 @@ func TestHandlerExpandedCoordinationToolVisibility(t *testing.T) {
 	for _, required := range []string{
 		"till.attention_item",
 		"till.handoff",
+		"till.list_attention_items",
+		"till.get_handoff",
+		"till.list_handoffs",
 		"till.raise_attention_item",
 		"till.resolve_attention_item",
 		"till.create_handoff",
@@ -1981,7 +1990,8 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, leaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(620, "till.list_capability_leases", map[string]any{
+	_, leaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(620, "till.capability_lease", map[string]any{
+		"operation":       "list",
 		"project_id":      "p1",
 		"scope_type":      "task",
 		"scope_id":        "task-1",
@@ -2003,7 +2013,8 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 		t.Fatal("list_capability_leases include_revoked = false, want true")
 	}
 
-	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(621, "till.get_handoff", map[string]any{
+	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(621, "till.handoff", map[string]any{
+		"operation":  "get",
 		"handoff_id": "handoff-1",
 	}))
 	if isError, _ := getResp.Result["isError"].(bool); isError {
@@ -2013,7 +2024,8 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 		t.Fatalf("get_handoff handoff_id = %q, want handoff-1", got)
 	}
 
-	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(622, "till.list_handoffs", map[string]any{
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(622, "till.handoff", map[string]any{
+		"operation":  "list",
 		"project_id": "p1",
 		"branch_id":  "branch-1",
 		"scope_type": "task",

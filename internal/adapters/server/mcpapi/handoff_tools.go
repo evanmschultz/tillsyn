@@ -19,30 +19,32 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.handoff",
-			mcp.WithDescription("Create or update one durable handoff for structured agent-agent or human-agent coordination."),
+			mcp.WithDescription("Create, update, get, or list durable handoffs for structured agent-agent or human-agent coordination."),
 			mcp.WithString("operation",
 				mcp.Required(),
-				mcp.Enum("create", "update"),
-				mcp.Description("Handoff mutation operation"),
+				mcp.Enum("create", "update", "get", "list"),
+				mcp.Description("Handoff operation"),
 			),
-			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=create")),
-			mcp.WithString("handoff_id", mcp.Description("Handoff identifier. Required for operation=update")),
-			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier when operation=create")),
-			mcp.WithString("scope_type", mcp.Description("Optional source scope level when operation=create"), mcp.Enum(common.SupportedScopeTypes()...)),
-			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope when operation=create")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=create|list")),
+			mcp.WithString("handoff_id", mcp.Description("Handoff identifier. Required for operation=update|get")),
+			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier when operation=create|list")),
+			mcp.WithString("scope_type", mcp.Description("Optional source scope level when operation=create|list"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope when operation=create|list")),
 			mcp.WithString("source_role", mcp.Description("Optional source role label, for example orchestrator, builder, or qa")),
 			mcp.WithString("target_branch_id", mcp.Description("Optional target branch identifier")),
 			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("target_scope_id", mcp.Description("Optional target scope identifier")),
 			mcp.WithString("target_role", mcp.Description("Optional target role label, for example orchestrator, builder, or qa")),
 			mcp.WithString("status", mcp.Description("Optional handoff status"), mcp.Enum("ready", "waiting", "blocked", "failed", "returned", "superseded", "resolved")),
+			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter when operation=list"), mcp.WithStringItems()),
+			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return when operation=list")),
 			mcp.WithString("summary", mcp.Description("Short handoff summary. Required for operation=create and operation=update")),
 			mcp.WithString("next_action", mcp.Description("Optional explicit next action for the receiver")),
 			mcp.WithArray("missing_evidence", mcp.Description("Optional missing evidence checklist"), mcp.WithStringItems()),
 			mcp.WithArray("related_refs", mcp.Description("Optional related ids or references"), mcp.WithStringItems()),
 			mcp.WithString("resolution_note", mcp.Description("Optional resolution note when closing or superseding the handoff during operation=update")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for operation=create|update. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=create|update. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
@@ -56,76 +58,8 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 		},
 	)
 
-	srv.AddTool(
-		mcp.NewTool(
-			"till.get_handoff",
-			mcp.WithDescription("Return one durable handoff by id."),
-			mcp.WithString("handoff_id", mcp.Required(), mcp.Description("Handoff identifier")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			handoffID, err := req.RequireString("handoff_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			handoff, err := handoffs.GetHandoff(ctx, handoffID)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(handoff)
-			if err != nil {
-				return nil, fmt.Errorf("encode get_handoff result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.list_handoffs",
-			mcp.WithDescription("List durable handoffs for one scope tuple."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier")),
-			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
-			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope")),
-			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter"), mcp.WithStringItems()),
-			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				ProjectID string   `json:"project_id"`
-				BranchID  string   `json:"branch_id"`
-				ScopeType string   `json:"scope_type"`
-				ScopeID   string   `json:"scope_id"`
-				Statuses  []string `json:"statuses"`
-				Limit     int      `json:"limit"`
-			}
-			if err := req.BindArguments(&args); err != nil {
-				return invalidRequestToolResult(err), nil
-			}
-			projectID := strings.TrimSpace(args.ProjectID)
-			if projectID == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
-			}
-			handoffRows, err := handoffs.ListHandoffs(ctx, common.ListHandoffsRequest{
-				ProjectID: projectID,
-				BranchID:  strings.TrimSpace(args.BranchID),
-				ScopeType: strings.TrimSpace(args.ScopeType),
-				ScopeID:   strings.TrimSpace(args.ScopeID),
-				Statuses:  append([]string(nil), args.Statuses...),
-				Limit:     args.Limit,
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{"handoffs": handoffRows})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_handoffs result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
 	if exposeLegacyCoordinationTools {
+		registerLegacyHandoffReadTools(srv, handoffs)
 		registerLegacyHandoffMutationTools(srv, handoffs)
 	}
 }
@@ -148,11 +82,52 @@ type handoffMutationArgs struct {
 	MissingEvidence []string `json:"missing_evidence"`
 	RelatedRefs     []string `json:"related_refs"`
 	ResolutionNote  string   `json:"resolution_note"`
+	Statuses        []string `json:"statuses"`
+	Limit           int      `json:"limit"`
 	SessionID       string   `json:"session_id"`
 	SessionSecret   string   `json:"session_secret"`
 	AgentInstanceID string   `json:"agent_instance_id"`
 	LeaseToken      string   `json:"lease_token"`
 	OverrideToken   string   `json:"override_token"`
+}
+
+func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.HandoffService) {
+	srv.AddTool(
+		mcp.NewTool(
+			"till.get_handoff",
+			mcp.WithDescription("Return one durable handoff by id."),
+			mcp.WithString("handoff_id", mcp.Required(), mcp.Description("Handoff identifier")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args handoffMutationArgs
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			args.Operation = "get"
+			return handleHandoffMutation(ctx, handoffs, args)
+		},
+	)
+
+	srv.AddTool(
+		mcp.NewTool(
+			"till.list_handoffs",
+			mcp.WithDescription("List durable handoffs for one scope tuple."),
+			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
+			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier")),
+			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope")),
+			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter"), mcp.WithStringItems()),
+			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args handoffMutationArgs
+			if err := req.BindArguments(&args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			args.Operation = "list"
+			return handleHandoffMutation(ctx, handoffs, args)
+		},
+	)
 }
 
 func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs common.HandoffService) {
@@ -226,6 +201,41 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, args handoffMutationArgs) (*mcp.CallToolResult, error) {
 	operation := strings.TrimSpace(args.Operation)
 	switch operation {
+	case "get":
+		handoffID := strings.TrimSpace(args.HandoffID)
+		if handoffID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "handoff_id" not found`), nil
+		}
+		handoff, err := handoffs.GetHandoff(ctx, handoffID)
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(handoff)
+		if err != nil {
+			return nil, fmt.Errorf("encode handoff get result: %w", err)
+		}
+		return result, nil
+	case "list":
+		projectID := strings.TrimSpace(args.ProjectID)
+		if projectID == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+		}
+		handoffRows, err := handoffs.ListHandoffs(ctx, common.ListHandoffsRequest{
+			ProjectID: projectID,
+			BranchID:  strings.TrimSpace(args.BranchID),
+			ScopeType: strings.TrimSpace(args.ScopeType),
+			ScopeID:   strings.TrimSpace(args.ScopeID),
+			Statuses:  append([]string(nil), args.Statuses...),
+			Limit:     args.Limit,
+		})
+		if err != nil {
+			return toolResultFromError(err), nil
+		}
+		result, err := mcp.NewToolResultJSON(map[string]any{"handoffs": handoffRows})
+		if err != nil {
+			return nil, fmt.Errorf("encode handoff list result: %w", err)
+		}
+		return result, nil
 	case "create":
 		projectID := strings.TrimSpace(args.ProjectID)
 		if projectID == "" {
