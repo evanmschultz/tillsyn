@@ -42,6 +42,7 @@ type fakeService struct {
 	nodeContracts           map[string]domain.NodeContractSnapshot
 	lastCreateProject       app.CreateProjectInput
 	lastUpdateProject       app.UpdateProjectInput
+	lastBindProjectTemplate app.BindProjectTemplateLibraryInput
 	lastAuthRequestFilter   domain.AuthRequestListFilter
 	lastAuthSessionFilter   app.AuthSessionFilter
 	lastCapabilityLeases    app.ListCapabilityLeasesInput
@@ -875,6 +876,7 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 
 // BindProjectTemplateLibrary sets one active project binding.
 func (f *fakeService) BindProjectTemplateLibrary(_ context.Context, in app.BindProjectTemplateLibraryInput) (domain.ProjectTemplateBinding, error) {
+	f.lastBindProjectTemplate = in
 	binding := domain.ProjectTemplateBinding{
 		ProjectID:        strings.TrimSpace(in.ProjectID),
 		LibraryID:        domain.NormalizeTemplateLibraryID(in.LibraryID),
@@ -15007,6 +15009,43 @@ func TestModelEditProjectClearsTemplateLibraryBinding(t *testing.T) {
 
 	if _, ok := svc.projectBindings[project.ID]; ok {
 		t.Fatalf("expected project binding removed, got %#v", svc.projectBindings[project.ID])
+	}
+}
+
+// TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary verifies save treats drift on the same selected library as an intentional reapply.
+func TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary(t *testing.T) {
+	now := time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID:      project.ID,
+		LibraryID:      library.ID,
+		LibraryName:    library.Name,
+		BoundRevision:  2,
+		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
+		LatestRevision: 3,
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('M'))
+	if m.mode != modeEditProject {
+		t.Fatalf("expected edit-project mode, got %v", m.mode)
+	}
+	lines, _ := m.projectFormBodyLines(96, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+	if !strings.Contains(rendered, "save reapplies the latest approved revision for future generated work") {
+		t.Fatalf("expected reapply hint in project form, got\n%s", rendered)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
+		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
+	}
+	if got := svc.lastBindProjectTemplate.LibraryID; got != library.ID {
+		t.Fatalf("BindProjectTemplateLibrary() library = %q, want %q", got, library.ID)
 	}
 }
 

@@ -708,7 +708,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "template project",
 			args: []string{"template", "project", "--help"},
-			want: []string{"till template project", "bind", "binding"},
+			want: []string{"till template project", "bind", "binding", "preview"},
 		},
 		{
 			name: "template project bind",
@@ -719,6 +719,11 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "template project binding",
 			args: []string{"template", "project", "binding", "--help"},
 			want: []string{"till template project binding", "--project-id", "active template-library binding"},
+		},
+		{
+			name: "template project preview",
+			args: []string{"template", "project", "preview", "--help"},
+			want: []string{"till template project preview", "--project-id", "migration-review candidates"},
 		},
 		{
 			name: "template contract",
@@ -2118,6 +2123,23 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	bindingOutput := bindingOut.String()
 	if got := extractCLIKVValue(t, bindingOutput, "library id"); got != "go-defaults" {
 		t.Fatalf("template project binding library = %q, want go-defaults", got)
+	}
+
+	var previewOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"template", "project", "preview",
+		"--project-id", "p1",
+	}, &previewOut, io.Discard); err != nil {
+		t.Fatalf("run(template project preview) error = %v", err)
+	}
+	previewOutput := previewOut.String()
+	if got := extractCLIKVValue(t, previewOutput, "project id"); got != "p1" {
+		t.Fatalf("template project preview project = %q, want p1", got)
+	}
+	if got := extractCLIKVValue(t, previewOutput, "review required"); got != "no" {
+		t.Fatalf("template project preview review required = %q, want no", got)
 	}
 
 	repo, err := sqlite.Open(dbPath)

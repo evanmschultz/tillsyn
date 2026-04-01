@@ -128,6 +128,8 @@ func commandProgressLabel(command string) string {
 		return "Binding project template"
 	case "template.project.binding":
 		return "Loading project template binding"
+	case "template.project.preview":
+		return "Loading project template reapply preview"
 	case "template.contract.show":
 		return "Loading template contract"
 	case "lease.list":

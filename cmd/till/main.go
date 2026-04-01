@@ -173,6 +173,11 @@ type templateProjectBindingCommandOptions struct {
 	projectID string
 }
 
+// templateProjectPreviewCommandOptions stores project template reapply preview lookup values.
+type templateProjectPreviewCommandOptions struct {
+	projectID string
+}
+
 // templateContractShowCommandOptions stores node-contract lookup values.
 type templateContractShowCommandOptions struct {
 	nodeID string
@@ -464,6 +469,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	templateBuiltinEnsureOpts := templateBuiltinEnsureCommandOptions{libraryID: "default-go"}
 	templateProjectBindOpts := templateProjectBindCommandOptions{}
 	templateProjectBindingOpts := templateProjectBindingCommandOptions{}
+	templateProjectPreviewOpts := templateProjectPreviewCommandOptions{}
 	templateContractShowOpts := templateContractShowCommandOptions{}
 	leaseListOpts := leaseListCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
 	leaseIssueOpts := leaseIssueCommandOptions{scopeType: string(domain.CapabilityScopeProject), role: string(domain.CapabilityRoleBuilder), requestedTTL: 8 * time.Hour}
@@ -477,7 +483,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateBuiltinStatusOpts, templateBuiltinEnsureOpts, templateProjectBindOpts, templateProjectBindingOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateBuiltinStatusOpts, templateBuiltinEnsureOpts, templateProjectBindOpts, templateProjectBindingOpts, templateProjectPreviewOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -1101,11 +1107,12 @@ explicitly when the embedded builtin contract changed.
 		Short: "Bind projects to template libraries",
 		Long: strings.TrimSpace(`
 Bind projects to approved template libraries and inspect the currently active
-binding for one project.
+binding or reapply preview for one project.
 `),
 		Example: strings.Join([]string{
 			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
 			"  till template project binding --project-id PROJECT_ID",
+			"  till template project preview --project-id PROJECT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1142,7 +1149,24 @@ work or comparing project behavior with the global library inventory.
 		},
 	}
 	templateProjectBindingCmd.Flags().StringVar(&templateProjectBindingOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd)
+	templateProjectPreviewCmd := &cobra.Command{
+		Use:   "preview",
+		Short: "Show one project's explicit template reapply preview",
+		Long: strings.TrimSpace(`
+Show the bound-versus-latest template drift for one project plus conservative
+migration-review candidates for existing generated nodes.
+
+Use this before rebinding the same library revision intentionally so the dev can
+review what changed without silently rewriting live work.
+`),
+		Example: "  till template project preview --project-id PROJECT_ID",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "template.project.preview")
+		},
+	}
+	templateProjectPreviewCmd.Flags().StringVar(&templateProjectPreviewOpts.projectID, "project-id", "", "Project identifier")
+	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd, templateProjectPreviewCmd)
 
 	templateContractCmd := &cobra.Command{
 		Use:   "contract",
@@ -2262,6 +2286,7 @@ func executeCommandFlow(
 	templateBuiltinEnsureOpts templateBuiltinEnsureCommandOptions,
 	templateProjectBindOpts templateProjectBindCommandOptions,
 	templateProjectBindingOpts templateProjectBindingCommandOptions,
+	templateProjectPreviewOpts templateProjectPreviewCommandOptions,
 	templateContractShowOpts templateContractShowCommandOptions,
 	leaseListOpts leaseListCommandOptions,
 	leaseIssueOpts leaseIssueCommandOptions,
@@ -2633,6 +2658,10 @@ func executeCommandFlow(
 	case "template.project.binding":
 		return runOneShotCommand("template.project.binding", "template project binding", func() error {
 			return runTemplateProjectBinding(ctx, svc, templateProjectBindingOpts, stdout)
+		})
+	case "template.project.preview":
+		return runOneShotCommand("template.project.preview", "template project preview", func() error {
+			return runTemplateProjectPreview(ctx, svc, templateProjectPreviewOpts, stdout)
 		})
 	case "template.contract.show":
 		return runOneShotCommand("template.contract.show", "template contract show", func() error {
@@ -3123,6 +3152,22 @@ func runTemplateProjectBinding(ctx context.Context, svc *app.Service, opts templ
 		return fmt.Errorf("get project template binding: %w", err)
 	}
 	return writeProjectTemplateBindingDetail(stdout, binding)
+}
+
+// runTemplateProjectPreview loads one project's explicit template reapply preview and writes it in a human-readable operator view.
+func runTemplateProjectPreview(ctx context.Context, svc *app.Service, opts templateProjectPreviewCommandOptions, stdout io.Writer) error {
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	projectID := strings.TrimSpace(opts.projectID)
+	if err := requireProjectID("template project preview", projectID); err != nil {
+		return err
+	}
+	preview, err := svc.GetProjectTemplateReapplyPreview(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("get project template reapply preview: %w", err)
+	}
+	return writeProjectTemplateReapplyPreviewDetail(stdout, preview)
 }
 
 // runTemplateContractShow loads one generated-node contract snapshot and writes it in a human-readable operator view.

@@ -410,9 +410,9 @@ func registerProjectTools(
 	srv.AddTool(
 		mcp.NewTool(
 			"till.project",
-			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Project operation"), mcp.Enum("list", "create", "update", "bind_template", "get_template_binding", "set_allowed_kinds", "list_allowed_kinds", "list_change_events", "get_dependency_rollup")),
-			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=update|bind_template|get_template_binding|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup")),
+			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|preview_template_reapply|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Project operation"), mcp.Enum("list", "create", "update", "bind_template", "get_template_binding", "preview_template_reapply", "set_allowed_kinds", "list_allowed_kinds", "list_change_events", "get_dependency_rollup")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=update|bind_template|get_template_binding|preview_template_reapply|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup")),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived projects for operation=list")),
 			mcp.WithNumber("limit", mcp.Description("Maximum rows to return for operation=list_change_events")),
 			mcp.WithString("name", mcp.Description("Project name. Required for operation=create|update")),
@@ -621,6 +621,23 @@ func registerProjectTools(
 				result, err := mcp.NewToolResultJSON(binding)
 				if err != nil {
 					return nil, fmt.Errorf("encode project get_template_binding result: %w", err)
+				}
+				return result, nil
+			case "preview_template_reapply":
+				if templates == nil {
+					return mcp.NewToolResultError("invalid_request: template library service is unavailable"), nil
+				}
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				preview, err := templates.GetProjectTemplateReapplyPreview(ctx, projectID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(preview)
+				if err != nil {
+					return nil, fmt.Errorf("encode project preview_template_reapply result: %w", err)
 				}
 				return result, nil
 			case "set_allowed_kinds":

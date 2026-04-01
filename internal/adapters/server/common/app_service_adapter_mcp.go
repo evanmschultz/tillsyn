@@ -969,6 +969,18 @@ func (a *AppServiceAdapter) GetProjectTemplateBinding(ctx context.Context, proje
 	return binding, nil
 }
 
+// GetProjectTemplateReapplyPreview loads one project's explicit template reapply preview.
+func (a *AppServiceAdapter) GetProjectTemplateReapplyPreview(ctx context.Context, projectID string) (domain.ProjectTemplateReapplyPreview, error) {
+	if a == nil || a.service == nil {
+		return domain.ProjectTemplateReapplyPreview{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	preview, err := a.service.GetProjectTemplateReapplyPreview(ctx, strings.TrimSpace(projectID))
+	if err != nil {
+		return domain.ProjectTemplateReapplyPreview{}, mapAppError("get project template reapply preview", err)
+	}
+	return preview, nil
+}
+
 // GetNodeContractSnapshot loads one generated-node contract snapshot.
 func (a *AppServiceAdapter) GetNodeContractSnapshot(ctx context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
 	if a == nil || a.service == nil {

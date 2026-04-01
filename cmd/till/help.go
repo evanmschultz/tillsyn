@@ -238,7 +238,8 @@ binding the library.
 	},
 	"till template project": {
 		Long: strings.TrimSpace(`
-Bind projects to approved template libraries and inspect the active binding.
+Bind projects to approved template libraries and inspect the active binding or
+reapply preview.
 
 Use this when project creation did not already bind a library or when you need
 to confirm which library currently governs generated workflow contracts.
@@ -246,6 +247,7 @@ to confirm which library currently governs generated workflow contracts.
 		Example: []string{
 			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
 			"  till template project binding --project-id PROJECT_ID",
+			"  till template project preview --project-id PROJECT_ID",
 		},
 	},
 	"till template project bind": {
@@ -268,6 +270,17 @@ future create-time template resolution.
 `),
 		Example: []string{
 			"  till template project binding --project-id PROJECT_ID",
+		},
+	},
+	"till template project preview": {
+		Long: strings.TrimSpace(`
+Show the bound-versus-latest template drift for one project plus conservative
+migration-review candidates for existing generated nodes.
+
+Use this before intentionally rebinding the same approved library revision.
+`),
+		Example: []string{
+			"  till template project preview --project-id PROJECT_ID",
 		},
 	},
 	"till template contract": {

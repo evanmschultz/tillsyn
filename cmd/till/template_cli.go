@@ -126,6 +126,31 @@ func writeProjectTemplateBindingDetail(stdout io.Writer, binding domain.ProjectT
 	})
 }
 
+// writeProjectTemplateReapplyPreviewDetail renders one explicit template reapply preview in a stable human-readable view.
+func writeProjectTemplateReapplyPreviewDetail(stdout io.Writer, preview domain.ProjectTemplateReapplyPreview) error {
+	printer := newCLIPrinter(stdout)
+	if err := writeCLIKVWithPrinter(printer, "Project Template Reapply Preview", [][2]string{
+		{"project id", firstNonEmptyTrimmed(preview.ProjectID, "-")},
+		{"library id", firstNonEmptyTrimmed(preview.LibraryID, "-")},
+		{"library name", firstNonEmptyTrimmed(preview.LibraryName, "-")},
+		{"drift status", firstNonEmptyTrimmed(preview.DriftStatus, "-")},
+		{"bound revision", firstNonEmptyTrimmed(renderOptionalPositiveInt(preview.BoundRevision), "-")},
+		{"latest revision", firstNonEmptyTrimmed(renderOptionalPositiveInt(preview.LatestRevision), "-")},
+		{"eligible migrations", firstNonEmptyTrimmed(renderOptionalPositiveInt(preview.EligibleMigrationCount), "0")},
+		{"ineligible migrations", firstNonEmptyTrimmed(renderOptionalPositiveInt(preview.IneligibleMigrationCount), "0")},
+		{"review required", yesNo(preview.ReviewRequired)},
+	}); err != nil {
+		return err
+	}
+	if err := writeProjectTemplateDefaultChangeTable(printer, preview.ProjectDefaultChanges); err != nil {
+		return err
+	}
+	if err := writeProjectTemplateChildRuleChangeTable(printer, preview.ChildRuleChanges); err != nil {
+		return err
+	}
+	return writeProjectTemplateMigrationCandidateTable(printer, preview.MigrationCandidates)
+}
+
 // writeNodeContractSnapshotDetail renders one generated-node contract snapshot in a stable human-readable detail block.
 func writeNodeContractSnapshotDetail(stdout io.Writer, snapshot domain.NodeContractSnapshot) error {
 	return writeCLIKV(stdout, "Node Contract", [][2]string{
@@ -161,6 +186,73 @@ func renderKindIDs(kindIDs []domain.KindID) string {
 		values = append(values, string(kindID))
 	}
 	return renderAuthStringList(values)
+}
+
+func writeProjectTemplateDefaultChangeTable(printer *laslig.Printer, changes []domain.ProjectTemplateDefaultChange) error {
+	if len(changes) == 0 {
+		return writeCLIPanelWithPrinter(printer, "Project Default Changes", "No project-level default changes detected.", "")
+	}
+	rows := make([][]string, 0, len(changes))
+	for _, change := range changes {
+		rows = append(rows, []string{
+			firstNonEmptyTrimmed(change.Field, "-"),
+			firstNonEmptyTrimmed(compactText(change.Previous), "-"),
+			firstNonEmptyTrimmed(compactText(change.Current), "-"),
+		})
+	}
+	return writeCLITableWithPrinter(
+		printer,
+		"Project Default Changes",
+		[]string{"FIELD", "BOUND REVISION", "LATEST REVISION"},
+		rows,
+		"No project-level default changes detected.",
+	)
+}
+
+func writeProjectTemplateChildRuleChangeTable(printer *laslig.Printer, changes []domain.ProjectTemplateChildRuleChange) error {
+	if len(changes) == 0 {
+		return writeCLIPanelWithPrinter(printer, "Child Rule Changes", "No generated child-rule changes detected.", "")
+	}
+	rows := make([][]string, 0, len(changes))
+	for _, change := range changes {
+		rows = append(rows, []string{
+			firstNonEmptyTrimmed(change.NodeTemplateName, change.NodeTemplateID),
+			firstNonEmptyTrimmed(change.ChildRuleID, "-"),
+			renderAuthStringList(change.ChangeKinds),
+			firstNonEmptyTrimmed(change.PreviousTitleTemplate, "-"),
+			firstNonEmptyTrimmed(change.CurrentTitleTemplate, "-"),
+		})
+	}
+	return writeCLITableWithPrinter(
+		printer,
+		"Child Rule Changes",
+		[]string{"NODE TEMPLATE", "RULE ID", "CHANGES", "BOUND TITLE", "LATEST TITLE"},
+		rows,
+		"No generated child-rule changes detected.",
+	)
+}
+
+func writeProjectTemplateMigrationCandidateTable(printer *laslig.Printer, candidates []domain.ProjectTemplateMigrationCandidate) error {
+	if len(candidates) == 0 {
+		return writeCLIPanelWithPrinter(printer, "Migration Candidates", "No existing generated nodes are affected by the current drift.", "")
+	}
+	rows := make([][]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		rows = append(rows, []string{
+			firstNonEmptyTrimmed(candidate.Title, candidate.TaskID),
+			firstNonEmptyTrimmed(candidate.TaskID, "-"),
+			firstNonEmptyTrimmed(string(candidate.Status), "-"),
+			firstNonEmptyTrimmed(renderAuthStringList(candidate.ChangeKinds), "-"),
+			firstNonEmptyTrimmed(compactText(candidate.Reason), "-"),
+		})
+	}
+	return writeCLITableWithPrinter(
+		printer,
+		"Migration Candidates",
+		[]string{"TASK", "TASK ID", "STATUS", "CHANGES", "REASON"},
+		rows,
+		"No existing generated nodes are affected by the current drift.",
+	)
 }
 
 func writeTemplateNodeTemplateTable(printer *laslig.Printer, nodeTemplates []domain.NodeTemplate) error {
