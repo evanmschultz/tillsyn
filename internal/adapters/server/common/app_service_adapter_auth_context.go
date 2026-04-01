@@ -26,13 +26,81 @@ func (a *AppServiceAdapter) normalizeMutationAuthorizationRequest(ctx context.Co
 	if a == nil || a.service == nil || a.auth == nil {
 		return in, nil
 	}
-	if _, err := a.auth.ValidateSession(ctx, in.SessionID, in.SessionSecret); err != nil {
+	validated, err := a.auth.ValidateSession(ctx, in.SessionID, in.SessionSecret)
+	if err != nil {
 		return in, nil
+	}
+	if err := enforceMutationApprovedPathPolicy(validated.Session.Metadata, in.Action); err != nil {
+		return MutationAuthorizationRequest{}, err
 	}
 	if err := a.enrichMutationAuthorizationContext(ctx, &in); err != nil {
 		return MutationAuthorizationRequest{}, mapAppError("authorize mutation", err)
 	}
 	return in, nil
+}
+
+// enforceMutationApprovedPathPolicy applies tillsyn's higher-level auth-scope split on top
+// of autent's generic approved-path matching.
+func enforceMutationApprovedPathPolicy(sessionMetadata map[string]string, action string) error {
+	approvedPath := strings.TrimSpace(sessionMetadata["approved_path"])
+	if approvedPath == "" {
+		return nil
+	}
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return nil
+	}
+	switch {
+	case mutationActionRequiresGlobalApprovedPath(action):
+		if approvedPath != "global" {
+			return ErrAuthorizationDenied
+		}
+	case mutationActionRequiresProjectScopedApproval(action):
+		if approvedPath == "global" {
+			return ErrAuthorizationDenied
+		}
+	}
+	return nil
+}
+
+// mutationActionRequiresGlobalApprovedPath reports whether one mutation is a locked
+// global-admin operation rather than a project-scoped workflow mutation.
+func mutationActionRequiresGlobalApprovedPath(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "create_project", "upsert_kind_definition", "upsert_template_library", "bind_project_template_library":
+		return true
+	default:
+		return false
+	}
+}
+
+// mutationActionRequiresProjectScopedApproval reports whether one mutation must be
+// performed under project or narrower approved scope, not global admin scope.
+func mutationActionRequiresProjectScopedApproval(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "update_project",
+		"set_project_allowed_kinds",
+		"create_task",
+		"update_task",
+		"move_task",
+		"move_task_state",
+		"delete_task",
+		"restore_task",
+		"reparent_task",
+		"create_comment",
+		"create_handoff",
+		"update_handoff",
+		"raise_attention_item",
+		"resolve_attention_item",
+		"issue_capability_lease",
+		"heartbeat_capability_lease",
+		"renew_capability_lease",
+		"revoke_capability_lease",
+		"revoke_all_capability_leases":
+		return true
+	default:
+		return false
+	}
 }
 
 // enrichMutationAuthorizationContext derives the narrowest project-rooted auth path for one mutation.

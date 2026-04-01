@@ -61,6 +61,88 @@ Validation so far:
 Next step:
 1. Commit and push the frozen-surface slice, watch the new GitHub Actions run to green, then tell the human to restart the MCP runtime/Codex session once so the new family tools become visible for parity and E2E validation.
 
+## Checkpoint 2026-03-31: Live MCP Parity Sweep On Reduced Surface
+
+Objective:
+- verify the live reduced MCP surface against the restarted runtime and identify any behavior or guidance drift that survived the surface-freeze slice.
+
+Context7:
+1. `/mark3labs/mcp-go` rechecked before the live parity remediation for operation-based tool guidance and handler/test consistency on consolidated tool families.
+
+Live read-side parity findings:
+1. Family-tool handlers are live and callable in the restarted session:
+   - `till_attention_item`
+   - `till_auth_request`
+   - `till_capability_lease`
+   - `till_capture_state`
+   - `till_comment`
+   - `till_embeddings`
+   - `till_get_bootstrap_guide`
+   - `till_get_instructions`
+   - `till_handoff`
+   - `till_kind`
+   - `till_plan_item`
+   - `till_project`
+   - `till_template`
+2. Live read-side behavior is correct for:
+   - `till.project(operation=list|get_template_binding|list_allowed_kinds|list_change_events|get_dependency_rollup)`,
+   - `till.plan_item(operation=list|search)`,
+   - `till.template(operation=list|get|get_node_contract)`,
+   - `till.kind(operation=list)`,
+   - `till.embeddings(operation=status)`,
+   - `till.attention_item(operation=list)`,
+   - `till.comment(operation=list)`,
+   - `till.handoff(operation=list)`,
+   - `till.capability_lease(operation=list)`,
+   - `till.auth_request(operation=list|get)`,
+   - `till.get_instructions`.
+3. Live auth-request lifecycle also passed for:
+   - `till.auth_request(operation=create|get|list|claim(waiting)|cancel)`.
+
+Live drift found:
+1. `till.get_bootstrap_guide` still returned removed flat tool names in `next_steps` and `recommended_tools`:
+   - `till.create_auth_request`,
+   - `till.claim_auth_request`,
+   - `till.list_projects`,
+   - `till.list_template_libraries`,
+   - `till.create_comment`.
+2. `till.capture_state` still returned removed flat tool names in `resume_hints`:
+   - `till.list_attention_items`,
+   - `till.list_project_change_events`,
+   - `till.list_child_tasks`.
+3. MCP auth error guidance in the adapter still told callers to use `till.create_auth_request` instead of the reduced family shape.
+
+Remediation:
+1. Updated bootstrap guidance generation to use:
+   - `till.auth_request(operation=create|claim)`,
+   - `till.template(operation=list)`,
+   - `till.comment(operation=create)`.
+2. Updated capture-state follow-up pointers and transport resume-hint rels to use:
+   - `till.attention_item`,
+   - `till.project`,
+   - `till.plan_item`,
+   with explicit `operation=...` in the hint note text.
+3. Updated MCP auth error help text to reference `till.auth_request(operation=create)`.
+4. Added/updated tests in:
+   - `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`,
+   - `internal/adapters/server/common/app_service_adapter_helpers_test.go`.
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS.
+2. `mage test-pkg ./internal/adapters/server/common` -> PASS.
+3. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+4. `mage ci` -> PASS.
+5. `mage build` -> PASS.
+
+Current blocker:
+1. The live MCP session still needs one restart to pick up the rebuilt binary for the guidance-copy fixes.
+2. Guarded mutation parity still needs a synchronized approval round:
+   - prior parity auth requests expired before claim because the human approval step did not happen while the agent was actively waiting to claim them.
+
+Next step:
+1. Restart the MCP runtime/session so the rebuilt guidance fixes are live.
+2. Create one fresh global auth request and one fresh project-scoped auth request for the guarded mutation parity sweep, then have the human approve them immediately while the agent is actively waiting to claim.
+
 ## Checkpoint 2026-03-31: Windows Resource Picker Test Stabilization
 
 Objective:
@@ -9304,3 +9386,61 @@ Next step:
 1. Commit and push this slice on its own.
 2. Restart the MCP runtime and verify the default tool list now keeps only `till.plan_item` for plan-item reads/writes.
 3. Then move on to the `comment` family consolidation slice.
+
+### 2026-04-01: Live Reduced-Surface Parity Sweep And Auth Fixup
+
+Objective:
+- run a full live parity sweep against the frozen reduced MCP family surface and remediate any behavior loss before moving on to product slices.
+
+Live MCP evidence:
+1. Confirmed the rebuilt runtime exposes the reduced 13-tool default surface and this Codex session can call it directly.
+2. Read-side parity passed across the reduced family tools, including:
+   - `till.get_bootstrap_guide`
+   - `till.get_instructions`
+   - `till.project`
+   - `till.plan_item`
+   - `till.kind`
+   - `till.template`
+   - `till.capture_state`
+   - `till.capability_lease(operation=list)`
+   - `till.handoff(operation=list|get)`
+   - `till.attention_item(operation=list)`
+   - `till.comment(operation=list)`
+   - `till.auth_request`
+3. Mutation-side live parity succeeded for:
+   - `till.kind(operation=upsert)`
+   - `till.template(operation=upsert|get)`
+   - `till.project(operation=create|update|get_template_binding|set_allowed_kinds|list_change_events|get_dependency_rollup)`
+   - `till.plan_item(operation=create|update|move|move_state|delete|restore|reparent|list)`
+   - `till.comment(operation=create|list)`
+   - `till.handoff(operation=create|get|update|list)`
+   - `till.attention_item(operation=raise|list|resolve)`
+   - `till.capability_lease(operation=issue|heartbeat|renew|revoke|revoke_all|list)`
+4. `till.embeddings(operation=reindex)` returned `internal_error: reindex embeddings: embeddings disabled`, which matches current runtime state rather than a surface regression.
+
+Parity failures found live:
+1. `till.project(operation=create)` incorrectly required an agent lease tuple even under approved global agent auth, which is impossible before the project exists.
+2. Approved global agent auth could issue a project lease and then perform ordinary in-project mutations, violating the locked global-vs-project auth split.
+3. Project-scoped approved auth could bind a template library even though project binding is part of the locked global-admin path.
+
+Implementation:
+1. Added explicit mutation approved-path policy enforcement in `internal/adapters/server/common/app_service_adapter_auth_context.go`:
+   - global-admin actions now require `approved_path="global"`
+   - ordinary project-scoped workflow mutations now reject global approved sessions
+2. Added a narrow unguarded-agent exception for project creation only in `internal/adapters/server/common/app_service_adapter_mcp.go`:
+   - approved agent sessions can create projects without a lease tuple
+   - all other guarded agent mutations still require the lease tuple
+3. Updated the MCP adapter actor builder in `internal/adapters/server/mcpapi/extended_tools.go` so `till.project(operation=create)` no longer requires a lease tuple while the rest of the guarded family mutations still do.
+
+Tests added/updated:
+1. `internal/adapters/server/common/app_service_adapter_auth_context_test.go`
+   - added coverage for the global-admin vs project-scoped mutation split
+2. `internal/adapters/server/common/app_service_adapter_mcp_guard_test.go`
+   - added coverage for the project-create unguarded-agent exception
+3. `internal/adapters/server/mcpapi/extended_tools_test.go`
+   - updated project-create MCP coverage to prove the create path works without a lease tuple
+
+Next step:
+1. Run focused mage package gates for the touched common/mcpapi packages.
+2. Run `mage ci`.
+3. Re-check the live project/auth parity paths on the rebuilt runtime.

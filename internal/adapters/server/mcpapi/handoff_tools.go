@@ -270,7 +270,7 @@ func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, 
 			AgentInstanceID: args.AgentInstanceID,
 			LeaseToken:      args.LeaseToken,
 			OverrideToken:   args.OverrideToken,
-		})
+		}, false)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -328,7 +328,7 @@ func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, 
 			AgentInstanceID: args.AgentInstanceID,
 			LeaseToken:      args.LeaseToken,
 			OverrideToken:   args.OverrideToken,
-		})
+		}, false)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

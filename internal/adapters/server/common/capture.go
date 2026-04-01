@@ -118,8 +118,8 @@ func (s *CaptureStateService) CaptureState(ctx context.Context, in CaptureStateR
 				Note: "request view=full for expanded, summary-safe context",
 			},
 			{
-				Rel:  "till.list_attention_items",
-				Note: "list unresolved attention records when available",
+				Rel:  "till.attention_item",
+				Note: "list unresolved attention records with till.attention_item(operation=list, state=\"open\") when available",
 			},
 		},
 		RequestedView:      req.View,

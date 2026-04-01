@@ -660,3 +660,120 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 		})
 	}
 }
+
+// TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit verifies the
+// locked split between global-admin mutations and project-scoped workflow
+// mutations.
+func TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit(t *testing.T) {
+	t.Parallel()
+
+	fixture := newAuthScopeFixtureForTest(t)
+	globalSessionID, globalSessionSecret := mustIssueApprovedPathSessionForTest(t, fixture.auth, "global")
+	projectSessionID, projectSessionSecret := mustIssueApprovedPathSessionForTest(t, fixture.auth, "project/"+fixture.projectID)
+
+	cases := []struct {
+		name          string
+		sessionID     string
+		sessionSecret string
+		req           MutationAuthorizationRequest
+		wantErr       error
+	}{
+		{
+			name:          "global approval may create project",
+			sessionID:     globalSessionID,
+			sessionSecret: globalSessionSecret,
+			req: MutationAuthorizationRequest{
+				Action:       "create_project",
+				Namespace:    "project:" + domain.AuthRequestGlobalProjectID,
+				ResourceType: "project",
+				ResourceID:   "new",
+				Context: map[string]string{
+					"project_id": domain.AuthRequestGlobalProjectID,
+					"scope_type": "project",
+					"scope_id":   domain.AuthRequestGlobalProjectID,
+				},
+			},
+		},
+		{
+			name:          "global approval may bind project template library",
+			sessionID:     globalSessionID,
+			sessionSecret: globalSessionSecret,
+			req: MutationAuthorizationRequest{
+				Action:       "bind_project_template_library",
+				Namespace:    "tillsyn",
+				ResourceType: "project",
+				ResourceID:   fixture.projectID,
+				Context: map[string]string{
+					"project_id": fixture.projectID,
+				},
+			},
+		},
+		{
+			name:          "project approval may not bind project template library",
+			sessionID:     projectSessionID,
+			sessionSecret: projectSessionSecret,
+			req: MutationAuthorizationRequest{
+				Action:       "bind_project_template_library",
+				Namespace:    "tillsyn",
+				ResourceType: "project",
+				ResourceID:   fixture.projectID,
+				Context: map[string]string{
+					"project_id": fixture.projectID,
+				},
+			},
+			wantErr: ErrAuthorizationDenied,
+		},
+		{
+			name:          "global approval may not issue in-project lease",
+			sessionID:     globalSessionID,
+			sessionSecret: globalSessionSecret,
+			req: MutationAuthorizationRequest{
+				Action:       "issue_capability_lease",
+				Namespace:    "project:" + fixture.projectID,
+				ResourceType: "capability_lease",
+				ResourceID:   fixture.taskA.ID,
+				Context: map[string]string{
+					"project_id": fixture.projectID,
+					"scope_type": "task",
+				},
+			},
+			wantErr: ErrAuthorizationDenied,
+		},
+		{
+			name:          "global approval may not update project",
+			sessionID:     globalSessionID,
+			sessionSecret: globalSessionSecret,
+			req: MutationAuthorizationRequest{
+				Action:       "update_project",
+				Namespace:    "tillsyn",
+				ResourceType: "project",
+				ResourceID:   fixture.projectID,
+				Context: map[string]string{
+					"project_id": fixture.projectID,
+				},
+			},
+			wantErr: ErrAuthorizationDenied,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.req
+			req.SessionID = tc.sessionID
+			req.SessionSecret = tc.sessionSecret
+			caller, err := fixture.adapter.AuthorizeMutation(context.Background(), req)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("AuthorizeMutation() error = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("AuthorizeMutation() error = %v", err)
+			}
+			if caller.PrincipalID != "user-1" {
+				t.Fatalf("AuthorizeMutation() principal_id = %q, want user-1", caller.PrincipalID)
+			}
+		})
+	}
+}

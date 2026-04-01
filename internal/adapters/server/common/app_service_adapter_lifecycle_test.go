@@ -252,24 +252,22 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if !containsStep(guide.NextSteps, "approved", "create a project") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want approved-session project guidance", guide.NextSteps)
 	}
-	if !containsStep(guide.NextSteps, "till.create_auth_request", "resume_token", "continuation_json") {
+	if !containsStep(guide.NextSteps, "till.auth_request(operation=create)", "resume_token", "continuation_json") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want auth-request continuation guidance", guide.NextSteps)
 	}
-	if !containsStep(guide.NextSteps, "till.claim_auth_request", "till.project(operation=create)") {
+	if !containsStep(guide.NextSteps, "till.auth_request(operation=claim)", "till.project(operation=create)") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want claim -> project create guidance", guide.NextSteps)
 	}
-	if !containsStep(guide.NextSteps, "till.list_template_libraries", "till.project(operation=bind_template)") {
+	if !containsStep(guide.NextSteps, "till.template(operation=list)", "till.project(operation=bind_template)") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want template-library binding guidance", guide.NextSteps)
 	}
 	if !containsStep(guide.NextSteps, "till.capture_state") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want capture-state guidance", guide.NextSteps)
 	}
 	for _, tool := range []string{
-		"till.create_auth_request",
-		"till.list_auth_requests",
-		"till.get_auth_request",
-		"till.claim_auth_request",
+		"till.auth_request",
 		"till.project",
+		"till.template",
 		"till.plan_item",
 		"till.capture_state",
 	} {

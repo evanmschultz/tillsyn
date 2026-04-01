@@ -566,7 +566,7 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 			AgentInstanceID: args.AgentInstanceID,
 			LeaseToken:      args.LeaseToken,
 			OverrideToken:   args.OverrideToken,
-		})
+		}, false)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -613,7 +613,7 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 			AgentInstanceID: args.AgentInstanceID,
 			LeaseToken:      args.LeaseToken,
 			OverrideToken:   args.OverrideToken,
-		})
+		}, false)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -684,7 +684,7 @@ func mapToolError(err error) toolErrorMapping {
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "session_required",
-			Text:  "session_required: " + err.Error() + "; next step: call till.create_auth_request to request scoped access",
+			Text:  "session_required: " + err.Error() + "; next step: call till.auth_request(operation=create) to request scoped access",
 		}
 	case errors.Is(err, common.ErrInvalidAuthentication):
 		return toolErrorMapping{
@@ -708,7 +708,7 @@ func mapToolError(err error) toolErrorMapping {
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "grant_required",
-			Text:  "grant_required: " + err.Error() + "; next step: call till.create_auth_request or wait for approval on the existing request",
+			Text:  "grant_required: " + err.Error() + "; next step: call till.auth_request(operation=create) or wait for approval on the existing request",
 		}
 	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
 		return toolErrorMapping{

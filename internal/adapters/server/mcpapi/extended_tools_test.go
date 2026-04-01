@@ -2700,8 +2700,6 @@ func TestHandlerExpandedCreateProjectPassesTemplateLibraryID(t *testing.T) {
 		"name":                "Project One",
 		"kind":                "go-service",
 		"template_library_id": "go-defaults",
-		"agent_instance_id":   "inst-1",
-		"lease_token":         "tok-1",
 	})))
 	if isError, _ := callResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_project returned isError=true: %#v", callResp.Result)
