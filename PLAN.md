@@ -9022,11 +9022,31 @@ Implementation:
 5. Kept the existing auth-action names (`create_task`, `update_task`, and so on) under the hood for this slice so current auth/policy behavior stays stable while the transport surface is reduced.
 
 Validation:
-1. Pending this slice's focused MCP/server test rerun.
-2. Pending this slice's full `mage ci` rerun.
+1. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (73 tests).
+2. `mage test-pkg ./internal/adapters/server/common` -> PASS (89 tests).
+3. `mage ci` -> PASS (1109 tests total, package coverage gate passed).
+4. `internal/adapters/server/mcpapi` coverage after this slice: 71.6%.
 
 Next step:
-1. Run focused MCP/server tests and `mage ci`.
-2. Commit and push this slice.
-3. Restart the MCP runtime when ready so the live surface reflects `till.plan_item`.
-4. Resume the live `TILLSYN` dogfood proof with the patched runtime.
+1. Restart the MCP runtime when ready so the live surface reflects `till.plan_item`.
+2. Resume the live `TILLSYN` dogfood proof with the patched runtime.
+3. Decide the next reduction wave for read/query tools after the live proof is green.
+
+### 2026-03-31: Bootstrap Vs Instructions Clarification
+
+Objective:
+- make the runtime-guidance split explicit before the next live MCP proof and record the open consolidation question instead of leaving it implicit.
+
+Clarification:
+1. `till.get_bootstrap_guide` is the lightweight runtime next-step surface:
+   - intended for empty-instance and pre-approval flows,
+   - returns operational bootstrap guidance,
+   - should stay small and deterministic.
+2. `till.get_instructions` is the embedded-doc and operator-policy surface:
+   - returns selected markdown docs plus agent-facing recommendations,
+   - is for missing/stale/ambiguous guidance,
+   - is not the project-state recovery surface,
+   - and is not a machine-readable schema browser for the whole MCP tool list.
+3. Open design question:
+   - we still need to decide whether bootstrap should remain its own tool or later collapse into `till.get_instructions(topic=bootstrap|workflow)`,
+   - but the split is intentional for now because bootstrap is runtime-generated minimal next-step guidance while instructions is broader embedded-doc retrieval.
