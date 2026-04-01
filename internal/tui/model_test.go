@@ -11754,7 +11754,21 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 	if m.taskFormResourceEditIndex != -1 {
 		t.Fatalf("expected new-resource row to keep edit index unset, got %d", m.taskFormResourceEditIndex)
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // first file after directory entry
+	targetName := "notes.md"
+	selected, ok := m.selectedResourcePickerEntry()
+	if !ok {
+		t.Fatal("expected at least one resource picker entry")
+	}
+	for steps := 0; selected.Name != targetName && steps < len(m.visibleResourcePickerItems()); steps++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+		selected, ok = m.selectedResourcePickerEntry()
+		if !ok {
+			t.Fatal("expected resource picker selection while navigating to target file")
+		}
+	}
+	if selected.Name != targetName {
+		t.Fatalf("expected to highlight %q before attach, got %q", targetName, selected.Name)
+	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeEditTask {
 		t.Fatalf("expected return to edit mode after attach, got %v", m.mode)
