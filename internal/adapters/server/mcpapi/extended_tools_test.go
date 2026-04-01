@@ -19,6 +19,7 @@ type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
 	lastCreateProjectReq     common.CreateProjectRequest
+	lastListProjectsArchived bool
 	lastGetTaskID            string
 	lastListTasksProjectID   string
 	lastListTasksArchived    bool
@@ -37,6 +38,9 @@ type stubExpandedService struct {
 	lastUpdateHandoffReq     common.UpdateHandoffRequest
 	lastListHandoffsReq      common.ListHandoffsRequest
 	lastListTemplateReq      common.ListTemplateLibrariesRequest
+	lastListKindsArchived    bool
+	lastUpsertKindReq        common.UpsertKindDefinitionRequest
+	lastSetAllowedKindsReq   common.SetProjectAllowedKindsRequest
 	lastUpsertTemplateReq    common.UpsertTemplateLibraryRequest
 	lastBindTemplateReq      common.BindProjectTemplateLibraryRequest
 	lastGetTemplateID        string
@@ -62,7 +66,8 @@ func (s *stubExpandedService) GetBootstrapGuide(_ context.Context) (common.Boots
 }
 
 // ListProjects returns one deterministic project row.
-func (s *stubExpandedService) ListProjects(_ context.Context, _ bool) ([]domain.Project, error) {
+func (s *stubExpandedService) ListProjects(_ context.Context, includeArchived bool) ([]domain.Project, error) {
+	s.lastListProjectsArchived = includeArchived
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []domain.Project{
 		{
@@ -514,7 +519,8 @@ func (s *stubExpandedService) GetProjectDependencyRollup(_ context.Context, _ st
 }
 
 // ListKindDefinitions returns one deterministic kind row.
-func (s *stubExpandedService) ListKindDefinitions(_ context.Context, _ bool) ([]domain.KindDefinition, error) {
+func (s *stubExpandedService) ListKindDefinitions(_ context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
+	s.lastListKindsArchived = includeArchived
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []domain.KindDefinition{
 		{
@@ -528,7 +534,8 @@ func (s *stubExpandedService) ListKindDefinitions(_ context.Context, _ bool) ([]
 }
 
 // UpsertKindDefinition returns one deterministic kind row.
-func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, _ common.UpsertKindDefinitionRequest) (domain.KindDefinition, error) {
+func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, in common.UpsertKindDefinitionRequest) (domain.KindDefinition, error) {
+	s.lastUpsertKindReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.KindDefinition{
 		ID:          domain.KindID("phase"),
@@ -540,7 +547,8 @@ func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, _ common.U
 }
 
 // SetProjectAllowedKinds reports deterministic success.
-func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, _ common.SetProjectAllowedKindsRequest) error {
+func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, in common.SetProjectAllowedKindsRequest) error {
+	s.lastSetAllowedKindsReq = in
 	return nil
 }
 
@@ -952,31 +960,14 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	requiredTools := []string{
 		"till.get_bootstrap_guide",
 		"till.get_instructions",
-		"till.list_projects",
-		"till.project",
-		"till.create_auth_request",
-		"till.list_auth_requests",
-		"till.get_auth_request",
-		"till.claim_auth_request",
-		"till.cancel_auth_request",
+		"till.auth_request",
 		"till.plan_item",
-		"till.get_embeddings_status",
-		"till.reindex_embeddings",
-		"till.list_project_change_events",
-		"till.get_project_dependency_rollup",
-		"till.list_kind_definitions",
-		"till.upsert_kind_definition",
 		"till.project",
-		"till.list_project_allowed_kinds",
-		"till.list_template_libraries",
-		"till.get_template_library",
-		"till.upsert_template_library",
-		"till.project",
-		"till.get_project_template_binding",
-		"till.get_node_contract_snapshot",
+		"till.embeddings",
+		"till.kind",
+		"till.template",
 		"till.capability_lease",
-		"till.create_comment",
-		"till.list_comments_by_target",
+		"till.comment",
 		"till.handoff",
 	}
 	for _, toolName := range requiredTools {
@@ -998,7 +989,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	}{
 		{name: "till.get_bootstrap_guide", args: map[string]any{}},
 		{name: "till.get_instructions", args: map[string]any{"include_markdown": false}},
-		{name: "till.list_projects", args: map[string]any{"include_archived": true}},
+		{name: "till.project", args: map[string]any{"operation": "list", "include_archived": true}},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"name":              "Project One",
@@ -1012,7 +1003,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.create_auth_request", args: map[string]any{
+		{name: "till.auth_request", args: map[string]any{
+			"operation":      "create",
 			"path":           "project/p1",
 			"principal_id":   "review-agent",
 			"principal_type": "agent",
@@ -1022,10 +1014,10 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"timeout":        "30m",
 			"reason":         "manual MCP review",
 		}},
-		{name: "till.list_auth_requests", args: map[string]any{"project_id": "p1", "state": "pending", "limit": 10}},
-		{name: "till.get_auth_request", args: map[string]any{"request_id": "req-1"}},
-		{name: "till.claim_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio"}},
-		{name: "till.cancel_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio", "resolution_note": "superseded"}},
+		{name: "till.auth_request", args: map[string]any{"operation": "list", "project_id": "p1", "state": "pending", "limit": 10}},
+		{name: "till.auth_request", args: map[string]any{"operation": "get", "request_id": "req-1"}},
+		{name: "till.auth_request", args: map[string]any{"operation": "claim", "request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio"}},
+		{name: "till.auth_request", args: map[string]any{"operation": "cancel", "request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio", "resolution_note": "superseded"}},
 		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
 		{name: "till.plan_item", args: map[string]any{"operation": "get", "task_id": "t1"}},
 		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
@@ -1079,15 +1071,16 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		})},
 		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1", "parent_id": "parent-1"}},
 		{name: "till.plan_item", args: map[string]any{"operation": "search", "project_id": "p1", "query": "task"}},
-		{name: "till.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
-		{name: "till.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
-		{name: "till.list_kind_definitions", args: map[string]any{}},
-		{name: "till.upsert_kind_definition", args: mergeArgs(validSessionArgs(), map[string]any{"id": "phase", "applies_to": []any{"phase"}})},
+		{name: "till.project", args: map[string]any{"operation": "list_change_events", "project_id": "p1", "limit": 25}},
+		{name: "till.project", args: map[string]any{"operation": "get_dependency_rollup", "project_id": "p1"}},
+		{name: "till.kind", args: map[string]any{"operation": "list"}},
+		{name: "till.kind", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "upsert", "id": "phase", "applies_to": []any{"phase"}})},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "task"}})},
-		{name: "till.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
-		{name: "till.list_template_libraries", args: map[string]any{"scope": "global", "status": "approved"}},
-		{name: "till.get_template_library", args: map[string]any{"library_id": "go-defaults"}},
-		{name: "till.upsert_template_library", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.project", args: map[string]any{"operation": "list_allowed_kinds", "project_id": "p1"}},
+		{name: "till.template", args: map[string]any{"operation": "list", "scope": "global", "status": "approved"}},
+		{name: "till.template", args: map[string]any{"operation": "get", "library_id": "go-defaults"}},
+		{name: "till.template", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation": "upsert",
 			"library": map[string]any{
 				"id":     "go-defaults",
 				"scope":  "global",
@@ -1104,15 +1097,18 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			},
 		})},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "bind_template", "project_id": "p1", "template_library_id": "go-defaults"})},
-		{name: "till.get_project_template_binding", args: map[string]any{"project_id": "p1"}},
-		{name: "till.get_node_contract_snapshot", args: map[string]any{"node_id": "task-qa-1"}},
+		{name: "till.project", args: map[string]any{"operation": "get_template_binding", "project_id": "p1"}},
+		{name: "till.template", args: map[string]any{"operation": "get_node_contract", "node_id": "task-qa-1"}},
+		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
+		{name: "till.embeddings", args: map[string]any{"operation": "reindex", "project_id": "p1", "wait": true}},
 		{name: "till.capability_lease", args: map[string]any{"operation": "list", "project_id": "p1", "scope_type": "project", "include_revoked": true}},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "issue", "project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "heartbeat", "agent_instance_id": "inst-1", "lease_token": "tok-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "renew", "agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "revoke", "agent_instance_id": "inst-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "revoke_all", "project_id": "p1", "scope_type": "project"})},
-		{name: "till.create_comment", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.comment", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
 			"project_id":        "p1",
 			"target_type":       "task",
 			"target_id":         "t1",
@@ -1121,7 +1117,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
+		{name: "till.comment", args: map[string]any{"operation": "list", "project_id": "p1", "target_type": "task", "target_id": "t1"}},
 		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
@@ -1369,10 +1365,16 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 		t.Fatalf("default project surface missing till.project: %#v", defaultTools)
 	}
 	for _, legacy := range []string{
+		"till.list_projects",
 		"till.create_project",
 		"till.update_project",
+		"till.list_kind_definitions",
+		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
 		"till.bind_project_template_library",
+		"till.list_template_libraries",
+		"till.get_template_library",
+		"till.upsert_template_library",
 	} {
 		if slices.Contains(defaultTools, legacy) {
 			t.Fatalf("unexpected legacy project tool %q in default surface: %#v", legacy, defaultTools)
@@ -1382,10 +1384,16 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	legacyTools := collectToolNames(t, Config{ExposeLegacyProjectTools: true})
 	for _, required := range []string{
 		"till.project",
+		"till.list_projects",
 		"till.create_project",
 		"till.update_project",
+		"till.list_kind_definitions",
+		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
 		"till.bind_project_template_library",
+		"till.list_template_libraries",
+		"till.get_template_library",
+		"till.upsert_template_library",
 	} {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy project mode missing %q: %#v", required, legacyTools)
@@ -1658,6 +1666,105 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 	}
 }
 
+// TestHandlerExpandedLegacyProjectReadAdminAliases verifies the remaining legacy read/admin aliases still execute when enabled.
+func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{},
+	}
+	handler, err := NewHandler(Config{ExposeLegacyProjectTools: true}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	callCases := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{
+			name: "list_projects",
+			tool: "till.list_projects",
+			args: map[string]any{"include_archived": true},
+		},
+		{
+			name: "list_kind_definitions",
+			tool: "till.list_kind_definitions",
+			args: map[string]any{"include_archived": true},
+		},
+		{
+			name: "upsert_kind_definition",
+			tool: "till.upsert_kind_definition",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"id":         "go-project",
+				"applies_to": []any{"project"},
+			}),
+		},
+		{
+			name: "get_template_library",
+			tool: "till.get_template_library",
+			args: map[string]any{"library_id": "go-defaults"},
+		},
+		{
+			name: "list_template_libraries",
+			tool: "till.list_template_libraries",
+			args: map[string]any{"scope": "global", "status": "approved"},
+		},
+		{
+			name: "upsert_template_library",
+			tool: "till.upsert_template_library",
+			args: mergeArgs(validSessionArgs(), map[string]any{
+				"library": map[string]any{
+					"id":     "go-defaults",
+					"scope":  "global",
+					"name":   "Go Defaults",
+					"status": "approved",
+				},
+			}),
+		},
+	}
+
+	for idx, tc := range callCases {
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(1500+idx, tc.tool, tc.args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("%s returned isError=true: %#v", tc.name, callResp.Result)
+		}
+	}
+
+	if !service.lastListProjectsArchived {
+		t.Fatal("legacy list_projects include_archived = false, want true")
+	}
+	if !service.lastListKindsArchived {
+		t.Fatal("legacy list_kind_definitions include_archived = false, want true")
+	}
+	if got := service.lastUpsertKindReq.ID; got != "go-project" {
+		t.Fatalf("legacy upsert_kind_definition id = %q, want go-project", got)
+	}
+	if got := service.lastSetAllowedKindsReq.ProjectID; got != "" {
+		t.Fatalf("legacy set_project_allowed_kinds unexpectedly ran, got project_id %q", got)
+	}
+	if got := service.lastListTemplateReq.Scope; got != domain.TemplateLibraryScopeGlobal {
+		t.Fatalf("legacy list_template_libraries scope = %q, want global", got)
+	}
+	if got := service.lastListTemplateReq.Status; got != domain.TemplateLibraryStatusApproved {
+		t.Fatalf("legacy list_template_libraries status = %q, want approved", got)
+	}
+	if got := service.lastGetTemplateID; got != "go-defaults" {
+		t.Fatalf("legacy get_template_library library_id = %q, want go-defaults", got)
+	}
+	if got := service.lastUpsertTemplateReq.ID; got != "go-defaults" {
+		t.Fatalf("legacy upsert_template_library id = %q, want go-defaults", got)
+	}
+}
+
 // TestHandlerExpandedPlanItemReadOperations verifies default plan-item reads route through get/list shapes.
 func TestHandlerExpandedPlanItemReadOperations(t *testing.T) {
 	t.Parallel()
@@ -1801,7 +1908,7 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
 	}
-	createSchema := findToolSchemaByName(t, toolsRaw, "till.create_comment")
+	createSchema := findToolSchemaByName(t, toolsRaw, "till.comment")
 	requiredRaw, _ := createSchema["required"].([]any)
 	required := make([]string, 0, len(requiredRaw))
 	for _, item := range requiredRaw {
@@ -1809,8 +1916,8 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 			required = append(required, value)
 		}
 	}
-	if !slices.Contains(required, "summary") {
-		t.Fatalf("create_comment required args missing summary: %#v", required)
+	if !slices.Contains(required, "operation") {
+		t.Fatalf("comment required args missing operation: %#v", required)
 	}
 	summaryDesc := schemaStringPropertyDescription(t, createSchema, "summary")
 	if !strings.Contains(strings.ToLower(summaryDesc), "markdown-rich") {
@@ -2069,7 +2176,8 @@ func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) 
 		t.Fatalf("embedding_status = %#v, want ready", got)
 	}
 
-	_, statusResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(613, "till.get_embeddings_status", map[string]any{
+	_, statusResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(613, "till.embeddings", map[string]any{
+		"operation":  "status",
 		"project_id": "p1",
 		"limit":      10,
 	}))
@@ -2268,7 +2376,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		t.Fatalf("plan_item move_state state = %q, want done", got)
 	}
 
-	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", mergeArgs(validSessionArgs(), map[string]any{
+	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.comment", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "create",
 		"project_id":        "p1",
 		"target_type":       "task",
 		"target_id":         "t1",
@@ -2278,19 +2387,19 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-comment",
 	})))
 	if isError, _ := commentResp.Result["isError"].(bool); isError {
-		t.Fatalf("create_comment returned isError=true: %#v", commentResp.Result)
+		t.Fatalf("comment create returned isError=true: %#v", commentResp.Result)
 	}
 	if got := service.lastCreateCommentReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("create_comment actor_type = %q, want agent", got)
+		t.Fatalf("comment create actor_type = %q, want agent", got)
 	}
 	if got := service.lastCreateCommentReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("create_comment actor_id = %q, want agent-session-1", got)
+		t.Fatalf("comment create actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastCreateCommentReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("create_comment actor_name = %q, want Agent Session One", got)
+		t.Fatalf("comment create actor_name = %q, want Agent Session One", got)
 	}
 	if got := service.lastCreateCommentReq.Summary; got != "Thread summary" {
-		t.Fatalf("create_comment summary = %q, want Thread summary", got)
+		t.Fatalf("comment create summary = %q, want Thread summary", got)
 	}
 
 	_, createHandoffResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3012, "till.handoff", mergeArgs(validSessionArgs(), map[string]any{
@@ -2504,7 +2613,8 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(401, "till.create_comment", mergeArgs(validSessionArgs(), map[string]any{
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(401, "till.comment", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "create",
 		"project_id":        "p1",
 		"target_type":       "branch",
 		"target_id":         "branch-1",
@@ -2514,28 +2624,29 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
-		t.Fatalf("create_comment returned isError=true: %#v", createResp.Result)
+		t.Fatalf("comment create returned isError=true: %#v", createResp.Result)
 	}
 	if got := service.lastCreateCommentReq.TargetType; got != "branch" {
-		t.Fatalf("create_comment target_type = %q, want branch", got)
+		t.Fatalf("comment create target_type = %q, want branch", got)
 	}
 	if got := service.lastCreateCommentReq.TargetID; got != "branch-1" {
-		t.Fatalf("create_comment target_id = %q, want branch-1", got)
+		t.Fatalf("comment create target_id = %q, want branch-1", got)
 	}
 
-	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(402, "till.list_comments_by_target", map[string]any{
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(402, "till.comment", map[string]any{
+		"operation":   "list",
 		"project_id":  "p1",
 		"target_type": "phase",
 		"target_id":   "phase-1",
 	}))
 	if isError, _ := listResp.Result["isError"].(bool); isError {
-		t.Fatalf("list_comments_by_target returned isError=true: %#v", listResp.Result)
+		t.Fatalf("comment list returned isError=true: %#v", listResp.Result)
 	}
 	if got := service.lastListCommentReq.TargetType; got != "phase" {
-		t.Fatalf("list_comments_by_target target_type = %q, want phase", got)
+		t.Fatalf("comment list target_type = %q, want phase", got)
 	}
 	if got := service.lastListCommentReq.TargetID; got != "phase-1" {
-		t.Fatalf("list_comments_by_target target_id = %q, want phase-1", got)
+		t.Fatalf("comment list target_id = %q, want phase-1", got)
 	}
 }
 
@@ -2628,8 +2739,9 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 		},
 		{
 			name: "upsert kind definition uses global sentinel scope",
-			tool: "till.upsert_kind_definition",
+			tool: "till.kind",
 			args: mergeArgs(validSessionArgs(), map[string]any{
+				"operation":  "upsert",
 				"id":         "go-project",
 				"applies_to": []any{"project"},
 			}),
@@ -2638,8 +2750,9 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 		},
 		{
 			name: "global template library uses global sentinel scope",
-			tool: "till.upsert_template_library",
+			tool: "till.template",
 			args: mergeArgs(validSessionArgs(), map[string]any{
+				"operation": "upsert",
 				"library": map[string]any{
 					"id":     "go-defaults",
 					"scope":  "global",
@@ -2652,8 +2765,9 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 		},
 		{
 			name: "project template library stays rooted to its project",
-			tool: "till.upsert_template_library",
+			tool: "till.template",
 			args: mergeArgs(validSessionArgs(), map[string]any{
+				"operation": "upsert",
 				"library": map[string]any{
 					"id":         "go-defaults-p1",
 					"scope":      "project",

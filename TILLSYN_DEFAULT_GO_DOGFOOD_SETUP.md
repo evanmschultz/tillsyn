@@ -47,11 +47,12 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - project-scoped agent auth is for guarded mutations inside that project;
   - branch/phase/task-scoped auth should be used when the runtime can prove the narrower path.
 - Default MCP surface note:
-  - `till.project` is the preferred project-root mutation family for create, update, template bind, and allowed-kinds updates;
+  - `till.auth_request` is the preferred auth-request family for `create|list|get|claim|cancel`;
+  - `till.project` is the preferred project-root family for `list|create|update|bind_template|get_template_binding|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup`;
   - `till.plan_item` is the preferred plan-item read/mutation family for `get|list|search|create|update|move|move_state|delete|restore|reparent`;
-  - a future `till.comment` family should own comment create/list rather than leaving comment operations split or folding them into `plan_item`;
-  - the older flat project mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
-  - the older flat task mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
+  - `till.kind`, `till.template`, and `till.embeddings` are the preferred family tools for catalog/template/embedding lifecycle work;
+  - `till.comment` is the preferred append-only coordination family for `create|list` and should not be folded into `plan_item`;
+  - the older flat project/template/kind aliases are compatibility-only where still exposed and should not be treated as the preferred default surface.
 - Agents and operators should not treat the global-to-project auth split as a bug.
 - After creating a project with global auth, the next normal step is to claim or reuse a project-scoped session before creating guarded in-project work.
 - Guarded agent lease identity should match the authenticated agent principal id; human-readable display names are attribution data, not the lease-match key.

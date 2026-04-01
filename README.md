@@ -95,21 +95,21 @@ Current MCP/runtime direction:
 - MCP tool surface now includes:
   - instructions: `till.get_instructions`
   - bootstrap guidance: `till.get_bootstrap_guide`
-  - auth requests: `till.create_auth_request`, `till.list_auth_requests`, `till.get_auth_request`, `till.claim_auth_request`, `till.cancel_auth_request`
-  - projects: `till.list_projects`, `till.project`
+  - auth requests: `till.auth_request`
+  - projects and project-root reads/admin: `till.project`
   - tasks/work graph: `till.plan_item`
   - capture/attention: `till.capture_state`, `till.attention_item`
-  - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
-  - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.list_project_allowed_kinds`
-  - template libraries/contracts: `till.list_template_libraries`, `till.get_template_library`, `till.upsert_template_library`, `till.get_project_template_binding`, `till.get_node_contract_snapshot`
+  - kinds/catalog admin: `till.kind`
+  - template libraries/contracts: `till.template`
+  - embeddings lifecycle: `till.embeddings`
   - capability leases: `till.capability_lease`
-  - comments: `till.create_comment`, `till.list_comments_by_target`
+  - comments: `till.comment`
   - handoffs: `till.handoff`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
     - `till.capability_lease(operation=revoke_all)` fails closed on invalid/unknown scope tuples;
-    - `till.create_comment` fails closed when the target does not exist in the referenced project;
+    - `till.comment(operation=create)` fails closed when the target does not exist in the referenced project;
     - `till.plan_item(operation=update)` title-only updates preserve existing priority when `priority` is omitted.
 
 Current auth note:
@@ -124,18 +124,20 @@ Current auth note:
 - TUI auth review now uses a dedicated full-screen review surface with visible decision controls, human-readable scope labels, explicit confirm-before-apply for both approve and deny, and optional notes that start blank instead of prefilled audit prose.
 - TUI auth inventory distinguishes pending requests, resolved requests, and active approved sessions, but the active-session revoke path is still less discoverable than it should be; CLI is the clearer operator revoke path for now.
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
-- MCP requesters can now resume approved requests through `till.claim_auth_request` when they created the original request with continuation metadata that includes a requester-owned `resume_token`; for delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
-- MCP requesters can now also withdraw their own pending requests through `till.cancel_auth_request` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
+- MCP requesters can now resume approved requests through `till.auth_request(operation=claim)` when they created the original request with continuation metadata that includes a requester-owned `resume_token`; for delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
+- MCP requesters can now also withdraw their own pending requests through `till.auth_request(operation=cancel)` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
   - do not treat the global-to-project auth split as a runtime bug.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
 - Default surface note:
+  - `till.auth_request` now owns auth-request create, list, get, claim, and cancel;
   - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
+  - `till.project` also owns project-root reads such as list, template binding lookup, allowed-kinds lookup, change events, and dependency rollups;
   - `till.plan_item` now owns plan-item reads and mutations such as get, list, search, create, update, move, move_state, delete, restore, and reparent;
-  - the older flat project mutation tools remain available only behind an explicit legacy-project-tools config switch for compatibility testing.
-  - the older flat task read/mutation tools remain available only behind an explicit legacy-plan-item-tools config switch for compatibility testing.
+  - `till.kind` now owns kind catalog list/upsert, `till.template` now owns template-library list/get/upsert plus node-contract lookup, `till.embeddings` now owns status/reindex, and `till.comment` now owns comment create/list;
+  - only selected older flat project/template/kind aliases remain behind explicit legacy config for compatibility testing.
 - Policy direction for the unified `plan_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans remain allowed to perform those transitions;
@@ -144,7 +146,7 @@ Current auth note:
   - destructive or terminal cleanup actions such as delete, hard cleanup, and final archive remain more restricted and should not default to agent autonomy.
 - Comment-family direction:
   - comments should not be folded into `till.plan_item`; they are a separate coordination/threading type.
-  - the next comment-family shape should be `till.comment(operation=create|list)`.
+  - the default comment-family shape is `till.comment(operation=create|list)`.
   - comments should stay append-only by default in the first family pass; agent comment editing is intentionally deferred so the coordination log remains trustworthy.
   - comments should be allowed anywhere inside the caller's approved scope subtree, which means parallel/sibling commenting is fine when the approved scope already covers both nodes.
   - if a caller does not hold scope broad enough for the affected sibling/parallel node, the preferred escalation path is still handoff or attention rather than silently widening comment reach.
@@ -154,7 +156,7 @@ Current auth note:
   - the current cross-process wake path is only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
   - the product direction is still that important routed notifications should be automatic and not require every agent to remember a manual polling tool, but that inbox/wake model is a later dedicated slice.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
-- Current continuation status: `till.claim_auth_request` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
+- Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
@@ -284,8 +286,9 @@ Dogfood auth request/session commands:
 Dogfood MCP continuation pattern:
 ```json
 {
-  "tool": "till.create_auth_request",
+  "tool": "till.auth_request",
   "arguments": {
+    "operation": "create",
     "path": "project/<project-id>",
     "principal_id": "<principal-id>",
     "principal_type": "agent",
@@ -296,9 +299,9 @@ Dogfood MCP continuation pattern:
 }
 ```
 
-After the user approves the request in the TUI, the requester can claim the approved session through MCP with the same `request_id` plus that `resume_token` using `till.claim_auth_request`.
+After the user approves the request in the TUI, the requester can claim the approved session through MCP with the same `request_id` plus that `resume_token` using `till.auth_request(operation=claim)`.
 
-If the requester needs to withdraw a still-pending request, it can call `till.cancel_auth_request` with that same `request_id` plus the requester-owned `resume_token`, `principal_id`, and `client_id`.
+If the requester needs to withdraw a still-pending request, it can call `till.auth_request(operation=cancel)` with that same `request_id` plus the requester-owned `resume_token`, `principal_id`, and `client_id`.
 
 Current auth caveat:
 - the request/session commands above are the primary operator dogfood path

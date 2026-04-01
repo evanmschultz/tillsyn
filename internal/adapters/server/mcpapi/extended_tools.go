@@ -397,47 +397,29 @@ func registerProjectTools(
 	projects common.ProjectService,
 	kinds common.KindCatalogService,
 	templates common.TemplateLibraryService,
+	changes common.ChangeFeedService,
 	exposeLegacyProjectTools bool,
 ) {
-	if projects == nil && kinds == nil && templates == nil {
+	if projects == nil && kinds == nil && templates == nil && changes == nil {
 		return
-	}
-
-	if projects != nil {
-		srv.AddTool(
-			mcp.NewTool(
-				"till.list_projects",
-				mcp.WithDescription("List projects."),
-				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				rows, err := projects.ListProjects(ctx, req.GetBool("include_archived", false))
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(map[string]any{"projects": rows})
-				if err != nil {
-					return nil, fmt.Errorf("encode list_projects result: %w", err)
-				}
-				return result, nil
-			},
-		)
 	}
 
 	srv.AddTool(
 		mcp.NewTool(
 			"till.project",
-			mcp.WithDescription("Mutate one project-root operation. Use operation=create|update|bind_template|set_allowed_kinds."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Project mutation operation"), mcp.Enum("create", "update", "bind_template", "set_allowed_kinds")),
-			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=update|bind_template|set_allowed_kinds")),
+			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Project operation"), mcp.Enum("list", "create", "update", "bind_template", "get_template_binding", "set_allowed_kinds", "list_allowed_kinds", "list_change_events", "get_dependency_rollup")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=update|bind_template|get_template_binding|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup")),
+			mcp.WithBoolean("include_archived", mcp.Description("Include archived projects for operation=list")),
+			mcp.WithNumber("limit", mcp.Description("Maximum rows to return for operation=list_change_events")),
 			mcp.WithString("name", mcp.Description("Project name. Required for operation=create|update")),
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithString("template_library_id", mcp.Description("Template library identifier. Used by operation=create or bind_template")),
 			mcp.WithArray("kind_ids", mcp.Description("Allowed kind id list for operation=set_allowed_kinds"), mcp.WithStringItems()),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for mutating operations. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for mutating operations. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
@@ -446,6 +428,8 @@ func registerProjectTools(
 			var args struct {
 				Operation         string                 `json:"operation"`
 				ProjectID         string                 `json:"project_id"`
+				IncludeArchived   bool                   `json:"include_archived"`
+				Limit             int                    `json:"limit"`
 				Name              string                 `json:"name"`
 				Description       string                 `json:"description"`
 				Kind              string                 `json:"kind"`
@@ -462,6 +446,19 @@ func registerProjectTools(
 				return invalidRequestToolResult(err), nil
 			}
 			switch strings.TrimSpace(args.Operation) {
+			case "list":
+				if projects == nil {
+					return mcp.NewToolResultError("invalid_request: project service is unavailable"), nil
+				}
+				rows, err := projects.ListProjects(ctx, args.IncludeArchived)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"projects": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode project list result: %w", err)
+				}
+				return result, nil
 			case "create":
 				if projects == nil {
 					return mcp.NewToolResultError("invalid_request: project service is unavailable"), nil
@@ -606,6 +603,23 @@ func registerProjectTools(
 					return nil, fmt.Errorf("encode project bind_template result: %w", err)
 				}
 				return result, nil
+			case "get_template_binding":
+				if templates == nil {
+					return mcp.NewToolResultError("invalid_request: template library service is unavailable"), nil
+				}
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				binding, err := templates.GetProjectTemplateBinding(ctx, projectID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(binding)
+				if err != nil {
+					return nil, fmt.Errorf("encode project get_template_binding result: %w", err)
+				}
+				return result, nil
 			case "set_allowed_kinds":
 				if kinds == nil {
 					return mcp.NewToolResultError("invalid_request: kind catalog service is unavailable"), nil
@@ -647,6 +661,57 @@ func registerProjectTools(
 					return nil, fmt.Errorf("encode project set_allowed_kinds result: %w", err)
 				}
 				return result, nil
+			case "list_allowed_kinds":
+				if kinds == nil {
+					return mcp.NewToolResultError("invalid_request: kind catalog service is unavailable"), nil
+				}
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				kindIDs, err := kinds.ListProjectAllowedKinds(ctx, projectID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"kind_ids": kindIDs})
+				if err != nil {
+					return nil, fmt.Errorf("encode project list_allowed_kinds result: %w", err)
+				}
+				return result, nil
+			case "list_change_events":
+				if changes == nil {
+					return mcp.NewToolResultError("invalid_request: change feed service is unavailable"), nil
+				}
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				rows, err := changes.ListProjectChangeEvents(ctx, projectID, args.Limit)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"events": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode project list_change_events result: %w", err)
+				}
+				return result, nil
+			case "get_dependency_rollup":
+				if changes == nil {
+					return mcp.NewToolResultError("invalid_request: change feed service is unavailable"), nil
+				}
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				rollup, err := changes.GetProjectDependencyRollup(ctx, projectID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(rollup)
+				if err != nil {
+					return nil, fmt.Errorf("encode project get_dependency_rollup result: %w", err)
+				}
+				return result, nil
 			default:
 				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
 			}
@@ -658,6 +723,25 @@ func registerProjectTools(
 	}
 
 	if projects != nil {
+		srv.AddTool(
+			mcp.NewTool(
+				"till.list_projects",
+				mcp.WithDescription("List projects (legacy alias for till.project operation=list)."),
+				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				rows, err := projects.ListProjects(ctx, req.GetBool("include_archived", false))
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"projects": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode list_projects result: %w", err)
+				}
+				return result, nil
+			},
+		)
+
 		srv.AddTool(
 			mcp.NewTool(
 				"till.create_project",
@@ -826,7 +910,6 @@ func registerTaskTools(
 	tasks common.TaskService,
 	search common.SearchService,
 	embeddings common.EmbeddingsService,
-	changes common.ChangeFeedService,
 	exposeLegacyPlanItemTools bool,
 ) {
 	if tasks != nil {
@@ -1513,8 +1596,9 @@ func registerTaskTools(
 	if embeddings != nil {
 		srv.AddTool(
 			mcp.NewTool(
-				"till.get_embeddings_status",
-				mcp.WithDescription("Show embeddings lifecycle summary counts and per-subject status rows."),
+				"till.embeddings",
+				mcp.WithDescription("Inspect or reindex embeddings lifecycle state. Use operation=status|reindex."),
+				mcp.WithString("operation", mcp.Required(), mcp.Description("Embeddings operation"), mcp.Enum("status", "reindex")),
 				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project inventory")),
 				mcp.WithBoolean("cross_project", mcp.Description("Inspect embeddings lifecycle across all projects")),
 				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects when resolving cross-project scope")),
@@ -1528,111 +1612,52 @@ func registerTaskTools(
 				),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				resultPayload, err := embeddings.GetEmbeddingsStatus(ctx, common.EmbeddingsStatusRequest{
-					ProjectID:       req.GetString("project_id", ""),
-					CrossProject:    req.GetBool("cross_project", false),
-					IncludeArchived: req.GetBool("include_archived", false),
-					Statuses:        req.GetStringSlice("statuses", nil),
-					Limit:           req.GetInt("limit", 0),
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
+				switch strings.TrimSpace(req.GetString("operation", "")) {
+				case "status":
+					resultPayload, err := embeddings.GetEmbeddingsStatus(ctx, common.EmbeddingsStatusRequest{
+						ProjectID:       req.GetString("project_id", ""),
+						CrossProject:    req.GetBool("cross_project", false),
+						IncludeArchived: req.GetBool("include_archived", false),
+						Statuses:        req.GetStringSlice("statuses", nil),
+						Limit:           req.GetInt("limit", 0),
+					})
+					if err != nil {
+						return toolResultFromError(err), nil
+					}
+					result, err := mcp.NewToolResultJSON(resultPayload)
+					if err != nil {
+						return nil, fmt.Errorf("encode embeddings status result: %w", err)
+					}
+					return result, nil
+				case "reindex":
+					waitTimeout, err := optionalDurationArg(req.GetString("wait_timeout", ""))
+					if err != nil {
+						return mcp.NewToolResultError(err.Error()), nil
+					}
+					waitPollInterval, err := optionalDurationArg(req.GetString("wait_poll_interval", ""))
+					if err != nil {
+						return mcp.NewToolResultError(err.Error()), nil
+					}
+					resultPayload, err := embeddings.ReindexEmbeddings(ctx, common.ReindexEmbeddingsRequest{
+						ProjectID:        req.GetString("project_id", ""),
+						CrossProject:     req.GetBool("cross_project", false),
+						IncludeArchived:  req.GetBool("include_archived", false),
+						Force:            req.GetBool("force", false),
+						Wait:             req.GetBool("wait", false),
+						WaitTimeout:      waitTimeout,
+						WaitPollInterval: waitPollInterval,
+					})
+					if err != nil {
+						return toolResultFromError(err), nil
+					}
+					result, err := mcp.NewToolResultJSON(resultPayload)
+					if err != nil {
+						return nil, fmt.Errorf("encode embeddings reindex result: %w", err)
+					}
+					return result, nil
+				default:
+					return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
 				}
-				result, err := mcp.NewToolResultJSON(resultPayload)
-				if err != nil {
-					return nil, fmt.Errorf("encode get_embeddings_status result: %w", err)
-				}
-				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.reindex_embeddings",
-				mcp.WithDescription("Enqueue or force explicit embeddings backfill/reindex work and optionally wait for steady state."),
-				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project reindex requests")),
-				mcp.WithBoolean("cross_project", mcp.Description("Reindex embeddings across all projects")),
-				mcp.WithBoolean("include_archived", mcp.Description("Include archived projects and work items in the reindex scope")),
-				mcp.WithBoolean("force", mcp.Description("Force ready rows back into the queue even when hashes already match")),
-				mcp.WithBoolean("wait", mcp.Description("Wait for the requested scope to reach a steady lifecycle state")),
-				mcp.WithString("wait_timeout", mcp.Description("Optional wait timeout duration (for example 30s or 2m)")),
-				mcp.WithString("wait_poll_interval", mcp.Description("Optional wait polling interval duration")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				waitTimeout, err := optionalDurationArg(req.GetString("wait_timeout", ""))
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				waitPollInterval, err := optionalDurationArg(req.GetString("wait_poll_interval", ""))
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				resultPayload, err := embeddings.ReindexEmbeddings(ctx, common.ReindexEmbeddingsRequest{
-					ProjectID:        req.GetString("project_id", ""),
-					CrossProject:     req.GetBool("cross_project", false),
-					IncludeArchived:  req.GetBool("include_archived", false),
-					Force:            req.GetBool("force", false),
-					Wait:             req.GetBool("wait", false),
-					WaitTimeout:      waitTimeout,
-					WaitPollInterval: waitPollInterval,
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(resultPayload)
-				if err != nil {
-					return nil, fmt.Errorf("encode reindex_embeddings result: %w", err)
-				}
-				return result, nil
-			},
-		)
-	}
-
-	if changes != nil {
-		srv.AddTool(
-			mcp.NewTool(
-				"till.list_project_change_events",
-				mcp.WithDescription("List recent project change events."),
-				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-				mcp.WithNumber("limit", mcp.Description("Maximum rows to return")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				projectID, err := req.RequireString("project_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				rows, err := changes.ListProjectChangeEvents(ctx, projectID, req.GetInt("limit", 25))
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(map[string]any{"events": rows})
-				if err != nil {
-					return nil, fmt.Errorf("encode list_project_change_events result: %w", err)
-				}
-				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.get_project_dependency_rollup",
-				mcp.WithDescription("Return dependency/blocking rollups for one project."),
-				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				projectID, err := req.RequireString("project_id")
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				rollup, err := changes.GetProjectDependencyRollup(ctx, projectID)
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(rollup)
-				if err != nil {
-					return nil, fmt.Errorf("encode get_project_dependency_rollup result: %w", err)
-				}
-				return result, nil
 			},
 		)
 	}
@@ -1646,97 +1671,187 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 
 	srv.AddTool(
 		mcp.NewTool(
-			"till.list_kind_definitions",
-			mcp.WithDescription("List kind catalog definitions."),
+			"till.kind",
+			mcp.WithDescription("Inspect or mutate kind catalog definitions. Use operation=list|upsert."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Kind operation"), mcp.Enum("list", "upsert")),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived kind definitions")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			rows, err := kinds.ListKindDefinitions(ctx, req.GetBool("include_archived", false))
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{"kinds": rows})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_kind_definitions result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.upsert_kind_definition",
-			mcp.WithDescription("Create or update one kind definition."),
-			mcp.WithString("id", mcp.Required(), mcp.Description("Kind identifier")),
+			mcp.WithString("id", mcp.Description("Kind identifier. Required for operation=upsert")),
 			mcp.WithString("display_name", mcp.Description("Kind display name")),
 			mcp.WithString("description_markdown", mcp.Description("Kind description markdown")),
-			mcp.WithArray("applies_to", mcp.Required(), mcp.Description("Allowed applies_to scope list"), mcp.WithStringItems()),
-			mcp.WithArray("allowed_parent_scopes", mcp.Description("Allowed parent scope list"), mcp.WithStringItems()),
+			mcp.WithArray("applies_to", mcp.Description("Allowed applies_to scope list for operation=upsert"), mcp.WithStringItems()),
+			mcp.WithArray("allowed_parent_scopes", mcp.Description("Allowed parent scope list for operation=upsert"), mcp.WithStringItems()),
 			mcp.WithString("payload_schema_json", mcp.Description("Optional payload schema JSON")),
 			mcp.WithObject("template", mcp.Description("Optional template object")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for operation=upsert. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=upsert. "+mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				ID                  string              `json:"id"`
-				DisplayName         string              `json:"display_name"`
-				DescriptionMarkdown string              `json:"description_markdown"`
-				AppliesTo           []string            `json:"applies_to"`
-				AllowedParentScopes []string            `json:"allowed_parent_scopes"`
-				PayloadSchemaJSON   string              `json:"payload_schema_json"`
-				Template            domain.KindTemplate `json:"template"`
-				SessionID           string              `json:"session_id"`
-				SessionSecret       string              `json:"session_secret"`
+			switch strings.TrimSpace(req.GetString("operation", "")) {
+			case "list":
+				rows, err := kinds.ListKindDefinitions(ctx, req.GetBool("include_archived", false))
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"kinds": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode kind list result: %w", err)
+				}
+				return result, nil
+			case "upsert":
+				var args struct {
+					ID                  string              `json:"id"`
+					DisplayName         string              `json:"display_name"`
+					DescriptionMarkdown string              `json:"description_markdown"`
+					AppliesTo           []string            `json:"applies_to"`
+					AllowedParentScopes []string            `json:"allowed_parent_scopes"`
+					PayloadSchemaJSON   string              `json:"payload_schema_json"`
+					Template            domain.KindTemplate `json:"template"`
+					SessionID           string              `json:"session_id"`
+					SessionSecret       string              `json:"session_secret"`
+				}
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				if strings.TrimSpace(args.ID) == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
+				}
+				if len(args.AppliesTo) == 0 {
+					return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
+				}
+				namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
+					"kind_id": strings.TrimSpace(args.ID),
+				})
+				if _, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(kinds),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"upsert_kind_definition",
+					namespace,
+					"kind_definition",
+					strings.TrimSpace(args.ID),
+					authContext,
+				); err != nil {
+					return toolResultFromError(err), nil
+				}
+				kind, err := kinds.UpsertKindDefinition(ctx, common.UpsertKindDefinitionRequest{
+					ID:                  args.ID,
+					DisplayName:         args.DisplayName,
+					DescriptionMarkdown: args.DescriptionMarkdown,
+					AppliesTo:           append([]string(nil), args.AppliesTo...),
+					AllowedParentScopes: append([]string(nil), args.AllowedParentScopes...),
+					PayloadSchemaJSON:   args.PayloadSchemaJSON,
+					Template:            args.Template,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(kind)
+				if err != nil {
+					return nil, fmt.Errorf("encode kind upsert result: %w", err)
+				}
+				return result, nil
+			default:
+				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
 			}
-			if err := req.BindArguments(&args); err != nil {
-				return invalidRequestToolResult(err), nil
-			}
-			if strings.TrimSpace(args.ID) == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
-			}
-			if len(args.AppliesTo) == 0 {
-				return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
-			}
-			namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
-				"kind_id": strings.TrimSpace(args.ID),
-			})
-			if _, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(kinds),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"upsert_kind_definition",
-				namespace,
-				"kind_definition",
-				strings.TrimSpace(args.ID),
-				authContext,
-			); err != nil {
-				return toolResultFromError(err), nil
-			}
-			kind, err := kinds.UpsertKindDefinition(ctx, common.UpsertKindDefinitionRequest{
-				ID:                  args.ID,
-				DisplayName:         args.DisplayName,
-				DescriptionMarkdown: args.DescriptionMarkdown,
-				AppliesTo:           append([]string(nil), args.AppliesTo...),
-				AllowedParentScopes: append([]string(nil), args.AllowedParentScopes...),
-				PayloadSchemaJSON:   args.PayloadSchemaJSON,
-				Template:            args.Template,
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(kind)
-			if err != nil {
-				return nil, fmt.Errorf("encode upsert_kind_definition result: %w", err)
-			}
-			return result, nil
 		},
 	)
 
 	if exposeLegacyProjectTools {
+		srv.AddTool(
+			mcp.NewTool(
+				"till.list_kind_definitions",
+				mcp.WithDescription("List kind catalog definitions (legacy alias for till.kind operation=list)."),
+				mcp.WithBoolean("include_archived", mcp.Description("Include archived kind definitions")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				rows, err := kinds.ListKindDefinitions(ctx, req.GetBool("include_archived", false))
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"kinds": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode list_kind_definitions result: %w", err)
+				}
+				return result, nil
+			},
+		)
+
+		srv.AddTool(
+			mcp.NewTool(
+				"till.upsert_kind_definition",
+				mcp.WithDescription("Create or update one kind definition (legacy alias for till.kind operation=upsert)."),
+				mcp.WithString("id", mcp.Required(), mcp.Description("Kind identifier")),
+				mcp.WithString("display_name", mcp.Description("Kind display name")),
+				mcp.WithString("description_markdown", mcp.Description("Kind description markdown")),
+				mcp.WithArray("applies_to", mcp.Required(), mcp.Description("Allowed applies_to scope list"), mcp.WithStringItems()),
+				mcp.WithArray("allowed_parent_scopes", mcp.Description("Allowed parent scope list"), mcp.WithStringItems()),
+				mcp.WithString("payload_schema_json", mcp.Description("Optional payload schema JSON")),
+				mcp.WithObject("template", mcp.Description("Optional template object")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var args struct {
+					ID                  string              `json:"id"`
+					DisplayName         string              `json:"display_name"`
+					DescriptionMarkdown string              `json:"description_markdown"`
+					AppliesTo           []string            `json:"applies_to"`
+					AllowedParentScopes []string            `json:"allowed_parent_scopes"`
+					PayloadSchemaJSON   string              `json:"payload_schema_json"`
+					Template            domain.KindTemplate `json:"template"`
+					SessionID           string              `json:"session_id"`
+					SessionSecret       string              `json:"session_secret"`
+				}
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				if strings.TrimSpace(args.ID) == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
+				}
+				if len(args.AppliesTo) == 0 {
+					return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
+				}
+				namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
+					"kind_id": strings.TrimSpace(args.ID),
+				})
+				if _, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(kinds),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"upsert_kind_definition",
+					namespace,
+					"kind_definition",
+					strings.TrimSpace(args.ID),
+					authContext,
+				); err != nil {
+					return toolResultFromError(err), nil
+				}
+				kind, err := kinds.UpsertKindDefinition(ctx, common.UpsertKindDefinitionRequest{
+					ID:                  args.ID,
+					DisplayName:         args.DisplayName,
+					DescriptionMarkdown: args.DescriptionMarkdown,
+					AppliesTo:           append([]string(nil), args.AppliesTo...),
+					AllowedParentScopes: append([]string(nil), args.AllowedParentScopes...),
+					PayloadSchemaJSON:   args.PayloadSchemaJSON,
+					Template:            args.Template,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(kind)
+				if err != nil {
+					return nil, fmt.Errorf("encode upsert_kind_definition result: %w", err)
+				}
+				return result, nil
+			},
+		)
+
 		srv.AddTool(
 			mcp.NewTool(
 				"till.set_project_allowed_kinds",
@@ -1796,29 +1911,6 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			},
 		)
 	}
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.list_project_allowed_kinds",
-			mcp.WithDescription("List explicit project allowed kind identifiers."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			kindIDs, err := kinds.ListProjectAllowedKinds(ctx, projectID)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{"kind_ids": kindIDs})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_project_allowed_kinds result: %w", err)
-			}
-			return result, nil
-		},
-	)
 }
 
 // registerTemplateLibraryTools registers template-library and node-contract inspection/binding tools.
@@ -1829,102 +1921,107 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 
 	srv.AddTool(
 		mcp.NewTool(
-			"till.list_template_libraries",
-			mcp.WithDescription("List template libraries. SQLite remains the source of truth, and JSON is the stable MCP transport format for these library records."),
+			"till.template",
+			mcp.WithDescription("Inspect or mutate template libraries and realized node contracts. Use operation=list|get|upsert|get_node_contract."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("list", "get", "upsert", "get_node_contract")),
 			mcp.WithString("scope", mcp.Description("Optional template-library scope filter"), mcp.Enum("global", "project", "draft")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
 			mcp.WithString("status", mcp.Description("Optional template-library status filter"), mcp.Enum("draft", "approved", "archived")),
+			mcp.WithString("library_id", mcp.Description("Template library identifier. Required for operation=get")),
+			mcp.WithObject("library", mcp.Description("Template library object. Required for operation=upsert")),
+			mcp.WithString("node_id", mcp.Description("Generated node identifier. Required for operation=get_node_contract")),
+			mcp.WithString("session_id", mcp.Description("Required for operation=upsert. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=upsert. "+mcpMutationSessionSecretDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			rows, err := templates.ListTemplateLibraries(ctx, common.ListTemplateLibrariesRequest{
-				Scope:     domain.TemplateLibraryScope(req.GetString("scope", "")),
-				ProjectID: req.GetString("project_id", ""),
-				Status:    domain.TemplateLibraryStatus(req.GetString("status", "")),
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
+			switch strings.TrimSpace(req.GetString("operation", "")) {
+			case "list":
+				rows, err := templates.ListTemplateLibraries(ctx, common.ListTemplateLibrariesRequest{
+					Scope:     domain.TemplateLibraryScope(req.GetString("scope", "")),
+					ProjectID: req.GetString("project_id", ""),
+					Status:    domain.TemplateLibraryStatus(req.GetString("status", "")),
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"libraries": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode template list result: %w", err)
+				}
+				return result, nil
+			case "get":
+				libraryID, err := req.RequireString("library_id")
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				library, err := templates.GetTemplateLibrary(ctx, libraryID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(library)
+				if err != nil {
+					return nil, fmt.Errorf("encode template get result: %w", err)
+				}
+				return result, nil
+			case "upsert":
+				var args struct {
+					Library       common.UpsertTemplateLibraryRequest `json:"library"`
+					SessionID     string                              `json:"session_id"`
+					SessionSecret string                              `json:"session_secret"`
+				}
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				resourceID := strings.TrimSpace(args.Library.ID)
+				if resourceID == "" {
+					resourceID = "new"
+				}
+				namespace, authContext := buildProjectRootedMutationAuthScope(strings.TrimSpace(args.Library.ProjectID), map[string]string{
+					"library_id": resourceID,
+				})
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(templates),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"upsert_template_library",
+					namespace,
+					"template_library",
+					resourceID,
+					authContext,
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				ctx = app.WithAuthenticatedCaller(ctx, caller)
+				library, err := templates.UpsertTemplateLibrary(ctx, args.Library)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(library)
+				if err != nil {
+					return nil, fmt.Errorf("encode template upsert result: %w", err)
+				}
+				return result, nil
+			case "get_node_contract":
+				nodeID, err := req.RequireString("node_id")
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				snapshot, err := templates.GetNodeContractSnapshot(ctx, nodeID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(snapshot)
+				if err != nil {
+					return nil, fmt.Errorf("encode template get_node_contract result: %w", err)
+				}
+				return result, nil
+			default:
+				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
 			}
-			result, err := mcp.NewToolResultJSON(map[string]any{"libraries": rows})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_template_libraries result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.get_template_library",
-			mcp.WithDescription("Show one template library by id."),
-			mcp.WithString("library_id", mcp.Required(), mcp.Description("Template library identifier")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			libraryID, err := req.RequireString("library_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			library, err := templates.GetTemplateLibrary(ctx, libraryID)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(library)
-			if err != nil {
-				return nil, fmt.Errorf("encode get_template_library result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.upsert_template_library",
-			mcp.WithDescription("Create or update one template library via JSON transport. SQLite remains canonical, while the TUI is the primary human review and approval surface."),
-			mcp.WithObject("library", mcp.Required(), mcp.Description("Template library object")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			var args struct {
-				Library       common.UpsertTemplateLibraryRequest `json:"library"`
-				SessionID     string                              `json:"session_id"`
-				SessionSecret string                              `json:"session_secret"`
-			}
-			if err := req.BindArguments(&args); err != nil {
-				return invalidRequestToolResult(err), nil
-			}
-			resourceID := strings.TrimSpace(args.Library.ID)
-			if resourceID == "" {
-				resourceID = "new"
-			}
-			namespace, authContext := buildProjectRootedMutationAuthScope(strings.TrimSpace(args.Library.ProjectID), map[string]string{
-				"library_id": resourceID,
-			})
-			caller, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(templates),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"upsert_template_library",
-				namespace,
-				"template_library",
-				resourceID,
-				authContext,
-			)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			ctx = app.WithAuthenticatedCaller(ctx, caller)
-			library, err := templates.UpsertTemplateLibrary(ctx, args.Library)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(library)
-			if err != nil {
-				return nil, fmt.Errorf("encode upsert_template_library result: %w", err)
-			}
-			return result, nil
 		},
 	)
 
@@ -1990,53 +2087,108 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 				return result, nil
 			},
 		)
+
+		srv.AddTool(
+			mcp.NewTool(
+				"till.list_template_libraries",
+				mcp.WithDescription("List template libraries (legacy alias for till.template operation=list)."),
+				mcp.WithString("scope", mcp.Description("Optional template-library scope filter"), mcp.Enum("global", "project", "draft")),
+				mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
+				mcp.WithString("status", mcp.Description("Optional template-library status filter"), mcp.Enum("draft", "approved", "archived")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				rows, err := templates.ListTemplateLibraries(ctx, common.ListTemplateLibrariesRequest{
+					Scope:     domain.TemplateLibraryScope(req.GetString("scope", "")),
+					ProjectID: req.GetString("project_id", ""),
+					Status:    domain.TemplateLibraryStatus(req.GetString("status", "")),
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"libraries": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode list_template_libraries result: %w", err)
+				}
+				return result, nil
+			},
+		)
+
+		srv.AddTool(
+			mcp.NewTool(
+				"till.get_template_library",
+				mcp.WithDescription("Show one template library by id (legacy alias for till.template operation=get)."),
+				mcp.WithString("library_id", mcp.Required(), mcp.Description("Template library identifier")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				libraryID, err := req.RequireString("library_id")
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				library, err := templates.GetTemplateLibrary(ctx, libraryID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(library)
+				if err != nil {
+					return nil, fmt.Errorf("encode get_template_library result: %w", err)
+				}
+				return result, nil
+			},
+		)
+
+		srv.AddTool(
+			mcp.NewTool(
+				"till.upsert_template_library",
+				mcp.WithDescription("Create or update one template library via JSON transport (legacy alias for till.template operation=upsert)."),
+				mcp.WithObject("library", mcp.Required(), mcp.Description("Template library object")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
+				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var args struct {
+					Library       common.UpsertTemplateLibraryRequest `json:"library"`
+					SessionID     string                              `json:"session_id"`
+					SessionSecret string                              `json:"session_secret"`
+				}
+				if err := req.BindArguments(&args); err != nil {
+					return invalidRequestToolResult(err), nil
+				}
+				resourceID := strings.TrimSpace(args.Library.ID)
+				if resourceID == "" {
+					resourceID = "new"
+				}
+				namespace, authContext := buildProjectRootedMutationAuthScope(strings.TrimSpace(args.Library.ProjectID), map[string]string{
+					"library_id": resourceID,
+				})
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(templates),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"upsert_template_library",
+					namespace,
+					"template_library",
+					resourceID,
+					authContext,
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				ctx = app.WithAuthenticatedCaller(ctx, caller)
+				library, err := templates.UpsertTemplateLibrary(ctx, args.Library)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(library)
+				if err != nil {
+					return nil, fmt.Errorf("encode upsert_template_library result: %w", err)
+				}
+				return result, nil
+			},
+		)
 	}
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.get_project_template_binding",
-			mcp.WithDescription("Show the active template-library binding for one project."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			binding, err := templates.GetProjectTemplateBinding(ctx, projectID)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(binding)
-			if err != nil {
-				return nil, fmt.Errorf("encode get_project_template_binding result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.get_node_contract_snapshot",
-			mcp.WithDescription("Show one generated-node contract snapshot used for truthful completion and actor-kind enforcement."),
-			mcp.WithString("node_id", mcp.Required(), mcp.Description("Generated node identifier")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			nodeID, err := req.RequireString("node_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			snapshot, err := templates.GetNodeContractSnapshot(ctx, nodeID)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(snapshot)
-			if err != nil {
-				return nil, fmt.Errorf("encode get_node_contract_snapshot result: %w", err)
-			}
-			return result, nil
-		},
-	)
 }
 
 // registerCapabilityLeaseTools registers lease visibility and lifecycle tools.
@@ -2219,15 +2371,16 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"till.create_comment",
-			mcp.WithDescription("Create one thread comment with markdown-rich summary/details for a project/branch/phase/task/subtask/decision/note target."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
-			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),
-			mcp.WithString("summary", mcp.Required(), mcp.Description("Markdown-rich summary for thread previews")),
+			"till.comment",
+			mcp.WithDescription("Create or list append-only coordination comments. Use operation=create|list."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Comment operation"), mcp.Enum("create", "list")),
+			mcp.WithString("project_id", mcp.Description("Project identifier")),
+			mcp.WithString("target_type", mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
+			mcp.WithString("target_id", mcp.Description("Target identifier")),
+			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich summary for thread previews")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
+			mcp.WithString("session_id", mcp.Description("Required for operation=create. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=create. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
@@ -2260,90 +2413,72 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			if targetID == "" {
 				return mcp.NewToolResultError(`invalid_request: required argument "target_id" not found`), nil
 			}
-			summary := strings.TrimSpace(args.Summary)
-			if summary == "" {
-				return mcp.NewToolResultError(`invalid_request: required argument "summary" not found`), nil
+			switch strings.TrimSpace(req.GetString("operation", "")) {
+			case "create":
+				summary := strings.TrimSpace(args.Summary)
+				if summary == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "summary" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(comments),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"create_comment",
+					"project:"+projectID,
+					"comment",
+					targetID,
+					map[string]string{
+						"project_id":  projectID,
+						"target_type": targetType,
+					},
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				})
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				comment, err := comments.CreateComment(ctx, common.CreateCommentRequest{
+					ProjectID:    projectID,
+					TargetType:   targetType,
+					TargetID:     targetID,
+					Summary:      summary,
+					BodyMarkdown: strings.TrimSpace(args.BodyMarkdown),
+					Actor:        actor,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(comment)
+				if err != nil {
+					return nil, fmt.Errorf("encode comment create result: %w", err)
+				}
+				return result, nil
+			case "list":
+				rows, err := comments.ListCommentsByTarget(ctx, common.ListCommentsByTargetRequest{
+					ProjectID:  projectID,
+					TargetType: targetType,
+					TargetID:   targetID,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"comments": rows})
+				if err != nil {
+					return nil, fmt.Errorf("encode comment list result: %w", err)
+				}
+				return result, nil
+			default:
+				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
 			}
-			caller, err := authorizeMCPMutation(
-				ctx,
-				pickMutationAuthorizer(comments),
-				mcpSessionAuthArgs{
-					SessionID:     args.SessionID,
-					SessionSecret: args.SessionSecret,
-				},
-				"create_comment",
-				"project:"+projectID,
-				"comment",
-				targetID,
-				map[string]string{
-					"project_id":  projectID,
-					"target_type": targetType,
-				},
-			)
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
-				AgentInstanceID: args.AgentInstanceID,
-				LeaseToken:      args.LeaseToken,
-				OverrideToken:   args.OverrideToken,
-			})
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			comment, err := comments.CreateComment(ctx, common.CreateCommentRequest{
-				ProjectID:    projectID,
-				TargetType:   targetType,
-				TargetID:     targetID,
-				Summary:      summary,
-				BodyMarkdown: strings.TrimSpace(args.BodyMarkdown),
-				Actor:        actor,
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(comment)
-			if err != nil {
-				return nil, fmt.Errorf("encode create_comment result: %w", err)
-			}
-			return result, nil
-		},
-	)
-
-	srv.AddTool(
-		mcp.NewTool(
-			"till.list_comments_by_target",
-			mcp.WithDescription("List comments for one target, including markdown-rich summary/details fields."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
-			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			targetType, err := req.RequireString("target_type")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			targetID, err := req.RequireString("target_id")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			rows, err := comments.ListCommentsByTarget(ctx, common.ListCommentsByTargetRequest{
-				ProjectID:  projectID,
-				TargetType: targetType,
-				TargetID:   targetID,
-			})
-			if err != nil {
-				return toolResultFromError(err), nil
-			}
-			result, err := mcp.NewToolResultJSON(map[string]any{"comments": rows})
-			if err != nil {
-				return nil, fmt.Errorf("encode list_comments_by_target result: %w", err)
-			}
-			return result, nil
 		},
 	)
 }
