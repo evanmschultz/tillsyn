@@ -92,6 +92,13 @@ type MoveTaskRequest struct {
 	Actor      ActorLeaseTuple
 }
 
+// MoveTaskStateRequest stores transport input for workflow-state transitions.
+type MoveTaskStateRequest struct {
+	TaskID string
+	State  string
+	Actor  ActorLeaseTuple
+}
+
 // DeleteTaskRequest stores transport input for task delete operations.
 type DeleteTaskRequest struct {
 	TaskID string
@@ -522,10 +529,12 @@ type ProjectService interface {
 
 // TaskService exposes task list/mutation operations.
 type TaskService interface {
+	GetTask(context.Context, string) (domain.Task, error)
 	ListTasks(context.Context, string, bool) ([]domain.Task, error)
 	CreateTask(context.Context, CreateTaskRequest) (domain.Task, error)
 	UpdateTask(context.Context, UpdateTaskRequest) (domain.Task, error)
 	MoveTask(context.Context, MoveTaskRequest) (domain.Task, error)
+	MoveTaskState(context.Context, MoveTaskStateRequest) (domain.Task, error)
 	DeleteTask(context.Context, DeleteTaskRequest) error
 	RestoreTask(context.Context, RestoreTaskRequest) (domain.Task, error)
 	ReparentTask(context.Context, ReparentTaskRequest) (domain.Task, error)

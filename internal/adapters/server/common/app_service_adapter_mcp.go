@@ -275,6 +275,18 @@ func (a *AppServiceAdapter) ListTasks(ctx context.Context, projectID string, inc
 	return tasks, nil
 }
 
+// GetTask returns one task/work-item row by id.
+func (a *AppServiceAdapter) GetTask(ctx context.Context, taskID string) (domain.Task, error) {
+	if a == nil || a.service == nil {
+		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	task, err := a.service.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return domain.Task{}, mapAppError("get task", err)
+	}
+	return task, nil
+}
+
 // CreateTask creates one level-scoped task/work item.
 func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest) (domain.Task, error) {
 	if a == nil || a.service == nil {
@@ -361,6 +373,41 @@ func (a *AppServiceAdapter) MoveTask(ctx context.Context, in MoveTaskRequest) (d
 	return task, nil
 }
 
+// MoveTaskState moves one task/work-item to the column that represents the requested lifecycle state.
+func (a *AppServiceAdapter) MoveTaskState(ctx context.Context, in MoveTaskStateRequest) (domain.Task, error) {
+	if a == nil || a.service == nil {
+		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	taskID := strings.TrimSpace(in.TaskID)
+	if taskID == "" {
+		return domain.Task{}, fmt.Errorf("task_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	state, err := normalizeTaskStateInput(in.State)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	task, err := a.service.GetTask(ctx, taskID)
+	if err != nil {
+		return domain.Task{}, mapAppError("move task state", err)
+	}
+	targetColumnID, err := a.resolveTaskColumnIDForState(ctx, task.ProjectID, state)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	if strings.TrimSpace(task.ColumnID) == targetColumnID && task.LifecycleState == state {
+		return task, nil
+	}
+	moved, err := a.service.MoveTask(ctx, task.ID, targetColumnID, task.Position)
+	if err != nil {
+		return domain.Task{}, mapAppError("move task state", err)
+	}
+	return moved, nil
+}
+
 // DeleteTask applies archive/hard delete behavior for one task.
 func (a *AppServiceAdapter) DeleteTask(ctx context.Context, in DeleteTaskRequest) error {
 	if a == nil || a.service == nil {
@@ -418,6 +465,82 @@ func (a *AppServiceAdapter) ListChildTasks(ctx context.Context, projectID, paren
 		return nil, mapAppError("list child tasks", err)
 	}
 	return tasks, nil
+}
+
+func (a *AppServiceAdapter) resolveTaskColumnIDForState(ctx context.Context, projectID string, state domain.LifecycleState) (string, error) {
+	columns, err := a.service.ListColumns(ctx, strings.TrimSpace(projectID), true)
+	if err != nil {
+		return "", mapAppError("resolve task state column", err)
+	}
+	for _, column := range columns {
+		if taskLifecycleStateForColumnName(column.Name) == state {
+			return strings.TrimSpace(column.ID), nil
+		}
+	}
+	return "", fmt.Errorf("state %q has no mapped column in project %q: %w", state, strings.TrimSpace(projectID), ErrInvalidCaptureStateRequest)
+}
+
+func normalizeTaskStateInput(raw string) (domain.LifecycleState, error) {
+	switch taskLifecycleStateForColumnName(raw) {
+	case domain.StateTodo, domain.StateProgress, domain.StateDone:
+		return taskLifecycleStateForColumnName(raw), nil
+	case domain.StateArchived:
+		return "", fmt.Errorf("state %q is unsupported for move_state; use delete/restore for archive flows: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
+	default:
+		return "", fmt.Errorf("state %q is unsupported: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
+	}
+}
+
+func taskLifecycleStateForColumnName(name string) domain.LifecycleState {
+	switch normalizeStateLikeID(name) {
+	case "todo":
+		return domain.StateTodo
+	case "progress":
+		return domain.StateProgress
+	case "done":
+		return domain.StateDone
+	case "archived":
+		return domain.StateArchived
+	default:
+		return ""
+	}
+}
+
+func normalizeStateLikeID(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	normalized := strings.Trim(b.String(), "-")
+	switch normalized {
+	case "to-do", "todo":
+		return "todo"
+	case "in-progress", "progress", "doing":
+		return "progress"
+	case "done", "complete", "completed":
+		return "done"
+	case "archived", "archive":
+		return "archived"
+	default:
+		return normalized
+	}
 }
 
 // SearchTasks runs a scoped or cross-project search query.

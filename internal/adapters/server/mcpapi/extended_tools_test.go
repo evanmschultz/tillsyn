@@ -19,8 +19,15 @@ type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
 	lastCreateProjectReq     common.CreateProjectRequest
+	lastGetTaskID            string
+	lastListTasksProjectID   string
+	lastListTasksArchived    bool
+	lastListChildProjectID   string
+	lastListChildParentID    string
+	lastListChildArchived    bool
 	lastCreateTaskReq        common.CreateTaskRequest
 	lastUpdateTaskReq        common.UpdateTaskRequest
+	lastMoveTaskStateReq     common.MoveTaskStateRequest
 	lastRestoreTaskReq       common.RestoreTaskRequest
 	lastIssueLeaseReq        common.IssueCapabilityLeaseRequest
 	lastListLeaseReq         common.ListCapabilityLeasesRequest
@@ -203,7 +210,9 @@ func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in common.Can
 }
 
 // ListTasks returns one deterministic task row.
-func (s *stubExpandedService) ListTasks(_ context.Context, _ string, _ bool) ([]domain.Task, error) {
+func (s *stubExpandedService) ListTasks(_ context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
+	s.lastListTasksProjectID = projectID
+	s.lastListTasksArchived = includeArchived
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []domain.Task{
 		{
@@ -219,6 +228,25 @@ func (s *stubExpandedService) ListTasks(_ context.Context, _ string, _ bool) ([]
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
+	}, nil
+}
+
+// GetTask returns one deterministic task row by id.
+func (s *stubExpandedService) GetTask(_ context.Context, taskID string) (domain.Task, error) {
+	s.lastGetTaskID = taskID
+	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	return domain.Task{
+		ID:             strings.TrimSpace(taskID),
+		ProjectID:      "p1",
+		ColumnID:       "c1",
+		Position:       0,
+		Title:          "Task One",
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		LifecycleState: domain.StateTodo,
+		Priority:       domain.PriorityMedium,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}, nil
 }
 
@@ -278,6 +306,25 @@ func (s *stubExpandedService) MoveTask(_ context.Context, _ common.MoveTaskReque
 	}, nil
 }
 
+// MoveTaskState returns one deterministic moved-by-state task row.
+func (s *stubExpandedService) MoveTaskState(_ context.Context, in common.MoveTaskStateRequest) (domain.Task, error) {
+	s.lastMoveTaskStateReq = in
+	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	return domain.Task{
+		ID:             strings.TrimSpace(in.TaskID),
+		ProjectID:      "p1",
+		ColumnID:       "c2",
+		Position:       0,
+		Title:          "Task One",
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		LifecycleState: domain.StateDone,
+		Priority:       domain.PriorityMedium,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, nil
+}
+
 // DeleteTask reports deterministic success.
 func (s *stubExpandedService) DeleteTask(_ context.Context, _ common.DeleteTaskRequest) error {
 	return nil
@@ -322,7 +369,10 @@ func (s *stubExpandedService) ReparentTask(_ context.Context, _ common.ReparentT
 }
 
 // ListChildTasks returns one deterministic child row.
-func (s *stubExpandedService) ListChildTasks(_ context.Context, _, _ string, _ bool) ([]domain.Task, error) {
+func (s *stubExpandedService) ListChildTasks(_ context.Context, projectID, parentID string, includeArchived bool) ([]domain.Task, error) {
+	s.lastListChildProjectID = projectID
+	s.lastListChildParentID = parentID
+	s.lastListChildArchived = includeArchived
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []domain.Task{
 		{
@@ -909,10 +959,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.get_auth_request",
 		"till.claim_auth_request",
 		"till.cancel_auth_request",
-		"till.list_tasks",
 		"till.plan_item",
-		"till.list_child_tasks",
-		"till.search_task_matches",
 		"till.get_embeddings_status",
 		"till.reindex_embeddings",
 		"till.list_project_change_events",
@@ -979,7 +1026,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.get_auth_request", args: map[string]any{"request_id": "req-1"}},
 		{name: "till.claim_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio"}},
 		{name: "till.cancel_auth_request", args: map[string]any{"request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio", "resolution_note": "superseded"}},
-		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
+		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
+		{name: "till.plan_item", args: map[string]any{"operation": "get", "task_id": "t1"}},
 		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
@@ -1004,6 +1052,13 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "move_state",
+			"task_id":           "t1",
+			"state":             "done",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})},
+		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "delete",
 			"task_id":           "t1",
 			"agent_instance_id": "inst-1",
@@ -1022,8 +1077,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
-		{name: "till.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
+		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1", "parent_id": "parent-1"}},
+		{name: "till.plan_item", args: map[string]any{"operation": "search", "project_id": "p1", "query": "task"}},
 		{name: "till.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
 		{name: "till.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
 		{name: "till.list_kind_definitions", args: map[string]any{}},
@@ -1382,12 +1437,15 @@ func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
 		t.Fatalf("default plan-item surface missing till.plan_item: %#v", defaultTools)
 	}
 	for _, legacy := range []string{
+		"till.list_tasks",
 		"till.create_task",
 		"till.update_task",
 		"till.move_task",
 		"till.delete_task",
 		"till.restore_task",
 		"till.reparent_task",
+		"till.list_child_tasks",
+		"till.search_task_matches",
 	} {
 		if slices.Contains(defaultTools, legacy) {
 			t.Fatalf("unexpected legacy task tool %q in default surface: %#v", legacy, defaultTools)
@@ -1397,12 +1455,15 @@ func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
 	legacyTools := collectToolNames(t, Config{ExposeLegacyPlanItemTools: true})
 	for _, required := range []string{
 		"till.plan_item",
+		"till.list_tasks",
 		"till.create_task",
 		"till.update_task",
 		"till.move_task",
 		"till.delete_task",
 		"till.restore_task",
 		"till.reparent_task",
+		"till.list_child_tasks",
+		"till.search_task_matches",
 	} {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy plan-item mode missing %q: %#v", required, legacyTools)
@@ -1597,6 +1658,66 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 	}
 }
 
+// TestHandlerExpandedPlanItemReadOperations verifies default plan-item reads route through get/list shapes.
+func TestHandlerExpandedPlanItemReadOperations(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4800, "till.plan_item", map[string]any{
+		"operation": "get",
+		"task_id":   "t1",
+	}))
+	if isError, _ := getResp.Result["isError"].(bool); isError {
+		t.Fatalf("plan_item get returned isError=true: %#v", getResp.Result)
+	}
+	if got := service.lastGetTaskID; got != "t1" {
+		t.Fatalf("plan_item get task_id = %q, want t1", got)
+	}
+
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4801, "till.plan_item", map[string]any{
+		"operation":        "list",
+		"project_id":       "p1",
+		"include_archived": true,
+	}))
+	if isError, _ := listResp.Result["isError"].(bool); isError {
+		t.Fatalf("plan_item list returned isError=true: %#v", listResp.Result)
+	}
+	if got := service.lastListTasksProjectID; got != "p1" {
+		t.Fatalf("plan_item list project_id = %q, want p1", got)
+	}
+	if !service.lastListTasksArchived {
+		t.Fatal("plan_item list include_archived = false, want true")
+	}
+
+	_, childListResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4802, "till.plan_item", map[string]any{
+		"operation":  "list",
+		"project_id": "p1",
+		"parent_id":  "parent-1",
+	}))
+	if isError, _ := childListResp.Result["isError"].(bool); isError {
+		t.Fatalf("plan_item child list returned isError=true: %#v", childListResp.Result)
+	}
+	if got := service.lastListChildProjectID; got != "p1" {
+		t.Fatalf("plan_item child list project_id = %q, want p1", got)
+	}
+	if got := service.lastListChildParentID; got != "parent-1" {
+		t.Fatalf("plan_item child list parent_id = %q, want parent-1", got)
+	}
+}
+
 // TestHandlerInstructionsToolReturnsEmbeddedDocs verifies till.get_instructions returns embedded markdown inventory and guidance.
 func TestHandlerInstructionsToolReturnsEmbeddedDocs(t *testing.T) {
 	t.Parallel()
@@ -1726,15 +1847,15 @@ func TestHandlerExpandedSearchToolSchemaOptions(t *testing.T) {
 		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
 	}
 
-	searchSchema := findToolSchemaByName(t, toolsRaw, "till.search_task_matches")
-	modeDesc := schemaStringPropertyDescription(t, searchSchema, "mode")
+	searchSchema := findToolSchemaByName(t, toolsRaw, "till.plan_item")
+	modeDesc := schemaStringPropertyDescription(t, searchSchema, "search_mode")
 	if !strings.Contains(modeDesc, "default hybrid") {
 		t.Fatalf("mode description = %q, want default hybrid guidance", modeDesc)
 	}
 	if !strings.Contains(modeDesc, "fall back to keyword") {
 		t.Fatalf("mode description = %q, want keyword fallback guidance", modeDesc)
 	}
-	modeEnum := schemaPropertyEnumStrings(t, searchSchema, "mode")
+	modeEnum := schemaPropertyEnumStrings(t, searchSchema, "search_mode")
 	for _, want := range []string{"keyword", "semantic", "hybrid"} {
 		if !slices.Contains(modeEnum, want) {
 			t.Fatalf("mode enum missing %q: %#v", want, modeEnum)
@@ -1809,7 +1930,8 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(610, "till.search_task_matches", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(610, "till.plan_item", map[string]any{
+		"operation":        "search",
 		"project_id":       "p1",
 		"query":            "task",
 		"cross_project":    true,
@@ -1819,13 +1941,13 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 		"kinds":            []any{"phase"},
 		"labels_any":       []any{"backend", "ops"},
 		"labels_all":       []any{"urgent"},
-		"mode":             "hybrid",
+		"search_mode":      "hybrid",
 		"sort":             "title_asc",
 		"limit":            75,
 		"offset":           10,
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); isError {
-		t.Fatalf("search_task_matches returned isError=true: %#v", callResp.Result)
+		t.Fatalf("plan_item search returned isError=true: %#v", callResp.Result)
 	}
 
 	if got := service.lastSearchTasksReq.ProjectID; got != "p1" {
@@ -1868,11 +1990,12 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 		t.Fatalf("labels_all = %#v, want [urgent]", got)
 	}
 
-	_, defaultResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(611, "till.search_task_matches", map[string]any{
+	_, defaultResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(611, "till.plan_item", map[string]any{
+		"operation":  "search",
 		"project_id": "p1",
 	}))
 	if isError, _ := defaultResp.Result["isError"].(bool); isError {
-		t.Fatalf("default search_task_matches returned isError=true: %#v", defaultResp.Result)
+		t.Fatalf("default plan_item search returned isError=true: %#v", defaultResp.Result)
 	}
 	if got := service.lastSearchTasksReq.Mode; got != "" {
 		t.Fatalf("default mode = %q, want empty for app-defaulting", got)
@@ -1918,13 +2041,14 @@ func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) 
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, searchResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(612, "till.search_task_matches", map[string]any{
-		"project_id": "p1",
-		"query":      "task",
-		"mode":       "semantic",
+	_, searchResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(612, "till.plan_item", map[string]any{
+		"operation":   "search",
+		"project_id":  "p1",
+		"query":       "task",
+		"search_mode": "semantic",
 	}))
 	if isError, _ := searchResp.Result["isError"].(bool); isError {
-		t.Fatalf("search_task_matches returned isError=true: %#v", searchResp.Result)
+		t.Fatalf("plan_item search returned isError=true: %#v", searchResp.Result)
 	}
 	searchStructured := toolResultStructured(t, searchResp.Result)
 	matchesAny, ok := searchStructured["matches"].([]any)
@@ -2122,6 +2246,26 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Agent Session One" {
 		t.Fatalf("plan_item update actor_name = %q, want Agent Session One", got)
+	}
+
+	_, moveStateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3010, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":         "move_state",
+		"task_id":           "t1",
+		"state":             "done",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
+	})))
+	if isError, _ := moveStateResp.Result["isError"].(bool); isError {
+		t.Fatalf("plan_item move_state returned isError=true: %#v", moveStateResp.Result)
+	}
+	if got := service.lastMoveTaskStateReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("plan_item move_state actor_type = %q, want agent", got)
+	}
+	if got := service.lastMoveTaskStateReq.Actor.ActorID; got != "agent-session-1" {
+		t.Fatalf("plan_item move_state actor_id = %q, want agent-session-1", got)
+	}
+	if got := service.lastMoveTaskStateReq.State; got != "done" {
+		t.Fatalf("plan_item move_state state = %q, want done", got)
 	}
 
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", mergeArgs(validSessionArgs(), map[string]any{

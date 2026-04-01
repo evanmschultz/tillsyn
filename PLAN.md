@@ -9115,3 +9115,84 @@ Clarification:
    - and confirm whether current generation provenance is sufficient to explain why one node was created or whether additional provenance/state must be stored first.
 8. This is intentionally deferred until after the remaining live dogfood proof and MCP surface-reduction slices:
    - do not silently fold `get_bootstrap_guide` into `get_instructions` until the explanation layer exists.
+
+### 2026-03-31: Next-Wave Surface Consensus
+
+Consensus locked before the next implementation wave:
+1. `till.plan_item` should continue absorbing same-noun behavior:
+   - the next default plan-item slice should fold in `get`, `list`, and `search`,
+   - instead of leaving plan-item reads split across standalone default tools.
+2. The next state-model direction for `till.plan_item` is not a separate `complete`-only verb:
+   - prefer one contract-aware state-transition operation so callers can move work forward or backward across ordinary active states,
+   - keep current structural `move` semantics distinct from state-transition semantics so ordering/reparenting do not get conflated with workflow state,
+   - and gate those transitions by stored contract/policy rather than by the caller guessing state rules.
+3. Default policy direction for that state-transition work:
+   - responsible actors should normally be able to progress their own work through allowed active states,
+   - humans remain allowed to do so,
+   - QA and orchestrator flows should be able to move work backward or otherwise redirect it when the stored contract/policy allows,
+   - builders should not automatically gain broad terminal-cleanup powers just because they can progress their own work,
+   - and delete/hard cleanup remain stricter than ordinary active-state movement.
+4. Comments should stay a separate noun family:
+   - do not fold comments into `till.plan_item`,
+   - the preferred next shape is `till.comment(operation=create|list)`,
+   - and comment editing stays deferred so the default coordination log remains append-only and trustworthy.
+5. Comment visibility/auth direction:
+   - comments should be allowed anywhere inside the caller's approved scope subtree,
+   - so parallel/sibling comments are valid when the approved scope already covers those nodes,
+   - but callers should not gain arbitrary out-of-scope comment reach just because a parallel item is affected,
+   - and handoff/attention remain the preferred structured escalation path when scope does not already cover the target.
+6. Mentions/notifications remain a later dedicated slice:
+   - role/actor-kind mentions such as `@human`, `@orchestrator`, `@qa`, and `@builder` are still the preferred starting point,
+   - but they should land with a real notification/inbox model rather than being faked by stuffing notifications into unrelated tool responses,
+   - and the current cross-process wake path should not be overstated because it only covers auth approval/claim flows today.
+
+Remaining major slices after this consensus checkpoint:
+1. `plan_item` read and state-transition consolidation.
+2. `comment` family consolidation.
+3. project/template/kind read/admin rationalization.
+4. `default-go` lifecycle expansion and project-template update/reapply behavior.
+5. later `get_instructions` expansion plus bootstrap collapse once the scoped explanation layer exists.
+
+### 2026-03-31: Plan-Item Read And State Consolidation
+
+Objective:
+- finish the same-noun reduction for plan items by folding default reads into `till.plan_item` and adding one contract-aware workflow-state transition operation.
+
+Implementation:
+1. Extended default `till.plan_item` to handle:
+   - `operation=get`
+   - `operation=list`
+   - `operation=search`
+   - `operation=move_state`
+   in addition to the existing mutation operations.
+2. Kept structural `move` distinct from workflow-state `move_state`:
+   - `move` still targets a specific column/position,
+   - `move_state` resolves the project column for a requested lifecycle state and routes through the same app-layer policy checks that already gate task movement.
+3. Added adapter-level support for the new plan-item surface:
+   - `TaskService.GetTask`
+   - `TaskService.MoveTaskState`
+   - `AppServiceAdapter.GetTask`
+   - `AppServiceAdapter.MoveTaskState`
+4. Rejected `archived` as a `move_state` target in the adapter:
+   - archive/restore flows remain on the stricter delete/restore path for now.
+5. Moved the older plan-item read tools behind `ExposeLegacyPlanItemTools` so they remain available only as compatibility aliases:
+   - `till.list_tasks`
+   - `till.list_child_tasks`
+   - `till.search_task_matches`
+6. Updated default-surface docs to describe the new preferred shape:
+   - `README.md`
+   - `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS (89 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (74 tests).
+3. `mage test-pkg ./internal/adapters/server/...` -> PASS (219 tests across 4 packages; 1 package with no tests).
+4. `mage ci` -> PASS (1110 tests total, package coverage gate passed).
+5. Coverage after this slice:
+   - `internal/adapters/server/common`: 70.0%
+   - `internal/adapters/server/mcpapi`: 70.2%
+
+Next step:
+1. Commit and push this slice on its own.
+2. Restart the MCP runtime and verify the default tool list now keeps only `till.plan_item` for plan-item reads/writes.
+3. Then move on to the `comment` family consolidation slice.

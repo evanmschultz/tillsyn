@@ -34,7 +34,11 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
 - Policy direction for the unified `plan_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans should remain allowed to perform those transitions;
+  - `till.plan_item` should own same-noun reads as well as writes instead of keeping separate default read tools for the same noun.
+  - `till.plan_item(operation=move_state)` is the preferred contract-aware state-transition shape instead of separate semantic `complete` / `reopen` verbs, so policy-gated forward and backward movement share one family shape.
   - delete/hard cleanup should remain human-only, and archive/final terminal transitions should stay more restricted than ordinary active-state moves.
+  - comments should remain a separate append-only coordination family rather than being folded into `till.plan_item`.
+  - parallel/sibling comments are expected when the approved scope already covers both nodes; otherwise escalation should use handoffs/attention instead of broadening scope implicitly.
 
 ### Auth / Scope Model
 
@@ -44,7 +48,8 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - branch/phase/task-scoped auth should be used when the runtime can prove the narrower path.
 - Default MCP surface note:
   - `till.project` is the preferred project-root mutation family for create, update, template bind, and allowed-kinds updates;
-  - `till.plan_item` is the preferred plan-item mutation family for create, update, move, delete, restore, and reparent;
+  - `till.plan_item` is the preferred plan-item read/mutation family for `get|list|search|create|update|move|move_state|delete|restore|reparent`;
+  - a future `till.comment` family should own comment create/list rather than leaving comment operations split or folding them into `plan_item`;
   - the older flat project mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
   - the older flat task mutation tools are compatibility aliases only and should not be treated as the preferred default surface.
 - Agents and operators should not treat the global-to-project auth split as a bug.
