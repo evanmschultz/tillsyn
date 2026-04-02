@@ -2,7 +2,40 @@
 
 Created: 2026-02-21
 Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, and a richer `till.get_instructions` surface that can now explain scoped project/template/kind/node rules from runtime state instead of acting like a docs-only fetcher. The next remaining work is bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, and a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+
+## Checkpoint 2026-04-02: Bootstrap Collapse Landed
+
+Objective:
+- collapse bootstrap guidance into the richer `till.get_instructions` surface without widening or breaking the frozen MCP tool family.
+
+Context7:
+1. Rechecked `/mark3labs/mcp-go` for backward-compatible structured JSON tool-result patterns before changing bootstrap/instructions handler assembly.
+
+Implementation summary:
+1. Added bootstrap as a first-class `till.get_instructions` topic:
+   - `mode=explain, focus=topic, topic=bootstrap` now returns the canonical richer bootstrap explanation.
+2. Kept `till.get_bootstrap_guide` on the frozen tool surface, but narrowed its role:
+   - it is now documented as the lightweight compatibility wrapper for empty-instance bootstrap flows,
+   - while `till.get_instructions(topic=bootstrap)` is the preferred explanation path going forward.
+3. Reused the same bootstrap source rather than inventing a second drift-prone copy:
+   - bootstrap-topic explanations are now lifted from the same runtime bootstrap guide source,
+   - and the richer explanation shape adds agent expectations, related tools, and auth-hygiene guidance on top.
+4. Folded auth-cleanup rules into the shipped guidance:
+   - never use another actor's auth,
+   - prefer narrow scope and short lifetime,
+   - orchestrators own child-session cleanup,
+   - and runs should not leave stale requests, sessions, leases, or coordination rows behind.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS (110 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (87 tests).
+3. `mage ci` -> PASS (1175 tests across 17 packages; `internal/adapters/server/mcpapi` coverage 72.5%).
+
+Outcome:
+1. Bootstrap guidance is now part of the canonical instructions surface instead of a separate planning concept.
+2. The frozen MCP surface remains intact because `till.get_bootstrap_guide` still exists as the compatibility wrapper.
+3. The next active slice is final collaborative dogfood hardening and closeout.
 
 ## Checkpoint 2026-04-02: Scoped Instructions Expansion Landed
 
@@ -46,7 +79,7 @@ Validation:
 Outcome:
 1. Agents can now ask `till.get_instructions` for rules tied to a real project, template library, kind, branch, phase, task, or generated node.
 2. The explanation layer now lifts actual persisted policy sources such as `standards_markdown`, template descriptions, task metadata, bindings, and node-contract snapshots.
-3. The next active slice is bootstrap collapse into the richer instructions surface.
+3. The next active slice is final collaborative dogfood hardening and closeout.
 
 ## Checkpoint 2026-04-02: Fresh Native MCP Wake Rerun Passed
 
@@ -86,7 +119,7 @@ Live MCP evidence:
 Outcome:
 1. The patched live-wait contract is now proven in both automated runtime coverage and fresh native MCP dogfood.
 2. The reopened coordination wake slice is closed.
-3. The next active implementation slice is bootstrap collapse into the richer instructions surface.
+3. The next active implementation slice is final collaborative dogfood hardening and closeout.
 
 ## Checkpoint 2026-04-02: Shared Baseline-Aware Live Wait Refactor
 
@@ -315,12 +348,20 @@ Immediate next live MCP tests before any new implementation:
 5. Only after those live tests pass should new implementation work start again.
 
 Remaining slices after the fresh live wake verification:
-1. Bootstrap collapse into richer instructions.
-   - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
-2. Final collaborative dogfood hardening and closeout.
+1. Final collaborative dogfood hardening and closeout.
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
-3. Cleanup/refinement after the active slices close.
+2. Cleanup/refinement after the active slices close.
    - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, keep `Action Required` at the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
+   - Add intuitive non-JSON human-facing rule and template-policy screens so operators can view and edit:
+     - global template rules,
+     - project-scoped rules,
+     - branch/phase/task/subtask rule overlays,
+     - and the effective inherited rule set for one concrete node.
+   - Design composable template layering instead of one flat template choice:
+     - a project should be able to inherit a general template such as `go` plus one or more narrower overlays such as `go cli/tui`, `go backend`, or `go wasm`,
+     - child layers should be able to override or extend parent defaults without forcing whole-template duplication,
+     - the effective rule-precedence model must be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
+     - and the UI must make inherited-vs-overridden rule sources obvious to humans and agents.
    - Group global notifications by project instead of scattering repeated project headers, and clear comment-notification rows from notices after the viewer opens/reviews them so old comments do not keep muddying the panel.
    - Read and discuss the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) before finalizing dogfood templates, then decide how its semi-formal reasoning model should update template contracts, research/qa orchestration, and scoped instructions.
 

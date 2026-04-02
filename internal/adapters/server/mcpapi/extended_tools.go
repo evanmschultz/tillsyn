@@ -382,7 +382,7 @@ func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuide
 	srv.AddTool(
 		mcp.NewTool(
 			"till.get_bootstrap_guide",
-			mcp.WithDescription("Return lightweight runtime bootstrap guidance for empty-instance flows, including when to use comments, mentions, handoffs, and scoped auth next. For restart/recovery on an existing instance, use till.capture_state first instead of bootstrap."),
+			mcp.WithDescription("Return lightweight runtime bootstrap guidance for empty-instance flows. This remains the compatibility wrapper on the frozen surface; prefer till.get_instructions(mode=explain, focus=topic, topic=bootstrap) for the richer canonical bootstrap explanation. For restart/recovery on an existing instance, use till.capture_state first instead of bootstrap."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			out, err := guide.GetBootstrapGuide(ctx)

@@ -59,6 +59,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	registerAuthRequestTools(mcpSrv, pickAuthRequestService(captureState, attention), authContexts)
 	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
 	registerInstructionsTool(mcpSrv, instructionsExplainServices{
+		bootstrap: pickBootstrapGuideReader(captureState, attention),
 		projects:  pickProjectService(captureState, attention),
 		tasks:     pickTaskService(captureState, attention),
 		kinds:     pickKindCatalogService(captureState, attention),

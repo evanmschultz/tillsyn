@@ -69,8 +69,20 @@ type stubExpandedService struct {
 // GetBootstrapGuide returns one deterministic bootstrap payload.
 func (s *stubExpandedService) GetBootstrapGuide(_ context.Context) (common.BootstrapGuide, error) {
 	return common.BootstrapGuide{
-		Mode:    "bootstrap_required",
-		Summary: "create project",
+		Mode:          "bootstrap_required",
+		Summary:       "No project context exists yet. Create an auth request, wait for approval, claim it, then create the project.",
+		WhatTillsynIs: "Tillsyn is a scoped planner with comments, handoffs, auth requests, capture-state recovery, and template workflow contracts.",
+		NextSteps: []string{
+			"If it is not approved yet, create an auth request with till.auth_request(operation=create).",
+			"After approval, claim the request with till.auth_request(operation=claim), then create the project with till.project(operation=create).",
+			"Use till.capture_state after restart instead of rerunning bootstrap on an existing instance.",
+		},
+		Recommended: []string{
+			"till.get_instructions",
+			"till.auth_request",
+			"till.project",
+			"till.capture_state",
+		},
 	}, nil
 }
 
@@ -2276,6 +2288,56 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 	rulesText := strings.ToLower(joinAnyStrings(scopedRules))
 	if !strings.Contains(rulesText, "validation plan") {
 		t.Fatalf("scoped_rules = %q, want validation plan guidance", rulesText)
+	}
+}
+
+// TestHandlerInstructionsToolExplainsBootstrapTopic verifies bootstrap guidance now lives in till.get_instructions.
+func TestHandlerInstructionsToolExplainsBootstrapTopic(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(
+		503,
+		"till.get_instructions",
+		map[string]any{
+			"mode":  "explain",
+			"focus": "topic",
+			"topic": "bootstrap",
+		},
+	))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("tool returned isError=true: %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if got, _ := structured["summary"].(string); !strings.Contains(strings.ToLower(got), "auth request") {
+		t.Fatalf("summary = %q, want bootstrap auth guidance", got)
+	}
+	explanation, ok := structured["explanation"].(map[string]any)
+	if !ok {
+		t.Fatalf("explanation missing: %#v", structured)
+	}
+	workflow, ok := explanation["workflow_contract"].([]any)
+	if !ok || len(workflow) == 0 {
+		t.Fatalf("workflow_contract missing: %#v", explanation)
+	}
+	workflowText := strings.ToLower(joinAnyStrings(workflow))
+	if !strings.Contains(workflowText, "till.project(operation=create)") {
+		t.Fatalf("workflow_contract = %q, want bootstrap project-create guidance", workflowText)
 	}
 }
 
