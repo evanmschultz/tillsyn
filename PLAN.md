@@ -4,6 +4,70 @@ Created: 2026-02-21
 Updated: 2026-03-31
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
+## Checkpoint 2026-04-01: Lease Identity Derivation Cleanup
+
+Objective:
+- remove the remaining MCP lease-issuance ergonomics mismatch where authenticated agent callers still had to supply an `agent_name` argument even though the handler already normalized the stored live lease identity from the authenticated session.
+
+Context7:
+1. `/mark3labs/mcp-go` reviewed before edits for `NewTool` required-vs-optional argument guidance, `BindArguments` handler flow, and JSON result normalization patterns after transport binding.
+
+Implementation summary:
+1. Updated `till.capability_lease(operation=issue)` so `agent_name` is only required for non-agent/operator issuance paths.
+2. Authenticated agent callers now authorize first and then derive the persisted lease identity from the authenticated caller tuple instead of failing early on a missing caller-supplied `agent_name`.
+3. Updated the MCP tool descriptions, including the legacy lease-issue alias, to describe the real contract rather than the old stricter transport requirement.
+4. Added MCP handler coverage proving an authenticated agent session can issue a lease without passing `agent_name`, and that the stored lease identity still normalizes to the authenticated agent principal.
+
+Validation so far:
+1. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+2. `mage ci` -> PASS.
+
+Next step:
+1. Commit/push this scoped-auth ergonomics slice and watch the new GitHub Actions run to green before resuming the next auth/delegation work.
+
+## Checkpoint 2026-04-01: Live MCP Default-Go Drift/Reapply E2E
+
+Objective:
+- finish the live MCP-only proof for builtin `default-go` drift visibility, explicit reapply, and the guarantee that existing generated nodes are not silently rewritten when no migration candidates are present.
+
+Live MCP evidence:
+1. Claimed one approved global auth session and one approved `TILLSYN` project-scoped auth session through `till.auth_request(operation=claim)`.
+2. Confirmed pre-refresh builtin and binding state:
+   - `till.template(operation=get_builtin_status, library_id="default-go")` -> `state="update_available"`, installed revision `1`,
+   - `till.project(operation=get_template_binding, project_id="81539b10-98be-4f2d-8964-184049e14111")` -> `bound_revision=1`, `drift_status="current"`,
+   - `till.project(operation=preview_template_reapply, ...)` -> no review required while latest approved library row still matched revision `1`.
+3. Ran `till.template(operation=ensure_builtin, library_id="default-go", ...)` under approved global auth.
+4. Confirmed builtin refresh landed live:
+   - `default-go` advanced to revision `2`,
+   - builtin status moved to `state="current"` with installed revision `2`.
+5. Confirmed the bound project then drifted as designed:
+   - `till.project(operation=get_template_binding, project_id="81539b10-98be-4f2d-8964-184049e14111")` -> `bound_revision=1`, `latest_revision=2`, `drift_status="update_available"`.
+6. Confirmed the project-specific reapply preview was a true no-op migration case:
+   - `till.project(operation=preview_template_reapply, ...)` -> `eligible_migration_count=0`, `ineligible_migration_count=0`, `review_required=false`.
+7. Ran the intentional same-library rebind under approved global auth:
+   - `till.project(operation=bind_template, project_id="81539b10-98be-4f2d-8964-184049e14111", template_library_id="default-go", ...)`.
+8. Confirmed post-rebind state:
+   - binding moved to revision `2`,
+   - `drift_status="current"`,
+   - `preview_template_reapply` returned no further work.
+9. Confirmed existing work inventory stayed unchanged in this no-candidate case:
+   - `till.capture_state(..., view="summary")` reported `total_tasks=31` both before and after rebind.
+
+Important runtime note:
+1. The current MCP runtime/client in this session still exposes the older auth-request create result shape and did not return `resume_token` automatically from `till.auth_request(operation=create)`, even though source/tests/docs now do.
+2. To finish this live E2E without another restart, the requests were created with explicit `continuation_json.resume_token` values and then claimed successfully.
+3. The runtime should be refreshed again before relying on the new create-result `resume_token` field during the next live MCP auth proof.
+
+Outcome:
+1. The locked product contract is now proven live for the no-candidate path:
+   - builtin refresh is explicit,
+   - drift is visible,
+   - reapply is explicit,
+   - existing generated work was not silently rewritten.
+
+Next step:
+1. Move on to the existing-node migration approval workflow and then the broader scoped-auth/notification dogfood slices.
+
 ## Checkpoint 2026-04-01: MCP Auth Request Continuation Ergonomics
 
 Objective:

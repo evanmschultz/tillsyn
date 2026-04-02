@@ -2610,6 +2610,20 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	if got := service.lastIssueLeaseReq.AgentName; got != "agent-session-1" {
 		t.Fatalf("capability_lease issue agent_name = %q, want agent-session-1", got)
 	}
+
+	_, issueLeaseNoNameResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3015, "till.capability_lease", mergeArgs(validSessionArgs(), map[string]any{
+		"operation":  "issue",
+		"project_id": "p1",
+		"scope_type": "project",
+		"role":       "builder",
+		"scope_id":   "p1",
+	})))
+	if isError, _ := issueLeaseNoNameResp.Result["isError"].(bool); isError {
+		t.Fatalf("capability_lease issue without agent_name returned isError=true: %#v", issueLeaseNoNameResp.Result)
+	}
+	if got := service.lastIssueLeaseReq.AgentName; got != "agent-session-1" {
+		t.Fatalf("capability_lease issue without agent_name agent_name = %q, want agent-session-1", got)
+	}
 }
 
 // TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples verifies session-first auth failures and tuple validation.

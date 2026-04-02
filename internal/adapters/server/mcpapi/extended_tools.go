@@ -193,9 +193,6 @@ func handleCapabilityLeaseMutation(
 		if role == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "role" not found`), nil
 		}
-		if agentName == "" {
-			return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
-		}
 		caller, err := authorizeMCPMutation(
 			ctx,
 			pickMutationAuthorizer(leases),
@@ -216,6 +213,8 @@ func handleCapabilityLeaseMutation(
 		}
 		if caller.PrincipalType == domain.ActorTypeAgent {
 			agentName = firstNonEmptyString(caller.PrincipalID, caller.PrincipalName)
+		} else if agentName == "" {
+			return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
 		}
 		lease, err := leases.IssueCapabilityLease(ctx, common.IssueCapabilityLeaseRequest{
 			ProjectID:                 projectID,
@@ -2324,7 +2323,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and for project scope; otherwise used by operation=issue|revoke_all")),
 			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases when operation=list")),
 			mcp.WithString("role", mcp.Description("orchestrator|builder|qa. Required for operation=issue"), mcp.Enum("orchestrator", "builder", "qa")),
-			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Required for operation=issue")),
+			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session; otherwise required for operation=issue")),
 			mcp.WithString("agent_instance_id", mcp.Description("Agent instance identifier. Required for operation=heartbeat|renew|revoke and optional for operation=issue")),
 			mcp.WithString("parent_instance_id", mcp.Description("Optional parent lease instance id for operation=issue")),
 			mcp.WithBoolean("allow_equal_scope_delegation", mcp.Description("Allow equal-scope delegation for operation=issue")),
@@ -2381,7 +2380,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("role", mcp.Required(), mcp.Description("orchestrator|builder|qa"), mcp.Enum("orchestrator", "builder", "qa")),
-			mcp.WithString("agent_name", mcp.Required(), mcp.Description("Agent display/name identifier")),
+			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session")),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional stable agent instance id")),
 			mcp.WithString("parent_instance_id", mcp.Description("Optional parent lease instance id")),
 			mcp.WithBoolean("allow_equal_scope_delegation", mcp.Description("Allow equal-scope delegation")),
