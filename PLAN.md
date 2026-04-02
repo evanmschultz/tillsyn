@@ -1,8 +1,44 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-04-01
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, and the TUI migration-review follow-through. The auth-session governance follow-up is now landed and proven live on the refreshed native `till_*` runtime: `till.auth_request` has a non-destructive `check_session_governance` operation, session governance is orchestrator-or-self only, and MCP/CLI auth+lease role enums now expose `research`. The scoped-auth and bounded-delegation dogfood slice is now landed too: orchestrators can mint bounded builder/qa/research child auth through `till.auth_request(operation=create)` with acting-session credentials, children claim their own approvals, and non-orchestrator sibling delegation fails closed. Routed mentions/notifications/inbox is now landed on top of `attention`: role-style comment mentions and durable handoffs materialize as inbox attention, and the TUI notices panels load project-wide unresolved attention. The next remaining work is broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, and final collaborative hardening.
+Updated: 2026-04-02
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, and routed mentions/inbox attention. The latest closeout on top of that landed a stdio-local auth-context handle path so normal MCP mutations no longer need inline session secrets after claim/validate, and project edit now exposes a direct comments-thread row. The next remaining work is broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, and final collaborative hardening.
+
+## Checkpoint 2026-04-02: StdIO Auth Context Handles And Project Edit Comments
+
+Objective:
+- eliminate inline `session_secret` reuse on normal raw-stdio MCP mutations by binding local auth-context handles, and restore direct project-comment access from the project edit screen.
+
+Context7:
+1. Reviewed `/golang/go` for local in-process state, context propagation, and error-wrapping patterns before the auth-context runtime work.
+2. Reviewed `/mark3labs/mcp-go` for typed tool argument binding and structured MCP tool response handling before patching the family-tool handlers.
+
+Implementation summary:
+1. Added one stdio-local MCP auth-context cache in `internal/adapters/server/mcpapi`:
+   - `till.auth_request(operation=claim|validate_session)` now binds the approved session locally and returns `auth_context_id`,
+   - `till.auth_request` acting-session flows now accept `acting_auth_context_id`,
+   - reduced mutation families now accept `auth_context_id` and resolve the stored secret server-side instead of requiring the caller to repeat it inline.
+2. Kept compatibility fallback intact:
+   - existing `session_secret` and `acting_session_secret` inputs still work,
+   - auth-context resolution is enabled for the raw stdio runtime and intentionally not the preferred HTTP path yet.
+3. Updated the project edit TUI surface:
+   - added a focusable `comments` row in edit-project mode,
+   - `enter/e` opens the project thread on the comments panel,
+   - `esc` from that thread returns cleanly to `modeEditProject`.
+4. Added regression coverage for:
+   - auth-request auth-context binding and acting-session reuse,
+   - reduced-family mutation auth via `auth_context_id`,
+   - project-edit comments row/thread return behavior.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS (110 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (77 tests).
+3. `mage test-pkg ./internal/tui` -> PASS (302 tests).
+4. `mage ci` -> PASS (1153 tests across 17 packages, coverage gate passed, build passed).
+
+Outcome:
+1. Raw stdio MCP now has a real handle-based path for authenticated mutation dogfood without repeating inline secrets on every call.
+2. Project edit once again exposes an intentional comment/thread path instead of forcing operators to leave the edit surface.
 
 ## Restart Handoff 2026-04-01
 

@@ -41,7 +41,7 @@ Local dogfood repo layout note:
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-03-26)
+## Active Status (2026-04-02)
 Implemented now:
 - Use `PLAN.md` as the active source of truth for the current dogfood auth/runtime wave.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
@@ -49,6 +49,10 @@ Implemented now:
 - Local builds no longer silently force dev mode.
 - `./till mcp` stays the raw stdio MCP server and shuts down cleanly on `Ctrl-C`.
 - Shared-DB `autent` wiring is active for session-first MCP mutation auth.
+- Raw-stdio MCP auth now supports local auth-context handles:
+  - `till.auth_request(operation=claim|validate_session)` returns `auth_context_id` on the stdio runtime,
+  - reduced mutation families accept `auth_context_id` instead of requiring inline `session_secret` on normal local MCP mutations,
+  - and acting-session governance/delegation flows on `till.auth_request` accept `acting_auth_context_id` with the existing `acting_session_id`.
 - Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase navigation, including nested phases.
 - Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase views show immediate children for that level (not full descendant dumps).
 - Task-focused scope renders direct subtasks in the board so `f` on a task opens subtask-level board context.
@@ -126,9 +130,16 @@ Current auth note:
 - TUI auth-request notifications route to focused-project vs global panels, and `enter` opens auth review directly instead of a generic thread fallback.
 - TUI auth review now uses a dedicated full-screen review surface with visible decision controls, human-readable scope labels, explicit confirm-before-apply for both approve and deny, and optional notes that start blank instead of prefilled audit prose.
 - TUI auth inventory distinguishes pending requests, resolved requests, and active approved sessions, but the active-session revoke path is still less discoverable than it should be; CLI is the clearer operator revoke path for now.
+- TUI project edit now includes a focusable `comments` row that opens the project thread directly on the comments panel and returns cleanly to edit mode on `esc`.
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.auth_request(operation=claim)` using the requester-owned `resume_token` returned by `till.auth_request(operation=create)`; when callers provide custom continuation metadata, `continuation_json.resume_token` must still be present and non-empty. For delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
 - MCP requesters can now also withdraw their own pending requests through `till.auth_request(operation=cancel)` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
+- On raw stdio MCP, callers should prefer auth-context handles over repeating secrets:
+  - `till.auth_request(operation=claim|validate_session)` returns `auth_context_id`,
+  - mutation-family tools such as `till.project`, `till.plan_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`, and `till.capability_lease` accept `session_id` plus `auth_context_id`,
+  - acting-session flows on `till.auth_request` accept `acting_session_id` plus `acting_auth_context_id`,
+  - inline `session_secret` and `acting_session_secret` remain compatibility fallbacks,
+  - and the local auth-context handle path is currently a stdio-runtime feature, not the preferred HTTP serve flow yet.
 - The reduced auth family now also exposes approved-session governance for MCP/runtime dogfood:
   - use `till.auth_request(operation=list_sessions|check_session_governance|revoke_session)` with an acting approved session whose approved path already contains the governed session scope;
   - simple project overlap is not enough to govern a broader global or multi-project session;
@@ -144,7 +155,8 @@ Current auth note:
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
-  - when an orchestrator needs child builder/qa/research auth, create that child request through `till.auth_request(operation=create, acting_session_id=..., acting_session_secret=...)` so requester ownership is derived from the acting orchestrator session and the child path stays bounded within the acting approved path;
+  - on raw stdio MCP, first claim or validate the acting session to get `auth_context_id`, then prefer `session_id` + `auth_context_id` for subsequent mutation calls;
+  - when an orchestrator needs child builder/qa/research auth, create that child request through `till.auth_request(operation=create, acting_session_id=..., acting_auth_context_id=...)` so requester ownership is derived from the acting orchestrator session and the child path stays bounded within the acting approved path;
   - builder, qa, and research agents may still request their own single-project rooted auth directly, but they must not mint sibling or broader child sessions for other principals;
   - do not treat the global-to-project auth split as a runtime bug.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.

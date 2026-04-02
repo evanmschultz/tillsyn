@@ -219,6 +219,7 @@ const (
 	projectFieldTags
 	projectFieldTemplateLibrary
 	projectFieldRootPath
+	projectFieldComments
 )
 
 // activity log limits used by modal rendering and retention.
@@ -4790,6 +4791,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	m.editingProjectID = ""
 	m.projectFormDescription = ""
 	if project != nil {
+		m.projectFormInputs = append(m.projectFormInputs, newModalInput("", "enter opens project comments thread", "", 160))
 		m.mode = modeEditProject
 		m.status = "edit project"
 		m.editingProjectID = project.ID
@@ -5308,7 +5310,7 @@ func isTaskFormDirectTextInputField(field int) bool {
 
 // isProjectFormDirectTextInputField reports whether the focused project-form field should consume printable text directly.
 func isProjectFormDirectTextInputField(field int) bool {
-	return field != projectFieldDescription && field != projectFieldKind && field != projectFieldTemplateLibrary
+	return field != projectFieldDescription && field != projectFieldKind && field != projectFieldTemplateLibrary && field != projectFieldComments
 }
 
 // taskFormFocusPosition resolves one form-focus field position within the current visual order.
@@ -5489,7 +5491,7 @@ func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	for i := range m.projectFormInputs {
 		m.projectFormInputs[i].Blur()
 	}
-	if idx == projectFieldDescription || idx == projectFieldKind || idx == projectFieldTemplateLibrary {
+	if idx == projectFieldDescription || idx == projectFieldKind || idx == projectFieldTemplateLibrary || idx == projectFieldComments {
 		return nil
 	}
 	return m.projectFormInputs[idx].Focus()
@@ -10235,6 +10237,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.status = "edit task"
 				return m, nil
 			}
+			if m.threadBackMode == modeEditProject {
+				m.mode = modeEditProject
+				m.status = "edit project"
+				return m, nil
+			}
 			m.mode = modeNone
 			m.status = "ready"
 			return m, nil
@@ -12037,6 +12044,14 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.startProjectKindPicker("")
 		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldTemplateLibrary:
 			return m, m.startTemplateLibraryPicker("")
+		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldComments:
+			next, cmd := m.startProjectThread(modeEditProject)
+			if model, ok := next.(Model); ok {
+				model.threadPanelFocus = threadPanelComments
+				model.threadDetailsActive = false
+				return model, cmd
+			}
+			return next, cmd
 		case msg.String() == "i" && m.projectFormFocus == projectFieldDescription:
 			return m, m.startProjectDescriptionEditor(msg)
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i" || msg.String() == "down":
@@ -12062,6 +12077,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if isPrintableFormTextKey(msg) {
 					return m, m.startTemplateLibraryPicker(msg.Text)
 				}
+				return m, nil
+			}
+			if m.projectFormFocus == projectFieldComments {
 				return m, nil
 			}
 			if len(m.projectFormInputs) == 0 {
@@ -17298,6 +17316,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"icon field is shown in path context, notices, and picker and supports emoji",
 			"template library field opens the approved-library picker; choose (none) to clear the active project binding",
 			"root_path field: r opens directory picker",
+			"comments row: enter or e opens the project thread on the comments panel",
 		}
 	case modeProjectKindPicker:
 		return "project kind picker", []string{
@@ -18309,6 +18328,14 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 		}
 	}
 	renderProjectInput("root_path", projectFieldRootPath)
+	if m.mode == modeEditProject && len(m.projectFormInputs) > projectFieldComments {
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("coordination"))
+		renderProjectInput("comments", projectFieldComments)
+		if m.projectFormFocus == projectFieldComments {
+			lines = append(lines, hintStyle.Render("enter/e opens the project thread on the comments panel"))
+		}
+	}
 
 	if m.mode == modeEditProject && strings.TrimSpace(m.editingProjectID) != "" {
 		for _, project := range m.projects {
@@ -21122,7 +21149,7 @@ func (m Model) modePrompt() string {
 	case modeAddProject:
 		return "new project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, esc cancels"
 	case modeEditProject:
-		return "edit project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, esc cancels"
+		return "edit project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, comments opens thread, esc cancels"
 	case modeSearchResults:
 		return "search results: j/k select, enter jump, esc close"
 	case modeEmbeddingsStatus:

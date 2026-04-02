@@ -397,7 +397,7 @@ func (m Model) startTaskThreadWithPanel(task domain.Task, backMode inputMode, pa
 
 // startThread initializes thread-mode state and kicks off comment loading.
 func (m Model) startThread(backMode inputMode, target domain.CommentTarget, title, description string, panel int) (tea.Model, tea.Cmd) {
-	if backMode != modeTaskInfo && backMode != modeEditTask {
+	if backMode != modeTaskInfo && backMode != modeEditTask && backMode != modeEditProject {
 		backMode = modeNone
 	}
 	m.mode = modeThread

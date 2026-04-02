@@ -17,6 +17,7 @@ import (
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/hylla/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 // stubCaptureStateReader provides deterministic capture-state responses for MCP tool tests.
@@ -1671,6 +1672,127 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	}
 	if got := capture.lastRevokeSession.ActingSessionSecret; got != "acting-secret-1" {
 		t.Fatalf("RevokeAuthSession() acting_session_secret = %q, want acting-secret-1", got)
+	}
+}
+
+// TestAuthRequestToolAuthContextHandles verifies stdio-style auth handles are minted on claim and
+// can drive acting-session governance calls without inline secrets.
+func TestAuthRequestToolAuthContextHandles(t *testing.T) {
+	t.Parallel()
+
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		claimResult: common.AuthRequestClaimResult{
+			Request: common.AuthRequestRecord{
+				ID:              "req-1",
+				State:           "approved",
+				Path:            "project/p1",
+				ApprovedPath:    "project/p1",
+				ProjectID:       "p1",
+				ScopeType:       common.ScopeTypeProject,
+				ScopeID:         "p1",
+				PrincipalID:     "review-agent",
+				PrincipalType:   "agent",
+				PrincipalRole:   "builder",
+				ClientID:        "till-mcp-stdio",
+				ClientType:      "mcp-stdio",
+				IssuedSessionID: "sess-1",
+			},
+			SessionSecret: "secret-1",
+		},
+		sessionRows: []common.AuthSessionRecord{{
+			SessionID:     "sess-child-1",
+			State:         "active",
+			ProjectID:     "p1",
+			ApprovedPath:  "project/p1",
+			PrincipalID:   "child-agent",
+			PrincipalType: "agent",
+			PrincipalRole: "research",
+			ClientID:      "child-client",
+			ClientType:    "mcp-stdio",
+			IssuedAt:      time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
+			ExpiresAt:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		}},
+		checkResult: common.AuthSessionGovernanceCheckResult{
+			Authorized:          false,
+			DecisionReason:      "out_of_scope",
+			ActingSessionID:     "sess-1",
+			ActingPrincipalID:   "review-agent",
+			ActingPrincipalRole: "builder",
+			ActingApprovedPath:  "project/p1",
+			TargetSession: common.AuthSessionRecord{
+				SessionID:     "sess-global-1",
+				State:         "active",
+				ApprovedPath:  "global",
+				PrincipalID:   "global-agent",
+				PrincipalType: "agent",
+				PrincipalRole: "orchestrator",
+				ClientID:      "global-client",
+				ClientType:    "mcp-stdio",
+				IssuedAt:      time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
+				ExpiresAt:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(1, "till.auth_request", map[string]any{
+		"operation":    "claim",
+		"request_id":   "req-1",
+		"resume_token": "resume-1",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+	}))
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	authContextID, _ := claimStructured["auth_context_id"].(string)
+	if !strings.HasPrefix(authContextID, "authctx-") {
+		t.Fatalf("claim auth_context_id = %q, want authctx-*", authContextID)
+	}
+
+	_, listSessionsResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", map[string]any{
+		"operation":              "list_sessions",
+		"project_id":             "p1",
+		"acting_session_id":      "sess-1",
+		"acting_auth_context_id": authContextID,
+		"session_state":          "active",
+		"principal_id":           "child-agent",
+		"client_id":              "child-client",
+	}))
+	listSessionsStructured := toolResultStructured(t, listSessionsResp.Result)
+	sessionsRaw, ok := listSessionsStructured["sessions"].([]any)
+	if !ok || len(sessionsRaw) != 1 {
+		t.Fatalf("list auth sessions payload = %#v, want one session", listSessionsStructured)
+	}
+	if got := capture.lastListSessions.ActingSessionSecret; got != "secret-1" {
+		t.Fatalf("ListAuthSessions() acting_session_secret = %q, want secret-1", got)
+	}
+
+	_, checkResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.auth_request", map[string]any{
+		"operation":              "check_session_governance",
+		"session_id":             "sess-global-1",
+		"acting_session_id":      "sess-1",
+		"acting_auth_context_id": authContextID,
+	}))
+	checkStructured := toolResultStructured(t, checkResp.Result)
+	if got := checkStructured["decision_reason"].(string); got != "out_of_scope" {
+		t.Fatalf("check_session_governance decision_reason = %q, want out_of_scope", got)
+	}
+	if got := capture.lastCheckSession.ActingSessionSecret; got != "secret-1" {
+		t.Fatalf("CheckAuthSessionGovernance() acting_session_secret = %q, want secret-1", got)
 	}
 }
 

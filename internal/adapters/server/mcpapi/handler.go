@@ -20,6 +20,7 @@ type Config struct {
 	ServerName                    string
 	ServerVersion                 string
 	EndpointPath                  string
+	EnableAuthContexts            bool
 	ExposeLegacyLeaseTools        bool
 	ExposeLegacyCoordinationTools bool
 	ExposeLegacyProjectTools      bool
@@ -50,11 +51,12 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		cfg.ServerVersion,
 		mcpserver.WithToolCapabilities(false),
 	)
+	authContexts := newMCPAuthContextStore(cfg.EnableAuthContexts)
 	registerCaptureStateTool(mcpSrv, captureState)
 	if attention != nil {
-		registerAttentionTools(mcpSrv, attention, cfg.ExposeLegacyCoordinationTools)
+		registerAttentionTools(mcpSrv, attention, authContexts, cfg.ExposeLegacyCoordinationTools)
 	}
-	registerAuthRequestTools(mcpSrv, pickAuthRequestService(captureState, attention))
+	registerAuthRequestTools(mcpSrv, pickAuthRequestService(captureState, attention), authContexts)
 	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
 	registerInstructionsTool(mcpSrv)
 	registerProjectTools(
@@ -63,6 +65,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		pickKindCatalogService(captureState, attention),
 		pickTemplateLibraryService(captureState, attention),
 		pickChangeFeedService(captureState, attention),
+		authContexts,
 		cfg.ExposeLegacyProjectTools,
 	)
 	registerTaskTools(
@@ -70,18 +73,19 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		pickTaskService(captureState, attention),
 		pickSearchService(captureState, attention),
 		pickEmbeddingsService(captureState, attention),
+		authContexts,
 		cfg.ExposeLegacyPlanItemTools,
 	)
-	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention), cfg.ExposeLegacyProjectTools)
-	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention), cfg.ExposeLegacyProjectTools)
-	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), cfg.ExposeLegacyLeaseTools)
-	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
-	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention), cfg.ExposeLegacyCoordinationTools)
+	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)
+	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)
+	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), authContexts, cfg.ExposeLegacyLeaseTools)
+	registerCommentTools(mcpSrv, pickCommentService(captureState, attention), authContexts)
+	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention), authContexts, cfg.ExposeLegacyCoordinationTools)
 	return mcpSrv, cfg, nil
 }
 
 // registerAuthRequestTools registers optional pre-session auth-request tools for MCP callers.
-func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.AuthRequestService) {
+func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.AuthRequestService, authContexts *mcpAuthContextStore) {
 	if authRequests == nil {
 		return
 	}
@@ -114,11 +118,13 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			mcp.WithString("session_secret", mcp.Description("Auth session secret. Required for operation=validate_session")),
 			mcp.WithString("acting_session_id", mcp.Description("Approved acting auth session identifier. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create")),
 			mcp.WithString("acting_session_secret", mcp.Description("Approved acting auth session secret. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create")),
+			mcp.WithString("acting_auth_context_id", mcp.Description("Bound MCP auth context handle for the acting session, returned by till.auth_request claim/validate_session on stdio runtimes")),
 			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel. Use the token returned by operation=create when continuation_json was omitted.")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
 			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
 				Operation           string `json:"operation"`
 				ProjectID           string `json:"project_id"`
@@ -145,6 +151,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				SessionSecret       string `json:"session_secret"`
 				ActingSessionID     string `json:"acting_session_id"`
 				ActingSessionSecret string `json:"acting_session_secret"`
+				ActingAuthContextID string `json:"acting_auth_context_id"`
 				ResumeToken         string `json:"resume_token"`
 				WaitTimeout         string `json:"wait_timeout"`
 				ResolutionNote      string `json:"resolution_note"`
@@ -166,14 +173,18 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if strings.TrimSpace(args.Reason) == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "reason" not found`), nil
 				}
+				actingSessionID, actingSessionSecret, err := resolveMCPActingSessionAuth(ctx, args.ActingSessionID, args.ActingSessionSecret)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
 				record, err := authRequests.CreateAuthRequest(ctx, common.CreateAuthRequestRequest{
 					Path:                args.Path,
 					PrincipalID:         args.PrincipalID,
 					PrincipalType:       args.PrincipalType,
 					PrincipalRole:       args.PrincipalRole,
 					PrincipalName:       args.PrincipalName,
-					ActingSessionID:     args.ActingSessionID,
-					ActingSessionSecret: args.ActingSessionSecret,
+					ActingSessionID:     actingSessionID,
+					ActingSessionSecret: actingSessionSecret,
 					RequestedByActor:    args.RequestedByActor,
 					RequestedByType:     args.RequestedByType,
 					RequesterClientID:   args.RequesterClientID,
@@ -258,6 +269,11 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
+				if authContextID, bindErr := bindMCPAuthContext(ctx, record.Request.IssuedSessionID, record.SessionSecret); bindErr != nil {
+					return nil, fmt.Errorf("bind auth context for claimed session: %w", bindErr)
+				} else {
+					record.AuthContextID = authContextID
+				}
 				result, err := mcp.NewToolResultJSON(record)
 				if err != nil {
 					return nil, fmt.Errorf("encode auth_request claim result: %w", err)
@@ -300,7 +316,10 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if actingSessionID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
 				}
-				actingSessionSecret := strings.TrimSpace(args.ActingSessionSecret)
+				actingSessionID, actingSessionSecret, err := resolveMCPActingSessionAuth(ctx, actingSessionID, args.ActingSessionSecret)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
 				if actingSessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
 				}
@@ -338,6 +357,11 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
+				if authContextID, bindErr := bindMCPAuthContext(ctx, session.SessionID, sessionSecret); bindErr != nil {
+					return nil, fmt.Errorf("bind auth context for validated session: %w", bindErr)
+				} else {
+					session.AuthContextID = authContextID
+				}
 				result, err := mcp.NewToolResultJSON(session)
 				if err != nil {
 					return nil, fmt.Errorf("encode auth_request validate_session result: %w", err)
@@ -352,7 +376,10 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if actingSessionID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
 				}
-				actingSessionSecret := strings.TrimSpace(args.ActingSessionSecret)
+				actingSessionID, actingSessionSecret, err := resolveMCPActingSessionAuth(ctx, actingSessionID, args.ActingSessionSecret)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
 				if actingSessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
 				}
@@ -378,7 +405,10 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if actingSessionID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
 				}
-				actingSessionSecret := strings.TrimSpace(args.ActingSessionSecret)
+				actingSessionID, actingSessionSecret, err := resolveMCPActingSessionAuth(ctx, actingSessionID, args.ActingSessionSecret)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
 				if actingSessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
 				}
@@ -405,6 +435,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 
 // NewHandler builds one stateless MCP streamable HTTP adapter with capture_state, attention, and optional app-backed tools.
 func NewHandler(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*Handler, error) {
+	cfg.EnableAuthContexts = false
 	mcpSrv, cfg, err := NewServer(cfg, captureState, attention)
 	if err != nil {
 		return nil, err
@@ -419,6 +450,7 @@ func NewHandler(cfg Config, captureState common.CaptureStateReader, attention co
 
 // ServeStdio starts one MCP server over stdio for local tool integrations.
 func ServeStdio(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) error {
+	cfg.EnableAuthContexts = true
 	mcpSrv, _, err := NewServer(cfg, captureState, attention)
 	if err != nil {
 		return err
@@ -512,7 +544,7 @@ type attentionItemMutationArgs struct {
 }
 
 // registerAttentionTools registers optional attention list/raise/resolve tools.
-func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService, exposeLegacyCoordinationTools bool) {
+func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService, authContexts *mcpAuthContextStore, exposeLegacyCoordinationTools bool) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.attention_item",
@@ -536,11 +568,13 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("reason", mcp.Description("Resolution reason when operation=resolve")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=raise|resolve. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=raise|resolve. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for operation=raise|resolve when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args attentionItemMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
