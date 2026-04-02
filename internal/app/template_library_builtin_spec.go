@@ -13,24 +13,24 @@ import (
 
 // builtinTemplateLibraryDocument stores one repo-authored builtin template library payload.
 type builtinTemplateLibraryDocument struct {
-	ID             string                              `json:"id"`
-	Name           string                              `json:"name"`
-	Description    string                              `json:"description"`
-	BuiltinSource  string                              `json:"builtin_source"`
-	BuiltinVersion string                              `json:"builtin_version"`
-	NodeTemplates  []builtinNodeTemplateDocument       `json:"node_templates"`
+	ID             string                        `json:"id"`
+	Name           string                        `json:"name"`
+	Description    string                        `json:"description"`
+	BuiltinSource  string                        `json:"builtin_source"`
+	BuiltinVersion string                        `json:"builtin_version"`
+	NodeTemplates  []builtinNodeTemplateDocument `json:"node_templates"`
 }
 
 // builtinNodeTemplateDocument stores one repo-authored node template payload.
 type builtinNodeTemplateDocument struct {
-	ID                      string                       `json:"id"`
-	ScopeLevel              domain.KindAppliesTo        `json:"scope_level"`
-	NodeKindID              domain.KindID               `json:"node_kind_id"`
-	DisplayName             string                       `json:"display_name"`
-	DescriptionMarkdown     string                       `json:"description_markdown"`
-	ProjectMetadataDefaults *domain.ProjectMetadata     `json:"project_metadata_defaults"`
-	TaskMetadataDefaults    *domain.TaskMetadata        `json:"task_metadata_defaults"`
-	ChildRules              []builtinChildRuleDocument  `json:"child_rules"`
+	ID                      string                     `json:"id"`
+	ScopeLevel              domain.KindAppliesTo       `json:"scope_level"`
+	NodeKindID              domain.KindID              `json:"node_kind_id"`
+	DisplayName             string                     `json:"display_name"`
+	DescriptionMarkdown     string                     `json:"description_markdown"`
+	ProjectMetadataDefaults *domain.ProjectMetadata    `json:"project_metadata_defaults"`
+	TaskMetadataDefaults    *domain.TaskMetadata       `json:"task_metadata_defaults"`
+	ChildRules              []builtinChildRuleDocument `json:"child_rules"`
 }
 
 // builtinChildRuleDocument stores one repo-authored child rule payload.

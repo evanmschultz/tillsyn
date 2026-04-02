@@ -4131,6 +4131,24 @@ func TestModelHelpOverlayModeSpecific(t *testing.T) {
 		t.Fatalf("expected due-picker-specific help guidance, got %q", out)
 	}
 
+	m.mode = modeEditTask
+	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
+	if !strings.Contains(out, "depends_on/blocked_by fields: enter or e opens dependency picker") {
+		t.Fatalf("expected edit-task help to mention dependency picker, got %q", out)
+	}
+	if !strings.Contains(out, "do not rely") || !strings.Contains(out, "execution sequencing") {
+		t.Fatalf("expected edit-task help to mention dependency-based sequencing, got %q", out)
+	}
+
+	m.mode = modeAddTask
+	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
+	if !strings.Contains(out, "depends_on/blocked_by fields: enter or e opens dependency picker") {
+		t.Fatalf("expected add-task help to mention dependency picker, got %q", out)
+	}
+	if !strings.Contains(out, "do not rely") || !strings.Contains(out, "execution sequencing") {
+		t.Fatalf("expected add-task help to mention dependency-based sequencing, got %q", out)
+	}
+
 	m.mode = modeAuthInventory
 	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
 	if !strings.Contains(out, "screen: coordination") {

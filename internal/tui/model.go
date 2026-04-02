@@ -17520,6 +17520,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"due field: enter or e opens due picker",
 			"labels field: enter or e opens label picker",
 			"depends_on/blocked_by fields: enter or e opens dependency picker",
+			"use depends_on, blocked_by, and blocked_reason to express prerequisite order; do not rely on board position alone for execution sequencing",
 			"subtasks/comments/resources are save-dependent rows here; save the task first, then manage them in edit mode",
 			"ctrl+s saves form",
 		}
@@ -17531,6 +17532,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"due field: enter or e opens due picker",
 			"labels field: enter or e opens label picker",
 			"depends_on/blocked_by fields: enter or e opens dependency picker",
+			"use depends_on, blocked_by, and blocked_reason to express prerequisite order; do not rely on board position alone for execution sequencing",
 			"subtasks section: first existing child is focused when present; left returns to + create; enter or e opens selected row",
 			"comments section: enter or e opens thread on the comments panel; . opens focused quick actions",
 			"resources section: first existing item is focused when present; left returns to + attach; enter or e opens resource action",

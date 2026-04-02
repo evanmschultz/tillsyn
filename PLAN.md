@@ -386,11 +386,14 @@ Remaining slices after the fresh live wake verification:
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
 2. Cleanup/refinement after the active slices close.
    - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, keep `Action Required` at the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
+   - During that dogfood wave, test task sequencing explicitly with `depends_on`, `blocked_by`, and `blocked_reason`, and confirm the shipped instructions/onboarding/docs make those fields the current way to keep work from starting before prerequisite work is done.
+   - After that sequencing proof, discuss whether CLI/MCP/TUI should also gain first-class visual reordering semantics for workflow order in addition to dependency fields, and decide what that should mean operationally versus cosmetically.
    - Add intuitive non-JSON human-facing rule and template-policy screens so operators can view and edit:
      - global template rules,
      - project-scoped rules,
      - branch/phase/task/subtask rule overlays,
      - and the effective inherited rule set for one concrete node.
+   - When the canonical `tillsyn` dogfood project/task tree is loaded into the DB, add one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker component so project root selection uses the picker instead of manual path entry.
    - Design composable template layering instead of one flat template choice:
      - a project should be able to inherit a general template such as `go` plus one or more narrower overlays such as `go cli/tui`, `go backend`, or `go wasm`,
      - child layers should be able to override or extend parent defaults without forcing whole-template duplication,

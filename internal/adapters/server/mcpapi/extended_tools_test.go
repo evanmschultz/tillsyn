@@ -377,6 +377,9 @@ func (s *stubExpandedService) GetTask(_ context.Context, taskID string) (domain.
 			AcceptanceCriteria:       "The explainer shows project rules and node-local rules.",
 			DefinitionOfDone:         "Focused tests pass and docs are aligned.",
 			ValidationPlan:           "Run mage test-pkg ./internal/adapters/server/mcpapi and mage ci.",
+			DependsOn:                []string{"phase-plan"},
+			BlockedBy:                []string{"task-design-review"},
+			BlockedReason:            "Waiting for the design review task to finish before implementation starts.",
 		},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -2288,6 +2291,15 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 	rulesText := strings.ToLower(joinAnyStrings(scopedRules))
 	if !strings.Contains(rulesText, "validation plan") {
 		t.Fatalf("scoped_rules = %q, want validation plan guidance", rulesText)
+	}
+	if !strings.Contains(rulesText, "depends on") {
+		t.Fatalf("scoped_rules = %q, want depends_on sequencing guidance", rulesText)
+	}
+	if !strings.Contains(rulesText, "blocked by") {
+		t.Fatalf("scoped_rules = %q, want blocked_by sequencing guidance", rulesText)
+	}
+	if !strings.Contains(workflowText, "task-level sequencing") {
+		t.Fatalf("workflow_contract = %q, want task sequencing guidance", workflowText)
 	}
 }
 
