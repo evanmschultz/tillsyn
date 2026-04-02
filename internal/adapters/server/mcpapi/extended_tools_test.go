@@ -83,6 +83,8 @@ func (s *stubExpandedService) ListProjects(_ context.Context, includeArchived bo
 			ID:        "p1",
 			Slug:      "proj-1",
 			Name:      "Project One",
+			Kind:      domain.KindID("go-project"),
+			Metadata:  domain.ProjectMetadata{StandardsMarkdown: "Use MCP tools first.\nRun TDD-style changes and finish with mage ci."},
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -356,8 +358,16 @@ func (s *stubExpandedService) GetTask(_ context.Context, taskID string) (domain.
 		Scope:          domain.KindAppliesToTask,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		Description:    "Implement the scoped instructions explainer.",
+		Metadata: domain.TaskMetadata{
+			Objective:                "Explain the node's real workflow rules.",
+			ImplementationNotesAgent: "Use MCP surfaces and keep Go changes idiomatic.",
+			AcceptanceCriteria:       "The explainer shows project rules and node-local rules.",
+			DefinitionOfDone:         "Focused tests pass and docs are aligned.",
+			ValidationPlan:           "Run mage test-pkg ./internal/adapters/server/mcpapi and mage ci.",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}, nil
 }
 
@@ -630,11 +640,13 @@ func (s *stubExpandedService) ListKindDefinitions(_ context.Context, includeArch
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []domain.KindDefinition{
 		{
-			ID:          domain.KindID("phase"),
-			DisplayName: "Phase",
-			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPhase},
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:                  domain.KindID("task"),
+			DisplayName:         "Task",
+			DescriptionMarkdown: "Normal implementation work item. Prefer comments for progress and handoffs for explicit routing.",
+			AppliesTo:           []domain.KindAppliesTo{domain.KindAppliesToTask},
+			AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToTask},
+			CreatedAt:           now,
+			UpdatedAt:           now,
 		},
 	}, nil
 }
@@ -669,19 +681,33 @@ func (s *stubExpandedService) ListTemplateLibraries(_ context.Context, in common
 	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
 	return []domain.TemplateLibrary{
 		{
-			ID:        "go-defaults",
-			Scope:     domain.TemplateLibraryScopeGlobal,
-			Name:      "Go Defaults",
-			Status:    domain.TemplateLibraryStatusApproved,
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:          "go-defaults",
+			Scope:       domain.TemplateLibraryScopeGlobal,
+			Name:        "Go Defaults",
+			Description: "Default Go workflow contract. Use MCP first, test with mage, and route QA explicitly.",
+			Status:      domain.TemplateLibraryStatusApproved,
+			Revision:    3,
+			CreatedAt:   now,
+			UpdatedAt:   now,
 			NodeTemplates: []domain.NodeTemplate{
 				{
-					ID:          "tmpl-task-build",
-					LibraryID:   "go-defaults",
-					ScopeLevel:  domain.KindAppliesToTask,
-					NodeKindID:  domain.KindID("build-task"),
-					DisplayName: "Build Task",
+					ID:                  "tmpl-task-build",
+					LibraryID:           "go-defaults",
+					ScopeLevel:          domain.KindAppliesToTask,
+					NodeKindID:          domain.KindID("build-task"),
+					DisplayName:         "Build Task",
+					DescriptionMarkdown: "Build work should stay TDD-first and hand off to QA once implementation evidence is attached.",
+					ChildRules: []domain.TemplateChildRule{{
+						ID:                      "rule-qa-pass",
+						NodeTemplateID:          "tmpl-task-build",
+						ChildScopeLevel:         domain.KindAppliesToSubtask,
+						ChildKindID:             domain.KindID("qa-check"),
+						TitleTemplate:           "QA PASS",
+						ResponsibleActorKind:    domain.TemplateActorKindQA,
+						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
+						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
+						RequiredForParentDone:   true,
+					}},
 				},
 			},
 		},
@@ -774,9 +800,12 @@ func (s *stubExpandedService) BindProjectTemplateLibrary(_ context.Context, in c
 func (s *stubExpandedService) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
 	s.lastGetTemplateBindingID = strings.TrimSpace(projectID)
 	return domain.ProjectTemplateBinding{
-		ProjectID: projectID,
-		LibraryID: "go-defaults",
-		BoundAt:   time.Date(2026, 3, 29, 12, 5, 0, 0, time.UTC),
+		ProjectID:     projectID,
+		LibraryID:     "go-defaults",
+		LibraryName:   "Go Defaults",
+		BoundRevision: 3,
+		DriftStatus:   domain.ProjectTemplateBindingDriftCurrent,
+		BoundAt:       time.Date(2026, 3, 29, 12, 5, 0, 0, time.UTC),
 	}, nil
 }
 
@@ -1123,6 +1152,20 @@ func schemaPropertyNumberField(t *testing.T, schema map[string]any, property, fi
 		t.Fatalf("property %q field %q has non-numeric type %T (%#v)", property, field, raw, raw)
 	}
 	return 0
+}
+
+// joinAnyStrings joins JSON-decoded string arrays into one assertion-friendly string.
+func joinAnyStrings(values []any) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		text, _ := value.(string)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		parts = append(parts, text)
+	}
+	return strings.Join(parts, " | ")
 }
 
 // TestHandlerExpandedToolSurfaceSuccessPaths exercises success paths for the expanded MCP tool set.
@@ -2118,6 +2161,121 @@ func TestHandlerInstructionsToolReturnsEmbeddedDocs(t *testing.T) {
 	}
 	if _, ok := mdGuidance["AGENTS.md"]; !ok {
 		t.Fatalf("md_file_guidance missing AGENTS.md guidance: %#v", mdGuidance)
+	}
+}
+
+// TestHandlerInstructionsToolExplainsProjectScope verifies till.get_instructions can explain project-scoped policy.
+func TestHandlerInstructionsToolExplainsProjectScope(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(
+		501,
+		"till.get_instructions",
+		map[string]any{
+			"focus":            "project",
+			"project_id":       "p1",
+			"include_evidence": true,
+		},
+	))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("tool returned isError=true: %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if got, _ := structured["focus"].(string); got != "project" {
+		t.Fatalf("focus = %q, want project", got)
+	}
+	explanation, ok := structured["explanation"].(map[string]any)
+	if !ok {
+		t.Fatalf("explanation missing: %#v", structured)
+	}
+	scopedRules, ok := explanation["scoped_rules"].([]any)
+	if !ok || len(scopedRules) == 0 {
+		t.Fatalf("scoped_rules missing: %#v", explanation)
+	}
+	rulesText := strings.ToLower(joinAnyStrings(scopedRules))
+	if !strings.Contains(rulesText, "standards_markdown") {
+		t.Fatalf("scoped_rules = %q, want standards_markdown guidance", rulesText)
+	}
+	if !strings.Contains(rulesText, "template library") {
+		t.Fatalf("scoped_rules = %q, want template binding guidance", rulesText)
+	}
+}
+
+// TestHandlerInstructionsToolExplainsNodeScope verifies till.get_instructions can explain node-local workflow rules.
+func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(
+		502,
+		"till.get_instructions",
+		map[string]any{
+			"focus":            "node",
+			"node_id":          "task-1",
+			"include_evidence": true,
+		},
+	))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("tool returned isError=true: %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	resolved, ok := structured["resolved_scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("resolved_scope missing: %#v", structured)
+	}
+	if got, _ := resolved["node_id"].(string); got != "task-1" {
+		t.Fatalf("node_id = %q, want task-1", got)
+	}
+	explanation, ok := structured["explanation"].(map[string]any)
+	if !ok {
+		t.Fatalf("explanation missing: %#v", structured)
+	}
+	workflow, ok := explanation["workflow_contract"].([]any)
+	if !ok || len(workflow) == 0 {
+		t.Fatalf("workflow_contract missing: %#v", explanation)
+	}
+	workflowText := strings.ToLower(joinAnyStrings(workflow))
+	if !strings.Contains(workflowText, "responsible actor kind") {
+		t.Fatalf("workflow_contract = %q, want responsible actor guidance", workflowText)
+	}
+	scopedRules, ok := explanation["scoped_rules"].([]any)
+	if !ok || len(scopedRules) == 0 {
+		t.Fatalf("scoped_rules missing: %#v", explanation)
+	}
+	rulesText := strings.ToLower(joinAnyStrings(scopedRules))
+	if !strings.Contains(rulesText, "validation plan") {
+		t.Fatalf("scoped_rules = %q, want validation plan guidance", rulesText)
 	}
 }
 
