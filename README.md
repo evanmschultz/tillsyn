@@ -80,7 +80,6 @@ Implemented now:
 
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
-- orchestrator/builder/qa scoped-auth choreography, including orchestrator-only multi-project/general scope enforcement and bounded delegation
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
 - broader wait/notify reuse beyond auth, including comment/handoff wakeups, richer disconnect-aware cleanup, and later HTTP/continuous-listening transport support
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
@@ -126,16 +125,30 @@ Current auth note:
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
 - MCP requesters can now resume approved requests through `till.auth_request(operation=claim)` using the requester-owned `resume_token` returned by `till.auth_request(operation=create)`; when callers provide custom continuation metadata, `continuation_json.resume_token` must still be present and non-empty. For delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
 - MCP requesters can now also withdraw their own pending requests through `till.auth_request(operation=cancel)` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
+- The reduced auth family now also exposes approved-session governance for MCP/runtime dogfood:
+  - use `till.auth_request(operation=list_sessions|check_session_governance|revoke_session)` with an acting approved session whose approved path already contains the governed session scope;
+  - simple project overlap is not enough to govern a broader global or multi-project session;
+  - explicit multi-project orchestrator approvals may govern matching project or multi-project child sessions without gaining global reach;
+  - session-governance policy:
+    - orchestrators may inspect/check/revoke any session at their approved scope or below;
+    - non-orchestrator agents may only inspect/check/revoke the exact same session they are currently using for self-cleanup;
+    - do not widen self-cleanup to sibling or descendant session governance;
+    - prefer the non-destructive `check_session_governance` operation for negative proof and UI/runtime explanation paths instead of relying on failed destructive revoke attempts;
+    - do not make ordinary task completion implicitly destroy the caller's auth session by default;
+    - if future workflow-specific auto-cleanup exists, keep it opt-in and limited to explicitly ephemeral sessions created for one bounded unit of work.
+  - use `till.auth_request(operation=validate_session)` when you already possess the target session secret and need to inspect the resolved session identity/details.
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
+  - when an orchestrator needs child builder/qa/research auth, create that child request through `till.auth_request(operation=create, acting_session_id=..., acting_session_secret=...)` so requester ownership is derived from the acting orchestrator session and the child path stays bounded within the acting approved path;
+  - builder, qa, and research agents may still request their own single-project rooted auth directly, but they must not mint sibling or broader child sessions for other principals;
   - do not treat the global-to-project auth split as a runtime bug.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
 - `till.capability_lease(operation=issue)` now follows that same rule directly:
   - for authenticated agent sessions, the issued lease identity is derived from the authenticated principal instead of trusting a caller-supplied `agent_name`;
   - explicit `agent_name` remains relevant only for non-agent/operator lease issuance paths.
 - Default surface note:
-  - `till.auth_request` now owns auth-request create, list, get, claim, and cancel;
+  - `till.auth_request` now owns auth-request create, list, get, claim, and cancel plus auth-session list, validate, governance-check, and revoke;
   - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
   - `till.project` also owns project-root reads such as list, template binding lookup, allowed-kinds lookup, change events, and dependency rollups;
   - `till.plan_item` now owns plan-item reads and mutations such as get, list, search, create, update, move, move_state, delete, restore, and reparent;
@@ -158,9 +171,20 @@ Current auth note:
   - actor-kind or role-style mention targets such as `@human`, `@orchestrator`, `@qa`, and `@builder` are the preferred starting point.
   - the current cross-process wake path is only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
   - the product direction is still that important routed notifications should be automatic and not require every agent to remember a manual polling tool, but that inbox/wake model is a later dedicated slice.
+- Current remaining dogfood order:
+  - first land mentions/notifications/inbox and broader wait/notify reuse beyond auth;
+  - then expand scoped `till.get_instructions`, collapse bootstrap into that richer surface later, and close with one final collaborative dogfood hardening pass.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
+- Current bounded-delegation status: `till.auth_request(operation=create)` now also supports explicit child delegation through `acting_session_id` and `acting_session_secret`; when used, requester attribution is derived from the acting session, child paths must stay within the acting approved path, and only orchestrators may create sibling child auth for other principals.
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
+- Active approved-session shutdown is a separate path:
+  - use `till.auth_request(operation=revoke_session)` for live session revocation,
+  - and keep `till.auth_request(operation=cancel)` limited to requester-owned pending-request cleanup.
+- Role-model note:
+  - the domain model already includes `research` alongside `orchestrator`, `builder`, and `qa`;
+  - current MCP auth/lease surfaces now expose `orchestrator|builder|qa|research`;
+  - `planner` is not yet a first-class runtime role and should not be added casually without deciding whether it is a constrained orchestration role, a research/planning hybrid, or just a naming alias.
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 - Open guidance question:

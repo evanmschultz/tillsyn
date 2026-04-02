@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,48 @@ func newAuthRequestAdapterForTest(t *testing.T) (*AppServiceAdapter, *sqlite.Rep
 		AuthBackend:  auth,
 	})
 	return NewAppServiceAdapter(svc, auth), repo
+}
+
+// mustCreateProjectForAuthRequestTest creates one extra project row for auth-session scope tests.
+func mustCreateProjectForAuthRequestTest(t *testing.T, repo *sqlite.Repository, id, name string) {
+	t.Helper()
+
+	project, err := domain.NewProject(id, name, "", authRequestTestNow)
+	if err != nil {
+		t.Fatalf("NewProject(%q) error = %v", id, err)
+	}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject(%q) error = %v", id, err)
+	}
+}
+
+// mustCreateApprovedAuthSessionForTest creates and approves one auth request and returns the approved session bundle.
+func mustCreateApprovedAuthSessionForTest(
+	t *testing.T,
+	adapter *AppServiceAdapter,
+	req CreateAuthRequestRequest,
+	approvePath string,
+) app.ApprovedAuthRequestResult {
+	t.Helper()
+
+	created, err := adapter.CreateAuthRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(%q) error = %v", req.Path, err)
+	}
+	approve := app.ApproveAuthRequestInput{
+		RequestID:      created.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for auth session governance",
+	}
+	if strings.TrimSpace(approvePath) != "" {
+		approve.Path = approvePath
+	}
+	approved, err := adapter.service.ApproveAuthRequest(context.Background(), approve)
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(%q) error = %v", req.Path, err)
+	}
+	return approved
 }
 
 // TestAppServiceAdapterAuthRequestLifecycle verifies create/list/get auth-request transport mapping.
@@ -217,6 +260,53 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 	}
 }
 
+// TestAppServiceAdapterCreateAuthRequestDelegatedResearchUsesActingSession verifies delegated
+// research requests derive requester ownership from the acting orchestrator session.
+func TestAppServiceAdapterCreateAuthRequestDelegatedResearchUsesActingSession(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	acting := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "orchestrator-1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client",
+		ClientType:       "mcp-stdio",
+		Reason:           "orchestrator project scope",
+		ContinuationJSON: `{"resume_token":"resume-orch"}`,
+	}, "")
+
+	created, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:                "project/p1/branch/research-1",
+		PrincipalID:         "research-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "research",
+		ClientID:            "research-client",
+		ClientType:          "mcp-stdio",
+		Reason:              "delegated research scope",
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(delegated research) error = %v", err)
+	}
+	if got := created.RequestedByActor; got != "orchestrator-1" {
+		t.Fatalf("CreateAuthRequest(delegated research) requested_by_actor = %q, want orchestrator-1", got)
+	}
+	if got := created.RequestedByType; got != "agent" {
+		t.Fatalf("CreateAuthRequest(delegated research) requested_by_type = %q, want agent", got)
+	}
+	if got := created.PrincipalRole; got != "research" {
+		t.Fatalf("CreateAuthRequest(delegated research) principal_role = %q, want research", got)
+	}
+	if got := created.Continuation[app.AuthRequestContinuationRequesterClientIDKey]; got != "orch-client" {
+		t.Fatalf("CreateAuthRequest(delegated research) continuation requester client = %#v, want orch-client", got)
+	}
+	if got := created.Path; got != "project/p1/branch/research-1" {
+		t.Fatalf("CreateAuthRequest(delegated research) path = %q, want project/p1/branch/research-1", got)
+	}
+}
+
 // TestAppServiceAdapterCancelAuthRequest verifies cancel maps through the real service lifecycle and resolves mirrored attention.
 func TestAppServiceAdapterCancelAuthRequest(t *testing.T) {
 	adapter, _ := newAuthRequestAdapterForTest(t)
@@ -267,6 +357,413 @@ func TestAppServiceAdapterCancelAuthRequest(t *testing.T) {
 	}
 	if got.State != "canceled" {
 		t.Fatalf("GetAuthRequest() state = %q, want canceled", got.State)
+	}
+}
+
+// TestAppServiceAdapterAuthSessionLifecycle verifies session list/validate/revoke transport mapping.
+func TestAppServiceAdapterAuthSessionLifecycle(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	created, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:              "project/p1",
+		PrincipalID:       "builder-1",
+		PrincipalType:     "agent",
+		PrincipalRole:     "builder",
+		RequestedByActor:  "orchestrator-1",
+		RequestedByType:   "agent",
+		RequesterClientID: "orchestrator-client",
+		ClientID:          "builder-client",
+		ClientType:        "mcp-stdio",
+		ClientName:        "Builder MCP",
+		RequestedTTL:      "720h",
+		Reason:            "session lifecycle proof",
+		ContinuationJSON:  `{"resume_token":"resume-session-1"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := adapter.service.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      created.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for session lifecycle proof",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	sessionID := approved.Request.IssuedSessionID
+
+	sessions, err := adapter.ListAuthSessions(context.Background(), ListAuthSessionsRequest{
+		ProjectID:           "p1",
+		SessionID:           sessionID,
+		State:               "active",
+		Limit:               10,
+		ActingSessionID:     sessionID,
+		ActingSessionSecret: approved.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("ListAuthSessions() error = %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("ListAuthSessions() len = %d, want 1", len(sessions))
+	}
+	if got := sessions[0].SessionID; got != sessionID {
+		t.Fatalf("ListAuthSessions() session_id = %q, want %q", got, sessionID)
+	}
+	if got := sessions[0].State; got != "active" {
+		t.Fatalf("ListAuthSessions() state = %q, want active", got)
+	}
+	if got := sessions[0].AuthRequestID; got != created.ID {
+		t.Fatalf("ListAuthSessions() auth_request_id = %q, want %q", got, created.ID)
+	}
+
+	validated, err := adapter.ValidateAuthSession(context.Background(), ValidateAuthSessionRequest{
+		SessionID:     sessionID,
+		SessionSecret: approved.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("ValidateAuthSession() error = %v", err)
+	}
+	if got := validated.State; got != "active" {
+		t.Fatalf("ValidateAuthSession() state = %q, want active", got)
+	}
+	if validated.LastValidatedAt == nil {
+		t.Fatal("ValidateAuthSession() last_validated_at = nil, want timestamp")
+	}
+
+	revoked, err := adapter.RevokeAuthSession(context.Background(), RevokeAuthSessionRequest{
+		SessionID:           sessionID,
+		Reason:              "operator cleanup",
+		ActingSessionID:     sessionID,
+		ActingSessionSecret: approved.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("RevokeAuthSession() error = %v", err)
+	}
+	if got := revoked.State; got != "revoked" {
+		t.Fatalf("RevokeAuthSession() state = %q, want revoked", got)
+	}
+	if got := revoked.RevocationReason; got != "operator cleanup" {
+		t.Fatalf("RevokeAuthSession() revocation_reason = %q, want operator cleanup", got)
+	}
+	if revoked.RevokedAt == nil {
+		t.Fatal("RevokeAuthSession() revoked_at = nil, want timestamp")
+	}
+}
+
+// TestAppServiceAdapterListAuthSessionsFiltersByActingApprovedPath verifies project-scoped governance
+// does not widen to broader global or multi-project sessions just because they overlap one project filter.
+func TestAppServiceAdapterListAuthSessionsFiltersByActingApprovedPath(t *testing.T) {
+	adapter, repo := newAuthRequestAdapterForTest(t)
+	mustCreateProjectForAuthRequestTest(t, repo, "p2", "Project Two")
+
+	acting := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "orch-p1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-p1",
+		ClientType:       "mcp-stdio",
+		Reason:           "project governance",
+		ContinuationJSON: `{"resume_token":"resume-acting-p1"}`,
+	}, "")
+	projectChild := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1/branch/b1",
+		PrincipalID:      "builder-p1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "builder-client-p1",
+		ClientType:       "mcp-stdio",
+		Reason:           "project child session",
+		ContinuationJSON: `{"resume_token":"resume-child-p1"}`,
+	}, "")
+	multi := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "projects/p1,p2",
+		PrincipalID:      "orch-multi",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-multi",
+		ClientType:       "mcp-stdio",
+		Reason:           "multi project session",
+		ContinuationJSON: `{"resume_token":"resume-multi"}`,
+	}, "")
+	global := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "global",
+		PrincipalID:      "orch-global",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-global",
+		ClientType:       "mcp-stdio",
+		Reason:           "global session",
+		ContinuationJSON: `{"resume_token":"resume-global"}`,
+	}, "")
+
+	sessions, err := adapter.ListAuthSessions(context.Background(), ListAuthSessionsRequest{
+		ProjectID:           "p1",
+		State:               "active",
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+		Limit:               10,
+	})
+	if err != nil {
+		t.Fatalf("ListAuthSessions(project scoped) error = %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("ListAuthSessions(project scoped) len = %d, want 2", len(sessions))
+	}
+	gotIDs := []string{sessions[0].SessionID, sessions[1].SessionID}
+	if !slices.Contains(gotIDs, acting.Request.IssuedSessionID) {
+		t.Fatalf("ListAuthSessions(project scoped) missing acting session: %#v", gotIDs)
+	}
+	if !slices.Contains(gotIDs, projectChild.Request.IssuedSessionID) {
+		t.Fatalf("ListAuthSessions(project scoped) missing child project session: %#v", gotIDs)
+	}
+	if slices.Contains(gotIDs, multi.Request.IssuedSessionID) {
+		t.Fatalf("ListAuthSessions(project scoped) unexpectedly included multi-project session: %#v", gotIDs)
+	}
+	if slices.Contains(gotIDs, global.Request.IssuedSessionID) {
+		t.Fatalf("ListAuthSessions(project scoped) unexpectedly included global session: %#v", gotIDs)
+	}
+}
+
+// TestAppServiceAdapterMultiProjectAuthSessionGovernance verifies multi-project acting approvals
+// can govern matching child sessions without gaining global session power.
+func TestAppServiceAdapterMultiProjectAuthSessionGovernance(t *testing.T) {
+	adapter, repo := newAuthRequestAdapterForTest(t)
+	mustCreateProjectForAuthRequestTest(t, repo, "p2", "Project Two")
+
+	acting := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "projects/p1,p2",
+		PrincipalID:      "orch-multi-acting",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-multi-acting",
+		ClientType:       "mcp-stdio",
+		Reason:           "multi project governance",
+		ContinuationJSON: `{"resume_token":"resume-multi-acting"}`,
+	}, "")
+	projectChild := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p2",
+		PrincipalID:      "builder-p2",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "builder-client-p2",
+		ClientType:       "mcp-stdio",
+		Reason:           "project p2 session",
+		ContinuationJSON: `{"resume_token":"resume-project-p2"}`,
+	}, "")
+	multiChild := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "projects/p1,p2",
+		PrincipalID:      "orch-multi-child",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-multi-child",
+		ClientType:       "mcp-stdio",
+		Reason:           "matching multi project session",
+		ContinuationJSON: `{"resume_token":"resume-orch-multi-child"}`,
+	}, "")
+	global := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "global",
+		PrincipalID:      "orch-global",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-global",
+		ClientType:       "mcp-stdio",
+		Reason:           "global session",
+		ContinuationJSON: `{"resume_token":"resume-global"}`,
+	}, "")
+
+	sessions, err := adapter.ListAuthSessions(context.Background(), ListAuthSessionsRequest{
+		State:               "active",
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+		Limit:               10,
+	})
+	if err != nil {
+		t.Fatalf("ListAuthSessions(multi project) error = %v", err)
+	}
+	var gotIDs []string
+	for _, session := range sessions {
+		gotIDs = append(gotIDs, session.SessionID)
+	}
+	for _, want := range []string{
+		acting.Request.IssuedSessionID,
+		projectChild.Request.IssuedSessionID,
+		multiChild.Request.IssuedSessionID,
+	} {
+		if !slices.Contains(gotIDs, want) {
+			t.Fatalf("ListAuthSessions(multi project) missing governed session %q in %#v", want, gotIDs)
+		}
+	}
+	if slices.Contains(gotIDs, global.Request.IssuedSessionID) {
+		t.Fatalf("ListAuthSessions(multi project) unexpectedly included global session: %#v", gotIDs)
+	}
+
+	revoked, err := adapter.RevokeAuthSession(context.Background(), RevokeAuthSessionRequest{
+		SessionID:           multiChild.Request.IssuedSessionID,
+		Reason:              "multi project cleanup",
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("RevokeAuthSession(multi project) error = %v", err)
+	}
+	if got := revoked.State; got != "revoked" {
+		t.Fatalf("RevokeAuthSession(multi project) state = %q, want revoked", got)
+	}
+
+	if _, err := adapter.RevokeAuthSession(context.Background(), RevokeAuthSessionRequest{
+		SessionID:           global.Request.IssuedSessionID,
+		Reason:              "should fail",
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+	}); !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("RevokeAuthSession(global via multi project) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestAppServiceAdapterCheckAuthSessionGovernanceReportsOutOfScope verifies non-destructive checks
+// return a structured denial for broader sessions that fall outside the acting session scope.
+func TestAppServiceAdapterCheckAuthSessionGovernanceReportsOutOfScope(t *testing.T) {
+	adapter, repo := newAuthRequestAdapterForTest(t)
+	mustCreateProjectForAuthRequestTest(t, repo, "p2", "Project Two")
+
+	acting := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "projects/p1,p2",
+		PrincipalID:      "orch-multi-acting",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-multi-acting",
+		ClientType:       "mcp-stdio",
+		Reason:           "multi project governance",
+		ContinuationJSON: `{"resume_token":"resume-multi-acting"}`,
+	}, "")
+	global := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "global",
+		PrincipalID:      "orch-global",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client-global",
+		ClientType:       "mcp-stdio",
+		Reason:           "global session",
+		ContinuationJSON: `{"resume_token":"resume-global"}`,
+	}, "")
+
+	decision, err := adapter.CheckAuthSessionGovernance(context.Background(), CheckAuthSessionGovernanceRequest{
+		SessionID:           global.Request.IssuedSessionID,
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("CheckAuthSessionGovernance(global via multi project) error = %v", err)
+	}
+	if decision.Authorized {
+		t.Fatalf("CheckAuthSessionGovernance(global via multi project) authorized = true, want false")
+	}
+	if got := decision.DecisionReason; got != "out_of_scope" {
+		t.Fatalf("CheckAuthSessionGovernance(global via multi project) decision_reason = %q, want out_of_scope", got)
+	}
+	if got := decision.ActingPrincipalRole; got != "orchestrator" {
+		t.Fatalf("CheckAuthSessionGovernance(global via multi project) acting_principal_role = %q, want orchestrator", got)
+	}
+	if got := decision.TargetSession.SessionID; got != global.Request.IssuedSessionID {
+		t.Fatalf("CheckAuthSessionGovernance(global via multi project) target session = %q, want %q", got, global.Request.IssuedSessionID)
+	}
+}
+
+// TestAppServiceAdapterRevokeAuthSessionAllowsSelfCleanup verifies non-orchestrator sessions
+// may revoke themselves without gaining broader session-governance power.
+func TestAppServiceAdapterRevokeAuthSessionAllowsSelfCleanup(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	builder := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1/branch/b1",
+		PrincipalID:      "builder-p1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "builder-client-p1",
+		ClientType:       "mcp-stdio",
+		Reason:           "builder self cleanup",
+		ContinuationJSON: `{"resume_token":"resume-builder-p1"}`,
+	}, "")
+
+	decision, err := adapter.CheckAuthSessionGovernance(context.Background(), CheckAuthSessionGovernanceRequest{
+		SessionID:           builder.Request.IssuedSessionID,
+		ActingSessionID:     builder.Request.IssuedSessionID,
+		ActingSessionSecret: builder.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("CheckAuthSessionGovernance(self) error = %v", err)
+	}
+	if !decision.Authorized {
+		t.Fatalf("CheckAuthSessionGovernance(self) authorized = false, want true")
+	}
+	if got := decision.DecisionReason; got != "self" {
+		t.Fatalf("CheckAuthSessionGovernance(self) decision_reason = %q, want self", got)
+	}
+
+	revoked, err := adapter.RevokeAuthSession(context.Background(), RevokeAuthSessionRequest{
+		SessionID:           builder.Request.IssuedSessionID,
+		Reason:              "builder self cleanup",
+		ActingSessionID:     builder.Request.IssuedSessionID,
+		ActingSessionSecret: builder.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("RevokeAuthSession(self) error = %v", err)
+	}
+	if got := revoked.State; got != "revoked" {
+		t.Fatalf("RevokeAuthSession(self) state = %q, want revoked", got)
+	}
+}
+
+// TestAppServiceAdapterNonOrchestratorGovernanceFailsClosed verifies non-orchestrator sessions
+// cannot inspect or inventory sibling sessions even when those sessions share project scope.
+func TestAppServiceAdapterNonOrchestratorGovernanceFailsClosed(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	builder := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1/branch/b1",
+		PrincipalID:      "builder-p1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "builder-client-p1",
+		ClientType:       "mcp-stdio",
+		Reason:           "builder session",
+		ContinuationJSON: `{"resume_token":"resume-builder-p1"}`,
+	}, "")
+	qa := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1/branch/b1",
+		PrincipalID:      "qa-p1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "qa",
+		ClientID:         "qa-client-p1",
+		ClientType:       "mcp-stdio",
+		Reason:           "qa sibling session",
+		ContinuationJSON: `{"resume_token":"resume-qa-p1"}`,
+	}, "")
+
+	decision, err := adapter.CheckAuthSessionGovernance(context.Background(), CheckAuthSessionGovernanceRequest{
+		SessionID:           qa.Request.IssuedSessionID,
+		ActingSessionID:     builder.Request.IssuedSessionID,
+		ActingSessionSecret: builder.SessionSecret,
+	})
+	if err != nil {
+		t.Fatalf("CheckAuthSessionGovernance(sibling via builder) error = %v", err)
+	}
+	if decision.Authorized {
+		t.Fatalf("CheckAuthSessionGovernance(sibling via builder) authorized = true, want false")
+	}
+	if got := decision.DecisionReason; got != "role_denied" {
+		t.Fatalf("CheckAuthSessionGovernance(sibling via builder) decision_reason = %q, want role_denied", got)
+	}
+
+	if _, err := adapter.ListAuthSessions(context.Background(), ListAuthSessionsRequest{
+		ProjectID:           "p1",
+		SessionID:           qa.Request.IssuedSessionID,
+		ActingSessionID:     builder.Request.IssuedSessionID,
+		ActingSessionSecret: builder.SessionSecret,
+	}); !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("ListAuthSessions(sibling via builder) error = %v, want ErrAuthorizationDenied", err)
 	}
 }
 
@@ -341,6 +838,70 @@ func TestAppServiceAdapterCreateAuthRequestRejectsInvalidRole(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
 		t.Fatalf("CreateAuthRequest() error = %v, want ErrInvalidCaptureStateRequest", err)
+	}
+}
+
+// TestAppServiceAdapterCreateAuthRequestDelegationRejectsNonOrchestrator verifies non-orchestrator
+// acting sessions cannot mint sibling child auth requests for other principals.
+func TestAppServiceAdapterCreateAuthRequestDelegationRejectsNonOrchestrator(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	builder := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1/branch/build-1",
+		PrincipalID:      "builder-1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "builder-client",
+		ClientType:       "mcp-stdio",
+		Reason:           "builder branch scope",
+		ContinuationJSON: `{"resume_token":"resume-builder"}`,
+	}, "")
+
+	_, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:                "project/p1/branch/build-1/phase/qa-pass",
+		PrincipalID:         "qa-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "qa",
+		ClientID:            "qa-client",
+		ClientType:          "mcp-stdio",
+		Reason:              "builder tries sibling delegation",
+		ActingSessionID:     builder.Request.IssuedSessionID,
+		ActingSessionSecret: builder.SessionSecret,
+	})
+	if !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("CreateAuthRequest(non-orchestrator delegation) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestAppServiceAdapterCreateAuthRequestDelegationRejectsBroaderScope verifies delegated
+// child auth requests remain bounded by the acting approved path.
+func TestAppServiceAdapterCreateAuthRequestDelegationRejectsBroaderScope(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	acting := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "orchestrator-1",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		ClientID:         "orch-client",
+		ClientType:       "mcp-stdio",
+		Reason:           "orchestrator project scope",
+		ContinuationJSON: `{"resume_token":"resume-orch"}`,
+	}, "")
+
+	_, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:                "projects/p1,p2",
+		PrincipalID:         "orchestrator-2",
+		PrincipalType:       "agent",
+		PrincipalRole:       "orchestrator",
+		ClientID:            "orch-child-client",
+		ClientType:          "mcp-stdio",
+		Reason:              "broader delegated scope",
+		ActingSessionID:     acting.Request.IssuedSessionID,
+		ActingSessionSecret: acting.SessionSecret,
+	})
+	if !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("CreateAuthRequest(broader delegation) error = %v, want ErrAuthorizationDenied", err)
 	}
 }
 

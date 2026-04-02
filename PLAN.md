@@ -1,8 +1,307 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-03-31
-Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
+Updated: 2026-04-01
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, and the TUI migration-review follow-through. The auth-session governance follow-up is now landed and proven live on the refreshed native `till_*` runtime: `till.auth_request` has a non-destructive `check_session_governance` operation, session governance is orchestrator-or-self only, and MCP/CLI auth+lease role enums now expose `research`. The scoped-auth and bounded-delegation dogfood slice is now landed too: orchestrators can mint bounded builder/qa/research child auth through `till.auth_request(operation=create)` with acting-session credentials, children claim their own approvals, and non-orchestrator sibling delegation fails closed. The next remaining work is routed mentions/notifications/inbox, broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, and final collaborative hardening.
+
+## Restart Handoff 2026-04-01
+
+Current local state:
+1. Worktree: `/Users/evanschultz/Documents/Code/hylla/tillsyn/main`
+2. The local worktree is intentionally dirty and uncommitted.
+3. Local validation is green:
+   - `mage test-pkg ./internal/adapters/server/common` -> PASS
+   - `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS
+   - `mage ci` -> PASS (1140 tests total, coverage gate passed, build passed)
+   - `mage build` -> PASS
+4. The rebuilt binary is [till](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/till).
+5. The latest local auth change is the scoped containment fix in `till.auth_request(operation=list_sessions|revoke_session)`:
+   - a project-scoped acting session must not govern broader global or multi-project sessions on simple project overlap,
+   - an explicit multi-project orchestrator approval may govern matching project or multi-project child sessions without gaining global reach.
+
+Immediate next live MCP tests before any new implementation:
+1. Refresh the MCP runtime/client so this rebuilt binary is what the live `till_*` tools are executing.
+2. Verify the refreshed MCP session sees the same 13-tool reduced surface:
+   - `till_attention_item`
+   - `till_auth_request`
+   - `till_capability_lease`
+   - `till_capture_state`
+   - `till_comment`
+   - `till_embeddings`
+   - `till_get_bootstrap_guide`
+   - `till_get_instructions`
+   - `till_handoff`
+   - `till_kind`
+   - `till_plan_item`
+   - `till_project`
+   - `till_template`
+3. Run live MCP auth-session governance parity for the new containment behavior:
+   - create and approve one project-scoped orchestrator auth request for one project,
+   - create and approve one multi-project orchestrator auth request for two projects,
+   - create and approve one broader global session plus matching in-scope project and multi-project child sessions,
+   - prove `till.auth_request(operation=list_sessions)` under the project-scoped acting session does not return the broader global or multi-project sessions,
+   - prove `till.auth_request(operation=list_sessions)` under the multi-project acting session does return matching project and matching multi-project child sessions,
+   - prove `till.auth_request(operation=revoke_session)` under the multi-project acting session can revoke an in-scope matching child session but fails closed on the global session,
+   - keep all checks MCP-only.
+4. If live parity matches local behavior, record the evidence in `PLAN.md`.
+5. Only after those live tests pass should new implementation work start again.
+
+Remaining slices after the live MCP auth-session parity check:
+1. Mentions, notifications, and inbox.
+   - Land real `@dev`, `@orchestrator`, `@qa`, and `@builder` routing with an actual inbox/wake model.
+2. Broader wait/notify reuse beyond auth.
+   - Extend the current auth-only live wake path to comments, handoffs, and other coordination events instead of requiring polling.
+3. Scoped `till.get_instructions` expansion.
+   - Grow instructions into a richer scoped explanation surface with inputs such as topic, `project_id`, `template_library_id`, `kind_id`, and `node_id`.
+4. Bootstrap collapse into richer instructions.
+   - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
+5. Final collaborative dogfood hardening and closeout.
+   - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
+
+## Checkpoint 2026-04-01: Live MCP Auth Session Governance Parity Refresh
+
+Objective:
+- verify on the refreshed native `till_*` runtime that the reduced surface is active and that the latest approved-path containment fix behaves live the same way it does in local tests.
+
+Context7:
+1. After the in-session MCP cancellations during live parity, reran Context7 per repo policy:
+   - `/mark3labs/mcp-go` for structured MCP tool results and tool-level error/result handling guidance.
+   - `/golang/go` for wrapped error and `errors.Is` guidance.
+
+Live MCP surface evidence:
+1. Native `till_*` bindings are active in this session; this was not a fallback transport run.
+2. Direct live MCP calls succeeded on the refreshed reduced-family bindings for:
+   - `till_get_bootstrap_guide`
+   - `till_auth_request(operation=list|create|claim|list_sessions|revoke_session)`
+   - `till_capability_lease(operation=list)`
+   - `till_capture_state`
+   - `till_embeddings(operation=status)`
+   - `till_get_instructions`
+   - `till_handoff(operation=list)`
+   - `till_kind(operation=list)`
+   - `till_plan_item(operation=search)`
+   - `till_project(operation=list)`
+   - `till_template(operation=list)`
+3. `till_attention_item(operation=list)` and `till_comment(operation=list)` are still exposed natively in-session, but their direct live calls were canceled by the session safety layer because those tool registrations are currently tagged as non-read-only/destructive even for list operations. That is a tool/runtime metadata issue, not a missing binding.
+
+Live auth-session governance evidence:
+1. Created, had approved, and claimed six live MCP auth requests on the disposable parity projects:
+   - project-scoped acting session on `79a61358-da6b-48ef-8506-55037281d47b`
+   - branch child session on `79a61358-da6b-48ef-8506-55037281d47b/branch/live-auth-b1`
+   - multi-project acting session on `projects/79a61358-da6b-48ef-8506-55037281d47b,d06f7be5-db91-4023-9cc1-bf56f1b9725d`
+   - matching project child session on `d06f7be5-db91-4023-9cc1-bf56f1b9725d`
+   - matching multi-project child session on the same two-project scope
+   - broader global session on `global`
+2. `till.auth_request(operation=list_sessions)` under the project-scoped acting session returned exactly:
+   - the project-scoped acting session itself
+   - the narrower branch child session
+   and did not return either the broader multi-project session or the broader global session.
+3. `till.auth_request(operation=list_sessions)` under the multi-project acting session returned:
+   - the multi-project acting session itself
+   - the matching multi-project child session
+   - the matching project child session on `d06f7be5-db91-4023-9cc1-bf56f1b9725d`
+   - the matching project-scoped acting session on `79a61358-da6b-48ef-8506-55037281d47b`
+   - the narrower branch child session on `79a61358-da6b-48ef-8506-55037281d47b/branch/live-auth-b1`
+   and did not return the broader global session.
+4. `till.auth_request(operation=revoke_session)` under the multi-project acting session successfully revoked the matching multi-project child session `652faeaa-519f-46f8-a382-9b0b5af34c53` with reason `live multi-project containment cleanup`.
+5. After the Codex client refresh picked up the new auth-family operation, the native binding returned the missing negative proof directly:
+   - `till.auth_request(operation=check_session_governance, session_id="7b1affe7-cc6f-4fbd-bac5-d2b02c00f06d", acting_session_id="216f175f-c0c5-49a7-abce-94acd7a5e194", ...)`
+   - result: `authorized=false`, `decision_reason="out_of_scope"`,
+   - acting approved path: `projects/79a61358-da6b-48ef-8506-55037281d47b,d06f7be5-db91-4023-9cc1-bf56f1b9725d`,
+   - target approved path: `global`.
+
+Follow-up decision:
+1. Keep the frozen reduced surface and use the non-destructive governance-check operation on `till.auth_request` rather than trying to force a failed destructive revoke as the negative proof.
+2. Session-governance policy for that follow-through:
+   - orchestrators may inspect/check/revoke any session at their approved scope or below;
+   - non-orchestrator agents may only inspect/check/revoke the exact same session they are currently using for self-cleanup;
+   - self-cleanup must not widen into sibling or descendant session governance;
+   - ordinary task completion must not implicitly revoke the caller's auth session by default;
+   - any future automatic cleanup should be opt-in and limited to explicitly ephemeral sessions created for one bounded unit of work.
+3. Role-model reminder for the same follow-through:
+   - domain auth/capability models already include `research`;
+   - public MCP/CLI auth and lease surfaces now expose `orchestrator|builder|qa|research`;
+   - `planner` is not yet a runtime role and needs an explicit product decision before implementation.
+
+Next step:
+1. Continue the remaining scoped-auth/delegation follow-through without widening the role model.
+
+## Checkpoint 2026-04-01: Scoped Auth And Bounded Delegation Dogfood
+
+Objective:
+- close the next dogfood slice by proving the real orchestrator-to-builder/qa/research auth choreography on top of the landed continuation and session-governance paths, while keeping multi-project/general scope orchestrator-only and child delegation explicitly bounded.
+
+Context7:
+1. `/golang/go` reviewed before edits for straightforward authorization-helper and focused test patterns around bounded least-privilege checks.
+2. `/mark3labs/mcp-go` reviewed before edits for structured MCP result wording and typed argument handling in family-tool flows.
+
+Implementation summary:
+1. Extended `till.auth_request(operation=create)` without adding a new tool:
+   - added optional `acting_session_id` and `acting_session_secret` inputs for delegated child auth creation,
+   - kept direct requester-owned create flows intact when those fields are omitted.
+2. Added delegated create enforcement in `internal/adapters/server/common/app_service_adapter_mcp.go`:
+   - requester ownership is derived from the acting session rather than trusting caller-supplied requester metadata,
+   - requested child paths must stay within the acting approved path,
+   - only orchestrators may create sibling child auth for other principals,
+   - builder/qa/research sessions may still self-request their own exact session identity but cannot mint sibling child sessions.
+3. Expanded auth-request transport and handler coverage so the reduced auth family now exposes the bounded delegation flow directly over MCP with the current frozen top-level tool surface.
+4. Updated README, PLAN, and `till.get_instructions` guidance so the shipped role model and delegated child-auth workflow are explicit for builder, qa, and research:
+   - `research` is part of the same scoped-auth choreography,
+   - `planner` remains outside the runtime role model.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS (109 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+3. `mage test-pkg ./cmd/till` -> PASS (220 tests).
+4. `mage ci` -> PASS (1146 tests total, coverage gate passed, build passed).
+
+Live MCP dogfood evidence:
+1. The previously mounted native `till_*` binding was stale for delegated create, so one fresh local `./till mcp` stdio session was used to exercise the rebuilt runtime directly.
+2. Under the approved multi-project orchestrator acting session `216f175f-c0c5-49a7-abce-94acd7a5e194`, the rebuilt runtime created three bounded child auth requests with requester attribution derived from the acting orchestrator:
+   - builder child `1a0d6847-a1e5-4768-bb15-018d5fdc3c9c` on `project/79a61358-da6b-48ef-8506-55037281d47b/branch/live-build-2`
+   - qa child `e0961509-a7c9-45eb-8aeb-0b0dac33b62f` on `project/79a61358-da6b-48ef-8506-55037281d47b/branch/live-build-2/phase/qa-pass`
+   - research child `7acf4c62-a239-4003-9de2-7af3e0cec664` on `project/79a61358-da6b-48ef-8506-55037281d47b/branch/live-build-2/phase/research-pass`
+   All three recorded `requested_by_actor="orch-multi-live-check"` and `requested_by_type="agent"`.
+3. After user approval, the refreshed native MCP binding successfully claimed all three child requests as their own principals/clients:
+   - builder session `83ad6a98-647a-46b1-ab13-ebda74ba2d2c`
+   - qa session `da0e599f-1ae7-46b7-9197-1e08b4614013`
+   - research session `43d4b873-0d3f-47ba-9c57-5cfe568130cc`
+4. The refreshed native MCP binding then proved the negative bounded-delegation case directly:
+   - using the claimed builder child session, `till.auth_request(operation=create, ... acting_session_id="83ad6a98-647a-46b1-ab13-ebda74ba2d2c" ...)` to mint sibling QA auth returned `auth_denied: authorization denied`.
+
+Outcome:
+1. The scoped-auth choreography slice is complete for orchestrator, builder, qa, and research on the frozen auth family surface.
+2. Remaining work moves to notifications/inbox, broader wait/notify reuse, scoped instructions expansion, bootstrap collapse, and final collaborative hardening.
+
+## Checkpoint 2026-04-01: Post-Dogfood Auth Session Cleanup
+
+Objective:
+- revoke the disposable live auth sessions created for the governance-parity and bounded-delegation dogfood runs before moving on to the next slice.
+
+Context7:
+1. After the earlier in-session revoke cancellations, reran Context7 per repo policy against `/websites/pkg_go_dev_go1_25_3` for the minimal file/logging update pass before editing this execution ledger.
+
+Live MCP cleanup evidence:
+1. Claimed one short-lived global cleanup session:
+   - cleanup request `a49a0d39-e429-45b1-a7a1-c638fd6149ce`
+   - cleanup session `7573bd55-e85d-4729-b14a-411908745a50`
+2. Listed live sessions under that cleanup session and targeted only the disposable dogfood principals/sessions from the auth-governance and bounded-delegation runs.
+3. Revoked the full disposable set over MCP:
+   - orchestrator acting session `216f175f-c0c5-49a7-abce-94acd7a5e194`
+   - builder sessions `9ac57a4f-3163-49f7-8408-05716665c0c4` and `83ad6a98-647a-46b1-ab13-ebda74ba2d2c`
+   - qa sessions `46a850d6-170f-4017-9b28-3b3327840b30` and `da0e599f-1ae7-46b7-9197-1e08b4614013`
+   - research sessions `705df0e3-0d73-4c27-b89e-603b1a201bf0` and `43d4b873-0d3f-47ba-9c57-5cfe568130cc`
+4. Verified the cleanup inventory before final self-revoke; the remaining active sessions were the ambient `codex-agent` sessions already present in the environment plus the cleanup session itself.
+5. Self-revoked the cleanup session last:
+   - cleanup session `7573bd55-e85d-4729-b14a-411908745a50` -> `state="revoked"`
+   - revocation reason: `cleanup session complete`
+
+Outcome:
+1. The disposable live auth evidence for this slice has been cleaned up without touching the unrelated ambient operator sessions.
+2. The worktree is ready for a local commit and the next mentions/notifications/inbox implementation slice.
+
+## Checkpoint 2026-04-01: Non-Destructive Session Governance Check And Research Surface
+
+Objective:
+- close the remaining reduced-surface auth gap without adding a new tool by landing a non-destructive governance check on `till.auth_request`, enforcing orchestrator-or-self session control, and exposing the existing `research` role on public MCP/CLI auth and lease surfaces.
+
+Context7:
+1. `/mark3labs/mcp-go` reviewed before edits for structured tool-handler/result patterns and typed argument binding.
+2. `/golang/go` reviewed for straightforward handler-test and request-capture assertion patterns.
+3. After the focused `mage test-pkg ./internal/adapters/server/mcpapi` failure, Context7 was rerun per repo policy before the next edit; the failure was in test-stub capture, not the production path.
+
+Implementation summary:
+1. Extended the reduced auth family without adding a new top-level tool:
+   - added `till.auth_request(operation=check_session_governance)`,
+   - reused the existing `session_id`, `acting_session_id`, and `acting_session_secret` arguments,
+   - returned a structured authorization decision plus acting/target session details.
+2. Refactored auth-session governance in `internal/adapters/server/common/app_service_adapter_mcp.go` so list, check, and revoke share the same decision path:
+   - exact-session self-cleanup is allowed for every role,
+   - broader governance is limited to orchestrators and still bounded by approved-path containment,
+   - non-orchestrators do not gain sibling or descendant governance power.
+3. Exposed `research` on the public MCP/CLI auth and capability-lease role enums instead of keeping it as a domain-only role.
+4. Updated README and this file so the documented public surface now matches the landed runtime contract and the accepted `planner` decision:
+   - `planner` remains a non-runtime product discussion item,
+   - `research` is the shipped evidence/discovery role.
+5. Fixed the expanded MCP surface test harness so lease issue assertions no longer get clobbered by later stubbed lease operations.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS (105 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+3. `mage test-pkg ./cmd/till` -> PASS (220 tests).
+
+Next step:
+1. Run `mage ci`.
+2. Re-run the live negative governance proof through the native MCP binding with one fresh approved multi-project acting session and one broader global target session if the previous secrets are no longer available in-session.
+
+## Checkpoint 2026-04-01: MCP Auth Family Session Governance
+
+Objective:
+- close the remaining reduced-surface auth gap by moving approved-session inventory, validation, and revocation into the existing `till.auth_request` family so orchestrators can govern delegated child sessions over MCP without falling back to CLI.
+
+Context7:
+1. `/mark3labs/mcp-go` reviewed before edits for operation-enum family-tool guidance and structured JSON result handling after bound argument normalization.
+2. After the first local package-test failure, Context7 was rechecked per repo policy before the next edit; no library API change was needed beyond confirming normal structured-result patterns.
+
+Implementation summary:
+1. Extended the common MCP auth surface with transport-safe session requests/results:
+   - `ListAuthSessionsRequest`
+   - `ValidateAuthSessionRequest`
+   - `RevokeAuthSessionRequest`
+   - `AuthSessionRecord`
+2. Expanded `AuthRequestService` so the reduced auth family now owns:
+   - auth-request lifecycle: `create|list|get|claim|cancel`
+   - auth-session lifecycle: `list_sessions|validate_session|revoke_session`
+3. Added app-adapter mappings for app-facing auth-session inventory, validation, and revocation.
+4. Kept the new session-governance path scoped instead of creating an unauthenticated operator backdoor:
+   - `list_sessions` and `revoke_session` now require an acting approved session whose approved path already covers the target project scope,
+   - `validate_session` remains possession-proof on the target session id/secret pair.
+5. Extended the MCP handler schema and routing for the three new auth-session operations without creating a new top-level tool.
+6. Added adapter and MCP handler tests covering:
+   - session inventory filtering,
+   - session validation,
+   - session revocation,
+   - and the updated reduced-family transport contract.
+7. Updated README so the documented reduced surface now matches the landed auth-family behavior and distinguishes pending-request cancel from live session revoke.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS.
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+3. `mage ci` -> PASS (1138 tests total, coverage gate passed, build passed).
+
+Next step:
+1. Continue the next local scoped-auth/delegation slice without pushing unless the user explicitly asks for it.
+
+## Checkpoint 2026-04-01: MCP Auth Session Governance Scope Containment
+
+Objective:
+- tighten the newly consolidated MCP auth-session governance path so session inventory/revocation follows full approved-path containment instead of leaking broader sessions on simple project overlap, while still honoring explicit multi-project orchestrator approvals.
+
+Context7:
+1. `/golang/go` reviewed before the code change for deterministic helper style with `strings.TrimSpace` and `slices.Contains`.
+2. After one focused test failure, Context7 was rechecked per repo policy before the next edit; the failure was a bad multi-project test fixture rather than a production-path issue.
+
+Implementation summary:
+1. Reworked auth-session governance in `internal/adapters/server/common/app_service_adapter_mcp.go` to validate the acting approved path once and reuse it for both list and revoke flows.
+2. Replaced the old project-only governance check with full approved-path containment:
+   - project-scoped acting sessions no longer see or revoke broader global or multi-project sessions just because those sessions also apply to the same project,
+   - explicit multi-project orchestrator approvals can now govern matching project and multi-project child sessions without requiring global scope.
+3. Added helper logic to:
+   - parse approved-path metadata into canonical auth-request paths,
+   - resolve governed session rows back to their effective approved path,
+   - compare acting scope vs governed scope using equal-or-narrower path semantics.
+4. Added real-stack adapter coverage for both sides of the policy:
+   - project-scoped acting sessions filter out broader overlapping sessions,
+   - multi-project acting sessions can inventory and revoke matching in-scope child sessions while still failing closed on global sessions.
+5. Updated `README.md` so the reduced auth-family docs now describe approved-path containment instead of loose project overlap.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS (103 tests).
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+3. `mage ci` -> PASS (1140 tests total, coverage gate passed, build passed).
+
+Next step:
+1. Continue the remaining local scoped-auth/delegation follow-through without pushing unless the user explicitly asks for it.
 
 ## Checkpoint 2026-04-01: Lease Identity Derivation Cleanup
 

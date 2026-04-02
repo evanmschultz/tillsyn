@@ -43,6 +43,8 @@ type stubAttentionService struct {
 	resolved       common.AttentionItem
 	authRequests   []common.AuthRequestRecord
 	authRequest    common.AuthRequestRecord
+	authSessions   []common.AuthSessionRecord
+	authSession    common.AuthSessionRecord
 	listErr        error
 	raiseErr       error
 	resolveErr     error
@@ -73,21 +75,32 @@ type stubProjectService struct {
 // stubAuthRequestService provides deterministic auth-request responses for MCP tool tests.
 type stubAuthRequestService struct {
 	stubCaptureStateReader
-	created      common.AuthRequestRecord
-	requests     []common.AuthRequestRecord
-	getResult    common.AuthRequestRecord
-	claimResult  common.AuthRequestClaimResult
-	cancelResult common.AuthRequestRecord
-	createErr    error
-	listErr      error
-	getErr       error
-	claimErr     error
-	cancelErr    error
-	lastCreate   common.CreateAuthRequestRequest
-	lastList     common.ListAuthRequestsRequest
-	lastGetID    string
-	lastClaim    common.ClaimAuthRequestRequest
-	lastCancel   common.CancelAuthRequestRequest
+	created             common.AuthRequestRecord
+	requests            []common.AuthRequestRecord
+	getResult           common.AuthRequestRecord
+	claimResult         common.AuthRequestClaimResult
+	cancelResult        common.AuthRequestRecord
+	sessionRows         []common.AuthSessionRecord
+	sessionResult       common.AuthSessionRecord
+	checkResult         common.AuthSessionGovernanceCheckResult
+	createErr           error
+	listErr             error
+	getErr              error
+	claimErr            error
+	cancelErr           error
+	listSessionsErr     error
+	validateSessionErr  error
+	checkErr            error
+	revokeSessionErr    error
+	lastCreate          common.CreateAuthRequestRequest
+	lastList            common.ListAuthRequestsRequest
+	lastGetID           string
+	lastClaim           common.ClaimAuthRequestRequest
+	lastCancel          common.CancelAuthRequestRequest
+	lastListSessions    common.ListAuthSessionsRequest
+	lastValidateSession common.ValidateAuthSessionRequest
+	lastCheckSession    common.CheckAuthSessionGovernanceRequest
+	lastRevokeSession   common.RevokeAuthSessionRequest
 }
 
 // stubMutationAuthorizer provides deterministic session-auth results for mutating MCP tool tests.
@@ -190,6 +203,42 @@ func (s *stubAuthRequestService) CancelAuthRequest(_ context.Context, req common
 	return s.cancelResult, nil
 }
 
+// ListAuthSessions records session filters and returns deterministic auth-session rows.
+func (s *stubAuthRequestService) ListAuthSessions(_ context.Context, req common.ListAuthSessionsRequest) ([]common.AuthSessionRecord, error) {
+	s.lastListSessions = req
+	if s.listSessionsErr != nil {
+		return nil, s.listSessionsErr
+	}
+	return append([]common.AuthSessionRecord(nil), s.sessionRows...), nil
+}
+
+// ValidateAuthSession records one validate request and returns one deterministic auth-session row.
+func (s *stubAuthRequestService) ValidateAuthSession(_ context.Context, req common.ValidateAuthSessionRequest) (common.AuthSessionRecord, error) {
+	s.lastValidateSession = req
+	if s.validateSessionErr != nil {
+		return common.AuthSessionRecord{}, s.validateSessionErr
+	}
+	return s.sessionResult, nil
+}
+
+// CheckAuthSessionGovernance records one governance-check request and returns one deterministic decision.
+func (s *stubAuthRequestService) CheckAuthSessionGovernance(_ context.Context, req common.CheckAuthSessionGovernanceRequest) (common.AuthSessionGovernanceCheckResult, error) {
+	s.lastCheckSession = req
+	if s.checkErr != nil {
+		return common.AuthSessionGovernanceCheckResult{}, s.checkErr
+	}
+	return s.checkResult, nil
+}
+
+// RevokeAuthSession records one revoke request and returns one deterministic auth-session row.
+func (s *stubAuthRequestService) RevokeAuthSession(_ context.Context, req common.RevokeAuthSessionRequest) (common.AuthSessionRecord, error) {
+	s.lastRevokeSession = req
+	if s.revokeSessionErr != nil {
+		return common.AuthSessionRecord{}, s.revokeSessionErr
+	}
+	return s.sessionResult, nil
+}
+
 // ListAttentionItems returns deterministic list data.
 func (s *stubAttentionService) ListAttentionItems(_ context.Context, req common.ListAttentionItemsRequest) ([]common.AttentionItem, error) {
 	s.lastList = req
@@ -245,6 +294,38 @@ func (s *stubAttentionService) GetAuthRequest(_ context.Context, requestID strin
 		return common.AuthRequestRecord{}, s.authRequestErr
 	}
 	return s.authRequest, nil
+}
+
+// ListAuthSessions returns deterministic auth-session rows for interface compatibility.
+func (s *stubAttentionService) ListAuthSessions(_ context.Context, _ common.ListAuthSessionsRequest) ([]common.AuthSessionRecord, error) {
+	if s.authRequestErr != nil {
+		return nil, s.authRequestErr
+	}
+	return append([]common.AuthSessionRecord(nil), s.authSessions...), nil
+}
+
+// ValidateAuthSession returns one deterministic auth-session row for interface compatibility.
+func (s *stubAttentionService) ValidateAuthSession(_ context.Context, _ common.ValidateAuthSessionRequest) (common.AuthSessionRecord, error) {
+	if s.authRequestErr != nil {
+		return common.AuthSessionRecord{}, s.authRequestErr
+	}
+	return s.authSession, nil
+}
+
+// CheckAuthSessionGovernance returns one deterministic governance decision for interface compatibility.
+func (s *stubAttentionService) CheckAuthSessionGovernance(_ context.Context, _ common.CheckAuthSessionGovernanceRequest) (common.AuthSessionGovernanceCheckResult, error) {
+	if s.authRequestErr != nil {
+		return common.AuthSessionGovernanceCheckResult{}, s.authRequestErr
+	}
+	return common.AuthSessionGovernanceCheckResult{}, nil
+}
+
+// RevokeAuthSession returns one deterministic auth-session row for interface compatibility.
+func (s *stubAttentionService) RevokeAuthSession(_ context.Context, _ common.RevokeAuthSessionRequest) (common.AuthSessionRecord, error) {
+	if s.authRequestErr != nil {
+		return common.AuthSessionRecord{}, s.authRequestErr
+	}
+	return s.authSession, nil
 }
 
 // jsonRPCResponse models minimal JSON-RPC response fields used in MCP adapter tests.
@@ -1147,7 +1228,7 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			ScopeID:             "p1",
 			PrincipalID:         "review-agent",
 			PrincipalType:       "agent",
-			PrincipalRole:       "orchestrator",
+			PrincipalRole:       "research",
 			ClientID:            "till-mcp-stdio",
 			ClientType:          "mcp-stdio",
 			RequestedSessionTTL: "2h0m0s",
@@ -1246,6 +1327,61 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			CreatedAt:        now,
 			ExpiresAt:        now.Add(30 * time.Minute),
 		},
+		sessionRows: []common.AuthSessionRecord{{
+			SessionID:     "sess-1",
+			State:         "active",
+			ProjectID:     "p1",
+			AuthRequestID: "req-1",
+			ApprovedPath:  "project/p1/branch/review",
+			PrincipalID:   "review-agent",
+			PrincipalType: "agent",
+			PrincipalRole: "builder",
+			PrincipalName: "Review Agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			ClientName:    "Till MCP STDIO",
+			IssuedAt:      now,
+			ExpiresAt:     now.Add(2 * time.Hour),
+		}},
+		sessionResult: common.AuthSessionRecord{
+			SessionID:        "sess-1",
+			State:            "revoked",
+			ProjectID:        "p1",
+			AuthRequestID:    "req-1",
+			ApprovedPath:     "project/p1/branch/review",
+			PrincipalID:      "review-agent",
+			PrincipalType:    "agent",
+			PrincipalRole:    "builder",
+			PrincipalName:    "Review Agent",
+			ClientID:         "till-mcp-stdio",
+			ClientType:       "mcp-stdio",
+			ClientName:       "Till MCP STDIO",
+			IssuedAt:         now,
+			ExpiresAt:        now.Add(2 * time.Hour),
+			LastValidatedAt:  ptrTime(now.Add(5 * time.Minute)),
+			RevokedAt:        ptrTime(now.Add(10 * time.Minute)),
+			RevocationReason: "operator cleanup",
+		},
+		checkResult: common.AuthSessionGovernanceCheckResult{
+			Authorized:          false,
+			DecisionReason:      "out_of_scope",
+			ActingSessionID:     "acting-sess-1",
+			ActingPrincipalID:   "review-agent",
+			ActingPrincipalRole: "research",
+			ActingApprovedPath:  "project/p1/branch/review",
+			TargetSession: common.AuthSessionRecord{
+				SessionID:     "sess-global-1",
+				State:         "active",
+				ApprovedPath:  "global",
+				PrincipalID:   "global-agent",
+				PrincipalType: "agent",
+				PrincipalRole: "orchestrator",
+				ClientID:      "global-client",
+				ClientType:    "mcp-stdio",
+				IssuedAt:      now,
+				ExpiresAt:     now.Add(2 * time.Hour),
+			},
+		},
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -1258,27 +1394,29 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", map[string]any{
-		"operation":           "create",
-		"path":                "project/p1",
-		"principal_id":        "review-agent",
-		"principal_type":      "agent",
-		"principal_role":      "orchestrator",
-		"requested_by_actor":  "orchestrator-1",
-		"requested_by_type":   "agent",
-		"requester_client_id": "orchestrator-client",
-		"client_id":           "till-mcp-stdio",
-		"client_type":         "mcp-stdio",
-		"requested_ttl":       "2h",
-		"timeout":             "30m",
-		"reason":              "manual MCP review",
-		"continuation_json":   `{"resume_tool":"till.plan_item"}`,
+		"operation":             "create",
+		"path":                  "project/p1/branch/research-1",
+		"principal_id":          "review-agent",
+		"principal_type":        "agent",
+		"principal_role":        "research",
+		"requested_by_actor":    "orchestrator-1",
+		"requested_by_type":     "agent",
+		"requester_client_id":   "orchestrator-client",
+		"client_id":             "till-mcp-stdio",
+		"client_type":           "mcp-stdio",
+		"acting_session_id":     "sess-orchestrator-1",
+		"acting_session_secret": "secret-orchestrator-1",
+		"requested_ttl":         "2h",
+		"timeout":               "30m",
+		"reason":                "manual MCP review",
+		"continuation_json":     `{"resume_tool":"till.plan_item"}`,
 	}))
 	createStructured := toolResultStructured(t, createResp.Result)
 	if got := createStructured["id"].(string); got != "req-1" {
 		t.Fatalf("create auth request id = %q, want req-1", got)
 	}
-	if got := createStructured["principal_role"].(string); got != "orchestrator" {
-		t.Fatalf("create auth request principal_role = %q, want orchestrator", got)
+	if got := createStructured["principal_role"].(string); got != "research" {
+		t.Fatalf("create auth request principal_role = %q, want research", got)
 	}
 	if got := createStructured["requested_by_actor"].(string); got != "orchestrator-1" {
 		t.Fatalf("create auth request requested_by_actor = %q, want orchestrator-1", got)
@@ -1292,11 +1430,17 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	if _, ok := createStructured["continuation"]; ok {
 		t.Fatalf("create auth request leaked continuation = %#v, want omitted", createStructured["continuation"])
 	}
-	if got := capture.lastCreate.Path; got != "project/p1" {
-		t.Fatalf("CreateAuthRequest() path = %q, want project/p1", got)
+	if got := capture.lastCreate.Path; got != "project/p1/branch/research-1" {
+		t.Fatalf("CreateAuthRequest() path = %q, want project/p1/branch/research-1", got)
 	}
-	if got := capture.lastCreate.PrincipalRole; got != "orchestrator" {
-		t.Fatalf("CreateAuthRequest() principal_role = %q, want orchestrator", got)
+	if got := capture.lastCreate.PrincipalRole; got != "research" {
+		t.Fatalf("CreateAuthRequest() principal_role = %q, want research", got)
+	}
+	if got := capture.lastCreate.ActingSessionID; got != "sess-orchestrator-1" {
+		t.Fatalf("CreateAuthRequest() acting_session_id = %q, want sess-orchestrator-1", got)
+	}
+	if got := capture.lastCreate.ActingSessionSecret; got != "secret-orchestrator-1" {
+		t.Fatalf("CreateAuthRequest() acting_session_secret = %q, want secret-orchestrator-1", got)
 	}
 	if got := capture.lastCreate.RequestedByActor; got != "orchestrator-1" {
 		t.Fatalf("CreateAuthRequest() requested_by_actor = %q, want orchestrator-1", got)
@@ -1420,6 +1564,103 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	}
 	if got := capture.lastCancel.ResolutionNote; got != "superseded" {
 		t.Fatalf("CancelAuthRequest() resolution_note = %q, want superseded", got)
+	}
+
+	_, listSessionsResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7, "till.auth_request", map[string]any{
+		"operation":             "list_sessions",
+		"project_id":            "p1",
+		"session_state":         "active",
+		"principal_id":          "review-agent",
+		"client_id":             "till-mcp-stdio",
+		"limit":                 10,
+		"acting_session_id":     "acting-sess-1",
+		"acting_session_secret": "acting-secret-1",
+	}))
+	listSessionsStructured := toolResultStructured(t, listSessionsResp.Result)
+	sessionsRaw, ok := listSessionsStructured["sessions"].([]any)
+	if !ok || len(sessionsRaw) != 1 {
+		t.Fatalf("list auth sessions payload = %#v, want one session", listSessionsStructured)
+	}
+	if got := capture.lastListSessions.ProjectID; got != "p1" {
+		t.Fatalf("ListAuthSessions() project_id = %q, want p1", got)
+	}
+	if got := capture.lastListSessions.State; got != "active" {
+		t.Fatalf("ListAuthSessions() state = %q, want active", got)
+	}
+	if got := capture.lastListSessions.PrincipalID; got != "review-agent" {
+		t.Fatalf("ListAuthSessions() principal_id = %q, want review-agent", got)
+	}
+	if got := capture.lastListSessions.ClientID; got != "till-mcp-stdio" {
+		t.Fatalf("ListAuthSessions() client_id = %q, want till-mcp-stdio", got)
+	}
+	if got := capture.lastListSessions.ActingSessionID; got != "acting-sess-1" {
+		t.Fatalf("ListAuthSessions() acting_session_id = %q, want acting-sess-1", got)
+	}
+	if got := capture.lastListSessions.ActingSessionSecret; got != "acting-secret-1" {
+		t.Fatalf("ListAuthSessions() acting_session_secret = %q, want acting-secret-1", got)
+	}
+
+	_, validateSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(8, "till.auth_request", map[string]any{
+		"operation":      "validate_session",
+		"session_id":     "sess-1",
+		"session_secret": "secret-1",
+	}))
+	validateSessionStructured := toolResultStructured(t, validateSessionResp.Result)
+	if got := validateSessionStructured["session_id"].(string); got != "sess-1" {
+		t.Fatalf("validate auth session session_id = %q, want sess-1", got)
+	}
+	if got := capture.lastValidateSession.SessionID; got != "sess-1" {
+		t.Fatalf("ValidateAuthSession() session_id = %q, want sess-1", got)
+	}
+	if got := capture.lastValidateSession.SessionSecret; got != "secret-1" {
+		t.Fatalf("ValidateAuthSession() session_secret = %q, want secret-1", got)
+	}
+
+	_, checkSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9, "till.auth_request", map[string]any{
+		"operation":             "check_session_governance",
+		"session_id":            "sess-global-1",
+		"acting_session_id":     "acting-sess-1",
+		"acting_session_secret": "acting-secret-1",
+	}))
+	checkSessionStructured := toolResultStructured(t, checkSessionResp.Result)
+	if got := checkSessionStructured["authorized"].(bool); got {
+		t.Fatalf("check auth session governance authorized = %v, want false", got)
+	}
+	if got := checkSessionStructured["decision_reason"].(string); got != "out_of_scope" {
+		t.Fatalf("check auth session governance decision_reason = %q, want out_of_scope", got)
+	}
+	if got := capture.lastCheckSession.SessionID; got != "sess-global-1" {
+		t.Fatalf("CheckAuthSessionGovernance() session_id = %q, want sess-global-1", got)
+	}
+	if got := capture.lastCheckSession.ActingSessionID; got != "acting-sess-1" {
+		t.Fatalf("CheckAuthSessionGovernance() acting_session_id = %q, want acting-sess-1", got)
+	}
+	if got := capture.lastCheckSession.ActingSessionSecret; got != "acting-secret-1" {
+		t.Fatalf("CheckAuthSessionGovernance() acting_session_secret = %q, want acting-secret-1", got)
+	}
+
+	_, revokeSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(10, "till.auth_request", map[string]any{
+		"operation":             "revoke_session",
+		"session_id":            "sess-1",
+		"reason":                "operator cleanup",
+		"acting_session_id":     "acting-sess-1",
+		"acting_session_secret": "acting-secret-1",
+	}))
+	revokeSessionStructured := toolResultStructured(t, revokeSessionResp.Result)
+	if got := revokeSessionStructured["state"].(string); got != "revoked" {
+		t.Fatalf("revoke auth session state = %q, want revoked", got)
+	}
+	if got := capture.lastRevokeSession.SessionID; got != "sess-1" {
+		t.Fatalf("RevokeAuthSession() session_id = %q, want sess-1", got)
+	}
+	if got := capture.lastRevokeSession.Reason; got != "operator cleanup" {
+		t.Fatalf("RevokeAuthSession() reason = %q, want operator cleanup", got)
+	}
+	if got := capture.lastRevokeSession.ActingSessionID; got != "acting-sess-1" {
+		t.Fatalf("RevokeAuthSession() acting_session_id = %q, want acting-sess-1", got)
+	}
+	if got := capture.lastRevokeSession.ActingSessionSecret; got != "acting-secret-1" {
+		t.Fatalf("RevokeAuthSession() acting_session_secret = %q, want acting-secret-1", got)
 	}
 }
 

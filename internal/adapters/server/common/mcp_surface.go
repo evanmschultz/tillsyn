@@ -424,21 +424,23 @@ type ListHandoffsRequest struct {
 
 // CreateAuthRequestRequest stores transport input for pre-session auth request creation.
 type CreateAuthRequestRequest struct {
-	Path              string
-	PrincipalID       string
-	PrincipalType     string
-	PrincipalRole     string
-	PrincipalName     string
-	RequestedByActor  string
-	RequestedByType   string
-	RequesterClientID string
-	ClientID          string
-	ClientType        string
-	ClientName        string
-	RequestedTTL      string
-	Timeout           string
-	Reason            string
-	ContinuationJSON  string
+	Path                string
+	PrincipalID         string
+	PrincipalType       string
+	PrincipalRole       string
+	PrincipalName       string
+	ActingSessionID     string
+	ActingSessionSecret string
+	RequestedByActor    string
+	RequestedByType     string
+	RequesterClientID   string
+	ClientID            string
+	ClientType          string
+	ClientName          string
+	RequestedTTL        string
+	Timeout             string
+	Reason              string
+	ContinuationJSON    string
 }
 
 // ListAuthRequestsRequest stores transport input for auth request inventory.
@@ -507,6 +509,71 @@ type AuthRequestClaimResult struct {
 	Request       AuthRequestRecord `json:"request"`
 	SessionSecret string            `json:"session_secret,omitempty"`
 	Waiting       bool              `json:"waiting,omitempty"`
+}
+
+// ListAuthSessionsRequest stores transport input for auth-session inventory queries.
+type ListAuthSessionsRequest struct {
+	ProjectID           string
+	SessionID           string
+	PrincipalID         string
+	ClientID            string
+	State               string
+	Limit               int
+	ActingSessionID     string
+	ActingSessionSecret string
+}
+
+// ValidateAuthSessionRequest stores transport input for session validation.
+type ValidateAuthSessionRequest struct {
+	SessionID     string
+	SessionSecret string
+}
+
+// CheckAuthSessionGovernanceRequest stores transport input for non-destructive session-governance checks.
+type CheckAuthSessionGovernanceRequest struct {
+	SessionID           string
+	ActingSessionID     string
+	ActingSessionSecret string
+}
+
+// RevokeAuthSessionRequest stores transport input for session revocation.
+type RevokeAuthSessionRequest struct {
+	SessionID           string
+	Reason              string
+	ActingSessionID     string
+	ActingSessionSecret string
+}
+
+// AuthSessionRecord stores one transport-facing auth session row.
+type AuthSessionRecord struct {
+	SessionID        string     `json:"session_id"`
+	State            string     `json:"state"`
+	ProjectID        string     `json:"project_id,omitempty"`
+	AuthRequestID    string     `json:"auth_request_id,omitempty"`
+	ApprovedPath     string     `json:"approved_path,omitempty"`
+	PrincipalID      string     `json:"principal_id"`
+	PrincipalType    string     `json:"principal_type"`
+	PrincipalRole    string     `json:"principal_role,omitempty"`
+	PrincipalName    string     `json:"principal_name,omitempty"`
+	ClientID         string     `json:"client_id"`
+	ClientType       string     `json:"client_type"`
+	ClientName       string     `json:"client_name,omitempty"`
+	IssuedAt         time.Time  `json:"issued_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	LastValidatedAt  *time.Time `json:"last_validated_at,omitempty"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	RevocationReason string     `json:"revocation_reason,omitempty"`
+}
+
+// AuthSessionGovernanceCheckResult stores one non-destructive session-governance decision.
+type AuthSessionGovernanceCheckResult struct {
+	Authorized          bool              `json:"authorized"`
+	DecisionReason      string            `json:"decision_reason,omitempty"`
+	ActingSessionID     string            `json:"acting_session_id,omitempty"`
+	ActingPrincipalID   string            `json:"acting_principal_id,omitempty"`
+	ActingPrincipalRole string            `json:"acting_principal_role,omitempty"`
+	ActingApprovedPath  string            `json:"acting_approved_path,omitempty"`
+	TargetSession       AuthSessionRecord `json:"target_session"`
 }
 
 // ListCommentsByTargetRequest stores transport input for comment list queries.
@@ -627,6 +694,10 @@ type AuthRequestService interface {
 	GetAuthRequest(context.Context, string) (AuthRequestRecord, error)
 	ClaimAuthRequest(context.Context, ClaimAuthRequestRequest) (AuthRequestClaimResult, error)
 	CancelAuthRequest(context.Context, CancelAuthRequestRequest) (AuthRequestRecord, error)
+	ListAuthSessions(context.Context, ListAuthSessionsRequest) ([]AuthSessionRecord, error)
+	ValidateAuthSession(context.Context, ValidateAuthSessionRequest) (AuthSessionRecord, error)
+	CheckAuthSessionGovernance(context.Context, CheckAuthSessionGovernanceRequest) (AuthSessionGovernanceCheckResult, error)
+	RevokeAuthSession(context.Context, RevokeAuthSessionRequest) (AuthSessionRecord, error)
 }
 
 // durationFromSeconds converts positive integer seconds to a transport duration.
