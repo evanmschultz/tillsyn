@@ -508,6 +508,7 @@ type AuthRequestRecord struct {
 type AuthRequestClaimResult struct {
 	Request       AuthRequestRecord `json:"request"`
 	SessionSecret string            `json:"session_secret,omitempty"`
+	AuthContextID string            `json:"auth_context_id,omitempty"`
 	Waiting       bool              `json:"waiting,omitempty"`
 }
 
@@ -563,6 +564,7 @@ type AuthSessionRecord struct {
 	LastValidatedAt  *time.Time `json:"last_validated_at,omitempty"`
 	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
 	RevocationReason string     `json:"revocation_reason,omitempty"`
+	AuthContextID    string     `json:"auth_context_id,omitempty"`
 }
 
 // AuthSessionGovernanceCheckResult stores one non-destructive session-governance decision.

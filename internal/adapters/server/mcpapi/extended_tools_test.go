@@ -12,6 +12,7 @@ import (
 
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/hylla/tillsyn/internal/domain"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
@@ -2162,6 +2163,10 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 	if !strings.Contains(strings.ToLower(bodyDesc), "markdown-rich") {
 		t.Fatalf("body_markdown description = %q, want markdown-rich guidance", bodyDesc)
 	}
+	authContextDesc := schemaStringPropertyDescription(t, createSchema, "auth_context_id")
+	if !strings.Contains(strings.ToLower(authContextDesc), "auth context") {
+		t.Fatalf("auth_context_id description = %q, want auth-context guidance", authContextDesc)
+	}
 }
 
 // TestHandlerExpandedSearchToolSchemaOptions verifies search mode/sort/pagination tool schema guidance.
@@ -2896,6 +2901,79 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	}
 	if got := service.lastListCommentReq.TargetID; got != "phase-1" {
 		t.Fatalf("comment list target_id = %q, want phase-1", got)
+	}
+}
+
+// TestHandlerExpandedMutationFamiliesAcceptAuthContextHandles verifies stdio-style auth handles
+// can replace inline session secrets on the reduced mutation families.
+func TestHandlerExpandedMutationFamiliesAcceptAuthContextHandles(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{},
+	}
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, service, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(500, "till.auth_request", map[string]any{
+		"operation":    "claim",
+		"request_id":   "req-1",
+		"resume_token": "resume-123",
+		"principal_id": "review-agent",
+		"client_id":    "till-mcp-stdio",
+	}))
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	authContextID, _ := claimStructured["auth_context_id"].(string)
+	if !strings.HasPrefix(authContextID, "authctx-") {
+		t.Fatalf("claim auth_context_id = %q, want authctx-*", authContextID)
+	}
+
+	_, createProjectResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(501, "till.project", map[string]any{
+		"operation":       "create",
+		"name":            "Project One",
+		"session_id":      "sess-1",
+		"auth_context_id": authContextID,
+	}))
+	if isError, _ := createProjectResp.Result["isError"].(bool); isError {
+		t.Fatalf("project create with auth_context_id returned isError=true: %#v", createProjectResp.Result)
+	}
+	if got := service.lastAuthRequest.SessionSecret; got != "secret-1" {
+		t.Fatalf("AuthorizeMutation() session_secret = %q, want secret-1", got)
+	}
+
+	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(502, "till.comment", map[string]any{
+		"operation":         "create",
+		"project_id":        "p1",
+		"target_type":       "task",
+		"target_id":         "t1",
+		"summary":           "Thread summary",
+		"body_markdown":     "hello",
+		"session_id":        "sess-1",
+		"auth_context_id":   authContextID,
+		"agent_instance_id": "inst-1",
+		"lease_token":       "tok-1",
+	}))
+	if isError, _ := commentResp.Result["isError"].(bool); isError {
+		t.Fatalf("comment create with auth_context_id returned isError=true: %#v", commentResp.Result)
+	}
+	if got := service.lastCreateCommentReq.Summary; got != "Thread summary" {
+		t.Fatalf("CreateComment() summary = %q, want Thread summary", got)
+	}
+	if got := service.lastAuthRequest.SessionSecret; got != "secret-1" {
+		t.Fatalf("AuthorizeMutation() reused session_secret = %q, want secret-1", got)
 	}
 }
 

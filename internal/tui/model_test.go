@@ -11989,6 +11989,46 @@ func TestModelEditTaskCommentsRowOpensThread(t *testing.T) {
 	}
 }
 
+// TestModelEditProjectCommentsRowOpensThread verifies edit-project keeps project comments reachable.
+func TestModelEditProjectCommentsRowOpensThread(t *testing.T) {
+	now := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project.Description = "Project details"
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
+
+	m = applyMsg(t, m, keyRune('M'))
+	if m.mode != modeEditProject {
+		t.Fatalf("expected edit-project mode, got %v", m.mode)
+	}
+
+	m = applyCmd(t, m, m.focusProjectFormField(projectFieldComments))
+	if m.projectFormFocus != projectFieldComments {
+		t.Fatalf("expected project comments row focus, got %d", m.projectFormFocus)
+	}
+
+	lines, _ := m.projectFormBodyLines(84, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+	if !strings.Contains(rendered, "coordination") || !strings.Contains(rendered, "comments:") {
+		t.Fatalf("expected edit-project form to render comments row, got\n%s", rendered)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected enter on project comments row to open thread, got %v", m.mode)
+	}
+	if m.threadPanelFocus != threadPanelComments {
+		t.Fatalf("expected project comments row to open thread on comments panel, got %d", m.threadPanelFocus)
+	}
+	if m.threadTarget.TargetType != domain.CommentTargetTypeProject {
+		t.Fatalf("expected project thread target, got %q", m.threadTarget.TargetType)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeEditProject {
+		t.Fatalf("expected esc from project thread to return to edit-project mode, got %v", m.mode)
+	}
+}
+
 // TestModelTaskInfoAndEditHideLabelInheritanceBlocks verifies info/edit hide inherited label blocks while keeping picker flows available.
 func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)

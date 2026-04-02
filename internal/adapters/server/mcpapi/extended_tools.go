@@ -16,6 +16,7 @@ import (
 const (
 	mcpMutationSessionDescription       = "Authenticated MCP session identifier"
 	mcpMutationSessionSecretDescription = "Authenticated MCP session secret"
+	mcpMutationAuthContextDescription   = "Bound MCP auth context handle returned by till.auth_request claim/validate_session on stdio runtimes"
 )
 
 // mcpSessionAuthArgs stores the session-secret pair required for mutating MCP calls.
@@ -45,9 +46,13 @@ func authorizeMCPMutation(
 	if authorizer == nil {
 		return domain.AuthenticatedCaller{}, fmt.Errorf("mutation authorizer is unavailable")
 	}
+	resolvedAuth, err := resolveMCPMutationAuth(ctx, auth)
+	if err != nil {
+		return domain.AuthenticatedCaller{}, err
+	}
 	return authorizer.AuthorizeMutation(ctx, common.MutationAuthorizationRequest{
-		SessionID:     strings.TrimSpace(auth.SessionID),
-		SessionSecret: strings.TrimSpace(auth.SessionSecret),
+		SessionID:     strings.TrimSpace(resolvedAuth.SessionID),
+		SessionSecret: strings.TrimSpace(resolvedAuth.SessionSecret),
 		Action:        strings.TrimSpace(action),
 		Namespace:     strings.TrimSpace(namespace),
 		ResourceType:  strings.TrimSpace(resourceType),
@@ -400,6 +405,7 @@ func registerProjectTools(
 	kinds common.KindCatalogService,
 	templates common.TemplateLibraryService,
 	changes common.ChangeFeedService,
+	authContexts *mcpAuthContextStore,
 	exposeLegacyProjectTools bool,
 ) {
 	if projects == nil && kinds == nil && templates == nil && changes == nil {
@@ -424,11 +430,13 @@ func registerProjectTools(
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("session_id", mcp.Description("Required for mutating operations. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for mutating operations. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for mutating operations when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
 				Operation         string                 `json:"operation"`
 				ProjectID         string                 `json:"project_id"`
@@ -981,10 +989,12 @@ func registerTaskTools(
 	tasks common.TaskService,
 	search common.SearchService,
 	embeddings common.EmbeddingsService,
+	authContexts *mcpAuthContextStore,
 	exposeLegacyPlanItemTools bool,
 ) {
 	if tasks != nil {
 		handlePlanItemOperation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
 				Operation       string               `json:"operation"`
 				ProjectID       string               `json:"project_id"`
@@ -1490,6 +1500,7 @@ func registerTaskTools(
 				mcp.WithString("mode", mcp.Description("archive|hard for operation=delete"), mcp.Enum("archive", "hard")),
 				mcp.WithString("session_id", mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Description(mcpMutationSessionSecretDescription)),
+				mcp.WithString("auth_context_id", mcp.Description(mcpMutationAuthContextDescription)),
 				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 				mcp.WithString("override_token", mcp.Description("Optional override token")),
@@ -1735,7 +1746,7 @@ func registerTaskTools(
 }
 
 // registerKindTools registers kind catalog and project allowlist tools.
-func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService, exposeLegacyProjectTools bool) {
+func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService, authContexts *mcpAuthContextStore, exposeLegacyProjectTools bool) {
 	if kinds == nil {
 		return
 	}
@@ -1755,8 +1766,10 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			mcp.WithObject("template", mcp.Description("Optional template object")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=upsert. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=upsert. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for operation=upsert when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			switch strings.TrimSpace(req.GetString("operation", "")) {
 			case "list":
 				rows, err := kinds.ListKindDefinitions(ctx, req.GetBool("include_archived", false))
@@ -1985,7 +1998,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 }
 
 // registerTemplateLibraryTools registers template-library and node-contract inspection/binding tools.
-func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.TemplateLibraryService, exposeLegacyProjectTools bool) {
+func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.TemplateLibraryService, authContexts *mcpAuthContextStore, exposeLegacyProjectTools bool) {
 	if templates == nil {
 		return
 	}
@@ -2003,8 +2016,10 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 			mcp.WithString("node_id", mcp.Description("Generated node identifier. Required for operation=get_node_contract")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=ensure_builtin|upsert. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=ensure_builtin|upsert. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for operation=ensure_builtin|upsert when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			switch strings.TrimSpace(req.GetString("operation", "")) {
 			case "list":
 				rows, err := templates.ListTemplateLibraries(ctx, common.ListTemplateLibrariesRequest{
@@ -2308,7 +2323,7 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 }
 
 // registerCapabilityLeaseTools registers lease visibility and lifecycle tools.
-func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService, exposeLegacyLeaseTools bool) {
+func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService, authContexts *mcpAuthContextStore, exposeLegacyLeaseTools bool) {
 	if leases == nil {
 		return
 	}
@@ -2334,8 +2349,10 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithString("reason", mcp.Description("Optional revocation reason for operation=revoke|revoke_all")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=issue|heartbeat|renew|revoke|revoke_all. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=issue|heartbeat|renew|revoke|revoke_all. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for operation=issue|heartbeat|renew|revoke|revoke_all when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args capabilityLeaseMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -2480,7 +2497,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 }
 
 // registerCommentTools registers comment create/list tools.
-func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentService) {
+func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentService, authContexts *mcpAuthContextStore) {
 	if comments == nil {
 		return
 	}
@@ -2497,11 +2514,13 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=create. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=create. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for operation=create when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
 				ProjectID       string `json:"project_id"`
 				TargetType      string `json:"target_type"`

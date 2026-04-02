@@ -11,7 +11,7 @@ import (
 )
 
 // registerHandoffTools registers durable handoff create/read/update/list tools.
-func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffService, exposeLegacyCoordinationTools bool) {
+func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffService, authContexts *mcpAuthContextStore, exposeLegacyCoordinationTools bool) {
 	if handoffs == nil {
 		return
 	}
@@ -45,11 +45,13 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 			mcp.WithString("resolution_note", mcp.Description("Optional resolution note when closing or superseding the handoff during operation=update")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=create|update. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=create|update. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("auth_context_id", mcp.Description("Required for operation=create|update when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
 			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
 			mcp.WithString("override_token", mcp.Description("Optional override token")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args handoffMutationArgs
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
