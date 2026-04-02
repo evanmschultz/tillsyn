@@ -88,56 +88,66 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.auth_request",
-			mcp.WithDescription("Create, inspect, or resume one auth-request lifecycle operation. Use operation=create|list|get|claim|cancel."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Auth-request operation"), mcp.Enum("create", "list", "get", "claim", "cancel")),
-			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
-			mcp.WithString("state", mcp.Description("Optional request state filter"), mcp.Enum("pending", "approved", "denied", "canceled", "expired")),
+			mcp.WithDescription("Create, inspect, resume, or govern auth-request and approved-session lifecycle state. Use operation=create|list|get|claim|cancel|list_sessions|validate_session|check_session_governance|revoke_session."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Auth-request or auth-session operation"), mcp.Enum("create", "list", "get", "claim", "cancel", "list_sessions", "validate_session", "check_session_governance", "revoke_session")),
+			mcp.WithString("project_id", mcp.Description("Optional project identifier filter for operation=list|list_sessions")),
+			mcp.WithString("state", mcp.Description("Optional request state filter for operation=list"), mcp.Enum("pending", "approved", "denied", "canceled", "expired")),
+			mcp.WithString("session_state", mcp.Description("Optional session state filter for operation=list_sessions"), mcp.Enum("active", "revoked", "expired")),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
 			mcp.WithString("path", mcp.Description("Required for operation=create. Auth scope path: project/<project-id>[/branch/<branch-id>[/phase/<phase-id>...]] | projects/<project-id>,<project-id>... | global")),
-			mcp.WithString("principal_id", mcp.Description("Required for operation=create|claim|cancel. Requested or requester principal identifier depending on operation")),
+			mcp.WithString("principal_id", mcp.Description("Required for operation=create|claim|cancel. Requested or requester principal identifier depending on operation; optional filter for operation=list_sessions")),
 			mcp.WithString("principal_type", mcp.Description("Requested principal type for operation=create"), mcp.Enum("user", "agent", "service")),
-			mcp.WithString("principal_role", mcp.Description("Optional requested agent role for operation=create"), mcp.Enum("orchestrator", "builder", "qa")),
+			mcp.WithString("principal_role", mcp.Description("Optional requested agent role for operation=create"), mcp.Enum("orchestrator", "builder", "qa", "research")),
 			mcp.WithString("principal_name", mcp.Description("Optional principal display name for operation=create")),
-			mcp.WithString("requested_by_actor", mcp.Description("Optional requester actor identifier for operation=create")),
-			mcp.WithString("requested_by_type", mcp.Description("Optional requester actor type for operation=create"), mcp.Enum("user", "agent", "system")),
-			mcp.WithString("requester_client_id", mcp.Description("Optional requester client identifier for operation=create")),
-			mcp.WithString("client_id", mcp.Description("Required for operation=create|claim|cancel. Requesting or requester client identifier depending on operation")),
+			mcp.WithString("requested_by_actor", mcp.Description("Optional requester actor identifier for operation=create. When acting_session_id is provided, this must be omitted or match the acting session principal id.")),
+			mcp.WithString("requested_by_type", mcp.Description("Optional requester actor type for operation=create. When acting_session_id is provided, this must be omitted or match the acting session principal type."), mcp.Enum("user", "agent", "system")),
+			mcp.WithString("requester_client_id", mcp.Description("Optional requester client identifier for operation=create. When acting_session_id is provided, this must be omitted or match the acting session client_id.")),
+			mcp.WithString("client_id", mcp.Description("Required for operation=create|claim|cancel. Requesting or requester client identifier depending on operation; optional filter for operation=list_sessions")),
 			mcp.WithString("client_type", mcp.Description("Requesting client type for operation=create")),
 			mcp.WithString("client_name", mcp.Description("Optional client display name for operation=create")),
 			mcp.WithString("requested_ttl", mcp.Description("Optional approved-session lifetime override for operation=create, for example 2h")),
 			mcp.WithString("timeout", mcp.Description("Optional pending-request timeout for operation=create, for example 30m")),
-			mcp.WithString("reason", mcp.Description("Required for operation=create. Human-readable reason shown to the approving user")),
+			mcp.WithString("reason", mcp.Description("Required for operation=create. Human-readable reason shown to the approving user; optional revoke reason for operation=revoke_session")),
 			mcp.WithString("continuation_json", mcp.Description("Optional JSON continuation payload for operation=create. If omitted, till.auth_request auto-generates a requester-owned resume_token and returns it in the create result. If provided for MCP claim/cancel flows, continuation_json.resume_token must be a non-empty string.")),
 			mcp.WithString("request_id", mcp.Description("Auth request identifier. Required for operation=get|claim|cancel")),
+			mcp.WithString("session_id", mcp.Description("Auth session identifier. Required for operation=validate_session|check_session_governance|revoke_session and optional filter for operation=list_sessions")),
+			mcp.WithString("session_secret", mcp.Description("Auth session secret. Required for operation=validate_session")),
+			mcp.WithString("acting_session_id", mcp.Description("Approved acting auth session identifier. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create")),
+			mcp.WithString("acting_session_secret", mcp.Description("Approved acting auth session secret. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create")),
 			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel. Use the token returned by operation=create when continuation_json was omitted.")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
 			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args struct {
-				Operation         string `json:"operation"`
-				ProjectID         string `json:"project_id"`
-				State             string `json:"state"`
-				Limit             int    `json:"limit"`
-				Path              string `json:"path"`
-				PrincipalID       string `json:"principal_id"`
-				PrincipalType     string `json:"principal_type"`
-				PrincipalRole     string `json:"principal_role"`
-				PrincipalName     string `json:"principal_name"`
-				RequestedByActor  string `json:"requested_by_actor"`
-				RequestedByType   string `json:"requested_by_type"`
-				RequesterClientID string `json:"requester_client_id"`
-				ClientID          string `json:"client_id"`
-				ClientType        string `json:"client_type"`
-				ClientName        string `json:"client_name"`
-				RequestedTTL      string `json:"requested_ttl"`
-				Timeout           string `json:"timeout"`
-				Reason            string `json:"reason"`
-				ContinuationJSON  string `json:"continuation_json"`
-				RequestID         string `json:"request_id"`
-				ResumeToken       string `json:"resume_token"`
-				WaitTimeout       string `json:"wait_timeout"`
-				ResolutionNote    string `json:"resolution_note"`
+				Operation           string `json:"operation"`
+				ProjectID           string `json:"project_id"`
+				State               string `json:"state"`
+				SessionState        string `json:"session_state"`
+				Limit               int    `json:"limit"`
+				Path                string `json:"path"`
+				PrincipalID         string `json:"principal_id"`
+				PrincipalType       string `json:"principal_type"`
+				PrincipalRole       string `json:"principal_role"`
+				PrincipalName       string `json:"principal_name"`
+				RequestedByActor    string `json:"requested_by_actor"`
+				RequestedByType     string `json:"requested_by_type"`
+				RequesterClientID   string `json:"requester_client_id"`
+				ClientID            string `json:"client_id"`
+				ClientType          string `json:"client_type"`
+				ClientName          string `json:"client_name"`
+				RequestedTTL        string `json:"requested_ttl"`
+				Timeout             string `json:"timeout"`
+				Reason              string `json:"reason"`
+				ContinuationJSON    string `json:"continuation_json"`
+				RequestID           string `json:"request_id"`
+				SessionID           string `json:"session_id"`
+				SessionSecret       string `json:"session_secret"`
+				ActingSessionID     string `json:"acting_session_id"`
+				ActingSessionSecret string `json:"acting_session_secret"`
+				ResumeToken         string `json:"resume_token"`
+				WaitTimeout         string `json:"wait_timeout"`
+				ResolutionNote      string `json:"resolution_note"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -157,21 +167,23 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 					return mcp.NewToolResultError(`invalid_request: required argument "reason" not found`), nil
 				}
 				record, err := authRequests.CreateAuthRequest(ctx, common.CreateAuthRequestRequest{
-					Path:              args.Path,
-					PrincipalID:       args.PrincipalID,
-					PrincipalType:     args.PrincipalType,
-					PrincipalRole:     args.PrincipalRole,
-					PrincipalName:     args.PrincipalName,
-					RequestedByActor:  args.RequestedByActor,
-					RequestedByType:   args.RequestedByType,
-					RequesterClientID: args.RequesterClientID,
-					ClientID:          args.ClientID,
-					ClientType:        args.ClientType,
-					ClientName:        args.ClientName,
-					RequestedTTL:      args.RequestedTTL,
-					Timeout:           args.Timeout,
-					Reason:            args.Reason,
-					ContinuationJSON:  args.ContinuationJSON,
+					Path:                args.Path,
+					PrincipalID:         args.PrincipalID,
+					PrincipalType:       args.PrincipalType,
+					PrincipalRole:       args.PrincipalRole,
+					PrincipalName:       args.PrincipalName,
+					ActingSessionID:     args.ActingSessionID,
+					ActingSessionSecret: args.ActingSessionSecret,
+					RequestedByActor:    args.RequestedByActor,
+					RequestedByType:     args.RequestedByType,
+					RequesterClientID:   args.RequesterClientID,
+					ClientID:            args.ClientID,
+					ClientType:          args.ClientType,
+					ClientName:          args.ClientName,
+					RequestedTTL:        args.RequestedTTL,
+					Timeout:             args.Timeout,
+					Reason:              args.Reason,
+					ContinuationJSON:    args.ContinuationJSON,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -281,6 +293,107 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				result, err := mcp.NewToolResultJSON(record)
 				if err != nil {
 					return nil, fmt.Errorf("encode auth_request cancel result: %w", err)
+				}
+				return result, nil
+			case "list_sessions":
+				actingSessionID := strings.TrimSpace(args.ActingSessionID)
+				if actingSessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
+				}
+				actingSessionSecret := strings.TrimSpace(args.ActingSessionSecret)
+				if actingSessionSecret == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
+				}
+				sessions, err := authRequests.ListAuthSessions(ctx, common.ListAuthSessionsRequest{
+					ProjectID:           args.ProjectID,
+					SessionID:           args.SessionID,
+					PrincipalID:         args.PrincipalID,
+					ClientID:            args.ClientID,
+					State:               args.SessionState,
+					Limit:               args.Limit,
+					ActingSessionID:     actingSessionID,
+					ActingSessionSecret: actingSessionSecret,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(map[string]any{"sessions": sessions})
+				if err != nil {
+					return nil, fmt.Errorf("encode auth_request list_sessions result: %w", err)
+				}
+				return result, nil
+			case "validate_session":
+				sessionID := strings.TrimSpace(args.SessionID)
+				if sessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "session_id" not found`), nil
+				}
+				sessionSecret := strings.TrimSpace(args.SessionSecret)
+				if sessionSecret == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "session_secret" not found`), nil
+				}
+				session, err := authRequests.ValidateAuthSession(ctx, common.ValidateAuthSessionRequest{
+					SessionID:     sessionID,
+					SessionSecret: sessionSecret,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(session)
+				if err != nil {
+					return nil, fmt.Errorf("encode auth_request validate_session result: %w", err)
+				}
+				return result, nil
+			case "check_session_governance":
+				sessionID := strings.TrimSpace(args.SessionID)
+				if sessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "session_id" not found`), nil
+				}
+				actingSessionID := strings.TrimSpace(args.ActingSessionID)
+				if actingSessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
+				}
+				actingSessionSecret := strings.TrimSpace(args.ActingSessionSecret)
+				if actingSessionSecret == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
+				}
+				decision, err := authRequests.CheckAuthSessionGovernance(ctx, common.CheckAuthSessionGovernanceRequest{
+					SessionID:           sessionID,
+					ActingSessionID:     actingSessionID,
+					ActingSessionSecret: actingSessionSecret,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(decision)
+				if err != nil {
+					return nil, fmt.Errorf("encode auth_request check_session_governance result: %w", err)
+				}
+				return result, nil
+			case "revoke_session":
+				sessionID := strings.TrimSpace(args.SessionID)
+				if sessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "session_id" not found`), nil
+				}
+				actingSessionID := strings.TrimSpace(args.ActingSessionID)
+				if actingSessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
+				}
+				actingSessionSecret := strings.TrimSpace(args.ActingSessionSecret)
+				if actingSessionSecret == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
+				}
+				session, err := authRequests.RevokeAuthSession(ctx, common.RevokeAuthSessionRequest{
+					SessionID:           sessionID,
+					Reason:              args.Reason,
+					ActingSessionID:     actingSessionID,
+					ActingSessionSecret: actingSessionSecret,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(session)
+				if err != nil {
+					return nil, fmt.Errorf("encode auth_request revoke_session result: %w", err)
 				}
 				return result, nil
 			default:

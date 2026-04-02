@@ -85,6 +85,10 @@ func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuth
 	if err != nil {
 		return AuthRequestRecord{}, err
 	}
+	requestedByActor, requestedByType, requesterClientID, err := a.resolveCreateAuthRequestRequester(ctx, in)
+	if err != nil {
+		return AuthRequestRecord{}, err
+	}
 	request, err := a.service.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
 		Path:                strings.TrimSpace(in.Path),
 		PrincipalID:         strings.TrimSpace(in.PrincipalID),
@@ -94,18 +98,48 @@ func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuth
 		ClientID:            strings.TrimSpace(in.ClientID),
 		ClientType:          strings.TrimSpace(in.ClientType),
 		ClientName:          strings.TrimSpace(in.ClientName),
-		RequesterClientID:   requesterClientID(in),
+		RequesterClientID:   requesterClientID,
 		RequestedSessionTTL: requestedTTL,
 		Reason:              strings.TrimSpace(in.Reason),
 		Continuation:        continuation,
-		RequestedBy:         firstNonEmptyRequestedBy(in.RequestedByActor, in.PrincipalID),
-		RequestedType:       requestedActorType(in.RequestedByType, in.PrincipalType),
+		RequestedBy:         requestedByActor,
+		RequestedType:       requestedByType,
 		Timeout:             timeout,
 	})
 	if err != nil {
 		return AuthRequestRecord{}, mapAppError("create auth request", err)
 	}
 	return mapAuthRequestRecord(request), nil
+}
+
+// resolveCreateAuthRequestRequester derives requester ownership for direct and delegated auth-request creation.
+func (a *AppServiceAdapter) resolveCreateAuthRequestRequester(ctx context.Context, in CreateAuthRequestRequest) (string, domain.ActorType, string, error) {
+	actingSessionID := strings.TrimSpace(in.ActingSessionID)
+	actingSessionSecret := strings.TrimSpace(in.ActingSessionSecret)
+	if actingSessionID == "" && actingSessionSecret == "" {
+		return firstNonEmptyRequestedBy(in.RequestedByActor, in.PrincipalID), requestedActorType(in.RequestedByType, in.PrincipalType), requesterClientID(in), nil
+	}
+	if actingSessionID == "" || actingSessionSecret == "" {
+		return "", "", "", fmt.Errorf("acting_session_id and acting_session_secret are both required for delegated auth request creation: %w", ErrInvalidCaptureStateRequest)
+	}
+	actingSession, actingPath, err := a.authorizeAuthSessionGovernance(ctx, actingSessionID, actingSessionSecret)
+	if err != nil {
+		return "", "", "", err
+	}
+	requestedPath, err := domain.ParseAuthRequestPath(strings.TrimSpace(in.Path))
+	if err != nil {
+		return "", "", "", err
+	}
+	if !authRequestPathWithin(actingPath, requestedPath) {
+		return "", "", "", ErrAuthorizationDenied
+	}
+	if err := validateDelegatedAuthRequestRequester(in, actingSession); err != nil {
+		return "", "", "", err
+	}
+	if delegatedAuthRequestIdentityDiffers(in, actingSession) && !authSessionRoleMayGovernOthers(actingSession) {
+		return "", "", "", ErrAuthorizationDenied
+	}
+	return strings.TrimSpace(actingSession.PrincipalID), domain.ActorType(strings.TrimSpace(actingSession.PrincipalType)), strings.TrimSpace(actingSession.ClientID), nil
 }
 
 // ListAuthRequests returns auth-request inventory rows from app-level APIs.
@@ -207,6 +241,300 @@ func (a *AppServiceAdapter) CancelAuthRequest(ctx context.Context, in CancelAuth
 		return AuthRequestRecord{}, mapAppError("cancel auth request", err)
 	}
 	return mapAuthRequestRecord(canceled), nil
+}
+
+// ListAuthSessions returns caller-safe auth-session inventory through app-level APIs.
+func (a *AppServiceAdapter) ListAuthSessions(ctx context.Context, in ListAuthSessionsRequest) ([]AuthSessionRecord, error) {
+	if a == nil || a.service == nil {
+		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	actingSession, actingPath, err := a.authorizeAuthSessionGovernance(ctx, in.ActingSessionID, in.ActingSessionSecret)
+	if err != nil {
+		return nil, err
+	}
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID != "" && !actingPath.MatchesProject(projectID) {
+		return nil, ErrAuthorizationDenied
+	}
+	sessionID := strings.TrimSpace(in.SessionID)
+	if !authSessionRoleMayGovernOthers(actingSession) {
+		if sessionID == "" || sessionID != strings.TrimSpace(actingSession.SessionID) {
+			return nil, ErrAuthorizationDenied
+		}
+	}
+	if projectID == "" && actingPath.Kind == domain.AuthRequestPathKindProject {
+		projectID = actingPath.ProjectID
+	}
+	sessions, err := a.service.ListAuthSessions(ctx, app.AuthSessionFilter{
+		SessionID:   sessionID,
+		ProjectID:   projectID,
+		PrincipalID: strings.TrimSpace(in.PrincipalID),
+		ClientID:    strings.TrimSpace(in.ClientID),
+		State:       strings.TrimSpace(in.State),
+		Limit:       0,
+	})
+	if err != nil {
+		return nil, mapAppError("list auth sessions", err)
+	}
+	out := make([]AuthSessionRecord, 0, len(sessions))
+	for _, session := range sessions {
+		if !authSessionWithinApprovedPath(session, actingPath) {
+			continue
+		}
+		out = append(out, mapAuthSessionRecord(session, time.Now().UTC()))
+		if in.Limit > 0 && len(out) >= in.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ValidateAuthSession validates one session/secret pair through app-level APIs.
+func (a *AppServiceAdapter) ValidateAuthSession(ctx context.Context, in ValidateAuthSessionRequest) (AuthSessionRecord, error) {
+	if a == nil || a.service == nil {
+		return AuthSessionRecord{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	sessionID := strings.TrimSpace(in.SessionID)
+	if sessionID == "" {
+		return AuthSessionRecord{}, fmt.Errorf("session_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	sessionSecret := strings.TrimSpace(in.SessionSecret)
+	if sessionSecret == "" {
+		return AuthSessionRecord{}, fmt.Errorf("session_secret is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	validated, err := a.service.ValidateAuthSession(ctx, sessionID, sessionSecret)
+	if err != nil {
+		return AuthSessionRecord{}, mapAppError("validate auth session", err)
+	}
+	return mapAuthSessionRecord(validated.Session, time.Now().UTC()), nil
+}
+
+// CheckAuthSessionGovernance returns one non-destructive auth-session governance decision.
+func (a *AppServiceAdapter) CheckAuthSessionGovernance(ctx context.Context, in CheckAuthSessionGovernanceRequest) (AuthSessionGovernanceCheckResult, error) {
+	if a == nil || a.service == nil {
+		return AuthSessionGovernanceCheckResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	targetSession, err := a.lookupAuthSessionForGovernance(ctx, in.SessionID)
+	if err != nil {
+		return AuthSessionGovernanceCheckResult{}, err
+	}
+	decision, err := a.resolveAuthSessionGovernance(ctx, in.ActingSessionID, in.ActingSessionSecret, targetSession)
+	if err != nil {
+		return AuthSessionGovernanceCheckResult{}, err
+	}
+	return decision, nil
+}
+
+// RevokeAuthSession revokes one auth session through app-level APIs.
+func (a *AppServiceAdapter) RevokeAuthSession(ctx context.Context, in RevokeAuthSessionRequest) (AuthSessionRecord, error) {
+	if a == nil || a.service == nil {
+		return AuthSessionRecord{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	targetSession, err := a.lookupAuthSessionForGovernance(ctx, in.SessionID)
+	if err != nil {
+		return AuthSessionRecord{}, err
+	}
+	decision, err := a.resolveAuthSessionGovernance(ctx, in.ActingSessionID, in.ActingSessionSecret, targetSession)
+	if err != nil {
+		return AuthSessionRecord{}, err
+	}
+	if !decision.Authorized {
+		return AuthSessionRecord{}, ErrAuthorizationDenied
+	}
+	revoked, err := a.service.RevokeAuthSession(ctx, strings.TrimSpace(in.SessionID), strings.TrimSpace(in.Reason))
+	if err != nil {
+		return AuthSessionRecord{}, mapAppError("revoke auth session", err)
+	}
+	return mapAuthSessionRecord(revoked, time.Now().UTC()), nil
+}
+
+// authorizeAuthSessionGovernance validates one acting auth session and returns its effective approved path.
+func (a *AppServiceAdapter) authorizeAuthSessionGovernance(ctx context.Context, actingSessionID, actingSessionSecret string) (app.AuthSession, domain.AuthRequestPath, error) {
+	if a == nil || a.service == nil {
+		return app.AuthSession{}, domain.AuthRequestPath{}, fmt.Errorf("auth session governance is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	if a.auth == nil {
+		return app.AuthSession{}, domain.AuthRequestPath{}, fmt.Errorf("auth session governance is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	actingSessionID = strings.TrimSpace(actingSessionID)
+	actingSessionSecret = strings.TrimSpace(actingSessionSecret)
+	if actingSessionID == "" || actingSessionSecret == "" {
+		return app.AuthSession{}, domain.AuthRequestPath{}, fmt.Errorf("acting_session_id and acting_session_secret are required: %w", ErrInvalidCaptureStateRequest)
+	}
+	validated, err := a.service.ValidateAuthSession(ctx, actingSessionID, actingSessionSecret)
+	if err != nil {
+		return app.AuthSession{}, domain.AuthRequestPath{}, mapAppError("authorize auth session governance", err)
+	}
+	actingPath, err := authSessionApprovedPath(validated.Session)
+	if err != nil {
+		return app.AuthSession{}, domain.AuthRequestPath{}, err
+	}
+	return validated.Session, actingPath, nil
+}
+
+// lookupAuthSessionForGovernance resolves one governed auth session row for check/revoke flows.
+func (a *AppServiceAdapter) lookupAuthSessionForGovernance(ctx context.Context, sessionID string) (app.AuthSession, error) {
+	if a == nil || a.service == nil {
+		return app.AuthSession{}, fmt.Errorf("auth session governance is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return app.AuthSession{}, fmt.Errorf("session_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	targetSessions, err := a.service.ListAuthSessions(ctx, app.AuthSessionFilter{SessionID: sessionID, Limit: 1})
+	if err != nil {
+		return app.AuthSession{}, mapAppError("lookup auth session", err)
+	}
+	if len(targetSessions) == 0 {
+		return app.AuthSession{}, fmt.Errorf("lookup auth session: %w", ErrNotFound)
+	}
+	return targetSessions[0], nil
+}
+
+// resolveAuthSessionGovernance evaluates whether one acting session may govern one target session.
+func (a *AppServiceAdapter) resolveAuthSessionGovernance(ctx context.Context, actingSessionID, actingSessionSecret string, targetSession app.AuthSession) (AuthSessionGovernanceCheckResult, error) {
+	actingSession, actingPath, err := a.authorizeAuthSessionGovernance(ctx, actingSessionID, actingSessionSecret)
+	if err != nil {
+		return AuthSessionGovernanceCheckResult{}, err
+	}
+	decision := AuthSessionGovernanceCheckResult{
+		Authorized:          false,
+		ActingSessionID:     strings.TrimSpace(actingSession.SessionID),
+		ActingPrincipalID:   strings.TrimSpace(actingSession.PrincipalID),
+		ActingPrincipalRole: strings.TrimSpace(actingSession.PrincipalRole),
+		ActingApprovedPath:  strings.TrimSpace(actingSession.ApprovedPath),
+		TargetSession:       mapAuthSessionRecord(targetSession, time.Now().UTC()),
+	}
+	if strings.TrimSpace(actingSession.SessionID) == strings.TrimSpace(targetSession.SessionID) {
+		decision.Authorized = true
+		decision.DecisionReason = "self"
+		return decision, nil
+	}
+	if !authSessionRoleMayGovernOthers(actingSession) {
+		decision.DecisionReason = "role_denied"
+		return decision, nil
+	}
+	if !authSessionWithinApprovedPath(targetSession, actingPath) {
+		decision.DecisionReason = "out_of_scope"
+		return decision, nil
+	}
+	decision.Authorized = true
+	decision.DecisionReason = "within_scope"
+	return decision, nil
+}
+
+// authSessionRoleMayGovernOthers reports whether one acting session may govern other sessions in-scope.
+func authSessionRoleMayGovernOthers(session app.AuthSession) bool {
+	return strings.TrimSpace(session.PrincipalRole) == string(domain.AuthRequestRoleOrchestrator)
+}
+
+// delegatedAuthRequestIdentityDiffers reports whether one delegated auth request targets a different principal/client pair.
+func delegatedAuthRequestIdentityDiffers(in CreateAuthRequestRequest, actingSession app.AuthSession) bool {
+	return strings.TrimSpace(in.PrincipalID) != strings.TrimSpace(actingSession.PrincipalID) || strings.TrimSpace(in.ClientID) != strings.TrimSpace(actingSession.ClientID)
+}
+
+// validateDelegatedAuthRequestRequester rejects caller-supplied requester metadata that disagrees with the acting session.
+func validateDelegatedAuthRequestRequester(in CreateAuthRequestRequest, actingSession app.AuthSession) error {
+	if requestedByActor := strings.TrimSpace(in.RequestedByActor); requestedByActor != "" && requestedByActor != strings.TrimSpace(actingSession.PrincipalID) {
+		return fmt.Errorf("requested_by_actor must match acting session principal for delegated auth request creation: %w", ErrInvalidCaptureStateRequest)
+	}
+	if requestedByType := strings.TrimSpace(in.RequestedByType); requestedByType != "" && requestedByType != strings.TrimSpace(actingSession.PrincipalType) {
+		return fmt.Errorf("requested_by_type must match acting session principal type for delegated auth request creation: %w", ErrInvalidCaptureStateRequest)
+	}
+	if requesterClientID := strings.TrimSpace(in.RequesterClientID); requesterClientID != "" && requesterClientID != strings.TrimSpace(actingSession.ClientID) {
+		return fmt.Errorf("requester_client_id must match acting session client_id for delegated auth request creation: %w", ErrInvalidCaptureStateRequest)
+	}
+	return nil
+}
+
+// approvedPathFromSessionMetadata parses one approved path from session metadata.
+func approvedPathFromSessionMetadata(sessionMetadata map[string]string) (domain.AuthRequestPath, error) {
+	if sessionMetadata == nil {
+		return domain.AuthRequestPath{}, fmt.Errorf("auth session governance is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	approvedPath := strings.TrimSpace(sessionMetadata["approved_path"])
+	if approvedPath == "" {
+		return domain.AuthRequestPath{}, ErrAuthorizationDenied
+	}
+	path, err := domain.ParseAuthRequestPath(approvedPath)
+	if err != nil {
+		return domain.AuthRequestPath{}, fmt.Errorf("approved_path %q is invalid: %w", approvedPath, ErrAuthorizationDenied)
+	}
+	return path, nil
+}
+
+// authSessionWithinApprovedPath reports whether one governed session row stays within the acting approved path.
+func authSessionWithinApprovedPath(session app.AuthSession, actingPath domain.AuthRequestPath) bool {
+	targetPath, err := authSessionApprovedPath(session)
+	if err != nil {
+		return false
+	}
+	return authRequestPathWithin(actingPath, targetPath)
+}
+
+// authSessionApprovedPath resolves one auth-session row back to its effective approved path.
+func authSessionApprovedPath(session app.AuthSession) (domain.AuthRequestPath, error) {
+	if approvedPath := strings.TrimSpace(session.ApprovedPath); approvedPath != "" {
+		return domain.ParseAuthRequestPath(approvedPath)
+	}
+	if projectID := strings.TrimSpace(session.ProjectID); projectID != "" {
+		return domain.AuthRequestPath{ProjectID: projectID}.Normalize()
+	}
+	return domain.AuthRequestPath{}, ErrAuthorizationDenied
+}
+
+// authRequestPathWithin reports whether candidate is equal to or narrower than requested.
+func authRequestPathWithin(requested, candidate domain.AuthRequestPath) bool {
+	requested, err := requested.Normalize()
+	if err != nil {
+		return false
+	}
+	candidate, err = candidate.Normalize()
+	if err != nil {
+		return false
+	}
+	switch requested.Kind {
+	case domain.AuthRequestPathKindGlobal:
+		return true
+	case domain.AuthRequestPathKindProjects:
+		switch candidate.Kind {
+		case domain.AuthRequestPathKindGlobal:
+			return false
+		case domain.AuthRequestPathKindProjects:
+			for _, projectID := range candidate.ProjectIDs {
+				if !requested.MatchesProject(projectID) {
+					return false
+				}
+			}
+			return len(candidate.ProjectIDs) > 0
+		default:
+			return requested.MatchesProject(candidate.ProjectID)
+		}
+	case domain.AuthRequestPathKindProject:
+	default:
+		return false
+	}
+	if requested.ProjectID != candidate.ProjectID {
+		return false
+	}
+	if requested.BranchID == "" {
+		return true
+	}
+	if requested.BranchID != candidate.BranchID {
+		return false
+	}
+	if len(requested.PhaseIDs) == 0 {
+		return true
+	}
+	if len(candidate.PhaseIDs) < len(requested.PhaseIDs) {
+		return false
+	}
+	for idx, phaseID := range requested.PhaseIDs {
+		if candidate.PhaseIDs[idx] != phaseID {
+			return false
+		}
+	}
+	return true
 }
 
 // CreateProject creates one project with optional kind and metadata.
@@ -1152,6 +1480,40 @@ func mapAuthRequestRecord(request domain.AuthRequest) AuthRequestRecord {
 		IssuedSessionID:        request.IssuedSessionID,
 		IssuedSessionExpiresAt: request.IssuedSessionExpiresAt,
 	}
+}
+
+// mapAuthSessionRecord converts one app-facing auth session into one transport-facing record.
+func mapAuthSessionRecord(session app.AuthSession, now time.Time) AuthSessionRecord {
+	return AuthSessionRecord{
+		SessionID:        strings.TrimSpace(session.SessionID),
+		State:            authSessionState(session, now),
+		ProjectID:        strings.TrimSpace(session.ProjectID),
+		AuthRequestID:    strings.TrimSpace(session.AuthRequestID),
+		ApprovedPath:     strings.TrimSpace(session.ApprovedPath),
+		PrincipalID:      strings.TrimSpace(session.PrincipalID),
+		PrincipalType:    strings.TrimSpace(session.PrincipalType),
+		PrincipalRole:    strings.TrimSpace(session.PrincipalRole),
+		PrincipalName:    strings.TrimSpace(session.PrincipalName),
+		ClientID:         strings.TrimSpace(session.ClientID),
+		ClientType:       strings.TrimSpace(session.ClientType),
+		ClientName:       strings.TrimSpace(session.ClientName),
+		IssuedAt:         session.IssuedAt.UTC(),
+		ExpiresAt:        session.ExpiresAt.UTC(),
+		LastValidatedAt:  session.LastValidatedAt,
+		RevokedAt:        session.RevokedAt,
+		RevocationReason: strings.TrimSpace(session.RevocationReason),
+	}
+}
+
+// authSessionState normalizes one auth session into the transport-facing lifecycle label.
+func authSessionState(session app.AuthSession, now time.Time) string {
+	if session.RevokedAt != nil {
+		return "revoked"
+	}
+	if !session.ExpiresAt.IsZero() && !now.Before(session.ExpiresAt.UTC()) {
+		return "expired"
+	}
+	return "active"
 }
 
 // authRequestCancelOwnershipMatches verifies one cancel request uses requester-owned continuation proof.

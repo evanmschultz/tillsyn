@@ -59,6 +59,10 @@ type stubExpandedService struct {
 	lastGetHandoffID                 string
 	lastClaimAuthRequestReq          common.ClaimAuthRequestRequest
 	lastCancelAuthRequestReq         common.CancelAuthRequestRequest
+	lastListAuthSessionsReq          common.ListAuthSessionsRequest
+	lastValidateAuthSessionReq       common.ValidateAuthSessionRequest
+	lastCheckAuthSessionReq          common.CheckAuthSessionGovernanceRequest
+	lastRevokeAuthSessionReq         common.RevokeAuthSessionRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -215,6 +219,103 @@ func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in common.Can
 		ResolutionNote:   strings.TrimSpace(in.ResolutionNote),
 		CreatedAt:        now,
 		ExpiresAt:        now.Add(30 * time.Minute),
+	}, nil
+}
+
+// ListAuthSessions returns one deterministic auth-session inventory row.
+func (s *stubExpandedService) ListAuthSessions(_ context.Context, in common.ListAuthSessionsRequest) ([]common.AuthSessionRecord, error) {
+	s.lastListAuthSessionsReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return []common.AuthSessionRecord{{
+		SessionID:     "sess-1",
+		State:         "active",
+		ProjectID:     "p1",
+		AuthRequestID: "req-1",
+		ApprovedPath:  "project/p1",
+		PrincipalID:   "review-agent",
+		PrincipalType: "agent",
+		PrincipalRole: "builder",
+		PrincipalName: "Review Agent",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+		IssuedAt:      now,
+		ExpiresAt:     now.Add(2 * time.Hour),
+	}}, nil
+}
+
+// ValidateAuthSession returns one deterministic auth-session row.
+func (s *stubExpandedService) ValidateAuthSession(_ context.Context, in common.ValidateAuthSessionRequest) (common.AuthSessionRecord, error) {
+	s.lastValidateAuthSessionReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	lastValidatedAt := now.Add(5 * time.Minute)
+	return common.AuthSessionRecord{
+		SessionID:       strings.TrimSpace(in.SessionID),
+		State:           "active",
+		ProjectID:       "p1",
+		AuthRequestID:   "req-1",
+		ApprovedPath:    "project/p1",
+		PrincipalID:     "review-agent",
+		PrincipalType:   "agent",
+		PrincipalRole:   "builder",
+		PrincipalName:   "Review Agent",
+		ClientID:        "till-mcp-stdio",
+		ClientType:      "mcp-stdio",
+		ClientName:      "Till MCP STDIO",
+		IssuedAt:        now,
+		ExpiresAt:       now.Add(2 * time.Hour),
+		LastValidatedAt: &lastValidatedAt,
+	}, nil
+}
+
+// CheckAuthSessionGovernance returns one deterministic governance-check result.
+func (s *stubExpandedService) CheckAuthSessionGovernance(_ context.Context, in common.CheckAuthSessionGovernanceRequest) (common.AuthSessionGovernanceCheckResult, error) {
+	s.lastCheckAuthSessionReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	return common.AuthSessionGovernanceCheckResult{
+		Authorized:          false,
+		DecisionReason:      "out_of_scope",
+		ActingSessionID:     strings.TrimSpace(in.ActingSessionID),
+		ActingPrincipalID:   "review-agent",
+		ActingPrincipalRole: "research",
+		ActingApprovedPath:  "project/p1",
+		TargetSession: common.AuthSessionRecord{
+			SessionID:     strings.TrimSpace(in.SessionID),
+			State:         "active",
+			ApprovedPath:  "global",
+			PrincipalID:   "global-agent",
+			PrincipalType: "agent",
+			PrincipalRole: "orchestrator",
+			ClientID:      "global-client",
+			ClientType:    "mcp-stdio",
+			IssuedAt:      now,
+			ExpiresAt:     now.Add(2 * time.Hour),
+		},
+	}, nil
+}
+
+// RevokeAuthSession returns one deterministic revoked auth-session row.
+func (s *stubExpandedService) RevokeAuthSession(_ context.Context, in common.RevokeAuthSessionRequest) (common.AuthSessionRecord, error) {
+	s.lastRevokeAuthSessionReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	revokedAt := now.Add(10 * time.Minute)
+	return common.AuthSessionRecord{
+		SessionID:        strings.TrimSpace(in.SessionID),
+		State:            "revoked",
+		ProjectID:        "p1",
+		AuthRequestID:    "req-1",
+		ApprovedPath:     "project/p1",
+		PrincipalID:      "review-agent",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		PrincipalName:    "Review Agent",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Till MCP STDIO",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(2 * time.Hour),
+		RevokedAt:        &revokedAt,
+		RevocationReason: strings.TrimSpace(in.Reason),
 	}, nil
 }
 
@@ -744,9 +845,8 @@ func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID 
 	}, nil
 }
 
-// IssueCapabilityLease returns one deterministic lease row.
-func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, in common.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	s.lastIssueLeaseReq = in
+// newStubCapabilityLease returns one deterministic lease row without mutating request capture state.
+func newStubCapabilityLease(in common.IssueCapabilityLeaseRequest) domain.CapabilityLease {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(time.Hour)
 	return domain.CapabilityLease{
@@ -760,13 +860,19 @@ func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, in common.
 		IssuedAt:    now,
 		ExpiresAt:   expiresAt,
 		HeartbeatAt: now,
-	}, nil
+	}
+}
+
+// IssueCapabilityLease returns one deterministic lease row.
+func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, in common.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+	s.lastIssueLeaseReq = in
+	return newStubCapabilityLease(in), nil
 }
 
 // ListCapabilityLeases returns one deterministic lease inventory row.
 func (s *stubExpandedService) ListCapabilityLeases(_ context.Context, in common.ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error) {
 	s.lastListLeaseReq = in
-	lease, _ := s.IssueCapabilityLease(context.Background(), common.IssueCapabilityLeaseRequest{})
+	lease := newStubCapabilityLease(common.IssueCapabilityLeaseRequest{})
 	if in.IncludeRevoked {
 		revokedAt := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
 		revoked := lease
@@ -781,17 +887,17 @@ func (s *stubExpandedService) ListCapabilityLeases(_ context.Context, in common.
 
 // HeartbeatCapabilityLease returns one deterministic lease row.
 func (s *stubExpandedService) HeartbeatCapabilityLease(_ context.Context, _ common.HeartbeatCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	return s.IssueCapabilityLease(context.Background(), common.IssueCapabilityLeaseRequest{})
+	return newStubCapabilityLease(common.IssueCapabilityLeaseRequest{}), nil
 }
 
 // RenewCapabilityLease returns one deterministic lease row.
 func (s *stubExpandedService) RenewCapabilityLease(_ context.Context, _ common.RenewCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	return s.IssueCapabilityLease(context.Background(), common.IssueCapabilityLeaseRequest{})
+	return newStubCapabilityLease(common.IssueCapabilityLeaseRequest{}), nil
 }
 
 // RevokeCapabilityLease returns one deterministic lease row.
 func (s *stubExpandedService) RevokeCapabilityLease(_ context.Context, _ common.RevokeCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	lease, _ := s.IssueCapabilityLease(context.Background(), common.IssueCapabilityLeaseRequest{})
+	lease := newStubCapabilityLease(common.IssueCapabilityLeaseRequest{})
 	now := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
 	lease.RevokedAt = &now
 	lease.RevokedReason = "test revoke"
@@ -1102,6 +1208,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"path":           "project/p1",
 			"principal_id":   "review-agent",
 			"principal_type": "agent",
+			"principal_role": "research",
 			"client_id":      "till-mcp-stdio",
 			"client_type":    "mcp-stdio",
 			"requested_ttl":  "2h",
@@ -1112,6 +1219,12 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.auth_request", args: map[string]any{"operation": "get", "request_id": "req-1"}},
 		{name: "till.auth_request", args: map[string]any{"operation": "claim", "request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio"}},
 		{name: "till.auth_request", args: map[string]any{"operation": "cancel", "request_id": "req-1", "resume_token": "resume-123", "principal_id": "review-agent", "client_id": "till-mcp-stdio", "resolution_note": "superseded"}},
+		{name: "till.auth_request", args: map[string]any{
+			"operation":             "check_session_governance",
+			"session_id":            "sess-global",
+			"acting_session_id":     "sess-1",
+			"acting_session_secret": "secret-1",
+		}},
 		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
 		{name: "till.plan_item", args: map[string]any{"operation": "get", "task_id": "t1"}},
 		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
@@ -1206,7 +1319,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
 		{name: "till.embeddings", args: map[string]any{"operation": "reindex", "project_id": "p1", "wait": true}},
 		{name: "till.capability_lease", args: map[string]any{"operation": "list", "project_id": "p1", "scope_type": "project", "include_revoked": true}},
-		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "issue", "project_id": "p1", "scope_type": "project", "role": "builder", "agent_name": "agent-1"})},
+		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "issue", "project_id": "p1", "scope_type": "project", "role": "research", "agent_name": "agent-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "heartbeat", "agent_instance_id": "inst-1", "lease_token": "tok-1"})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "renew", "agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60})},
 		{name: "till.capability_lease", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "revoke", "agent_instance_id": "inst-1"})},
@@ -1275,6 +1388,18 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	}
 	if got := service.lastApproveTemplateMigrationsReq.TaskIDs; !slices.Equal(got, []string{"task-qa-1"}) {
 		t.Fatalf("approve_template_migrations task_ids = %#v, want [task-qa-1]", got)
+	}
+	if got := service.lastCreateAuthRequestReq.PrincipalRole; got != "research" {
+		t.Fatalf("create auth request principal_role = %q, want research", got)
+	}
+	if got := service.lastCheckAuthSessionReq.SessionID; got != "sess-global" {
+		t.Fatalf("check_session_governance session_id = %q, want sess-global", got)
+	}
+	if got := service.lastCheckAuthSessionReq.ActingSessionID; got != "sess-1" {
+		t.Fatalf("check_session_governance acting_session_id = %q, want sess-1", got)
+	}
+	if got := service.lastIssueLeaseReq.Role; got != "research" {
+		t.Fatalf("issue capability lease role = %q, want research", got)
 	}
 }
 
