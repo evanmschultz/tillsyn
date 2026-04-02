@@ -2634,9 +2634,8 @@ func (m Model) loadData() tea.Msg {
 		projectAttention, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
 			Level: domain.LevelTupleInput{
 				ProjectID: project.ID,
-				ScopeType: domain.ScopeLevelProject,
-				ScopeID:   project.ID,
 			},
+			AllScopes:      true,
 			UnresolvedOnly: true,
 			Limit:          256,
 		})
@@ -2675,9 +2674,8 @@ func (m Model) loadData() tea.Msg {
 	globalAttention, globalAttentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: domain.AuthRequestGlobalProjectID,
-			ScopeType: domain.ScopeLevelProject,
-			ScopeID:   domain.AuthRequestGlobalProjectID,
 		},
+		AllScopes:      true,
 		UnresolvedOnly: true,
 		Limit:          256,
 	})
@@ -15029,7 +15027,7 @@ func (m Model) scopeAttentionSummary(byID map[string]domain.Task) (int, int, int
 func buildScopeWarnings(attentionItemsCount, attentionUserActionCount, globalNoticesPartialCount int) []string {
 	warnings := make([]string, 0, 3)
 	if attentionItemsCount > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d work items report open blockers", attentionItemsCount))
+		warnings = append(warnings, fmt.Sprintf("%d open attention items in scope", attentionItemsCount))
 	}
 	if attentionUserActionCount > 0 {
 		warnings = append(warnings, fmt.Sprintf("%d attention items require user action", attentionUserActionCount))

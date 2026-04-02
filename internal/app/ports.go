@@ -45,6 +45,7 @@ type Repository interface {
 	ListCommentTargets(context.Context, string) ([]domain.CommentTarget, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	CreateAttentionItem(context.Context, domain.AttentionItem) error
+	UpsertAttentionItem(context.Context, domain.AttentionItem) error
 	GetAttentionItem(context.Context, string) (domain.AttentionItem, error)
 	ListAttentionItems(context.Context, domain.AttentionListFilter) ([]domain.AttentionItem, error)
 	ResolveAttentionItem(context.Context, string, string, domain.ActorType, time.Time) (domain.AttentionItem, error)

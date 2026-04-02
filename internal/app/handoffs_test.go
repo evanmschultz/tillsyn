@@ -79,6 +79,70 @@ func TestServiceHandoffLifecycle(t *testing.T) {
 	}
 }
 
+// TestServiceHandoffLifecycleSyncsInboxAttention verifies routed handoffs mirror into one updatable inbox attention row.
+func TestServiceHandoffLifecycleSyncsInboxAttention(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 3, 21, 13, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("project-1", "Project", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	repo.projects[project.ID] = project
+
+	svc := NewService(repo, func() string { return "handoff-inbox" }, func() time.Time { return now }, ServiceConfig{})
+	handoff, err := svc.CreateHandoff(context.Background(), CreateHandoffInput{
+		Level:           domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
+		SourceRole:      "orchestrator",
+		TargetScopeType: domain.ScopeLevelTask,
+		TargetScopeID:   "task-1",
+		TargetRole:      "dev",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "Builder should take the next pass",
+		NextAction:      "Implement the follow-up",
+		CreatedBy:       "user-1",
+		CreatedType:     domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateHandoff() error = %v", err)
+	}
+
+	mirrored, ok := repo.attentionItems[handoff.ID+"::handoff"]
+	if !ok {
+		t.Fatalf("expected mirrored handoff attention item, got %#v", repo.attentionItems)
+	}
+	if mirrored.Kind != domain.AttentionKindHandoff || mirrored.TargetRole != "builder" {
+		t.Fatalf("unexpected mirrored handoff attention %#v", mirrored)
+	}
+	if mirrored.State != domain.AttentionStateOpen || !mirrored.RequiresUserAction {
+		t.Fatalf("expected open routed handoff attention, got %#v", mirrored)
+	}
+	if mirrored.ScopeType != domain.ScopeLevelTask || mirrored.ScopeID != "task-1" {
+		t.Fatalf("expected target task scope for mirrored handoff, got %#v", mirrored)
+	}
+
+	svc.clock = func() time.Time { return now.Add(5 * time.Minute) }
+	updated, err := svc.UpdateHandoff(context.Background(), UpdateHandoffInput{
+		HandoffID:      handoff.ID,
+		Status:         domain.HandoffStatusResolved,
+		Summary:        "Builder completed the pass",
+		UpdatedBy:      "qa-1",
+		UpdatedType:    domain.ActorTypeUser,
+		ResolvedBy:     "qa-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "verified",
+	})
+	if err != nil {
+		t.Fatalf("UpdateHandoff() error = %v", err)
+	}
+	resolved := repo.attentionItems[updated.ID+"::handoff"]
+	if resolved.State != domain.AttentionStateResolved || resolved.ResolvedAt == nil {
+		t.Fatalf("expected resolved mirrored handoff attention, got %#v", resolved)
+	}
+	if resolved.TargetRole != "builder" {
+		t.Fatalf("expected canonical target role preserved, got %#v", resolved)
+	}
+}
+
 // TestServiceCreateHandoffUsesResolvedMutationActor verifies context identity wins for persisted attribution.
 func TestServiceCreateHandoffUsesResolvedMutationActor(t *testing.T) {
 	repo := newFakeRepo()

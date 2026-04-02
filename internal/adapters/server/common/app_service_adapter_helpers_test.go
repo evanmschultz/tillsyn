@@ -121,6 +121,36 @@ func TestNormalizeAttentionStateFilter(t *testing.T) {
 	}
 }
 
+// TestNormalizeAttentionListRequest verifies inbox-style project-wide listing normalization and validation.
+func TestNormalizeAttentionListRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := normalizeAttentionListRequest(ListAttentionItemsRequest{
+		ProjectID:  "p1",
+		AllScopes:  true,
+		TargetRole: "dev",
+	})
+	if err != nil {
+		t.Fatalf("normalizeAttentionListRequest(all_scopes) error = %v", err)
+	}
+	if req.ScopeType != "" || req.ScopeID != "" {
+		t.Fatalf("normalizeAttentionListRequest(all_scopes) scope = (%q, %q), want empty", req.ScopeType, req.ScopeID)
+	}
+	if req.TargetRole != "dev" {
+		t.Fatalf("normalizeAttentionListRequest(all_scopes) target_role = %q, want dev passthrough", req.TargetRole)
+	}
+
+	_, err = normalizeAttentionListRequest(ListAttentionItemsRequest{
+		ProjectID: "p1",
+		AllScopes: true,
+		ScopeType: ScopeTypeTask,
+		ScopeID:   "t1",
+	})
+	if !errors.Is(err, ErrUnsupportedScope) {
+		t.Fatalf("normalizeAttentionListRequest(all_scopes with scope) error = %v, want ErrUnsupportedScope", err)
+	}
+}
+
 // TestBuildScopePathFromLevel verifies project and nested scope nodes are deterministic.
 func TestBuildScopePathFromLevel(t *testing.T) {
 	t.Parallel()

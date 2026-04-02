@@ -55,6 +55,10 @@ Implemented now:
 - Board path context is always visible above columns (`path: project -> ...`) and updates on each `f` drill-down.
 - Board cards now include hierarchy markers in metadata (`[branch|...]` / `[phase|...]`) so branch/phase rows are visually distinct from task rows.
 - Wide layouts render a right-side notices panel with unresolved attention summary, selected-item context, and recent activity hints.
+- Attention is now the durable inbox substrate for routed coordination:
+  - comment mentions for `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research` materialize as role-targeted attention rows (`@dev` aliases to builder),
+  - durable handoffs mirror into stable inbox attention rows for the target role,
+  - and project/global notifications now load project-wide unresolved attention instead of only project-root attention.
 - `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
@@ -81,7 +85,7 @@ Implemented now:
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
-- broader wait/notify reuse beyond auth, including comment/handoff wakeups, richer disconnect-aware cleanup, and later HTTP/continuous-listening transport support
+- broader wait/notify reuse beyond auth, including live comment/handoff wakeups on top of the landed durable inbox routing, richer disconnect-aware cleanup, and later HTTP/continuous-listening transport support
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
@@ -167,10 +171,13 @@ Current auth note:
   - comments should be allowed anywhere inside the caller's approved scope subtree, which means parallel/sibling commenting is fine when the approved scope already covers both nodes.
   - if a caller does not hold scope broad enough for the affected sibling/parallel node, the preferred escalation path is still handoff or attention rather than silently widening comment reach.
 - Mentions/notifications direction:
-  - mentions are still desirable, but as a later routed-notification slice rather than part of the current reduction wave.
-  - actor-kind or role-style mention targets such as `@human`, `@orchestrator`, `@qa`, and `@builder` are the preferred starting point.
-  - the current cross-process wake path is only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
-  - the product direction is still that important routed notifications should be automatic and not require every agent to remember a manual polling tool, but that inbox/wake model is a later dedicated slice.
+  - routed inbox attention is now landed on the frozen surface without adding a new top-level tool:
+    - comment mentions for `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research` sync into role-targeted `attention` rows,
+    - durable handoffs sync into one stable target-role inbox attention row,
+    - `till.attention_item(operation=list)` now supports project-wide reads plus `target_role` filtering through `all_scopes` and `target_role`,
+    - and the TUI notices panels consume project-wide unresolved attention so routed inbox items surface naturally in project/global notifications.
+  - the current cross-process wake path is still only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
+  - the next wait/notify slice should reuse the same inbox substrate instead of inventing a second notification model.
 - Current remaining dogfood order:
   - first land mentions/notifications/inbox and broader wait/notify reuse beyond auth;
   - then expand scoped `till.get_instructions`, collapse bootstrap into that richer surface later, and close with one final collaborative dogfood hardening pass.

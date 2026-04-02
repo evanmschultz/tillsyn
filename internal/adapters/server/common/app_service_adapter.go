@@ -133,6 +133,8 @@ func (a *AppServiceAdapter) ListAttentionItems(ctx context.Context, in ListAtten
 			ScopeType: domain.ScopeLevel(req.ScopeType),
 			ScopeID:   req.ScopeID,
 		},
+		AllScopes:  req.AllScopes,
+		TargetRole: req.TargetRole,
 	}
 	if req.State != "" {
 		listInput.States = []domain.AttentionState{domain.AttentionState(req.State)}
@@ -170,6 +172,7 @@ func (a *AppServiceAdapter) RaiseAttentionItem(ctx context.Context, in RaiseAtte
 		Kind:               domain.AttentionKind(req.Kind),
 		Summary:            req.Summary,
 		BodyMarkdown:       req.BodyMarkdown,
+		TargetRole:         req.TargetRole,
 		RequiresUserAction: req.RequiresUserAction,
 		CreatedBy:          actorID,
 		CreatedType:        actorType,
@@ -221,20 +224,31 @@ func (a *AppServiceAdapter) lookupProject(ctx context.Context, projectID string)
 
 // normalizeAttentionListRequest validates and canonicalizes list_attention_items input.
 func normalizeAttentionListRequest(in ListAttentionItemsRequest) (ListAttentionItemsRequest, error) {
-	projectID, scopeType, scopeID, err := normalizeScopeTuple(in.ProjectID, in.ScopeType, in.ScopeID)
-	if err != nil {
-		return ListAttentionItemsRequest{}, err
-	}
-
 	state, err := normalizeAttentionStateFilter(in.State)
 	if err != nil {
 		return ListAttentionItemsRequest{}, err
 	}
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID == "" {
+		return ListAttentionItemsRequest{}, fmt.Errorf("project_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	scopeType := strings.ToLower(strings.TrimSpace(in.ScopeType))
+	scopeID := strings.TrimSpace(in.ScopeID)
+	if !in.AllScopes {
+		projectID, scopeType, scopeID, err = normalizeScopeTuple(projectID, scopeType, scopeID)
+		if err != nil {
+			return ListAttentionItemsRequest{}, err
+		}
+	} else if scopeType != "" || scopeID != "" {
+		return ListAttentionItemsRequest{}, fmt.Errorf("scope_type and scope_id are unsupported when all_scopes is true: %w", ErrUnsupportedScope)
+	}
 	return ListAttentionItemsRequest{
-		ProjectID: projectID,
-		ScopeType: scopeType,
-		ScopeID:   scopeID,
-		State:     state,
+		ProjectID:  projectID,
+		ScopeType:  scopeType,
+		ScopeID:    scopeID,
+		State:      state,
+		AllScopes:  in.AllScopes,
+		TargetRole: strings.TrimSpace(strings.ToLower(in.TargetRole)),
 	}, nil
 }
 
@@ -271,6 +285,7 @@ func normalizeRaiseAttentionItemRequest(in RaiseAttentionItemRequest) (RaiseAtte
 		Kind:               kind,
 		Summary:            summary,
 		BodyMarkdown:       strings.TrimSpace(in.BodyMarkdown),
+		TargetRole:         strings.TrimSpace(strings.ToLower(in.TargetRole)),
 		RequiresUserAction: in.RequiresUserAction,
 		Actor:              in.Actor,
 	}, nil
@@ -522,6 +537,7 @@ func mapDomainAttentionItem(item domain.AttentionItem) AttentionItem {
 		Kind:               string(domain.NormalizeAttentionKind(item.Kind)),
 		Summary:            item.Summary,
 		BodyMarkdown:       item.BodyMarkdown,
+		TargetRole:         item.TargetRole,
 		RequiresUserAction: item.RequiresUserAction,
 		CreatedAt:          item.CreatedAt.UTC(),
 		ResolvedAt:         item.ResolvedAt,

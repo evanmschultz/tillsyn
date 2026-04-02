@@ -2105,6 +2105,108 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 	})
 }
 
+// TestRepository_AttentionItemProjectWideRoleFilterAndUpsert verifies inbox-style role filtering and handoff-style upserts.
+func TestRepository_AttentionItemProjectWideRoleFilterAndUpsert(t *testing.T) {
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	ctx := context.Background()
+	now := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-inbox", "Inbox", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	mention, err := domain.NewAttentionItem(domain.AttentionItemInput{
+		ID:                 "attn-mention",
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelTask,
+		ScopeID:            "task-1",
+		Kind:               domain.AttentionKindMention,
+		Summary:            "mention for qa",
+		BodyMarkdown:       "Please review.",
+		TargetRole:         "qa",
+		RequiresUserAction: false,
+		CreatedByActor:     "user-1",
+		CreatedByType:      domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAttentionItem(mention) error = %v", err)
+	}
+	if err := repo.CreateAttentionItem(ctx, mention); err != nil {
+		t.Fatalf("CreateAttentionItem(mention) error = %v", err)
+	}
+
+	handoff, err := domain.NewAttentionItem(domain.AttentionItemInput{
+		ID:                 "attn-handoff",
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelBranch,
+		ScopeID:            "branch-1",
+		Kind:               domain.AttentionKindHandoff,
+		Summary:            "handoff for builder",
+		BodyMarkdown:       "Implement the next pass.",
+		TargetRole:         "dev",
+		RequiresUserAction: true,
+		CreatedByActor:     "orch-1",
+		CreatedByType:      domain.ActorTypeAgent,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("NewAttentionItem(handoff) error = %v", err)
+	}
+	if err := repo.UpsertAttentionItem(ctx, handoff); err != nil {
+		t.Fatalf("UpsertAttentionItem(open) error = %v", err)
+	}
+
+	builderRows, err := repo.ListAttentionItems(ctx, domain.AttentionListFilter{
+		ProjectID:      project.ID,
+		UnresolvedOnly: true,
+		TargetRole:     "builder",
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(builder project-wide) error = %v", err)
+	}
+	if len(builderRows) != 1 || builderRows[0].ID != handoff.ID || builderRows[0].TargetRole != "builder" {
+		t.Fatalf("expected one canonical builder inbox row, got %#v", builderRows)
+	}
+
+	qaRows, err := repo.ListAttentionItems(ctx, domain.AttentionListFilter{
+		ProjectID:      project.ID,
+		UnresolvedOnly: true,
+		TargetRole:     "qa",
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(qa project-wide) error = %v", err)
+	}
+	if len(qaRows) != 1 || qaRows[0].ID != mention.ID {
+		t.Fatalf("expected one qa mention row, got %#v", qaRows)
+	}
+
+	handoff.State = domain.AttentionStateResolved
+	resolvedAt := now.Add(2 * time.Minute)
+	handoff.ResolvedAt = &resolvedAt
+	handoff.ResolvedByActor = "qa-1"
+	handoff.ResolvedByType = domain.ActorTypeUser
+	if err := repo.UpsertAttentionItem(ctx, handoff); err != nil {
+		t.Fatalf("UpsertAttentionItem(resolved) error = %v", err)
+	}
+
+	builderRows, err = repo.ListAttentionItems(ctx, domain.AttentionListFilter{
+		ProjectID:      project.ID,
+		UnresolvedOnly: true,
+		TargetRole:     "builder",
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(builder after resolve) error = %v", err)
+	}
+	if len(builderRows) != 0 {
+		t.Fatalf("expected resolved upsert to disappear from unresolved inbox, got %#v", builderRows)
+	}
+}
+
 // TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport verifies seeded defaults include nested phase support.
 func TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport(t *testing.T) {
 	ctx := context.Background()

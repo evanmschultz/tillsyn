@@ -12757,7 +12757,7 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if strings.Contains(rendered, "Notices\nproject:") || strings.Contains(rendered, "Notices\r\nproject:") {
 		t.Fatalf("expected legacy notices fallback block to be absent, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "work items") {
+	if !strings.Contains(rendered, "open attention items in scope") {
 		t.Fatalf("expected blocker warning in notices panel, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "attention items") {
