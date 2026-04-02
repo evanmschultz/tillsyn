@@ -393,6 +393,8 @@ Remaining slices after the fresh live wake verification:
      - project-scoped rules,
      - branch/phase/task/subtask rule overlays,
      - and the effective inherited rule set for one concrete node.
+   - Add a dedicated project view mode alongside project edit mode so humans can inspect project metadata, template binding, and drift/update state without dropping straight into an editor.
+   - In that later TUI pass, surface project template drift/update visibility in project view as well as project edit so update-available state is obvious without opening the edit workflow.
    - When the canonical `tillsyn` dogfood project/task tree is loaded into the DB, add one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker component so project root selection uses the picker instead of manual path entry.
    - Design composable template layering instead of one flat template choice:
      - a project should be able to inherit a general template such as `go` plus one or more narrower overlays such as `go cli/tui`, `go backend`, or `go wasm`,
