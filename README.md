@@ -346,6 +346,8 @@ After the current active slices close, run one cleanup/refinement wave focused o
   - project-scoped rules,
   - branch/phase/task/subtask rule overlays,
   - and the effective inherited rule view for one concrete node.
+- add a dedicated project view mode alongside project edit mode so humans can inspect project metadata, template binding, and drift/update state without dropping straight into an editor.
+- in that later TUI pass, surface project template drift/update visibility in project view as well as project edit so update-available state is obvious without opening the edit workflow.
 - when the canonical `tillsyn` dogfood project/task tree is loaded into the DB, include one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker flow so the field uses the same picker component instead of manual path entry.
 - design and implement composable template layering rather than one flat template choice:
   - one project should be able to inherit general `go` rules plus a narrower layer such as `go cli/tui`, `go backend`, or `go wasm`,
