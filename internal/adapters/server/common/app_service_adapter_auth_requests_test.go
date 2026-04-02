@@ -284,6 +284,46 @@ func TestAppServiceAdapterCreateAuthRequestRejectsBadContinuationJSON(t *testing
 	if err == nil || !strings.Contains(err.Error(), "continuation_json") {
 		t.Fatalf("CreateAuthRequest() error = %v, want continuation_json validation", err)
 	}
+
+	_, err = adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "review-agent",
+		ClientID:         "till-mcp-stdio",
+		Reason:           "manual MCP review",
+		ContinuationJSON: `{"resume_tool":"till.plan_item"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "continuation_json.resume_token") {
+		t.Fatalf("CreateAuthRequest() error = %v, want continuation_json.resume_token validation", err)
+	}
+}
+
+// TestAppServiceAdapterCreateAuthRequestAutoGeneratesResumeToken verifies MCP create flows become claimable by default when continuation_json is omitted.
+func TestAppServiceAdapterCreateAuthRequestAutoGeneratesResumeToken(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	created, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "review-agent",
+		PrincipalType:    "agent",
+		ClientID:         "till-mcp-stdio",
+		ClientType:       "mcp-stdio",
+		Reason:           "manual MCP review",
+		RequestedByActor: "orchestrator-1",
+		RequestedByType:  "agent",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if !created.HasContinuation {
+		t.Fatal("CreateAuthRequest() has_continuation = false, want true")
+	}
+	resumeToken := strings.TrimSpace(authRequestResumeToken(created.Continuation))
+	if resumeToken == "" {
+		t.Fatal("CreateAuthRequest() continuation missing auto-generated resume_token")
+	}
+	if got := created.Continuation[app.AuthRequestContinuationRequesterClientIDKey]; got != "till-mcp-stdio" {
+		t.Fatalf("CreateAuthRequest() continuation requester client = %#v, want till-mcp-stdio", got)
+	}
 }
 
 // TestAppServiceAdapterCreateAuthRequestRejectsInvalidRole verifies unsupported auth-request roles fail as invalid transport input.

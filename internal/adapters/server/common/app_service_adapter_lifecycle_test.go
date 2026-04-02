@@ -252,8 +252,8 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if !containsStep(guide.NextSteps, "approved", "create a project") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want approved-session project guidance", guide.NextSteps)
 	}
-	if !containsStep(guide.NextSteps, "till.auth_request(operation=create)", "resume_token", "continuation_json") {
-		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want auth-request continuation guidance", guide.NextSteps)
+	if !containsStep(guide.NextSteps, "till.auth_request(operation=create)", "auto-generate", "resume_token") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want auth-request auto-generation guidance", guide.NextSteps)
 	}
 	if !containsStep(guide.NextSteps, "till.auth_request(operation=claim)", "till.project(operation=create)") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want claim -> project create guidance", guide.NextSteps)
