@@ -746,6 +746,15 @@ func collectNodeScopedRules(project domain.Project, task domain.Task) []string {
 	if validation := strings.TrimSpace(task.Metadata.ValidationPlan); validation != "" {
 		rules = append(rules, "Validation plan: "+validation)
 	}
+	if len(task.Metadata.DependsOn) > 0 {
+		rules = append(rules, fmt.Sprintf("Depends on: %s. Treat these as prerequisites before starting or closing this node.", strings.Join(task.Metadata.DependsOn, ", ")))
+	}
+	if len(task.Metadata.BlockedBy) > 0 {
+		rules = append(rules, fmt.Sprintf("Blocked by: %s. This node should remain blocked until those dependencies are resolved.", strings.Join(task.Metadata.BlockedBy, ", ")))
+	}
+	if blockedReason := strings.TrimSpace(task.Metadata.BlockedReason); blockedReason != "" {
+		rules = append(rules, "Blocked reason: "+blockedReason)
+	}
 	if len(task.Metadata.CommandSnippets) > 0 {
 		rules = append(rules, fmt.Sprintf("Command snippets are attached to this node: %s.", strings.Join(task.Metadata.CommandSnippets, ", ")))
 	}
@@ -770,6 +779,9 @@ func collectNodeWorkflowContract(task domain.Task, kind domain.KindDefinition, k
 			fmt.Sprintf("Required for parent done: %t.", snapshot.RequiredForParentDone),
 			fmt.Sprintf("Required for containing done: %t.", snapshot.RequiredForContainingDone),
 		)
+	}
+	if len(task.Metadata.DependsOn) > 0 || len(task.Metadata.BlockedBy) > 0 {
+		contract = append(contract, "Task-level sequencing is currently expressed through depends_on, blocked_by, and blocked_reason rather than visual board order alone.")
 	}
 	if !snapshotFound {
 		contract = append(contract, "No stored node-contract snapshot exists for this node, so only project, kind, and node-local metadata rules apply.")

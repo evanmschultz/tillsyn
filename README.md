@@ -273,6 +273,7 @@ Template-library operator examples:
   - `PROJECT SETUP` is project-only onboarding work for new or adopted projects,
   - normal branch/work execution should flow through `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
   - the preferred operator flow is to create or confirm `PLAN` before broad implementation begins,
+  - until richer workflow ordering rules land, task-level sequencing should be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete,
   - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`.
 - Example shape:
   - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
@@ -330,6 +331,7 @@ Instruction-tool usage guidance:
 - Use `include_markdown=false` for inventory checks and `include_markdown=true` when full markdown text is required.
 - Descriptions/details and comment summary/body fields are markdown-first authoring surfaces.
 - Use `focus=project|template|kind|node` with `project_id`, `template_library_id`, `kind_id`, or `node_id` when you need scoped rules for a real runtime object instead of generic doc guidance.
+- For task sequencing today, use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite order and keep downstream work from starting too early; visual reordering can remain a later enhancement but should not replace explicit dependency intent.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
@@ -338,11 +340,13 @@ Roadmap-only in the active wave (explicitly deferred):
 
 After the current active slices close, run one cleanup/refinement wave focused on real dogfood usage:
 - clean/refresh the local dogfood DB and create the canonical `tillsyn` project/task tree that will be used for real collaborative dogfooding.
+- during that dogfood wave, test task sequencing explicitly with `depends_on`, `blocked_by`, and `blocked_reason`, then discuss whether CLI/MCP/TUI should also gain first-class visual reordering semantics in addition to dependency-driven ordering.
 - add intuitive non-JSON TUI/operator surfaces for viewing and editing workflow rules and template policy:
   - global template rules,
   - project-scoped rules,
   - branch/phase/task/subtask rule overlays,
   - and the effective inherited rule view for one concrete node.
+- when the canonical `tillsyn` dogfood project/task tree is loaded into the DB, include one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker flow so the field uses the same picker component instead of manual path entry.
 - design and implement composable template layering rather than one flat template choice:
   - one project should be able to inherit general `go` rules plus a narrower layer such as `go cli/tui`, `go backend`, or `go wasm`,
   - child template layers should be able to override or extend parent defaults instead of forcing duplicated whole-template copies,
