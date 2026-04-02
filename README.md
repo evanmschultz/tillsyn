@@ -131,6 +131,9 @@ Current auth note:
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
   - do not treat the global-to-project auth split as a runtime bug.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
+- `till.capability_lease(operation=issue)` now follows that same rule directly:
+  - for authenticated agent sessions, the issued lease identity is derived from the authenticated principal instead of trusting a caller-supplied `agent_name`;
+  - explicit `agent_name` remains relevant only for non-agent/operator lease issuance paths.
 - Default surface note:
   - `till.auth_request` now owns auth-request create, list, get, claim, and cancel;
   - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
