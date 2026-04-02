@@ -2,7 +2,39 @@
 
 Created: 2026-02-21
 Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, and routed mentions/inbox attention. The latest closeout on top of that landed a stdio-local auth-context handle path so normal MCP mutations no longer need inline session secrets after claim/validate, and project edit now exposes a direct comments-thread row. The next remaining work is broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, and final collaborative hardening.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, and routed mentions/inbox attention. The latest closeout on top of that landed a stdio-local auth-context handle path so normal MCP mutations no longer need inline session secrets after claim/validate, and project edit now exposes a direct comments-thread row. The next remaining work is broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset and notification polish.
+
+## Checkpoint 2026-04-02: Coordination Guidance Clarification And Cleanup Follow-Through Planning
+
+Objective:
+- remove the remaining operator confusion between comments, mentions, and action-required rows by tightening the MCP tool/bootstrap/instructions guidance and by recording the later cleanup/refinement wave explicitly in the roadmap.
+
+Context7:
+1. Reviewed `/mark3labs/mcp-go` for concise MCP tool and argument description patterns before patching the runtime-facing tool text.
+
+Implementation summary:
+1. Tightened the MCP instruction/bootstrap/tool descriptions so the shipped runtime guidance now states the coordination model explicitly:
+   - comments are the shared append-only discussion lane,
+   - role mentions create viewer-scoped comment inbox rows,
+   - handoffs are the structured next-action lane and the normal source of `Action Required`,
+   - and `attention` is the durable substrate underneath routed comments, handoffs, and later notification rows.
+2. Updated the embedded recommendation text in `till.get_instructions` so agent-facing guidance now names the supported role mentions directly:
+   - `@human`, `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research`,
+   - with `@dev` normalized to builder.
+3. Updated the canonical docs to remove ambiguity:
+   - README now includes an explicit coordination primer and a direct note that `Action Required` should be interpreted as open handoffs or other explicit work requests rather than ordinary comments,
+   - README and PLAN now both carry the later cleanup/refinement wave for production dogfood follow-through.
+4. Captured the later cleanup/refinement wave so it does not get lost after the active slices:
+   - clean/refresh the DB and create the canonical `tillsyn` dogfood project/task tree,
+   - move `Action Required` to the top of project notifications,
+   - add configurable notification color with orange as the first dogfood candidate,
+   - highlight `@human` mentions in rendered markdown,
+   - wire local terminal/OS notifications for mentions and other attention-worthy rows,
+   - and keep kind labeling, unread/history, and noise-control follow-through explicit.
+
+Outcome:
+1. The runtime-facing docs now match the actual coordination semantics more closely, so agents and operators should not have to infer the intended workflow from implementation details.
+2. The later cleanup/refinement wave is now part of the tracked roadmap instead of an oral reminder.
 
 ## Checkpoint 2026-04-02: StdIO Auth Context Handles And Project Edit Comments
 
@@ -91,6 +123,8 @@ Remaining slices after the live MCP auth-session parity check:
    - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
 4. Final collaborative dogfood hardening and closeout.
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
+5. Cleanup/refinement after the active slices close.
+   - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, move `Action Required` to the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
 
 ## Checkpoint 2026-04-01: Routed Mentions Notifications And Inbox
 
@@ -121,6 +155,10 @@ Implementation summary:
    - routed mentions support `@research`,
    - auth/lease role docs continue to expose `research`,
    - `planner` remains a non-runtime concept.
+6. Follow-up UX direction before the next slice:
+   - routed comment mentions should move out of generic `Warnings` rows and into a dedicated `Comments` notifications section,
+   - that comments section should only surface mentions that match the current viewer identity/role,
+   - and individual comment-inbox rows should be clearable one at a time after review.
 
 Validation:
 1. `mage test-pkg ./internal/adapters/storage/sqlite` -> PASS (68 tests).
@@ -276,6 +314,84 @@ Live MCP cleanup evidence:
 Outcome:
 1. The disposable live auth evidence for this slice has been cleaned up without touching the unrelated ambient operator sessions.
 2. The worktree is ready for a local commit and the next mentions/notifications/inbox implementation slice.
+
+## Checkpoint 2026-04-02: Live Agent-Agent Comments And Inbox Verification
+
+Objective:
+- prove on the native MCP surface that bounded orchestrator, builder, QA, and research sessions can use comments, mentions, handoffs, and inbox attention together on one real project scope, and verify that routed comment mentions clear one at a time.
+
+Context7:
+1. Rechecked `/golang/go` before the final docs/log updates after the live runtime guard failure and recovery.
+
+Live MCP setup:
+1. Claimed one project-scoped orchestrator auth session on `TILLSYN`:
+   - request `5590f308-8b8b-4724-8e77-18bc08748a5e`
+   - session `479711af-cba8-426d-8f87-0ead1cdec22a`
+   - auth context `authctx-1bb3ec5000e2bb338980b1d539737067`
+2. Claimed three bounded child auth sessions on the same project:
+   - builder request `4fa8bd1f-12a8-4b08-8cf3-0fc47f5cd6a1` -> session `a7ff8910-4ad0-4c58-a3b1-a53edc06ac24`
+   - QA request `89ab5dea-7c5b-4f91-9a87-bd2eb5609c0a` -> session `ec7436d0-e6ee-4bc9-8877-8e511df8e521`
+   - research request `0f758504-45dc-43e2-ac54-5e5a4ec32348` -> session `5ffea384-b1e1-412e-aacd-cf1e9aeb78ce`
+3. Issued one project-scoped capability lease per live role session:
+   - orchestrator instance `13d0210f-01e2-4b17-be05-d1cb5d27ea58`
+   - builder instance `4d1920f8-6616-48f2-94a7-24ac2efab373`
+   - QA instance `2e8dcd33-a5fe-4db6-b95b-f5040271b8cd`
+   - research instance `295b250d-8def-4942-808c-65af40737d8b`
+
+Live agent/subagent execution:
+1. Spawned one Codex subagent for each live runtime role:
+   - builder draft agent `019d4f05-d9d5-7bc3-8843-d4e13ae86dd0`
+   - QA draft agent `019d4f05-dce7-7be3-8909-55dfa4b59ace`
+   - research draft agent `019d4f05-e034-7490-a667-7d0a49a6ba92`
+2. Used those subagents to draft the role-specific comment and handoff payloads, then posted the live mutations through the corresponding bounded MCP sessions because the stdio auth handles are local to this Codex runtime.
+
+Inspectable live nodes:
+1. Project thread target:
+   - project `81539b10-98be-4f2d-8964-184049e14111` (`TILLSYN`)
+   - thread target `project/81539b10-98be-4f2d-8964-184049e14111`
+2. Live project-thread comments created during the pass:
+   - orchestrator kickoff comment `9d979208-6c7e-4b7b-9cbc-aacb4c37a7d2`
+   - builder comment `000de268-3cd2-4a20-8cfa-af51439b2a18`
+   - research comment `9936bc8c-984a-4f56-9ca9-d1469f2f3951`
+   - QA comment `5e32097b-e593-482a-ae9f-d5695ddcc6ea`
+3. Live project-scoped handoffs created during the pass:
+   - builder -> QA handoff `f848d601-2af5-4131-b1f0-f34619fa30b9`
+   - QA -> orchestrator handoff `50810947-96b2-4f3b-8a59-3e043ba89bde`
+
+Live routing evidence:
+1. `till.comment(operation=list)` on the `TILLSYN` project thread returned the existing user comment plus the four new role-authenticated comments above.
+2. `till.attention_item(operation=list, target_role="human", all_scopes=true, state=open)` returned exactly four open routed mention rows, one for each new agent-authored comment that mentioned `@human`.
+3. `till.attention_item(operation=list, target_role="builder", all_scopes=true, state=open)` returned:
+   - the orchestrator kickoff mention to builder
+   - the research follow-up mention to builder
+4. `till.attention_item(operation=list, target_role="qa", all_scopes=true, state=open)` returned:
+   - the builder mention to QA
+   - the mirrored builder -> QA handoff inbox row
+5. `till.attention_item(operation=list, target_role="research", all_scopes=true, state=open)` returned:
+   - the orchestrator kickoff mention to research
+   - the builder mention to research
+6. `till.attention_item(operation=list, target_role="orchestrator", all_scopes=true, state=open)` returned:
+   - the existing user `@orchestrator` mention
+   - the new QA -> orchestrator handoff inbox row
+   - the new QA mention to orchestrator before per-item clear
+
+Per-item clear evidence:
+1. Resolved one routed comment mention directly:
+   - attention id `5e32097b-e593-482a-ae9f-d5695ddcc6ea::mention::orchestrator`
+2. Follow-up `till.attention_item(operation=list, target_role="orchestrator", all_scopes=true, state=open)` showed:
+   - the QA -> orchestrator handoff row still open
+   - the older user `@orchestrator` mention still open
+   - the resolved QA mention row no longer present in the open result set
+3. That is the live proof that routed comment mentions clear one at a time without clearing unrelated inbox state.
+
+Validation:
+1. `mage test-pkg ./internal/tui` -> PASS (304 tests).
+2. `mage ci` -> PASS (1155 tests across 17 packages, coverage gate passed, build passed).
+
+Outcome:
+1. Live bounded agent-agent coordination on comments, mentions, and handoffs is working on the native MCP surface for orchestrator, builder, QA, and research.
+2. The TUI/docs direction is now aligned with viewer-scoped `Comments` notifications instead of generic warning treatment for routed mentions.
+3. The next remaining runtime slice is still broader wait/notify reuse beyond auth.
 
 ## Checkpoint 2026-04-01: Non-Destructive Session Governance Check And Research Surface
 

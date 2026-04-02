@@ -382,7 +382,7 @@ func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuide
 	srv.AddTool(
 		mcp.NewTool(
 			"till.get_bootstrap_guide",
-			mcp.WithDescription("Return bootstrap guidance when no project context exists yet."),
+			mcp.WithDescription("Return lightweight runtime bootstrap guidance for empty-instance flows, including when to use comments, mentions, handoffs, and scoped auth next."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			out, err := guide.GetBootstrapGuide(ctx)
@@ -2505,13 +2505,13 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.comment",
-			mcp.WithDescription("Create or list append-only coordination comments. Use operation=create|list."),
+			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs."),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Comment operation"), mcp.Enum("create", "list")),
 			mcp.WithString("project_id", mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Description("Target identifier")),
-			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich summary for thread previews")),
-			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment")),
+			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich thread summary; use @human, @dev, @builder, @qa, @orchestrator, or @research when routing comment inbox mentions")),
+			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment; rendered as shared thread content, not as a private role mailbox")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=create. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=create. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("auth_context_id", mcp.Description("Required for operation=create when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),

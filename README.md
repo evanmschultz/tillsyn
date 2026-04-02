@@ -188,11 +188,21 @@ Current auth note:
     - durable handoffs sync into one stable target-role inbox attention row,
     - `till.attention_item(operation=list)` now supports project-wide reads plus `target_role` filtering through `all_scopes` and `target_role`,
     - and the TUI notices panels consume project-wide unresolved attention so routed inbox items surface naturally in project/global notifications.
+  - TUI notifications should now distinguish inbox-style comment mentions from generic warning/action rows:
+    - routed comment mentions belong in a dedicated `Comments` section instead of the generic `Warnings` section,
+    - `Action Required` should be read as structured handoff/action routing rather than ordinary thread discussion,
+    - the board/TUI should only surface comment-mention inbox rows that match the current viewer identity (`human` for ordinary user sessions; explicit agent-role matches when the local identity is configured that way),
+    - and comment inbox rows should be clearable one at a time after review instead of being treated as ambient warning clutter.
+  - Live status:
+    - bounded builder, QA, and research agent sessions can now post real project-thread comments and durable handoffs on the same project scope,
+    - those comments fan out into role-targeted mention inbox rows exactly once per mentioned role,
+    - and per-item clear works on routed comment mentions without clearing unrelated handoffs or older mentions in the same role inbox.
   - the current cross-process wake path is still only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
   - the next wait/notify slice should reuse the same inbox substrate instead of inventing a second notification model.
 - Current remaining dogfood order:
-  - first land mentions/notifications/inbox and broader wait/notify reuse beyond auth;
-  - then expand scoped `till.get_instructions`, collapse bootstrap into that richer surface later, and close with one final collaborative dogfood hardening pass.
+  - first land broader wait/notify reuse beyond auth;
+  - then expand scoped `till.get_instructions`, collapse bootstrap into that richer surface later, close with one final collaborative dogfood hardening pass,
+  - and only after those slices finish, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, and OS-level notification ergonomics.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current bounded-delegation status: `till.auth_request(operation=create)` now also supports explicit child delegation through `acting_session_id` and `acting_session_secret`; when used, requester attribution is derived from the acting session, child paths must stay within the acting approved path, and only orchestrators may create sibling child auth for other principals.
@@ -204,6 +214,13 @@ Current auth note:
   - the domain model already includes `research` alongside `orchestrator`, `builder`, and `qa`;
   - current MCP auth/lease surfaces now expose `orchestrator|builder|qa|research`;
   - `planner` is not yet a first-class runtime role and should not be added casually without deciding whether it is a constrained orchestration role, a research/planning hybrid, or just a naming alias.
+- Coordination primer:
+  - `till.comment` is the shared append-only discussion lane for humans and agents on the same in-scope node or subtree.
+  - Supported routed mentions are `@human`, `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research`; `@dev` aliases to builder.
+  - Mentioned comments create routed inbox rows in the `Comments` notifications section for the matching viewer/role.
+  - `till.handoff` is the structured next-action lane; open handoffs are what should normally appear in `Action Required`.
+  - `attention` is the durable inbox substrate underneath routed mentions, handoffs, and other notification-worthy rows.
+  - If you see `Action Required`, assume there is an open handoff or similarly explicit work-request row to inspect, not just a plain comment.
 - Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 - Open guidance question:
@@ -290,6 +307,16 @@ Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
 - remote/team auth-tenancy expansion and additional security hardening,
 - template-library authoring/approval/binding UX, richer actor-kind-aware template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
+
+After the current active slices close, run one cleanup/refinement wave focused on real dogfood usage:
+- clean/refresh the local dogfood DB and create the canonical `tillsyn` project/task tree that will be used for real collaborative dogfooding.
+- move `Action Required` to the top of the project notifications panel.
+- add one configurable notifications accent/color, dogfood orange first, and apply it consistently to attention-worthy notification surfaces such as comments, warnings, and action-required rows before choosing a long-term default.
+- highlight `@human` mentions in rendered thread/comment markdown so human-directed asks stand out immediately.
+- connect Tillsyn notifications to the local terminal/OS notification path for `@mentions`, `Action Required`, and other attention-worthy events.
+- keep the notifications panel labeling explicit enough that `comment mention`, `handoff`, and other attention kinds cannot be mistaken for each other during dogfood.
+- add unread/new cues plus history/audit-friendly wording for the same notification surfaces so terminal dings still have an in-product trace.
+- add notification-noise controls such as per-kind mute/quieting or dedupe rules if real dogfood shows repeated routed rows becoming distracting.
 
 Current post-dogfood consensus note:
 - the detailed working consensus for that template/agent/communication scope is tracked in `TEMPLATE_AGENT_CONSENSUS.md` until it is folded back into the canonical docs.

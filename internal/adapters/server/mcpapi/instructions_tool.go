@@ -36,7 +36,7 @@ func registerInstructionsTool(srv *mcpserver.MCPServer) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.get_instructions",
-			mcp.WithDescription("Return embedded markdown docs and agent-facing dogfooding recommendations for using till MCP effectively."),
+			mcp.WithDescription("Return embedded markdown docs plus agent-facing coordination, notification, and scoped-auth guidance for using till MCP effectively."),
 			mcp.WithString("topic", mcp.Description("Optional topic focus (for example: dogfooding, agents, claude, workflows)")),
 			mcp.WithArray("doc_names", mcp.Description("Optional markdown file-name filter list (for example: README.md, AGENTS.md)"), mcp.WithStringItems()),
 			mcp.WithBoolean("include_markdown", mcp.Description("Include markdown content in docs payload (default true)")),
@@ -116,9 +116,9 @@ func buildInstructionsToolResponse(topic string, docNames []string, includeMarkd
 	sort.Strings(available)
 
 	topic = strings.TrimSpace(topic)
-	summary := "Embedded instruction docs for till MCP dogfooding and agent configuration guidance."
+	summary := "Embedded instruction docs for till MCP dogfooding, coordination, notifications, and agent configuration guidance."
 	if topic != "" {
-		summary = fmt.Sprintf("Embedded instruction docs focused on %q for till MCP dogfooding and agent configuration guidance.", topic)
+		summary = fmt.Sprintf("Embedded instruction docs focused on %q for till MCP dogfooding, coordination, notifications, and agent configuration guidance.", topic)
 	}
 
 	out := instructionsToolResponse{
@@ -142,6 +142,11 @@ func recommendedInstructionSettings() []string {
 		"Use include_markdown=false for quick inventory checks; enable it when drafting or validating policy text.",
 		"Set max_chars_per_doc to keep responses bounded in long docs such as PLAN.md.",
 		"Treat task/project details and comment summaries/bodies as markdown content in all agent-authored payloads.",
+		"Treat till.comment as the default shared thread lane for discussion and status updates inside Tillsyn; comments are append-only coordination history, not private per-role mailboxes.",
+		"Use role mentions intentionally in comment markdown: @human, @dev, @builder, @qa, @orchestrator, and @research are the supported routed mentions; @dev aliases to builder.",
+		"Treat routed comment mentions as viewer-scoped inbox comments that belong in the Comments notifications section, not as generic warnings and not as action-required work by default.",
+		"Treat till.handoff as the structured next-action lane; open handoffs are what should normally surface as Action Required rows in notifications.",
+		"When explaining attention rows, distinguish the noun family clearly: comment mentions are inbox comments, handoff mirrors are action-required coordination, and attention is the shared durable inbox substrate underneath both.",
 		"Treat the scoped-auth split as expected behavior: global approved agent sessions are for template/global admin and project creation, while guarded in-project mutations should normally use project-scoped approved sessions.",
 		"When documenting or using delegated auth, treat builder/qa/research child requests as an explicit acting-session flow: orchestrators request child auth with acting_session_id and acting_session_secret, requester ownership stays bound to the acting session, and child scope must remain within the acting approved path.",
 		"When template libraries are active, keep README examples and operator docs aligned with the actor-kind workflow contracts actually enforced in SQLite.",
@@ -178,6 +183,9 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Canonical tool index with minimal call examples for high-frequency workflows.",
 			"Explain the expected scoped-auth model clearly: global agent auth for template/global admin and project creation, project-scoped auth for guarded in-project mutations.",
 			"Document the delegated child-auth flow explicitly: orchestrators create bounded builder/qa/research requests through till.auth_request(operation=create) with acting session credentials, while child claim ownership stays with the approved child principal/client.",
+			"Include one explicit coordination primer that explains comments vs mentions vs handoffs vs attention, so operators and agents can infer the intended workflow without reading implementation code.",
+			"Document that routed comment mentions belong in the viewer-scoped Comments notifications section, while open handoffs are the primary Action Required rows.",
+			"Call out the supported role mentions explicitly: @human, @dev, @builder, @qa, @orchestrator, and @research, with @dev normalized to builder.",
 			"Canonical template-library examples covering inspect, bind, contract lookup, and JSON transport for CLI/MCP authoring against the SQLite-backed source of truth.",
 			"At least one readable child_rules example that shows multi-role follow-up work and truthful completion gates, such as a build task auto-generating multiple QA subtasks.",
 			"Document the preferred workflow order for default-go style work: project setup when needed, then PLAN, BUILD, CLOSEOUT, and BRANCH CLEANUP.",
