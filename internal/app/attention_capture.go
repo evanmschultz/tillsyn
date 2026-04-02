@@ -168,14 +168,18 @@ func (s *Service) ListAttentionItems(ctx context.Context, in ListAttentionItemsI
 	if err != nil {
 		return nil, err
 	}
+	baselineSequence, err := s.liveWaitBaselineSequence(ctx, LiveWaitEventAttentionChanged, level.ProjectID)
+	if err != nil {
+		return nil, err
+	}
 	items, err := s.repo.ListAttentionItems(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	if len(items) > 0 || in.WaitTimeout <= 0 {
+	if in.WaitTimeout <= 0 {
 		return items, nil
 	}
-	woke, err := s.waitForLiveEvent(ctx, LiveWaitEventAttentionChanged, level.ProjectID, in.WaitTimeout)
+	woke, err := s.waitForLiveEvent(ctx, LiveWaitEventAttentionChanged, level.ProjectID, baselineSequence, in.WaitTimeout)
 	if err != nil {
 		return nil, err
 	}

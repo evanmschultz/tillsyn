@@ -2510,7 +2510,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			mcp.WithString("project_id", mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Description("Target identifier")),
-			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next thread comment before returning when the thread is currently empty, for example 30s. Use this while actively watching a thread; after restart, rerun operation=list to recover current comments.")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next thread change after capturing the current thread state, for example 30s. Use this while actively watching a thread; without a new change before timeout it returns the current comments, and after restart you should rerun operation=list to recover current thread state.")),
 			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich thread summary; use @human, @dev, @builder, @qa, @orchestrator, or @research when routing comment inbox mentions")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment; rendered as shared thread content, not as a private role mailbox")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=create. "+mcpMutationSessionDescription)),

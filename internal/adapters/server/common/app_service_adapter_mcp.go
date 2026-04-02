@@ -44,7 +44,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"Use till.comment(operation=create) for shared discussion and status updates inside Tillsyn; role mentions such as @human, @builder, @qa, @orchestrator, and @research route comment inbox rows",
 			"Use till.handoff for explicit next-action routing; open handoffs should be interpreted as Action Required only for the addressed viewer and as oversight warnings for everyone else",
 			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
-			"For active coordination watchers, keep till.attention_item/till.comment/till.handoff operation=list calls open with wait_timeout instead of polling",
+			"For active coordination watchers, keep till.attention_item/till.comment/till.handoff operation=list calls open with wait_timeout so they wait for the next change after current baseline state instead of polling",
 			"After a client restart on an existing instance, recover with till.capture_state first, then till.attention_item(operation=list), till.handoff(operation=list), and till.comment(operation=list) for the threads you need to resume",
 		},
 		Recommended: []string{

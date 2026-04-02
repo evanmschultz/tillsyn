@@ -560,7 +560,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and required for operation=raise")),
 			mcp.WithString("state", mcp.Description("Filter by state when operation=list")),
 			mcp.WithBoolean("all_scopes", mcp.Description("List attention across the whole project when operation=list; scope_type and scope_id must be omitted")),
-			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next project-scoped inbox change before returning when no matching rows are currently present, for example 30s. Use this for live watchers; after restart, rerun operation=list to recover current state.")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next project-scoped inbox change after capturing current inbox state, for example 30s. Use this for live watchers; without a new change before timeout it returns the current rows, and after restart you should rerun operation=list to recover inbox state.")),
 			mcp.WithString("kind", mcp.Description("Attention kind. Required for operation=raise")),
 			mcp.WithString("summary", mcp.Description("Markdown-rich summary for quick triage. Required for operation=raise")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context when operation=raise")),
@@ -602,7 +602,7 @@ func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.
 			mcp.WithString("state", mcp.Description("Filter by state")),
 			mcp.WithBoolean("all_scopes", mcp.Description("List attention across the whole project; scope_type and scope_id must be omitted")),
 			mcp.WithString("target_role", mcp.Description("Optional routed inbox target such as builder, qa, orchestrator, research, or alias dev")),
-			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for the next project-scoped inbox change before returning when no matching rows are currently present. Use this for live watchers; rerun list after restart to recover current state.")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for the next project-scoped inbox change after capturing current state. Use this for live watchers; without a new change before timeout it returns the current rows, and after restart you should rerun list to recover inbox state.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs

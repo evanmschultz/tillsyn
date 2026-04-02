@@ -38,7 +38,7 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 			mcp.WithString("status", mcp.Description("Optional handoff status"), mcp.Enum("ready", "waiting", "blocked", "failed", "returned", "superseded", "resolved")),
 			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter when operation=list"), mcp.WithStringItems()),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return when operation=list")),
-			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next project-scoped handoff change before returning when no matching rows are currently present, for example 30s. Use this for live watchers; after restart, rerun operation=list to recover current handoff state.")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next project-scoped handoff change after capturing current handoff state, for example 30s. Use this for live watchers; without a new change before timeout it returns the current handoffs, and after restart you should rerun operation=list to recover durable coordination state.")),
 			mcp.WithString("summary", mcp.Description("Short action-oriented handoff summary. Required for operation=create and operation=update")),
 			mcp.WithString("next_action", mcp.Description("Optional explicit next action for the receiver; this is the clearest place to state what should happen next")),
 			mcp.WithArray("missing_evidence", mcp.Description("Optional missing evidence checklist"), mcp.WithStringItems()),
@@ -122,7 +122,7 @@ func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.Ha
 			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope")),
 			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter"), mcp.WithStringItems()),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
-			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for the next project-scoped handoff change before returning when no matching rows are currently present. Use this for live watchers; rerun list after restart to recover current state.")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for the next project-scoped handoff change after capturing current state. Use this for live watchers; without a new change before timeout it returns the current handoffs, and after restart you should rerun list to recover durable state.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs

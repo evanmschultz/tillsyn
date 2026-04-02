@@ -53,11 +53,11 @@ func TestBrokerReplaysLatestEvent(t *testing.T) {
 	}
 	broker.Publish(want)
 
-	got, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-1")
+	got, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-1", 0)
 	if err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	if got.Type != want.Type || got.Key != want.Key || got.Value != want.Value {
+	if got.Type != want.Type || got.Key != want.Key || got.Value != want.Value || got.Sequence != 1 {
 		t.Fatalf("Wait() event = %#v, want %#v", got, want)
 	}
 }
@@ -83,7 +83,7 @@ func TestBrokerWakesAcrossInstances(t *testing.T) {
 	waitDone := make(chan app.LiveWaitEvent, 1)
 	waitErr := make(chan error, 1)
 	go func() {
-		got, err := waitBroker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-2")
+		got, err := waitBroker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-2", 0)
 		if err != nil {
 			waitErr <- err
 			return
@@ -117,7 +117,7 @@ func TestBrokerCancelsAndCleansSubscription(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := broker.Wait(ctx, app.LiveWaitEventAuthRequestResolved, "req-3"); err == nil {
+	if _, err := broker.Wait(ctx, app.LiveWaitEventAuthRequestResolved, "req-3", 0); err == nil {
 		t.Fatal("Wait() error = nil, want context deadline exceeded")
 	}
 
@@ -137,7 +137,7 @@ func TestBrokerCloseReleasesActiveWaiters(t *testing.T) {
 
 	waitDone := make(chan error, 1)
 	go func() {
-		_, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-4")
+		_, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-4", 0)
 		waitDone <- err
 	}()
 
@@ -171,7 +171,7 @@ func TestBrokerRejectsWaitAfterClose(t *testing.T) {
 	if err := broker.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-5"); !errors.Is(err, errBrokerClosed) {
+	if _, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-5", 0); !errors.Is(err, errBrokerClosed) {
 		t.Fatalf("Wait() error = %v, want errBrokerClosed", err)
 	}
 }
@@ -184,7 +184,7 @@ func TestBrokerRejectsSpoofedWakePacket(t *testing.T) {
 	waitDone := make(chan app.LiveWaitEvent, 1)
 	waitErr := make(chan error, 1)
 	go func() {
-		got, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-6")
+		got, err := broker.Wait(context.Background(), app.LiveWaitEventAuthRequestResolved, "req-6", 0)
 		if err != nil {
 			waitErr <- err
 			return
@@ -233,6 +233,44 @@ func TestBrokerRejectsSpoofedWakePacket(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wait() did not wake after authenticated publish")
+	}
+}
+
+// TestBrokerWaitAfterSequenceIgnoresStaleEvent verifies reused keys only wake on newer events.
+func TestBrokerWaitAfterSequenceIgnoresStaleEvent(t *testing.T) {
+	repo := newBrokerDB(t, "after-sequence.db")
+	broker := newTestBroker(t, repo.DB())
+
+	broker.Publish(app.LiveWaitEvent{
+		Type:  app.LiveWaitEventCommentChanged,
+		Key:   "project-1|project|project-1",
+		Value: "project-1|project|project-1",
+	})
+	latest, ok, err := broker.Latest(context.Background(), app.LiveWaitEventCommentChanged, "project-1|project|project-1")
+	if err != nil {
+		t.Fatalf("Latest() error = %v", err)
+	}
+	if !ok || latest.Sequence != 1 {
+		t.Fatalf("Latest() = %#v, %v, want sequence 1", latest, ok)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	if _, err := broker.Wait(ctx, app.LiveWaitEventCommentChanged, "project-1|project|project-1", latest.Sequence); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait() error = %v, want DeadlineExceeded while no newer event exists", err)
+	}
+
+	broker.Publish(app.LiveWaitEvent{
+		Type:  app.LiveWaitEventCommentChanged,
+		Key:   "project-1|project|project-1",
+		Value: "project-1|project|project-1",
+	})
+	got, err := broker.Wait(context.Background(), app.LiveWaitEventCommentChanged, "project-1|project|project-1", latest.Sequence)
+	if err != nil {
+		t.Fatalf("Wait() second error = %v", err)
+	}
+	if got.Sequence != 2 {
+		t.Fatalf("Wait() sequence = %d, want 2", got.Sequence)
 	}
 }
 

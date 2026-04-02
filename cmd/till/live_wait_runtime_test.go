@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -255,6 +256,173 @@ func TestCrossProcessAuthWaitWakesOnCancel(t *testing.T) {
 	}
 }
 
+// TestCrossProcessCommentWaitWakesOnNextComment verifies reusable thread keys wait for a newer comment instead of replaying old state.
+func TestCrossProcessCommentWaitWakesOnNextComment(t *testing.T) {
+	fixture := newCrossProcessAuthFixture(t)
+
+	if _, err := fixture.approveService.CreateComment(context.Background(), app.CreateCommentInput{
+		ProjectID:    fixture.project.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     fixture.project.ID,
+		Summary:      "initial thread comment",
+		BodyMarkdown: "existing thread state",
+		ActorType:    domain.ActorTypeUser,
+		ActorID:      "user-1",
+		ActorName:    "user-1",
+	}); err != nil {
+		t.Fatalf("CreateComment(initial) error = %v", err)
+	}
+
+	resultCh := make(chan []domain.Comment, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := fixture.waitService.ListCommentsByTarget(context.Background(), app.ListCommentsByTargetInput{
+			ProjectID:   fixture.project.ID,
+			TargetType:  domain.CommentTargetTypeProject,
+			TargetID:    fixture.project.ID,
+			WaitTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- items
+	}()
+
+	select {
+	case got := <-resultCh:
+		t.Fatalf("ListCommentsByTarget() returned early with %#v before a newer comment", got)
+	case err := <-errCh:
+		t.Fatalf("ListCommentsByTarget() early error = %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	waitForLiveWaitSubscription(t, fixture.waitRepo.DB(), string(app.LiveWaitEventCommentChanged), crossProcessCommentWaitKey(fixture.project.ID, domain.CommentTargetTypeProject, fixture.project.ID))
+	second, err := fixture.approveService.CreateComment(context.Background(), app.CreateCommentInput{
+		ProjectID:    fixture.project.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     fixture.project.ID,
+		Summary:      "follow-up comment",
+		BodyMarkdown: "wake the waiting thread watcher",
+		ActorType:    domain.ActorTypeUser,
+		ActorID:      "user-2",
+		ActorName:    "user-2",
+	})
+	if err != nil {
+		t.Fatalf("CreateComment(second) error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListCommentsByTarget() error = %v", err)
+	case items := <-resultCh:
+		if len(items) != 2 {
+			t.Fatalf("ListCommentsByTarget() len = %d, want 2 after next-change wake", len(items))
+		}
+		if items[1].ID != second.ID {
+			t.Fatalf("ListCommentsByTarget() latest id = %q, want %q", items[1].ID, second.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ListCommentsByTarget() did not wake after the newer comment")
+	}
+}
+
+// TestCrossProcessAttentionWaitWakesOnRaise verifies project-scoped attention waits wake across broker instances.
+func TestCrossProcessAttentionWaitWakesOnRaise(t *testing.T) {
+	fixture := newCrossProcessAuthFixture(t)
+
+	resultCh := make(chan []domain.AttentionItem, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := fixture.waitService.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
+			Level: domain.LevelTupleInput{
+				ProjectID: fixture.project.ID,
+				ScopeType: domain.ScopeLevelProject,
+				ScopeID:   fixture.project.ID,
+			},
+			UnresolvedOnly: true,
+			WaitTimeout:    5 * time.Second,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- items
+	}()
+
+	waitForLiveWaitSubscription(t, fixture.waitRepo.DB(), string(app.LiveWaitEventAttentionChanged), fixture.project.ID)
+	created, err := fixture.approveService.RaiseAttentionItem(context.Background(), app.RaiseAttentionItemInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: fixture.project.ID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   fixture.project.ID,
+		},
+		Kind:               domain.AttentionKindRiskNote,
+		Summary:            "cross-process attention wake",
+		RequiresUserAction: false,
+		CreatedBy:          "user-1",
+		CreatedType:        domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("RaiseAttentionItem() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListAttentionItems() error = %v", err)
+	case items := <-resultCh:
+		if len(items) != 1 || items[0].ID != created.ID {
+			t.Fatalf("ListAttentionItems() = %#v, want raised attention after wake", items)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ListAttentionItems() did not wake after attention raise")
+	}
+}
+
+// TestCrossProcessHandoffWaitWakesOnCreate verifies project-scoped handoff waits wake across broker instances.
+func TestCrossProcessHandoffWaitWakesOnCreate(t *testing.T) {
+	fixture := newCrossProcessAuthFixture(t)
+
+	resultCh := make(chan []domain.Handoff, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := fixture.waitService.ListHandoffs(context.Background(), app.ListHandoffsInput{
+			Level:       domain.LevelTupleInput{ProjectID: fixture.project.ID, ScopeType: domain.ScopeLevelProject},
+			WaitTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- items
+	}()
+
+	waitForLiveWaitSubscription(t, fixture.waitRepo.DB(), string(app.LiveWaitEventHandoffChanged), fixture.project.ID)
+	created, err := fixture.approveService.CreateHandoff(context.Background(), app.CreateHandoffInput{
+		Level:       domain.LevelTupleInput{ProjectID: fixture.project.ID, ScopeType: domain.ScopeLevelProject},
+		SourceRole:  "builder",
+		TargetRole:  "qa",
+		Status:      domain.HandoffStatusWaiting,
+		Summary:     "cross-process handoff wake",
+		CreatedBy:   "user-1",
+		CreatedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateHandoff() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListHandoffs() error = %v", err)
+	case items := <-resultCh:
+		if len(items) != 1 || items[0].ID != created.ID {
+			t.Fatalf("ListHandoffs() = %#v, want created handoff after wake", items)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ListHandoffs() did not wake after handoff create")
+	}
+}
+
 // TestLoadOrCreateRuntimeLiveWaitSecretSurvivesConcurrentBootstrap verifies first-run secret bootstrap converges on one shared secret.
 func TestLoadOrCreateRuntimeLiveWaitSecretSurvivesConcurrentBootstrap(t *testing.T) {
 	root := t.TempDir()
@@ -395,15 +563,23 @@ func newCrossProcessAuthFixture(t *testing.T) crossProcessAuthFixture {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 
+	var waitID uint64
+	var approveID uint64
 	return crossProcessAuthFixture{
 		waitRepo:    waitRepo,
 		approveRepo: approveRepo,
-		waitService: app.NewService(waitRepo, func() string { return "wait-id" }, time.Now, app.ServiceConfig{
+		waitService: app.NewService(waitRepo, func() string {
+			waitID++
+			return fmt.Sprintf("wait-id-%d", waitID)
+		}, time.Now, app.ServiceConfig{
 			AuthRequests:   waitAuth,
 			AuthBackend:    waitAuth,
 			LiveWaitBroker: waitBroker,
 		}),
-		approveService: app.NewService(approveRepo, func() string { return "approve-id" }, time.Now, app.ServiceConfig{
+		approveService: app.NewService(approveRepo, func() string {
+			approveID++
+			return fmt.Sprintf("approve-id-%d", approveID)
+		}, time.Now, app.ServiceConfig{
 			AuthRequests:   approveAuth,
 			AuthBackend:    approveAuth,
 			LiveWaitBroker: approveBroker,
@@ -432,4 +608,9 @@ func waitForLiveWaitSubscription(t *testing.T, db *sql.DB, eventType, key string
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("live wait subscription for event_type=%q key=%q never appeared", eventType, key)
+}
+
+// crossProcessCommentWaitKey mirrors the runtime thread key used by comment live waits.
+func crossProcessCommentWaitKey(projectID string, targetType domain.CommentTargetType, targetID string) string {
+	return fmt.Sprintf("%s|%s|%s", projectID, targetType, targetID)
 }
