@@ -7,15 +7,15 @@
  │                                                     │ │                                    │ 
  │  To Do (1)                                          │ │ Project Notifications              │ 
  │                                                     │ │                                    │ 
- │  │  Golden board task                               │ │ Coordination                       │ 
- │     [medium|#alpha,#beta]                           │ │ pending requests: 0                │ 
- │                                                     │ │ active sessions: 0                 │ 
- │                                                     │ │ active leases: 0                   │ 
- │                                                     │ │ open handoffs: 0                   │ 
+ │  │  Golden board task                               │ │ Action Required                    │ 
+ │     [medium|#alpha,#beta]                           │ │ none                               │ 
  │                                                     │ │                                    │ 
  │                                                     │ │ Warnings                           │ 
  │                                                     │ │ none                               │ 
  │                                                     │ │                                    │ 
+ │                                                     │ │ Coordination                       │ 
+ │                                                     │ │ pending requests: 0                │ 
+ │                                                     │ │ active sessions: 0                 │ 
  │                                                     │ │                                    │ 
  │                                                     │ ╰────────────────────────────────────╯ 
  │                                                     │ ╭────────────────────────────────────╮ 

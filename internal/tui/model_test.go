@@ -7687,17 +7687,19 @@ func TestModelNoticesSectionNavigationAndTaskInfoAction(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected up-navigation to move focus to attention section, got %v", m.noticesSection)
+	if m.noticesSection != noticesSectionCoordination {
+		t.Fatalf("expected up-navigation to move focus to coordination section, got %v", m.noticesSection)
 	}
 	m = applyMsg(t, m, keyRune('k'))
 	if m.noticesSection != noticesSectionWarnings {
 		t.Fatalf("expected second up-navigation to move focus to warnings section, got %v", m.noticesSection)
 	}
-
-	for i := 0; i < 4 && m.noticesSection != noticesSectionRecentActivity; i++ {
-		m = applyMsg(t, m, keyRune('j'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected third up-navigation to move focus to action-required section, got %v", m.noticesSection)
 	}
+
+	m = advanceNoticesSection(t, m, noticesSectionRecentActivity)
 	if m.noticesSection != noticesSectionRecentActivity {
 		t.Fatalf("expected down-navigation to return focus to recent activity section, got %v", m.noticesSection)
 	}
@@ -7730,10 +7732,7 @@ func TestModelNoticesAttentionRowsOpenTaskInfoWhenAssociated(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected notices focus on attention section, got %v", m.noticesSection)
-	}
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected enter on attention row to open task info, got %v", m.mode)
@@ -8004,10 +8003,7 @@ func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testi
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected notices focus on attention section, got %v", m.noticesSection)
-	}
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeThread {
@@ -8445,10 +8441,7 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
-	}
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	sections := m.noticesSectionsForInteraction()
 	var row noticesPanelItem
 	found := false
@@ -8619,7 +8612,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('a'))
 	if m.mode != modeAuthReview {
@@ -8762,7 +8755,7 @@ func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('a'))
 	if m.mode != modeAuthReview {
@@ -8810,7 +8803,7 @@ func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m.noticesFocused = true
 
 	if _, ok := m.selectedAuthRequestForActiveNotice(); ok {
@@ -8870,7 +8863,7 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('d'))
 	if m.mode != modeAuthReview {
@@ -10292,10 +10285,7 @@ func TestModelProjectNotificationsScopedRowsFallbackToProjectThread(t *testing.T
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionAttention {
-		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
-	}
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeThread {
@@ -10469,7 +10459,7 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
+	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeAuthReview {
 		t.Fatalf("expected auth review mode, got %v", m.mode)
@@ -14683,6 +14673,35 @@ func loadReadyModel(t *testing.T, m Model) Model {
 		ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyEnter})
 	}
 	return ready
+}
+
+// focusNoticesSection steps upward through the notices panel until the target
+// section is selected, keeping tests resilient to section-order changes.
+func focusNoticesSection(t *testing.T, m Model, target noticesSectionID) Model {
+	t.Helper()
+	for i := 0; i < len(noticesPanelSectionOrder)+2; i++ {
+		if m.noticesSection == target {
+			return m
+		}
+		m = applyMsg(t, m, keyRune('k'))
+	}
+	t.Fatalf("expected notices section %v, got %v", target, m.noticesSection)
+	return m
+}
+
+// advanceNoticesSection steps downward through the notices panel until the
+// target section is selected, accounting for multi-row sections like
+// Coordination.
+func advanceNoticesSection(t *testing.T, m Model, target noticesSectionID) Model {
+	t.Helper()
+	for i := 0; i < 24; i++ {
+		if m.noticesSection == target {
+			return m
+		}
+		m = applyMsg(t, m, keyRune('j'))
+	}
+	t.Fatalf("expected notices section %v after downward traversal, got %v", target, m.noticesSection)
+	return m
 }
 
 // applyMsg applies msg.
