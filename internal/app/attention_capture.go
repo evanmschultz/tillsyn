@@ -43,6 +43,7 @@ type ListAttentionItemsInput struct {
 	TargetRole         string
 	RequiresUserAction *bool
 	Limit              int
+	WaitTimeout        time.Duration
 }
 
 // ResolveAttentionItemInput holds write-time fields for resolving one attention item.
@@ -143,6 +144,7 @@ func (s *Service) RaiseAttentionItem(ctx context.Context, in RaiseAttentionItemI
 	if err := s.repo.CreateAttentionItem(ctx, item); err != nil {
 		return domain.AttentionItem{}, err
 	}
+	s.publishAttentionChanged(level.ProjectID)
 	return item, nil
 }
 
@@ -165,6 +167,20 @@ func (s *Service) ListAttentionItems(ctx context.Context, in ListAttentionItemsI
 	})
 	if err != nil {
 		return nil, err
+	}
+	items, err := s.repo.ListAttentionItems(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) > 0 || in.WaitTimeout <= 0 {
+		return items, nil
+	}
+	woke, err := s.waitForLiveEvent(ctx, LiveWaitEventAttentionChanged, level.ProjectID, in.WaitTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if !woke {
+		return items, nil
 	}
 	return s.repo.ListAttentionItems(ctx, filter)
 }
@@ -199,7 +215,12 @@ func (s *Service) ResolveAttentionItem(ctx context.Context, in ResolveAttentionI
 	if err := s.enforceMutationGuard(ctx, existing.ProjectID, resolvedType, existing.ScopeType.ToCapabilityScopeType(), existing.ScopeID, domain.CapabilityActionResolveAttention); err != nil {
 		return domain.AttentionItem{}, err
 	}
-	return s.repo.ResolveAttentionItem(ctx, attentionID, strings.TrimSpace(in.ResolvedBy), resolvedType, s.clock().UTC())
+	resolved, err := s.repo.ResolveAttentionItem(ctx, attentionID, strings.TrimSpace(in.ResolvedBy), resolvedType, s.clock().UTC())
+	if err != nil {
+		return domain.AttentionItem{}, err
+	}
+	s.publishAttentionChanged(existing.ProjectID)
+	return resolved, nil
 }
 
 // CaptureState returns summary-first level-scoped context for deterministic recovery.

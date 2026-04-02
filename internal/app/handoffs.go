@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hylla/tillsyn/internal/domain"
 )
@@ -47,9 +48,10 @@ type UpdateHandoffInput struct {
 
 // ListHandoffsInput captures fields for listing handoffs within one scope.
 type ListHandoffsInput struct {
-	Level    domain.LevelTupleInput
-	Statuses []domain.HandoffStatus
-	Limit    int
+	Level       domain.LevelTupleInput
+	Statuses    []domain.HandoffStatus
+	Limit       int
+	WaitTimeout time.Duration
 }
 
 // CreateHandoff creates one durable handoff record.
@@ -113,6 +115,8 @@ func (s *Service) CreateHandoff(ctx context.Context, in CreateHandoffInput) (dom
 	if err := s.syncHandoffInboxAttention(ctx, handoff); err != nil {
 		return domain.Handoff{}, err
 	}
+	s.publishHandoffChanged(level.ProjectID)
+	s.publishAttentionChanged(level.ProjectID)
 	return handoff, nil
 }
 
@@ -152,6 +156,20 @@ func (s *Service) ListHandoffs(ctx context.Context, in ListHandoffsInput) ([]dom
 	})
 	if err != nil {
 		return nil, err
+	}
+	handoffs, err := s.handoffRepo.ListHandoffs(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(handoffs) > 0 || in.WaitTimeout <= 0 {
+		return handoffs, nil
+	}
+	woke, err := s.waitForLiveEvent(ctx, LiveWaitEventHandoffChanged, level.ProjectID, in.WaitTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if !woke {
+		return handoffs, nil
 	}
 	return s.handoffRepo.ListHandoffs(ctx, filter)
 }
@@ -225,6 +243,8 @@ func (s *Service) UpdateHandoff(ctx context.Context, in UpdateHandoffInput) (dom
 	if err := s.syncHandoffInboxAttention(ctx, existing); err != nil {
 		return domain.Handoff{}, err
 	}
+	s.publishHandoffChanged(existing.ProjectID)
+	s.publishAttentionChanged(existing.ProjectID)
 	return existing, nil
 }
 

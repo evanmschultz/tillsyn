@@ -136,6 +136,11 @@ func (a *AppServiceAdapter) ListAttentionItems(ctx context.Context, in ListAtten
 		AllScopes:  req.AllScopes,
 		TargetRole: req.TargetRole,
 	}
+	waitTimeout, err := parseOptionalDurationString(req.WaitTimeout, "wait_timeout")
+	if err != nil {
+		return nil, err
+	}
+	listInput.WaitTimeout = waitTimeout
 	if req.State != "" {
 		listInput.States = []domain.AttentionState{domain.AttentionState(req.State)}
 	}
@@ -243,12 +248,13 @@ func normalizeAttentionListRequest(in ListAttentionItemsRequest) (ListAttentionI
 		return ListAttentionItemsRequest{}, fmt.Errorf("scope_type and scope_id are unsupported when all_scopes is true: %w", ErrUnsupportedScope)
 	}
 	return ListAttentionItemsRequest{
-		ProjectID:  projectID,
-		ScopeType:  scopeType,
-		ScopeID:    scopeID,
-		State:      state,
-		AllScopes:  in.AllScopes,
-		TargetRole: strings.TrimSpace(strings.ToLower(in.TargetRole)),
+		ProjectID:   projectID,
+		ScopeType:   scopeType,
+		ScopeID:     scopeID,
+		State:       state,
+		AllScopes:   in.AllScopes,
+		TargetRole:  strings.TrimSpace(strings.ToLower(in.TargetRole)),
+		WaitTimeout: strings.TrimSpace(in.WaitTimeout),
 	}, nil
 }
 

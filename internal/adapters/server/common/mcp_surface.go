@@ -414,12 +414,13 @@ type UpdateHandoffRequest struct {
 
 // ListHandoffsRequest stores transport input for scoped handoff inventory.
 type ListHandoffsRequest struct {
-	ProjectID string
-	BranchID  string
-	ScopeType string
-	ScopeID   string
-	Statuses  []string
-	Limit     int
+	ProjectID   string
+	BranchID    string
+	ScopeType   string
+	ScopeID     string
+	Statuses    []string
+	Limit       int
+	WaitTimeout string
 }
 
 // CreateAuthRequestRequest stores transport input for pre-session auth request creation.
@@ -580,9 +581,10 @@ type AuthSessionGovernanceCheckResult struct {
 
 // ListCommentsByTargetRequest stores transport input for comment list queries.
 type ListCommentsByTargetRequest struct {
-	ProjectID  string
-	TargetType string
-	TargetID   string
+	ProjectID   string
+	TargetType  string
+	TargetID    string
+	WaitTimeout string
 }
 
 // CommentRecord stores transport-facing comment payloads with summary and markdown details.

@@ -89,11 +89,11 @@ Implemented now:
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
-- broader wait/notify reuse beyond auth, including live comment/handoff wakeups on top of the landed durable inbox routing, richer disconnect-aware cleanup, and later HTTP/continuous-listening transport support
+- richer disconnect-aware cleanup, broader continuous-listening/HTTP transport follow-through, and later OS-level notification ergonomics on top of the now-landed waitable stdio comment/handoff/attention watchers
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
-- `capture_state` is a summary-first recovery surface for level-scoped workflows.
+- `capture_state` is the summary-first recovery surface for level-scoped workflows; after client shutdown/restart, call it first to re-anchor project/scope context before resuming any watchers.
 - `till.get_bootstrap_guide` is the lightweight runtime next-step surface for empty-instance and pre-approval flows.
 - `till.get_instructions` is the embedded-doc and operator-policy surface; it returns selected markdown docs plus agent-facing recommendations, not per-project runtime state and not a machine-readable schema browser for every tool.
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
@@ -113,6 +113,9 @@ Current MCP/runtime direction:
   - comments: `till.comment`
   - handoffs: `till.handoff`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
+  - recovery/watch guidance:
+    - during active runs, use `wait_timeout` on `till.attention_item(operation=list)`, `till.comment(operation=list)`, and `till.handoff(operation=list)` instead of polling when you need live wakeups;
+    - after client shutdown/restart, recover in this order: `till.capture_state`, `till.attention_item(operation=list, all_scopes=true)` for inbox state, `till.handoff(operation=list)` for durable coordination state, then `till.comment(operation=list)` for any thread you need to resume.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
     - `till.capability_lease(operation=revoke_all)` fails closed on invalid/unknown scope tuples;
@@ -190,18 +193,22 @@ Current auth note:
     - and the TUI notices panels consume project-wide unresolved attention so routed inbox items surface naturally in project/global notifications.
   - TUI notifications should now distinguish inbox-style comment mentions from generic warning/action rows:
     - routed comment mentions belong in a dedicated `Comments` section instead of the generic `Warnings` section,
-    - `Action Required` should be read as structured handoff/action routing rather than ordinary thread discussion,
+    - `Action Required` should be reserved for structured handoff/action routing that is explicitly addressed to the current viewer,
+    - lingering handoffs for other roles should stay visible as oversight warnings/coordination state instead of looking like human work items,
     - the board/TUI should only surface comment-mention inbox rows that match the current viewer identity (`human` for ordinary user sessions; explicit agent-role matches when the local identity is configured that way),
     - and comment inbox rows should be clearable one at a time after review instead of being treated as ambient warning clutter.
   - Live status:
     - bounded builder, QA, and research agent sessions can now post real project-thread comments and durable handoffs on the same project scope,
     - those comments fan out into role-targeted mention inbox rows exactly once per mentioned role,
-    - and per-item clear works on routed comment mentions without clearing unrelated handoffs or older mentions in the same role inbox.
-  - the current cross-process wake path is still only landed for auth approval/claim flows; it is not yet the general automatic notification transport for comments, mentions, or handoffs.
-  - the next wait/notify slice should reuse the same inbox substrate instead of inventing a second notification model.
+    - per-item clear works on routed comment mentions without clearing unrelated handoffs or older mentions in the same role inbox,
+    - and waitable list calls now wake on the next attention, comment, or handoff change in the stdio runtime so active agent watchers do not have to poll.
+  - current transport caveat:
+    - stdio waitable watchers are now landed for attention, comments, and handoffs,
+    - but this is still not a full push-notification transport for disconnected clients, HTTP listeners, or OS notifications;
+    - after restart, agents should recover durable state with `capture_state`, `attention_item(list)`, `handoff(list)`, and thread `comment(list)` reads before resuming watchers.
 - Current remaining dogfood order:
-  - first land broader wait/notify reuse beyond auth;
-  - then expand scoped `till.get_instructions`, collapse bootstrap into that richer surface later, close with one final collaborative dogfood hardening pass,
+  - first expand scoped `till.get_instructions`,
+  - then collapse bootstrap into that richer surface later, close with one final collaborative dogfood hardening pass,
   - and only after those slices finish, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, and OS-level notification ergonomics.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
@@ -214,14 +221,19 @@ Current auth note:
   - the domain model already includes `research` alongside `orchestrator`, `builder`, and `qa`;
   - current MCP auth/lease surfaces now expose `orchestrator|builder|qa|research`;
   - `planner` is not yet a first-class runtime role and should not be added casually without deciding whether it is a constrained orchestration role, a research/planning hybrid, or just a naming alias.
+- Role-purpose note:
+  - `orchestrator` plans, routes, delegates, and cleans up coordination state.
+  - `builder` implements and reports progress with comments/handoffs.
+  - `qa` verifies outcomes, returns/reopens work when needed, and closes verification handoffs.
+  - `research` inspects code and runtime state, compiles findings or bug inventories, and may use local MCP tools plus Context7 to gather evidence before handing results back.
 - Coordination primer:
   - `till.comment` is the shared append-only discussion lane for humans and agents on the same in-scope node or subtree.
   - Supported routed mentions are `@human`, `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research`; `@dev` aliases to builder.
   - Mentioned comments create routed inbox rows in the `Comments` notifications section for the matching viewer/role.
-  - `till.handoff` is the structured next-action lane; open handoffs are what should normally appear in `Action Required`.
+  - `till.handoff` is the structured next-action lane; open handoffs should appear in `Action Required` only for the addressed viewer and otherwise remain visible as coordination/oversight warnings until the receiving agent resolves them.
   - `attention` is the durable inbox substrate underneath routed mentions, handoffs, and other notification-worthy rows.
-  - If you see `Action Required`, assume there is an open handoff or similarly explicit work-request row to inspect, not just a plain comment.
-- Current live-transport caveat: auth is the only landed consumer of that local cross-process broker today. This is not yet the broader session-aware stdio notification layer for arbitrary wait/notify surfaces, and it does not yet cover comment/handoff wakeups, richer disconnect-aware session cleanup, or HTTP/continuous-listening transports.
+  - If you see `Action Required`, assume there is an open handoff or similarly explicit work-request row for the current viewer, not just a plain comment.
+- Current live-transport caveat: waitable stdio watchers are now landed for auth, attention, comments, and handoffs, but they still depend on an active waiting client. This is not yet a disconnected push-notification system, richer session-aware cleanup layer, or HTTP/continuous-listening transport.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 - Open guidance question:
   - we still need to decide whether `till.get_bootstrap_guide` should remain a dedicated lightweight tool or collapse into `till.get_instructions(topic=bootstrap|workflow)` later;
@@ -314,6 +326,8 @@ After the current active slices close, run one cleanup/refinement wave focused o
 - add one configurable notifications accent/color, dogfood orange first, and apply it consistently to attention-worthy notification surfaces such as comments, warnings, and action-required rows before choosing a long-term default.
 - highlight `@human` mentions in rendered thread/comment markdown so human-directed asks stand out immediately.
 - connect Tillsyn notifications to the local terminal/OS notification path for `@mentions`, `Action Required`, and other attention-worthy events.
+- read the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) and explicitly review how its semi-formal reasoning model should reshape default templates, generated workflow contracts, and scoped instructions before the real dogfood template set is finalized.
+- plan and discuss, in detail, which parts of that paper should map into Tillsyn template phases, research/qa handoffs, and instruction guidance rather than treating the paper as a one-off reading note.
 - keep the notifications panel labeling explicit enough that `comment mention`, `handoff`, and other attention kinds cannot be mistaken for each other during dogfood.
 - add unread/new cues plus history/audit-friendly wording for the same notification surfaces so terminal dings still have an in-product trace.
 - add notification-noise controls such as per-kind mute/quieting or dedupe rules if real dogfood shows repeated routed rows becoming distracting.

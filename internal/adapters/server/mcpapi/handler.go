@@ -493,7 +493,7 @@ func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState common.Capt
 	srv.AddTool(
 		mcp.NewTool(
 			"till.capture_state",
-			mcp.WithDescription("Return a summary-first state capture for one scoped level tuple."),
+			mcp.WithDescription("Return a summary-first state capture for one scoped level tuple. Use this first after client shutdown/restart to re-anchor project, scope, and recovery context before resuming waitable inbox/comment/handoff watchers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Description("Scope type"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier (defaults to project_id)")),
@@ -529,6 +529,7 @@ type attentionItemMutationArgs struct {
 	ScopeID            string `json:"scope_id"`
 	State              string `json:"state"`
 	AllScopes          bool   `json:"all_scopes"`
+	WaitTimeout        string `json:"wait_timeout"`
 	Kind               string `json:"kind"`
 	Summary            string `json:"summary"`
 	BodyMarkdown       string `json:"body_markdown"`
@@ -548,7 +549,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 	srv.AddTool(
 		mcp.NewTool(
 			"till.attention_item",
-			mcp.WithDescription("Create, resolve, or list attention items."),
+			mcp.WithDescription("Create, resolve, or list attention items. Use operation=list plus wait_timeout to keep a coordination watcher open during active runs; after client shutdown/restart, rerun capture_state and then list attention again to rebuild inbox state before resuming."),
 			mcp.WithString("operation",
 				mcp.Required(),
 				mcp.Enum("list", "raise", "resolve"),
@@ -559,6 +560,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and required for operation=raise")),
 			mcp.WithString("state", mcp.Description("Filter by state when operation=list")),
 			mcp.WithBoolean("all_scopes", mcp.Description("List attention across the whole project when operation=list; scope_type and scope_id must be omitted")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next project-scoped inbox change before returning when no matching rows are currently present, for example 30s. Use this for live watchers; after restart, rerun operation=list to recover current state.")),
 			mcp.WithString("kind", mcp.Description("Attention kind. Required for operation=raise")),
 			mcp.WithString("summary", mcp.Description("Markdown-rich summary for quick triage. Required for operation=raise")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context when operation=raise")),
@@ -593,13 +595,14 @@ func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_attention_items",
-			mcp.WithDescription("List attention items for a project scope."),
+			mcp.WithDescription("List attention items for a project scope. Use this after client restart to recover inbox state before resuming live watchers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Description("Scope type")),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("state", mcp.Description("Filter by state")),
 			mcp.WithBoolean("all_scopes", mcp.Description("List attention across the whole project; scope_type and scope_id must be omitted")),
 			mcp.WithString("target_role", mcp.Description("Optional routed inbox target such as builder, qa, orchestrator, research, or alias dev")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for the next project-scoped inbox change before returning when no matching rows are currently present. Use this for live watchers; rerun list after restart to recover current state.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs
@@ -673,12 +676,13 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 		}
 		items, err := attention.ListAttentionItems(ctx, common.ListAttentionItemsRequest{
-			ProjectID:  projectID,
-			ScopeType:  strings.TrimSpace(args.ScopeType),
-			ScopeID:    strings.TrimSpace(args.ScopeID),
-			State:      strings.TrimSpace(args.State),
-			AllScopes:  args.AllScopes,
-			TargetRole: strings.TrimSpace(args.TargetRole),
+			ProjectID:   projectID,
+			ScopeType:   strings.TrimSpace(args.ScopeType),
+			ScopeID:     strings.TrimSpace(args.ScopeID),
+			State:       strings.TrimSpace(args.State),
+			AllScopes:   args.AllScopes,
+			TargetRole:  strings.TrimSpace(args.TargetRole),
+			WaitTimeout: strings.TrimSpace(args.WaitTimeout),
 		})
 		if err != nil {
 			return toolResultFromError(err), nil

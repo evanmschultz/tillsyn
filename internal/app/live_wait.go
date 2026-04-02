@@ -12,6 +12,9 @@ type LiveWaitEventType string
 // Live-wait event types define the first reusable coordination wakeup channels.
 const (
 	LiveWaitEventAuthRequestResolved LiveWaitEventType = "auth_request_resolved"
+	LiveWaitEventAttentionChanged    LiveWaitEventType = "attention_changed"
+	LiveWaitEventHandoffChanged      LiveWaitEventType = "handoff_changed"
+	LiveWaitEventCommentChanged      LiveWaitEventType = "comment_changed"
 )
 
 // LiveWaitEvent carries one in-process wakeup payload for waiting callers.

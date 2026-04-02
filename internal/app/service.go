@@ -505,9 +505,10 @@ type CreateCommentInput struct {
 
 // ListCommentsByTargetInput holds input values for list comment operations.
 type ListCommentsByTargetInput struct {
-	ProjectID  string
-	TargetType domain.CommentTargetType
-	TargetID   string
+	ProjectID   string
+	TargetType  domain.CommentTargetType
+	TargetID    string
+	WaitTimeout time.Duration
 }
 
 // SearchTasksFilter defines filtering criteria for queries.
@@ -1088,6 +1089,8 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 	}, false, "comment_created"); err != nil {
 		return domain.Comment{}, err
 	}
+	s.publishCommentChanged(target)
+	s.publishAttentionChanged(target.ProjectID)
 	return comment, nil
 }
 
@@ -1121,6 +1124,18 @@ func (s *Service) ListCommentsByTarget(ctx context.Context, in ListCommentsByTar
 	comments, err := s.repo.ListCommentsByTarget(ctx, target)
 	if err != nil {
 		return nil, err
+	}
+	if len(comments) == 0 && in.WaitTimeout > 0 {
+		woke, err := s.waitForLiveEvent(ctx, LiveWaitEventCommentChanged, commentLiveWaitKey(target), in.WaitTimeout)
+		if err != nil {
+			return nil, err
+		}
+		if woke {
+			comments, err = s.repo.ListCommentsByTarget(ctx, target)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	slices.SortFunc(comments, func(a, b domain.Comment) int {
 		switch {

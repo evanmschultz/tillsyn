@@ -541,6 +541,7 @@ type noticesPanelItem struct {
 	Label                 string
 	AttentionID           string
 	AttentionKind         domain.AttentionKind
+	HandoffID             string
 	TaskID                string
 	ProjectID             string
 	ScopeType             domain.ScopeLevel
@@ -563,10 +564,10 @@ type noticesPanelSection struct {
 
 // noticesPanelSectionOrder stores the stable section traversal order for notices navigation.
 var noticesPanelSectionOrder = []noticesSectionID{
-	noticesSectionCoordination,
+	noticesSectionAttention,
 	noticesSectionWarnings,
 	noticesSectionComments,
-	noticesSectionAttention,
+	noticesSectionCoordination,
 	noticesSectionRecentActivity,
 }
 
@@ -584,6 +585,7 @@ type globalNoticesPanelItem struct {
 	StableKey          string
 	AttentionID        string
 	AttentionKind      domain.AttentionKind
+	HandoffID          string
 	ProjectID          string
 	ProjectLabel       string
 	ScopeType          domain.ScopeLevel
@@ -780,57 +782,58 @@ type Model struct {
 	// taskFormResourceEditIndex tracks which staged resource row is being replaced from picker flow (-1 = append).
 	taskFormResourceEditIndex int
 
-	projectPickerIndex             int
-	projectFormInputs              []textinput.Model
-	projectFormFocus               int
-	projectFormDescription         string
-	templateMigrationReviewPreview *domain.ProjectTemplateReapplyPreview
-	templateMigrationReviewDraft   *pendingProjectTemplateReview
-	templateMigrationReviewLoading bool
-	templateMigrationReviewIndex   int
-	templateMigrationReviewPicked  map[string]struct{}
-	kindDefinitions                []domain.KindDefinition
-	templateLibraries              []domain.TemplateLibrary
-	currentProjectTemplateBinding  *domain.ProjectTemplateBinding
-	taskNodeContracts              map[string]domain.NodeContractSnapshot
-	descriptionEditorBack          inputMode
-	descriptionEditorTarget        descriptionEditorTarget
-	descriptionEditorTaskFormField int
-	descriptionEditorMode          descriptionEditorViewMode
-	descriptionEditorPath          string
-	descriptionEditorThreadDetails bool
-	descriptionEditorUndo          []string
-	descriptionEditorRedo          []string
-	labelsConfigInputs             []textinput.Model
-	labelsConfigFocus              int
-	labelsConfigSlug               string
-	labelsConfigBranchTaskID       string
-	labelsConfigPhaseTaskID        string
-	editingProjectID               string
-	editingTaskID                  string
-	taskInfoTaskID                 string
-	taskInfoOriginTaskID           string
-	taskInfoPath                   []string
-	taskInfoSubtaskIdx             int
-	taskInfoFocusedSubtaskID       string
-	taskInfoComments               []domain.Comment
-	taskInfoCommentsError          string
-	taskFormParentID               string
-	taskFormKind                   domain.WorkKind
-	taskFormScope                  domain.KindAppliesTo
-	taskFormBackMode               inputMode
-	taskFormBackTaskID             string
-	taskFormBackChildID            string
-	pendingProjectID               string
-	pendingOpenAuthInventory       bool
-	pendingOpenAuthInventoryGlobal bool
-	pendingFocusTaskID             string
-	pendingActivityJumpTask        string
-	pendingOpenTaskInfoID          string
-	pendingOpenActivityLog         bool
-	pendingOpenThreadTarget        domain.CommentTarget
-	pendingOpenThreadTitle         string
-	pendingOpenThreadBody          string
+	projectPickerIndex                int
+	projectFormInputs                 []textinput.Model
+	projectFormFocus                  int
+	projectFormDescription            string
+	templateMigrationReviewPreview    *domain.ProjectTemplateReapplyPreview
+	templateMigrationReviewDraft      *pendingProjectTemplateReview
+	templateMigrationReviewLoading    bool
+	templateMigrationReviewIndex      int
+	templateMigrationReviewPicked     map[string]struct{}
+	kindDefinitions                   []domain.KindDefinition
+	templateLibraries                 []domain.TemplateLibrary
+	currentProjectTemplateBinding     *domain.ProjectTemplateBinding
+	taskNodeContracts                 map[string]domain.NodeContractSnapshot
+	descriptionEditorBack             inputMode
+	descriptionEditorTarget           descriptionEditorTarget
+	descriptionEditorTaskFormField    int
+	descriptionEditorMode             descriptionEditorViewMode
+	descriptionEditorPath             string
+	descriptionEditorThreadDetails    bool
+	descriptionEditorUndo             []string
+	descriptionEditorRedo             []string
+	labelsConfigInputs                []textinput.Model
+	labelsConfigFocus                 int
+	labelsConfigSlug                  string
+	labelsConfigBranchTaskID          string
+	labelsConfigPhaseTaskID           string
+	editingProjectID                  string
+	editingTaskID                     string
+	taskInfoTaskID                    string
+	taskInfoOriginTaskID              string
+	taskInfoPath                      []string
+	taskInfoSubtaskIdx                int
+	taskInfoFocusedSubtaskID          string
+	taskInfoComments                  []domain.Comment
+	taskInfoCommentsError             string
+	taskFormParentID                  string
+	taskFormKind                      domain.WorkKind
+	taskFormScope                     domain.KindAppliesTo
+	taskFormBackMode                  inputMode
+	taskFormBackTaskID                string
+	taskFormBackChildID               string
+	pendingProjectID                  string
+	pendingOpenAuthInventory          bool
+	pendingOpenAuthInventoryGlobal    bool
+	pendingOpenAuthInventoryHandoffID string
+	pendingFocusTaskID                string
+	pendingActivityJumpTask           string
+	pendingOpenTaskInfoID             string
+	pendingOpenActivityLog            bool
+	pendingOpenThreadTarget           domain.CommentTarget
+	pendingOpenThreadTitle            string
+	pendingOpenThreadBody             string
 
 	lastArchivedTaskID string
 
@@ -1864,6 +1867,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = statusPrefix + "requests/sessions " + requestSessionScope + " • project-local " + coordinationProjectLabel
 		} else {
 			m.status = statusPrefix + "requests/sessions " + requestSessionScope
+		}
+		if handoffID := strings.TrimSpace(m.pendingOpenAuthInventoryHandoffID); handoffID != "" {
+			m.pendingOpenAuthInventoryHandoffID = ""
+			items := m.authInventoryItems()
+			found := false
+			for idx, item := range items {
+				if item.Handoff == nil || strings.TrimSpace(item.Handoff.ID) != handoffID {
+					continue
+				}
+				m.authInventoryIndex = idx
+				title, body, ok := m.authInventoryItemDetail(item)
+				if !ok {
+					break
+				}
+				m.openCoordinationDetail(item, title, body)
+				found = true
+				break
+			}
+			if !found {
+				m.status = "handoff not found in coordination"
+			}
 		}
 		m.syncAuthInventoryViewport()
 		return m, nil
@@ -3789,11 +3813,12 @@ func (m Model) selectedAuthInventoryItem() (authInventoryItem, bool) {
 }
 
 // openCoordinationFromNotice opens coordination directly or after a project reload when a notice row targets another project.
-func (m *Model) openCoordinationFromNotice(projectID string, global bool) tea.Cmd {
+func (m *Model) openCoordinationFromNotice(projectID string, global bool, handoffID string) tea.Cmd {
 	if m == nil {
 		return nil
 	}
 	projectID = strings.TrimSpace(projectID)
+	m.pendingOpenAuthInventoryHandoffID = strings.TrimSpace(handoffID)
 	if global {
 		return m.startAuthInventory(true)
 	}
@@ -15629,7 +15654,7 @@ func globalNoticesPanelItemFromAttentionLabel(projectID, projectLabel string, it
 		scopeID = projectID
 	}
 	attentionID := strings.TrimSpace(item.ID)
-	return globalNoticesPanelItem{
+	out := globalNoticesPanelItem{
 		StableKey:         globalNoticesStableKey(projectID, attentionID, scopeType, scopeID, summary),
 		AttentionID:       attentionID,
 		AttentionKind:     item.Kind,
@@ -15641,6 +15666,16 @@ func globalNoticesPanelItemFromAttentionLabel(projectID, projectLabel string, it
 		TaskID:            globalNoticesTaskIDFromAttention(item),
 		ThreadDescription: strings.TrimSpace(item.BodyMarkdown),
 	}
+	if domain.NormalizeAttentionKind(item.Kind) == domain.AttentionKindHandoff {
+		out.HandoffID = handoffIDFromAttentionID(attentionID)
+	}
+	return out
+}
+
+// handoffIDFromAttentionID strips the mirrored handoff attention suffix back to the source handoff id.
+func handoffIDFromAttentionID(attentionID string) string {
+	attentionID = strings.TrimSpace(attentionID)
+	return strings.TrimSuffix(attentionID, "::handoff")
 }
 
 // normalizeNoticeInboxRole canonicalizes viewer-facing inbox roles and common aliases.
@@ -15700,14 +15735,28 @@ func (m Model) isViewerCommentAttention(item domain.AttentionItem) bool {
 	return slices.Contains(m.viewerInboxRoles(), targetRole)
 }
 
+// isViewerHandoffAttention reports whether one handoff row is explicitly routed to the current viewer identity.
+func (m Model) isViewerHandoffAttention(item domain.AttentionItem) bool {
+	if !item.IsUnresolved() || domain.NormalizeAttentionKind(item.Kind) != domain.AttentionKindHandoff {
+		return false
+	}
+	targetRole := normalizeNoticeInboxRole(item.TargetRole)
+	if targetRole == "" {
+		return false
+	}
+	return slices.Contains(m.viewerInboxRoles(), targetRole)
+}
+
 // shouldShowWarningAttention reports whether one attention row belongs in the generic warnings section.
 func (m Model) shouldShowWarningAttention(item domain.AttentionItem) bool {
 	if !item.IsUnresolved() {
 		return false
 	}
 	switch domain.NormalizeAttentionKind(item.Kind) {
-	case domain.AttentionKindMention, domain.AttentionKindHandoff:
+	case domain.AttentionKindMention:
 		return false
+	case domain.AttentionKindHandoff:
+		return !m.isViewerHandoffAttention(item)
 	}
 	return !item.RequiresUserAction
 }
@@ -15720,12 +15769,15 @@ func (m Model) shouldShowActionRequiredAttention(item domain.AttentionItem) bool
 	if m.isViewerCommentAttention(item) {
 		return false
 	}
+	if domain.NormalizeAttentionKind(item.Kind) == domain.AttentionKindHandoff {
+		return m.isViewerHandoffAttention(item)
+	}
 	return item.RequiresUserAction
 }
 
 // shouldShowGlobalNoticeAttention reports whether one attention row should surface in the global notifications list.
 func (m Model) shouldShowGlobalNoticeAttention(item domain.AttentionItem) bool {
-	return m.shouldShowActionRequiredAttention(item) || m.isViewerCommentAttention(item)
+	return m.shouldShowActionRequiredAttention(item) || m.isViewerCommentAttention(item) || m.shouldShowWarningAttention(item)
 }
 
 // globalNoticesPanelItemsForInteraction returns selectable global-notifications rows.
@@ -15910,15 +15962,27 @@ func (m Model) noticesPanelItemFromAttention(item domain.AttentionItem) (notices
 		rowProjectID = projectID
 	}
 	return noticesPanelItem{
-		Label:             label,
-		AttentionID:       strings.TrimSpace(item.ID),
-		AttentionKind:     item.Kind,
+		Label:         label,
+		AttentionID:   strings.TrimSpace(item.ID),
+		AttentionKind: item.Kind,
+		HandoffID: func() string {
+			if domain.NormalizeAttentionKind(item.Kind) == domain.AttentionKindHandoff {
+				return handoffIDFromAttentionID(item.ID)
+			}
+			return ""
+		}(),
 		TaskID:            notificationTaskIDFromScope(scopeType, scopeID),
 		ProjectID:         rowProjectID,
 		ScopeType:         scopeType,
 		ScopeID:           scopeID,
 		ThreadTitle:       notificationThreadTitle(scopeType, item.Summary),
 		ThreadDescription: strings.TrimSpace(item.BodyMarkdown),
+		CoordinationProjectID: func() string {
+			if domain.NormalizeAttentionKind(item.Kind) == domain.AttentionKindHandoff {
+				return rowProjectID
+			}
+			return ""
+		}(),
 	}, true
 }
 
@@ -15991,12 +16055,28 @@ func (m Model) noticesPanelSections(
 	sections := make([]noticesPanelSection, 0, len(noticesPanelSectionOrder))
 	_ = attentionTop
 
-	coordinationRows := m.noticesCoordinationPanelItems()
+	attentionRows := m.noticesAttentionPanelItems()
+	actionableAttentionCount := len(attentionRows)
+	if actionableAttentionCount == 0 {
+		attentionRows = append(attentionRows, noticesPanelItem{Label: "none"})
+	}
+	attentionSummary := []string{}
+	if actionableAttentionCount > 0 {
+		attentionSummary = append(attentionSummary, fmt.Sprintf("requires action: %d", actionableAttentionCount))
+	}
+	if attentionTotal > 0 {
+		attentionSummary = append(
+			attentionSummary,
+			fmt.Sprintf("scope items: %d", attentionItems),
+			fmt.Sprintf("unresolved: %d", attentionTotal),
+			fmt.Sprintf("blocked: %d", attentionBlocked),
+		)
+	}
 	sections = append(sections, noticesPanelSection{
-		ID:      noticesSectionCoordination,
-		Title:   noticesSectionTitle(noticesSectionCoordination),
-		Summary: nil,
-		Items:   coordinationRows,
+		ID:      noticesSectionAttention,
+		Title:   noticesSectionTitle(noticesSectionAttention),
+		Summary: attentionSummary,
+		Items:   attentionRows,
 	})
 
 	warningItems := m.noticesWarningPanelItems()
@@ -16021,28 +16101,12 @@ func (m Model) noticesPanelSections(
 		})
 	}
 
-	attentionRows := m.noticesAttentionPanelItems()
-	actionableAttentionCount := len(attentionRows)
-	if actionableAttentionCount == 0 {
-		attentionRows = append(attentionRows, noticesPanelItem{Label: "none"})
-	}
-	attentionSummary := []string{}
-	if actionableAttentionCount > 0 {
-		attentionSummary = append(attentionSummary, fmt.Sprintf("requires action: %d", actionableAttentionCount))
-	}
-	if attentionTotal > 0 {
-		attentionSummary = append(
-			attentionSummary,
-			fmt.Sprintf("scope items: %d", attentionItems),
-			fmt.Sprintf("unresolved: %d", attentionTotal),
-			fmt.Sprintf("blocked: %d", attentionBlocked),
-		)
-	}
+	coordinationRows := m.noticesCoordinationPanelItems()
 	sections = append(sections, noticesPanelSection{
-		ID:      noticesSectionAttention,
-		Title:   noticesSectionTitle(noticesSectionAttention),
-		Summary: attentionSummary,
-		Items:   attentionRows,
+		ID:      noticesSectionCoordination,
+		Title:   noticesSectionTitle(noticesSectionCoordination),
+		Summary: nil,
+		Items:   coordinationRows,
 	})
 
 	activityRows := m.recentActivityPanelEntries()
@@ -16624,8 +16688,8 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	}
 	m.clampGlobalNoticesSelection()
 	item := items[clamp(m.globalNoticesIdx, 0, len(items)-1)]
-	if strings.TrimSpace(item.ProjectID) != "" && (strings.HasPrefix(strings.TrimSpace(item.StableKey), "coordination:") || item.CoordinationGlobal) {
-		cmd := m.openCoordinationFromNotice(item.ProjectID, item.CoordinationGlobal)
+	if strings.TrimSpace(item.ProjectID) != "" && (strings.HasPrefix(strings.TrimSpace(item.StableKey), "coordination:") || item.CoordinationGlobal || strings.TrimSpace(item.HandoffID) != "") {
+		cmd := m.openCoordinationFromNotice(item.ProjectID, item.CoordinationGlobal, item.HandoffID)
 		return m, cmd
 	}
 	if req, ok := m.selectedAuthRequestForActiveNotice(); ok && strings.TrimSpace(req.ID) != "" {
@@ -16800,7 +16864,7 @@ func (m Model) activateNoticesSelection() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if strings.TrimSpace(item.CoordinationProjectID) != "" || item.CoordinationGlobal {
-		cmd := m.openCoordinationFromNotice(item.CoordinationProjectID, item.CoordinationGlobal)
+		cmd := m.openCoordinationFromNotice(item.CoordinationProjectID, item.CoordinationGlobal, item.HandoffID)
 		return m, cmd
 	}
 	if req, ok := m.selectedAuthRequestForActiveNotice(); ok && strings.TrimSpace(req.ID) != "" {

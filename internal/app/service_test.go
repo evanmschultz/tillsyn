@@ -3345,6 +3345,63 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	}
 }
 
+// TestListCommentsByTargetWaitsForLiveChange verifies comment list wait_timeout resumes on the next thread update.
+func TestListCommentsByTargetWaitsForLiveChange(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 2, 10, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+
+	svc := NewService(repo, func() string { return "comment-live" }, func() time.Time { return now }, ServiceConfig{})
+	resultCh := make(chan []domain.Comment, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, listErr := svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
+			ProjectID:   project.ID,
+			TargetType:  domain.CommentTargetTypeProject,
+			TargetID:    project.ID,
+			WaitTimeout: time.Second,
+		})
+		if listErr != nil {
+			errCh <- listErr
+			return
+		}
+		resultCh <- items
+	}()
+
+	select {
+	case got := <-resultCh:
+		t.Fatalf("ListCommentsByTarget() returned early with %#v before a live change", got)
+	case err := <-errCh:
+		t.Fatalf("ListCommentsByTarget() early error = %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     project.ID,
+		Summary:      "Project kickoff",
+		BodyMarkdown: "First live thread update",
+		ActorType:    domain.ActorTypeUser,
+		ActorID:      "user-1",
+		ActorName:    "user-1",
+	}); err != nil {
+		t.Fatalf("CreateComment() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListCommentsByTarget() error = %v", err)
+	case items := <-resultCh:
+		if len(items) != 1 || items[0].ID != "comment-live" {
+			t.Fatalf("ListCommentsByTarget() = %#v, want comment-live after wake", items)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ListCommentsByTarget() did not wake after a live comment change")
+	}
+}
+
 // TestCreateCommentUsesContextActorNameFallback verifies comment mutations reuse the context display name for matching actors.
 func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	repo := newFakeRepo()

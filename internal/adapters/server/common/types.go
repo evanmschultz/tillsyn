@@ -182,12 +182,13 @@ type CaptureStateReadModel interface {
 
 // ListAttentionItemsRequest captures list query filters for attention records.
 type ListAttentionItemsRequest struct {
-	ProjectID  string
-	ScopeType  string
-	ScopeID    string
-	State      string
-	AllScopes  bool
-	TargetRole string
+	ProjectID   string
+	ScopeType   string
+	ScopeID     string
+	State       string
+	AllScopes   bool
+	TargetRole  string
+	WaitTimeout string
 }
 
 // RaiseAttentionItemRequest captures input for new attention records.

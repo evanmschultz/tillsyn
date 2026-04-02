@@ -143,6 +143,63 @@ func TestServiceHandoffLifecycleSyncsInboxAttention(t *testing.T) {
 	}
 }
 
+// TestServiceListHandoffsWaitsForLiveChange verifies handoff list wait_timeout resumes on the next project-scoped handoff change.
+func TestServiceListHandoffsWaitsForLiveChange(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("project-1", "Project", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	repo.projects[project.ID] = project
+
+	svc := NewService(repo, func() string { return "handoff-live" }, func() time.Time { return now }, ServiceConfig{})
+	resultCh := make(chan []domain.Handoff, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, listErr := svc.ListHandoffs(context.Background(), ListHandoffsInput{
+			Level:       domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
+			WaitTimeout: time.Second,
+		})
+		if listErr != nil {
+			errCh <- listErr
+			return
+		}
+		resultCh <- items
+	}()
+
+	select {
+	case got := <-resultCh:
+		t.Fatalf("ListHandoffs() returned early with %#v before a live change", got)
+	case err := <-errCh:
+		t.Fatalf("ListHandoffs() early error = %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	if _, err := svc.CreateHandoff(context.Background(), CreateHandoffInput{
+		Level:       domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
+		SourceRole:  "builder",
+		TargetRole:  "qa",
+		Status:      domain.HandoffStatusWaiting,
+		Summary:     "builder ready for qa",
+		CreatedBy:   "user-1",
+		CreatedType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("CreateHandoff() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListHandoffs() error = %v", err)
+	case items := <-resultCh:
+		if len(items) != 1 || items[0].ID != "handoff-live" {
+			t.Fatalf("ListHandoffs() = %#v, want handoff-live after wake", items)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ListHandoffs() did not wake after a live handoff change")
+	}
+}
+
 // TestServiceCreateHandoffUsesResolvedMutationActor verifies context identity wins for persisted attribution.
 func TestServiceCreateHandoffUsesResolvedMutationActor(t *testing.T) {
 	repo := newFakeRepo()
