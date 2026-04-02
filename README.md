@@ -94,8 +94,8 @@ Still in progress for this dogfood wave:
 
 Current MCP/runtime direction:
 - `capture_state` is the summary-first recovery surface for level-scoped workflows; after client shutdown/restart, call it first to re-anchor project/scope context before resuming any watchers.
-- `till.get_bootstrap_guide` is the lightweight runtime next-step surface for empty-instance and pre-approval flows.
-- `till.get_instructions` is the embedded-doc and scoped policy/explanation surface; it can return selected markdown docs plus agent-facing recommendations, and it can also explain one concrete project, template library, kind, or node from runtime state without turning into a raw schema browser.
+- `till.get_instructions` is the embedded-doc and scoped policy/explanation surface; it can return selected markdown docs plus agent-facing recommendations, it can explain one concrete project, template library, kind, or node from runtime state without turning into a raw schema browser, and `topic=bootstrap` is now the canonical richer bootstrap explanation path.
+- `till.get_bootstrap_guide` remains on the frozen tool family as the lightweight compatibility wrapper for empty-instance and pre-approval flows.
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - MCP mutation auth is session-first.
 - transport-level lease/scope request contracts remain secondary local workflow guardrails for non-user mutations.
@@ -162,6 +162,14 @@ Current auth note:
   - when an orchestrator needs child builder/qa/research auth, create that child request through `till.auth_request(operation=create, acting_session_id=..., acting_auth_context_id=...)` so requester ownership is derived from the acting orchestrator session and the child path stays bounded within the acting approved path;
   - builder, qa, and research agents may still request their own single-project rooted auth directly, but they must not mint sibling or broader child sessions for other principals;
   - do not treat the global-to-project auth split as a runtime bug.
+- Auth hygiene expectations:
+  - never use another agent's or user's auth session, session secret, or `auth_context_id`;
+  - never paste auth material into comments, handoffs, task metadata, docs, or external logs;
+  - always request the narrowest scope and shortest reasonable lifetime for the work being done;
+  - orchestrators are responsible for child-session cleanup at the end of a run unless a stricter project/template rule says otherwise;
+  - builders, qa, and research agents may clean up only their own sessions and must not govern sibling or broader sessions;
+  - after a run ends, do not leave muddy auth state behind: pending requests, active child sessions, stale leases, and stale coordination rows should all be cleaned up truthfully;
+  - after restart, recover current auth and coordination state before minting replacement sessions so the runtime is not polluted with duplicate leftovers.
 - Guarded agent lease identity should be rooted in the authenticated agent principal id; display names are for attribution, not lease matching.
 - `till.capability_lease(operation=issue)` now follows that same rule directly:
   - for authenticated agent sessions, the issued lease identity is derived from the authenticated principal instead of trusting a caller-supplied `agent_name`;
@@ -211,9 +219,8 @@ Current auth note:
     - but this is still not a full push-notification transport for disconnected clients, HTTP listeners, or OS notifications;
     - after restart, agents should recover durable state with `capture_state`, `attention_item(list)`, `handoff(list)`, and thread `comment(list)` reads before resuming watchers.
 - Current remaining dogfood order:
-  - first decide and land bootstrap collapse on top of the now-shipped scoped `till.get_instructions` surface,
-  - then close with one final collaborative dogfood hardening pass,
-  - and only after those slices finish, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, and OS-level notification ergonomics.
+  - first close with one final collaborative dogfood hardening pass,
+  - and only after that slice finishes, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, OS-level notification ergonomics, and richer rule/template composition UX.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current bounded-delegation status: `till.auth_request(operation=create)` now also supports explicit child delegation through `acting_session_id` and `acting_session_secret`; when used, requester attribution is derived from the acting session, child paths must stay within the acting approved path, and only orchestrators may create sibling child auth for other principals.
@@ -239,9 +246,9 @@ Current auth note:
   - If you see `Action Required`, assume there is an open handoff or similarly explicit work-request row for the current viewer, not just a plain comment.
 - Current live-transport caveat: waitable stdio watchers are now landed for auth, attention, comments, and handoffs, but they still depend on an active waiting client. This is not yet a disconnected push-notification system, richer session-aware cleanup layer, or HTTP/continuous-listening transport.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
-- Open guidance question:
-  - we still need to decide whether `till.get_bootstrap_guide` should remain a dedicated lightweight tool or collapse into `till.get_instructions(topic=bootstrap|workflow)` later;
-  - the current split is intentional for now because bootstrap is runtime-generated minimal next-step guidance, while `till.get_instructions` now handles both embedded docs and scoped runtime explanations.
+- Bootstrap/instructions status:
+  - `till.get_instructions(topic=bootstrap)` is now the canonical richer bootstrap explanation surface.
+  - `till.get_bootstrap_guide` remains the dedicated lightweight compatibility wrapper on the frozen MCP family.
   - the current scoped explanation surface already accepts optional `project_id`, `template_library_id`, `kind_id`, and `node_id` plus `focus=project|template|kind|node|topic`.
   - project scope now explains project standards, allowed kinds, template binding, and project-local workflow expectations.
   - template scope now explains node-template descriptions, child rules, responsible actor kinds, blocker rules, and migration/reapply context.
@@ -330,6 +337,16 @@ Roadmap-only in the active wave (explicitly deferred):
 
 After the current active slices close, run one cleanup/refinement wave focused on real dogfood usage:
 - clean/refresh the local dogfood DB and create the canonical `tillsyn` project/task tree that will be used for real collaborative dogfooding.
+- add intuitive non-JSON TUI/operator surfaces for viewing and editing workflow rules and template policy:
+  - global template rules,
+  - project-scoped rules,
+  - branch/phase/task/subtask rule overlays,
+  - and the effective inherited rule view for one concrete node.
+- design and implement composable template layering rather than one flat template choice:
+  - one project should be able to inherit general `go` rules plus a narrower layer such as `go cli/tui`, `go backend`, or `go wasm`,
+  - child template layers should be able to override or extend parent defaults instead of forcing duplicated whole-template copies,
+  - the effective rule-precedence model should be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
+  - and the human-facing UI should make inherited vs overridden rule sources obvious.
 - move `Action Required` to the top of the project notifications panel.
 - add one configurable notifications accent/color, dogfood orange first, and apply it consistently to attention-worthy notification surfaces such as comments, warnings, and action-required rows before choosing a long-term default.
 - highlight `@human` mentions in rendered thread/comment markdown so human-directed asks stand out immediately.

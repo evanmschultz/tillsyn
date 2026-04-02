@@ -13,6 +13,7 @@ import (
 
 // instructionsExplainServices stores the runtime readers used for scoped explanations.
 type instructionsExplainServices struct {
+	bootstrap common.BootstrapGuideReader
 	projects  common.ProjectService
 	tasks     common.TaskService
 	kinds     common.KindCatalogService
@@ -41,7 +42,7 @@ type instructionsExplainResult struct {
 func explainInstructionsScope(ctx context.Context, services instructionsExplainServices, req instructionsExplainRequest) (instructionsExplainResult, error) {
 	switch req.Focus {
 	case instructionsToolFocusTopic:
-		return explainTopicInstructions(req), nil
+		return explainTopicInstructions(ctx, services, req)
 	case instructionsToolFocusProject:
 		return explainProjectInstructions(ctx, services, req)
 	case instructionsToolFocusTemplate:
@@ -55,9 +56,16 @@ func explainInstructionsScope(ctx context.Context, services instructionsExplainS
 	}
 }
 
-// explainTopicInstructions returns one generic workflow explanation when no scoped runtime object was requested.
-func explainTopicInstructions(req instructionsExplainRequest) instructionsExplainResult {
+// explainTopicInstructions returns generic or bootstrap-specific workflow guidance when no concrete runtime object was requested.
+func explainTopicInstructions(ctx context.Context, services instructionsExplainServices, req instructionsExplainRequest) (instructionsExplainResult, error) {
 	topic := strings.TrimSpace(req.Topic)
+	if strings.EqualFold(topic, "bootstrap") && services.bootstrap != nil {
+		guide, err := services.bootstrap.GetBootstrapGuide(ctx)
+		if err != nil {
+			return instructionsExplainResult{}, fmt.Errorf("get bootstrap guide: %w", err)
+		}
+		return explainBootstrapTopic(guide), nil
+	}
 	title := "General Till Guidance"
 	overview := "Use embedded docs plus scoped runtime reads to understand workflow policy, coordination, auth, and template contracts."
 	if topic != "" {
@@ -91,6 +99,48 @@ func explainTopicInstructions(req instructionsExplainRequest) instructionsExplai
 		Summary:       summary,
 		ResolvedScope: instructionsToolResolvedScope{},
 		Explanation:   explanation,
+	}, nil
+}
+
+// explainBootstrapTopic lifts the lightweight bootstrap guide into the richer instructions explanation shape.
+func explainBootstrapTopic(guide common.BootstrapGuide) instructionsExplainResult {
+	scopedRules := []string{
+		"Bootstrap is for empty-instance and first-project setup; after work already exists, prefer till.capture_state plus scoped coordination reads instead of re-running bootstrap.",
+		"Do not use another agent's or user's session, session secret, or auth_context_id during bootstrap or later workflow steps.",
+		"Claim or validate your own narrow approved session, then clean up child auth sessions, stale leases, and leftover coordination rows truthfully after the run.",
+	}
+	workflow := append([]string(nil), guide.NextSteps...)
+	related := make([]instructionsToolRelatedTool, 0, len(guide.Recommended))
+	for _, tool := range guide.Recommended {
+		reason := "recommended during bootstrap and first-project setup"
+		switch tool {
+		case "till.get_instructions":
+			reason = "canonical policy and scoped explanation surface after bootstrap collapse"
+		case "till.capture_state":
+			reason = "restart recovery once the instance already has project state"
+		case "till.auth_request":
+			reason = "request, claim, validate, and clean up scoped auth"
+		}
+		related = append(related, instructionsToolRelatedTool{Tool: tool, Reason: reason})
+	}
+	gaps := make([]string, 0, 1)
+	if strings.TrimSpace(guide.RoadmapNotice) != "" {
+		gaps = append(gaps, guide.RoadmapNotice)
+	}
+	return instructionsExplainResult{
+		Summary: guide.Summary,
+		Explanation: instructionsToolExplanation{
+			Title:            "Bootstrap Guidance",
+			Overview:         strings.TrimSpace(guide.WhatTillsynIs),
+			ScopedRules:      scopedRules,
+			WorkflowContract: workflow,
+			AgentExpectations: []string{
+				"Use till.get_instructions(topic=bootstrap) as the canonical bootstrap explanation surface; till.get_bootstrap_guide is the compatibility wrapper on the frozen MCP family.",
+				"Once a project exists, move from bootstrap into scoped project, template, kind, and node explanations instead of relying on generic startup text.",
+			},
+			RelatedTools: related,
+			Gaps:         gaps,
+		},
 	}
 }
 

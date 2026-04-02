@@ -16,6 +16,7 @@ func newInstructionsTestServices() instructionsExplainServices {
 		},
 	}
 	return instructionsExplainServices{
+		bootstrap: service,
 		projects:  service,
 		tasks:     service,
 		kinds:     service,
@@ -77,6 +78,36 @@ func TestBuildInstructionsToolResponseExplainTemplate(t *testing.T) {
 	}
 	if len(resp.Explanation.Evidence) == 0 {
 		t.Fatal("Evidence empty, want template description evidence")
+	}
+}
+
+// TestBuildInstructionsToolResponseExplainBootstrap verifies bootstrap topic uses the richer shared bootstrap guidance.
+func TestBuildInstructionsToolResponseExplainBootstrap(t *testing.T) {
+	t.Parallel()
+
+	resp, err := buildInstructionsToolResponse(context.Background(), newInstructionsTestServices(), instructionsToolRequest{
+		Mode:                   "explain",
+		Focus:                  "topic",
+		Topic:                  "bootstrap",
+		IncludeMarkdown:        false,
+		IncludeRecommendations: false,
+	})
+	if err != nil {
+		t.Fatalf("buildInstructionsToolResponse() error = %v", err)
+	}
+	if resp.Explanation == nil {
+		t.Fatal("Explanation nil, want bootstrap explanation")
+	}
+	if got := resp.Explanation.Title; got != "Bootstrap Guidance" {
+		t.Fatalf("Title = %q, want Bootstrap Guidance", got)
+	}
+	workflow := strings.ToLower(strings.Join(resp.Explanation.WorkflowContract, " | "))
+	if !strings.Contains(workflow, "till.auth_request(operation=create)") {
+		t.Fatalf("WorkflowContract = %q, want auth-request bootstrap guidance", workflow)
+	}
+	expectations := strings.ToLower(strings.Join(resp.Explanation.AgentExpectations, " | "))
+	if !strings.Contains(expectations, "till.get_instructions") {
+		t.Fatalf("AgentExpectations = %q, want get_instructions bootstrap guidance", expectations)
 	}
 }
 
