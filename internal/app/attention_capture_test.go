@@ -92,6 +92,71 @@ func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 	}
 }
 
+// TestServiceListAttentionItemsWaitsForLiveChange verifies attention list wait_timeout resumes on the next project-scoped inbox change.
+func TestServiceListAttentionItemsWaitsForLiveChange(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 2, 10, 15, 0, 0, time.UTC)
+	svc := NewService(repo, func() string { return "attn-live" }, func() time.Time { return now }, ServiceConfig{})
+
+	project, err := svc.CreateProject(context.Background(), "Attention Wait", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	resultCh := make(chan []domain.AttentionItem, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, listErr := svc.ListAttentionItems(context.Background(), ListAttentionItemsInput{
+			Level: domain.LevelTupleInput{
+				ProjectID: project.ID,
+				ScopeType: domain.ScopeLevelProject,
+				ScopeID:   project.ID,
+			},
+			UnresolvedOnly: true,
+			WaitTimeout:    time.Second,
+		})
+		if listErr != nil {
+			errCh <- listErr
+			return
+		}
+		resultCh <- items
+	}()
+
+	select {
+	case got := <-resultCh:
+		t.Fatalf("ListAttentionItems() returned early with %#v before a live change", got)
+	case err := <-errCh:
+		t.Fatalf("ListAttentionItems() early error = %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	if _, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: project.ID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   project.ID,
+		},
+		Kind:               domain.AttentionKindRiskNote,
+		Summary:            "Need orchestration follow-up",
+		RequiresUserAction: false,
+		CreatedBy:          "user-1",
+		CreatedType:        domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("RaiseAttentionItem() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListAttentionItems() error = %v", err)
+	case items := <-resultCh:
+		if len(items) != 1 || items[0].ID != "attn-live" {
+			t.Fatalf("ListAttentionItems() = %#v, want attn-live after wake", items)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ListAttentionItems() did not wake after a live attention change")
+	}
+}
+
 // TestRaiseAttentionItemValidatesScopeEntityConsistency verifies scope_type/scope_id tuple validation.
 func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 	repo := newFakeRepo()

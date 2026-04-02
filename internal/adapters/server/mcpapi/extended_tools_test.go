@@ -2497,13 +2497,14 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	}
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(622, "till.handoff", map[string]any{
-		"operation":  "list",
-		"project_id": "p1",
-		"branch_id":  "branch-1",
-		"scope_type": "task",
-		"scope_id":   "task-1",
-		"statuses":   []any{"waiting", "blocked"},
-		"limit":      25,
+		"operation":    "list",
+		"project_id":   "p1",
+		"branch_id":    "branch-1",
+		"scope_type":   "task",
+		"scope_id":     "task-1",
+		"statuses":     []any{"waiting", "blocked"},
+		"limit":        25,
+		"wait_timeout": "30s",
 	}))
 	if isError, _ := listResp.Result["isError"].(bool); isError {
 		t.Fatalf("list_handoffs returned isError=true: %#v", listResp.Result)
@@ -2525,6 +2526,9 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	}
 	if got := service.lastListHandoffsReq.Limit; got != 25 {
 		t.Fatalf("list_handoffs limit = %d, want 25", got)
+	}
+	if got := service.lastListHandoffsReq.WaitTimeout; got != "30s" {
+		t.Fatalf("list_handoffs wait_timeout = %q, want 30s", got)
 	}
 }
 
@@ -2888,10 +2892,11 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	}
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(402, "till.comment", map[string]any{
-		"operation":   "list",
-		"project_id":  "p1",
-		"target_type": "phase",
-		"target_id":   "phase-1",
+		"operation":    "list",
+		"project_id":   "p1",
+		"target_type":  "phase",
+		"target_id":    "phase-1",
+		"wait_timeout": "15s",
 	}))
 	if isError, _ := listResp.Result["isError"].(bool); isError {
 		t.Fatalf("comment list returned isError=true: %#v", listResp.Result)
@@ -2901,6 +2906,9 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	}
 	if got := service.lastListCommentReq.TargetID; got != "phase-1" {
 		t.Fatalf("comment list target_id = %q, want phase-1", got)
+	}
+	if got := service.lastListCommentReq.WaitTimeout; got != "15s" {
+		t.Fatalf("comment list wait_timeout = %q, want 15s", got)
 	}
 }
 

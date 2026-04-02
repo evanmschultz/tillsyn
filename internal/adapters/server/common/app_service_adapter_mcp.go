@@ -21,8 +21,8 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	}
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
-		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing. Once work exists, use comments for shared discussion, mentions for routed comment inbox items, and handoffs for explicit action-required coordination.",
-		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, and SQLite-backed template libraries for generated workflow contracts.",
+		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing. Once work exists, use comments for shared discussion, mentions for routed comment inbox items, and handoffs for explicit next-action coordination that are action-required only for the addressed viewer.",
+		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, waitable stdio coordination watchers, and SQLite-backed template libraries for generated workflow contracts.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
 			"Task graph operations across branch/phase/task/subtask scopes",
@@ -42,9 +42,10 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"After the project exists, claim or reuse a project-scoped approved session before guarded in-project mutations such as till.plan_item(operation=create)",
 			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
 			"Use till.comment(operation=create) for shared discussion and status updates inside Tillsyn; role mentions such as @human, @builder, @qa, @orchestrator, and @research route comment inbox rows",
-			"Use till.handoff for explicit next-action routing; open handoffs should be interpreted as Action Required rather than ordinary comments",
+			"Use till.handoff for explicit next-action routing; open handoffs should be interpreted as Action Required only for the addressed viewer and as oversight warnings for everyone else",
 			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
-			"Call till.capture_state to reorient and continue safely",
+			"For active coordination watchers, keep till.attention_item/till.comment/till.handoff operation=list calls open with wait_timeout instead of polling",
+			"After a client restart on an existing instance, recover with till.capture_state first, then till.attention_item(operation=list), till.handoff(operation=list), and till.comment(operation=list) for the threads you need to resume",
 		},
 		Recommended: []string{
 			"till.get_instructions",
@@ -1718,10 +1719,15 @@ func (a *AppServiceAdapter) ListCommentsByTarget(ctx context.Context, in ListCom
 	if a == nil || a.service == nil {
 		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
+	waitTimeout, err := parseOptionalDurationString(in.WaitTimeout, "wait_timeout")
+	if err != nil {
+		return nil, err
+	}
 	comments, err := a.service.ListCommentsByTarget(ctx, app.ListCommentsByTargetInput{
-		ProjectID:  strings.TrimSpace(in.ProjectID),
-		TargetType: domain.CommentTargetType(strings.TrimSpace(in.TargetType)),
-		TargetID:   strings.TrimSpace(in.TargetID),
+		ProjectID:   strings.TrimSpace(in.ProjectID),
+		TargetType:  domain.CommentTargetType(strings.TrimSpace(in.TargetType)),
+		TargetID:    strings.TrimSpace(in.TargetID),
+		WaitTimeout: waitTimeout,
 	})
 	if err != nil {
 		return nil, mapAppError("list comments by target", err)
@@ -1807,6 +1813,10 @@ func (a *AppServiceAdapter) ListHandoffs(ctx context.Context, in ListHandoffsReq
 	if a == nil || a.service == nil {
 		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
+	waitTimeout, err := parseOptionalDurationString(in.WaitTimeout, "wait_timeout")
+	if err != nil {
+		return nil, err
+	}
 	handoffs, err := a.service.ListHandoffs(ctx, app.ListHandoffsInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: strings.TrimSpace(in.ProjectID),
@@ -1814,8 +1824,9 @@ func (a *AppServiceAdapter) ListHandoffs(ctx context.Context, in ListHandoffsReq
 			ScopeType: domain.ScopeLevel(strings.TrimSpace(in.ScopeType)),
 			ScopeID:   strings.TrimSpace(in.ScopeID),
 		},
-		Statuses: toHandoffStatusList(in.Statuses),
-		Limit:    in.Limit,
+		Statuses:    toHandoffStatusList(in.Statuses),
+		Limit:       in.Limit,
+		WaitTimeout: waitTimeout,
 	})
 	if err != nil {
 		return nil, mapAppError("list handoffs", err)

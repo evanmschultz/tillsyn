@@ -2,7 +2,45 @@
 
 Created: 2026-02-21
 Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, and routed mentions/inbox attention. The latest closeout on top of that landed a stdio-local auth-context handle path so normal MCP mutations no longer need inline session secrets after claim/validate, and project edit now exposes a direct comments-thread row. The next remaining work is broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset and notification polish.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, and a direct project-edit comments row. The latest closeout on top of that lands waitable stdio comment/handoff/attention watchers plus viewer-aware handoff notification routing and recovery guidance. The next remaining work is scoped instructions expansion, later bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset and notification polish.
+
+## Checkpoint 2026-04-02: Waitable Coordination Recovery And Viewer-Aware Handoff Notices
+
+Objective:
+- close the broader wait/notify reuse slice for local stdio dogfood by extending live wake support from auth into attention/comments/handoffs, make restart recovery expectations explicit in the shipped docs/tool text, and stop treating agent-agent handoffs as human action-required rows.
+
+Context7:
+1. Reviewed `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for Bubble Tea update/selection patterns before tightening notice deep-link behavior and tests.
+
+Implementation summary:
+1. Extended the in-process live-wait broker reuse beyond auth:
+   - added attention/comment/handoff event types,
+   - added one shared service helper for waitable list behavior,
+   - published broker wakeups after comment create, handoff create/update, and attention raise/resolve,
+   - and added `wait_timeout` support to the app/common/MCP paths for `till.attention_item(operation=list)`, `till.comment(operation=list)`, and `till.handoff(operation=list)`.
+2. Tightened notices semantics for human oversight:
+   - routed comment mentions remain in the dedicated `Comments` section,
+   - handoffs only stay in `Action Required` when they are explicitly addressed to the current viewer,
+   - other open handoffs remain visible as warnings/coordination oversight instead of looking like human work items.
+3. Fixed handoff activation from notices:
+   - handoff-backed notice rows now carry the source handoff id,
+   - `enter` from project/global notices deep-links through coordination inventory into the handoff detail modal instead of falling back to the comments thread.
+4. Updated shipped recovery/role guidance:
+   - MCP tool descriptions now tell agents to keep waitable list calls open during active runs and to rerun `capture_state` plus attention/handoff/comment list reads after client restart,
+   - `till.get_instructions` now includes explicit crash-recovery order and a clearer role-purpose contract for orchestrator, builder, qa, and research,
+   - README now documents that action-required handoffs are viewer-targeted only and that restart recovery should use `capture_state`, `attention_item(list)`, `handoff(list)`, and `comment(list)` before resuming watchers.
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (183 tests).
+2. `mage test-pkg ./internal/adapters/server/common` -> PASS (110 tests).
+3. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (78 tests).
+4. `mage test-pkg ./internal/tui` -> PASS (306 tests).
+5. `mage ci` -> PASS (1161 tests across 17 packages, coverage gate passed, build passed).
+
+Outcome:
+1. Active agents can now keep local stdio coordination watchers open without polling.
+2. After restart, the runtime docs now tell agents exactly how to rebuild inbox/coordination/thread state before resuming.
+3. Human viewers should no longer be told that agent-agent handoffs are their own immediate work items.
 
 ## Checkpoint 2026-04-02: Coordination Guidance Clarification And Cleanup Follow-Through Planning
 
@@ -115,16 +153,15 @@ Immediate next live MCP tests before any new implementation:
 5. Only after those live tests pass should new implementation work start again.
 
 Remaining slices after the live MCP auth-session parity check:
-1. Broader wait/notify reuse beyond auth.
-   - Extend the current auth-only live wake path to comments, handoffs, and other coordination events instead of requiring polling.
-2. Scoped `till.get_instructions` expansion.
+1. Scoped `till.get_instructions` expansion.
    - Grow instructions into a richer scoped explanation surface with inputs such as topic, `project_id`, `template_library_id`, `kind_id`, and `node_id`.
-3. Bootstrap collapse into richer instructions.
+2. Bootstrap collapse into richer instructions.
    - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
-4. Final collaborative dogfood hardening and closeout.
+3. Final collaborative dogfood hardening and closeout.
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
-5. Cleanup/refinement after the active slices close.
-   - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, move `Action Required` to the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
+4. Cleanup/refinement after the active slices close.
+   - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, keep `Action Required` at the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
+   - Read and discuss the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) before finalizing dogfood templates, then decide how its semi-formal reasoning model should update template contracts, research/qa orchestration, and scoped instructions.
 
 ## Checkpoint 2026-04-01: Routed Mentions Notifications And Inbox
 

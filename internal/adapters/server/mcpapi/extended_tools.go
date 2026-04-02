@@ -382,7 +382,7 @@ func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuide
 	srv.AddTool(
 		mcp.NewTool(
 			"till.get_bootstrap_guide",
-			mcp.WithDescription("Return lightweight runtime bootstrap guidance for empty-instance flows, including when to use comments, mentions, handoffs, and scoped auth next."),
+			mcp.WithDescription("Return lightweight runtime bootstrap guidance for empty-instance flows, including when to use comments, mentions, handoffs, and scoped auth next. For restart/recovery on an existing instance, use till.capture_state first instead of bootstrap."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			out, err := guide.GetBootstrapGuide(ctx)
@@ -2505,11 +2505,12 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.comment",
-			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs."),
+			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs. During active runs, operation=list can wait for the next thread update, and after client shutdown/restart you should rerun capture_state plus comment/attention reads to recover thread state."),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Comment operation"), mcp.Enum("create", "list")),
 			mcp.WithString("project_id", mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Description("Target identifier")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next thread comment before returning when the thread is currently empty, for example 30s. Use this while actively watching a thread; after restart, rerun operation=list to recover current comments.")),
 			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich thread summary; use @human, @dev, @builder, @qa, @orchestrator, or @research when routing comment inbox mentions")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment; rendered as shared thread content, not as a private role mailbox")),
 			mcp.WithString("session_id", mcp.Description("Required for operation=create. "+mcpMutationSessionDescription)),
@@ -2525,6 +2526,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				ProjectID       string `json:"project_id"`
 				TargetType      string `json:"target_type"`
 				TargetID        string `json:"target_id"`
+				WaitTimeout     string `json:"wait_timeout"`
 				Summary         string `json:"summary"`
 				BodyMarkdown    string `json:"body_markdown"`
 				SessionID       string `json:"session_id"`
@@ -2599,9 +2601,10 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				return result, nil
 			case "list":
 				rows, err := comments.ListCommentsByTarget(ctx, common.ListCommentsByTargetRequest{
-					ProjectID:  projectID,
-					TargetType: targetType,
-					TargetID:   targetID,
+					ProjectID:   projectID,
+					TargetType:  targetType,
+					TargetID:    targetID,
+					WaitTimeout: strings.TrimSpace(args.WaitTimeout),
 				})
 				if err != nil {
 					return toolResultFromError(err), nil

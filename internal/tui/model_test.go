@@ -8208,6 +8208,133 @@ func TestModelProjectNotificationsCommentsCanClearOneRow(t *testing.T) {
 	}
 }
 
+// TestModelProjectNotificationsAgentHandoffsStayInWarnings verifies agent-targeted
+// handoffs remain oversight warnings for a human viewer instead of surfacing as
+// human action-required rows.
+func TestModelProjectNotificationsAgentHandoffsStayInWarnings(t *testing.T) {
+	now := time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "handoff-qa::handoff",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindHandoff,
+			Summary:            "handoff for qa: builder finished implementation",
+			TargetRole:         "qa",
+			RequiresUserAction: true,
+		},
+	}
+
+	sections := m.noticesSectionsForInteraction()
+	warningFound := false
+	for _, section := range sections {
+		switch section.ID {
+		case noticesSectionWarnings:
+			if len(section.Items) != 1 {
+				t.Fatalf("expected one warning handoff row, got %d", len(section.Items))
+			}
+			row := section.Items[0]
+			if got := row.HandoffID; got != "handoff-qa" {
+				t.Fatalf("warning handoff id = %q, want handoff-qa", got)
+			}
+			if got := row.CoordinationProjectID; got != project.ID {
+				t.Fatalf("warning coordination project id = %q, want %q", got, project.ID)
+			}
+			warningFound = true
+		case noticesSectionAttention:
+			if len(section.Items) != 1 || strings.TrimSpace(section.Items[0].Label) != "none" {
+				t.Fatalf("expected action-required section placeholder only, got %#v", section.Items)
+			}
+		}
+	}
+	if !warningFound {
+		t.Fatal("expected agent-targeted handoff in warnings section")
+	}
+}
+
+// TestModelProjectNotificationHandoffRowOpensCoordinationDetail verifies a
+// handoff-backed notice deep-links into coordination detail instead of the
+// comment thread fallback.
+func TestModelProjectNotificationHandoffRowOpensCoordinationDetail(t *testing.T) {
+	now := time.Date(2026, 4, 2, 10, 5, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Review",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	handoff, err := domain.NewHandoff(domain.HandoffInput{
+		ID:              "handoff-human",
+		ProjectID:       project.ID,
+		ScopeType:       domain.ScopeLevelProject,
+		SourceRole:      "qa",
+		TargetScopeType: domain.ScopeLevelTask,
+		TargetScopeID:   task.ID,
+		TargetRole:      "human",
+		Status:          domain.HandoffStatusWaiting,
+		Summary:         "handoff for human: review the qa result",
+		NextAction:      "inspect the QA summary",
+		CreatedByActor:  "qa-agent",
+		CreatedByType:   domain.ActorTypeAgent,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewHandoff() error = %v", err)
+	}
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.handoffs = append(svc.handoffs, handoff)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "handoff-human::handoff",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindHandoff,
+			Summary:            "handoff for human: review the qa result",
+			TargetRole:         "human",
+			RequiresUserAction: true,
+		},
+	}
+	row, ok := m.noticesPanelItemFromAttention(m.attentionItems[0])
+	if !ok {
+		t.Fatal("expected handoff attention row")
+	}
+	m = applyCmdWithTimeout(t, m, m.openCoordinationFromNotice(row.CoordinationProjectID, row.CoordinationGlobal, row.HandoffID), 50*time.Millisecond)
+	if m.mode != modeCoordinationDetail {
+		t.Fatalf("expected handoff notice enter to open coordination detail, got %v", m.mode)
+	}
+	if m.threadTarget.TargetID != "" {
+		t.Fatalf("expected handoff notice not to open thread target, got %#v", m.threadTarget)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View()))
+	for _, want := range []string{"Handoff", "review the qa result", "inspect the QA summary"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected coordination detail modal to include %q, got\n%s", want, rendered)
+		}
+	}
+}
+
 // TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction verifies Agent/User Action rows only include requires-user-action records.
 func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 10, 0, 0, time.UTC)

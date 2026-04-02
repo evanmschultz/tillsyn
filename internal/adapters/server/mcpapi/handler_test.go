@@ -2135,3 +2135,53 @@ func TestHandlerAttentionToolCallErrorMapping(t *testing.T) {
 		t.Fatalf("error text = %q, want prefix not_found:", got)
 	}
 }
+
+// TestHandlerAttentionListForwardsWaitTimeout verifies attention list waits are forwarded.
+func TestHandlerAttentionListForwardsWaitTimeout(t *testing.T) {
+	capture := &stubCaptureStateReader{
+		captureState: common.CaptureState{StateHash: "abc123"},
+	}
+	attention := &stubAttentionService{
+		items: []common.AttentionItem{{
+			ID:        "att-1",
+			ProjectID: "p1",
+			ScopeType: string(domain.ScopeLevelProject),
+			ScopeID:   "p1",
+			State:     string(domain.AttentionStateOpen),
+			Kind:      string(domain.AttentionKindMention),
+			Summary:   "watcher row",
+		}},
+	}
+
+	handler, err := NewHandler(Config{}, capture, attention)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.attention_item", map[string]any{
+		"operation":    "list",
+		"project_id":   "p1",
+		"all_scopes":   true,
+		"target_role":  "orchestrator",
+		"wait_timeout": "20s",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("attention list returned isError=true: %#v", callResp.Result)
+	}
+	if got := attention.lastList.ProjectID; got != "p1" {
+		t.Fatalf("ListAttentionItems() project_id = %q, want p1", got)
+	}
+	if !attention.lastList.AllScopes {
+		t.Fatal("ListAttentionItems() all_scopes = false, want true")
+	}
+	if got := attention.lastList.TargetRole; got != "orchestrator" {
+		t.Fatalf("ListAttentionItems() target_role = %q, want orchestrator", got)
+	}
+	if got := attention.lastList.WaitTimeout; got != "20s" {
+		t.Fatalf("ListAttentionItems() wait_timeout = %q, want 20s", got)
+	}
+}

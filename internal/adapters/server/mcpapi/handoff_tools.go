@@ -19,7 +19,7 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.handoff",
-			mcp.WithDescription("Create, update, get, or list durable handoffs for structured next-action routing. Handoffs are the source of Action Required rows; use till.comment for ordinary discussion."),
+			mcp.WithDescription("Create, update, get, or list durable handoffs for structured next-action routing. Handoffs are the source of Action Required rows for the addressed actor and oversight warnings for everyone else; use till.comment for ordinary discussion. During active runs, operation=list can wait for the next handoff change, and after client shutdown/restart you should rerun capture_state plus handoff/attention reads before resuming."),
 			mcp.WithString("operation",
 				mcp.Required(),
 				mcp.Enum("create", "update", "get", "list"),
@@ -38,6 +38,7 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 			mcp.WithString("status", mcp.Description("Optional handoff status"), mcp.Enum("ready", "waiting", "blocked", "failed", "returned", "superseded", "resolved")),
 			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter when operation=list"), mcp.WithStringItems()),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return when operation=list")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next project-scoped handoff change before returning when no matching rows are currently present, for example 30s. Use this for live watchers; after restart, rerun operation=list to recover current handoff state.")),
 			mcp.WithString("summary", mcp.Description("Short action-oriented handoff summary. Required for operation=create and operation=update")),
 			mcp.WithString("next_action", mcp.Description("Optional explicit next action for the receiver; this is the clearest place to state what should happen next")),
 			mcp.WithArray("missing_evidence", mcp.Description("Optional missing evidence checklist"), mcp.WithStringItems()),
@@ -86,6 +87,7 @@ type handoffMutationArgs struct {
 	ResolutionNote  string   `json:"resolution_note"`
 	Statuses        []string `json:"statuses"`
 	Limit           int      `json:"limit"`
+	WaitTimeout     string   `json:"wait_timeout"`
 	SessionID       string   `json:"session_id"`
 	SessionSecret   string   `json:"session_secret"`
 	AgentInstanceID string   `json:"agent_instance_id"`
@@ -113,13 +115,14 @@ func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.Ha
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_handoffs",
-			mcp.WithDescription("List durable handoffs for one scope tuple."),
+			mcp.WithDescription("List durable handoffs for one scope tuple. After a client restart, rerun this to recover durable coordination state before resuming live watchers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier")),
 			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope")),
 			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter"), mcp.WithStringItems()),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for the next project-scoped handoff change before returning when no matching rows are currently present. Use this for live watchers; rerun list after restart to recover current state.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
@@ -223,12 +226,13 @@ func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, 
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 		}
 		handoffRows, err := handoffs.ListHandoffs(ctx, common.ListHandoffsRequest{
-			ProjectID: projectID,
-			BranchID:  strings.TrimSpace(args.BranchID),
-			ScopeType: strings.TrimSpace(args.ScopeType),
-			ScopeID:   strings.TrimSpace(args.ScopeID),
-			Statuses:  append([]string(nil), args.Statuses...),
-			Limit:     args.Limit,
+			ProjectID:   projectID,
+			BranchID:    strings.TrimSpace(args.BranchID),
+			ScopeType:   strings.TrimSpace(args.ScopeType),
+			ScopeID:     strings.TrimSpace(args.ScopeID),
+			Statuses:    append([]string(nil), args.Statuses...),
+			Limit:       args.Limit,
+			WaitTimeout: strings.TrimSpace(args.WaitTimeout),
 		})
 		if err != nil {
 			return toolResultFromError(err), nil
