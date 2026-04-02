@@ -1125,11 +1125,11 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.attention_item", map[string]any{
-		"operation":  "list",
-		"project_id": "p1",
-		"scope_type": "project",
-		"scope_id":   "p1",
-		"state":      "open",
+		"operation":   "list",
+		"project_id":  "p1",
+		"all_scopes":  true,
+		"target_role": "builder",
+		"state":       "open",
 	}))
 	listStructured := toolResultStructured(t, listResp.Result)
 	itemsRaw, ok := listStructured["items"].([]any)
@@ -1139,14 +1139,20 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	if attention.lastList.ProjectID != "p1" {
 		t.Fatalf("list project_id = %q, want p1", attention.lastList.ProjectID)
 	}
-	if attention.lastList.ScopeType != "project" {
-		t.Fatalf("list scope_type = %q, want project", attention.lastList.ScopeType)
+	if attention.lastList.ScopeType != "" {
+		t.Fatalf("list scope_type = %q, want empty for all_scopes", attention.lastList.ScopeType)
 	}
-	if attention.lastList.ScopeID != "p1" {
-		t.Fatalf("list scope_id = %q, want p1", attention.lastList.ScopeID)
+	if attention.lastList.ScopeID != "" {
+		t.Fatalf("list scope_id = %q, want empty for all_scopes", attention.lastList.ScopeID)
 	}
 	if attention.lastList.State != "open" {
 		t.Fatalf("list state = %q, want open", attention.lastList.State)
+	}
+	if !attention.lastList.AllScopes {
+		t.Fatal("list all_scopes = false, want true")
+	}
+	if attention.lastList.TargetRole != "builder" {
+		t.Fatalf("list target_role = %q, want builder", attention.lastList.TargetRole)
 	}
 
 	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.attention_item", mergeArgs(validSessionArgs(), map[string]any{
@@ -1157,6 +1163,7 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		"kind":                 "blocker",
 		"summary":              "Raised by tool",
 		"body_markdown":        "Details",
+		"target_role":          "qa",
 		"requires_user_action": true,
 		"agent_instance_id":    "inst-1",
 		"lease_token":          "lease-1",
@@ -1182,6 +1189,9 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	}
 	if attention.lastRaise.BodyMarkdown != "Details" {
 		t.Fatalf("raise body_markdown = %q, want Details", attention.lastRaise.BodyMarkdown)
+	}
+	if attention.lastRaise.TargetRole != "qa" {
+		t.Fatalf("raise target_role = %q, want qa", attention.lastRaise.TargetRole)
 	}
 	if !attention.lastRaise.RequiresUserAction {
 		t.Fatalf("raise requires_user_action = false, want true")

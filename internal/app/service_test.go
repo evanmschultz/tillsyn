@@ -730,6 +730,12 @@ func (f *fakeRepo) CreateAttentionItem(_ context.Context, item domain.AttentionI
 	return nil
 }
 
+// UpsertAttentionItem creates or replaces one attention item row.
+func (f *fakeRepo) UpsertAttentionItem(_ context.Context, item domain.AttentionItem) error {
+	f.attentionItems[item.ID] = item
+	return nil
+}
+
 // GetAttentionItem returns one attention item row by id.
 func (f *fakeRepo) GetAttentionItem(_ context.Context, attentionID string) (domain.AttentionItem, error) {
 	item, ok := f.attentionItems[attentionID]
@@ -778,6 +784,9 @@ func (f *fakeRepo) ListAttentionItems(_ context.Context, filter domain.Attention
 			continue
 		}
 		if filter.ScopeType != "" && item.ScopeID != filter.ScopeID {
+			continue
+		}
+		if filter.TargetRole != "" && item.TargetRole != filter.TargetRole {
 			continue
 		}
 		if filter.UnresolvedOnly && !item.IsUnresolved() {
@@ -3373,6 +3382,60 @@ func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	}
 	if repo.createCommentActor.ActorName != "Evan Schultz" {
 		t.Fatalf("repo comment actor name = %q, want Evan Schultz", repo.createCommentActor.ActorName)
+	}
+}
+
+// TestCreateCommentCreatesMentionInboxAttention verifies routed @mentions materialize scoped inbox attention rows.
+func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 26, 11, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, func() string { return "comment-1" }, func() time.Time { return now }, ServiceConfig{})
+	comment, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		Summary:      "Need review from @dev and @qa",
+		BodyMarkdown: "Please check this branch, @qa. @dev already has context.",
+		ActorID:      "user-1",
+		ActorName:    "Evan Schultz",
+		ActorType:    domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateComment() error = %v", err)
+	}
+
+	builderMention, ok := repo.attentionItems[comment.ID+"::mention::builder"]
+	if !ok {
+		t.Fatalf("expected builder mention attention item, got %#v", repo.attentionItems)
+	}
+	if builderMention.Kind != domain.AttentionKindMention || builderMention.TargetRole != "builder" {
+		t.Fatalf("unexpected builder mention %#v", builderMention)
+	}
+	if builderMention.ScopeType != domain.ScopeLevelTask || builderMention.ScopeID != task.ID {
+		t.Fatalf("expected task-scoped builder mention, got %#v", builderMention)
+	}
+
+	qaMention, ok := repo.attentionItems[comment.ID+"::mention::qa"]
+	if !ok {
+		t.Fatalf("expected qa mention attention item, got %#v", repo.attentionItems)
+	}
+	if qaMention.Kind != domain.AttentionKindMention || qaMention.TargetRole != "qa" {
+		t.Fatalf("unexpected qa mention %#v", qaMention)
+	}
+	if len(repo.attentionItems) != 2 {
+		t.Fatalf("expected exactly two routed mention attention rows, got %#v", repo.attentionItems)
 	}
 }
 

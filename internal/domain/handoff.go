@@ -427,7 +427,7 @@ func normalizeHandoffList(values []string) []string {
 
 // normalizeHandoffRole canonicalizes one freeform handoff role string.
 func normalizeHandoffRole(role string) string {
-	return strings.TrimSpace(strings.ToLower(role))
+	return normalizeCoordinationRoleLabel(role)
 }
 
 // normalizeHandoffActor canonicalizes one freeform actor string.

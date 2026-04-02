@@ -27,6 +27,7 @@ type RaiseAttentionItemInput struct {
 	Kind               domain.AttentionKind
 	Summary            string
 	BodyMarkdown       string
+	TargetRole         string
 	RequiresUserAction bool
 	CreatedBy          string
 	CreatedType        domain.ActorType
@@ -35,9 +36,11 @@ type RaiseAttentionItemInput struct {
 // ListAttentionItemsInput holds scoped query fields for listing attention items.
 type ListAttentionItemsInput struct {
 	Level              domain.LevelTupleInput
+	AllScopes          bool
 	UnresolvedOnly     bool
 	States             []domain.AttentionState
 	Kinds              []domain.AttentionKind
+	TargetRole         string
 	RequiresUserAction *bool
 	Limit              int
 }
@@ -128,6 +131,7 @@ func (s *Service) RaiseAttentionItem(ctx context.Context, in RaiseAttentionItemI
 		Kind:               in.Kind,
 		Summary:            in.Summary,
 		BodyMarkdown:       in.BodyMarkdown,
+		TargetRole:         in.TargetRole,
 		RequiresUserAction: in.RequiresUserAction,
 		CreatedByActor:     in.CreatedBy,
 		CreatedByType:      createdType,
@@ -150,11 +154,12 @@ func (s *Service) ListAttentionItems(ctx context.Context, in ListAttentionItemsI
 	}
 	filter, err := domain.NormalizeAttentionListFilter(domain.AttentionListFilter{
 		ProjectID:          level.ProjectID,
-		ScopeType:          level.ScopeType,
-		ScopeID:            level.ScopeID,
+		ScopeType:          zeroScopeLevelWhen(in.AllScopes, level.ScopeType),
+		ScopeID:            zeroStringWhen(in.AllScopes, level.ScopeID),
 		UnresolvedOnly:     in.UnresolvedOnly,
 		States:             in.States,
 		Kinds:              in.Kinds,
+		TargetRole:         in.TargetRole,
 		RequiresUserAction: in.RequiresUserAction,
 		Limit:              in.Limit,
 	})
@@ -162,6 +167,22 @@ func (s *Service) ListAttentionItems(ctx context.Context, in ListAttentionItemsI
 		return nil, err
 	}
 	return s.repo.ListAttentionItems(ctx, filter)
+}
+
+// zeroScopeLevelWhen clears one scope level when the condition is true.
+func zeroScopeLevelWhen(clear bool, level domain.ScopeLevel) domain.ScopeLevel {
+	if clear {
+		return ""
+	}
+	return level
+}
+
+// zeroStringWhen clears one string when the condition is true.
+func zeroStringWhen(clear bool, value string) string {
+	if clear {
+		return ""
+	}
+	return value
 }
 
 // ResolveAttentionItem marks one attention item as resolved and returns the updated row.

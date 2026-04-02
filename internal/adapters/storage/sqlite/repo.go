@@ -477,6 +477,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			kind TEXT NOT NULL,
 			summary TEXT NOT NULL,
 			body_markdown TEXT NOT NULL DEFAULT '',
+			target_role TEXT NOT NULL DEFAULT '',
 			requires_user_action INTEGER NOT NULL DEFAULT 0,
 			created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
 			created_by_type TEXT NOT NULL DEFAULT 'user',
@@ -578,6 +579,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add projects.metadata_json: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE attention_items ADD COLUMN target_role TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migrate sqlite add attention_items.target_role: %w", err)
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add projects.kind: %w", err)
@@ -2758,11 +2762,11 @@ func (r *Repository) CreateAttentionItem(ctx context.Context, item domain.Attent
 
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO attention_items(
-			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, requires_user_action,
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, target_role, requires_user_action,
 			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
 			resolved_by_actor, resolved_by_type, resolved_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		item.ID,
 		level.ProjectID,
@@ -2773,6 +2777,7 @@ func (r *Repository) CreateAttentionItem(ctx context.Context, item domain.Attent
 		string(kind),
 		summary,
 		strings.TrimSpace(item.BodyMarkdown),
+		normalizeCoordinationRole(item.TargetRole),
 		boolToInt(item.RequiresUserAction),
 		createdBy,
 		string(createdByType),
@@ -2786,6 +2791,108 @@ func (r *Repository) CreateAttentionItem(ctx context.Context, item domain.Attent
 	)
 	if err != nil {
 		return fmt.Errorf("insert attention item: %w", err)
+	}
+	return nil
+}
+
+// UpsertAttentionItem creates or replaces one scoped attention-item row.
+func (r *Repository) UpsertAttentionItem(ctx context.Context, item domain.AttentionItem) error {
+	item.ID = strings.TrimSpace(item.ID)
+	if item.ID == "" {
+		return domain.ErrInvalidID
+	}
+	level, err := domain.NewLevelTuple(domain.LevelTupleInput{
+		ProjectID: item.ProjectID,
+		BranchID:  item.BranchID,
+		ScopeType: item.ScopeType,
+		ScopeID:   item.ScopeID,
+	})
+	if err != nil {
+		return err
+	}
+
+	state := domain.NormalizeAttentionState(item.State)
+	if state == "" {
+		state = domain.AttentionStateOpen
+	}
+	if !domain.IsValidAttentionState(state) {
+		return domain.ErrInvalidAttentionState
+	}
+	kind := domain.NormalizeAttentionKind(item.Kind)
+	if !domain.IsValidAttentionKind(kind) {
+		return domain.ErrInvalidAttentionKind
+	}
+	summary := strings.TrimSpace(item.Summary)
+	if summary == "" {
+		return domain.ErrInvalidSummary
+	}
+
+	createdBy := strings.TrimSpace(item.CreatedByActor)
+	if createdBy == "" {
+		createdBy = "tillsyn-user"
+	}
+	createdByType := normalizeActorType(item.CreatedByType)
+	createdAt := item.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+
+	ackBy := strings.TrimSpace(item.AcknowledgedByActor)
+	ackByType := normalizeOptionalActorType(item.AcknowledgedByType)
+	resolvedBy := strings.TrimSpace(item.ResolvedByActor)
+	resolvedByType := normalizeOptionalActorType(item.ResolvedByType)
+
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO attention_items(
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, target_role, requires_user_action,
+			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
+			resolved_by_actor, resolved_by_type, resolved_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			project_id = excluded.project_id,
+			branch_id = excluded.branch_id,
+			scope_type = excluded.scope_type,
+			scope_id = excluded.scope_id,
+			state = excluded.state,
+			kind = excluded.kind,
+			summary = excluded.summary,
+			body_markdown = excluded.body_markdown,
+			target_role = excluded.target_role,
+			requires_user_action = excluded.requires_user_action,
+			created_by_actor = excluded.created_by_actor,
+			created_by_type = excluded.created_by_type,
+			created_at = excluded.created_at,
+			acknowledged_by_actor = excluded.acknowledged_by_actor,
+			acknowledged_by_type = excluded.acknowledged_by_type,
+			acknowledged_at = excluded.acknowledged_at,
+			resolved_by_actor = excluded.resolved_by_actor,
+			resolved_by_type = excluded.resolved_by_type,
+			resolved_at = excluded.resolved_at
+	`,
+		item.ID,
+		level.ProjectID,
+		level.BranchID,
+		string(level.ScopeType),
+		level.ScopeID,
+		string(state),
+		string(kind),
+		summary,
+		strings.TrimSpace(item.BodyMarkdown),
+		normalizeCoordinationRole(item.TargetRole),
+		boolToInt(item.RequiresUserAction),
+		createdBy,
+		string(createdByType),
+		ts(createdAt),
+		ackBy,
+		ackByType,
+		nullableTS(item.AcknowledgedAt),
+		resolvedBy,
+		resolvedByType,
+		nullableTS(item.ResolvedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert attention item: %w", err)
 	}
 	return nil
 }
@@ -2804,13 +2911,17 @@ func (r *Repository) ListAttentionItems(ctx context.Context, filter domain.Atten
 
 	query := `
 		SELECT
-			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, requires_user_action,
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, target_role, requires_user_action,
 			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
 			resolved_by_actor, resolved_by_type, resolved_at
 		FROM attention_items
-		WHERE project_id = ? AND scope_type = ? AND scope_id = ?
+		WHERE project_id = ?
 	`
-	args := []any{filter.ProjectID, string(filter.ScopeType), filter.ScopeID}
+	args := []any{filter.ProjectID}
+	if filter.ScopeType != "" {
+		query += ` AND scope_type = ? AND scope_id = ?`
+		args = append(args, string(filter.ScopeType), filter.ScopeID)
+	}
 
 	if filter.UnresolvedOnly {
 		query += ` AND state != ?`
@@ -2827,6 +2938,10 @@ func (r *Repository) ListAttentionItems(ctx context.Context, filter domain.Atten
 		for _, kind := range filter.Kinds {
 			args = append(args, string(kind))
 		}
+	}
+	if trimmed := normalizeCoordinationRole(filter.TargetRole); trimmed != "" {
+		query += ` AND target_role = ?`
+		args = append(args, trimmed)
 	}
 	if filter.RequiresUserAction != nil {
 		query += ` AND requires_user_action = ?`
@@ -3230,7 +3345,7 @@ func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, err
 func getAttentionItemByID(ctx context.Context, q queryRower, attentionID string) (domain.AttentionItem, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, requires_user_action,
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, target_role, requires_user_action,
 			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
 			resolved_by_actor, resolved_by_type, resolved_at
 		FROM attention_items
@@ -4275,6 +4390,7 @@ func scanAttentionItem(s scanner) (domain.AttentionItem, error) {
 		&kindRaw,
 		&item.Summary,
 		&item.BodyMarkdown,
+		&item.TargetRole,
 		&requiresUserAction,
 		&item.CreatedByActor,
 		&createdByTypeRaw,
@@ -4295,6 +4411,7 @@ func scanAttentionItem(s scanner) (domain.AttentionItem, error) {
 	item.ScopeType = domain.NormalizeScopeLevel(domain.ScopeLevel(scopeTypeRaw))
 	item.State = domain.NormalizeAttentionState(domain.AttentionState(stateRaw))
 	item.Kind = domain.NormalizeAttentionKind(domain.AttentionKind(kindRaw))
+	item.TargetRole = normalizeCoordinationRole(item.TargetRole)
 	item.RequiresUserAction = requiresUserAction != 0
 	item.CreatedByType = normalizeActorType(domain.ActorType(createdByTypeRaw))
 	item.CreatedAt = parseTS(createdRaw)
@@ -4304,6 +4421,18 @@ func scanAttentionItem(s scanner) (domain.AttentionItem, error) {
 	item.ResolvedAt = parseNullTS(resolvedAtRaw)
 
 	return item, nil
+}
+
+// normalizeCoordinationRole canonicalizes coordination-facing role labels and aliases for storage queries.
+func normalizeCoordinationRole(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "dev":
+		return "builder"
+	case "researcher":
+		return "research"
+	default:
+		return strings.TrimSpace(strings.ToLower(raw))
+	}
 }
 
 // scanAuthRequest decodes one auth_requests row.

@@ -110,6 +110,7 @@ type AttentionItem struct {
 	Kind               string     `json:"kind"`
 	Summary            string     `json:"summary"`
 	BodyMarkdown       string     `json:"body_markdown,omitempty"`
+	TargetRole         string     `json:"target_role,omitempty"`
 	RequiresUserAction bool       `json:"requires_user_action"`
 	CreatedAt          time.Time  `json:"created_at"`
 	ResolvedAt         *time.Time `json:"resolved_at,omitempty"`
@@ -181,10 +182,12 @@ type CaptureStateReadModel interface {
 
 // ListAttentionItemsRequest captures list query filters for attention records.
 type ListAttentionItemsRequest struct {
-	ProjectID string
-	ScopeType string
-	ScopeID   string
-	State     string
+	ProjectID  string
+	ScopeType  string
+	ScopeID    string
+	State      string
+	AllScopes  bool
+	TargetRole string
 }
 
 // RaiseAttentionItemRequest captures input for new attention records.
@@ -195,6 +198,7 @@ type RaiseAttentionItemRequest struct {
 	Kind               string `json:"kind"`
 	Summary            string `json:"summary"`
 	BodyMarkdown       string `json:"body_markdown,omitempty"`
+	TargetRole         string `json:"target_role,omitempty"`
 	RequiresUserAction bool   `json:"requires_user_action"`
 	Actor              ActorLeaseTuple
 }

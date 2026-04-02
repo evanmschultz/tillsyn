@@ -496,9 +496,11 @@ type attentionItemMutationArgs struct {
 	ScopeType          string `json:"scope_type"`
 	ScopeID            string `json:"scope_id"`
 	State              string `json:"state"`
+	AllScopes          bool   `json:"all_scopes"`
 	Kind               string `json:"kind"`
 	Summary            string `json:"summary"`
 	BodyMarkdown       string `json:"body_markdown"`
+	TargetRole         string `json:"target_role"`
 	RequiresUserAction bool   `json:"requires_user_action"`
 	ID                 string `json:"id"`
 	Reason             string `json:"reason"`
@@ -524,9 +526,11 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("scope_type", mcp.Description("Scope type. Optional for operation=list and required for operation=raise")),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and required for operation=raise")),
 			mcp.WithString("state", mcp.Description("Filter by state when operation=list")),
+			mcp.WithBoolean("all_scopes", mcp.Description("List attention across the whole project when operation=list; scope_type and scope_id must be omitted")),
 			mcp.WithString("kind", mcp.Description("Attention kind. Required for operation=raise")),
 			mcp.WithString("summary", mcp.Description("Markdown-rich summary for quick triage. Required for operation=raise")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context when operation=raise")),
+			mcp.WithString("target_role", mcp.Description("Optional routed inbox target such as builder, qa, orchestrator, research, or alias dev")),
 			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action when operation=raise")),
 			mcp.WithString("id", mcp.Description("Attention item id. Required for operation=resolve")),
 			mcp.WithString("reason", mcp.Description("Resolution reason when operation=resolve")),
@@ -560,6 +564,8 @@ func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.
 			mcp.WithString("scope_type", mcp.Description("Scope type")),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("state", mcp.Description("Filter by state")),
+			mcp.WithBoolean("all_scopes", mcp.Description("List attention across the whole project; scope_type and scope_id must be omitted")),
+			mcp.WithString("target_role", mcp.Description("Optional routed inbox target such as builder, qa, orchestrator, research, or alias dev")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs
@@ -583,6 +589,7 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 			mcp.WithString("kind", mcp.Required(), mcp.Description("Attention kind")),
 			mcp.WithString("summary", mcp.Required(), mcp.Description("Markdown-rich summary for quick triage")),
 			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context")),
+			mcp.WithString("target_role", mcp.Description("Optional routed inbox target such as builder, qa, orchestrator, research, or alias dev")),
 			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -632,10 +639,12 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 		}
 		items, err := attention.ListAttentionItems(ctx, common.ListAttentionItemsRequest{
-			ProjectID: projectID,
-			ScopeType: strings.TrimSpace(args.ScopeType),
-			ScopeID:   strings.TrimSpace(args.ScopeID),
-			State:     strings.TrimSpace(args.State),
+			ProjectID:  projectID,
+			ScopeType:  strings.TrimSpace(args.ScopeType),
+			ScopeID:    strings.TrimSpace(args.ScopeID),
+			State:      strings.TrimSpace(args.State),
+			AllScopes:  args.AllScopes,
+			TargetRole: strings.TrimSpace(args.TargetRole),
 		})
 		if err != nil {
 			return toolResultFromError(err), nil
@@ -701,6 +710,7 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 			Kind:               kind,
 			Summary:            summary,
 			BodyMarkdown:       strings.TrimSpace(args.BodyMarkdown),
+			TargetRole:         strings.TrimSpace(args.TargetRole),
 			RequiresUserAction: args.RequiresUserAction,
 			Actor:              actor,
 		})

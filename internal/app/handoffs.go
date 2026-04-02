@@ -110,6 +110,9 @@ func (s *Service) CreateHandoff(ctx context.Context, in CreateHandoffInput) (dom
 	if err := s.handoffRepo.CreateHandoff(ctx, handoff); err != nil {
 		return domain.Handoff{}, err
 	}
+	if err := s.syncHandoffInboxAttention(ctx, handoff); err != nil {
+		return domain.Handoff{}, err
+	}
 	return handoff, nil
 }
 
@@ -217,6 +220,9 @@ func (s *Service) UpdateHandoff(ctx context.Context, in UpdateHandoffInput) (dom
 		return domain.Handoff{}, err
 	}
 	if err := s.handoffRepo.UpdateHandoff(ctx, existing); err != nil {
+		return domain.Handoff{}, err
+	}
+	if err := s.syncHandoffInboxAttention(ctx, existing); err != nil {
 		return domain.Handoff{}, err
 	}
 	return existing, nil

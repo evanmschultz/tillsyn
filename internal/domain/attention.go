@@ -31,6 +31,8 @@ const (
 	AttentionKindBlocker           AttentionKind = "blocker"
 	AttentionKindConsensusRequired AttentionKind = "consensus_required"
 	AttentionKindApprovalRequired  AttentionKind = "approval_required"
+	AttentionKindMention           AttentionKind = "mention"
+	AttentionKindHandoff           AttentionKind = "handoff"
 	AttentionKindRiskNote          AttentionKind = "risk_note"
 )
 
@@ -39,6 +41,8 @@ var validAttentionKinds = []AttentionKind{
 	AttentionKindBlocker,
 	AttentionKindConsensusRequired,
 	AttentionKindApprovalRequired,
+	AttentionKindMention,
+	AttentionKindHandoff,
 	AttentionKindRiskNote,
 }
 
@@ -53,6 +57,7 @@ type AttentionItem struct {
 	Kind                AttentionKind
 	Summary             string
 	BodyMarkdown        string
+	TargetRole          string
 	RequiresUserAction  bool
 	CreatedByActor      string
 	CreatedByType       ActorType
@@ -76,6 +81,7 @@ type AttentionItemInput struct {
 	Kind               AttentionKind
 	Summary            string
 	BodyMarkdown       string
+	TargetRole         string
 	RequiresUserAction bool
 	CreatedByActor     string
 	CreatedByType      ActorType
@@ -89,6 +95,7 @@ type AttentionListFilter struct {
 	UnresolvedOnly     bool
 	States             []AttentionState
 	Kinds              []AttentionKind
+	TargetRole         string
 	RequiresUserAction *bool
 	Limit              int
 }
@@ -98,6 +105,7 @@ func NewAttentionItem(in AttentionItemInput, now time.Time) (AttentionItem, erro
 	in.ID = strings.TrimSpace(in.ID)
 	in.Summary = strings.TrimSpace(in.Summary)
 	in.BodyMarkdown = strings.TrimSpace(in.BodyMarkdown)
+	in.TargetRole = normalizeCoordinationRoleLabel(in.TargetRole)
 	in.State = NormalizeAttentionState(in.State)
 	in.Kind = NormalizeAttentionKind(in.Kind)
 
@@ -150,6 +158,7 @@ func NewAttentionItem(in AttentionItemInput, now time.Time) (AttentionItem, erro
 		Kind:               in.Kind,
 		Summary:            in.Summary,
 		BodyMarkdown:       in.BodyMarkdown,
+		TargetRole:         in.TargetRole,
 		RequiresUserAction: in.RequiresUserAction,
 		CreatedByActor:     createdByActor,
 		CreatedByType:      createdByType,
@@ -195,6 +204,7 @@ func NormalizeAttentionListFilter(filter AttentionListFilter) (AttentionListFilt
 	filter.ProjectID = strings.TrimSpace(filter.ProjectID)
 	filter.ScopeType = NormalizeScopeLevel(filter.ScopeType)
 	filter.ScopeID = strings.TrimSpace(filter.ScopeID)
+	filter.TargetRole = normalizeCoordinationRoleLabel(filter.TargetRole)
 	if filter.ProjectID == "" {
 		return AttentionListFilter{}, ErrInvalidID
 	}

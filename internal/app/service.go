@@ -1078,6 +1078,9 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 	if err := s.repo.CreateComment(ctx, comment); err != nil {
 		return domain.Comment{}, err
 	}
+	if err := s.syncCommentInboxAttention(ctx, comment); err != nil {
+		return domain.Comment{}, err
+	}
 	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
 		ProjectID:  comment.ProjectID,
 		TargetType: comment.TargetType,

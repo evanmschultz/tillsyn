@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-04-01
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, and the TUI migration-review follow-through. The auth-session governance follow-up is now landed and proven live on the refreshed native `till_*` runtime: `till.auth_request` has a non-destructive `check_session_governance` operation, session governance is orchestrator-or-self only, and MCP/CLI auth+lease role enums now expose `research`. The scoped-auth and bounded-delegation dogfood slice is now landed too: orchestrators can mint bounded builder/qa/research child auth through `till.auth_request(operation=create)` with acting-session credentials, children claim their own approvals, and non-orchestrator sibling delegation fails closed. The next remaining work is routed mentions/notifications/inbox, broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, and final collaborative hardening.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, and the TUI migration-review follow-through. The auth-session governance follow-up is now landed and proven live on the refreshed native `till_*` runtime: `till.auth_request` has a non-destructive `check_session_governance` operation, session governance is orchestrator-or-self only, and MCP/CLI auth+lease role enums now expose `research`. The scoped-auth and bounded-delegation dogfood slice is now landed too: orchestrators can mint bounded builder/qa/research child auth through `till.auth_request(operation=create)` with acting-session credentials, children claim their own approvals, and non-orchestrator sibling delegation fails closed. Routed mentions/notifications/inbox is now landed on top of `attention`: role-style comment mentions and durable handoffs materialize as inbox attention, and the TUI notices panels load project-wide unresolved attention. The next remaining work is broader wait/notify reuse beyond auth, scoped instructions expansion, later bootstrap collapse, and final collaborative hardening.
 
 ## Restart Handoff 2026-04-01
 
@@ -47,16 +47,57 @@ Immediate next live MCP tests before any new implementation:
 5. Only after those live tests pass should new implementation work start again.
 
 Remaining slices after the live MCP auth-session parity check:
-1. Mentions, notifications, and inbox.
-   - Land real `@dev`, `@orchestrator`, `@qa`, and `@builder` routing with an actual inbox/wake model.
-2. Broader wait/notify reuse beyond auth.
+1. Broader wait/notify reuse beyond auth.
    - Extend the current auth-only live wake path to comments, handoffs, and other coordination events instead of requiring polling.
-3. Scoped `till.get_instructions` expansion.
+2. Scoped `till.get_instructions` expansion.
    - Grow instructions into a richer scoped explanation surface with inputs such as topic, `project_id`, `template_library_id`, `kind_id`, and `node_id`.
-4. Bootstrap collapse into richer instructions.
+3. Bootstrap collapse into richer instructions.
    - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
-5. Final collaborative dogfood hardening and closeout.
+4. Final collaborative dogfood hardening and closeout.
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
+
+## Checkpoint 2026-04-01: Routed Mentions Notifications And Inbox
+
+Objective:
+- land the routed mentions/notifications/inbox slice on the frozen MCP surface, including research-role visibility, without adding a new top-level tool.
+
+Context7:
+1. Before implementation, reviewed:
+   - `/websites/pkg_go_dev_go1_25_3` for regexp, string normalization, and `database/sql` scan expectations,
+   - `/mark3labs/mcp-go` for family-tool argument/result shaping.
+2. After the transient parallel-`mage` runner failure, reran Context7 per repo policy:
+   - `/websites/pkg_go_dev_go1_25_3` for testing/helper guidance before the final doc and validation pass.
+
+Implementation summary:
+1. Landed attention-backed inbox routing in app/storage/domain layers without adding a new top-level tool:
+   - `attention` now carries optional `target_role`,
+   - role labels normalize `dev -> builder` and `researcher -> research`,
+   - new `mention` and `handoff` attention kinds back durable inbox rows.
+2. Added routed inbox syncing:
+   - comment creation parses `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research` mentions and upserts one stable role-targeted attention row per mentioned role,
+   - handoff create/update mirrors one stable inbox attention row for the target role and resolves that mirrored row when the handoff becomes terminal or loses a target role.
+3. Extended the existing attention family rather than adding a new inbox tool:
+   - `till.attention_item(operation=list)` now supports `all_scopes` for project-wide reads and `target_role` for role-targeted inbox filtering,
+   - `till.attention_item(operation=raise)` can also set `target_role`,
+   - the sqlite adapter now supports project-wide attention listing plus id-stable upsert for mirrored inbox rows.
+4. Updated the TUI notices loading path to consume project-wide unresolved attention so routed mention/handoff inbox items surface in the existing project/global notifications panels.
+5. Kept the research role explicit in the shipped coordination model:
+   - routed mentions support `@research`,
+   - auth/lease role docs continue to expose `research`,
+   - `planner` remains a non-runtime concept.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/storage/sqlite` -> PASS (68 tests).
+2. `mage test-pkg ./internal/tui` -> PASS (301 tests).
+3. `mage test-pkg ./internal/app` -> PASS (180 tests).
+4. `mage test-pkg ./internal/adapters/server/common` -> PASS (110 tests).
+5. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (75 tests).
+6. One concurrent `mage` rerun failed while compiling magefiles (`open ./mage_output_file.go: no such file or directory`); rerunning those package targets sequentially passed, so the issue was a local parallel-runner artifact rather than a product regression.
+7. `mage ci` -> PASS (1150 tests across 17 packages, coverage gate passed, build passed).
+
+Outcome:
+1. The routed mentions/notifications/inbox slice is complete on the frozen tool surface.
+2. The next remaining runtime slice is broader wait/notify reuse beyond auth so comments and handoffs can wake listeners without polling.
 
 ## Checkpoint 2026-04-01: Live MCP Auth Session Governance Parity Refresh
 
