@@ -89,7 +89,7 @@ Implemented now:
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
-- richer disconnect-aware cleanup, broader continuous-listening/HTTP transport follow-through, and later OS-level notification ergonomics on top of the now-landed waitable stdio comment/handoff/attention watchers
+- richer disconnect-aware cleanup, broader continuous-listening/HTTP transport follow-through, one fresh native MCP rerun to re-close the now-patched coordination wake slice, and later OS-level notification ergonomics on top of the baseline-aware stdio watcher model
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
@@ -114,7 +114,7 @@ Current MCP/runtime direction:
   - handoffs: `till.handoff`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
   - recovery/watch guidance:
-    - during active runs, use `wait_timeout` on `till.attention_item(operation=list)`, `till.comment(operation=list)`, and `till.handoff(operation=list)` instead of polling when you need live wakeups;
+    - during active runs, use `wait_timeout` on `till.attention_item(operation=list)`, `till.comment(operation=list)`, and `till.handoff(operation=list)` to wait for the next change after the current baseline state instead of polling;
     - after client shutdown/restart, recover in this order: `till.capture_state`, `till.attention_item(operation=list, all_scopes=true)` for inbox state, `till.handoff(operation=list)` for durable coordination state, then `till.comment(operation=list)` for any thread you need to resume.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
@@ -201,13 +201,18 @@ Current auth note:
     - bounded builder, QA, and research agent sessions can now post real project-thread comments and durable handoffs on the same project scope,
     - those comments fan out into role-targeted mention inbox rows exactly once per mentioned role,
     - per-item clear works on routed comment mentions without clearing unrelated handoffs or older mentions in the same role inbox,
-    - and waitable list calls now wake on the next attention, comment, or handoff change in the stdio runtime so active agent watchers do not have to poll.
+    - auth wait wake is proven live through `till.auth_request(operation=claim, wait_timeout=...)`,
+    - local cross-process runtime coverage now also proves comment, attention, and handoff waiters wake on the next newer change after the current baseline state,
+    - and the remaining coordination-wake acceptance check is one fresh native MCP rerun on the patched runtime.
   - current transport caveat:
-    - stdio waitable watchers are now landed for attention, comments, and handoffs,
+    - stdio waitable watcher plumbing is now landed for attention, comments, and handoffs with baseline-aware “next change” semantics,
+    - local runtime tests now cover auth plus coordination wake end to end across broker instances,
+    - and the remaining proof step is one fresh native MCP rerun on the patched runtime,
     - but this is still not a full push-notification transport for disconnected clients, HTTP listeners, or OS notifications;
     - after restart, agents should recover durable state with `capture_state`, `attention_item(list)`, `handoff(list)`, and thread `comment(list)` reads before resuming watchers.
 - Current remaining dogfood order:
-  - first expand scoped `till.get_instructions`,
+  - first rerun fresh native MCP coordination wake parity on the patched runtime,
+  - then expand scoped `till.get_instructions`,
   - then collapse bootstrap into that richer surface later, close with one final collaborative dogfood hardening pass,
   - and only after those slices finish, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, and OS-level notification ergonomics.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
@@ -329,6 +334,8 @@ After the current active slices close, run one cleanup/refinement wave focused o
 - read the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) and explicitly review how its semi-formal reasoning model should reshape default templates, generated workflow contracts, and scoped instructions before the real dogfood template set is finalized.
 - plan and discuss, in detail, which parts of that paper should map into Tillsyn template phases, research/qa handoffs, and instruction guidance rather than treating the paper as a one-off reading note.
 - keep the notifications panel labeling explicit enough that `comment mention`, `handoff`, and other attention kinds cannot be mistaken for each other during dogfood.
+- group global notifications by project instead of scattering repeated project headers through the panel.
+- clear comment-notification rows from notices after the viewer opens/reviews them so old mentions do not keep muddying the project/global notifications panels.
 - add unread/new cues plus history/audit-friendly wording for the same notification surfaces so terminal dings still have an in-product trace.
 - add notification-noise controls such as per-kind mute/quieting or dedupe rules if real dogfood shows repeated routed rows becoming distracting.
 

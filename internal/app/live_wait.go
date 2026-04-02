@@ -22,12 +22,16 @@ type LiveWaitEvent struct {
 	Type  LiveWaitEventType
 	Key   string
 	Value any
+	// Sequence is the monotonic change token for one event key.
+	Sequence int64
 }
 
 // LiveWaitBroker provides one reusable in-process wait/publish surface for live coordination.
 type LiveWaitBroker interface {
+	// Latest returns the latest known event for one type/key pair when present.
+	Latest(ctx context.Context, eventType LiveWaitEventType, key string) (LiveWaitEvent, bool, error)
 	// Wait blocks until a matching event is published or the context ends.
-	Wait(ctx context.Context, eventType LiveWaitEventType, key string) (LiveWaitEvent, error)
+	Wait(ctx context.Context, eventType LiveWaitEventType, key string, afterSequence int64) (LiveWaitEvent, error)
 	// Publish wakes all callers waiting on the matching event type and key.
 	Publish(event LiveWaitEvent)
 }
@@ -54,8 +58,23 @@ func NewInProcessLiveWaitBroker() LiveWaitBroker {
 	}
 }
 
-// Wait blocks until one matching event is published or the context ends.
-func (b *inProcessLiveWaitBroker) Wait(ctx context.Context, eventType LiveWaitEventType, key string) (LiveWaitEvent, error) {
+// Latest returns the latest known event for one type/key pair.
+func (b *inProcessLiveWaitBroker) Latest(_ context.Context, eventType LiveWaitEventType, key string) (LiveWaitEvent, bool, error) {
+	if b == nil {
+		return LiveWaitEvent{}, false, fmt.Errorf("live wait broker is not configured")
+	}
+	subscriptionKey := liveWaitSubscriptionKey{
+		eventType: eventType,
+		key:       key,
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	event, ok := b.latest[subscriptionKey]
+	return event, ok, nil
+}
+
+// Wait blocks until one newer matching event is published or the context ends.
+func (b *inProcessLiveWaitBroker) Wait(ctx context.Context, eventType LiveWaitEventType, key string, afterSequence int64) (LiveWaitEvent, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -66,7 +85,7 @@ func (b *inProcessLiveWaitBroker) Wait(ctx context.Context, eventType LiveWaitEv
 		eventType: eventType,
 		key:       key,
 	}
-	waiterID, ch, event, resolved := b.register(subscriptionKey)
+	waiterID, ch, event, resolved := b.register(subscriptionKey, afterSequence)
 	if resolved {
 		return event, nil
 	}
@@ -85,6 +104,12 @@ func (b *inProcessLiveWaitBroker) Publish(event LiveWaitEvent) {
 	if b == nil {
 		return
 	}
+	if event.Sequence <= 0 {
+		event.Sequence = b.nextSequence(liveWaitSubscriptionKey{
+			eventType: event.Type,
+			key:       event.Key,
+		})
+	}
 	subscriptionKey := liveWaitSubscriptionKey{
 		eventType: event.Type,
 		key:       event.Key,
@@ -99,11 +124,11 @@ func (b *inProcessLiveWaitBroker) Publish(event LiveWaitEvent) {
 }
 
 // register stores one waiter channel and returns its stable id.
-func (b *inProcessLiveWaitBroker) register(key liveWaitSubscriptionKey) (uint64, chan LiveWaitEvent, LiveWaitEvent, bool) {
+func (b *inProcessLiveWaitBroker) register(key liveWaitSubscriptionKey, afterSequence int64) (uint64, chan LiveWaitEvent, LiveWaitEvent, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if event, ok := b.latest[key]; ok {
+	if event, ok := b.latest[key]; ok && event.Sequence > afterSequence {
 		return 0, nil, event, true
 	}
 	b.nextID++
@@ -114,6 +139,21 @@ func (b *inProcessLiveWaitBroker) register(key liveWaitSubscriptionKey) (uint64,
 	}
 	b.waiters[key][waiterID] = ch
 	return waiterID, ch, LiveWaitEvent{}, false
+}
+
+// nextSequence returns the next monotonic sequence for one event key.
+func (b *inProcessLiveWaitBroker) nextSequence(key liveWaitSubscriptionKey) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.nextSequenceLocked(key)
+}
+
+// nextSequenceLocked returns the next monotonic sequence for one event key with the mutex held.
+func (b *inProcessLiveWaitBroker) nextSequenceLocked(key liveWaitSubscriptionKey) int64 {
+	if latest, ok := b.latest[key]; ok && latest.Sequence > 0 {
+		return latest.Sequence + 1
+	}
+	return 1
 }
 
 // unregister removes one waiter if it is still present.

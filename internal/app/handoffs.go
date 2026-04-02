@@ -157,14 +157,18 @@ func (s *Service) ListHandoffs(ctx context.Context, in ListHandoffsInput) ([]dom
 	if err != nil {
 		return nil, err
 	}
+	baselineSequence, err := s.liveWaitBaselineSequence(ctx, LiveWaitEventHandoffChanged, level.ProjectID)
+	if err != nil {
+		return nil, err
+	}
 	handoffs, err := s.handoffRepo.ListHandoffs(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	if len(handoffs) > 0 || in.WaitTimeout <= 0 {
+	if in.WaitTimeout <= 0 {
 		return handoffs, nil
 	}
-	woke, err := s.waitForLiveEvent(ctx, LiveWaitEventHandoffChanged, level.ProjectID, in.WaitTimeout)
+	woke, err := s.waitForLiveEvent(ctx, LiveWaitEventHandoffChanged, level.ProjectID, baselineSequence, in.WaitTimeout)
 	if err != nil {
 		return nil, err
 	}

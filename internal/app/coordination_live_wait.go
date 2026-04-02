@@ -12,19 +12,34 @@ import (
 
 // waitForLiveEvent waits for one broker event and treats local wait timeouts as a
 // normal no-op so list surfaces can return current state without failing closed.
-func (s *Service) waitForLiveEvent(ctx context.Context, eventType LiveWaitEventType, key string, waitTimeout time.Duration) (bool, error) {
+func (s *Service) waitForLiveEvent(ctx context.Context, eventType LiveWaitEventType, key string, afterSequence int64, waitTimeout time.Duration) (bool, error) {
 	if s == nil || s.liveWait == nil || waitTimeout <= 0 {
 		return false, nil
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
-	if _, err := s.liveWait.Wait(waitCtx, eventType, strings.TrimSpace(key)); err != nil {
+	if _, err := s.liveWait.Wait(waitCtx, eventType, strings.TrimSpace(key), afterSequence); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			return false, nil
 		}
 		return false, err
 	}
 	return true, nil
+}
+
+// liveWaitBaselineSequence returns the latest known monotonic sequence for one event key.
+func (s *Service) liveWaitBaselineSequence(ctx context.Context, eventType LiveWaitEventType, key string) (int64, error) {
+	if s == nil || s.liveWait == nil {
+		return 0, nil
+	}
+	event, ok, err := s.liveWait.Latest(ctx, eventType, strings.TrimSpace(key))
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, nil
+	}
+	return event.Sequence, nil
 }
 
 // publishAttentionChanged wakes live waiters interested in project-scoped inbox changes.

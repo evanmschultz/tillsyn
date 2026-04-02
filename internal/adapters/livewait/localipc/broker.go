@@ -133,8 +133,22 @@ func (b *Broker) Close() error {
 	return nil
 }
 
-// Wait blocks until the requested event is published, the context ends, or the broker closes.
-func (b *Broker) Wait(ctx context.Context, eventType app.LiveWaitEventType, key string) (app.LiveWaitEvent, error) {
+// Latest returns the latest known event for one type/key pair.
+func (b *Broker) Latest(ctx context.Context, eventType app.LiveWaitEventType, key string) (app.LiveWaitEvent, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if b == nil {
+		return app.LiveWaitEvent{}, false, fmt.Errorf("live wait broker is not configured")
+	}
+	if err := ensureSchema(ctx, b.db); err != nil {
+		return app.LiveWaitEvent{}, false, err
+	}
+	return b.latestEvent(ctx, subscriptionKey{eventType: eventType, key: key})
+}
+
+// Wait blocks until the requested newer event is published, the context ends, or the broker closes.
+func (b *Broker) Wait(ctx context.Context, eventType app.LiveWaitEventType, key string, afterSequence int64) (app.LiveWaitEvent, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -150,7 +164,7 @@ func (b *Broker) Wait(ctx context.Context, eventType app.LiveWaitEventType, key 
 	subKey := subscriptionKey{eventType: eventType, key: key}
 	if event, ok, err := b.latestEvent(ctx, subKey); err != nil {
 		return app.LiveWaitEvent{}, err
-	} else if ok {
+	} else if ok && event.Sequence > afterSequence {
 		return event, nil
 	}
 
@@ -171,7 +185,7 @@ func (b *Broker) Wait(ctx context.Context, eventType app.LiveWaitEventType, key 
 	}
 	if event, ok, err := b.latestEvent(ctx, subKey); err != nil {
 		return app.LiveWaitEvent{}, err
-	} else if ok {
+	} else if ok && event.Sequence > afterSequence {
 		return event, nil
 	}
 
@@ -199,9 +213,11 @@ func (b *Broker) Publish(event app.LiveWaitEvent) {
 	if err := ensureSchema(ctx, b.db); err != nil {
 		return
 	}
-	if err := b.upsertLatestEvent(ctx, event); err != nil {
+	sequence, err := b.upsertLatestEvent(ctx, event)
+	if err != nil {
 		return
 	}
+	event.Sequence = sequence
 
 	b.publishLocal(event)
 	rows, err := b.listSubscriptions(ctx, event)
@@ -307,7 +323,8 @@ func (b *Broker) publishLocal(event app.LiveWaitEvent) {
 // latestEvent loads one durable latest-event snapshot if it exists.
 func (b *Broker) latestEvent(ctx context.Context, key subscriptionKey) (app.LiveWaitEvent, bool, error) {
 	var payload string
-	err := b.db.QueryRowContext(ctx, `SELECT payload_json FROM live_wait_events WHERE event_type = ? AND key = ?`, string(key.eventType), key.key).Scan(&payload)
+	var sequence int64
+	err := b.db.QueryRowContext(ctx, `SELECT payload_json, sequence FROM live_wait_events WHERE event_type = ? AND key = ?`, string(key.eventType), key.key).Scan(&payload, &sequence)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return app.LiveWaitEvent{}, false, nil
@@ -318,26 +335,29 @@ func (b *Broker) latestEvent(ctx context.Context, key subscriptionKey) (app.Live
 	if err != nil {
 		return app.LiveWaitEvent{}, false, err
 	}
+	event.Sequence = sequence
 	return event, true, nil
 }
 
 // upsertLatestEvent persists one durable latest-event snapshot for replay.
-func (b *Broker) upsertLatestEvent(ctx context.Context, event app.LiveWaitEvent) error {
+func (b *Broker) upsertLatestEvent(ctx context.Context, event app.LiveWaitEvent) (int64, error) {
 	payload, err := encodeEvent(event)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = b.db.ExecContext(ctx, `
-		INSERT INTO live_wait_events(event_type, key, payload_json, created_at)
-		VALUES(?, ?, ?, ?)
+	err = b.db.QueryRowContext(ctx, `
+		INSERT INTO live_wait_events(event_type, key, payload_json, created_at, sequence)
+		VALUES(?, ?, ?, ?, 1)
 		ON CONFLICT(event_type, key) DO UPDATE SET
 			payload_json = excluded.payload_json,
-			created_at = excluded.created_at
-	`, string(event.Type), event.Key, payload, b.clock().UTC().Format(time.RFC3339Nano))
+			created_at = excluded.created_at,
+			sequence = live_wait_events.sequence + 1
+		RETURNING sequence
+	`, string(event.Type), event.Key, payload, b.clock().UTC().Format(time.RFC3339Nano)).Scan(&event.Sequence)
 	if err != nil {
-		return fmt.Errorf("upsert latest live wait event: %w", err)
+		return 0, fmt.Errorf("upsert latest live wait event: %w", err)
 	}
-	return nil
+	return event.Sequence, nil
 }
 
 // insertSubscription records one durable wait registration for the active broker address.
@@ -460,6 +480,7 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			key TEXT NOT NULL,
 			payload_json TEXT NOT NULL,
 			created_at TEXT NOT NULL,
+			sequence INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(event_type, key)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_live_wait_subscriptions_event ON live_wait_subscriptions(event_type, key, expires_at, callback_url);`,
@@ -468,6 +489,50 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("ensure live wait schema: %w", err)
 		}
+	}
+	if err := ensureEventSequenceColumn(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureEventSequenceColumn backfills the durable event sequence column for upgraded runtimes.
+func ensureEventSequenceColumn(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+liveWaitEventsTable+`)`)
+	if err != nil {
+		return fmt.Errorf("inspect live wait event schema: %w", err)
+	}
+	defer rows.Close()
+
+	hasSequence := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			kind      string
+			notNull   int
+			defaultV  any
+			primaryID int
+		)
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultV, &primaryID); err != nil {
+			return fmt.Errorf("scan live wait event schema: %w", err)
+		}
+		if name == "sequence" {
+			hasSequence = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate live wait event schema: %w", err)
+	}
+	if hasSequence {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE `+liveWaitEventsTable+` ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add live wait event sequence column: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE `+liveWaitEventsTable+` SET sequence = 1 WHERE sequence <= 0`); err != nil {
+		return fmt.Errorf("backfill live wait event sequence column: %w", err)
 	}
 	return nil
 }

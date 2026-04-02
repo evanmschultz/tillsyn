@@ -2,7 +2,85 @@
 
 Created: 2026-02-21
 Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, and a direct project-edit comments row. The latest closeout on top of that lands waitable stdio comment/handoff/attention watchers plus viewer-aware handoff notification routing and recovery guidance. The next remaining work is scoped instructions expansion, later bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset and notification polish.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, and a direct project-edit comments row. The latest local fix on top of that reuses the auth-style wake machinery through one baseline-aware live-wait contract for auth, comments, attention, and handoffs, with new cross-process runtime coverage for the coordination families. Fresh live MCP rerun is still pending before this slice is fully re-closed in the execution log. The next remaining work is that final live coordination wake retest, scoped instructions expansion, later bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset and notification polish.
+
+## Checkpoint 2026-04-02: Shared Baseline-Aware Live Wait Refactor
+
+Objective:
+- fix the reopened coordination wake slice by reusing the auth live-wait machinery shape through one shared baseline-aware contract instead of keeping auth and coordination on separate semantics.
+
+Context7:
+1. Reviewed `/websites/pkg_go_dev_go1_25_3` for context timeout and concurrent test coordination patterns before patching the live-wait contract and runtime tests.
+
+Implementation summary:
+1. Generalized the live-wait broker contract in app/runtime layers:
+   - live-wait events now carry a monotonic `sequence`,
+   - the broker now exposes `Latest(...)` plus `Wait(..., afterSequence)`,
+   - in-process and local IPC broker implementations now only replay events newer than the caller baseline,
+   - and durable runtime broker storage now tracks per-key event sequences.
+2. Moved auth and coordination onto the same baseline-aware wait semantics:
+   - auth claims capture a baseline before reading the current request state, then wait for a newer resolution event,
+   - comment, attention, and handoff list calls now capture current baseline state first and, when `wait_timeout` is provided, wait for the next newer change instead of only waiting when the current list is empty,
+   - and this fixes the active-thread/active-project watcher shape that previously could not watch “next change” on non-empty keys.
+3. Added the missing runtime proof that was absent before:
+   - cross-process runtime tests now cover comment, attention, and handoff waits in `cmd/till/live_wait_runtime_test.go`,
+   - including the reused-key comment case where one thread already has comments and the waiter must block for the next comment rather than replaying the old thread event.
+4. Updated runtime-facing tool descriptions to match the new contract:
+   - `wait_timeout` on `till.comment`, `till.attention_item`, and `till.handoff` now explicitly means “wait for the next change after capturing current state,”
+   - and callers are told that a timeout returns current state when no newer change arrives.
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (184 tests).
+2. `mage test-pkg ./internal/adapters/livewait/localipc` -> PASS (9 tests).
+3. `mage test-pkg ./cmd/till` -> PASS (223 tests, including new cross-process coordination wake coverage).
+
+Outcome:
+1. Auth and coordination now share one maintainable baseline-aware live-wait contract instead of separate auth-vs-coordination semantics.
+2. Local runtime coverage now proves cross-process wake for comment, attention, and handoff waits.
+3. Fresh native MCP rerun is still the remaining acceptance check before this slice is treated as fully closed.
+
+## Checkpoint 2026-04-02: Live Coordination Wake Verification Reopened The Wait Slice
+
+Objective:
+- run a fresh live MCP-only parity pass against auth wake, comment wake, routed attention wake, and handoff wake after landing the stdio waitable-list infrastructure, and record exactly what still works versus what still does not.
+
+Live MCP setup:
+1. Cleaned up stale `TILLSYN` handoffs first:
+   - claimed project-scoped cleanup auth,
+   - reused the existing orchestrator lease,
+   - resolved the two stale failed handoffs on `TILLSYN`,
+   - and confirmed `till.handoff(operation=list, statuses=[waiting,ready,blocked,failed])` returned no open rows afterward.
+2. Reused the disposable project `Live Comments Inbox Check` (`bf085f71-f6bc-4f59-856c-731df19da0c4`) for a clean live wake probe.
+3. Claimed the already-approved disposable-project auth requests:
+   - orchestrator session `8ca9d405-f4f8-41c3-9f4d-88117d3bdc02` with auth context `authctx-3476894a7cf1a2309d21bfdd0898691b`,
+   - builder session `0e3c6856-348a-42c1-bdd2-a1cce7382ba3` with auth context `authctx-11c0f571a50c5dbe89c5d806c1c2d0ef`,
+   - and heartbeated the existing orchestrator lease `b235d97c-a33a-4ed9-b3d7-032f11964722`.
+
+Live MCP evidence:
+1. Auth wait wake still works:
+   - created auth request `3718dd04-27c7-4232-a0cc-636c64315c06` for builder principal `wake-auth-second`,
+   - kept `till.auth_request(operation=claim, wait_timeout=5m, ...)` open in a waiting subagent,
+   - user approved the request,
+   - and the waiting claim returned successfully with issued session `7ab4c9b8-c5b2-4b59-b9df-7f3231e63acf` instead of timing out.
+2. Durable coordination writes still work:
+   - created project comment `838de743-fb8b-451e-b0ca-b8d461819731` targeted at QA via `@qa`,
+   - created handoff `b8eb0811-9836-4cf5-a3a5-7925577f1f0e` from orchestrator to QA,
+   - direct `till.attention_item(operation=list, all_scopes=true, target_role=qa)` reads then showed both:
+     - routed mention `838de743-fb8b-451e-b0ca-b8d461819731::mention::qa`,
+     - mirrored handoff attention `b8eb0811-9836-4cf5-a3a5-7925577f1f0e::handoff`,
+   - and direct `till.handoff(operation=list, statuses=[waiting,ready,blocked], target_role=qa)` reads showed the new waiting handoff.
+3. Live coordination wake still failed in the same run:
+   - a waiting subagent on `till.attention_item(operation=list, all_scopes=true, state=open, target_role=qa, wait_timeout=5m)` timed out,
+   - a waiting subagent on `till.handoff(operation=list, statuses=[waiting,ready,blocked], wait_timeout=5m)` timed out,
+   - and the earlier project-thread comment waiter did not prove a fresh wake because it returned immediately with an older existing comment on the same thread instead of a newly arrived event.
+
+Outcome:
+1. The wait/recovery slice is only partially closed:
+   - auth continuation wake is working live,
+   - durable comment/mention/handoff creation is working live,
+   - but cross-agent live wake for comment/attention/handoff waits is not yet behaving as intended.
+2. The broader wait/notify reuse slice is therefore reopened and should stay ahead of scoped-instructions expansion.
+3. The next code/debugging pass should treat this as a runtime regression investigation rather than a docs-only follow-up.
 
 ## Checkpoint 2026-04-02: Waitable Coordination Recovery And Viewer-Aware Handoff Notices
 
@@ -152,15 +230,18 @@ Immediate next live MCP tests before any new implementation:
 4. If live parity matches local behavior, record the evidence in `PLAN.md`.
 5. Only after those live tests pass should new implementation work start again.
 
-Remaining slices after the live MCP auth-session parity check:
-1. Scoped `till.get_instructions` expansion.
+Remaining slices after the fresh live wake verification:
+1. Coordination wake parity fix and retest.
+   - Make `till.comment`, `till.attention_item`, and `till.handoff` waiters wake reliably across waiting agents the same way `till.auth_request(operation=claim, wait_timeout=...)` already does, then rerun the same live MCP-only proof.
+2. Scoped `till.get_instructions` expansion.
    - Grow instructions into a richer scoped explanation surface with inputs such as topic, `project_id`, `template_library_id`, `kind_id`, and `node_id`.
-2. Bootstrap collapse into richer instructions.
+3. Bootstrap collapse into richer instructions.
    - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
-3. Final collaborative dogfood hardening and closeout.
+4. Final collaborative dogfood hardening and closeout.
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
-4. Cleanup/refinement after the active slices close.
+5. Cleanup/refinement after the active slices close.
    - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, keep `Action Required` at the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
+   - Group global notifications by project instead of scattering repeated project headers, and clear comment-notification rows from notices after the viewer opens/reviews them so old comments do not keep muddying the panel.
    - Read and discuss the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) before finalizing dogfood templates, then decide how its semi-formal reasoning model should update template contracts, research/qa orchestration, and scoped instructions.
 
 ## Checkpoint 2026-04-01: Routed Mentions Notifications And Inbox

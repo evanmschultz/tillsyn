@@ -1121,12 +1121,17 @@ func (s *Service) ListCommentsByTarget(ctx context.Context, in ListCommentsByTar
 	if err != nil {
 		return nil, err
 	}
+	waitKey := commentLiveWaitKey(target)
+	baselineSequence, err := s.liveWaitBaselineSequence(ctx, LiveWaitEventCommentChanged, waitKey)
+	if err != nil {
+		return nil, err
+	}
 	comments, err := s.repo.ListCommentsByTarget(ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	if len(comments) == 0 && in.WaitTimeout > 0 {
-		woke, err := s.waitForLiveEvent(ctx, LiveWaitEventCommentChanged, commentLiveWaitKey(target), in.WaitTimeout)
+	if in.WaitTimeout > 0 {
+		woke, err := s.waitForLiveEvent(ctx, LiveWaitEventCommentChanged, waitKey, baselineSequence, in.WaitTimeout)
 		if err != nil {
 			return nil, err
 		}

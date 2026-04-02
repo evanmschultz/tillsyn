@@ -141,7 +141,7 @@ func recommendedInstructionSettings() []string {
 		"Use doc_names to scope context (for example README.md and AGENTS.md) instead of loading every doc on each step.",
 		"Use include_markdown=false for quick inventory checks; enable it when drafting or validating policy text.",
 		"Set max_chars_per_doc to keep responses bounded in long docs such as PLAN.md.",
-		"During active coordination runs, keep waitable till.attention_item/till.comment/till.handoff list calls open with wait_timeout instead of polling when you need live wakeups.",
+		"During active coordination runs, keep waitable till.attention_item/till.comment/till.handoff list calls open with wait_timeout so they wait for the next change after current baseline state instead of polling.",
 		"If the client dies or the session restarts, recover in this order: till.capture_state for scope context, till.attention_item(operation=list, all_scopes=true) for inbox state, till.handoff(operation=list) for durable coordination state, then till.comment(operation=list) for any thread you need to resume.",
 		"Treat task/project details and comment summaries/bodies as markdown content in all agent-authored payloads.",
 		"Treat till.comment as the default shared thread lane for discussion and status updates inside Tillsyn; comments are append-only coordination history, not private per-role mailboxes.",

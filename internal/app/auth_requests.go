@@ -354,6 +354,10 @@ func (s *Service) claimAuthRequestRecord(ctx context.Context, requestID string, 
 
 // claimAuthRequestLive waits on one in-process resolution event instead of polling storage.
 func (s *Service) claimAuthRequestLive(ctx context.Context, requestID string, in ClaimAuthRequestInput, waitTimeout time.Duration) (ClaimedAuthRequestResult, error) {
+	baselineSequence, err := s.liveWaitBaselineSequence(ctx, LiveWaitEventAuthRequestResolved, requestID)
+	if err != nil {
+		return ClaimedAuthRequestResult{}, err
+	}
 	result, err := s.claimAuthRequestOnce(ctx, requestID, in)
 	if err != nil {
 		return ClaimedAuthRequestResult{}, err
@@ -363,7 +367,7 @@ func (s *Service) claimAuthRequestLive(ctx context.Context, requestID string, in
 	}
 	waitCtx, cancel := context.WithDeadline(ctx, authRequestWaitDeadline(s.clock().UTC(), result.Request.ExpiresAt, waitTimeout))
 	defer cancel()
-	if _, err := s.liveWait.Wait(waitCtx, LiveWaitEventAuthRequestResolved, requestID); err != nil {
+	if _, err := s.liveWait.Wait(waitCtx, LiveWaitEventAuthRequestResolved, requestID, baselineSequence); err != nil {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			return ClaimedAuthRequestResult{}, err
 		}
