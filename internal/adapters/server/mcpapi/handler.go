@@ -31,6 +31,13 @@ type Handler struct {
 	httpHandler http.Handler
 }
 
+// authRequestCreateResult keeps create-time resume ownership proof available to the requester
+// without exposing private continuation metadata in general auth-request inventory reads.
+type authRequestCreateResult struct {
+	common.AuthRequestRecord
+	ResumeToken string `json:"resume_token,omitempty"`
+}
+
 // NewServer builds one MCP server with the full tillsyn tool surface.
 func NewServer(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*mcpserver.MCPServer, Config, error) {
 	if captureState == nil {
@@ -100,9 +107,9 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			mcp.WithString("requested_ttl", mcp.Description("Optional approved-session lifetime override for operation=create, for example 2h")),
 			mcp.WithString("timeout", mcp.Description("Optional pending-request timeout for operation=create, for example 30m")),
 			mcp.WithString("reason", mcp.Description("Required for operation=create. Human-readable reason shown to the approving user")),
-			mcp.WithString("continuation_json", mcp.Description("Optional JSON continuation payload for operation=create")),
+			mcp.WithString("continuation_json", mcp.Description("Optional JSON continuation payload for operation=create. If omitted, till.auth_request auto-generates a requester-owned resume_token and returns it in the create result. If provided for MCP claim/cancel flows, continuation_json.resume_token must be a non-empty string.")),
 			mcp.WithString("request_id", mcp.Description("Auth request identifier. Required for operation=get|claim|cancel")),
-			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel")),
+			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel. Use the token returned by operation=create when continuation_json was omitted.")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
 			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn")),
 		),
@@ -169,7 +176,11 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(record)
+				resumeToken, _ := record.Continuation["resume_token"].(string)
+				result, err := mcp.NewToolResultJSON(authRequestCreateResult{
+					AuthRequestRecord: record,
+					ResumeToken:       strings.TrimSpace(resumeToken),
+				})
 				if err != nil {
 					return nil, fmt.Errorf("encode auth_request create result: %w", err)
 				}

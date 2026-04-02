@@ -1152,6 +1152,7 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			ClientType:          "mcp-stdio",
 			RequestedSessionTTL: "2h0m0s",
 			HasContinuation:     true,
+			Continuation:        map[string]any{"resume_token": "resume-1"},
 			Reason:              "manual MCP review",
 			RequestedByActor:    "orchestrator-1",
 			RequestedByType:     "agent",
@@ -1194,6 +1195,7 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			ClientType:          "mcp-stdio",
 			RequestedSessionTTL: "2h0m0s",
 			HasContinuation:     true,
+			Continuation:        map[string]any{"resume_token": "resume-1"},
 			Reason:              "manual MCP review",
 			RequestedByActor:    "orchestrator-1",
 			RequestedByType:     "agent",
@@ -1283,6 +1285,9 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	}
 	if got := createStructured["has_continuation"].(bool); !got {
 		t.Fatal("create auth request has_continuation = false, want true")
+	}
+	if got := createStructured["resume_token"].(string); got != "resume-1" {
+		t.Fatalf("create auth request resume_token = %q, want resume-1", got)
 	}
 	if _, ok := createStructured["continuation"]; ok {
 		t.Fatalf("create auth request leaked continuation = %#v, want omitted", createStructured["continuation"])

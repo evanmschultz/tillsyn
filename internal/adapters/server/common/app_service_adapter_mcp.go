@@ -2,6 +2,8 @@ package common
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -18,7 +20,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	}
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
-		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token stored in continuation_json before continuing.",
+		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing.",
 		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment/handoff coordination, pre-session auth requests, summary-first recovery context, and SQLite-backed template libraries for generated workflow contracts.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
@@ -32,7 +34,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 		},
 		NextSteps: []string{
 			"If this session is already approved for global work, create a project with till.project(operation=create)",
-			"If it is not approved yet, create an auth request with till.auth_request(operation=create) and put the requester-owned resume_token in continuation_json",
+			"If it is not approved yet, create an auth request with till.auth_request(operation=create); if you omit continuation_json it will auto-generate and return a requester-owned resume_token for later claim/cancel",
 			"After approval, claim the request with till.auth_request(operation=claim), then create the project with till.project(operation=create)",
 			"After the project exists, claim or reuse a project-scoped approved session before guarded in-project mutations such as till.plan_item(operation=create)",
 			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
@@ -79,7 +81,7 @@ func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuth
 	if err != nil {
 		return AuthRequestRecord{}, err
 	}
-	continuation, err := parseContinuationJSON(in.ContinuationJSON)
+	continuation, err := normalizeCreateAuthRequestContinuation(in.ContinuationJSON)
 	if err != nil {
 		return AuthRequestRecord{}, err
 	}
@@ -1046,6 +1048,22 @@ func parseContinuationJSON(raw string) (map[string]any, error) {
 	return cloneJSONObject(continuation), nil
 }
 
+// normalizeCreateAuthRequestContinuation returns one claimable continuation payload for MCP auth-request create flows.
+func normalizeCreateAuthRequestContinuation(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]any{"resume_token": generateAuthRequestResumeToken()}, nil
+	}
+	continuation, err := parseContinuationJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	if authRequestResumeToken(continuation) == "" {
+		return nil, fmt.Errorf("continuation_json.resume_token is required when continuation_json is provided: %w", ErrInvalidCaptureStateRequest)
+	}
+	return continuation, nil
+}
+
 // requestedActorType resolves explicit requester attribution and falls back to requested principal type.
 func requestedActorType(requestedByType, principalType string) domain.ActorType {
 	switch strings.TrimSpace(strings.ToLower(requestedByType)) {
@@ -1162,8 +1180,22 @@ func authRequestResumeTokenMatches(continuation map[string]any, want string) boo
 	if want == "" {
 		return false
 	}
+	return authRequestResumeToken(continuation) == want
+}
+
+// authRequestResumeToken returns one normalized requester-owned resume token from continuation metadata.
+func authRequestResumeToken(continuation map[string]any) string {
 	got, _ := continuation["resume_token"].(string)
-	return strings.TrimSpace(got) == want
+	return strings.TrimSpace(got)
+}
+
+// generateAuthRequestResumeToken returns one opaque continuation token for MCP claim/cancel ownership proof.
+func generateAuthRequestResumeToken() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("resume-%d", time.Now().UTC().UnixNano())
+	}
+	return "resume-" + hex.EncodeToString(buf)
 }
 
 // ListProjectAllowedKinds lists canonical kind ids in one project's allowlist.

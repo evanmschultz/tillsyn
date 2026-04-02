@@ -4,6 +4,33 @@ Created: 2026-02-21
 Updated: 2026-03-31
 Status: In progress; `main` now carries the green cross-process auth/MCP, laslig CLI, and operational embeddings/search wave, and this merge lane now layers the template workflow-contract MVP on top without dropping those capabilities. Template libraries cover persisted rules, project binding, generated-node enforcement, snapshot transport, first-class TUI kind/library pickers plus template-contract inspection, and laslig-aligned template CLI operator output while keeping JSON as the stable ingestion transport. Local merge resolution and `mage ci` are green; the main remaining product seam is final cleanup of the legacy create-time kind-template fallback path rather than missing template-MVP behavior.
 
+## Checkpoint 2026-04-01: MCP Auth Request Continuation Ergonomics
+
+Objective:
+- remove the MCP auth-request continuation footgun so agent callers can create claimable requests by default while still failing closed on malformed custom continuation payloads.
+
+Context7:
+1. `/mark3labs/mcp-go` reviewed before edits for tool schema wording, optional-vs-required argument guidance, and structured JSON result patterns for generated values returned from handlers.
+
+Implementation summary:
+1. Updated the MCP/common auth-request create adapter to normalize continuation payloads instead of accepting raw optional JSON at face value:
+   - when `continuation_json` is omitted, create now auto-generates a requester-owned `resume_token`,
+   - when `continuation_json` is provided, `continuation_json.resume_token` must be present and non-empty,
+   - create still injects the requester-bound private client ownership metadata needed for later `claim`/`cancel`.
+2. Updated the reduced MCP tool schema and create result:
+   - `till.auth_request(operation=create)` now documents the auto-generated resume-token behavior,
+   - `till.auth_request(operation=claim|cancel)` now points callers at the token returned by create when continuation was omitted,
+   - create returns `resume_token` in the tool result while still keeping the private continuation payload out of normal auth-request JSON.
+3. Updated bootstrap guidance so MCP dogfood instructions no longer tell callers they must hand-author `continuation_json` just to make claimable requests.
+4. Updated operator docs in `README.md` to describe the new default flow and the remaining validation rule for custom continuation payloads.
+
+Validation so far:
+1. `mage test-pkg ./internal/adapters/server/common` -> PASS.
+2. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+
+Next step:
+1. Run `mage ci`, then commit/push this slice and watch the new GitHub Actions run to green before resuming the live MCP drift/reapply E2E.
+
 ## Checkpoint 2026-03-31: Freeze MCP Family Surface
 
 Objective:

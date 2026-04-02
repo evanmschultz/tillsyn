@@ -124,7 +124,7 @@ Current auth note:
 - TUI auth review now uses a dedicated full-screen review surface with visible decision controls, human-readable scope labels, explicit confirm-before-apply for both approve and deny, and optional notes that start blank instead of prefilled audit prose.
 - TUI auth inventory distinguishes pending requests, resolved requests, and active approved sessions, but the active-session revoke path is still less discoverable than it should be; CLI is the clearer operator revoke path for now.
 - CLI auth inventory supports project/global request and session listing so operators can inspect and revoke without guesswork.
-- MCP requesters can now resume approved requests through `till.auth_request(operation=claim)` when they created the original request with continuation metadata that includes a requester-owned `resume_token`; for delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
+- MCP requesters can now resume approved requests through `till.auth_request(operation=claim)` using the requester-owned `resume_token` returned by `till.auth_request(operation=create)`; when callers provide custom continuation metadata, `continuation_json.resume_token` must still be present and non-empty. For delegated on-behalf-of approvals, the approved child principal/client now owns the continuation claim directly.
 - MCP requesters can now also withdraw their own pending requests through `till.auth_request(operation=cancel)` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
@@ -328,6 +328,8 @@ Dogfood MCP continuation pattern:
   }
 }
 ```
+
+If `continuation_json` is omitted, `till.auth_request(operation=create)` now auto-generates a requester-owned `resume_token` and returns it in the create result. If `continuation_json` is provided, `continuation_json.resume_token` must still be present and non-empty.
 
 After the user approves the request in the TUI, the requester can claim the approved session through MCP with the same `request_id` plus that `resume_token` using `till.auth_request(operation=claim)`.
 
