@@ -12,10 +12,7 @@ import (
 )
 
 const (
-	defaultGoBuiltinLibraryID      = "default-go"
-	defaultGoBuiltinLibraryName    = "Default Go"
-	defaultGoBuiltinLibrarySource  = "builtin://tillsyn/default-go"
-	defaultGoBuiltinLibraryVersion = "2026-04-01.1"
+	defaultGoBuiltinLibraryID = "default-go"
 )
 
 // EnsureBuiltinTemplateLibraryInput stores one explicit builtin install or refresh request.
@@ -133,7 +130,7 @@ type builtinTemplateActor struct {
 func builtinTemplateLibrarySpec(libraryID string, actor builtinTemplateActor) (UpsertTemplateLibraryInput, error) {
 	switch domain.NormalizeTemplateLibraryID(libraryID) {
 	case "", defaultGoBuiltinLibraryID:
-		return defaultGoBuiltinTemplateLibrarySpec(actor), nil
+		return defaultGoBuiltinTemplateLibrarySpec(actor)
 	default:
 		return UpsertTemplateLibraryInput{}, fmt.Errorf("%w: unsupported builtin template library %q", domain.ErrInvalidTemplateLibrary, strings.TrimSpace(libraryID))
 	}
@@ -236,102 +233,11 @@ func (s *Service) builtinTemplateMissingKinds(ctx context.Context, requiredKinds
 	return missing, nil
 }
 
-// defaultGoBuiltinTemplateLibrarySpec returns the locked builtin default-go library contract.
-func defaultGoBuiltinTemplateLibrarySpec(actor builtinTemplateActor) UpsertTemplateLibraryInput {
-	actorID := firstNonEmptyTrimmed(actor.ID, templateSystemActorID)
-	actorName := firstNonEmptyTrimmed(actor.Name, templateSystemActorName)
-	actorType := firstActorType(actor.Type, domain.ActorTypeSystem)
-	return UpsertTemplateLibraryInput{
-		ID:                  defaultGoBuiltinLibraryID,
-		Scope:               domain.TemplateLibraryScopeGlobal,
-		Name:                defaultGoBuiltinLibraryName,
-		Status:              domain.TemplateLibraryStatusApproved,
-		BuiltinManaged:      true,
-		BuiltinSource:       defaultGoBuiltinLibrarySource,
-		BuiltinVersion:      defaultGoBuiltinLibraryVersion,
-		CreatedByActorID:    actorID,
-		CreatedByActorName:  actorName,
-		CreatedByActorType:  actorType,
-		ApprovedByActorID:   actorID,
-		ApprovedByActorName: actorName,
-		ApprovedByActorType: actorType,
-		NodeTemplates: []UpsertNodeTemplateInput{
-			{
-				ID:          "go-project-template",
-				ScopeLevel:  domain.KindAppliesToProject,
-				NodeKindID:  domain.KindID("go-project"),
-				DisplayName: "Go Project",
-				ProjectMetadataDefaults: &domain.ProjectMetadata{
-					Owner:             "Evan",
-					StandardsMarkdown: defaultGoBuiltinStandardsMarkdown(),
-				},
-				ChildRules: []UpsertTemplateChildRuleInput{
-					{
-						ID:                      "implementation-track",
-						Position:                1,
-						ChildScopeLevel:         domain.KindAppliesToPhase,
-						ChildKindID:             domain.KindID("implementation-phase"),
-						TitleTemplate:           "IMPLEMENTATION TRACK",
-						DescriptionTemplate:     "Primary implementation and verification phase for the project.",
-						ResponsibleActorKind:    domain.TemplateActorKindBuilder,
-						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindOrchestrator},
-						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
-						RequiredForParentDone:   true,
-					},
-				},
-			},
-			{
-				ID:          "build-task-template",
-				ScopeLevel:  domain.KindAppliesToTask,
-				NodeKindID:  domain.KindID("build-task"),
-				DisplayName: "Build Task",
-				ChildRules: []UpsertTemplateChildRuleInput{
-					{
-						ID:                      "qa-pass-1",
-						Position:                1,
-						ChildScopeLevel:         domain.KindAppliesToSubtask,
-						ChildKindID:             domain.KindID("qa-check"),
-						TitleTemplate:           "QA PASS 1",
-						DescriptionTemplate:     "First QA pass for the parent build task.",
-						ResponsibleActorKind:    domain.TemplateActorKindQA,
-						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
-						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
-						RequiredForParentDone:   true,
-					},
-					{
-						ID:                      "qa-pass-2",
-						Position:                2,
-						ChildScopeLevel:         domain.KindAppliesToSubtask,
-						ChildKindID:             domain.KindID("qa-check"),
-						TitleTemplate:           "QA PASS 2",
-						DescriptionTemplate:     "Second QA pass for the parent build task.",
-						ResponsibleActorKind:    domain.TemplateActorKindQA,
-						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
-						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
-						RequiredForParentDone:   true,
-					},
-				},
-			},
-		},
+// defaultGoBuiltinTemplateLibrarySpec loads the builtin default-go library contract from the repo-visible embedded source.
+func defaultGoBuiltinTemplateLibrarySpec(actor builtinTemplateActor) (UpsertTemplateLibraryInput, error) {
+	doc, err := loadBuiltinTemplateLibraryDocument(defaultGoBuiltinLibraryID)
+	if err != nil {
+		return UpsertTemplateLibraryInput{}, err
 	}
-}
-
-// defaultGoBuiltinStandardsMarkdown returns the locked default-go standards payload from the dogfood contract.
-func defaultGoBuiltinStandardsMarkdown() string {
-	return strings.Join([]string{
-		"- Bare control repo with visible sibling worktrees.",
-		"- One dedicated `gopls` MCP server per active worktree.",
-		"- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.",
-		"- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.",
-		"- MCP-first dogfooding for runtime and operator workflows.",
-		"- `mage` is the canonical build/test gate.",
-		"- Laslig styling for all Mage functions and CLI output.",
-		"- Fang for help and CLI command surfaces.",
-		"- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.",
-		"- GitHub Actions CI and release snapshot checks must stay green.",
-		"- No ad-hoc `.codex/` directories inside worktrees.",
-		"- Follow `AGENTS.md` workflow and worktree rules.",
-		"- Comments and handoffs are the coordination layer.",
-		"- Template-generated QA blockers must be completed truthfully before done.",
-	}, "\n")
+	return builtinTemplateLibraryInputFromDocument(doc, actor), nil
 }

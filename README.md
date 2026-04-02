@@ -290,6 +290,7 @@ Template-library operator examples:
   - any migration of existing template-owned nodes should be surfaced as dev-approved action-required work with both per-item approval and an explicit `approve all` affordance,
   - and the review UI should use the normal TUI/React-style component language already used elsewhere in Tillsyn rather than inventing a separate template-admin presentation model.
 - Current lifecycle implementation status:
+  - builtin template authoring now uses a repo-visible `templates/` source directory, with the approved builtin snapshot embedded into the binary for normal runtime/install flows,
   - template libraries now carry revision/provenance metadata,
   - project bindings pin a bound library snapshot plus the bound revision instead of following the mutable latest library row,
   - binding reads now surface drift/current state against the latest approved library revision,
@@ -347,6 +348,19 @@ After the current active slices close, run one cleanup/refinement wave focused o
   - child template layers should be able to override or extend parent defaults instead of forcing duplicated whole-template copies,
   - the effective rule-precedence model should be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
   - and the human-facing UI should make inherited vs overridden rule sources obvious.
+- treat builtin/default template distribution as a hybrid source model:
+  - contributor-facing source of truth should live in the repo template directory,
+  - release/runtime onboarding should still work from an embedded or generated approved builtin snapshot so new users do not need a cloned repo,
+  - SQLite should remain the installed/runtime source of truth after builtin ensure/import,
+  - future remote or marketplace sources should be able to plug into the same normalized install path instead of introducing a separate one-off loader,
+  - and the first refactor in that slice should leave room for a later repo-backed or remote source fetch path without making normal onboarding depend on live network access.
+- open questions for that later slice:
+  - whether builtin template specs should be committed as JSON, TOML, or another review-friendly format,
+  - what generation/embed step should convert repo template sources into the shipped builtin snapshot,
+  - whether a later remote-repo lookup path should fetch from the canonical Tillsyn repo, a separate registry, or both, and how that should be cached/versioned locally,
+  - how approval, provenance, votes, usage metrics, and proposed changes should eventually map onto builtin vs marketplace templates,
+  - how much of that system should be first-class in the runtime versus layered on later as external/template-registry infrastructure,
+  - and how builtin snapshots, layered overlays, and installed local edits should reconcile when the upstream source evolves.
 - move `Action Required` to the top of the project notifications panel.
 - add one configurable notifications accent/color, dogfood orange first, and apply it consistently to attention-worthy notification surfaces such as comments, warnings, and action-required rows before choosing a long-term default.
 - highlight `@human` mentions in rendered thread/comment markdown so human-directed asks stand out immediately.

@@ -2,7 +2,41 @@
 
 Created: 2026-02-21
 Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, and a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family, and a repo-visible embedded builtin template source under `templates/` for `default-go`. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+
+## Checkpoint 2026-04-02: Repo-Visible Builtin Template Source Landed
+
+Objective:
+- move builtin template authoring out of hardcoded Go constructors and into a repo-visible source directory without weakening the existing ensure/status lifecycle behavior or making onboarding depend on a live repo checkout.
+
+Context7:
+1. Reviewed `/websites/pkg_go_dev_go1_25_3` for `embed.FS` and `encoding/json` usage patterns before switching builtin template loading to embedded repo-authored JSON.
+
+Implementation summary:
+1. Added a contributor-visible builtin template source directory:
+   - `templates/builtin/default-go.json` now holds the canonical default-go library payload in a reviewable repo file.
+2. Kept onboarding/runtime simple by embedding those repo sources at build time:
+   - added `templates/embed.go`,
+   - embedded `templates/builtin/*.json`,
+   - and kept runtime reads on the embedded snapshot rather than a live checkout path.
+3. Replaced the hardcoded default-go constructor with a strict loader path:
+   - builtin template loading now decodes the embedded JSON source with `DisallowUnknownFields`,
+   - verifies the document id matches the requested builtin library id,
+   - and converts that document into the same ordinary `UpsertTemplateLibraryInput` shape used before.
+4. Preserved the existing lifecycle contract:
+   - `till.template(operation=get_builtin_status|ensure_builtin)` and the matching CLI paths still see the same builtin-managed library metadata,
+   - status/ensure still compute missing kinds, digest, and installed drift from the ordinary template-library model,
+   - and the refactor only changed where the builtin source of truth lives.
+5. Added direct coverage for the new source path:
+   - tests now verify the builtin spec loads from the repo-visible source and still installs the expected builtin source/version/node-template contract.
+
+Validation:
+1. `mage test-pkg ./internal/app` -> PASS (185 tests).
+
+Outcome:
+1. Builtin template authoring is no longer trapped in Go code.
+2. The repo now has the explicit `templates/` source layout needed for later composition/marketplace work without forcing normal users to clone or network-fetch anything.
+3. The next active slice remains final collaborative dogfood hardening and closeout.
 
 ## Checkpoint 2026-04-02: Bootstrap Collapse Landed
 
@@ -362,6 +396,19 @@ Remaining slices after the fresh live wake verification:
      - child layers should be able to override or extend parent defaults without forcing whole-template duplication,
      - the effective rule-precedence model must be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
      - and the UI must make inherited-vs-overridden rule sources obvious to humans and agents.
+   - Treat builtin/default template distribution as a hybrid source model:
+     - contributor-facing source of truth should live in the repo template directory,
+     - release/runtime onboarding should still work from an embedded or generated approved builtin snapshot so new users do not need a cloned repo,
+     - SQLite should remain the installed/runtime source of truth after builtin ensure/import,
+     - future remote or marketplace sources should be able to plug into the same normalized install path instead of introducing a separate one-off loader,
+     - and the first refactor in that slice should leave room for a later repo-backed or remote source fetch path without making normal onboarding depend on live network access.
+   - Open questions for that later slice:
+     - whether builtin template specs should be committed as JSON, TOML, or another review-friendly format,
+     - what generation/embed step should convert repo template sources into the shipped builtin snapshot,
+     - whether a later remote-repo lookup path should fetch from the canonical Tillsyn repo, a separate registry, or both, and how that should be cached/versioned locally,
+     - how approval, provenance, votes, usage metrics, and proposed changes should eventually map onto builtin vs marketplace templates,
+     - how much of that system should be first-class in the runtime versus layered on later as external/template-registry infrastructure,
+     - and how builtin snapshots, layered overlays, and installed local edits should reconcile when the upstream source evolves.
    - Group global notifications by project instead of scattering repeated project headers, and clear comment-notification rows from notices after the viewer opens/reviews them so old comments do not keep muddying the panel.
    - Read and discuss the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) before finalizing dogfood templates, then decide how its semi-formal reasoning model should update template contracts, research/qa orchestration, and scoped instructions.
 
