@@ -30,7 +30,7 @@ Local dogfood repo layout note:
 - Archive-first delete flow with configurable defaults.
 - Project and work-item thread mode with ownership-attributed markdown comments as the shared in-scope communication lane for human-to-agent and agent-to-agent coordination.
 - Descriptions/comments are stored as markdown source fields and rendered in TUI views.
-- MCP instruction tool for embedded docs + agent recommendations (`till.get_instructions`).
+- MCP instruction tool for embedded docs plus scoped project/template/kind/node explanations (`till.get_instructions`).
 - Raw stdio MCP via `./till mcp` as the primary local MCP transport.
 - Secondary HTTP/API + HTTP MCP serve surface via `./till serve`.
 - Project roots are real filesystem directory mappings; resource attachment is blocked outside the allowed root.
@@ -89,13 +89,13 @@ Implemented now:
 Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
-- richer disconnect-aware cleanup, broader continuous-listening/HTTP transport follow-through, one fresh native MCP rerun to re-close the now-patched coordination wake slice, and later OS-level notification ergonomics on top of the baseline-aware stdio watcher model
+- richer disconnect-aware cleanup, broader continuous-listening/HTTP transport follow-through, and later OS-level notification ergonomics on top of the baseline-aware stdio watcher model
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
 - `capture_state` is the summary-first recovery surface for level-scoped workflows; after client shutdown/restart, call it first to re-anchor project/scope context before resuming any watchers.
 - `till.get_bootstrap_guide` is the lightweight runtime next-step surface for empty-instance and pre-approval flows.
-- `till.get_instructions` is the embedded-doc and operator-policy surface; it returns selected markdown docs plus agent-facing recommendations, not per-project runtime state and not a machine-readable schema browser for every tool.
+- `till.get_instructions` is the embedded-doc and scoped policy/explanation surface; it can return selected markdown docs plus agent-facing recommendations, and it can also explain one concrete project, template library, kind, or node from runtime state without turning into a raw schema browser.
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - MCP mutation auth is session-first.
 - transport-level lease/scope request contracts remain secondary local workflow guardrails for non-user mutations.
@@ -203,17 +203,16 @@ Current auth note:
     - per-item clear works on routed comment mentions without clearing unrelated handoffs or older mentions in the same role inbox,
     - auth wait wake is proven live through `till.auth_request(operation=claim, wait_timeout=...)`,
     - local cross-process runtime coverage now also proves comment, attention, and handoff waiters wake on the next newer change after the current baseline state,
-    - and the remaining coordination-wake acceptance check is one fresh native MCP rerun on the patched runtime.
+    - and the fresh native MCP rerun now also proves live auth wake, routed attention wake, handoff wake, and comment wake on a clean empty task thread.
   - current transport caveat:
     - stdio waitable watcher plumbing is now landed for attention, comments, and handoffs with baseline-aware “next change” semantics,
     - local runtime tests now cover auth plus coordination wake end to end across broker instances,
-    - and the remaining proof step is one fresh native MCP rerun on the patched runtime,
+    - and the native MCP proof is now re-closed on the patched runtime,
     - but this is still not a full push-notification transport for disconnected clients, HTTP listeners, or OS notifications;
     - after restart, agents should recover durable state with `capture_state`, `attention_item(list)`, `handoff(list)`, and thread `comment(list)` reads before resuming watchers.
 - Current remaining dogfood order:
-  - first rerun fresh native MCP coordination wake parity on the patched runtime,
-  - then expand scoped `till.get_instructions`,
-  - then collapse bootstrap into that richer surface later, close with one final collaborative dogfood hardening pass,
+  - first decide and land bootstrap collapse on top of the now-shipped scoped `till.get_instructions` surface,
+  - then close with one final collaborative dogfood hardening pass,
   - and only after those slices finish, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, and OS-level notification ergonomics.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
@@ -242,9 +241,12 @@ Current auth note:
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 - Open guidance question:
   - we still need to decide whether `till.get_bootstrap_guide` should remain a dedicated lightweight tool or collapse into `till.get_instructions(topic=bootstrap|workflow)` later;
-  - the current split is intentional for now because bootstrap is runtime-generated minimal next-step guidance, while instructions is broader embedded-doc retrieval and recommendation payloads.
-  - if we do collapse bootstrap later, `till.get_instructions` should grow into a scoped explanation tool with inputs such as optional `project_id`, `template_library_id`, `kind_id`, and `node_id`;
-  - `kind_id` alone will not be enough for every explanation, because global catalog meaning, project-scoped usage, template-scoped usage, and one concrete node contract can differ.
+  - the current split is intentional for now because bootstrap is runtime-generated minimal next-step guidance, while `till.get_instructions` now handles both embedded docs and scoped runtime explanations.
+  - the current scoped explanation surface already accepts optional `project_id`, `template_library_id`, `kind_id`, and `node_id` plus `focus=project|template|kind|node|topic`.
+  - project scope now explains project standards, allowed kinds, template binding, and project-local workflow expectations.
+  - template scope now explains node-template descriptions, child rules, responsible actor kinds, blocker rules, and migration/reapply context.
+  - branch/phase/task/subtask scope now explains the concrete node's description plus metadata fields such as objective, implementation notes, acceptance criteria, definition of done, and validation plan, together with any stored node-contract snapshot.
+  - this explanation layer prefers persisted runtime policy sources such as `standards_markdown`, template descriptions, task metadata, project bindings, and node-contract snapshots before falling back to generic embedded docs.
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
@@ -319,6 +321,7 @@ Instruction-tool usage guidance:
 - Keep context bounded with `doc_names` and `max_chars_per_doc`.
 - Use `include_markdown=false` for inventory checks and `include_markdown=true` when full markdown text is required.
 - Descriptions/details and comment summary/body fields are markdown-first authoring surfaces.
+- Use `focus=project|template|kind|node` with `project_id`, `template_library_id`, `kind_id`, or `node_id` when you need scoped rules for a real runtime object instead of generic doc guidance.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),

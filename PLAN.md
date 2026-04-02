@@ -2,7 +2,91 @@
 
 Created: 2026-02-21
 Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, and a direct project-edit comments row. The latest local fix on top of that reuses the auth-style wake machinery through one baseline-aware live-wait contract for auth, comments, attention, and handoffs, with new cross-process runtime coverage for the coordination families. Fresh live MCP rerun is still pending before this slice is fully re-closed in the execution log. The next remaining work is that final live coordination wake retest, scoped instructions expansion, later bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset and notification polish.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, and a richer `till.get_instructions` surface that can now explain scoped project/template/kind/node rules from runtime state instead of acting like a docs-only fetcher. The next remaining work is bootstrap collapse, final collaborative hardening, and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+
+## Checkpoint 2026-04-02: Scoped Instructions Expansion Landed
+
+Objective:
+- turn `till.get_instructions` into a real scoped policy/explanation surface for project/template/kind/node guidance while keeping the embedded-doc path intact and explanation-first.
+
+Context7:
+1. Reviewed `/mark3labs/mcp-go` for typed tool argument/result shaping and backward-compatible structured MCP tool responses before patching the `till.get_instructions` schema and handler contract.
+2. After the initial validation mistake and package build failure, reran `/mark3labs/mcp-go` per repo policy before the next edits to keep the tool-shape remediation aligned with MCP-Go handler patterns.
+
+Implementation summary:
+1. Expanded `till.get_instructions` from docs-only retrieval into three usable modes:
+   - `mode=docs` for embedded markdown retrieval,
+   - `mode=explain` for scoped runtime explanations,
+   - `mode=hybrid` for both together.
+2. Added explicit scoped selectors:
+   - `focus=topic|project|template|kind|node`,
+   - optional `project_id`, `template_library_id`, `kind_id`, and `node_id`,
+   - plus optional `include_evidence` for returning concrete policy/runtime sources.
+3. Implemented one explanation-first resolver layer for the shipped runtime model:
+   - project explanations now join project metadata, `standards_markdown`, allowed kinds, and active template binding,
+   - template explanations now join library description, node-template descriptions, child rules, actor kinds, and blocker flags,
+   - kind explanations now join catalog meaning with project allowlist/template usage context when supplied,
+   - node explanations now join task lineage, project standards, node description, node metadata (`objective`, agent notes, acceptance criteria, definition of done, validation plan), and stored node-contract snapshots when present.
+4. Kept the response explanation-first instead of schema-dump-first:
+   - `summary`,
+   - `resolved_scope`,
+   - `explanation.title|overview|why_it_applies|scoped_rules|workflow_contract|agent_expectations|related_tools`,
+   - and optional `evidence`/`gaps`.
+5. Updated the shipped recommendation text so agents are told to use scoped instruction focus for real runtime objects instead of inferring local policy from raw JSON and README prose.
+
+Validation:
+1. `mage test-pkg ./internal/adapters/server/mcpapi` -> PASS (85 tests).
+2. `mage ci` -> PASS (1173 tests across 17 packages; `internal/adapters/server/mcpapi` coverage 72.2%).
+3. Added handler and direct explainer coverage for:
+   - project-scoped explanation returning standards/binding guidance,
+   - template-scoped explanation returning library/child-rule guidance,
+   - kind-scoped explanation returning project allowlist and template-usage context,
+   - and node-scoped explanation returning validation-plan and generated-contract guidance.
+
+Outcome:
+1. Agents can now ask `till.get_instructions` for rules tied to a real project, template library, kind, branch, phase, task, or generated node.
+2. The explanation layer now lifts actual persisted policy sources such as `standards_markdown`, template descriptions, task metadata, bindings, and node-contract snapshots.
+3. The next active slice is bootstrap collapse into the richer instructions surface.
+
+## Checkpoint 2026-04-02: Fresh Native MCP Wake Rerun Passed
+
+Objective:
+- re-close the reopened coordination wake slice by proving the patched baseline-aware live-wait contract works end to end over the native MCP runtime, not just in package/runtime tests.
+
+Live MCP setup:
+1. Reused the disposable project `Live Comments Inbox Check` (`bf085f71-f6bc-4f59-856c-731df19da0c4`) so the rerun covered both reused keys and one fresh empty thread.
+2. Claimed a fresh orchestrator session for the rerun:
+   - auth request `ce4d23f0-f7f4-4d7a-ad39-eff65b48f27a`,
+   - issued session `73edc73a-7614-4053-b796-affbb04c126b`,
+   - auth context `authctx-4411f62512c8bda383213fa50aa5f249`.
+3. Rotated the stale orchestrator lease onto the fresh session:
+   - revoked stale lease instance `b235d97c-a33a-4ed9-b3d7-032f11964722`,
+   - issued replacement lease instance `a7533cbb-f4d2-4ff0-ae5a-f7aeffb007eb`.
+
+Live MCP evidence:
+1. Routed attention wake: PASS.
+   - created research comment `fab5bc7f-ce93-41bf-9f7c-24e9acc9b385`,
+   - waiting agent woke with routed attention row `fab5bc7f-ce93-41bf-9f7c-24e9acc9b385::mention::research`,
+   - and the returned summary matched the new comment instead of timing out on an older baseline.
+2. Handoff wake: PASS.
+   - created research handoff `5fc3c0da-b209-4a8d-a291-f07f547993ed`,
+   - waiting agent woke on the new handoff instead of timing out,
+   - and the reused project key no longer blocked wake behavior just because older rows already existed.
+3. Comment wake on a clean thread: PASS.
+   - created clean task `2798498e-b1a5-45c2-bdbf-a6b6c9894cca`,
+   - kept `till.comment(operation=list, wait_timeout=5m)` open on that empty task thread,
+   - then created task comment `7d5a59a4-bd5c-4af4-a9be-52b471f46d73`,
+   - and the waiter woke on that first new task-thread comment.
+4. Auth claim wake: PASS.
+   - created auth request `2c6b925c-69de-4ed4-8557-cc3f42b856a0` for principal `wake-auth-proof`,
+   - kept one waiting `till.auth_request(operation=claim, wait_timeout=5m)` open before approval,
+   - user approved the request afterward,
+   - and the waiting claim woke with issued session `8ab8b4e9-6e92-4a38-b8fc-a1a9050bf064`.
+
+Outcome:
+1. The patched live-wait contract is now proven in both automated runtime coverage and fresh native MCP dogfood.
+2. The reopened coordination wake slice is closed.
+3. The next active implementation slice is bootstrap collapse into the richer instructions surface.
 
 ## Checkpoint 2026-04-02: Shared Baseline-Aware Live Wait Refactor
 
@@ -37,7 +121,7 @@ Validation:
 Outcome:
 1. Auth and coordination now share one maintainable baseline-aware live-wait contract instead of separate auth-vs-coordination semantics.
 2. Local runtime coverage now proves cross-process wake for comment, attention, and handoff waits.
-3. Fresh native MCP rerun is still the remaining acceptance check before this slice is treated as fully closed.
+3. Fresh native MCP rerun later confirmed the acceptance check, and this slice is now fully closed.
 
 ## Checkpoint 2026-04-02: Live Coordination Wake Verification Reopened The Wait Slice
 
@@ -231,15 +315,11 @@ Immediate next live MCP tests before any new implementation:
 5. Only after those live tests pass should new implementation work start again.
 
 Remaining slices after the fresh live wake verification:
-1. Coordination wake parity fix and retest.
-   - Make `till.comment`, `till.attention_item`, and `till.handoff` waiters wake reliably across waiting agents the same way `till.auth_request(operation=claim, wait_timeout=...)` already does, then rerun the same live MCP-only proof.
-2. Scoped `till.get_instructions` expansion.
-   - Grow instructions into a richer scoped explanation surface with inputs such as topic, `project_id`, `template_library_id`, `kind_id`, and `node_id`.
-3. Bootstrap collapse into richer instructions.
+1. Bootstrap collapse into richer instructions.
    - Only after scoped instructions is good enough, fold `till.get_bootstrap_guide` into that richer explanation surface.
-4. Final collaborative dogfood hardening and closeout.
+2. Final collaborative dogfood hardening and closeout.
    - Run the full operator/agent workflow end to end on the frozen MCP surface, capture evidence in this file, and clean up the remaining rough edges.
-5. Cleanup/refinement after the active slices close.
+3. Cleanup/refinement after the active slices close.
    - Refresh the DB, create the canonical `tillsyn` dogfood project/task tree, keep `Action Required` at the top of project notifications, dogfood a configurable orange notifications accent, highlight `@human` mentions in rendered markdown, wire local terminal/OS notifications, and harden notification clarity/noise controls based on real usage.
    - Group global notifications by project instead of scattering repeated project headers, and clear comment-notification rows from notices after the viewer opens/reviews them so old comments do not keep muddying the panel.
    - Read and discuss the full `Agentic Code Reasoning` paper (`arXiv:2603.01896`) before finalizing dogfood templates, then decide how its semi-formal reasoning model should update template contracts, research/qa orchestration, and scoped instructions.
