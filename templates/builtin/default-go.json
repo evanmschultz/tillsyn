@@ -1,0 +1,80 @@
+{
+  "id": "default-go",
+  "name": "Default Go",
+  "builtin_source": "builtin://tillsyn/default-go",
+  "builtin_version": "2026-04-01.1",
+  "node_templates": [
+    {
+      "id": "go-project-template",
+      "scope_level": "project",
+      "node_kind_id": "go-project",
+      "display_name": "Go Project",
+      "project_metadata_defaults": {
+        "owner": "Evan",
+        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated QA blockers must be completed truthfully before done."
+      },
+      "child_rules": [
+        {
+          "id": "implementation-track",
+          "position": 1,
+          "child_scope_level": "phase",
+          "child_kind_id": "implementation-phase",
+          "title_template": "IMPLEMENTATION TRACK",
+          "description_template": "Primary implementation and verification phase for the project.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "build-task-template",
+      "scope_level": "task",
+      "node_kind_id": "build-task",
+      "display_name": "Build Task",
+      "child_rules": [
+        {
+          "id": "qa-pass-1",
+          "position": 1,
+          "child_scope_level": "subtask",
+          "child_kind_id": "qa-check",
+          "title_template": "QA PASS 1",
+          "description_template": "First QA pass for the parent build task.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "qa-pass-2",
+          "position": 2,
+          "child_scope_level": "subtask",
+          "child_kind_id": "qa-check",
+          "title_template": "QA PASS 2",
+          "description_template": "Second QA pass for the parent build task.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    }
+  ]
+}

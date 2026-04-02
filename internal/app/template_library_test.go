@@ -259,12 +259,44 @@ func TestGetBuiltinTemplateLibraryStatusMissing(t *testing.T) {
 	}
 }
 
+// TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource verifies the builtin default-go contract loads from the repo-visible template source.
+func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
+	spec, err := defaultGoBuiltinTemplateLibrarySpec(builtinTemplateActor{})
+	if err != nil {
+		t.Fatalf("defaultGoBuiltinTemplateLibrarySpec() error = %v", err)
+	}
+	if spec.ID != "default-go" {
+		t.Fatalf("spec.ID = %q, want default-go", spec.ID)
+	}
+	if spec.BuiltinSource != "builtin://tillsyn/default-go" {
+		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-go", spec.BuiltinSource)
+	}
+	if spec.BuiltinVersion != "2026-04-01.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-01.1", spec.BuiltinVersion)
+	}
+	if got, want := len(spec.NodeTemplates), 2; got != want {
+		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
+	}
+	projectDefaults := spec.NodeTemplates[0].ProjectMetadataDefaults
+	if projectDefaults == nil || strings.TrimSpace(projectDefaults.StandardsMarkdown) == "" {
+		t.Fatalf("spec.NodeTemplates[0].ProjectMetadataDefaults = %#v, want standards markdown", projectDefaults)
+	}
+}
+
 // TestEnsureBuiltinTemplateLibraryInstallsDefaultGo verifies the supported builtin library installs explicitly once required kinds exist.
 func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
 	svc := newDeterministicService(repo, time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
 	seedBuiltinTemplateKinds(t, ctx, svc)
+	spec, err := defaultGoBuiltinTemplateLibrarySpec(builtinTemplateActor{
+		ID:   "dev-1",
+		Name: "Dev",
+		Type: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("defaultGoBuiltinTemplateLibrarySpec() error = %v", err)
+	}
 
 	result, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
 		LibraryID: "default-go",
@@ -287,11 +319,11 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	if !result.Library.BuiltinManaged {
 		t.Fatal("result.Library.BuiltinManaged = false, want true")
 	}
-	if result.Library.BuiltinSource != defaultGoBuiltinLibrarySource {
-		t.Fatalf("result.Library.BuiltinSource = %q, want %q", result.Library.BuiltinSource, defaultGoBuiltinLibrarySource)
+	if result.Library.BuiltinSource != spec.BuiltinSource {
+		t.Fatalf("result.Library.BuiltinSource = %q, want %q", result.Library.BuiltinSource, spec.BuiltinSource)
 	}
-	if result.Library.BuiltinVersion != defaultGoBuiltinLibraryVersion {
-		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, defaultGoBuiltinLibraryVersion)
+	if result.Library.BuiltinVersion != spec.BuiltinVersion {
+		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, spec.BuiltinVersion)
 	}
 	if got, want := len(result.Library.NodeTemplates), 2; got != want {
 		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
@@ -312,11 +344,14 @@ func TestGetBuiltinTemplateLibraryStatusDetectsUpdateAvailable(t *testing.T) {
 	svc := newDeterministicService(repo, time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
 	seedBuiltinTemplateKinds(t, ctx, svc)
 
-	spec := defaultGoBuiltinTemplateLibrarySpec(builtinTemplateActor{
+	spec, err := defaultGoBuiltinTemplateLibrarySpec(builtinTemplateActor{
 		ID:   "dev-1",
 		Name: "Dev",
 		Type: domain.ActorTypeUser,
 	})
+	if err != nil {
+		t.Fatalf("defaultGoBuiltinTemplateLibrarySpec() error = %v", err)
+	}
 	spec.BuiltinManaged = false
 	spec.BuiltinSource = ""
 	spec.BuiltinVersion = ""
