@@ -39,6 +39,7 @@ type Service interface {
 	ListCommentsByTarget(context.Context, app.ListCommentsByTargetInput) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
+	ResolveAttentionItem(context.Context, app.ResolveAttentionItemInput) (domain.AttentionItem, error)
 	ListTemplateLibraries(context.Context, app.ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ListAuthSessions(context.Context, app.AuthSessionFilter) ([]app.AuthSession, error)
@@ -513,6 +514,7 @@ type noticesSectionID int
 const (
 	noticesSectionCoordination noticesSectionID = iota
 	noticesSectionWarnings
+	noticesSectionComments
 	noticesSectionAttention
 	noticesSectionRecentActivity
 )
@@ -538,6 +540,7 @@ const (
 type noticesPanelItem struct {
 	Label                 string
 	AttentionID           string
+	AttentionKind         domain.AttentionKind
 	TaskID                string
 	ProjectID             string
 	ScopeType             domain.ScopeLevel
@@ -562,6 +565,7 @@ type noticesPanelSection struct {
 var noticesPanelSectionOrder = []noticesSectionID{
 	noticesSectionCoordination,
 	noticesSectionWarnings,
+	noticesSectionComments,
 	noticesSectionAttention,
 	noticesSectionRecentActivity,
 }
@@ -579,6 +583,7 @@ const (
 type globalNoticesPanelItem struct {
 	StableKey          string
 	AttentionID        string
+	AttentionKind      domain.AttentionKind
 	ProjectID          string
 	ProjectLabel       string
 	ScopeType          domain.ScopeLevel
@@ -858,6 +863,7 @@ type Model struct {
 	noticesSection         noticesSectionID
 	noticesCoordinationIdx int
 	noticesWarnings        int
+	noticesComments        int
 	noticesAttention       int
 	noticesActivity        int
 	attentionItems         []domain.AttentionItem
@@ -2661,7 +2667,7 @@ func (m Model) loadData() tea.Msg {
 			attentionItems = append(attentionItems, projectAttention...)
 		}
 		for _, item := range projectAttention {
-			if !item.RequiresUserAction {
+			if !m.shouldShowGlobalNoticeAttention(item) {
 				continue
 			}
 			if project.ID == projectID {
@@ -2682,7 +2688,7 @@ func (m Model) loadData() tea.Msg {
 	})
 	if globalAttentionErr == nil {
 		for _, item := range globalAttention {
-			if !item.RequiresUserAction {
+			if !m.shouldShowGlobalNoticeAttention(item) {
 				continue
 			}
 			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttentionLabel(domain.AuthRequestGlobalProjectID, "All Projects", item))
@@ -9825,6 +9831,12 @@ func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			m.beginGlobalNoticeTransition(msg)
 			return m.activateGlobalNoticesSelection()
+		case msg.String() == "x":
+			item, ok := m.selectedGlobalNoticesItem()
+			if !ok || domain.NormalizeAttentionKind(item.AttentionKind) != domain.AttentionKindMention {
+				return m, nil
+			}
+			return m, m.resolveGlobalNoticeAttentionCmd(item)
 		case key.Matches(msg, m.keys.activityLog):
 			return m, m.openActivityLog()
 		default:
@@ -9853,6 +9865,12 @@ func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.
 		return m, nil
 	case msg.Code == tea.KeyEnter || msg.String() == "enter":
 		return m.activateNoticesSelection()
+	case msg.String() == "x":
+		item, ok := m.selectedNoticesPanelItem()
+		if !ok || domain.NormalizeAttentionKind(item.AttentionKind) != domain.AttentionKindMention {
+			return m, nil
+		}
+		return m, m.resolveNoticeAttentionCmd(item)
 	case key.Matches(msg, m.keys.activityLog):
 		return m, m.openActivityLog()
 	default:
@@ -15614,6 +15632,7 @@ func globalNoticesPanelItemFromAttentionLabel(projectID, projectLabel string, it
 	return globalNoticesPanelItem{
 		StableKey:         globalNoticesStableKey(projectID, attentionID, scopeType, scopeID, summary),
 		AttentionID:       attentionID,
+		AttentionKind:     item.Kind,
 		ProjectID:         projectID,
 		ProjectLabel:      strings.TrimSpace(projectLabel),
 		ScopeType:         scopeType,
@@ -15622,6 +15641,91 @@ func globalNoticesPanelItemFromAttentionLabel(projectID, projectLabel string, it
 		TaskID:            globalNoticesTaskIDFromAttention(item),
 		ThreadDescription: strings.TrimSpace(item.BodyMarkdown),
 	}
+}
+
+// normalizeNoticeInboxRole canonicalizes viewer-facing inbox roles and common aliases.
+func normalizeNoticeInboxRole(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "dev":
+		return "builder"
+	case "researcher":
+		return "research"
+	default:
+		return strings.TrimSpace(strings.ToLower(raw))
+	}
+}
+
+// isNoticeInboxRole reports whether one role is routable through the comment inbox view.
+func isNoticeInboxRole(role string) bool {
+	switch normalizeNoticeInboxRole(role) {
+	case "builder", "qa", "orchestrator", "research", "human":
+		return true
+	default:
+		return false
+	}
+}
+
+// viewerInboxRoles returns the routable inbox roles that map to the current local viewer identity.
+func (m Model) viewerInboxRoles() []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 2)
+	add := func(raw string) {
+		role := normalizeNoticeInboxRole(raw)
+		if !isNoticeInboxRole(role) {
+			return
+		}
+		if _, ok := seen[role]; ok {
+			return
+		}
+		seen[role] = struct{}{}
+		out = append(out, role)
+	}
+	if m.threadActorType() == domain.ActorTypeUser {
+		add("human")
+	}
+	add(m.identityActorID)
+	add(m.identityDisplayName)
+	return out
+}
+
+// isViewerCommentAttention reports whether one attention row belongs in the viewer-scoped comments inbox.
+func (m Model) isViewerCommentAttention(item domain.AttentionItem) bool {
+	if !item.IsUnresolved() || domain.NormalizeAttentionKind(item.Kind) != domain.AttentionKindMention {
+		return false
+	}
+	targetRole := normalizeNoticeInboxRole(item.TargetRole)
+	if targetRole == "" {
+		return false
+	}
+	return slices.Contains(m.viewerInboxRoles(), targetRole)
+}
+
+// shouldShowWarningAttention reports whether one attention row belongs in the generic warnings section.
+func (m Model) shouldShowWarningAttention(item domain.AttentionItem) bool {
+	if !item.IsUnresolved() {
+		return false
+	}
+	switch domain.NormalizeAttentionKind(item.Kind) {
+	case domain.AttentionKindMention, domain.AttentionKindHandoff:
+		return false
+	}
+	return !item.RequiresUserAction
+}
+
+// shouldShowActionRequiredAttention reports whether one attention row belongs in the action-required section.
+func (m Model) shouldShowActionRequiredAttention(item domain.AttentionItem) bool {
+	if !item.IsUnresolved() {
+		return false
+	}
+	if m.isViewerCommentAttention(item) {
+		return false
+	}
+	return item.RequiresUserAction
+}
+
+// shouldShowGlobalNoticeAttention reports whether one attention row should surface in the global notifications list.
+func (m Model) shouldShowGlobalNoticeAttention(item domain.AttentionItem) bool {
+	return m.shouldShowActionRequiredAttention(item) || m.isViewerCommentAttention(item)
 }
 
 // globalNoticesPanelItemsForInteraction returns selectable global-notifications rows.
@@ -15724,6 +15828,8 @@ func noticesSectionTitle(section noticesSectionID) string {
 		return "Coordination"
 	case noticesSectionWarnings:
 		return "Warnings"
+	case noticesSectionComments:
+		return "Comments"
 	case noticesSectionAttention:
 		return "Action Required"
 	case noticesSectionRecentActivity:
@@ -15740,6 +15846,8 @@ func (m Model) noticesSelectionIndex(section noticesSectionID) int {
 		return m.noticesCoordinationIdx
 	case noticesSectionWarnings:
 		return m.noticesWarnings
+	case noticesSectionComments:
+		return m.noticesComments
 	case noticesSectionAttention:
 		return m.noticesAttention
 	case noticesSectionRecentActivity:
@@ -15756,6 +15864,8 @@ func (m *Model) setNoticesSelectionIndex(section noticesSectionID, idx int) {
 		m.noticesCoordinationIdx = idx
 	case noticesSectionWarnings:
 		m.noticesWarnings = idx
+	case noticesSectionComments:
+		m.noticesComments = idx
 	case noticesSectionAttention:
 		m.noticesAttention = idx
 	case noticesSectionRecentActivity:
@@ -15767,6 +15877,16 @@ func (m *Model) setNoticesSelectionIndex(section noticesSectionID, idx int) {
 func noticesSectionPosition(section noticesSectionID) int {
 	for idx, candidate := range noticesPanelSectionOrder {
 		if candidate == section {
+			return idx
+		}
+	}
+	return -1
+}
+
+// noticesSectionIndex resolves one section id to its concrete position in one rendered notices slice.
+func noticesSectionIndex(sections []noticesPanelSection, section noticesSectionID) int {
+	for idx, candidate := range sections {
+		if candidate.ID == section {
 			return idx
 		}
 	}
@@ -15792,6 +15912,7 @@ func (m Model) noticesPanelItemFromAttention(item domain.AttentionItem) (notices
 	return noticesPanelItem{
 		Label:             label,
 		AttentionID:       strings.TrimSpace(item.ID),
+		AttentionKind:     item.Kind,
 		TaskID:            notificationTaskIDFromScope(scopeType, scopeID),
 		ProjectID:         rowProjectID,
 		ScopeType:         scopeType,
@@ -15805,6 +15926,9 @@ func (m Model) noticesPanelItemFromAttention(item domain.AttentionItem) (notices
 func (m Model) noticesWarningPanelItems() []noticesPanelItem {
 	out := make([]noticesPanelItem, 0, len(m.attentionItems))
 	for _, item := range m.attentionItems {
+		if !m.shouldShowWarningAttention(item) {
+			continue
+		}
 		row, ok := m.noticesPanelItemFromAttention(item)
 		if !ok {
 			continue
@@ -15821,11 +15945,27 @@ func (m Model) noticesWarningPanelItems() []noticesPanelItem {
 	return out
 }
 
+// noticesCommentsPanelItems builds viewer-scoped comment inbox rows from routed mention attention.
+func (m Model) noticesCommentsPanelItems() []noticesPanelItem {
+	out := make([]noticesPanelItem, 0, len(m.attentionItems))
+	for _, item := range m.attentionItems {
+		if !m.isViewerCommentAttention(item) {
+			continue
+		}
+		row, ok := m.noticesPanelItemFromAttention(item)
+		if !ok {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // noticesAttentionPanelItems builds selectable action-required rows from persisted attention records.
 func (m Model) noticesAttentionPanelItems() []noticesPanelItem {
 	out := make([]noticesPanelItem, 0, len(m.attentionItems))
 	for _, item := range m.attentionItems {
-		if !item.RequiresUserAction {
+		if !m.shouldShowActionRequiredAttention(item) {
 			continue
 		}
 		row, ok := m.noticesPanelItemFromAttention(item)
@@ -15869,6 +16009,17 @@ func (m Model) noticesPanelSections(
 		Summary: append([]string(nil), m.warnings...),
 		Items:   warningItems,
 	})
+
+	commentRows := m.noticesCommentsPanelItems()
+	if len(commentRows) > 0 {
+		commentSummary := []string{fmt.Sprintf("mentions for you: %d", len(commentRows))}
+		sections = append(sections, noticesPanelSection{
+			ID:      noticesSectionComments,
+			Title:   noticesSectionTitle(noticesSectionComments),
+			Summary: commentSummary,
+			Items:   commentRows,
+		})
+	}
 
 	attentionRows := m.noticesAttentionPanelItems()
 	actionableAttentionCount := len(attentionRows)
@@ -15934,8 +16085,15 @@ func (m *Model) clampNoticesSelectionForSections(sections []noticesPanelSection)
 		idx := clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)
 		m.setNoticesSelectionIndex(section.ID, idx)
 	}
-	if noticesSectionPosition(m.noticesSection) < 0 {
-		m.noticesSection = noticesSectionRecentActivity
+	if noticesSectionIndex(sections, m.noticesSection) >= 0 {
+		return
+	}
+	if idx := noticesSectionIndex(sections, noticesSectionRecentActivity); idx >= 0 {
+		m.noticesSection = sections[idx].ID
+		return
+	}
+	if len(sections) > 0 {
+		m.noticesSection = sections[0].ID
 	}
 }
 
@@ -15971,9 +16129,9 @@ func (m Model) selectedNoticesPanelItem() (noticesPanelItem, bool) {
 		return noticesPanelItem{}, false
 	}
 	m.clampNoticesSelectionForSections(sections)
-	sectionPos := noticesSectionPosition(m.noticesSection)
+	sectionPos := noticesSectionIndex(sections, m.noticesSection)
 	if sectionPos < 0 {
-		sectionPos = noticesSectionPosition(noticesSectionRecentActivity)
+		sectionPos = noticesSectionIndex(sections, noticesSectionRecentActivity)
 		if sectionPos < 0 {
 			sectionPos = 0
 		}
@@ -16395,9 +16553,9 @@ func (m *Model) moveNoticesSelection(delta int) bool {
 		return false
 	}
 	m.clampNoticesSelectionForSections(sections)
-	sectionPos := noticesSectionPosition(m.noticesSection)
+	sectionPos := noticesSectionIndex(sections, m.noticesSection)
 	if sectionPos < 0 {
-		sectionPos = noticesSectionPosition(noticesSectionRecentActivity)
+		sectionPos = noticesSectionIndex(sections, noticesSectionRecentActivity)
 		if sectionPos < 0 {
 			sectionPos = 0
 		}
@@ -16586,6 +16744,52 @@ func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
 	m.status = "task not found"
 	m.completeGlobalNoticeTransition("task_not_found")
 	return m, nil
+}
+
+// resolveNoticeAttentionCmd resolves one selected notice attention row and reloads notifications.
+func (m Model) resolveNoticeAttentionCmd(item noticesPanelItem) tea.Cmd {
+	attentionID := strings.TrimSpace(item.AttentionID)
+	if attentionID == "" || m.svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_, err := m.svc.ResolveAttentionItem(context.Background(), app.ResolveAttentionItemInput{
+			AttentionID:  attentionID,
+			ResolvedBy:   m.threadActorID(),
+			ResolvedType: m.threadActorType(),
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		status := "notification cleared"
+		if domain.NormalizeAttentionKind(item.AttentionKind) == domain.AttentionKindMention {
+			status = "comment notification cleared"
+		}
+		return actionMsg{status: status, reload: true}
+	}
+}
+
+// resolveGlobalNoticeAttentionCmd resolves one selected global notice attention row and reloads notifications.
+func (m Model) resolveGlobalNoticeAttentionCmd(item globalNoticesPanelItem) tea.Cmd {
+	attentionID := strings.TrimSpace(item.AttentionID)
+	if attentionID == "" || m.svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_, err := m.svc.ResolveAttentionItem(context.Background(), app.ResolveAttentionItemInput{
+			AttentionID:  attentionID,
+			ResolvedBy:   m.threadActorID(),
+			ResolvedType: m.threadActorType(),
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		status := "notification cleared"
+		if domain.NormalizeAttentionKind(item.AttentionKind) == domain.AttentionKindMention {
+			status = "comment notification cleared"
+		}
+		return actionMsg{status: status, reload: true}
+	}
 }
 
 // activateNoticesSelection runs enter behavior for the active notices row.
@@ -16924,7 +17128,14 @@ func globalNoticesItemLines(item globalNoticesPanelItem) []string {
 		}
 		return lines
 	}
-	lines = append(lines, "action required: "+summary)
+	switch domain.NormalizeAttentionKind(item.AttentionKind) {
+	case domain.AttentionKindMention:
+		lines = append(lines, "comment: "+summary)
+	case domain.AttentionKindHandoff:
+		lines = append(lines, "handoff: "+summary)
+	default:
+		lines = append(lines, "action required: "+summary)
+	}
 	return lines
 }
 
@@ -17221,9 +17432,9 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			panelLine = "tab/shift+tab cycle board/project/global panels; left/right wraps panel focus"
 			if m.noticesFocused {
 				if m.noticesPanel == noticesPanelFocusGlobal {
-					panelLine = "tab/shift+tab cycle board/project/global panels; up/down move global notifications; left/right wrap panels; enter opens selected item"
+					panelLine = "tab/shift+tab cycle board/project/global panels; up/down move global notifications; left/right wrap panels; enter opens selected item; x clears selected comment mention"
 				} else {
-					panelLine = "tab/shift+tab cycle board/project/global panels; up/down move project notifications; left/right wrap panels; enter opens selected item"
+					panelLine = "tab/shift+tab cycle board/project/global panels; up/down move project notifications; left/right wrap panels; enter opens selected item; x clears selected comment mention"
 				}
 			}
 		}

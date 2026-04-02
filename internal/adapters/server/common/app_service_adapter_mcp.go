@@ -13,20 +13,23 @@ import (
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
-// GetBootstrapGuide returns summary-first onboarding guidance for empty-instance and pre-approval flows.
+// GetBootstrapGuide returns summary-first onboarding guidance for empty-instance,
+// pre-approval, and first-use coordination flows.
 func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide, error) {
 	if a == nil || a.service == nil {
 		return BootstrapGuide{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
-		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing.",
-		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment/handoff coordination, pre-session auth requests, summary-first recovery context, and SQLite-backed template libraries for generated workflow contracts.",
+		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing. Once work exists, use comments for shared discussion, mentions for routed comment inbox items, and handoffs for explicit action-required coordination.",
+		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, and SQLite-backed template libraries for generated workflow contracts.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
 			"Task graph operations across branch/phase/task/subtask scopes",
-			"Markdown comments and durable handoffs as the shared human-agent and agent-agent coordination lane",
-			"Attention/blocker signaling with user-action visibility",
+			"Markdown comments as the shared discussion thread for human-agent and agent-agent coordination",
+			"Role-routed @mentions that materialize viewer-scoped comment inbox rows",
+			"Durable handoffs for explicit next-action routing and action-required notifications",
+			"Attention/blocker signaling with user-action visibility across comments, handoffs, and other coordination rows",
 			"Kind catalog plus template-library-driven generated follow-up work and node-contract snapshots",
 			"Pre-session auth requests, approval, and continuation claims",
 			"Capability lease issuance and guardrailed non-user mutations",
@@ -38,7 +41,8 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"After approval, claim the request with till.auth_request(operation=claim), then create the project with till.project(operation=create)",
 			"After the project exists, claim or reuse a project-scoped approved session before guarded in-project mutations such as till.plan_item(operation=create)",
 			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
-			"Use till.comment(operation=create) and till.handoff inside Tillsyn for human-agent or agent-agent coordination instead of pushing that discussion back into ad-hoc markdown files",
+			"Use till.comment(operation=create) for shared discussion and status updates inside Tillsyn; role mentions such as @human, @builder, @qa, @orchestrator, and @research route comment inbox rows",
+			"Use till.handoff for explicit next-action routing; open handoffs should be interpreted as Action Required rather than ordinary comments",
 			"Call till.get_instructions for README and any optional external policy-doc guidance when operator docs need to match the runtime workflow model",
 			"Call till.capture_state to reorient and continue safely",
 		},

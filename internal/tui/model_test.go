@@ -62,6 +62,7 @@ type fakeService struct {
 	changeEventsErr         error
 	attentionErrByProject   map[string]error
 	attentionItemsByProject map[string][]domain.AttentionItem
+	lastResolveAttention    app.ResolveAttentionItemInput
 	embeddingRows           []app.EmbeddingRecord
 	searchRequestedMode     app.SearchMode
 	searchEffectiveMode     app.SearchMode
@@ -335,6 +336,12 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 			if req, ok := f.authRequests[strings.TrimSpace(item.ID)]; ok && req.State != domain.AuthRequestStatePending {
 				continue
 			}
+			if in.UnresolvedOnly && !item.IsUnresolved() {
+				continue
+			}
+			if targetRole := strings.TrimSpace(in.TargetRole); targetRole != "" && strings.TrimSpace(item.TargetRole) != targetRole {
+				continue
+			}
 			out = append(out, item)
 		}
 		if in.Limit > 0 && len(out) > in.Limit {
@@ -370,6 +377,29 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 		out = out[:in.Limit]
 	}
 	return out, nil
+}
+
+// ResolveAttentionItem marks one fake attention row resolved and records the request.
+func (f *fakeService) ResolveAttentionItem(_ context.Context, in app.ResolveAttentionItemInput) (domain.AttentionItem, error) {
+	if f.err != nil {
+		return domain.AttentionItem{}, f.err
+	}
+	f.lastResolveAttention = in
+	attentionID := strings.TrimSpace(in.AttentionID)
+	for projectID, rows := range f.attentionItemsByProject {
+		for idx, item := range rows {
+			if strings.TrimSpace(item.ID) != attentionID {
+				continue
+			}
+			if err := item.Resolve(in.ResolvedBy, in.ResolvedType, time.Now().UTC()); err != nil {
+				return domain.AttentionItem{}, err
+			}
+			rows[idx] = item
+			f.attentionItemsByProject[projectID] = rows
+			return item, nil
+		}
+	}
+	return domain.AttentionItem{}, app.ErrNotFound
 }
 
 // ListAuthRequests returns fake auth requests filtered by project/state in stable creation order.
@@ -7680,8 +7710,8 @@ func TestModelNoticesSectionNavigationAndTaskInfoAction(t *testing.T) {
 	}
 }
 
-// TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated verifies warning/attention row enter actions when scoped to one task.
-func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testing.T) {
+// TestModelNoticesAttentionRowsOpenTaskInfoWhenAssociated verifies attention-row enter actions when scoped to one task.
+func TestModelNoticesAttentionRowsOpenTaskInfoWhenAssociated(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 25, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -7715,19 +7745,6 @@ func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testi
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
 		t.Fatalf("expected esc to close task info back to board, got %v", m.mode)
-	}
-
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
-	if m.noticesSection != noticesSectionWarnings {
-		t.Fatalf("expected notices focus on warnings section, got %v", m.noticesSection)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected enter on warning row to open associated task info, got %v", m.mode)
-	}
-	if m.taskInfoTaskID != task.ID {
-		t.Fatalf("expected warning row task-info target %q, got %q", task.ID, m.taskInfoTaskID)
 	}
 }
 
@@ -8004,8 +8021,8 @@ func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testi
 	}
 }
 
-// TestModelProjectNotificationsWarningRowsStayScopedAndActionable verifies warning rows remain notification-scoped and open threads when task routing is not applicable.
-func TestModelProjectNotificationsWarningRowsStayScopedAndActionable(t *testing.T) {
+// TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads verifies non-action warning rows remain notification-scoped and open threads when task routing is not applicable.
+func TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 5, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -8026,9 +8043,9 @@ func TestModelProjectNotificationsWarningRowsStayScopedAndActionable(t *testing.
 			ScopeType:          domain.ScopeLevelProject,
 			ScopeID:            project.ID,
 			State:              domain.AttentionStateOpen,
-			Kind:               domain.AttentionKindConsensusRequired,
+			Kind:               domain.AttentionKindRiskNote,
 			Summary:            "project warning row",
-			RequiresUserAction: true,
+			RequiresUserAction: false,
 		},
 	}
 
@@ -8062,6 +8079,132 @@ func TestModelProjectNotificationsWarningRowsStayScopedAndActionable(t *testing.
 	}
 	if m.threadTarget.ProjectID != project.ID || m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != project.ID {
 		t.Fatalf("expected project warning thread target %q, got %#v", project.ID, m.threadTarget)
+	}
+}
+
+// TestModelProjectNotificationsCommentsSectionFiltersViewerMentions verifies routed comment mentions render in the dedicated viewer-scoped comments section instead of warnings.
+func TestModelProjectNotificationsCommentsSectionFiltersViewerMentions(t *testing.T) {
+	now := time.Date(2026, 4, 2, 9, 15, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "att-human-mention",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindMention,
+			Summary:            "mention for human: please review",
+			TargetRole:         "human",
+			RequiresUserAction: false,
+		},
+		{
+			ID:                 "att-orchestrator-mention",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindMention,
+			Summary:            "mention for orchestrator: do not show in human inbox",
+			TargetRole:         "orchestrator",
+			RequiresUserAction: false,
+		},
+	}
+
+	sections := m.noticesSectionsForInteraction()
+	commentFound := false
+	for _, section := range sections {
+		switch section.ID {
+		case noticesSectionWarnings:
+			for _, item := range section.Items {
+				if strings.Contains(item.Label, "mention for") {
+					t.Fatalf("expected routed mentions to stay out of warnings, got %q", item.Label)
+				}
+			}
+		case noticesSectionComments:
+			commentFound = true
+			if len(section.Items) != 1 {
+				t.Fatalf("expected one viewer-scoped comment row, got %d", len(section.Items))
+			}
+			if got := section.Items[0].AttentionID; got != "att-human-mention" {
+				t.Fatalf("comments section attention id = %q, want %q", got, "att-human-mention")
+			}
+		}
+	}
+	if !commentFound {
+		t.Fatal("expected comments section for viewer-scoped mention")
+	}
+}
+
+// TestModelProjectNotificationsCommentsCanClearOneRow verifies comment inbox rows resolve one at a time from the notices panel.
+func TestModelProjectNotificationsCommentsCanClearOneRow(t *testing.T) {
+	now := time.Date(2026, 4, 2, 9, 20, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{
+		{
+			ID:                 "att-human-mention-a",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindMention,
+			Summary:            "mention for human: first",
+			TargetRole:         "human",
+			RequiresUserAction: false,
+		},
+		{
+			ID:                 "att-human-mention-b",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindMention,
+			Summary:            "mention for human: second",
+			TargetRole:         "human",
+			RequiresUserAction: false,
+		},
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusProject
+	m.noticesSection = noticesSectionComments
+	m.noticesComments = 0
+
+	m = applyMsg(t, m, keyRune('x'))
+	if got := strings.TrimSpace(svc.lastResolveAttention.AttentionID); got != "att-human-mention-a" {
+		t.Fatalf("resolved attention id = %q, want %q", got, "att-human-mention-a")
+	}
+	if got := strings.TrimSpace(m.status); got != "comment notification cleared" {
+		t.Fatalf("status = %q, want %q", got, "comment notification cleared")
+	}
+	if got := len(m.noticesCommentsPanelItems()); got != 1 {
+		t.Fatalf("remaining comment rows = %d, want 1", got)
+	}
+	if got := m.noticesCommentsPanelItems()[0].AttentionID; got != "att-human-mention-b" {
+		t.Fatalf("remaining attention id = %q, want %q", got, "att-human-mention-b")
 	}
 }
 
@@ -8350,7 +8493,6 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('a'))
 	if m.mode != modeAuthReview {
@@ -8494,7 +8636,6 @@ func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('a'))
 	if m.mode != modeAuthReview {
@@ -8542,7 +8683,6 @@ func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 
@@ -8603,7 +8743,6 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	m.noticesFocused = true
 	m = applyMsg(t, m, keyRune('d'))
@@ -10203,7 +10342,6 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, keyRune('k'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeAuthReview {
