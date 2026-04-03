@@ -38,6 +38,7 @@ type fakeService struct {
 	handoffs                []domain.Handoff
 	kindDefinitions         []domain.KindDefinition
 	templateLibraries       []domain.TemplateLibrary
+	builtinTemplateStatuses map[string]domain.BuiltinTemplateLibraryStatus
 	projectBindings         map[string]domain.ProjectTemplateBinding
 	projectReapplyPreviews  map[string]domain.ProjectTemplateReapplyPreview
 	nodeContracts           map[string]domain.NodeContractSnapshot
@@ -94,6 +95,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		comments:                map[string][]domain.Comment{},
 		authRequests:            map[string]domain.AuthRequest{},
 		authSessions:            []app.AuthSession{},
+		builtinTemplateStatuses: map[string]domain.BuiltinTemplateLibraryStatus{},
 		projectBindings:         map[string]domain.ProjectTemplateBinding{},
 		projectReapplyPreviews:  map[string]domain.ProjectTemplateReapplyPreview{},
 		nodeContracts:           map[string]domain.NodeContractSnapshot{},
@@ -148,6 +150,15 @@ func (f *fakeService) GetProjectTemplateBinding(_ context.Context, projectID str
 		return domain.ProjectTemplateBinding{}, app.ErrNotFound
 	}
 	return binding, nil
+}
+
+// GetBuiltinTemplateLibraryStatus returns one builtin template lifecycle view when present.
+func (f *fakeService) GetBuiltinTemplateLibraryStatus(_ context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
+	status, ok := f.builtinTemplateStatuses[domain.NormalizeTemplateLibraryID(libraryID)]
+	if !ok {
+		return domain.BuiltinTemplateLibraryStatus{}, app.ErrNotFound
+	}
+	return status, nil
 }
 
 // GetProjectTemplateReapplyPreview returns one staged project drift preview when present.
@@ -15472,6 +15483,50 @@ func TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary(t *testing.T
 	}
 }
 
+// TestModelEditProjectShowsBuiltinTemplateUpdateStatus verifies project edit distinguishes shipped builtin updates from project binding drift.
+func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
+	now := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
+	library.BuiltinManaged = true
+	library.BuiltinVersion = "2026-04-03.1"
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
+		ProjectID:     project.ID,
+		LibraryID:     library.ID,
+		LibraryName:   library.Name,
+		BoundRevision: 2,
+		DriftStatus:   domain.ProjectTemplateBindingDriftCurrent,
+	}
+	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
+		LibraryID:         library.ID,
+		Name:              library.Name,
+		BuiltinVersion:    "2026-04-03.1",
+		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
+		Installed:         true,
+		InstalledRevision: 2,
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, keyRune('M'))
+	if m.mode != modeEditProject {
+		t.Fatalf("expected edit-project mode, got %v", m.mode)
+	}
+	lines, _ := m.projectFormBodyLines(96, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+
+	for _, want := range []string{
+		"active_binding: default-go — Default Go • rev:2 • drift:current",
+		"shipped_builtin: state:update_available • version:2026-04-03.1 • installed_rev:2",
+		"run ensure builtin before rebinding projects to the newer shipped template",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected project form to contain %q, got\n%s", want, rendered)
+		}
+	}
+}
+
 // TestModelEditProjectDriftedTemplateOpensMigrationReview verifies drifted same-library saves open the TUI review step before rebinding.
 func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
 	now := time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC)
@@ -15527,6 +15582,43 @@ func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected migration review to contain %q, got\n%s", want, rendered)
+		}
+	}
+}
+
+// TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus verifies the template picker surfaces shipped builtin update availability.
+func TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus(t *testing.T) {
+	now := time.Date(2026, 4, 3, 10, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
+	library.BuiltinManaged = true
+	library.BuiltinVersion = "2026-04-03.1"
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
+		LibraryID:         library.ID,
+		Name:              library.Name,
+		BuiltinVersion:    "2026-04-03.1",
+		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
+		Installed:         true,
+		InstalledRevision: 2,
+	}
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, keyRune('N'))
+	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTemplateLibraryPicker {
+		t.Fatalf("expected template-library picker mode, got %v", m.mode)
+	}
+	overlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 90)
+	for _, want := range []string{
+		"default-go — Default Go • shipped update available",
+		"shipped_builtin: state:update_available • version:2026-04-03.1 • installed_rev:2",
+		"run ensure builtin before rebinding projects to the newer shipped template",
+	} {
+		if !strings.Contains(overlay, want) {
+			t.Fatalf("expected template-library picker overlay to contain %q, got\n%s", want, overlay)
 		}
 	}
 }

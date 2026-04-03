@@ -364,7 +364,11 @@ func TestAppServiceAdapterBuiltinTemplateLifecycle(t *testing.T) {
 	}
 	for _, spec := range []app.CreateKindDefinitionInput{
 		{ID: "go-project", DisplayName: "Go Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{ID: "implementation-phase", DisplayName: "Implementation Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "project-setup-phase", DisplayName: "Project Setup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "plan-phase", DisplayName: "Plan Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-phase", DisplayName: "Build Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "closeout-phase", DisplayName: "Closeout Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {

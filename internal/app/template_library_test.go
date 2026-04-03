@@ -251,11 +251,21 @@ func TestGetBuiltinTemplateLibraryStatusMissing(t *testing.T) {
 	if status.Installed {
 		t.Fatal("status.Installed = true, want false")
 	}
-	if got, want := len(status.RequiredKindIDs), 4; got != want {
+	if got, want := len(status.RequiredKindIDs), 10; got != want {
 		t.Fatalf("len(status.RequiredKindIDs) = %d, want %d", got, want)
 	}
-	if got, want := len(status.MissingKindIDs), 4; got != want {
+	if got, want := len(status.MissingKindIDs), 8; got != want {
 		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
+	}
+	for _, want := range []domain.KindID{"branch", "task", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check"} {
+		if !slices.Contains(status.RequiredKindIDs, want) {
+			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
+		}
+	}
+	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check"} {
+		if !slices.Contains(status.MissingKindIDs, want) {
+			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
+		}
 	}
 }
 
@@ -271,15 +281,33 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	if spec.BuiltinSource != "builtin://tillsyn/default-go" {
 		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-go", spec.BuiltinSource)
 	}
-	if spec.BuiltinVersion != "2026-04-01.1" {
-		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-01.1", spec.BuiltinVersion)
+	if spec.BuiltinVersion != "2026-04-03.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-03.1", spec.BuiltinVersion)
 	}
-	if got, want := len(spec.NodeTemplates), 2; got != want {
+	if got, want := len(spec.NodeTemplates), 8; got != want {
 		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
 	}
 	projectDefaults := spec.NodeTemplates[0].ProjectMetadataDefaults
 	if projectDefaults == nil || strings.TrimSpace(projectDefaults.StandardsMarkdown) == "" {
 		t.Fatalf("spec.NodeTemplates[0].ProjectMetadataDefaults = %#v, want standards markdown", projectDefaults)
+	}
+	if got := spec.NodeTemplates[0].ChildRules[0].TitleTemplate; got != "PROJECT SETUP" {
+		t.Fatalf("project root child title = %q, want PROJECT SETUP", got)
+	}
+	branchTemplate := spec.NodeTemplates[2]
+	if branchTemplate.NodeKindID != "branch" {
+		t.Fatalf("branch template node kind = %q, want branch", branchTemplate.NodeKindID)
+	}
+	if got, want := len(branchTemplate.ChildRules), 4; got != want {
+		t.Fatalf("len(branchTemplate.ChildRules) = %d, want %d", got, want)
+	}
+	if got := []string{
+		branchTemplate.ChildRules[0].TitleTemplate,
+		branchTemplate.ChildRules[1].TitleTemplate,
+		branchTemplate.ChildRules[2].TitleTemplate,
+		branchTemplate.ChildRules[3].TitleTemplate,
+	}; !slices.Equal(got, []string{"PLAN", "BUILD", "CLOSEOUT", "BRANCH CLEANUP"}) {
+		t.Fatalf("branch child titles = %#v, want PLAN/BUILD/CLOSEOUT/BRANCH CLEANUP", got)
 	}
 }
 
@@ -325,7 +353,7 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	if result.Library.BuiltinVersion != spec.BuiltinVersion {
 		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, spec.BuiltinVersion)
 	}
-	if got, want := len(result.Library.NodeTemplates), 2; got != want {
+	if got, want := len(result.Library.NodeTemplates), 8; got != want {
 		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
 	}
 	loaded, err := svc.GetTemplateLibrary(ctx, "default-go")
@@ -334,6 +362,308 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	}
 	if !loaded.BuiltinManaged {
 		t.Fatal("loaded.BuiltinManaged = false, want true")
+	}
+}
+
+// TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow verifies the shipped builtin default-go contract
+// generates project setup at project creation, branch lifecycle phases at lane creation, and QA work for build tasks.
+func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{AutoCreateProjectColumns: false})
+	seedBuiltinTemplateKinds(t, ctx, svc)
+
+	if _, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-go",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:              "Tillsyn",
+		Kind:              "go-project",
+		TemplateLibraryID: "default-go",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(project roots) error = %v", err)
+	}
+	rootTasks := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if strings.TrimSpace(task.ParentID) == "" {
+			rootTasks = append(rootTasks, task)
+		}
+	}
+	if got, want := len(rootTasks), 1; got != want {
+		t.Fatalf("len(rootTasks) = %d, want %d", got, want)
+	}
+	projectSetup := rootTasks[0]
+	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("project setup root = %#v, want PROJECT SETUP/project-setup-phase/phase", projectSetup)
+	}
+	projectSetupContract, ok := repo.nodeContracts[projectSetup.ID]
+	if !ok {
+		t.Fatalf("repo.nodeContracts missing project setup %q", projectSetup.ID)
+	}
+	if projectSetupContract.SourceChildRuleID != "project-setup" {
+		t.Fatalf("project setup contract source child rule = %q, want project-setup", projectSetupContract.SourceChildRuleID)
+	}
+
+	columns, err := svc.ListColumns(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) == 0 {
+		t.Fatal("expected template root column for branch lane creation")
+	}
+
+	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "MAIN DOGFOOD LANE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(branch children) error = %v", err)
+	}
+	branchChildren := make([]domain.Task, 0)
+	branchPhaseKinds := map[string]domain.WorkKind{}
+	for _, task := range tasks {
+		if task.ParentID != branch.ID {
+			continue
+		}
+		branchChildren = append(branchChildren, task)
+		branchPhaseKinds[task.Title] = task.Kind
+	}
+	gotBranchTitles := make([]string, 0, len(branchChildren))
+	for _, task := range branchChildren {
+		gotBranchTitles = append(gotBranchTitles, task.Title)
+	}
+	slices.Sort(gotBranchTitles)
+	wantBranchTitles := []string{"BRANCH CLEANUP", "BUILD", "CLOSEOUT", "PLAN"}
+	if !slices.Equal(gotBranchTitles, wantBranchTitles) {
+		t.Fatalf("branch child titles = %#v, want %#v", gotBranchTitles, wantBranchTitles)
+	}
+	if branchPhaseKinds["PLAN"] != domain.WorkKind("plan-phase") ||
+		branchPhaseKinds["BUILD"] != domain.WorkKind("build-phase") ||
+		branchPhaseKinds["CLOSEOUT"] != domain.WorkKind("closeout-phase") ||
+		branchPhaseKinds["BRANCH CLEANUP"] != domain.WorkKind("branch-cleanup-phase") {
+		t.Fatalf("branch phase kinds = %#v, want plan/build/closeout/branch-cleanup phase kinds", branchPhaseKinds)
+	}
+
+	var buildPhase domain.Task
+	for _, task := range branchChildren {
+		if task.Title == "BUILD" {
+			buildPhase = task
+			break
+		}
+	}
+	if buildPhase.ID == "" {
+		t.Fatal("expected generated BUILD phase")
+	}
+
+	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  buildPhase.ID,
+		ColumnID:  buildPhase.ColumnID,
+		Kind:      domain.WorkKind("build-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "IMPLEMENT TEMPLATE UPDATE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(build-task) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(build-task children) error = %v", err)
+	}
+	buildTaskChildren := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if task.ParentID == buildTask.ID {
+			buildTaskChildren = append(buildTaskChildren, task)
+		}
+	}
+	gotQATitles := make([]string, 0, len(buildTaskChildren))
+	for _, task := range buildTaskChildren {
+		gotQATitles = append(gotQATitles, task.Title)
+	}
+	slices.Sort(gotQATitles)
+	if want := []string{"QA PASS 1", "QA PASS 2"}; !slices.Equal(gotQATitles, want) {
+		t.Fatalf("build-task child titles = %#v, want %#v", gotQATitles, want)
+	}
+	for _, task := range buildTaskChildren {
+		snapshot, ok := repo.nodeContracts[task.ID]
+		if !ok {
+			t.Fatalf("repo.nodeContracts missing generated QA child %q", task.ID)
+		}
+		if snapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+			t.Fatalf("snapshot.ResponsibleActorKind = %q, want qa", snapshot.ResponsibleActorKind)
+		}
+		if !snapshot.RequiredForParentDone {
+			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
+		}
+		if !slices.Contains(snapshot.EditableByActorKinds, domain.TemplateActorKindQA) {
+			t.Fatalf("snapshot.EditableByActorKinds for %q = %#v, want qa", task.Title, snapshot.EditableByActorKinds)
+		}
+		if !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindHuman) || !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindQA) {
+			t.Fatalf("snapshot.CompletableByActorKinds for %q = %#v, want qa+human", task.Title, snapshot.CompletableByActorKinds)
+		}
+	}
+}
+
+// TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow verifies the shipped builtin
+// generates project setup, branch lifecycle phases, and build-task QA work end to end.
+func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{
+		AutoCreateProjectColumns: false,
+	})
+	seedBuiltinTemplateKinds(t, ctx, svc)
+
+	if _, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-go",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:              "TILLSYN",
+		Kind:              "go-project",
+		TemplateLibraryID: "default-go",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	binding, err := svc.GetProjectTemplateBinding(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectTemplateBinding() error = %v", err)
+	}
+	if binding.LibraryID != "default-go" {
+		t.Fatalf("binding.LibraryID = %q, want default-go", binding.LibraryID)
+	}
+
+	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(project) error = %v", err)
+	}
+	projectSetup := findTaskByTitle(t, tasks, "PROJECT SETUP")
+	if projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("project setup kind/scope = %q/%q, want project-setup-phase/phase", projectSetup.Kind, projectSetup.Scope)
+	}
+	if got, want := childTitles(tasks, projectSetup.ID), []string{
+		"CREATE OR CONFIRM FIRST BRANCH LANE",
+		"CREATE OR CONFIRM FIRST PLAN PHASE",
+		"HYLLA INGEST MODE DECISION",
+		"HYLLA INITIAL INGEST OR REFRESH",
+		"HYLLA VS GIT FRESHNESS CHECK",
+		"PROJECT METADATA AND STANDARDS LOCK",
+		"TEMPLATE FIT REVIEW",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("project setup child titles = %#v, want %#v", got, want)
+	}
+
+	columns, err := svc.ListColumns(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) == 0 {
+		t.Fatal("expected a root column for template-generated work")
+	}
+
+	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "MAIN WORKTREE LANE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(branch lifecycle) error = %v", err)
+	}
+	if got, want := childTitles(tasks, branch.ID), []string{"BRANCH CLEANUP", "BUILD", "CLOSEOUT", "PLAN"}; !slices.Equal(got, want) {
+		t.Fatalf("branch child titles = %#v, want %#v", got, want)
+	}
+	planPhase := findChildTaskByTitle(t, tasks, branch.ID, "PLAN")
+	if got, want := childTitles(tasks, planPhase.ID), []string{
+		"BRANCH AND WORKTREE SETUP",
+		"BUILD TASK TREE",
+		"CLOSEOUT AND CLEANUP EXPECTATIONS",
+		"CONTEXT7 AND GO DOC RESEARCH",
+		"HYLLA-FIRST CODE UNDERSTANDING",
+		"SCOPE CONFIRMATION WITH DEV",
+		"VALIDATION PLAN",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("plan child titles = %#v, want %#v", got, want)
+	}
+	closeoutPhase := findChildTaskByTitle(t, tasks, branch.ID, "CLOSEOUT")
+	if got, want := childTitles(tasks, closeoutPhase.ID), []string{
+		"DEV REVIEW",
+		"HYLLA REFRESHED AND CURRENT TO GIT",
+		"LOCAL COMMIT RECORDED",
+		"ORCHESTRATOR AND DEV COLLABORATIVE TESTING",
+		"PUSH PR HANDOFF READINESS",
+		"QA SWEEP 1",
+		"QA SWEEP 2",
+		"REQUIRED MAGE GATES GREEN",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("closeout child titles = %#v, want %#v", got, want)
+	}
+	cleanupPhase := findChildTaskByTitle(t, tasks, branch.ID, "BRANCH CLEANUP")
+	if got, want := childTitles(tasks, cleanupPhase.ID), []string{
+		"CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
+		"CONFIRM STALE MCP SERVER GONE",
+		"REFRESH CODEX MCP LIST",
+		"REMOVE FINISHED BRANCH",
+		"REMOVE LANE GOPLS MCP ENTRY",
+		"REMOVE LINKED WORKTREE",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("cleanup child titles = %#v, want %#v", got, want)
+	}
+
+	buildPhase := findChildTaskByTitle(t, tasks, branch.ID, "BUILD")
+	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  buildPhase.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("build-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "IMPLEMENT SHIPPED DEFAULT-GO TEMPLATE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(build-task) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(build task) error = %v", err)
+	}
+	if got, want := childTitles(tasks, buildTask.ID), []string{"QA PASS 1", "QA PASS 2"}; !slices.Equal(got, want) {
+		t.Fatalf("build-task QA child titles = %#v, want %#v", got, want)
 	}
 }
 
@@ -802,7 +1132,11 @@ func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
 	t.Helper()
 	for _, spec := range []CreateKindDefinitionInput{
 		{ID: "go-project", DisplayName: "Go Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{ID: "implementation-phase", DisplayName: "Implementation Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "project-setup-phase", DisplayName: "Project Setup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "plan-phase", DisplayName: "Plan Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-phase", DisplayName: "Build Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "closeout-phase", DisplayName: "Closeout Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
@@ -810,6 +1144,43 @@ func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
 			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)
 		}
 	}
+}
+
+// childTitles returns stable sorted child titles for one parent task id.
+func childTitles(tasks []domain.Task, parentID string) []string {
+	out := make([]string, 0)
+	for _, task := range tasks {
+		if task.ParentID != parentID {
+			continue
+		}
+		out = append(out, task.Title)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// findTaskByTitle returns one task with the requested title or fails the test.
+func findTaskByTitle(t *testing.T, tasks []domain.Task, title string) domain.Task {
+	t.Helper()
+	for _, task := range tasks {
+		if task.Title == title {
+			return task
+		}
+	}
+	t.Fatalf("missing task with title %q", title)
+	return domain.Task{}
+}
+
+// findChildTaskByTitle returns one child task with the requested title or fails the test.
+func findChildTaskByTitle(t *testing.T, tasks []domain.Task, parentID, title string) domain.Task {
+	t.Helper()
+	for _, task := range tasks {
+		if task.ParentID == parentID && task.Title == title {
+			return task
+		}
+	}
+	t.Fatalf("missing child task %q under parent %q", title, parentID)
+	return domain.Task{}
 }
 
 // TestUnbindProjectTemplateLibrary verifies project bindings can be removed cleanly for TUI edit flows.

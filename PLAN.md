@@ -1,8 +1,90 @@
 # Tillsyn Plan
 
 Created: 2026-02-21
-Updated: 2026-04-02
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family, and a repo-visible embedded builtin template source under `templates/` for `default-go`. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+Updated: 2026-04-03
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family, and a repo-visible embedded builtin template source under `templates/` for `default-go`. `default-go` now ships the real project-setup plus branch-lifecycle contract: project-root `PROJECT SETUP`, branch-lane `PLAN/BUILD/CLOSEOUT/BRANCH CLEANUP`, and `build-task` QA generation. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+
+## Checkpoint 2026-04-03: TUI Builtin Update Visibility
+
+Objective:
+- surface shipped builtin template update status directly in the TUI without auto-mutating the DB on launch.
+
+Implementation summary:
+1. Extended the TUI service/load path to fetch builtin lifecycle status for visible approved builtin-managed template libraries alongside the existing project binding data.
+2. Kept builtin update status distinct from project binding drift:
+   - project drift still compares a bound project snapshot to the latest installed DB template row,
+   - builtin update status compares the installed DB library against the currently shipped embedded builtin snapshot.
+3. Updated project edit rendering so the template workflow section now shows:
+   - the active binding summary,
+   - a separate `shipped_builtin:` lifecycle line,
+   - and an explicit operator hint to run `ensure_builtin` before rebinding when the shipped builtin is newer.
+4. Updated the template-library picker so builtin-managed rows mark `shipped update available` and the picker footer renders the builtin lifecycle summary even when the default highlighted row is `(none)`.
+5. Added focused TUI coverage for both render paths.
+
+Validation:
+1. `mage test-pkg ./internal/tui` -> PASS (308 tests).
+2. `mage ci` -> PASS (1180 tests across 18 packages; coverage gate and build passed).
+
+Outcome:
+1. Operators can now see shipped builtin update availability in the TUI before running `ensure_builtin`.
+2. We still keep builtin refresh explicit and auditable instead of mutating the DB automatically on every launch.
+
+## Checkpoint 2026-04-03: Expand Shipped Default-Go Contract
+
+Objective:
+- replace the old minimal builtin `default-go` contract in the binary source with the real documented workflow before continuing onboarding and dogfood.
+
+Implementation summary:
+1. Replaced the shipped repo/binary builtin template source in `templates/builtin/default-go.json`:
+   - removed the old single project-root `IMPLEMENTATION TRACK` phase,
+   - added project-root `PROJECT SETUP`,
+   - added branch-lane auto-generation for `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
+   - preserved `build-task` auto-generation of `QA PASS 1` and `QA PASS 2`,
+   - and added concrete setup/closeout/cleanup task generation so the template contract is materially useful instead of mostly prose.
+2. Hardened builtin lifecycle behavior for truly fresh instances:
+   - `GetBuiltinTemplateLibraryStatus` and `EnsureBuiltinTemplateLibrary` now bootstrap the default generic kind catalog first,
+   - so builtin status/ensure no longer depend on an earlier manual `kind list` call just to resolve built-in `branch` and `task` kinds.
+3. Aligned lifecycle tests and operator docs with the new contract:
+   - required kind expectations now include the new phase kinds,
+   - builtin version moved forward so installed older `default-go` rows will surface `update_available`,
+   - and the canonical dogfood spec now points at the shipped repo source instead of keeping a stale inline minimal JSON copy.
+
+Outcome:
+1. The template that goes into the binary is now the real project-setup plus branch-lifecycle contract, not the old test-shaped root phase.
+2. The next verification pass should confirm that existing installed `default-go` rows in the DB show `update_available`, and that fresh onboarding on a clean DB installs the expanded contract correctly.
+
+## Checkpoint 2026-04-03: Fresh Onboarding Bootstrap Pass
+
+Objective:
+- prove the fresh-instance bootstrap path on a reset real user DB before loading the canonical `TILLSYN` dogfood work tree.
+
+Implementation summary:
+1. Confirmed the reset instance was truly fresh over native MCP:
+   - no projects,
+   - only built-in generic kinds,
+   - no installed template libraries,
+   - `till.template(operation=get_builtin_status, library_id="default-go")` returned `state="missing"` with missing kinds `build-task`, `go-project`, `implementation-phase`, and `qa-check`.
+2. Bootstrapped the fresh instance through the intended MCP path:
+   - claimed global orchestrator auth,
+   - upserted the missing Go/template kinds,
+   - installed builtin `default-go`,
+   - created the fresh `TILLSYN` project,
+   - claimed project-scoped orchestrator auth and issued a project lease,
+   - updated `TILLSYN` to `kind="go-project"`.
+3. Confirmed the template binding itself is healthy on the fresh instance:
+   - `default-go` is bound to the new `TILLSYN` project,
+   - binding drift is `current`.
+4. Found one onboarding/runtime gap during the fresh pass:
+   - when `TILLSYN` was first created as plain `project`, then later updated to `go-project` and bound to `default-go`, the project allowlist and initial root phase did not auto-materialize.
+   - We manually repaired that by setting the project allowed kinds to the `default-go` set and then creating the root `IMPLEMENTATION TRACK` phase against the fresh project's real `To Do` column id.
+
+Outcome:
+1. Fresh-instance MCP bootstrap is proven workable on a clean user DB.
+2. The canonical `TILLSYN` project now exists on the fresh instance with:
+   - `kind="go-project"`,
+   - builtin `default-go` installed and bound,
+   - root `IMPLEMENTATION TRACK` phase created.
+3. Follow-up for hardening: tighten the canonical onboarding path so a fresh `go-project` + `default-go` bind cleanly applies the expected allowlist and initial generated phase without the current manual repair step.
 
 ## Checkpoint 2026-04-02: Repo-Visible Builtin Template Source Landed
 
@@ -395,12 +477,18 @@ Remaining slices after the fresh live wake verification:
      - and the effective inherited rule set for one concrete node.
    - Add a dedicated project view mode alongside project edit mode so humans can inspect project metadata, template binding, and drift/update state without dropping straight into an editor.
    - In that later TUI pass, surface project template drift/update visibility in project view as well as project edit so update-available state is obvious without opening the edit workflow.
+   - Keep builtin-update visibility separate from project-binding drift:
+     - project edit and the template-library picker now show shipped builtin lifecycle state separately from `ProjectTemplateBinding.DriftStatus`,
+     - project drift still compares the bound project snapshot to the latest template row already installed in the DB,
+     - builtin update availability compares the installed DB library against the currently shipped builtin snapshot,
+     - later polish should surface the same builtin-update indicator in project view/global operator surfaces and add any extra provenance persistence we need beyond digest-first comparison.
    - When the canonical `tillsyn` dogfood project/task tree is loaded into the DB, add one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker component so project root selection uses the picker instead of manual path entry.
    - Design composable template layering instead of one flat template choice:
      - a project should be able to inherit a general template such as `go` plus one or more narrower overlays such as `go cli/tui`, `go backend`, or `go wasm`,
      - child layers should be able to override or extend parent defaults without forcing whole-template duplication,
      - the effective rule-precedence model must be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
      - and the UI must make inherited-vs-overridden rule sources obvious to humans and agents.
+   - After template layering/inheritance lands and we introduce additional Go project subtypes, rerun builtin update/rebind/drift checks explicitly so we prove template update behavior still works correctly across inherited template stacks.
    - Treat builtin/default template distribution as a hybrid source model:
      - contributor-facing source of truth should live in the repo template directory,
      - release/runtime onboarding should still work from an embedded or generated approved builtin snapshot so new users do not need a cloned repo,

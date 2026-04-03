@@ -1,26 +1,213 @@
 {
   "id": "default-go",
   "name": "Default Go",
+  "description": "Builtin Go workflow contract for project setup, branch planning, implementation, closeout, and cleanup.",
   "builtin_source": "builtin://tillsyn/default-go",
-  "builtin_version": "2026-04-01.1",
+  "builtin_version": "2026-04-03.1",
   "node_templates": [
     {
       "id": "go-project-template",
       "scope_level": "project",
       "node_kind_id": "go-project",
       "display_name": "Go Project",
+      "description_markdown": "Project-level Go workflow contract with explicit setup before normal branch execution.",
       "project_metadata_defaults": {
         "owner": "Evan",
-        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated QA blockers must be completed truthfully before done."
+        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated blockers must be completed truthfully before done.\n- Use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite ordering until richer workflow ordering rules land.\n- Never use another agent's auth or `auth_context_id`, and never paste auth material into comments, handoffs, tasks, or docs.\n- Orchestrators own child auth cleanup and must leave no stale sessions, leases, or coordination trash behind."
       },
       "child_rules": [
         {
-          "id": "implementation-track",
+          "id": "project-setup",
           "position": 1,
           "child_scope_level": "phase",
-          "child_kind_id": "implementation-phase",
-          "title_template": "IMPLEMENTATION TRACK",
-          "description_template": "Primary implementation and verification phase for the project.",
+          "child_kind_id": "project-setup-phase",
+          "title_template": "PROJECT SETUP",
+          "description_template": "Project-only onboarding work for template fit, Hylla decisions, metadata lock, and preparation for the first branch lane.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "project-setup-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "project-setup-phase",
+      "display_name": "Project Setup Phase",
+      "description_markdown": "Project-only onboarding phase that must happen before normal branch work starts.",
+      "task_metadata_defaults": {
+        "objective": "Bootstrap the project, confirm template fit, and prepare the first branch lane.",
+        "definition_of_done": "Template fit reviewed, Hylla decisions recorded, project metadata locked, and the first branch lane plus PLAN phase are explicitly queued.",
+        "validation_plan": "Confirm standards, Hylla freshness, and the initial workflow shape with the dev before broad implementation.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "project-setup-template-fit-review",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "TEMPLATE FIT REVIEW",
+          "description_template": "Review whether default-go still matches this project's needs before normal execution begins.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-ingest-mode-decision",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA INGEST MODE DECISION",
+          "description_template": "Choose `structural_only`, `embeddings_only`, or `full_enrichment` with the dev.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-initial-refresh",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA INITIAL INGEST OR REFRESH",
+          "description_template": "Run the initial Hylla ingest or refresh for the intended repo state.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-freshness-check",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA VS GIT FRESHNESS CHECK",
+          "description_template": "Confirm the Hylla artifact is current to the intended git ref.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-metadata-standards-lock",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "PROJECT METADATA AND STANDARDS LOCK",
+          "description_template": "Lock project metadata, standards, auth hygiene expectations, and coordination rules before normal execution.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-first-branch-lane",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CREATE OR CONFIRM FIRST BRANCH LANE",
+          "description_template": "Create or confirm the first visible sibling worktree branch lane and its dedicated gopls MCP entry.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-first-plan-phase",
+          "position": 7,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CREATE OR CONFIRM FIRST PLAN PHASE",
+          "description_template": "Queue the first branch lane so its PLAN phase is explicit before broad implementation starts.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "branch-template",
+      "scope_level": "branch",
+      "node_kind_id": "branch",
+      "display_name": "Branch Lane",
+      "description_markdown": "A branch/worktree lane that auto-generates the normal PLAN -> BUILD -> CLOSEOUT -> BRANCH CLEANUP phases.",
+      "child_rules": [
+        {
+          "id": "branch-plan",
+          "position": 1,
+          "child_scope_level": "phase",
+          "child_kind_id": "plan-phase",
+          "title_template": "PLAN",
+          "description_template": "Planning phase for current-state understanding, task shaping, and validation design before BUILD starts.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "branch-build",
+          "position": 2,
+          "child_scope_level": "phase",
+          "child_kind_id": "build-phase",
+          "title_template": "BUILD",
+          "description_template": "Implementation phase for concrete build-task work.",
           "responsible_actor_kind": "builder",
           "editable_by_actor_kinds": [
             "builder",
@@ -28,6 +215,481 @@
           ],
           "completable_by_actor_kinds": [
             "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "branch-closeout",
+          "position": 3,
+          "child_scope_level": "phase",
+          "child_kind_id": "closeout-phase",
+          "title_template": "CLOSEOUT",
+          "description_template": "Verification, review, and readiness phase after BUILD.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "branch-cleanup",
+          "position": 4,
+          "child_scope_level": "phase",
+          "child_kind_id": "branch-cleanup-phase",
+          "title_template": "BRANCH CLEANUP",
+          "description_template": "Final cleanup phase for branch/worktree/MCP retirement once closeout is truly done.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "plan-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "plan-phase",
+      "display_name": "Plan Phase",
+      "description_markdown": "Explicit planning phase that should exist before broad implementation begins.",
+      "task_metadata_defaults": {
+        "objective": "Understand current state and shape the executable task tree before BUILD begins.",
+        "definition_of_done": "Current state is understood, scope is confirmed, implementation tasks exist, validation is defined, and prerequisites are explicit.",
+        "validation_plan": "Use Hylla, Context7, and `go doc` to confirm current behavior and validate the planned task tree with the dev.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "plan-hylla-understanding",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA-FIRST CODE UNDERSTANDING",
+          "description_template": "Review current code shape through Hylla before local implementation begins.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-context7-research",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CONTEXT7 AND GO DOC RESEARCH",
+          "description_template": "Gather external and package-local documentation before implementation.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-scope-confirmation",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "SCOPE CONFIRMATION WITH DEV",
+          "description_template": "Confirm the actual scope and intended operator outcome before implementation.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-build-task-tree",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "BUILD TASK TREE",
+          "description_template": "Create the detailed build-task and supporting task tree for the upcoming BUILD phase.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "builder"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-validation-plan",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "VALIDATION PLAN",
+          "description_template": "Define how the work will be validated before handoff and closeout.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-branch-worktree-setup",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "BRANCH AND WORKTREE SETUP",
+          "description_template": "Plan or confirm visible sibling worktree setup, dedicated gopls MCP wiring, and branch-lane basics.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-closeout-cleanup-expectations",
+          "position": 7,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CLOSEOUT AND CLEANUP EXPECTATIONS",
+          "description_template": "Define closeout, auth cleanup, branch cleanup, and coordination expectations up front.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "build-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "build-phase",
+      "display_name": "Build Phase",
+      "description_markdown": "Implementation phase where concrete `build-task` items should live.",
+      "task_metadata_defaults": {
+        "objective": "Implement the planned changes using concrete build-task items.",
+        "definition_of_done": "Planned build tasks are completed truthfully and all generated QA blockers are resolved.",
+        "validation_plan": "Run the planned package and repo checks before handing work to closeout.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": []
+    },
+    {
+      "id": "closeout-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "closeout-phase",
+      "display_name": "Closeout Phase",
+      "description_markdown": "Post-build verification and readiness phase.",
+      "task_metadata_defaults": {
+        "objective": "Verify the completed build work, attach evidence, and confirm readiness for push, PR, or handoff.",
+        "definition_of_done": "Checks are green, review/testing happened, and the branch lane is ready for cleanup.",
+        "validation_plan": "Use the completed work plus Hylla-backed understanding to run QA sweeps and collaborative testing.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "closeout-mage-gates",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REQUIRED MAGE GATES GREEN",
+          "description_template": "Run the required `mage` checks and record the green result.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-local-commit",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "LOCAL COMMIT RECORDED",
+          "description_template": "Create or verify the local commit that captures the completed branch work.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-hylla-refresh",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA REFRESHED AND CURRENT TO GIT",
+          "description_template": "Refresh the Hylla artifact as needed and confirm it matches the current git state.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-qa-sweep-1",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "QA SWEEP 1",
+          "description_template": "Run the first QA sweep across completed work using task state plus Hylla-backed understanding.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-qa-sweep-2",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "QA SWEEP 2",
+          "description_template": "Run the second QA sweep across completed work using task state plus Hylla-backed understanding.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-dev-review",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "DEV REVIEW",
+          "description_template": "Review the completed change with the dev before cleanup or push.",
+          "responsible_actor_kind": "human",
+          "editable_by_actor_kinds": [
+            "human"
+          ],
+          "completable_by_actor_kinds": [
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-collaborative-testing",
+          "position": 7,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "ORCHESTRATOR AND DEV COLLABORATIVE TESTING",
+          "description_template": "Run the final collaborative testing pass with the dev before declaring readiness.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-readiness",
+          "position": 8,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "PUSH PR HANDOFF READINESS",
+          "description_template": "Confirm the lane is ready for push, PR, or explicit handoff without leaving coordination trash behind.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "branch-cleanup-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "branch-cleanup-phase",
+      "display_name": "Branch Cleanup Phase",
+      "description_markdown": "Final cleanup phase for branch/worktree/MCP retirement.",
+      "task_metadata_defaults": {
+        "objective": "Retire the finished lane cleanly without leaving stale branches, worktrees, gopls entries, sessions, leases, or coordination rows behind.",
+        "definition_of_done": "Branch/worktree/MCP cleanup is complete and no stale auth or coordination trash remains.",
+        "validation_plan": "Confirm closeout is truly done first, then verify local git and MCP state after cleanup.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "cleanup-confirm-closeout",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
+          "description_template": "Confirm the closeout work is actually complete before branch retirement begins.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-remove-worktree",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REMOVE LINKED WORKTREE",
+          "description_template": "Remove the visible sibling worktree for the finished lane when it is no longer needed.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-remove-branch",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REMOVE FINISHED BRANCH",
+          "description_template": "Remove the branch when it is no longer needed.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-remove-gopls-entry",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REMOVE LANE GOPLS MCP ENTRY",
+          "description_template": "Remove the lane-specific gopls MCP entry from the bare-root Codex config.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-refresh-codex-mcp-list",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REFRESH CODEX MCP LIST",
+          "description_template": "Rerun `codex mcp list` and refresh the visible MCP registry after cleanup.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-confirm-stale-server-gone",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CONFIRM STALE MCP SERVER GONE",
+          "description_template": "Confirm the old lane server is gone and no stale auth, lease, or coordination rows remain.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
             "human"
           ],
           "required_for_parent_done": true
@@ -39,6 +701,15 @@
       "scope_level": "task",
       "node_kind_id": "build-task",
       "display_name": "Build Task",
+      "description_markdown": "Concrete implementation task that auto-generates the two required QA passes.",
+      "task_metadata_defaults": {
+        "validation_plan": "Run the required package and repo checks before handing this task to closeout.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
       "child_rules": [
         {
           "id": "qa-pass-1",

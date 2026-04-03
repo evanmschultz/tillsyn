@@ -269,12 +269,13 @@ Template-library operator examples:
   - assign each generated node to a responsible actor kind,
   - restrict edit/complete actions per actor kind,
   - and mark specific generated nodes as required blockers for parent or containing-scope completion.
-- Current default-go workflow direction:
-  - `PROJECT SETUP` is project-only onboarding work for new or adopted projects,
-  - normal branch/work execution should flow through `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
-  - the preferred operator flow is to create or confirm `PLAN` before broad implementation begins,
-  - until richer workflow ordering rules land, task-level sequencing should be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete,
-  - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md`.
+- Current shipped default-go workflow:
+  - a `go-project` now auto-generates one project-root `PROJECT SETUP` phase,
+  - `PROJECT SETUP` is project-only onboarding work for new or adopted projects and should queue the first branch lane plus its `PLAN` phase before broad implementation,
+  - each `branch` lane now auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP` in that order,
+  - `build-task` remains the concrete implementation task kind and still auto-generates `QA PASS 1` and `QA PASS 2`,
+  - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete,
+  - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` and shipped from [templates/builtin/default-go.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-go.json).
 - Example shape:
   - a `build-task` template can generate two `qa-check` children with different titles, both owned by `qa`, both `required_for_parent_done: true`, and both still commentable because comments remain the shared coordination lane.
 - Default-go lifecycle management direction:
@@ -348,6 +349,11 @@ After the current active slices close, run one cleanup/refinement wave focused o
   - and the effective inherited rule view for one concrete node.
 - add a dedicated project view mode alongside project edit mode so humans can inspect project metadata, template binding, and drift/update state without dropping straight into an editor.
 - in that later TUI pass, surface project template drift/update visibility in project view as well as project edit so update-available state is obvious without opening the edit workflow.
+- keep builtin-update visibility distinct from project-binding drift:
+  - project edit and the template-library picker now show shipped builtin lifecycle state separately from `ProjectTemplateBinding.DriftStatus`,
+  - project drift still compares the bound project snapshot to the latest template row already installed in the DB,
+  - builtin update availability compares the installed DB library against the currently shipped builtin snapshot,
+  - later polish should surface the same builtin-update indicator in project view/global operator surfaces and persist any extra provenance we need beyond digest-first comparison.
 - when the canonical `tillsyn` dogfood project/task tree is loaded into the DB, include one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker flow so the field uses the same picker component instead of manual path entry.
 - design and implement composable template layering rather than one flat template choice:
   - one project should be able to inherit general `go` rules plus a narrower layer such as `go cli/tui`, `go backend`, or `go wasm`,
