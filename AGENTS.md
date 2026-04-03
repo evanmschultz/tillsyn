@@ -2,8 +2,7 @@
 
 This file defines persistent repo-wide instructions for coding agents working in this repository. It is not runtime behavior for `tillsyn`.
 
-Keep branch-specific and temporary phase-specific process in:
-- `PLAN.md` for the active execution ledger and temporary run guidance.
+Use markdown planning docs as migration/input material, not the default long-term execution surface, once the canonical in-app `TILLSYN` project exists.
 
 You are a senior Go dev. YOU ALWAYS:
 
@@ -58,12 +57,23 @@ You are a senior Go dev. YOU ALWAYS:
 - For runtime/protocol validation in this phase, run MCP-only checks (no HTTP/curl validation probes).
 - It is allowed to `mage build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
-- Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
-- Treat `PLAN.md` as the active source of truth for temporary run state, acceptance checklists, commands run, evidence, and completion state.
+- Keep the canonical collaborative execution backlog in Tillsyn itself once the real `TILLSYN` project has been bootstrapped.
+- Treat repo markdown planning docs as source material to review, migrate, discuss with the user, and then retire or trim when their content is safely captured in Tillsyn.
+- Use `PLAN.md` as a temporary execution ledger only when the active work has not yet been migrated into Tillsyn or when the user explicitly wants a repo-local run log.
 - Keep `PLAN.md` single-writer by default:
   - only the orchestrator/integrator updates run completion state there,
   - worker lanes provide handoff notes unless explicitly assigned to update `PLAN.md`.
 - When proposing new implementation phases, explicitly review the active backlog and open discussion items in `PLAN.md` first.
+- Treat user-mentioned opportunities to improve Tillsyn templates, communication, agent workflow, client-native guidance, or skill integration as first-class optimization signals:
+  - discuss those opportunities with the user before assuming the right product change,
+  - capture them in tracked guidance or the in-app Tillsyn backlog when asked,
+  - keep the human in the loop for policy/template/workflow changes,
+  - and continuously look for ways Tillsyn could better support coding clients such as Codex CLI or Claude Code through clearer guidance, skills, and workflow integration.
+- During onboarding of an existing project/repo into Tillsyn, one of the earliest project-root tasks should be:
+  - review all relevant markdown docs in the bare repo and worktree,
+  - gather planning/rules/workflow content worth migrating,
+  - discuss with the user what belongs in Tillsyn versus what should stay as docs or be cleaned up,
+  - and only then load the curated backlog/rules into Tillsyn.
 - When clarification is needed, ask in two stages:
   - first ask general goal-alignment questions and lock shared objectives,
   - only after that consensus ask specific implementation-detail questions.
@@ -90,14 +100,9 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Worklogs
 
-- Use `PLAN.md` as the live execution ledger.
-- Every meaningful checkpoint should capture:
-  - current objective/plan,
-  - commands/tests run and outcomes,
-  - file edits and why,
-  - failures/remediation,
-  - current status and next step.
-- Temporary or wave-specific workflow detail belongs in `PLAN.md`, not in this file.
+- Prefer Tillsyn project/task state, comments, handoffs, and coordination records as the live execution ledger once the canonical project exists.
+- Use `PLAN.md` for temporary bootstrap/risk tracking only until that state is migrated into Tillsyn, or when the user explicitly wants a repo-local ledger.
+- Temporary or wave-specific workflow detail that has not yet been migrated may live in `PLAN.md`, but the long-term goal is to fold relevant planning into Tillsyn and clean up stale markdown plans.
 
 ## Tech Stack
 

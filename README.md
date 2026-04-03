@@ -363,6 +363,14 @@ After the current active slices close, run one cleanup/refinement wave focused o
   - child template layers should be able to override or extend parent defaults instead of forcing duplicated whole-template copies,
   - the effective rule-precedence model should be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
   - and the human-facing UI should make inherited vs overridden rule sources obvious.
+- add better onboarding/template support for existing projects:
+  - when onboarding an existing repo, one of the first project-root tasks should be to review all relevant markdown files in the bare repo and active worktree, gather rules/plans that matter, discuss with the user what should move into Tillsyn, and identify what should remain docs or be cleaned up,
+  - this should become an explicit reusable template/onboarding pattern instead of an ad-hoc manual reminder,
+  - and the default onboarding UX should make it obvious that markdown is intake material to review and migrate, not the long-term working backlog.
+- support a non-branch execution shape when no real git branch/worktree lane is intended:
+  - the current `default-go` branch contract is useful when a real branch lane exists,
+  - but dogfood/setup work should also support a phase-only execution path so operators do not get forced `BRANCH CLEANUP` work when no branch was ever created,
+  - and the template/rule system should make that distinction explicit instead of overloading one branch-centric path for every workflow.
 - add per-actor mention routing and rename the human mention target:
   - routed mentions must support specific agents of the same role (for example multiple QA or builder agents) instead of only broad role buckets,
   - the human/operator mention target should be `@user`, not `@human`,
