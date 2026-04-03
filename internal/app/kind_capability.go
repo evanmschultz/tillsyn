@@ -555,11 +555,15 @@ func (s *Service) ensureKindCatalogBootstrapped(ctx context.Context) error {
 			s.kindBootstrap.err = err
 			return
 		}
-		if len(kinds) > 0 {
-			return
+		existing := make(map[domain.KindID]struct{}, len(kinds))
+		for _, kind := range kinds {
+			existing[kind.ID] = struct{}{}
 		}
 		now := s.clock()
 		for _, in := range defaultKindDefinitionInputs() {
+			if _, ok := existing[in.ID]; ok {
+				continue
+			}
 			kind, buildErr := domain.NewKindDefinition(in, now)
 			if buildErr != nil {
 				s.kindBootstrap.err = buildErr
@@ -569,6 +573,7 @@ func (s *Service) ensureKindCatalogBootstrapped(ctx context.Context) error {
 				s.kindBootstrap.err = createErr
 				return
 			}
+			existing[kind.ID] = struct{}{}
 		}
 	})
 	return s.kindBootstrap.err

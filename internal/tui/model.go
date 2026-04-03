@@ -46,6 +46,7 @@ type Service interface {
 	ListCapabilityLeases(context.Context, app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error)
 	ListHandoffs(context.Context, app.ListHandoffsInput) ([]domain.Handoff, error)
 	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
+	GetBuiltinTemplateLibraryStatus(context.Context, string) (domain.BuiltinTemplateLibraryStatus, error)
 	GetProjectTemplateReapplyPreview(context.Context, string) (domain.ProjectTemplateReapplyPreview, error)
 	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
@@ -793,6 +794,7 @@ type Model struct {
 	templateMigrationReviewPicked     map[string]struct{}
 	kindDefinitions                   []domain.KindDefinition
 	templateLibraries                 []domain.TemplateLibrary
+	builtinTemplateStatuses           map[string]domain.BuiltinTemplateLibraryStatus
 	currentProjectTemplateBinding     *domain.ProjectTemplateBinding
 	taskNodeContracts                 map[string]domain.NodeContractSnapshot
 	descriptionEditorBack             inputMode
@@ -957,6 +959,7 @@ type loadedMsg struct {
 	tasks                     []domain.Task
 	kindDefinitions           []domain.KindDefinition
 	templateLibraries         []domain.TemplateLibrary
+	builtinTemplateStatuses   map[string]domain.BuiltinTemplateLibraryStatus
 	projectTemplateBinding    *domain.ProjectTemplateBinding
 	taskNodeContracts         map[string]domain.NodeContractSnapshot
 	searchRequestedMode       app.SearchMode
@@ -1302,6 +1305,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		searchRoots:                    []string{},
 		projectRoots:                   map[string]string{},
 		templateMigrationReviewPicked:  map[string]struct{}{},
+		builtinTemplateStatuses:        map[string]domain.BuiltinTemplateLibraryStatus{},
 		identityDisplayName:            "tillsyn-user",
 		identityActorID:                "tillsyn-user",
 		identityDefaultActorType:       string(domain.ActorTypeUser),
@@ -1376,6 +1380,14 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	m.tasks = msg.tasks
 	m.kindDefinitions = append([]domain.KindDefinition(nil), msg.kindDefinitions...)
 	m.templateLibraries = append([]domain.TemplateLibrary(nil), msg.templateLibraries...)
+	if msg.builtinTemplateStatuses != nil {
+		m.builtinTemplateStatuses = make(map[string]domain.BuiltinTemplateLibraryStatus, len(msg.builtinTemplateStatuses))
+		for libraryID, status := range msg.builtinTemplateStatuses {
+			m.builtinTemplateStatuses[libraryID] = status
+		}
+	} else {
+		m.builtinTemplateStatuses = map[string]domain.BuiltinTemplateLibraryStatus{}
+	}
 	if msg.projectTemplateBinding != nil {
 		binding := *msg.projectTemplateBinding
 		m.currentProjectTemplateBinding = &binding
@@ -1415,6 +1427,7 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.projectPickerIndex = 0
 		m.columns = nil
 		m.tasks = nil
+		m.builtinTemplateStatuses = map[string]domain.BuiltinTemplateLibraryStatus{}
 		m.currentProjectTemplateBinding = nil
 		m.taskNodeContracts = map[string]domain.NodeContractSnapshot{}
 		m.activityLog = []activityEntry{}
@@ -2498,12 +2511,18 @@ func (m Model) loadData() tea.Msg {
 		return loadedMsg{err: err}
 	}
 	if len(projects) == 0 {
+		builtinTemplateStatuses, statusErr := m.loadBuiltinTemplateStatuses(templateLibraries)
+		if statusErr != nil {
+			m.traceLoadDataStage("total", totalStartedAt, statusErr, "project_count", 0, "column_count", 0, "task_count", 0)
+			return loadedMsg{err: statusErr}
+		}
 		m.traceLoadDataStage("total", totalStartedAt, nil, "project_count", 0, "column_count", 0, "task_count", 0)
 		return loadedMsg{
-			projects:          projects,
-			kindDefinitions:   kindDefinitions,
-			templateLibraries: templateLibraries,
-			taskNodeContracts: map[string]domain.NodeContractSnapshot{},
+			projects:                projects,
+			kindDefinitions:         kindDefinitions,
+			templateLibraries:       templateLibraries,
+			builtinTemplateStatuses: builtinTemplateStatuses,
+			taskNodeContracts:       map[string]domain.NodeContractSnapshot{},
 		}
 	}
 
@@ -2525,6 +2544,11 @@ func (m Model) loadData() tea.Msg {
 	case errors.Is(err, app.ErrNotFound):
 		projectTemplateBinding = nil
 	default:
+		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
+		return loadedMsg{err: err}
+	}
+	builtinTemplateStatuses, err := m.loadBuiltinTemplateStatuses(templateLibraries)
+	if err != nil {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
 		return loadedMsg{err: err}
 	}
@@ -2773,6 +2797,7 @@ func (m Model) loadData() tea.Msg {
 		tasks:                     tasks,
 		kindDefinitions:           kindDefinitions,
 		templateLibraries:         templateLibraries,
+		builtinTemplateStatuses:   builtinTemplateStatuses,
 		projectTemplateBinding:    projectTemplateBinding,
 		taskNodeContracts:         taskNodeContracts,
 		searchRequestedMode:       searchRequestedMode,
@@ -6277,6 +6302,19 @@ func (m Model) activeProjectTemplateBinding(projectID string) (domain.ProjectTem
 	return *m.currentProjectTemplateBinding, true
 }
 
+// builtinTemplateStatus returns one loaded builtin lifecycle status by library id when available.
+func (m Model) builtinTemplateStatus(libraryID string) (domain.BuiltinTemplateLibraryStatus, bool) {
+	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
+	if libraryID == "" || len(m.builtinTemplateStatuses) == 0 {
+		return domain.BuiltinTemplateLibraryStatus{}, false
+	}
+	status, ok := m.builtinTemplateStatuses[libraryID]
+	if !ok {
+		return domain.BuiltinTemplateLibraryStatus{}, false
+	}
+	return status, true
+}
+
 // hasApprovedTemplateLibrary reports whether the given global approved template library is currently visible to the TUI.
 func (m Model) hasApprovedTemplateLibrary(libraryID string) bool {
 	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
@@ -6311,6 +6349,44 @@ func (m Model) templateLibrarySummaryRows(limit int) []string {
 		}
 	}
 	return rows
+}
+
+// loadBuiltinTemplateStatuses resolves builtin lifecycle status for visible approved builtin-managed libraries.
+func (m Model) loadBuiltinTemplateStatuses(templateLibraries []domain.TemplateLibrary) (map[string]domain.BuiltinTemplateLibraryStatus, error) {
+	statuses := map[string]domain.BuiltinTemplateLibraryStatus{}
+	for _, library := range templateLibraries {
+		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved || !library.BuiltinManaged {
+			continue
+		}
+		libraryID := domain.NormalizeTemplateLibraryID(library.ID)
+		if libraryID == "" {
+			continue
+		}
+		if _, ok := statuses[libraryID]; ok {
+			continue
+		}
+		status, err := m.svc.GetBuiltinTemplateLibraryStatus(context.Background(), libraryID)
+		if err != nil {
+			return nil, err
+		}
+		statuses[libraryID] = status
+	}
+	return statuses, nil
+}
+
+// builtinTemplateStatusSummary renders one compact builtin lifecycle summary for TUI hints.
+func (m Model) builtinTemplateStatusSummary(status domain.BuiltinTemplateLibraryStatus) string {
+	if status.LibraryID == "" {
+		return "-"
+	}
+	parts := []string{"state:" + fallbackText(strings.TrimSpace(string(status.State)), "-")}
+	if version := strings.TrimSpace(status.BuiltinVersion); version != "" {
+		parts = append(parts, "version:"+version)
+	}
+	if status.InstalledRevision > 0 {
+		parts = append(parts, fmt.Sprintf("installed_rev:%d", status.InstalledRevision))
+	}
+	return strings.Join(parts, " • ")
 }
 
 // templateLibraryDisplayLabel returns one stable id/name label for project-form and picker rows.
@@ -18578,15 +18654,25 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	lines = append(lines, "")
 	lines = append(lines, hintStyle.Render("template workflow"))
 	renderProjectInput("template_library", projectFieldTemplateLibrary)
+	selectedLibraryID := domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value())
 	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
 		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
 			lines = append(lines, hintStyle.Render("active_binding: "+m.templateBindingSummary(binding)))
+			if selectedLibraryID == "" {
+				selectedLibraryID = domain.NormalizeTemplateLibraryID(binding.LibraryID)
+			}
 			if domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value()) == domain.NormalizeTemplateLibraryID(binding.LibraryID) &&
 				strings.TrimSpace(binding.DriftStatus) == domain.ProjectTemplateBindingDriftUpdateAvailable {
 				lines = append(lines, hintStyle.Render("save opens migration review before rebinding future generated work; existing nodes need approve/skip"))
 			}
 		} else {
 			lines = append(lines, hintStyle.Render("active_binding: -"))
+		}
+	}
+	if status, ok := m.builtinTemplateStatus(selectedLibraryID); ok {
+		lines = append(lines, hintStyle.Render("shipped_builtin: "+m.builtinTemplateStatusSummary(status)))
+		if status.State == domain.BuiltinTemplateLibraryStateUpdateAvailable {
+			lines = append(lines, hintStyle.Render("run ensure builtin before rebinding projects to the newer shipped template"))
 		}
 	}
 	if m.projectFormFocus == projectFieldTemplateLibrary {
@@ -20396,7 +20482,32 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 					lines = append(lines, cursor+"(none) remove project template binding")
 					continue
 				}
-				lines = append(lines, cursor+m.templateLibraryDisplayLabel(item.LibraryID, item.Name))
+				label := m.templateLibraryDisplayLabel(item.LibraryID, item.Name)
+				if status, ok := m.builtinTemplateStatus(item.LibraryID); ok && status.State == domain.BuiltinTemplateLibraryStateUpdateAvailable {
+					label += " • shipped update available"
+				}
+				lines = append(lines, cursor+label)
+			}
+		}
+		if len(m.templateLibraryPickerItems) > 0 {
+			detailItem := m.templateLibraryPickerItems[clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)]
+			if detailItem.Clear {
+				for _, item := range m.templateLibraryPickerItems {
+					if item.Clear {
+						continue
+					}
+					detailItem = item
+					break
+				}
+			}
+			if !detailItem.Clear {
+				if status, ok := m.builtinTemplateStatus(detailItem.LibraryID); ok {
+					lines = append(lines, "")
+					lines = append(lines, hintStyle.Render("shipped_builtin: "+m.builtinTemplateStatusSummary(status)))
+					if status.State == domain.BuiltinTemplateLibraryStateUpdateAvailable {
+						lines = append(lines, hintStyle.Render("run ensure builtin before rebinding projects to the newer shipped template"))
+					}
+				}
 			}
 		}
 		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter choose • ctrl+u clear • esc close"))

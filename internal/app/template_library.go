@@ -122,6 +122,9 @@ func (s *Service) GetTemplateLibrary(ctx context.Context, libraryID string) (dom
 
 // UpsertTemplateLibrary creates or updates one template library and all nested rules.
 func (s *Service) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLibraryInput) (domain.TemplateLibrary, error) {
+	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
+		return domain.TemplateLibrary{}, err
+	}
 	now := s.clock()
 	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.CreatedByActorID, in.CreatedByActorName, in.CreatedByActorType)
 	if in.Scope != domain.TemplateLibraryScopeGlobal {
