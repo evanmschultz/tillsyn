@@ -354,12 +354,24 @@ After the current active slices close, run one cleanup/refinement wave focused o
   - project drift still compares the bound project snapshot to the latest template row already installed in the DB,
   - builtin update availability compares the installed DB library against the currently shipped builtin snapshot,
   - later polish should surface the same builtin-update indicator in project view/global operator surfaces and persist any extra provenance we need beyond digest-first comparison.
+- add an explicit TUI action for builtin template refresh:
+  - today the operator can see `shipped update available`, but there is no direct TUI action in project edit or the template-library picker to run builtin ensure/refresh,
+  - add one visible `ensure builtin` action from the relevant template surfaces so operators do not have to drop to MCP/CLI just to refresh the installed builtin template row.
 - when the canonical `tillsyn` dogfood project/task tree is loaded into the DB, include one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker flow so the field uses the same picker component instead of manual path entry.
 - design and implement composable template layering rather than one flat template choice:
   - one project should be able to inherit general `go` rules plus a narrower layer such as `go cli/tui`, `go backend`, or `go wasm`,
   - child template layers should be able to override or extend parent defaults instead of forcing duplicated whole-template copies,
   - the effective rule-precedence model should be explicit, for example: global template base -> subtype overlays -> project rule overrides -> node-local contract/metadata,
   - and the human-facing UI should make inherited vs overridden rule sources obvious.
+- add per-actor mention routing and rename the human mention target:
+  - routed mentions must support specific agents of the same role (for example multiple QA or builder agents) instead of only broad role buckets,
+  - the human/operator mention target should be `@user`, not `@human`,
+  - and the canonical `tillsyn` dogfood project/task tree should include explicit tasks to validate role-vs-actor-specific mention routing and notification behavior.
+- during real dogfood setup, explicitly re-check and, when needed, update the active project template binding before loading the project task tree so the project does not quietly continue on an older template contract.
+- fix the fresh-DB onboarding gap before or during real dogfood:
+  - after a clean DB reset, the TUI project form currently only shows generic built-in kinds and no template libraries,
+  - `go-project` and `default-go` do not appear until the custom template kinds are created and builtin `default-go` is explicitly ensured into the DB,
+  - add a real onboarding flow so a fresh user can create a Go project from the TUI without manually bootstrapping kinds and builtin templates first.
 - treat builtin/default template distribution as a hybrid source model:
   - contributor-facing source of truth should live in the repo template directory,
   - release/runtime onboarding should still work from an embedded or generated approved builtin snapshot so new users do not need a cloned repo,
