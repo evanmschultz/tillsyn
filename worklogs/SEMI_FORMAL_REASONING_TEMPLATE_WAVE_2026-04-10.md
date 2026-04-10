@@ -48,6 +48,53 @@ Instead, sharpen the reasoning contract inside the nodes that already exist:
 - `QA PASS 2` tries to falsify the conclusion,
 - `CLOSEOUT` reconciles final code, final Hylla state, and remaining risk.
 
+## Operating Rules
+
+Use these source rules consistently:
+- use Hylla for committed repo-local evidence,
+- use git diff for uncommitted local deltas,
+- use Context7 only for external semantics the repository cannot prove,
+- turn unresolved uncertainty into explicit comments, handoffs, or attention instead of optimistic completion.
+
+Use this reasoning shape for semantic, high-risk, or ambiguous work:
+- premises,
+- evidence,
+- trace or cases,
+- conclusion,
+- unknowns.
+
+Keep the current workflow shape:
+- `PLAN`
+- `BUILD`
+- `CLOSEOUT`
+- generated `QA PASS 1`
+- generated `QA PASS 2`
+- generated `COMMIT AND REINGEST`
+
+Do not add a new top-level reasoning phase in this wave.
+
+## Skills To Build Next
+
+These are the first-wave skills this template pass is meant to support:
+
+1. `semi-formal-reasoning`
+- shared convention skill for premises, evidence, trace or cases, conclusion, and unknowns.
+
+2. `plan-from-hylla`
+- fills PLAN work with repo-grounded evidence and current-state understanding.
+
+3. `qa-sweep-reasoner`
+- makes closeout QA challenge claims instead of rubber-stamping them.
+
+4. `commit-and-reingest`
+- runs the post-build freshness loop so downstream reasoning uses current Hylla state.
+
+Expected execution surfaces:
+- skill/shared guidance: `semi-formal-reasoning`,
+- multi-step agent or worker flow: `plan-from-hylla`,
+- multi-step agent or worker flow: `qa-sweep-reasoner`,
+- orchestrator-triggered workflow or slash command: `commit-and-reingest`.
+
 ## Contract Changes
 
 ### Project Standards
