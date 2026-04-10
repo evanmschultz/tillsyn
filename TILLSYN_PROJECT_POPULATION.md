@@ -45,7 +45,7 @@ Use these older files as source material, not as the long-term execution surface
 - The shipped builtin `default-go` now generates:
   - project-root `PROJECT SETUP`;
   - branch-lane `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`;
-  - task-level QA generation for `build-task` via `QA PASS 1` and `QA PASS 2`.
+  - task-level verification generation for `build-task` via `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`.
 - This contract is real and executable today.
 - During dogfooding, we must keep watching for workflow gaps and decide what belongs in the template versus what should remain manual planning.
 

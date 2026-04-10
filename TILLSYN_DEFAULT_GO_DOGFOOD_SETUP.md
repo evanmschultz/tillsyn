@@ -28,6 +28,7 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - `branch-cleanup-phase`
 - Task kind: `build-task`
 - Subtask kind: `qa-check`
+- Subtask kind: `commit-and-reingest`
 - Dogfood project names should use all caps.
 
 ### Ownership / Actor-Kind Rules
@@ -70,6 +71,10 @@ The Go standards payload should reflect how `tillsyn` itself is organized:
 - One dedicated `gopls` MCP server per active worktree.
 - Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.
 - Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.
+- For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.
+- Use Hylla for committed repo-local evidence, use git diff for uncommitted local deltas, and use Context7 only for external semantics the repo cannot prove.
+- Unresolved uncertainty must become explicit coordination state instead of optimistic completion.
+- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.
 - MCP-first dogfooding for runtime and operator workflows.
 - `mage` is the canonical build/test gate.
 - Laslig styling for all Mage functions and CLI output.
@@ -240,6 +245,7 @@ Each concrete implementation task should normally be a `build-task`, so it auto-
 
 - `QA PASS 1`
 - `QA PASS 2`
+- `COMMIT AND REINGEST`
 
 ### Closeout-Phase Contract
 
@@ -288,6 +294,7 @@ For every `build-task`:
 - auto-create:
   - `QA PASS 1`
   - `QA PASS 2`
+  - `COMMIT AND REINGEST`
 
 Both QA subtasks should be:
 
@@ -295,6 +302,14 @@ Both QA subtasks should be:
 - `editable_by_actor_kinds = ["qa"]`
 - `completable_by_actor_kinds = ["qa", "human"]`
 - `required_for_parent_done = true`
+
+The `COMMIT AND REINGEST` subtask should be:
+
+- `responsible_actor_kind = "builder"`
+- `editable_by_actor_kinds = ["builder", "orchestrator"]`
+- `completable_by_actor_kinds = ["builder", "human"]`
+- `required_for_parent_done = true`
+- focused on committing confirmed-good work, triggering Hylla refresh, waiting for ingest completion, and recording the resulting freshness evidence
 
 ## Exact Template Object
 
@@ -309,6 +324,7 @@ That repo file is the authoritative shipped contract. It now contains:
 - branch-lane generation for `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`;
 - closeout and branch-cleanup default task generation; and
 - `build-task` QA pass generation.
+- `build-task` commit-and-reingest generation.
 
 ## Initial Dogfood Tree
 
@@ -331,6 +347,7 @@ Because these are `build-task` items, each one should auto-generate:
 
 - `QA PASS 1`
 - `QA PASS 2`
+- `COMMIT AND REINGEST`
 
 ## MCP-Only Execution Sequence
 
@@ -350,6 +367,7 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
    - `branch-cleanup-phase`
    - `build-task`
    - `qa-check`
+   - `commit-and-reingest`
 5. Upsert the global template library `default-go`.
 6. Create `TILLSYN` with:
    - `kind = "go-project"`
@@ -368,6 +386,7 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
 11. For each build task, confirm the template-generated subtasks appear:
    - `QA PASS 1`
    - `QA PASS 2`
+   - `COMMIT AND REINGEST`
 12. Confirm the generated QA subtasks carry the expected node contract:
    - `responsible_actor_kind = "qa"`
    - `editable_by_actor_kinds = ["qa"]`
@@ -380,6 +399,7 @@ The executing agent should verify all of the following through MCP-visible state
 
 - `default-go` exists as an approved global template library.
 - `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, and `qa-check` exist in the kind catalog.
+- `commit-and-reingest` exists in the kind catalog.
 - `TILLSYN` exists with kind `go-project`.
 - `TILLSYN` has the agreed project description.
 - `TILLSYN` has the agreed standards markdown.
@@ -388,7 +408,8 @@ The executing agent should verify all of the following through MCP-visible state
 - A branch lane exists under `TILLSYN`.
 - That branch lane auto-generated `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`.
 - Each initial build task exists under the generated `BUILD` phase.
-- Each build task auto-generated `QA PASS 1` and `QA PASS 2`.
+- Each build task auto-generated `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`.
+- Each build task auto-generated `COMMIT AND REINGEST`.
 - Each QA subtask has the expected contract snapshot.
 
 ## Deferred / Not In Scope Yet
@@ -413,7 +434,7 @@ Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/ev
 2. Use the expected auth scopes:
    - global approved agent auth for kind/template-library admin and project creation/binding;
    - project-scoped approved agent auth for guarded in-project mutations after the project exists.
-3. Upsert kinds `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, and `qa-check`.
+3. Upsert kinds `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, `qa-check`, and `commit-and-reingest`.
 4. Upsert the approved global template library `default-go` exactly as specified in the markdown file.
 5. Create project `TILLSYN` in all caps as kind `go-project`, using the locked description and standards.
 6. Bind `default-go` during project creation if possible, otherwise bind immediately after creation.
@@ -430,7 +451,7 @@ Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/ev
    - REDUCE LEASE TOOL VISIBILITY
    - ALIGN README WITH MCP SURFACE
    - ALIGN BOOTSTRAP GUIDE WITH MCP SURFACE
-10. Verify each build-task auto-generated `QA PASS 1` and `QA PASS 2`.
+10. Verify each build-task auto-generated `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`.
 11. Verify the generated QA subtasks have the expected node contract.
 
 Do not use CLI mutation commands. Report exact MCP results, any schema mismatches, and any missing tool/path needed to complete the setup.

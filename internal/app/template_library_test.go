@@ -251,18 +251,18 @@ func TestGetBuiltinTemplateLibraryStatusMissing(t *testing.T) {
 	if status.Installed {
 		t.Fatal("status.Installed = true, want false")
 	}
-	if got, want := len(status.RequiredKindIDs), 10; got != want {
+	if got, want := len(status.RequiredKindIDs), 11; got != want {
 		t.Fatalf("len(status.RequiredKindIDs) = %d, want %d", got, want)
 	}
-	if got, want := len(status.MissingKindIDs), 8; got != want {
+	if got, want := len(status.MissingKindIDs), 9; got != want {
 		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
 	}
-	for _, want := range []domain.KindID{"branch", "task", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check"} {
+	for _, want := range []domain.KindID{"branch", "task", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "commit-and-reingest"} {
 		if !slices.Contains(status.RequiredKindIDs, want) {
 			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
 		}
 	}
-	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check"} {
+	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "commit-and-reingest"} {
 		if !slices.Contains(status.MissingKindIDs, want) {
 			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
 		}
@@ -281,8 +281,8 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	if spec.BuiltinSource != "builtin://tillsyn/default-go" {
 		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-go", spec.BuiltinSource)
 	}
-	if spec.BuiltinVersion != "2026-04-03.1" {
-		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-03.1", spec.BuiltinVersion)
+	if spec.BuiltinVersion != "2026-04-10.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-10.1", spec.BuiltinVersion)
 	}
 	if got, want := len(spec.NodeTemplates), 8; got != want {
 		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
@@ -503,7 +503,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		gotQATitles = append(gotQATitles, task.Title)
 	}
 	slices.Sort(gotQATitles)
-	if want := []string{"QA PASS 1", "QA PASS 2"}; !slices.Equal(gotQATitles, want) {
+	if want := []string{"COMMIT AND REINGEST", "QA PASS 1", "QA PASS 2"}; !slices.Equal(gotQATitles, want) {
 		t.Fatalf("build-task child titles = %#v, want %#v", gotQATitles, want)
 	}
 	for _, task := range buildTaskChildren {
@@ -511,11 +511,23 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		if !ok {
 			t.Fatalf("repo.nodeContracts missing generated QA child %q", task.ID)
 		}
-		if snapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
-			t.Fatalf("snapshot.ResponsibleActorKind = %q, want qa", snapshot.ResponsibleActorKind)
-		}
 		if !snapshot.RequiredForParentDone {
 			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
+		}
+		if task.Title == "COMMIT AND REINGEST" {
+			if snapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
+				t.Fatalf("commit-and-reingest responsible actor = %q, want builder", snapshot.ResponsibleActorKind)
+			}
+			if !slices.Contains(snapshot.EditableByActorKinds, domain.TemplateActorKindBuilder) || !slices.Contains(snapshot.EditableByActorKinds, domain.TemplateActorKindOrchestrator) {
+				t.Fatalf("commit-and-reingest editable actors = %#v, want builder+orchestrator", snapshot.EditableByActorKinds)
+			}
+			if !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindHuman) || !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindBuilder) {
+				t.Fatalf("commit-and-reingest completable actors = %#v, want builder+human", snapshot.CompletableByActorKinds)
+			}
+			continue
+		}
+		if snapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+			t.Fatalf("snapshot.ResponsibleActorKind = %q, want qa", snapshot.ResponsibleActorKind)
 		}
 		if !slices.Contains(snapshot.EditableByActorKinds, domain.TemplateActorKindQA) {
 			t.Fatalf("snapshot.EditableByActorKinds for %q = %#v, want qa", task.Title, snapshot.EditableByActorKinds)
@@ -662,7 +674,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	if err != nil {
 		t.Fatalf("ListTasks(build task) error = %v", err)
 	}
-	if got, want := childTitles(tasks, buildTask.ID), []string{"QA PASS 1", "QA PASS 2"}; !slices.Equal(got, want) {
+	if got, want := childTitles(tasks, buildTask.ID), []string{"COMMIT AND REINGEST", "QA PASS 1", "QA PASS 2"}; !slices.Equal(got, want) {
 		t.Fatalf("build-task QA child titles = %#v, want %#v", got, want)
 	}
 }
@@ -1139,6 +1151,7 @@ func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
 		if _, err := svc.UpsertKindDefinition(ctx, spec); err != nil {
 			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)
