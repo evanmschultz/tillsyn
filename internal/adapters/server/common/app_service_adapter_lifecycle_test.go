@@ -371,6 +371,7 @@ func TestAppServiceAdapterBuiltinTemplateLifecycle(t *testing.T) {
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
 		if _, err := fixture.svc.UpsertKindDefinition(ctx, spec); err != nil {
 			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)

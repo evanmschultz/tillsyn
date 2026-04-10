@@ -39,7 +39,7 @@ Implementation summary:
    - removed the old single project-root `IMPLEMENTATION TRACK` phase,
    - added project-root `PROJECT SETUP`,
    - added branch-lane auto-generation for `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
-   - preserved `build-task` auto-generation of `QA PASS 1` and `QA PASS 2`,
+   - preserved `build-task` auto-generation of `QA PASS 1` and `QA PASS 2` and added `COMMIT AND REINGEST`,
    - and added concrete setup/closeout/cleanup task generation so the template contract is materially useful instead of mostly prose.
 2. Hardened builtin lifecycle behavior for truly fresh instances:
    - `GetBuiltinTemplateLibraryStatus` and `EnsureBuiltinTemplateLibrary` now bootstrap the default generic kind catalog first,
