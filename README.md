@@ -273,11 +273,23 @@ Template-library operator examples:
   - a `go-project` now auto-generates one project-root `PROJECT SETUP` phase,
   - `PROJECT SETUP` is project-only onboarding work for new or adopted projects and should queue the first branch lane plus its `PLAN` phase before broad implementation,
   - each `branch` lane now auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP` in that order,
-  - `build-task` remains the concrete implementation task kind and now auto-generates `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`,
+  - `build-task` remains the concrete implementation task kind and now auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`,
   - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete,
   - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` and shipped from [templates/builtin/default-go.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-go.json).
 - Example shape:
-  - a `build-task` template can generate two `qa-check` children with different titles plus one `commit-and-reingest` child, all commentable because comments remain the shared coordination lane, while completion blockers still enforce truthful closeout.
+  - a `build-task` template can generate one proof-oriented `qa-check` child, one falsification-oriented `qa-check` child, plus one `commit-and-reingest` child, all commentable because comments remain the shared coordination lane, while completion blockers still enforce truthful closeout.
+- Shared cross-client named-agent convention:
+  - the current runtime still routes work by actor kind such as `orchestrator`, `research`, `builder`, and `qa`,
+  - but template text and docs should explicitly describe the intended named-agent pattern so orchestrators and clients do not forget which style of agent belongs to which task:
+    - `orchestration-agent`
+    - `planning-agent`
+    - `research-agent`
+    - `builder-agent`
+    - `qa-proof-agent`
+    - `qa-falsification-agent`
+    - `closeout-agent`
+    - `commit-and-reingest-agent`
+    - `gopls-worktree-agent`
 - Default-go lifecycle management direction:
   - `default-go` should be treated as a builtin-managed template library rather than a one-off bootstrap artifact,
   - refresh/install should be explicit and auditable,
@@ -311,7 +323,7 @@ Template-library operator examples:
   - `till template builtin status --library-id default-go`
   - `till template builtin ensure --library-id default-go`
   - `till template library show --library-id go-defaults`
-  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-pass-1","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 1","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-pass-2","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA pass 2","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
+  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-proof-review","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA PROOF REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-falsification-review","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA FALSIFICATION REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
   - `till template project bind --project-id <project-id> --library-id go-defaults`
   - `till template project binding --project-id <project-id>`
   - `till template project preview --project-id <project-id>`

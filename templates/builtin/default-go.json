@@ -3,7 +3,7 @@
   "name": "Default Go",
   "description": "Builtin Go workflow contract for project setup, branch planning, implementation, closeout, and cleanup.",
   "builtin_source": "builtin://tillsyn/default-go",
-  "builtin_version": "2026-04-10.1",
+  "builtin_version": "2026-04-10.2",
   "node_templates": [
     {
       "id": "go-project-template",
@@ -13,7 +13,7 @@
       "description_markdown": "Project-level Go workflow contract with explicit setup before normal branch execution.",
       "project_metadata_defaults": {
         "owner": "Evan",
-        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.\n- Use Hylla for committed repo-local evidence, use git diff for uncommitted local deltas, and use Context7 only for external semantics the repo cannot prove.\n- Unresolved uncertainty must become explicit coordination state such as comments, handoffs, or attention instead of optimistic completion.\n- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated blockers must be completed truthfully before done.\n- Use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite ordering until richer workflow ordering rules land.\n- Never use another agent's auth or `auth_context_id`, and never paste auth material into comments, handoffs, tasks, or docs.\n- Orchestrators own child auth cleanup and must leave no stale sessions, leases, or coordination trash behind."
+        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.\n- Use Hylla for committed repo-local evidence, use git diff for uncommitted local deltas, and use Context7 only for external semantics the repo cannot prove.\n- Shared cross-client named agents should stay aligned across Codex and Claude: `orchestration-agent`, `planning-agent`, `research-agent`, `builder-agent`, `qa-proof-agent`, `qa-falsification-agent`, `closeout-agent`, `commit-and-reingest-agent`, and `gopls-worktree-agent`.\n- Build in small tested increments and prefer TDD where practical.\n- Coverage expectations remain real gates; maintain the repo minimum and use the canonical `mage` verification path.\n- Prefer the smallest concrete design that satisfies the current requirement.\n- Reuse or refactor existing code when that is the best option instead of adding speculative structure.\n- Do not add abstraction for hypothetical future variation.\n- Prefer idiomatic Go naming, package structure, interface placement, error handling, and test shape.\n- Wrap and bubble errors with context and keep logging at meaningful operational boundaries instead of deep utility layers.\n- Unresolved uncertainty must become explicit coordination state such as comments, handoffs, or attention instead of optimistic completion.\n- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated blockers must be completed truthfully before done.\n- Use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite ordering until richer workflow ordering rules land.\n- Never use another agent's auth or `auth_context_id`, and never paste auth material into comments, handoffs, tasks, or docs.\n- Orchestrators own child auth cleanup and must leave no stale sessions, leases, or coordination trash behind."
       },
       "child_rules": [
         {
@@ -261,11 +261,11 @@
       "scope_level": "phase",
       "node_kind_id": "plan-phase",
       "display_name": "Plan Phase",
-      "description_markdown": "Explicit planning phase that should exist before broad implementation begins. Semantic or high-risk work should leave this phase with a written reasoning certificate grounded in Hylla evidence, external contracts only where needed, counterexample thinking, and a clear validation plan before BUILD starts.",
+      "description_markdown": "Explicit planning phase that should exist before broad implementation begins. `planning-agent` and `research-agent` work here to ground the plan in Hylla evidence, check reuse opportunities, prefer the smallest viable design, and leave semantic or high-risk work with a written reasoning certificate plus proof-oriented and falsification-oriented QA preparation before BUILD starts.",
       "task_metadata_defaults": {
-        "objective": "Understand current state, gather repo-local and external evidence, and shape the executable task tree before BUILD begins.",
-        "definition_of_done": "Current state is understood, scope is confirmed, implementation tasks exist, validation is defined, prerequisites are explicit, and semantic or high-risk claims are supported by a written reasoning certificate with evidence, counterexample checks, and explicit unknowns.",
-        "validation_plan": "Use Hylla first for repo-local behavior, Context7 and `go doc` only for external semantics the repo cannot prove, record counterexample checks, and validate the planned task tree with the dev before BUILD.",
+        "objective": "Understand current state, gather repo-local and external evidence, identify reuse or refactor opportunities, and shape the executable task tree before BUILD begins.",
+        "definition_of_done": "Current state is understood, scope is confirmed, implementation tasks exist, validation is defined, prerequisites are explicit, semantic or high-risk claims are supported by a written reasoning certificate with evidence and explicit unknowns, and the plan reflects the smallest viable idiomatic Go design rather than speculative abstraction.",
+        "validation_plan": "Use Hylla first for repo-local behavior, Context7 and `go doc` only for external semantics the repo cannot prove, record counterexample checks, identify proof-oriented and falsification-oriented QA expectations, and validate the planned task tree with the dev before BUILD.",
         "completion_contract": {
           "completion_checklist": [
             {
@@ -290,12 +290,17 @@
             },
             {
               "id": "plan-falsification",
-              "text": "Validation plan includes falsification or counterexample checks.",
+              "text": "Validation plan includes proof-oriented and falsification-oriented QA checks.",
               "done": false
             },
             {
               "id": "plan-reasoning-summary",
               "text": "Semantic or high-risk claims summarized in task evidence or a reasoning comment.",
+              "done": false
+            },
+            {
+              "id": "plan-go-quality",
+              "text": "The plan checks reuse, YAGNI pressure, Go idioms, test strategy, and incremental delivery expectations.",
               "done": false
             }
           ],
@@ -311,7 +316,7 @@
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "HYLLA-FIRST CODE UNDERSTANDING",
-          "description_template": "Trace the relevant symbols, callers, data flow, and invariants through Hylla before local implementation begins.",
+          "description_template": "Have `research-agent` or `planning-agent` trace the relevant symbols, callers, data flow, invariants, and reuse candidates through Hylla before local implementation begins.",
           "responsible_actor_kind": "research",
           "editable_by_actor_kinds": [
             "research",
@@ -329,7 +334,7 @@
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "CONTEXT7 AND GO DOC RESEARCH",
-          "description_template": "Gather only the external and package-local documentation needed for semantics the repository itself cannot prove.",
+          "description_template": "Have `research-agent` gather only the external and package-local documentation needed for semantics the repository itself cannot prove.",
           "responsible_actor_kind": "research",
           "editable_by_actor_kinds": [
             "research",
@@ -364,7 +369,7 @@
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "BUILD TASK TREE",
-          "description_template": "Create the detailed build-task and supporting task tree for the upcoming BUILD phase, making semantic-risk work decomposable and verifiable.",
+          "description_template": "Create the detailed build-task and supporting task tree for the upcoming BUILD phase, making semantic-risk work decomposable, verifiable, incremental, and assignable to `builder-agent` plus the correct QA agents.",
           "responsible_actor_kind": "orchestrator",
           "editable_by_actor_kinds": [
             "orchestrator",
@@ -382,7 +387,7 @@
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "VALIDATION PLAN",
-          "description_template": "Define how the work will be validated before handoff and closeout, including counterexamples, alternate traces, and likely hidden dependencies.",
+          "description_template": "Define how the work will be validated before handoff and closeout, including proof-oriented QA, falsification-oriented QA, counterexamples, alternate traces, likely hidden dependencies, and Go-quality checks.",
           "responsible_actor_kind": "qa",
           "editable_by_actor_kinds": [
             "qa",
@@ -435,11 +440,11 @@
       "scope_level": "phase",
       "node_kind_id": "build-phase",
       "display_name": "Build Phase",
-      "description_markdown": "Implementation phase where concrete `build-task` items should live.",
+      "description_markdown": "Implementation phase where concrete `build-task` items should live. `builder-agent` should implement in small tested increments, prefer idiomatic concrete Go structure, and avoid speculative abstraction.",
       "task_metadata_defaults": {
-        "objective": "Implement the planned changes using concrete build-task items.",
-        "definition_of_done": "Planned build tasks are completed truthfully, semantic claims match the final code, and all generated QA blockers are resolved.",
-        "validation_plan": "Run the planned package and repo checks, and reconcile any semantic claims against the final implemented code before handing work to closeout.",
+        "objective": "Implement the planned changes using concrete build-task items and the smallest justified design.",
+        "definition_of_done": "Planned build tasks are completed truthfully, semantic claims match the final code, Go naming and structure are idiomatic, speculative abstraction is avoided, and all generated QA blockers are resolved.",
+        "validation_plan": "Run the planned package and repo checks, reconcile any semantic claims against the final implemented code, and make sure the implementation stays incremental, testable, and idiomatic before handing work to closeout.",
         "completion_contract": {
           "completion_checklist": [
             {
@@ -459,7 +464,12 @@
             },
             {
               "id": "build-phase-qa-ready",
-              "text": "Generated QA blockers are positioned to verify the actual claim.",
+              "text": "Generated QA blockers are positioned to verify the actual claim and challenge unnecessary complexity.",
+              "done": false
+            },
+            {
+              "id": "build-phase-go-quality",
+              "text": "Implementation preserves Go idioms for naming, package structure, interfaces, tests, errors, and logging boundaries.",
               "done": false
             }
           ],
@@ -475,11 +485,11 @@
       "scope_level": "phase",
       "node_kind_id": "closeout-phase",
       "display_name": "Closeout Phase",
-      "description_markdown": "Post-build verification and readiness phase. This phase should reconcile final code, final Hylla state, QA findings, and any recorded reasoning before declaring the lane ready for handoff, push, or cleanup.",
+      "description_markdown": "Post-build verification and readiness phase. `closeout-agent` should reconcile final code, final Hylla state, proof-oriented QA findings, falsification-oriented QA findings, and any recorded reasoning before declaring the lane ready for handoff, push, or cleanup.",
       "task_metadata_defaults": {
         "objective": "Verify the completed build work, attach evidence, reconcile reasoning with final code state, and confirm readiness for push, PR, or handoff.",
-        "definition_of_done": "Checks are green, Hylla is current to final git state, review/testing happened, semantic claims still match the final code, unresolved risks are explicit, and the branch lane is ready for cleanup.",
-        "validation_plan": "Use the completed work plus Hylla-backed understanding to run QA sweeps, reconcile reasoning against final git state, and escalate remaining uncertainty instead of forcing readiness.",
+        "definition_of_done": "Checks are green, Hylla is current to final git state, review/testing happened, semantic claims still match the final code, justified simplicity and Go-quality expectations still hold, unresolved risks are explicit, and the branch lane is ready for cleanup.",
+        "validation_plan": "Use the completed work plus Hylla-backed understanding to run proof-oriented and falsification-oriented QA, reconcile reasoning against final git state, and escalate remaining uncertainty instead of forcing readiness.",
         "completion_contract": {
           "completion_checklist": [
             {
@@ -494,12 +504,12 @@
             },
             {
               "id": "closeout-qa1",
-              "text": "QA sweep 1 verified evidence completeness.",
+              "text": "Proof-oriented QA verified evidence completeness and design support.",
               "done": false
             },
             {
               "id": "closeout-qa2",
-              "text": "QA sweep 2 challenged the conclusion with falsification thinking.",
+              "text": "Falsification-oriented QA challenged the conclusion and unnecessary complexity.",
               "done": false
             },
             {
@@ -561,7 +571,7 @@
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "HYLLA REFRESHED AND CURRENT TO GIT",
-          "description_template": "Refresh the Hylla artifact as needed, confirm it matches the current git state, and reconcile recorded reasoning against the refreshed graph.",
+          "description_template": "Have `commit-and-reingest-agent` or the freshness-focused research flow refresh the Hylla artifact as needed, confirm it matches the current git state, and reconcile recorded reasoning against the refreshed graph.",
           "responsible_actor_kind": "research",
           "editable_by_actor_kinds": [
             "research",
@@ -578,8 +588,8 @@
           "position": 4,
           "child_scope_level": "task",
           "child_kind_id": "task",
-          "title_template": "QA SWEEP 1",
-          "description_template": "Run the first QA sweep across completed work to verify evidence completeness, trace coherence, and contract coverage using task state plus Hylla-backed understanding.",
+          "title_template": "QA PROOF REVIEW",
+          "description_template": "Have `qa-proof-agent` verify evidence completeness, trace coherence, contract coverage, Go idiom fit, testability, and justified simplicity using task state plus Hylla-backed understanding.",
           "responsible_actor_kind": "qa",
           "editable_by_actor_kinds": [
             "qa",
@@ -596,8 +606,8 @@
           "position": 5,
           "child_scope_level": "task",
           "child_kind_id": "task",
-          "title_template": "QA SWEEP 2",
-          "description_template": "Run the second QA sweep across completed work to attempt falsification through counterexamples, alternate traces, hidden dependencies, or contract mismatches.",
+          "title_template": "QA FALSIFICATION REVIEW",
+          "description_template": "Have `qa-falsification-agent` attempt falsification through counterexamples, alternate traces, hidden dependencies, contract mismatches, YAGNI pressure, and unnecessary abstraction checks.",
           "responsible_actor_kind": "qa",
           "editable_by_actor_kinds": [
             "qa",
@@ -787,10 +797,10 @@
       "scope_level": "task",
       "node_kind_id": "build-task",
       "display_name": "Build Task",
-      "description_markdown": "Concrete implementation task that auto-generates the two required QA passes plus a commit-and-reingest closeout step.",
+      "description_markdown": "Concrete implementation task that auto-generates distinct proof-oriented and falsification-oriented QA subtasks plus a commit-and-reingest closeout step.",
       "task_metadata_defaults": {
-        "definition_of_done": "The planned change is implemented truthfully, semantic claims match the final code, generated QA blockers are resolved, and confirmed-good work is committed and refreshed into Hylla.",
-        "validation_plan": "Run the required package and repo checks, verify semantic claims with QA passes, then commit and refresh Hylla before handing this task to closeout.",
+        "definition_of_done": "The planned change is implemented truthfully, semantic claims match the final code, Go quality expectations still hold, generated QA blockers are resolved, and confirmed-good work is committed and refreshed into Hylla.",
+        "validation_plan": "Run the required package and repo checks, verify semantic claims with proof-oriented and falsification-oriented QA, then commit and refresh Hylla before handing this task to closeout.",
         "completion_contract": {
           "completion_checklist": [
             {
@@ -799,13 +809,13 @@
               "done": false
             },
             {
-              "id": "build-task-qa-pass-1",
-              "text": "QA PASS 1 verified evidence completeness.",
+              "id": "build-task-qa-proof",
+              "text": "QA proof review verified evidence completeness and design support.",
               "done": false
             },
             {
-              "id": "build-task-qa-pass-2",
-              "text": "QA PASS 2 challenged the conclusion through falsification checks.",
+              "id": "build-task-qa-falsification",
+              "text": "QA falsification review challenged the conclusion and unnecessary complexity.",
               "done": false
             },
             {
@@ -821,12 +831,12 @@
       },
       "child_rules": [
         {
-          "id": "qa-pass-1",
+          "id": "qa-proof-review",
           "position": 1,
           "child_scope_level": "subtask",
           "child_kind_id": "qa-check",
-          "title_template": "QA PASS 1",
-          "description_template": "First QA pass for the parent build task. Verify evidence completeness, trace coherence, and that the claimed behavior is actually supported.",
+          "title_template": "QA PROOF REVIEW",
+          "description_template": "Have `qa-proof-agent` verify evidence completeness, trace coherence, claimed behavior support, Go naming and structure fit, error and logging discipline, testability, and justified simplicity for the parent build task.",
           "responsible_actor_kind": "qa",
           "editable_by_actor_kinds": [
             "qa"
@@ -838,12 +848,12 @@
           "required_for_parent_done": true
         },
         {
-          "id": "qa-pass-2",
+          "id": "qa-falsification-review",
           "position": 2,
           "child_scope_level": "subtask",
           "child_kind_id": "qa-check",
-          "title_template": "QA PASS 2",
-          "description_template": "Second QA pass for the parent build task. Try to falsify the conclusion through counterexamples, alternate traces, hidden dependencies, or contract mismatches.",
+          "title_template": "QA FALSIFICATION REVIEW",
+          "description_template": "Have `qa-falsification-agent` try to falsify the conclusion through counterexamples, alternate traces, hidden dependencies, contract mismatches, YAGNI pressure, and unnecessary abstraction checks for the parent build task.",
           "responsible_actor_kind": "qa",
           "editable_by_actor_kinds": [
             "qa"
@@ -860,7 +870,7 @@
           "child_scope_level": "subtask",
           "child_kind_id": "commit-and-reingest",
           "title_template": "COMMIT AND REINGEST",
-          "description_template": "Commit confirmed-good work, trigger Hylla refresh, wait for the artifact to catch up to that commit, and record the resulting freshness evidence for downstream reasoning.",
+          "description_template": "Have `commit-and-reingest-agent` commit confirmed-good work, trigger Hylla refresh, wait for the artifact to catch up to that commit, and record the resulting freshness evidence for downstream reasoning.",
           "responsible_actor_kind": "builder",
           "editable_by_actor_kinds": [
             "builder",

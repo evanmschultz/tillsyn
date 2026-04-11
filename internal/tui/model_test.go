@@ -10426,7 +10426,8 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 		t.Fatalf("expected global notifications focus before activation, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
 	}
 
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyCmdWithTimeout(t, mustModelValue(t, updated), cmd, 100*time.Millisecond)
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected global notification enter to open task info, got %v", m.mode)
 	}
@@ -15489,7 +15490,7 @@ func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
 	library.BuiltinManaged = true
-	library.BuiltinVersion = "2026-04-10.1"
+	library.BuiltinVersion = "2026-04-10.2"
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
@@ -15502,7 +15503,7 @@ func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
 		LibraryID:         library.ID,
 		Name:              library.Name,
-		BuiltinVersion:    "2026-04-10.1",
+		BuiltinVersion:    "2026-04-10.2",
 		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
 		Installed:         true,
 		InstalledRevision: 2,
@@ -15518,7 +15519,7 @@ func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 
 	for _, want := range []string{
 		"active_binding: default-go — Default Go • rev:2 • drift:current",
-		"shipped_builtin: state:update_available • version:2026-04-10.1 • installed_rev:2",
+		"shipped_builtin: state:update_available • version:2026-04-10.2 • installed_rev:2",
 		"run ensure builtin before rebinding projects to the newer shipped template",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -15554,11 +15555,11 @@ func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
 			{
 				TaskID:            "qa-1",
-				Title:             "QA PASS 1",
+				Title:             "QA PROOF REVIEW",
 				Scope:             domain.KindAppliesToTask,
 				Kind:              domain.WorkKindTask,
 				LifecycleState:    domain.StateTodo,
-				SourceChildRuleID: "qa-pass-1",
+				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
 				ChangeKinds:       []string{"title", "description"},
 			},
@@ -15577,7 +15578,7 @@ func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
 	for _, want := range []string{
 		"template drift",
 		"existing-node migrations",
-		"QA PASS 1",
+		"QA PROOF REVIEW",
 		"approve selected",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -15592,13 +15593,13 @@ func TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
 	library.BuiltinManaged = true
-	library.BuiltinVersion = "2026-04-10.1"
+	library.BuiltinVersion = "2026-04-10.2"
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
 		LibraryID:         library.ID,
 		Name:              library.Name,
-		BuiltinVersion:    "2026-04-10.1",
+		BuiltinVersion:    "2026-04-10.2",
 		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
 		Installed:         true,
 		InstalledRevision: 2,
@@ -15614,7 +15615,7 @@ func TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	overlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 90)
 	for _, want := range []string{
 		"default-go — Default Go • shipped update available",
-		"shipped_builtin: state:update_available • version:2026-04-10.1 • installed_rev:2",
+		"shipped_builtin: state:update_available • version:2026-04-10.2 • installed_rev:2",
 		"run ensure builtin before rebinding projects to the newer shipped template",
 	} {
 		if !strings.Contains(overlay, want) {
@@ -15650,11 +15651,11 @@ func TestModelTemplateMigrationReviewApproveSelectedCompletesSave(t *testing.T) 
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
 			{
 				TaskID:            "qa-1",
-				Title:             "QA PASS 1",
+				Title:             "QA PROOF REVIEW",
 				Scope:             domain.KindAppliesToTask,
 				Kind:              domain.WorkKindTask,
 				LifecycleState:    domain.StateTodo,
-				SourceChildRuleID: "qa-pass-1",
+				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
 				ChangeKinds:       []string{"title", "description"},
 			},
@@ -15711,11 +15712,11 @@ func TestModelTemplateMigrationReviewSkipContinuesReapply(t *testing.T) {
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
 			{
 				TaskID:            "qa-1",
-				Title:             "QA PASS 1",
+				Title:             "QA PROOF REVIEW",
 				Scope:             domain.KindAppliesToTask,
 				Kind:              domain.WorkKindTask,
 				LifecycleState:    domain.StateTodo,
-				SourceChildRuleID: "qa-pass-1",
+				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
 				ChangeKinds:       []string{"title"},
 			},
@@ -15765,7 +15766,7 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 		ProjectID:                 project.ID,
 		SourceLibraryID:           "go-defaults",
 		SourceNodeTemplateID:      "build-template",
-		SourceChildRuleID:         "qa-pass-1",
+		SourceChildRuleID:         "qa-proof-review",
 		CreatedByActorID:          "tillsyn-system-template",
 		ResponsibleActorKind:      domain.TemplateActorKindBuilder,
 		EditableByActorKinds:      []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
@@ -15784,7 +15785,7 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 		"project_library_drift: update_available",
 		"source_library: go-defaults",
 		"source_node_template: build-template",
-		"source_child_rule: qa-pass-1",
+		"source_child_rule: qa-proof-review",
 		"responsible_actor_kind: builder",
 		"editable_by: builder",
 		"completable_by: builder, human",

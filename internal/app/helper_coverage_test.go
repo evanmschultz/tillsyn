@@ -49,12 +49,12 @@ func TestTemplateContractHelperFormatting(t *testing.T) {
 	if got := taskDisplayLabel(domain.Task{Title: "  ", ID: "task-123"}); got != "task-123" {
 		t.Fatalf("taskDisplayLabel(empty title) = %q, want task-123", got)
 	}
-	if got := taskDisplayLabel(domain.Task{Title: "QA pass 1", ID: "task-123"}); got != "QA pass 1" {
-		t.Fatalf("taskDisplayLabel(title) = %q, want QA pass 1", got)
+	if got := taskDisplayLabel(domain.Task{Title: "QA PROOF REVIEW", ID: "task-123"}); got != "QA PROOF REVIEW" {
+		t.Fatalf("taskDisplayLabel(title) = %q, want QA PROOF REVIEW", got)
 	}
 
 	blocker := formatNodeContractBlocker(
-		domain.Task{Title: "QA pass 1", ID: "task-123"},
+		domain.Task{Title: "QA PROOF REVIEW", ID: "task-123"},
 		domain.NodeContractSnapshot{
 			ResponsibleActorKind:    domain.TemplateActorKindQA,
 			CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -62,7 +62,7 @@ func TestTemplateContractHelperFormatting(t *testing.T) {
 		},
 		"parent",
 	)
-	for _, want := range []string{"parent blocker", "QA pass 1", "responsible actor kind: qa", "orchestrator (override)"} {
+	for _, want := range []string{"parent blocker", "QA PROOF REVIEW", "responsible actor kind: qa", "orchestrator (override)"} {
 		if !strings.Contains(blocker, want) {
 			t.Fatalf("expected blocker text to contain %q, got %q", want, blocker)
 		}

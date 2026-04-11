@@ -35,8 +35,21 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
 
 - `builder`, `qa`, `research`, `orchestrator`, and `human` are actor kinds.
 - Template ownership is by actor kind, not by a pre-known specific agent principal.
-- Both QA subtasks should use actor kind `qa`.
-- The stricter rule "two different QA principals must complete the two QA passes" is deferred to a later policy wave.
+- Both QA review subtasks should use actor kind `qa`.
+- The stricter rule "two different QA principals must complete the proof-oriented and falsification-oriented QA reviews" is deferred to a later policy wave.
+- The template should still distinguish proof-oriented QA from falsification-oriented QA and explicitly describe the intended named agent pattern:
+  - `qa-proof-agent`
+  - `qa-falsification-agent`
+- Shared cross-client agent names should be treated as guidance in template text and docs now, even though runtime routing is still by actor kind:
+  - `orchestration-agent`
+  - `planning-agent`
+  - `research-agent`
+  - `builder-agent`
+  - `qa-proof-agent`
+  - `qa-falsification-agent`
+  - `closeout-agent`
+  - `commit-and-reingest-agent`
+  - `gopls-worktree-agent`
 - Policy direction for the unified `plan_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans should remain allowed to perform those transitions;
@@ -73,6 +86,13 @@ The Go standards payload should reflect how `tillsyn` itself is organized:
 - Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.
 - For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.
 - Use Hylla for committed repo-local evidence, use git diff for uncommitted local deltas, and use Context7 only for external semantics the repo cannot prove.
+- Build in small tested increments and prefer TDD where practical.
+- Maintain the repo coverage gate and use the canonical `mage` verification flow.
+- Prefer the smallest concrete design that satisfies the current requirement.
+- Reuse or refactor existing code when that is the best option.
+- Do not add abstraction for hypothetical future variation.
+- Prefer idiomatic Go naming, package structure, interface placement, error handling, logging boundaries, and test shape.
+- Wrap and bubble errors with context instead of swallowing them.
 - Unresolved uncertainty must become explicit coordination state instead of optimistic completion.
 - Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.
 - MCP-first dogfooding for runtime and operator workflows.
@@ -243,8 +263,8 @@ The `BUILD` phase holds the actual implementation tasks.
 
 Each concrete implementation task should normally be a `build-task`, so it auto-generates:
 
-- `QA PASS 1`
-- `QA PASS 2`
+- `QA PROOF REVIEW`
+- `QA FALSIFICATION REVIEW`
 - `COMMIT AND REINGEST`
 
 ### Closeout-Phase Contract
@@ -256,8 +276,8 @@ That phase should include tasks for at least:
 - all required `mage` tests/checks passing;
 - local commit recorded;
 - Hylla artifact ingested or refreshed and confirmed current to git;
-- QA sweep 1 across completed work, using the done tasks plus Hylla-backed code understanding;
-- QA sweep 2 across completed work, using the done tasks plus Hylla-backed code understanding;
+- proof-oriented QA across completed work, using the done tasks plus Hylla-backed code understanding;
+- falsification-oriented QA across completed work, using the done tasks plus Hylla-backed code understanding;
 - dev review;
 - orchestrator + dev collaborative testing;
 - push / PR / handoff readiness.
@@ -292,8 +312,8 @@ That setup work should cover at least:
 For every `build-task`:
 
 - auto-create:
-  - `QA PASS 1`
-  - `QA PASS 2`
+  - `QA PROOF REVIEW`
+  - `QA FALSIFICATION REVIEW`
   - `COMMIT AND REINGEST`
 
 Both QA subtasks should be:
@@ -323,7 +343,7 @@ That repo file is the authoritative shipped contract. It now contains:
 - project-setup task generation for template fit, Hylla decisions, metadata lock, first branch lane, and first `PLAN` phase preparation;
 - branch-lane generation for `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`;
 - closeout and branch-cleanup default task generation; and
-- `build-task` QA pass generation.
+- `build-task` QA review generation.
 - `build-task` commit-and-reingest generation.
 
 ## Initial Dogfood Tree
@@ -345,8 +365,8 @@ Inside that first branch lane's generated `BUILD` phase, create these initial `b
 
 Because these are `build-task` items, each one should auto-generate:
 
-- `QA PASS 1`
-- `QA PASS 2`
+- `QA PROOF REVIEW`
+- `QA FALSIFICATION REVIEW`
 - `COMMIT AND REINGEST`
 
 ## MCP-Only Execution Sequence
@@ -384,8 +404,8 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
    - `BRANCH CLEANUP`
 10. Under the generated `BUILD` phase, create the initial build tasks listed above.
 11. For each build task, confirm the template-generated subtasks appear:
-   - `QA PASS 1`
-   - `QA PASS 2`
+   - `QA PROOF REVIEW`
+   - `QA FALSIFICATION REVIEW`
    - `COMMIT AND REINGEST`
 12. Confirm the generated QA subtasks carry the expected node contract:
    - `responsible_actor_kind = "qa"`
@@ -408,13 +428,13 @@ The executing agent should verify all of the following through MCP-visible state
 - A branch lane exists under `TILLSYN`.
 - That branch lane auto-generated `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`.
 - Each initial build task exists under the generated `BUILD` phase.
-- Each build task auto-generated `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`.
+- Each build task auto-generated `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`.
 - Each build task auto-generated `COMMIT AND REINGEST`.
 - Each QA subtask has the expected contract snapshot.
 
 ## Deferred / Not In Scope Yet
 
-- Enforcing that `QA PASS 1` and `QA PASS 2` must be completed by two distinct QA principals.
+- Enforcing that proof-oriented QA and falsification-oriented QA must be completed by two distinct QA principals.
 - Final default `enabled_tools` cleanup for the Tillsyn MCP server.
 - Archive/delete policy changes beyond the current accepted temporary behavior.
 - Exact final field-by-field payload shape for the migration-review queue and lifecycle export objects.
@@ -451,7 +471,7 @@ Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/ev
    - REDUCE LEASE TOOL VISIBILITY
    - ALIGN README WITH MCP SURFACE
    - ALIGN BOOTSTRAP GUIDE WITH MCP SURFACE
-10. Verify each build-task auto-generated `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`.
+10. Verify each build-task auto-generated `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`.
 11. Verify the generated QA subtasks have the expected node contract.
 
 Do not use CLI mutation commands. Report exact MCP results, any schema mismatches, and any missing tool/path needed to complete the setup.
