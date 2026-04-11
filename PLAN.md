@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-04-03
-Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family, and a repo-visible embedded builtin template source under `templates/` for `default-go`. `default-go` now ships the real project-setup plus branch-lifecycle contract: project-root `PROJECT SETUP`, branch-lane `PLAN/BUILD/CLOSEOUT/BRANCH CLEANUP`, and `build-task` QA generation. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
+Status: In progress; `main` now carries the reduced 13-tool MCP family surface, green cross-process auth/MCP, builtin `default-go` lifecycle visibility/refresh/reapply, explicit existing-node migration approval, the TUI migration-review follow-through, scoped auth/delegation dogfood, routed mentions/inbox attention, stdio-local auth-context handles, a direct project-edit comments row, one shared baseline-aware live-wait contract for auth/comments/attention/handoffs, a richer `till.get_instructions` surface that now explains scoped project/template/kind/node rules and absorbs bootstrap guidance through `topic=bootstrap` while `till.get_bootstrap_guide` remains the compatibility wrapper on the frozen MCP family, and a repo-visible embedded builtin template source under `templates/` for `default-go`. `default-go` now ships the real project-setup plus branch-lifecycle contract: project-root `PROJECT SETUP`, branch-lane `PLAN/BUILD/CLOSEOUT/BRANCH CLEANUP`, and `build-task` proof-oriented plus falsification-oriented QA generation with `COMMIT AND REINGEST`. The next remaining work is final collaborative hardening and then one cleanup/refinement wave for the real dogfood dataset, notification polish, and template/instructions follow-through.
 
 ## Checkpoint 2026-04-03: TUI Builtin Update Visibility
 
@@ -39,7 +39,7 @@ Implementation summary:
    - removed the old single project-root `IMPLEMENTATION TRACK` phase,
    - added project-root `PROJECT SETUP`,
    - added branch-lane auto-generation for `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
-   - preserved `build-task` auto-generation of `QA PASS 1` and `QA PASS 2` and added `COMMIT AND REINGEST`,
+   - preserved `build-task` auto-generation as two distinct QA follow-ups, now expressed as `QA PROOF REVIEW` and `QA FALSIFICATION REVIEW`, and added `COMMIT AND REINGEST`,
    - and added concrete setup/closeout/cleanup task generation so the template contract is materially useful instead of mostly prose.
 2. Hardened builtin lifecycle behavior for truly fresh instances:
    - `GetBuiltinTemplateLibraryStatus` and `EnsureBuiltinTemplateLibrary` now bootstrap the default generic kind catalog first,
@@ -8979,7 +8979,7 @@ Backlog/open-findings review checkpoint:
 Parallel/subagent execution:
 1. Spawned worker lane `LANE-UX-EDIT-NODE-TESTS` (lock: `internal/tui/model_test.go`) and worker lane `LANE-UX-EDIT-NODE-CODE-R2` (lock: `internal/tui/model.go`).
 2. Performed integrator review of both lane diffs before accepting integration.
-3. Ran independent dual QA passes with agents Hooke + Galileo; initial QA reported a real medium regression and hint-copy drift; follow-up remediation loop was executed and re-verified with fresh dual QA PASS.
+3. Ran independent dual QA reviews with agents Hooke + Galileo; initial QA reported a real medium regression and hint-copy drift; follow-up remediation loop was executed and re-verified with fresh dual QA review.
 
 Context7 compliance:
 1. Pre-edit consult:

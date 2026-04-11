@@ -2272,7 +2272,7 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1",
+				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -2337,7 +2337,7 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1 REVIEW",
+				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
@@ -2366,7 +2366,7 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 	if got := extractCLIKVValue(t, output, "applied count"); got != "1" {
 		t.Fatalf("template project approve-migrations applied count = %q, want 1", got)
 	}
-	if !strings.Contains(output, "QA PASS 1 REVIEW") {
+	if !strings.Contains(output, "QA PROOF REVIEW UPDATE") {
 		t.Fatalf("expected updated title in approve-migrations output, got %q", output)
 	}
 
@@ -2374,8 +2374,8 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
 	}
-	if updatedTask.Title != "QA PASS 1 REVIEW" {
-		t.Fatalf("updated task title = %q, want QA PASS 1 REVIEW", updatedTask.Title)
+	if updatedTask.Title != "QA PROOF REVIEW UPDATE" {
+		t.Fatalf("updated task title = %q, want QA PROOF REVIEW UPDATE", updatedTask.Title)
 	}
 }
 

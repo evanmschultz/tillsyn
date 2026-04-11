@@ -433,7 +433,7 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1",
+				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -483,7 +483,7 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1 REVIEW",
+				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
@@ -541,7 +541,7 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1",
+				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -606,7 +606,7 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1 REVIEW",
+				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
@@ -637,8 +637,8 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
 	}
-	if updatedTask.Title != "QA PASS 1 REVIEW" {
-		t.Fatalf("updated task title = %q, want QA PASS 1 REVIEW", updatedTask.Title)
+	if updatedTask.Title != "QA PROOF REVIEW UPDATE" {
+		t.Fatalf("updated task title = %q, want QA PROOF REVIEW UPDATE", updatedTask.Title)
 	}
 	snapshot, err := fixture.svc.GetNodeContractSnapshot(ctx, generated.ID)
 	if err != nil {

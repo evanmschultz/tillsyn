@@ -281,8 +281,8 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	if spec.BuiltinSource != "builtin://tillsyn/default-go" {
 		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-go", spec.BuiltinSource)
 	}
-	if spec.BuiltinVersion != "2026-04-10.1" {
-		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-10.1", spec.BuiltinVersion)
+	if spec.BuiltinVersion != "2026-04-10.2" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-10.2", spec.BuiltinVersion)
 	}
 	if got, want := len(spec.NodeTemplates), 8; got != want {
 		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
@@ -503,7 +503,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		gotQATitles = append(gotQATitles, task.Title)
 	}
 	slices.Sort(gotQATitles)
-	if want := []string{"COMMIT AND REINGEST", "QA PASS 1", "QA PASS 2"}; !slices.Equal(gotQATitles, want) {
+	if want := []string{"COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(gotQATitles, want) {
 		t.Fatalf("build-task child titles = %#v, want %#v", gotQATitles, want)
 	}
 	for _, task := range buildTaskChildren {
@@ -639,8 +639,8 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		"LOCAL COMMIT RECORDED",
 		"ORCHESTRATOR AND DEV COLLABORATIVE TESTING",
 		"PUSH PR HANDOFF READINESS",
-		"QA SWEEP 1",
-		"QA SWEEP 2",
+		"QA FALSIFICATION REVIEW",
+		"QA PROOF REVIEW",
 		"REQUIRED MAGE GATES GREEN",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("closeout child titles = %#v, want %#v", got, want)
@@ -674,7 +674,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	if err != nil {
 		t.Fatalf("ListTasks(build task) error = %v", err)
 	}
-	if got, want := childTitles(tasks, buildTask.ID), []string{"COMMIT AND REINGEST", "QA PASS 1", "QA PASS 2"}; !slices.Equal(got, want) {
+	if got, want := childTitles(tasks, buildTask.ID), []string{"COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(got, want) {
 		t.Fatalf("build-task QA child titles = %#v, want %#v", got, want)
 	}
 }
@@ -748,7 +748,7 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1",
+				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -809,7 +809,7 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1 REVIEW",
+				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
@@ -883,7 +883,7 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1",
+				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -945,7 +945,7 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1 REVIEW",
+				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},
@@ -971,8 +971,8 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 		t.Fatalf("ApproveProjectTemplateMigrations() = %#v, want one applied migration", result)
 	}
 	updatedTask := repo.tasks[generated.ID]
-	if updatedTask.Title != "QA PASS 1 REVIEW" {
-		t.Fatalf("updated task title = %q, want QA PASS 1 REVIEW", updatedTask.Title)
+	if updatedTask.Title != "QA PROOF REVIEW UPDATE" {
+		t.Fatalf("updated task title = %q, want QA PROOF REVIEW UPDATE", updatedTask.Title)
 	}
 	if updatedTask.Description != "Verify the latest contract" {
 		t.Fatalf("updated task description = %q, want latest contract", updatedTask.Description)
@@ -1031,7 +1031,7 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1",
+				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -1106,7 +1106,7 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
 				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
-				TitleTemplate:           "QA PASS 1 REVIEW",
+				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindOrchestrator},

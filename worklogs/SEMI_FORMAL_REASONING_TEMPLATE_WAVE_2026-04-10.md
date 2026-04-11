@@ -10,7 +10,7 @@ Tighten the shipped `default-go` builtin so Tillsyn's normal Go workflow enforce
 
 This wave is complete when:
 - `PLAN` explicitly requires Hylla-first premises, Context7 only where needed, counterexample thinking, and a written conclusion/unknowns shape for semantic or high-risk work,
-- `QA PASS 1` and `QA PASS 2` stop being duplicate placeholders and become asymmetric verification gates,
+- `QA PROOF REVIEW` and `QA FALSIFICATION REVIEW` stop being duplicate placeholders and become asymmetric verification gates,
 - `CLOSEOUT` reconciles reasoning against final code plus fresh Hylla state,
 - `build-task` auto-generates a required `COMMIT AND REINGEST` subtask so downstream reasoning is not built on stale Hylla premises,
 - builtin default-go tests and dogfood setup docs reflect the new contract.
@@ -37,15 +37,15 @@ Keep the current lifecycle:
 - `PLAN`
 - `BUILD`
 - `CLOSEOUT`
-- generated `QA PASS 1`
-- generated `QA PASS 2`
+- generated `QA PROOF REVIEW`
+- generated `QA FALSIFICATION REVIEW`
 
 Do not add a new reasoning phase.
 
 Instead, sharpen the reasoning contract inside the nodes that already exist:
 - `PLAN` gathers evidence and shapes the task tree,
-- `QA PASS 1` checks proof completeness,
-- `QA PASS 2` tries to falsify the conclusion,
+- `QA PROOF REVIEW` checks proof completeness,
+- `QA FALSIFICATION REVIEW` tries to falsify the conclusion,
 - `CLOSEOUT` reconciles final code, final Hylla state, and remaining risk.
 
 ## Operating Rules
@@ -67,8 +67,8 @@ Keep the current workflow shape:
 - `PLAN`
 - `BUILD`
 - `CLOSEOUT`
-- generated `QA PASS 1`
-- generated `QA PASS 2`
+- generated `QA PROOF REVIEW`
+- generated `QA FALSIFICATION REVIEW`
 - generated `COMMIT AND REINGEST`
 
 Do not add a new top-level reasoning phase in this wave.
@@ -132,13 +132,13 @@ Keep the existing build-task shape, but:
 - wait until Hylla is current to that commit,
 - only then allow downstream reasoning to assume the graph is fresh.
 
-### QA Passes
+### QA Reviews
 
-Keep the titles.
+Keep the two review slots distinct.
 
-Make the passes asymmetric:
-- `QA PASS 1`: verify evidence completeness and reasoning coherence,
-- `QA PASS 2`: attempt falsification via counterexamples, alternate traces, hidden dependencies, or contract mismatches.
+Make them asymmetric:
+- `QA PROOF REVIEW`: verify evidence completeness and reasoning coherence,
+- `QA FALSIFICATION REVIEW`: attempt falsification via counterexamples, alternate traces, hidden dependencies, or contract mismatches.
 
 ### Closeout
 

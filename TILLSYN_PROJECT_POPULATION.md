@@ -45,9 +45,19 @@ Use these older files as source material, not as the long-term execution surface
 - The shipped builtin `default-go` now generates:
   - project-root `PROJECT SETUP`;
   - branch-lane `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`;
-  - task-level verification generation for `build-task` via `QA PASS 1`, `QA PASS 2`, and `COMMIT AND REINGEST`.
+  - task-level verification generation for `build-task` via `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`.
 - This contract is real and executable today.
 - During dogfooding, we must keep watching for workflow gaps and decide what belongs in the template versus what should remain manual planning.
+- The intended named-agent guidance should be shared across clients even though the runtime still routes by generic actor kind:
+  - `orchestration-agent`
+  - `planning-agent`
+  - `research-agent`
+  - `builder-agent`
+  - `qa-proof-agent`
+  - `qa-falsification-agent`
+  - `closeout-agent`
+  - `commit-and-reingest-agent`
+  - `gopls-worktree-agent`
 
 ### One-Time Onboarding Exception
 
