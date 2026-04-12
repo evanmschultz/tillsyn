@@ -852,6 +852,12 @@ func mapToolError(err error) toolErrorMapping {
 			Code:  "bootstrap_required",
 			Text:  "bootstrap_required: " + err.Error(),
 		}
+	case errors.Is(err, common.ErrBuiltinTemplateBootstrapRequired):
+		return toolErrorMapping{
+			Class: "bootstrap",
+			Code:  "builtin_template_bootstrap_required",
+			Text:  "builtin_template_bootstrap_required: " + err.Error(),
+		}
 	case errors.Is(err, common.ErrGuardrailViolation):
 		return toolErrorMapping{
 			Class: "guardrail",

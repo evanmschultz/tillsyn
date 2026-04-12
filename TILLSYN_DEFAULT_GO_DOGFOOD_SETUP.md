@@ -240,6 +240,7 @@ Current implementation direction for this contract:
   - `till template builtin status|ensure`; and
   - `till.template(operation=get_builtin_status|ensure_builtin)`;
 - explicit builtin ensure should fail loudly when required kinds are still missing instead of silently installing a partial contract;
+- explicit builtin ensure guidance should tell agents to run builtin status first and treat required/missing kinds as a runtime-DB bootstrap mismatch, not as the builtin template being absent;
 - explicit reapply may use the existing bind/update path as long as it remains visibly dev-approved and drift-aware;
 - in the TUI, saving a project with the same selected drifted library should open a drift summary + migration-review step before rebinding future generated work.
 - that TUI review step should expose per-item selection, explicit `approve all`, and explicit skip for existing generated nodes while preserving dev approval as the final gate.

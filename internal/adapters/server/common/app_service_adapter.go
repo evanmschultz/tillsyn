@@ -593,6 +593,8 @@ func mapAppError(operation string, err error) error {
 	switch {
 	case errors.Is(err, ErrBootstrapRequired):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrBootstrapRequired, err))
+	case errors.Is(err, domain.ErrBuiltinTemplateBootstrapRequired):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrBuiltinTemplateBootstrapRequired, err))
 	case errors.Is(err, app.ErrNotFound):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
 	case errors.Is(err, domain.ErrMutationLeaseRequired),

@@ -97,7 +97,7 @@ func (s *Service) EnsureBuiltinTemplateLibrary(ctx context.Context, in EnsureBui
 		for _, kindID := range missingKinds {
 			values = append(values, string(kindID))
 		}
-		return domain.BuiltinTemplateLibraryEnsureResult{}, fmt.Errorf("%w: builtin template %q requires kinds [%s]", domain.ErrKindNotFound, spec.ID, strings.Join(values, ", "))
+		return domain.BuiltinTemplateLibraryEnsureResult{}, fmt.Errorf("%w: builtin template %q requires kind definitions [%s] in the active runtime DB; call get_builtin_status first, confirm you are on the intended stable or dev runtime, and bootstrap the missing kinds before ensure_builtin", domain.ErrBuiltinTemplateBootstrapRequired, spec.ID, strings.Join(values, ", "))
 	}
 
 	changed := true

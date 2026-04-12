@@ -108,6 +108,7 @@ func explainBootstrapTopic(guide common.BootstrapGuide) instructionsExplainResul
 		"Bootstrap is for empty-instance and first-project setup; after work already exists, prefer till.capture_state plus scoped coordination reads instead of re-running bootstrap.",
 		"Do not use another agent's or user's session, session secret, or auth_context_id during bootstrap or later workflow steps.",
 		"Claim or validate your own narrow approved session, then clean up child auth sessions, stale leases, and leftover coordination rows truthfully after the run.",
+		"When stable and dev runtimes both exist, confirm which runtime root or DB you are talking to before interpreting missing templates, kinds, or drift state.",
 	}
 	workflow := append([]string(nil), guide.NextSteps...)
 	related := make([]instructionsToolRelatedTool, 0, len(guide.Recommended))
@@ -310,6 +311,7 @@ func explainTemplateInstructions(ctx context.Context, services instructionsExpla
 		"Use till.project(operation=bind_template) or the TUI project edit flow to bind or rebind this library explicitly.",
 		"Use till.project(operation=preview_template_reapply) before adopting newer template revisions into an existing project.",
 		"At project creation, the orchestrator should confirm with the dev whether this library should define the whole project workflow or whether extra generic kinds should remain explicitly allowed.",
+		"Before ensure_builtin, run till.template(operation=get_builtin_status). If required or missing kinds are reported there, the active runtime DB is missing builtin prerequisite kinds or you are on the wrong stable/dev runtime; do not misread that as the builtin template being missing.",
 		"Before ensure_builtin, rebind, or other DB-mutating template updates, compare the current Hylla-backed repo state against the current DB library/binding state and ask the dev whether they want that update applied.",
 		"After binding, use till.project(operation=set_allowed_kinds) or till kind allowlist set to keep the project restricted to this library's node kinds or to intentionally opt generic kinds in.",
 	}

@@ -256,6 +256,7 @@ func TestMapAppError(t *testing.T) {
 		{name: "invalid auth request ttl", err: domain.ErrInvalidAuthRequestTTL, wantErr: ErrInvalidCaptureStateRequest},
 		{name: "lease required", err: domain.ErrMutationLeaseRequired, wantErr: ErrGuardrailViolation},
 		{name: "bootstrap", err: ErrBootstrapRequired, wantErr: ErrBootstrapRequired},
+		{name: "builtin template bootstrap", err: domain.ErrBuiltinTemplateBootstrapRequired, wantErr: ErrBuiltinTemplateBootstrapRequired},
 	}
 
 	for _, tc := range cases {

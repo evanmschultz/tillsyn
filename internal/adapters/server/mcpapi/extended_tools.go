@@ -424,7 +424,7 @@ func registerProjectTools(
 	srv.AddTool(
 		mcp.NewTool(
 			"till.project",
-			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|preview_template_reapply|approve_template_migrations|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup."+mcpGuardedMutationToolSuffix),
+			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|preview_template_reapply|approve_template_migrations|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup. For template changes, preview drift first, compare Hylla-backed repo state with the current DB binding state, ask the dev before mutating, and use set_allowed_kinds only to keep the project template-limited or to intentionally opt generic kinds in."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Project operation"), mcp.Enum("list", "create", "update", "bind_template", "get_template_binding", "preview_template_reapply", "approve_template_migrations", "set_allowed_kinds", "list_allowed_kinds", "list_change_events", "get_dependency_rollup")),
 			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=update|bind_template|get_template_binding|preview_template_reapply|approve_template_migrations|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup")),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived projects for operation=list")),
@@ -432,10 +432,10 @@ func registerProjectTools(
 			mcp.WithString("name", mcp.Description("Project name. Required for operation=create|update")),
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
-			mcp.WithString("template_library_id", mcp.Description("Template library identifier. Used by operation=create or bind_template")),
+			mcp.WithString("template_library_id", mcp.Description("Template library identifier. Used by operation=create or bind_template. Confirm with the dev whether this library should govern the project workflow and whether generic kinds should remain allowed before mutating the binding.")),
 			mcp.WithArray("task_ids", mcp.Description("Optional task ids for operation=approve_template_migrations"), mcp.WithStringItems()),
 			mcp.WithBoolean("approve_all", mcp.Description("Approve every eligible migration candidate for operation=approve_template_migrations")),
-			mcp.WithArray("kind_ids", mcp.Description("Allowed kind id list for operation=set_allowed_kinds"), mcp.WithStringItems()),
+			mcp.WithArray("kind_ids", mcp.Description("Allowed kind id list for operation=set_allowed_kinds. Use this to keep the project template-limited or to intentionally opt specific generic kinds in after discussing that policy with the dev."), mcp.WithStringItems()),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("session_id", mcp.Description("Required for mutating operations. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for mutating operations. "+mcpMutationSessionSecretDescription)),
@@ -1948,7 +1948,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 		srv.AddTool(
 			mcp.NewTool(
 				"till.set_project_allowed_kinds",
-				mcp.WithDescription("Set explicit project allowed kind identifiers."),
+				mcp.WithDescription("Set explicit project allowed kind identifiers. Use this to keep a project limited to its template kinds or to intentionally opt specific generic kinds in after discussing that policy with the dev."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithArray("kind_ids", mcp.Required(), mcp.Description("Allowed kind id list"), mcp.WithStringItems()),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
@@ -2015,7 +2015,7 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 	srv.AddTool(
 		mcp.NewTool(
 			"till.template",
-			mcp.WithDescription("Inspect or mutate template libraries and realized node contracts. Use operation=list|get|get_builtin_status|ensure_builtin|upsert|get_node_contract."),
+			mcp.WithDescription("Inspect or mutate template libraries and realized node contracts. Use operation=list|get|get_builtin_status|ensure_builtin|upsert|get_node_contract. For builtin refresh flows, call get_builtin_status before ensure_builtin. If required_kind_ids or missing_kind_ids are reported, the active runtime DB is missing prerequisite kind definitions or you are on the wrong stable/dev runtime; that is a bootstrap/runtime mismatch issue, not a missing template library."),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("list", "get", "get_builtin_status", "ensure_builtin", "upsert", "get_node_contract")),
 			mcp.WithString("scope", mcp.Description("Optional template-library scope filter"), mcp.Enum("global", "project", "draft")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter")),
@@ -2169,7 +2169,7 @@ func registerTemplateLibraryTools(srv *mcpserver.MCPServer, templates common.Tem
 		srv.AddTool(
 			mcp.NewTool(
 				"till.bind_project_template_library",
-				mcp.WithDescription("Bind one project to one approved template library."),
+				mcp.WithDescription("Bind one project to one approved template library. Preview drift first, compare current Hylla-backed repo state with the DB binding state, and ask the dev before mutating the binding."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithString("library_id", mcp.Required(), mcp.Description("Template library identifier")),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
