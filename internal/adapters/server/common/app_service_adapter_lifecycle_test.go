@@ -246,6 +246,12 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	if guide.Summary == "" || !strings.Contains(guide.Summary, "approved global agent session") || !strings.Contains(guide.Summary, "auth request") {
 		t.Fatalf("GetBootstrapGuide() summary = %q, want auth-aware bootstrap guidance", guide.Summary)
 	}
+	if !strings.Contains(guide.Summary, "worklogs in Tillsyn itself") {
+		t.Fatalf("GetBootstrapGuide() summary = %q, want Tillsyn-only coordination guidance", guide.Summary)
+	}
+	if !strings.Contains(guide.WhatTillsynIs, "AGENTS.md") || !strings.Contains(guide.WhatTillsynIs, "CLAUDE.md") {
+		t.Fatalf("GetBootstrapGuide() what_tillsyn_is = %q, want AGENTS.md/CLAUDE.md policy guidance", guide.WhatTillsynIs)
+	}
 	if len(guide.NextSteps) < 4 {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want at least 4 operational steps", guide.NextSteps)
 	}
@@ -260,6 +266,12 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 	}
 	if !containsStep(guide.NextSteps, "till.template(operation=list)", "till.project(operation=bind_template)") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want template-library binding guidance", guide.NextSteps)
+	}
+	if !containsStep(guide.NextSteps, "Keep active coordination inside Tillsyn itself") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want Tillsyn-only coordination step", guide.NextSteps)
+	}
+	if !containsStep(guide.NextSteps, "AGENTS.md", "CLAUDE.md") {
+		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want AGENTS.md/CLAUDE.md alignment step", guide.NextSteps)
 	}
 	if !containsStep(guide.NextSteps, "till.capture_state") {
 		t.Fatalf("GetBootstrapGuide() next_steps = %#v, want capture-state guidance", guide.NextSteps)

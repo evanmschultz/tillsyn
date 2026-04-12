@@ -21,8 +21,8 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	}
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
-		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing. Once work exists, use comments for shared discussion, mentions for routed comment inbox items, and handoffs for explicit next-action coordination that are action-required only for the addressed viewer.",
-		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, waitable stdio coordination watchers, and SQLite-backed template libraries for generated workflow contracts.",
+		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing. Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself rather than in markdown files. Once work exists, use comments for shared discussion, mentions for routed comment inbox items, and handoffs for explicit next-action coordination that are action-required only for the addressed viewer.",
+		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, waitable stdio coordination watchers, and SQLite-backed template libraries for generated workflow contracts. Durable policy docs such as AGENTS.md, CLAUDE.md, and README.md may describe the workflow, but the active execution state belongs in Tillsyn itself.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
 			"Task graph operations across branch/phase/task/subtask scopes",
@@ -33,7 +33,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"Kind catalog plus template-library-driven generated follow-up work and node-contract snapshots",
 			"Pre-session auth requests, approval, and continuation claims",
 			"Capability lease issuance and guardrailed non-user mutations",
-			"Instruction/bootstrap guidance for README plus optional external agent-policy and skill alignment",
+			"Instruction/bootstrap guidance for README plus optional AGENTS.md, CLAUDE.md, and skill-policy alignment",
 		},
 		NextSteps: []string{
 			"If this session is already approved for global work, create a project with till.project(operation=create)",
@@ -43,8 +43,10 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"If a guarded mutation rejects a user session plus lease tuple, either remove agent_instance_id/lease_token to act as a human or claim/validate a project-scoped approved agent session before retrying; renewing a lease alone does not change caller type",
 			"Never reuse another actor's session or auth_context_id; each actor should claim or validate its own scoped auth and clean up stale child sessions, leases, and pending requests truthfully after the run",
 			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
+			"Keep active coordination inside Tillsyn itself; do not create markdown task trackers, worklogs, or temporary execution plans for the run",
 			"Use till.comment(operation=create) for shared discussion and status updates inside Tillsyn; role mentions such as @human, @builder, @qa, @orchestrator, and @research route comment inbox rows",
 			"Use till.handoff for explicit next-action routing; open handoffs should be interpreted as Action Required only for the addressed viewer and as oversight warnings for everyone else",
+			"If workflow policy changes, update the tracked AGENTS.md and any tracked CLAUDE.md in the active worktree alongside the relevant bootstrap/instructions surfaces so client guidance stays aligned, but keep live execution state in Tillsyn",
 			"Prefer till.get_instructions(mode=explain, focus=topic, topic=bootstrap) for the canonical richer bootstrap explanation; till.get_bootstrap_guide remains the lightweight compatibility wrapper on the frozen surface",
 			"For active coordination watchers, keep till.attention_item/till.comment/till.handoff operation=list calls open with wait_timeout so they wait for the next change after current baseline state instead of polling",
 			"After a client restart on an existing instance, recover with till.capture_state first, then till.attention_item(operation=list), till.handoff(operation=list), and till.comment(operation=list) for the threads you need to resume",

@@ -77,12 +77,14 @@ func explainTopicInstructions(ctx context.Context, services instructionsExplainS
 		Overview: overview,
 		ScopedRules: []string{
 			"Tillsyn is a multi-actor coordination runtime, not just a planning ledger; name the owning role and use the right coordination surface for the job.",
+			"Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself rather than markdown files.",
 			"Use till.get_instructions for policy context, not as a replacement for direct runtime state tools.",
 			"Use till.comment for shared discussion, till.handoff for explicit next-action routing, and till.attention_item for durable inbox/notification state.",
 			"Use till.capture_state first after restart, then rebuild inbox, handoff, and thread state before resuming watchers.",
 		},
 		AgentExpectations: []string{
 			"Prefer MCP surfaces over CLI for live dogfood flows unless the operator explicitly asks for CLI validation.",
+			"If workflow policy changes, update AGENTS.md, any tracked CLAUDE.md, and the relevant bootstrap/instructions docs together so clients stay aligned, but do not use those files as live worklogs.",
 			"Keep role ownership explicit: orchestrator routes and cleans up, builder implements, QA verifies, research gathers evidence, and human approval stays visible when required.",
 			"Use project-scoped approved sessions for guarded in-project mutation work and global sessions for template/global admin only.",
 		},
@@ -109,6 +111,7 @@ func explainTopicInstructions(ctx context.Context, services instructionsExplainS
 func explainBootstrapTopic(guide common.BootstrapGuide) instructionsExplainResult {
 	scopedRules := []string{
 		"Bootstrap is for empty-instance and first-project setup; after work already exists, prefer till.capture_state plus scoped coordination reads instead of re-running bootstrap.",
+		"Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself; do not create markdown task trackers, worklogs, or temporary execution plans for the run.",
 		"Do not use another agent's or user's session, session secret, or auth_context_id during bootstrap or later workflow steps.",
 		"Claim or validate your own narrow approved session, then clean up child auth sessions, stale leases, and leftover coordination rows truthfully after the run.",
 		"When stable and dev runtimes both exist, confirm which runtime root or DB you are talking to before interpreting missing templates, kinds, or drift state.",
@@ -140,6 +143,7 @@ func explainBootstrapTopic(guide common.BootstrapGuide) instructionsExplainResul
 			WorkflowContract: workflow,
 			AgentExpectations: []string{
 				"Use till.get_instructions(topic=bootstrap) as the canonical bootstrap explanation surface; till.get_bootstrap_guide is the compatibility wrapper on the frozen MCP family.",
+				"If workflow policy changes, update AGENTS.md, any tracked CLAUDE.md, and the relevant bootstrap/instructions surfaces together so agent guidance stays synchronized, but keep live execution state in Tillsyn.",
 				"Once a project exists, move from bootstrap into scoped project, template, kind, and node explanations instead of relying on generic startup text.",
 			},
 			RelatedTools: related,
