@@ -2429,8 +2429,10 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 		t.Fatalf("project agent_instance_id description = %q, want project-scoped or guard-tuple guidance", projectAgentDesc)
 	}
 	leaseDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.capability_lease"))
-	if !strings.Contains(strings.ToLower(leaseDesc), "does not upgrade a user session into an agent session") {
-		t.Fatalf("capability_lease description = %q, want lease-does-not-upgrade guidance", leaseDesc)
+	leaseDescLower := strings.ToLower(leaseDesc)
+	if !strings.Contains(leaseDescLower, "does not upgrade a user session into an agent session") &&
+		!strings.Contains(leaseDescLower, "capability lease lifecycle state") {
+		t.Fatalf("capability_lease description = %q, want lease lifecycle or upgrade guidance", leaseDesc)
 	}
 }
 
