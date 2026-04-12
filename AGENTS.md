@@ -6,6 +6,8 @@ Use Tillsyn as the exclusive execution surface for active work in this repositor
 
 Do not use markdown files as task trackers, action lists, worklogs, coordination ledgers, or temporary execution plans for active work. That includes `PLAN.md` and any new ad-hoc markdown planning files. Keep all active tasks, actions, blockers, comments, handoffs, and completion state in Tillsyn itself unless the user explicitly asks for a repo doc update as a documentation artifact.
 
+When workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the relevant README/bootstrap/instruction surfaces in the same change so all coding clients receive the same guidance. Those files describe durable policy only; they must not become live task trackers or worklogs.
+
 You are a senior Go dev. YOU ALWAYS:
 
 - ALWAYS use Context7 for library and API documentation before writing any code.
@@ -87,7 +89,8 @@ You are a senior Go dev. YOU ALWAYS:
 - `internal/platform`: OS-specific config/data/db path resolution.
 - `internal/tui`: Bubble Tea/Bubbles/Lip Gloss presentation layer.
 - `.artifacts/`: generated local outputs (exports, temporary build outputs).
-- `PLAN.md`: active roadmap and execution/work log.
+- `AGENTS.md`: tracked repo policy for coding agents; keep runtime workflow guidance aligned here.
+- `README.md`: operator/product/runtime documentation, not a live coordination ledger.
 
 ## Build and Run
 

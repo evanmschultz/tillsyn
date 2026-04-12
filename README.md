@@ -7,6 +7,7 @@ The project/repo name is `tillsyn`, and the runtime command name is `till`.
 
 `tillsyn` is a local-first multi-actor coordination runtime with TUI, MCP, and CLI surfaces. Planning is only one part of the model: the runtime also carries typed workflow contracts, scoped auth, generated blockers, shared discussion threads, structured handoffs, durable inbox/attention state, and restart-safe recovery.
 A core product purpose is maintaining one DB-backed source of truth for coordination and execution state instead of fragmented markdown files or passive status logs.
+Active tasks, actions, blockers, comments, handoffs, and worklogs should stay in Tillsyn itself rather than in markdown planning files.
 
 Current scope:
 - local human + coding-agent coordination workflows in one runtime.
@@ -18,6 +19,7 @@ Current scope:
 Contributor workflow and CI policy: `CONTRIBUTING.md`
 Local branch/worktree workflow expectations are documented in `AGENTS.md`.
 Agent/client integration framing is documented in `TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md`.
+If repo-wide agent workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the bootstrap/instructions surfaces together so clients stay aligned.
 
 Local dogfood repo layout note:
 - the bare control repo lives one directory above this checkout,
@@ -93,7 +95,7 @@ Still in progress for this dogfood wave:
 - broader user-configurable policy/grant management beyond the current local dogfood request/session flow
 - explicit anti-adoption gatekeeping for any future auth-context reuse or attachment flow beyond the requester-bound claim path
 - richer disconnect-aware cleanup, broader continuous-listening/HTTP transport follow-through, and later OS-level notification ergonomics on top of the baseline-aware stdio watcher model
-- final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
+- final collaborative dogfood retest closeout and evidence capture in Tillsyn itself
 
 Current MCP/runtime direction:
 - Tillsyn should be treated as a multi-actor coordination runtime, not a passive planning ledger: use the runtime's distinct role, workflow, and coordination surfaces directly instead of flattening them into generic status text.
@@ -252,6 +254,10 @@ Current auth note:
   - If you see `Action Required`, assume there is an open handoff or similarly explicit work-request row for the current viewer, not just a plain comment.
 - Current live-transport caveat: waitable stdio watchers are now landed for auth, attention, comments, and handoffs, but they still depend on an active waiting client. This is not yet a disconnected push-notification system, richer session-aware cleanup layer, or HTTP/continuous-listening transport.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
+- Policy-document expectation note:
+  - `AGENTS.md` and any tracked `CLAUDE.md` are durable agent-policy files, not task ledgers.
+  - when workflow instructions change, update those files together with bootstrap and instruction-surface guidance so client behavior stays aligned.
+  - do not use markdown docs for active worklogs, coordination queues, or execution tracking.
 - Bootstrap/instructions status:
   - `till.get_instructions(topic=bootstrap)` is now the canonical richer bootstrap explanation surface.
   - `till.get_bootstrap_guide` remains the dedicated lightweight compatibility wrapper on the frozen MCP family.
@@ -362,6 +368,8 @@ Instruction-tool usage guidance:
 - Keep context bounded with `doc_names` and `max_chars_per_doc`.
 - Use `include_markdown=false` for inventory checks and `include_markdown=true` when full markdown text is required.
 - Descriptions/details and comment summary/body fields are markdown-first authoring surfaces.
+- Keep active execution state in Tillsyn itself; markdown docs are for durable policy/documentation, not live coordination or worklogs.
+- When agent workflow policy changes, update `AGENTS.md`, any tracked `CLAUDE.md`, and the bootstrap/instructions docs together.
 - Use `focus=project|template|kind|node` with `project_id`, `template_library_id`, `kind_id`, or `node_id` when you need scoped rules for a real runtime object instead of generic doc guidance.
 - For task sequencing today, use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite order and keep downstream work from starting too early; visual reordering can remain a later enhancement but should not replace explicit dependency intent.
 

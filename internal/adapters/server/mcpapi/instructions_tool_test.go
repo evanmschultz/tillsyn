@@ -139,6 +139,13 @@ func TestBuildInstructionsToolResponseExplainBootstrap(t *testing.T) {
 	if !strings.Contains(expectations, "till.get_instructions") {
 		t.Fatalf("AgentExpectations = %q, want get_instructions bootstrap guidance", expectations)
 	}
+	if !strings.Contains(expectations, "agents.md") || !strings.Contains(expectations, "claude.md") {
+		t.Fatalf("AgentExpectations = %q, want AGENTS.md/CLAUDE.md policy-sync guidance", expectations)
+	}
+	scopedRules := strings.ToLower(strings.Join(resp.Explanation.ScopedRules, " | "))
+	if !strings.Contains(scopedRules, "worklogs in tillsyn itself") {
+		t.Fatalf("ScopedRules = %q, want tillsyn-only coordination guidance", scopedRules)
+	}
 }
 
 // TestBuildInstructionsToolResponseExplainKind verifies kind explanations join catalog and scoped usage context.
@@ -222,5 +229,36 @@ func TestNormalizeInstructionsToolModeAndFocus(t *testing.T) {
 		ProjectID: "p1",
 	}); err == nil {
 		t.Fatal("normalizeInstructionsToolModeAndFocus(mode=docs, project_id) error = nil, want invalid_request")
+	}
+}
+
+// TestRecommendedInstructionSettingsIncludeTillsynOnlyCoordination verifies the helper recommendations reinforce Tillsyn-only active coordination.
+func TestRecommendedInstructionSettingsIncludeTillsynOnlyCoordination(t *testing.T) {
+	t.Parallel()
+
+	recommendations := strings.ToLower(strings.Join(recommendedInstructionSettings(), " | "))
+	if !strings.Contains(recommendations, "worklogs in tillsyn itself") {
+		t.Fatalf("recommendedInstructionSettings() = %q, want Tillsyn-only worklog guidance", recommendations)
+	}
+	if !strings.Contains(recommendations, "agents.md") || !strings.Contains(recommendations, "claude.md") {
+		t.Fatalf("recommendedInstructionSettings() = %q, want AGENTS.md/CLAUDE.md sync guidance", recommendations)
+	}
+}
+
+// TestRecommendedMDFileGuidanceHighlightsTillsynOnlyPolicy verifies repo-doc recommendations forbid markdown execution ledgers.
+func TestRecommendedMDFileGuidanceHighlightsTillsynOnlyPolicy(t *testing.T) {
+	t.Parallel()
+
+	guidance := recommendedMDFileGuidance()
+	agents := strings.ToLower(strings.Join(guidance["AGENTS.md"], " | "))
+	if !strings.Contains(agents, "must stay in tillsyn") {
+		t.Fatalf("AGENTS.md guidance = %q, want Tillsyn-only coordination guidance", agents)
+	}
+	if !strings.Contains(agents, "claude.md") {
+		t.Fatalf("AGENTS.md guidance = %q, want CLAUDE.md alignment guidance", agents)
+	}
+	claude := strings.ToLower(strings.Join(guidance["CLAUDE.md"], " | "))
+	if !strings.Contains(claude, "must stay in tillsyn") {
+		t.Fatalf("CLAUDE.md guidance = %q, want Tillsyn-only coordination guidance", claude)
 	}
 }
