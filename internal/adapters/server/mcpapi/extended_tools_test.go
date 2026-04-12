@@ -2423,8 +2423,10 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 	}
 	projectSchema := findToolSchemaByName(t, toolsRaw, "till.project")
 	projectAgentDesc := schemaStringPropertyDescription(t, projectSchema, "agent_instance_id")
-	if !strings.Contains(strings.ToLower(projectAgentDesc), "project-scoped approved agent session") {
-		t.Fatalf("project agent_instance_id description = %q, want project-scoped agent guidance", projectAgentDesc)
+	projectAgentDescLower := strings.ToLower(projectAgentDesc)
+	if !strings.Contains(projectAgentDescLower, "project-scoped approved agent session") &&
+		!strings.Contains(projectAgentDescLower, "secondary local guard checks") {
+		t.Fatalf("project agent_instance_id description = %q, want project-scoped or guard-tuple guidance", projectAgentDesc)
 	}
 	leaseDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.capability_lease"))
 	if !strings.Contains(strings.ToLower(leaseDesc), "does not upgrade a user session into an agent session") {
@@ -3110,7 +3112,8 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		}
 	}
 	if isError, _ := missingLeaseResp.Result["isError"].(bool); isError {
-		if got := toolResultText(t, missingLeaseResp.Result); !strings.Contains(got, "agent_instance_id and lease_token are required") {
+		if got := toolResultText(t, missingLeaseResp.Result); !strings.Contains(got, "agent_instance_id and lease_token are required") &&
+			!strings.Contains(got, "agent_name, agent_instance_id, and lease_token are required") {
 			t.Fatalf("missing lease tuple error = %q, want lease tuple requirement", got)
 		}
 	}

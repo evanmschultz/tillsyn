@@ -158,7 +158,11 @@ func TestDefaultPathsWithOptionsDevMode(t *testing.T) {
 // TestDefaultPathsWithOptionsStableHome verifies the stable runtime defaults under ~/.tillsyn-style homes.
 func TestDefaultPathsWithOptionsStableHome(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	} else {
+		t.Setenv("HOME", home)
+	}
 
 	p, err := DefaultPathsWithOptions(Options{AppName: "tillsyn"})
 	if err != nil {
@@ -256,9 +260,15 @@ func TestHasWorkspaceMarkerDetectsGitDirectory(t *testing.T) {
 // TestDefaultLegacyPathsUsesLegacyPlatformLayout verifies the compatibility helper still exposes the prior OS-specific layout.
 func TestDefaultLegacyPathsUsesLegacyPlatformLayout(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+		t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	} else {
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	}
 
 	p, err := DefaultLegacyPaths()
 	if err != nil {
@@ -269,6 +279,10 @@ func TestDefaultLegacyPathsUsesLegacyPlatformLayout(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		wantConfig = filepath.Join(home, "Library", "Application Support", "tillsyn", "config.toml")
 		wantDB = filepath.Join(home, "Library", "Application Support", "tillsyn", "tillsyn.db")
+	}
+	if runtime.GOOS == "windows" {
+		wantConfig = filepath.Join(home, "AppData", "Roaming", "tillsyn", "config.toml")
+		wantDB = filepath.Join(home, "AppData", "Local", "tillsyn", "tillsyn.db")
 	}
 	if got := p.ConfigPath; got != wantConfig {
 		t.Fatalf("config path = %q, want %q", got, wantConfig)
