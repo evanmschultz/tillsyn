@@ -439,6 +439,84 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	}
 }
 
+// TestGetBuiltinTemplateLibraryStatusMissingDefaultFrontend verifies builtin lifecycle status reports a missing install and missing frontend kind prerequisites.
+func TestGetBuiltinTemplateLibraryStatusMissingDefaultFrontend(t *testing.T) {
+	ctx := context.Background()
+	svc := newDeterministicService(newFakeRepo(), time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
+
+	status, err := svc.GetBuiltinTemplateLibraryStatus(ctx, "default-frontend")
+	if err != nil {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() error = %v", err)
+	}
+	if status.State != domain.BuiltinTemplateLibraryStateMissing {
+		t.Fatalf("status.State = %q, want missing", status.State)
+	}
+	if status.Installed {
+		t.Fatal("status.Installed = true, want false")
+	}
+	if got, want := len(status.RequiredKindIDs), 14; got != want {
+		t.Fatalf("len(status.RequiredKindIDs) = %d, want %d", got, want)
+	}
+	if got, want := len(status.MissingKindIDs), 12; got != want {
+		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
+	}
+	for _, want := range []domain.KindID{"branch", "task", "frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
+		if !slices.Contains(status.RequiredKindIDs, want) {
+			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
+		}
+	}
+	for _, want := range []domain.KindID{"frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
+		if !slices.Contains(status.MissingKindIDs, want) {
+			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
+		}
+	}
+}
+
+// TestDefaultFrontendBuiltinTemplateLibrarySpecLoadsRepoSource verifies the builtin default-frontend contract loads from the repo-visible template source.
+func TestDefaultFrontendBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
+	spec, err := defaultFrontendBuiltinTemplateLibrarySpec(builtinTemplateActor{})
+	if err != nil {
+		t.Fatalf("defaultFrontendBuiltinTemplateLibrarySpec() error = %v", err)
+	}
+	if spec.ID != "default-frontend" {
+		t.Fatalf("spec.ID = %q, want default-frontend", spec.ID)
+	}
+	if spec.BuiltinSource != "builtin://tillsyn/default-frontend" {
+		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-frontend", spec.BuiltinSource)
+	}
+	if spec.BuiltinVersion != "2026-04-12.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-12.1", spec.BuiltinVersion)
+	}
+	if got, want := len(spec.NodeTemplates), 8; got != want {
+		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
+	}
+	projectDefaults := spec.NodeTemplates[0].ProjectMetadataDefaults
+	if projectDefaults == nil || strings.TrimSpace(projectDefaults.StandardsMarkdown) == "" {
+		t.Fatalf("spec.NodeTemplates[0].ProjectMetadataDefaults = %#v, want standards markdown", projectDefaults)
+	}
+	if got := spec.NodeTemplates[0].ChildRules[0].TitleTemplate; got != "PROJECT SETUP" {
+		t.Fatalf("project root child title = %q, want PROJECT SETUP", got)
+	}
+	var buildTaskTemplate UpsertNodeTemplateInput
+	for _, nodeTemplate := range spec.NodeTemplates {
+		if nodeTemplate.NodeKindID == "build-task" {
+			buildTaskTemplate = nodeTemplate
+			break
+		}
+	}
+	if buildTaskTemplate.ID == "" {
+		t.Fatal("expected build-task node template in default-frontend builtin")
+	}
+	gotChildTitles := make([]string, 0, len(buildTaskTemplate.ChildRules))
+	for _, childRule := range buildTaskTemplate.ChildRules {
+		gotChildTitles = append(gotChildTitles, childRule.TitleTemplate)
+	}
+	slices.Sort(gotChildTitles)
+	if want := []string{"ACCESSIBILITY CHECK", "COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(gotChildTitles, want) {
+		t.Fatalf("build-task child titles = %#v, want %#v", gotChildTitles, want)
+	}
+}
+
 // TestEnsureBuiltinTemplateLibraryInstallsDefaultGo verifies the supported builtin library installs explicitly once required kinds exist.
 func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	ctx := context.Background()
@@ -485,6 +563,60 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
 	}
 	loaded, err := svc.GetTemplateLibrary(ctx, "default-go")
+	if err != nil {
+		t.Fatalf("GetTemplateLibrary() error = %v", err)
+	}
+	if !loaded.BuiltinManaged {
+		t.Fatal("loaded.BuiltinManaged = false, want true")
+	}
+}
+
+// TestEnsureBuiltinTemplateLibraryInstallsDefaultFrontend verifies the supported builtin frontend library installs explicitly once required kinds exist.
+func TestEnsureBuiltinTemplateLibraryInstallsDefaultFrontend(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := newDeterministicService(repo, time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
+	seedDefaultFrontendBuiltinTemplateKinds(t, ctx, svc)
+	spec, err := defaultFrontendBuiltinTemplateLibrarySpec(builtinTemplateActor{
+		ID:   "dev-1",
+		Name: "Dev",
+		Type: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("defaultFrontendBuiltinTemplateLibrarySpec() error = %v", err)
+	}
+
+	result, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-frontend",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("result.Changed = false, want true")
+	}
+	if result.Status.State != domain.BuiltinTemplateLibraryStateCurrent {
+		t.Fatalf("result.Status.State = %q, want current", result.Status.State)
+	}
+	if len(result.Status.MissingKindIDs) != 0 {
+		t.Fatalf("result.Status.MissingKindIDs = %#v, want none", result.Status.MissingKindIDs)
+	}
+	if !result.Library.BuiltinManaged {
+		t.Fatal("result.Library.BuiltinManaged = false, want true")
+	}
+	if result.Library.BuiltinSource != spec.BuiltinSource {
+		t.Fatalf("result.Library.BuiltinSource = %q, want %q", result.Library.BuiltinSource, spec.BuiltinSource)
+	}
+	if result.Library.BuiltinVersion != spec.BuiltinVersion {
+		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, spec.BuiltinVersion)
+	}
+	if got, want := len(result.Library.NodeTemplates), 8; got != want {
+		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
+	}
+	loaded, err := svc.GetTemplateLibrary(ctx, "default-frontend")
 	if err != nil {
 		t.Fatalf("GetTemplateLibrary() error = %v", err)
 	}
@@ -689,6 +821,147 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		}
 		if !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindHuman) || !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindQA) {
 			t.Fatalf("snapshot.CompletableByActorKinds for %q = %#v, want qa+human", task.Title, snapshot.CompletableByActorKinds)
+		}
+	}
+}
+
+// TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow verifies the shipped builtin default-frontend contract
+// generates project setup, branch lifecycle phases, plan guidance, and frontend QA work for build tasks.
+func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{AutoCreateProjectColumns: false})
+	seedDefaultFrontendBuiltinTemplateKinds(t, ctx, svc)
+
+	if _, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-frontend",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:              "Frontend",
+		Kind:              "frontend-project",
+		TemplateLibraryID: "default-frontend",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(project roots) error = %v", err)
+	}
+	rootTasks := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if strings.TrimSpace(task.ParentID) == "" {
+			rootTasks = append(rootTasks, task)
+		}
+	}
+	if got, want := len(rootTasks), 1; got != want {
+		t.Fatalf("len(rootTasks) = %d, want %d", got, want)
+	}
+	projectSetup := rootTasks[0]
+	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("project setup root = %#v, want PROJECT SETUP/project-setup-phase/phase", projectSetup)
+	}
+
+	columns, err := svc.ListColumns(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) == 0 {
+		t.Fatal("expected template root column for branch lane creation")
+	}
+
+	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "FRONTEND LANE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(branch children) error = %v", err)
+	}
+	branchChildren := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if task.ParentID == branch.ID {
+			branchChildren = append(branchChildren, task)
+		}
+	}
+	if got, want := childTitles(tasks, branch.ID), []string{"BRANCH CLEANUP", "BUILD", "CLOSEOUT", "PLAN"}; !slices.Equal(got, want) {
+		t.Fatalf("branch child titles = %#v, want %#v", got, want)
+	}
+
+	planPhase := findTaskByTitle(t, branchChildren, "PLAN")
+	if got, want := childTitles(tasks, planPhase.ID), []string{
+		"BRANCH SETUP",
+		"BUILD TASK TREE",
+		"CLOSEOUT AND CLEANUP EXPECTATIONS",
+		"CONTEXT7 AND BROWSER RESEARCH",
+		"DESIGN EXPLORATION",
+		"HYLLA-FIRST CODE UNDERSTANDING",
+		"SCOPE CONFIRMATION WITH DEV",
+		"VALIDATION PLAN",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("plan child titles = %#v, want %#v", got, want)
+	}
+
+	buildPhase := findTaskByTitle(t, branchChildren, "BUILD")
+	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  buildPhase.ID,
+		ColumnID:  buildPhase.ColumnID,
+		Kind:      domain.WorkKind("build-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "IMPLEMENT FRONTEND UPDATE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(build-task) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(build-task children) error = %v", err)
+	}
+	buildTaskChildren := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if task.ParentID == buildTask.ID {
+			buildTaskChildren = append(buildTaskChildren, task)
+		}
+	}
+	if want := []string{"ACCESSIBILITY CHECK", "COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(childTitles(tasks, buildTask.ID), want) {
+		t.Fatalf("build-task child titles = %#v, want %#v", childTitles(tasks, buildTask.ID), want)
+	}
+	for _, task := range buildTaskChildren {
+		snapshot, ok := repo.nodeContracts[task.ID]
+		if !ok {
+			t.Fatalf("repo.nodeContracts missing generated child %q", task.ID)
+		}
+		if !snapshot.RequiredForParentDone {
+			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
+		}
+		switch task.Title {
+		case "COMMIT AND REINGEST":
+			if snapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
+				t.Fatalf("commit-and-reingest responsible actor = %q, want builder", snapshot.ResponsibleActorKind)
+			}
+		case "VISUAL QA", "ACCESSIBILITY CHECK", "QA PROOF REVIEW", "QA FALSIFICATION REVIEW":
+			if snapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+				t.Fatalf("%s responsible actor = %q, want qa", task.Title, snapshot.ResponsibleActorKind)
+			}
+		default:
+			t.Fatalf("unexpected build-task child %q", task.Title)
 		}
 	}
 }
@@ -1307,6 +1580,29 @@ func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+	} {
+		if _, err := svc.UpsertKindDefinition(ctx, spec); err != nil {
+			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)
+		}
+	}
+}
+
+// seedDefaultFrontendBuiltinTemplateKinds installs the builtin default-frontend prerequisite kinds used by lifecycle tests.
+func seedDefaultFrontendBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
+	t.Helper()
+	for _, spec := range []CreateKindDefinitionInput{
+		{ID: "frontend-project", DisplayName: "Frontend Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
+		{ID: "project-setup-phase", DisplayName: "Project Setup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "plan-phase", DisplayName: "Plan Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-phase", DisplayName: "Build Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "closeout-phase", DisplayName: "Closeout Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "visual-qa", DisplayName: "Visual QA", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "a11y-check", DisplayName: "Accessibility Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "design-review", DisplayName: "Design Review", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
 		if _, err := svc.UpsertKindDefinition(ctx, spec); err != nil {

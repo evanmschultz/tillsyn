@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	defaultGoBuiltinLibraryID = "default-go"
+	defaultGoBuiltinLibraryID       = "default-go"
+	defaultFrontendBuiltinLibraryID = "default-frontend"
 )
 
 // EnsureBuiltinTemplateLibraryInput stores one explicit builtin install or refresh request.
@@ -137,6 +138,8 @@ func builtinTemplateLibrarySpec(libraryID string, actor builtinTemplateActor) (U
 	switch domain.NormalizeTemplateLibraryID(libraryID) {
 	case "", defaultGoBuiltinLibraryID:
 		return defaultGoBuiltinTemplateLibrarySpec(actor)
+	case defaultFrontendBuiltinLibraryID:
+		return defaultFrontendBuiltinTemplateLibrarySpec(actor)
 	default:
 		return UpsertTemplateLibraryInput{}, fmt.Errorf("%w: unsupported builtin template library %q", domain.ErrInvalidTemplateLibrary, strings.TrimSpace(libraryID))
 	}
@@ -242,6 +245,15 @@ func (s *Service) builtinTemplateMissingKinds(ctx context.Context, requiredKinds
 // defaultGoBuiltinTemplateLibrarySpec loads the builtin default-go library contract from the repo-visible embedded source.
 func defaultGoBuiltinTemplateLibrarySpec(actor builtinTemplateActor) (UpsertTemplateLibraryInput, error) {
 	doc, err := loadBuiltinTemplateLibraryDocument(defaultGoBuiltinLibraryID)
+	if err != nil {
+		return UpsertTemplateLibraryInput{}, err
+	}
+	return builtinTemplateLibraryInputFromDocument(doc, actor), nil
+}
+
+// defaultFrontendBuiltinTemplateLibrarySpec loads the builtin default-frontend library contract from the repo-visible embedded source.
+func defaultFrontendBuiltinTemplateLibrarySpec(actor builtinTemplateActor) (UpsertTemplateLibraryInput, error) {
+	doc, err := loadBuiltinTemplateLibraryDocument(defaultFrontendBuiltinLibraryID)
 	if err != nil {
 		return UpsertTemplateLibraryInput{}, err
 	}

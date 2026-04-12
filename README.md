@@ -271,13 +271,18 @@ Template-library operator examples:
   - assign each generated node to a responsible actor kind,
   - restrict edit/complete actions per actor kind,
   - and mark specific generated nodes as required blockers for parent or containing-scope completion.
-- Current shipped default-go workflow:
-  - a `go-project` now auto-generates one project-root `PROJECT SETUP` phase,
-  - `PROJECT SETUP` is project-only onboarding work for new or adopted projects and should queue the first branch lane plus its `PLAN` phase before broad implementation,
-  - each `branch` lane now auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP` in that order,
-  - `build-task` remains the concrete implementation task kind and now auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`,
-  - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete,
+- Current shipped builtin workflows:
+  - `default-go`:
+  - a `go-project` auto-generates one project-root `PROJECT SETUP` phase,
+  - each `branch` lane auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
+  - each `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`,
   - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` and shipped from [templates/builtin/default-go.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-go.json).
+  - `default-frontend`:
+  - a `frontend-project` auto-generates one project-root `PROJECT SETUP` phase,
+  - each `branch` lane auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
+  - each `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, `VISUAL QA`, `ACCESSIBILITY CHECK`, and `COMMIT AND REINGEST`,
+  - and the shipped summary plus builtin source are in [TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md) and [templates/builtin/default-frontend.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-frontend.json).
+  - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete.
 - Example shape:
   - a `build-task` template can generate one proof-oriented `qa-check` child, one falsification-oriented `qa-check` child, plus one `commit-and-reingest` child, all commentable because comments remain the shared coordination lane, while completion blockers still enforce truthful closeout.
 - Shared cross-client named-agent convention:
@@ -324,6 +329,8 @@ Template-library operator examples:
   - `till template library list --scope global --status approved`
   - `till template builtin status --library-id default-go`
   - `till template builtin ensure --library-id default-go`
+  - `till template builtin status --library-id default-frontend`
+  - `till template builtin ensure --library-id default-frontend`
   - `till template library show --library-id go-defaults`
   - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-proof-review","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA PROOF REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-falsification-review","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA FALSIFICATION REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
   - `till template project bind --project-id <project-id> --library-id go-defaults`
