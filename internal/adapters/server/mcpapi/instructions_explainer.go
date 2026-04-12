@@ -67,7 +67,7 @@ func explainTopicInstructions(ctx context.Context, services instructionsExplainS
 		return explainBootstrapTopic(guide), nil
 	}
 	title := "General Till Guidance"
-	overview := "Use embedded docs plus scoped runtime reads to understand workflow policy, coordination, auth, and template contracts."
+	overview := "Treat Tillsyn as a multi-actor coordination runtime and use embedded docs plus scoped runtime reads to understand workflow policy, coordination, auth, and template contracts."
 	if topic != "" {
 		title = fmt.Sprintf("Topic Guidance: %s", topic)
 		overview = fmt.Sprintf("Use embedded docs and runtime context together for %s guidance.", topic)
@@ -76,17 +76,20 @@ func explainTopicInstructions(ctx context.Context, services instructionsExplainS
 		Title:    title,
 		Overview: overview,
 		ScopedRules: []string{
+			"Tillsyn is a multi-actor coordination runtime, not just a planning ledger; name the owning role and use the right coordination surface for the job.",
 			"Use till.get_instructions for policy context, not as a replacement for direct runtime state tools.",
-			"Use till.comment for shared discussion, till.handoff for explicit next-action routing, and till.attention_item for inbox/notification state.",
+			"Use till.comment for shared discussion, till.handoff for explicit next-action routing, and till.attention_item for durable inbox/notification state.",
 			"Use till.capture_state first after restart, then rebuild inbox, handoff, and thread state before resuming watchers.",
 		},
 		AgentExpectations: []string{
 			"Prefer MCP surfaces over CLI for live dogfood flows unless the operator explicitly asks for CLI validation.",
+			"Keep role ownership explicit: orchestrator routes and cleans up, builder implements, QA verifies, research gathers evidence, and human approval stays visible when required.",
 			"Use project-scoped approved sessions for guarded in-project mutation work and global sessions for template/global admin only.",
 		},
 		RelatedTools: []instructionsToolRelatedTool{
 			{Tool: "till.get_instructions", Reason: "embedded docs and scoped explanations"},
 			{Tool: "till.capture_state", Reason: "summary-first restart recovery"},
+			{Tool: "till.attention_item", Operation: "list|raise|resolve", Reason: "durable inbox and notification state"},
 			{Tool: "till.comment", Operation: "create|list", Reason: "shared coordination threads"},
 			{Tool: "till.handoff", Operation: "create|list|update", Reason: "durable next-action routing"},
 		},

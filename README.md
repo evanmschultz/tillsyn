@@ -5,22 +5,24 @@ A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 `tillsyn` uses the Swedish word `tillsyn` ("oversight/supervision").
 The project/repo name is `tillsyn`, and the runtime command name is `till`.
 
-`tillsyn` is designed as a better human-visible planning and verification surface than ad-hoc markdown checklists. The primary direction is human + coding-agent collaboration with explicit state, auditability, and clear completion gates, while still remaining useful as a standalone personal TUI task manager.
-A core product purpose is maintaining one DB-backed source of truth for planning/execution state instead of fragmented markdown files.
+`tillsyn` is a local-first multi-actor coordination runtime with TUI, MCP, and CLI surfaces. Planning is only one part of the model: the runtime also carries typed workflow contracts, scoped auth, generated blockers, shared discussion threads, structured handoffs, durable inbox/attention state, and restart-safe recovery.
+A core product purpose is maintaining one DB-backed source of truth for coordination and execution state instead of fragmented markdown files or passive status logs.
 
 Current scope:
-- local tracking and planning workflows (human-operated TUI).
+- local human + coding-agent coordination workflows in one runtime.
+- DB-backed planning, execution, comments, handoffs, attention, auth, and template-driven workflow state.
+- stable installed runtime rooted at `~/.tillsyn`, plus repo-local dev runtime support via `mage dev`.
 - local runtime diagnostics with styled logging and runtime log files under the active root, plus dev-mode workspace-local log placement.
-- the active auth/runtime dogfood run is tracked in `PLAN.md`.
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
 Local branch/worktree workflow expectations are documented in `AGENTS.md`.
+Agent/client integration framing is documented in `TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md`.
 
 Local dogfood repo layout note:
 - the bare control repo lives one directory above this checkout,
 - `main/` is the operator/integration worktree,
-- additional linked worktrees typically live under the bare root's `.tmp/`.
+- additional linked worktrees should normally live as visible sibling worktrees under the bare root, not under `.tmp/`.
 
 ## Features
 - Multi-project Kanban board.
@@ -28,7 +30,7 @@ Local dogfood repo layout note:
 - SQLite persistence (`modernc.org/sqlite`, no CGO).
 - Keyboard navigation (`vim` keys + arrows) and mouse support.
 - Archive-first delete flow with configurable defaults.
-- Project and work-item thread mode with ownership-attributed markdown comments as the shared in-scope communication lane for human-to-agent and agent-to-agent coordination.
+- Project and work-item coordination with markdown comments as the shared discussion lane, handoffs as structured next-action routing, and attention as the durable inbox substrate.
 - Descriptions/comments are stored as markdown source fields and rendered in TUI views.
 - MCP instruction tool for embedded docs plus scoped project/template/kind/node explanations (`till.get_instructions`).
 - Raw stdio MCP via `./till mcp` as the primary local MCP transport.
@@ -41,10 +43,10 @@ Local dogfood repo layout note:
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-04-02)
+## Active Status (2026-04-12)
 Implemented now:
-- Use `PLAN.md` as the active source of truth for the current dogfood auth/runtime wave.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
+- Stable runtime now defaults to `~/.tillsyn`, `mage dev` runs against repo-local `./.tillsyn`, and `mage install` installs `till` into `~/.local/bin`.
 - `./till`, `./till mcp`, and `./till serve` now share the same real default runtime unless the user explicitly opts into a different runtime.
 - Local builds no longer silently force dev mode.
 - `./till mcp` stays the raw stdio MCP server and shuts down cleanly on `Ctrl-C`.
@@ -69,6 +71,7 @@ Implemented now:
 - Legacy kind-template compatibility paths still exist for create-time defaults and generated work when no template library is selected or when no matching bound node template exists.
 - Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, truthful completion gates, `system` audit provenance for generated nodes, and explicit global-to-project adopt/apply flows instead of silent backfill; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
 - Project creation can now optionally bind one approved global template library at create time, so project-scoped template defaults and root generated work start from the template-library model instead of the legacy kind-template path when the operator chooses that path.
+- The builtin `default-go` project setup path now explicitly includes `HYLLA VS DB STATE REVIEW`, and agents are expected to compare current Hylla state with installed DB template/binding state and ask the dev before DB-mutating refreshes such as builtin ensure or template reapply.
 - The intended auth model is now explicit:
   - global agent auth is for global catalog admin, template-library admin, and project creation/binding;
   - project-scoped agent auth is for guarded mutations inside that project;
@@ -93,6 +96,7 @@ Still in progress for this dogfood wave:
 - final collaborative dogfood retest closeout and evidence capture in `PLAN.md`
 
 Current MCP/runtime direction:
+- Tillsyn should be treated as a multi-actor coordination runtime, not a passive planning ledger: use the runtime's distinct role, workflow, and coordination surfaces directly instead of flattening them into generic status text.
 - `capture_state` is the summary-first recovery surface for level-scoped workflows; after client shutdown/restart, call it first to re-anchor project/scope context before resuming any watchers.
 - `till.get_instructions` is the embedded-doc and scoped policy/explanation surface; it can return selected markdown docs plus agent-facing recommendations, it can explain one concrete project, template library, kind, or node from runtime state without turning into a raw schema browser, and `topic=bootstrap` is now the canonical richer bootstrap explanation path.
 - `till.get_bootstrap_guide` remains on the frozen tool family as the lightweight compatibility wrapper for empty-instance and pre-approval flows.
@@ -377,7 +381,7 @@ After the current active slices close, run one cleanup/refinement wave focused o
 - add a dedicated project view mode alongside project edit mode so humans can inspect project metadata, template binding, and drift/update state without dropping straight into an editor.
 - in that later TUI pass, surface project template drift/update visibility in project view as well as project edit so update-available state is obvious without opening the edit workflow.
 - keep builtin-update visibility distinct from project-binding drift:
-  - project edit and the template-library picker now show shipped builtin lifecycle state separately from `ProjectTemplateBinding.DriftStatus`,
+- project edit and the template-library picker now show shipped builtin lifecycle state separately from `ProjectTemplateBinding.DriftStatus`,
   - project drift still compares the bound project snapshot to the latest template row already installed in the DB,
   - builtin update availability compares the installed DB library against the currently shipped builtin snapshot,
   - later polish should surface the same builtin-update indicator in project view/global operator surfaces and persist any extra provenance we need beyond digest-first comparison.
@@ -455,9 +459,27 @@ Install the stable binary into `~/.local/bin/till`:
 mage install
 ```
 
+Installed stable runtime state defaults to:
+- runtime root: `~/.tillsyn`
+- config: `~/.tillsyn/config.toml`
+- database: `~/.tillsyn/tillsyn.db`
+- logs: `~/.tillsyn/logs`
+
 Run the isolated repo-local dev runtime:
 ```bash
 mage dev
+```
+
+Repo-local dev runtime state defaults to:
+- runtime root: `<repo>/.tillsyn`
+- config: `<repo>/.tillsyn/config.toml`
+- database: `<repo>/.tillsyn/tillsyn.db`
+- logs: `<repo>/.tillsyn/logs`
+
+Inspect the active runtime paths:
+```bash
+till paths
+./till --dev paths
 ```
 
 ## Startup Behavior
