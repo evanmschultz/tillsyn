@@ -98,7 +98,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.auth_request",
-			mcp.WithDescription("Create, inspect, resume, or govern auth-request and approved-session lifecycle state. Use operation=create|list|get|claim|cancel|list_sessions|validate_session|check_session_governance|revoke_session."),
+			mcp.WithDescription("Create, inspect, resume, or govern auth-request and approved-session lifecycle state. Use operation=create|list|get|claim|cancel|list_sessions|validate_session|check_session_governance|revoke_session. For operation=create with acting_session_id, different-principal child auth is orchestrator-only; non-orchestrators may request only their own session."),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Auth-request or auth-session operation"), mcp.Enum("create", "list", "get", "claim", "cancel", "list_sessions", "validate_session", "check_session_governance", "revoke_session")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter for operation=list|list_sessions")),
 			mcp.WithString("state", mcp.Description("Optional request state filter for operation=list"), mcp.Enum("pending", "approved", "denied", "canceled", "expired")),
@@ -122,8 +122,8 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			mcp.WithString("request_id", mcp.Description("Auth request identifier. Required for operation=get|claim|cancel")),
 			mcp.WithString("session_id", mcp.Description("Auth session identifier. Required for operation=validate_session|check_session_governance|revoke_session and optional filter for operation=list_sessions")),
 			mcp.WithString("session_secret", mcp.Description("Auth session secret. Required for operation=validate_session")),
-			mcp.WithString("acting_session_id", mcp.Description("Approved acting auth session identifier. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create")),
-			mcp.WithString("acting_session_secret", mcp.Description("Approved acting auth session secret. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create")),
+			mcp.WithString("acting_session_id", mcp.Description("Approved acting auth session identifier. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create. When create targets a different principal/client, this acting session must be an orchestrator session; non-orchestrators may request only their own session.")),
+			mcp.WithString("acting_session_secret", mcp.Description("Approved acting auth session secret. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create. When create targets a different principal/client, this acting session must be an orchestrator session; non-orchestrators may request only their own session.")),
 			mcp.WithString("acting_auth_context_id", mcp.Description("Bound MCP auth context handle for the acting session, returned by till.auth_request claim/validate_session on stdio runtimes")),
 			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel. Use the token returned by operation=create when continuation_json was omitted.")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
@@ -555,7 +555,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 	srv.AddTool(
 		mcp.NewTool(
 			"till.attention_item",
-			mcp.WithDescription("Create, resolve, or list attention items. Use operation=list plus wait_timeout to keep a coordination watcher open during active runs; after client shutdown/restart, rerun capture_state and then list attention again to rebuild inbox state before resuming."),
+			mcp.WithDescription("Create, resolve, or list attention items. Use operation=list plus wait_timeout to keep a coordination watcher open during active runs; after client shutdown/restart, rerun capture_state and then list attention again to rebuild inbox state before resuming."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation",
 				mcp.Required(),
 				mcp.Enum("list", "raise", "resolve"),
@@ -577,9 +577,9 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 			mcp.WithString("session_id", mcp.Description("Required for operation=raise|resolve. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=raise|resolve. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("auth_context_id", mcp.Description("Required for operation=raise|resolve when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
@@ -636,9 +636,9 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs
@@ -658,9 +658,9 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 			mcp.WithString("reason", mcp.Description("Resolution reason")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token for secondary local guard checks")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs

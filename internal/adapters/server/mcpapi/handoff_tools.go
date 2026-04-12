@@ -19,7 +19,7 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.handoff",
-			mcp.WithDescription("Create, update, get, or list durable handoffs for structured next-action routing. Handoffs are the source of Action Required rows for the addressed actor and oversight warnings for everyone else; use till.comment for ordinary discussion. During active runs, operation=list can wait for the next handoff change, and after client shutdown/restart you should rerun capture_state plus handoff/attention reads before resuming."),
+			mcp.WithDescription("Create, update, get, or list durable handoffs for structured next-action routing. Handoffs are the source of Action Required rows for the addressed actor and oversight warnings for everyone else; use till.comment for ordinary discussion. During active runs, operation=list can wait for the next handoff change, and after client shutdown/restart you should rerun capture_state plus handoff/attention reads before resuming."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation",
 				mcp.Required(),
 				mcp.Enum("create", "update", "get", "list"),
@@ -47,9 +47,9 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 			mcp.WithString("session_id", mcp.Description("Required for operation=create|update. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=create|update. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("auth_context_id", mcp.Description("Required for operation=create|update when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
@@ -156,9 +156,9 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 			mcp.WithArray("related_refs", mcp.Description("Optional related ids or references"), mcp.WithStringItems()),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
@@ -188,9 +188,9 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 			mcp.WithString("resolution_note", mcp.Description("Optional resolution note when closing or superseding the handoff")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
