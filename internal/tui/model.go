@@ -17658,7 +17658,8 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"description field opens full markdown editor (enter or i)",
 			"kind field opens the project-kind picker (enter/e; typing starts a filtered picker)",
 			"icon field is shown in path context, notices, and picker and supports emoji",
-			"template library field opens the approved-library picker (enter/e; typing starts a filtered picker)",
+			"template library field opens the approved-library picker (enter/e; typing starts a filtered picker) and seeds allowed kinds from the selected library",
+			"confirm with the dev whether extra generic kinds should be allowed after template selection",
 			"root_path field: r opens directory picker",
 		}
 	case modeEditProject:
@@ -17668,6 +17669,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"kind field opens the project-kind picker; changing it updates template matching for future work",
 			"icon field is shown in path context, notices, and picker and supports emoji",
 			"template library field opens the approved-library picker; choose (none) to clear the active project binding",
+			"rebinding should include an explicit generic-kind decision with the dev; template-only is the safe default",
 			"root_path field: r opens directory picker",
 			"comments row: enter or e opens the project thread on the comments panel",
 		}
@@ -18675,8 +18677,15 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 			lines = append(lines, hintStyle.Render("run ensure builtin before rebinding projects to the newer shipped template"))
 		}
 	}
+	if selectedLibraryID == "" {
+		lines = append(lines, hintStyle.Render("template_policy: no library selected; the project starts with the broader catalog allowlist"))
+	} else {
+		lines = append(lines, hintStyle.Render("template_policy: selected library seeds allowed kinds from its node templates and child rules"))
+		lines = append(lines, hintStyle.Render("decide with the dev whether any extra generic kinds should be explicitly allowed after setup"))
+	}
 	if m.projectFormFocus == projectFieldTemplateLibrary {
 		lines = append(lines, hintStyle.Render("enter/e opens picker; type to start a filtered picker; choose (none) to clear"))
+		lines = append(lines, hintStyle.Render("template-only is the safe default; use kind allowlist controls later to opt generic kinds in intentionally"))
 	}
 	libraryRows := m.templateLibrarySummaryRows(5)
 	if len(libraryRows) == 0 {

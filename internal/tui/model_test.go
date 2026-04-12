@@ -15346,6 +15346,29 @@ func TestModelProjectKindPickerCtrlUAndEscape(t *testing.T) {
 	}
 }
 
+// TestProjectFormBodyLinesExplainTemplatePolicy verifies the project form explains template-derived allowlists and generic-kind decisions.
+func TestProjectFormBodyLinesExplainTemplatePolicy(t *testing.T) {
+	now := time.Date(2026, 4, 11, 11, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
+	svc := newFakeService([]domain.Project{project}, nil, nil)
+	svc.templateLibraries = []domain.TemplateLibrary{library}
+	m := loadReadyModel(t, NewModel(svc))
+
+	_ = m.startProjectForm(nil)
+	m.projectFormInputs[projectFieldTemplateLibrary].SetValue("go-defaults")
+	lines, _ := m.projectFormBodyLines(90, lipgloss.NewStyle(), lipgloss.Color("62"))
+	rendered := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"template_policy: selected library seeds allowed kinds from its node templates and child rules",
+		"decide with the dev whether any extra generic kinds should be explicitly allowed after setup",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected project form template guidance %q, got\n%s", want, rendered)
+		}
+	}
+}
+
 // TestModelProjectAndTemplatePickersMouseWheel verifies wheel scrolling moves selection inside picker overlays.
 func TestModelProjectAndTemplatePickersMouseWheel(t *testing.T) {
 	now := time.Date(2026, 3, 30, 12, 27, 0, 0, time.UTC)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -253,7 +254,8 @@ func (s *Service) BindProjectTemplateLibrary(ctx context.Context, in BindProject
 	if projectID == "" {
 		return domain.ProjectTemplateBinding{}, domain.ErrInvalidID
 	}
-	if _, err := s.repo.GetProject(ctx, projectID); err != nil {
+	project, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
 		return domain.ProjectTemplateBinding{}, err
 	}
 	library, err := s.repo.GetTemplateLibrary(ctx, in.LibraryID)
@@ -282,8 +284,21 @@ func (s *Service) BindProjectTemplateLibrary(ctx context.Context, in BindProject
 	if err != nil {
 		return domain.ProjectTemplateBinding{}, err
 	}
+	previousBinding, previousBindingFound, err := loadExistingProjectBindingForAllowlist(ctx, s.repo, projectID)
+	if err != nil {
+		return domain.ProjectTemplateBinding{}, err
+	}
 	if err := s.repo.UpsertProjectTemplateBinding(ctx, binding); err != nil {
 		return domain.ProjectTemplateBinding{}, err
+	}
+	refreshAllowlist, err := s.shouldRefreshProjectAllowlistForBinding(ctx, project, previousBinding, previousBindingFound)
+	if err != nil {
+		return domain.ProjectTemplateBinding{}, err
+	}
+	if refreshAllowlist {
+		if err := s.initializeProjectAllowedKinds(ctx, project, &library); err != nil {
+			return domain.ProjectTemplateBinding{}, err
+		}
 	}
 	return s.enrichProjectTemplateBinding(ctx, binding)
 }
@@ -406,6 +421,63 @@ func (s *Service) enrichProjectTemplateBinding(ctx context.Context, binding doma
 		}
 	}
 	return binding, nil
+}
+
+// loadExistingProjectBindingForAllowlist loads one binding when it exists so bind-time allowlist sync can compare policy shapes.
+func loadExistingProjectBindingForAllowlist(ctx context.Context, repo Repository, projectID string) (domain.ProjectTemplateBinding, bool, error) {
+	binding, err := repo.GetProjectTemplateBinding(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return domain.ProjectTemplateBinding{}, false, nil
+		}
+		return domain.ProjectTemplateBinding{}, false, err
+	}
+	return binding, true, nil
+}
+
+// shouldRefreshProjectAllowlistForBinding reports whether an explicit bind should replace the current allowlist with template-derived kinds.
+func (s *Service) shouldRefreshProjectAllowlistForBinding(ctx context.Context, project domain.Project, previousBinding domain.ProjectTemplateBinding, previousBindingFound bool) (bool, error) {
+	currentKinds, err := s.ListProjectAllowedKinds(ctx, project.ID)
+	if err != nil {
+		return false, err
+	}
+	currentKinds = normalizeKindIDList(currentKinds)
+	defaultKinds, err := s.defaultProjectAllowedKindIDs(ctx, project.Kind)
+	if err != nil {
+		return false, err
+	}
+	if slices.Equal(currentKinds, defaultKinds) {
+		return true, nil
+	}
+	if !previousBindingFound {
+		return false, nil
+	}
+	previousLibrary, err := librarySnapshotForBinding(ctx, s.repo, previousBinding)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	previousTemplateKinds := templateDerivedProjectAllowedKindIDs(project.Kind, previousLibrary)
+	return slices.Equal(currentKinds, previousTemplateKinds), nil
+}
+
+// librarySnapshotForBinding resolves the most specific library snapshot available for one binding.
+func librarySnapshotForBinding(ctx context.Context, repo Repository, binding domain.ProjectTemplateBinding) (*domain.TemplateLibrary, error) {
+	if binding.BoundLibrarySnapshot != nil {
+		snapshot := *binding.BoundLibrarySnapshot
+		return &snapshot, nil
+	}
+	libraryID := strings.TrimSpace(binding.LibraryID)
+	if libraryID == "" {
+		return nil, ErrNotFound
+	}
+	library, err := repo.GetTemplateLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	return &library, nil
 }
 
 // mergeTaskMetadataWithNodeTemplate applies task defaults from one node template at create time.

@@ -259,6 +259,29 @@ func NormalizeTemplateLibraryID(id string) string {
 	return strings.TrimSpace(strings.ToLower(id))
 }
 
+// ReferencedKindIDs returns the sorted unique kind ids referenced by one library.
+func (l TemplateLibrary) ReferencedKindIDs() []KindID {
+	seen := make(map[KindID]struct{})
+	for _, nodeTemplate := range l.NodeTemplates {
+		if kindID := NormalizeKindID(nodeTemplate.NodeKindID); kindID != "" {
+			seen[kindID] = struct{}{}
+		}
+		for _, childRule := range nodeTemplate.ChildRules {
+			if kindID := NormalizeKindID(childRule.ChildKindID); kindID != "" {
+				seen[kindID] = struct{}{}
+			}
+		}
+	}
+	out := make([]KindID, 0, len(seen))
+	for kindID := range seen {
+		out = append(out, kindID)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i] < out[j]
+	})
+	return out
+}
+
 // NormalizeTemplateLibraryScope canonicalizes template-library scope values.
 func NormalizeTemplateLibraryScope(scope TemplateLibraryScope) TemplateLibraryScope {
 	return TemplateLibraryScope(strings.TrimSpace(strings.ToLower(string(scope))))

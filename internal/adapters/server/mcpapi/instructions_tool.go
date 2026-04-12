@@ -334,6 +334,7 @@ func recommendedInstructionSettings() []string {
 		"Treat orchestrator cleanup as part of the workflow contract: child auth sessions, stale leases, pending requests, and stale coordination rows should be cleaned up truthfully when a run ends.",
 		"Use the role model consistently: orchestrator plans/routes/delegates/cleans up, builder implements, qa verifies and closes or returns work, and research inspects code/runtime state, compiles findings, and can use local MCP tools plus Context7 to gather evidence.",
 		"When template libraries are active, explain the actual scoped rule sources: project standards_markdown, template descriptions, child rules, branch/phase/task metadata, and node-contract snapshots.",
+		"When creating or reconfiguring a project, have the orchestrator confirm with the dev which template library should govern the project, whether the project should stay template-only, and which generic kinds, if any, are explicitly allowed.",
 		"When documenting default-go or similar workflow contracts, distinguish project-only setup from the normal branch/work lifecycle and keep PLAN before BUILD explicit.",
 		"Use depends_on, blocked_by, and blocked_reason to express real prerequisite order between tasks/phases today; do not rely on visual board position alone to tell agents what must finish first.",
 		"When explaining template libraries, prefer concrete child_rules examples such as a build task that auto-generates one or more required QA subtasks owned by qa.",
@@ -353,6 +354,7 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Dogfooding policy: reporting format for findings, blockers, and recovery steps.",
 			"Authoring policy: task/project details and comment summaries/bodies must be written as markdown.",
 			"Template policy: which actor kinds may draft, approve, bind, or apply template-library changes, and when human approval is mandatory.",
+			"Project template policy: how project creation chooses a governing template library, whether generic kinds are allowed, and how allowed-kinds should track that decision.",
 		},
 		"CLAUDE.md": {
 			"Interaction contract: communication style, update cadence, and escalation behavior.",
@@ -372,6 +374,7 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Document that routed comment mentions belong in the viewer-scoped Comments notifications section, while open handoffs are the primary Action Required rows.",
 			"Call out the supported role mentions explicitly: @human, @dev, @builder, @qa, @orchestrator, and @research, with @dev normalized to builder.",
 			"Canonical template-library examples covering inspect, bind, contract lookup, and JSON transport for CLI/MCP authoring against the SQLite-backed source of truth.",
+			"Document project-creation template policy explicitly: choose the governing template library up front, explain that template-bound projects can restrict allowed kinds to library-defined node kinds, and show how generic kinds are intentionally opted in.",
 			"At least one readable child_rules example that shows multi-role follow-up work and truthful completion gates, such as a build task auto-generating multiple QA subtasks.",
 			"Document the preferred workflow order for default-go style work: project setup when needed, then PLAN, BUILD, CLOSEOUT, and BRANCH CLEANUP.",
 			"Document that depends_on, blocked_by, and blocked_reason are the current explicit sequencing tools for task/phase prerequisites until richer visual ordering rules exist.",
