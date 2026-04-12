@@ -337,7 +337,7 @@ func buildAuthenticatedHTTPActor(caller domain.AuthenticatedCaller, guard httpMu
 	hasGuardTuple := guard.AgentInstanceID != "" || guard.LeaseToken != "" || guard.OverrideToken != ""
 	if caller.PrincipalType != domain.ActorTypeAgent {
 		if hasGuardTuple {
-			return common.ActorLeaseTuple{}, fmt.Errorf("guarded mutation tuple requires an authenticated agent session: %w", common.ErrInvalidCaptureStateRequest)
+			return common.ActorLeaseTuple{}, fmt.Errorf("guarded mutation tuple requires an authenticated agent session; remove agent_instance_id/lease_token to act as a human or claim/validate an approved agent session first: %w", common.ErrInvalidCaptureStateRequest)
 		}
 		return actor, nil
 	}

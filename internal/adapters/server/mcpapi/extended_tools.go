@@ -17,6 +17,12 @@ const (
 	mcpMutationSessionDescription       = "Authenticated MCP session identifier"
 	mcpMutationSessionSecretDescription = "Authenticated MCP session secret"
 	mcpMutationAuthContextDescription   = "Bound MCP auth context handle returned by till.auth_request claim/validate_session on stdio runtimes"
+	mcpGuardedMutationTupleDescription  = "Only for authenticated agent sessions; supplying this with a user session is invalid. Claim or validate a project-scoped approved agent session before guarded in-project mutations."
+	mcpAgentInstanceDescription         = "Optional agent lease instance id for secondary local guard checks. " + mcpGuardedMutationTupleDescription
+	mcpLeaseTokenDescription            = "Optional agent lease token for secondary local guard checks. " + mcpGuardedMutationTupleDescription
+	mcpOverrideTokenDescription         = "Optional override token for secondary local guard checks. " + mcpGuardedMutationTupleDescription
+	mcpGuardedMutationToolSuffix        = " Guarded lease tuple fields are only for authenticated agent sessions; a user session plus agent_instance_id/lease_token is invalid. Claim or validate a project-scoped approved agent session before guarded in-project mutations."
+	mcpCapabilityLeaseToolSuffix        = " Issuing or renewing a lease does not upgrade a user session into an agent session; guarded mutation tuples on other tools still require authenticated agent sessions."
 )
 
 // mcpSessionAuthArgs stores the session-secret pair required for mutating MCP calls.
@@ -80,7 +86,10 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 
 	if caller.PrincipalType != domain.ActorTypeAgent {
 		if hasGuardTuple {
-			return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: guarded mutation tuple requires an authenticated agent session")
+			return common.ActorLeaseTuple{}, fmt.Errorf(
+				"invalid_request: guarded mutation tuple requires an authenticated agent session; current session principal_type=%s. Remove agent_instance_id/lease_token to act as a human, or claim/validate a project-scoped approved agent session before retrying",
+				caller.PrincipalType,
+			)
 		}
 		return actor, nil
 	}
@@ -88,7 +97,7 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 		return actor, nil
 	}
 	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
-		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_name, agent_instance_id, and lease_token are required for authenticated agent mutations")
+		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_instance_id and lease_token are required for authenticated agent mutations; agent identity comes from the authenticated session")
 	}
 
 	// Lease identity must stay tied to the stable principal id; display name remains
@@ -415,7 +424,7 @@ func registerProjectTools(
 	srv.AddTool(
 		mcp.NewTool(
 			"till.project",
-			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|preview_template_reapply|approve_template_migrations|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup."),
+			mcp.WithDescription("Read or mutate one project-root operation. Use operation=list|create|update|bind_template|get_template_binding|preview_template_reapply|approve_template_migrations|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Project operation"), mcp.Enum("list", "create", "update", "bind_template", "get_template_binding", "preview_template_reapply", "approve_template_migrations", "set_allowed_kinds", "list_allowed_kinds", "list_change_events", "get_dependency_rollup")),
 			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=update|bind_template|get_template_binding|preview_template_reapply|approve_template_migrations|set_allowed_kinds|list_allowed_kinds|list_change_events|get_dependency_rollup")),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived projects for operation=list")),
@@ -431,9 +440,9 @@ func registerProjectTools(
 			mcp.WithString("session_id", mcp.Description("Required for mutating operations. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for mutating operations. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("auth_context_id", mcp.Description("Required for mutating operations when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
@@ -832,9 +841,9 @@ func registerProjectTools(
 				mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
+				mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+				mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+				mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				var args struct {
@@ -912,9 +921,9 @@ func registerProjectTools(
 				mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
+				mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+				mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+				mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				var args struct {
@@ -1468,7 +1477,7 @@ func registerTaskTools(
 		srv.AddTool(
 			mcp.NewTool(
 				"till.plan_item",
-				mcp.WithDescription("Read or mutate one plan-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."),
+				mcp.WithDescription("Read or mutate one plan-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."+mcpGuardedMutationToolSuffix),
 				mcp.WithString("operation", mcp.Required(), mcp.Description("Plan-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
 				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create and optional for operation=search")),
 				mcp.WithString("task_id", mcp.Description("Plan-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
@@ -1501,9 +1510,9 @@ func registerTaskTools(
 				mcp.WithString("session_id", mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Description(mcpMutationSessionSecretDescription)),
 				mcp.WithString("auth_context_id", mcp.Description(mcpMutationAuthContextDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-				mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-				mcp.WithString("override_token", mcp.Description("Optional override token")),
+				mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+				mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+				mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return handlePlanItemOperation(ctx, req, "plan_item", "")
@@ -1540,9 +1549,9 @@ func registerTaskTools(
 					mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-					mcp.WithString("override_token", mcp.Description("Optional override token")),
+					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+					mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return handlePlanItemOperation(ctx, req, "create_task", "create")
@@ -1562,9 +1571,9 @@ func registerTaskTools(
 					mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-					mcp.WithString("override_token", mcp.Description("Optional override token")),
+					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+					mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return handlePlanItemOperation(ctx, req, "update_task", "update")
@@ -1580,9 +1589,9 @@ func registerTaskTools(
 					mcp.WithNumber("position", mcp.Required(), mcp.Description("Destination position")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-					mcp.WithString("override_token", mcp.Description("Optional override token")),
+					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+					mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return handlePlanItemOperation(ctx, req, "move_task", "move")
@@ -1597,9 +1606,9 @@ func registerTaskTools(
 					mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-					mcp.WithString("override_token", mcp.Description("Optional override token")),
+					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+					mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return handlePlanItemOperation(ctx, req, "delete_task", "delete")
@@ -1613,9 +1622,9 @@ func registerTaskTools(
 					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-					mcp.WithString("override_token", mcp.Description("Optional override token")),
+					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+					mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return handlePlanItemOperation(ctx, req, "restore_task", "restore")
@@ -1630,9 +1639,9 @@ func registerTaskTools(
 					mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-					mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-					mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-					mcp.WithString("override_token", mcp.Description("Optional override token")),
+					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+					mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return handlePlanItemOperation(ctx, req, "reparent_task", "reparent")
@@ -2331,14 +2340,14 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.capability_lease",
-			mcp.WithDescription("List or mutate capability lease lifecycle state. Use operation=list|issue|heartbeat|renew|revoke|revoke_all."),
+			mcp.WithDescription("List or mutate capability lease lifecycle state. Use operation=list|issue|heartbeat|renew|revoke|revoke_all."+mcpCapabilityLeaseToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Capability lease operation"), mcp.Enum("list", "issue", "heartbeat", "renew", "revoke", "revoke_all")),
 			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|issue|revoke_all")),
 			mcp.WithString("scope_type", mcp.Description("project|branch|phase|task|subtask. Optional for operation=list; required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and for project scope; otherwise used by operation=issue|revoke_all")),
 			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases when operation=list")),
 			mcp.WithString("role", mcp.Description("orchestrator|builder|qa|research. Required for operation=issue"), mcp.Enum("orchestrator", "builder", "qa", "research")),
-			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session; otherwise required for operation=issue")),
+			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session; otherwise required for operation=issue. Issuing a lease under a user session does not convert that user session into an authenticated agent session for later guarded mutations.")),
 			mcp.WithString("agent_instance_id", mcp.Description("Agent instance identifier. Required for operation=heartbeat|renew|revoke and optional for operation=issue")),
 			mcp.WithString("parent_instance_id", mcp.Description("Optional parent lease instance id for operation=issue")),
 			mcp.WithBoolean("allow_equal_scope_delegation", mcp.Description("Allow equal-scope delegation for operation=issue")),
@@ -2397,7 +2406,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("role", mcp.Required(), mcp.Description("orchestrator|builder|qa|research"), mcp.Enum("orchestrator", "builder", "qa", "research")),
-			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session")),
+			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session. Issuing a lease under a user session does not convert that user session into an authenticated agent session for later guarded mutations.")),
 			mcp.WithString("agent_instance_id", mcp.Description("Optional stable agent instance id")),
 			mcp.WithString("parent_instance_id", mcp.Description("Optional parent lease instance id")),
 			mcp.WithBoolean("allow_equal_scope_delegation", mcp.Description("Allow equal-scope delegation")),
@@ -2505,7 +2514,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.comment",
-			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs. During active runs, operation=list can wait for the next thread update, and after client shutdown/restart you should rerun capture_state plus comment/attention reads to recover thread state."),
+			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs. During active runs, operation=list can wait for the next thread update, and after client shutdown/restart you should rerun capture_state plus comment/attention reads to recover thread state."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Comment operation"), mcp.Enum("create", "list")),
 			mcp.WithString("project_id", mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
@@ -2516,9 +2525,9 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			mcp.WithString("session_id", mcp.Description("Required for operation=create. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for operation=create. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("auth_context_id", mcp.Description("Required for operation=create when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
-			mcp.WithString("agent_instance_id", mcp.Description("Optional agent lease instance id for secondary local guard checks")),
-			mcp.WithString("lease_token", mcp.Description("Optional agent lease token for secondary local guard checks")),
-			mcp.WithString("override_token", mcp.Description("Optional override token")),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)

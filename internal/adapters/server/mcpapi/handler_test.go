@@ -1796,6 +1796,50 @@ func TestAuthRequestToolAuthContextHandles(t *testing.T) {
 	}
 }
 
+func TestHandlerAuthRequestToolSchemaExplainsDelegatedAgentRules(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+
+	authTool := findToolByName(t, toolsRaw, "till.auth_request")
+	authDesc := toolDescription(t, authTool)
+	if !strings.Contains(strings.ToLower(authDesc), "orchestrator-only") {
+		t.Fatalf("auth_request description = %q, want orchestrator-only delegated guidance", authDesc)
+	}
+	authSchema := findToolSchemaByName(t, toolsRaw, "till.auth_request")
+	actingSessionDesc := schemaStringPropertyDescription(t, authSchema, "acting_session_id")
+	if !strings.Contains(strings.ToLower(actingSessionDesc), "orchestrator session") {
+		t.Fatalf("acting_session_id description = %q, want orchestrator-session guidance", actingSessionDesc)
+	}
+	if !strings.Contains(strings.ToLower(actingSessionDesc), "non-orchestrators may request only their own session") {
+		t.Fatalf("acting_session_id description = %q, want self-request-only guidance", actingSessionDesc)
+	}
+}
+
 // TestHandlerClaimAuthRequestWaitingPayload verifies waiting claims return a pending request plus waiting=true without secrets.
 func TestHandlerClaimAuthRequestWaitingPayload(t *testing.T) {
 	capture := &stubAuthRequestService{

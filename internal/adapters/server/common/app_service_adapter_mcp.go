@@ -39,7 +39,8 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"If this session is already approved for global work, create a project with till.project(operation=create)",
 			"If it is not approved yet, create an auth request with till.auth_request(operation=create); if you omit continuation_json it will auto-generate and return a requester-owned resume_token for later claim/cancel",
 			"After approval, claim the request with till.auth_request(operation=claim), then create the project with till.project(operation=create)",
-			"After the project exists, claim or reuse a project-scoped approved session before guarded in-project mutations such as till.plan_item(operation=create)",
+			"After the project exists, claim or reuse a project-scoped approved agent session before guarded in-project mutations such as till.plan_item(operation=create)",
+			"If a guarded mutation rejects a user session plus lease tuple, either remove agent_instance_id/lease_token to act as a human or claim/validate a project-scoped approved agent session before retrying; renewing a lease alone does not change caller type",
 			"Never reuse another actor's session or auth_context_id; each actor should claim or validate its own scoped auth and clean up stale child sessions, leases, and pending requests truthfully after the run",
 			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
 			"Use till.comment(operation=create) for shared discussion and status updates inside Tillsyn; role mentions such as @human, @builder, @qa, @orchestrator, and @research route comment inbox rows",
@@ -137,13 +138,13 @@ func (a *AppServiceAdapter) resolveCreateAuthRequestRequester(ctx context.Contex
 		return "", "", "", err
 	}
 	if !authRequestPathWithin(actingPath, requestedPath) {
-		return "", "", "", ErrAuthorizationDenied
+		return "", "", "", fmt.Errorf("delegated auth request path %q must stay within acting approved path %q: %w", strings.TrimSpace(in.Path), strings.TrimSpace(actingSession.ApprovedPath), ErrAuthorizationDenied)
 	}
 	if err := validateDelegatedAuthRequestRequester(in, actingSession); err != nil {
 		return "", "", "", err
 	}
 	if delegatedAuthRequestIdentityDiffers(in, actingSession) && !authSessionRoleMayGovernOthers(actingSession) {
-		return "", "", "", ErrAuthorizationDenied
+		return "", "", "", fmt.Errorf("delegated auth request for a different principal/client requires an orchestrator acting session; non-orchestrators may request only their own session: %w", ErrAuthorizationDenied)
 	}
 	return strings.TrimSpace(actingSession.PrincipalID), domain.ActorType(strings.TrimSpace(actingSession.PrincipalType)), strings.TrimSpace(actingSession.ClientID), nil
 }
@@ -1949,14 +1950,14 @@ func withMutationGuardContextAllowUnguardedAgent(ctx context.Context, actor Acto
 	overrideToken := strings.TrimSpace(actor.OverrideToken)
 	hasGuardTuple := agentInstanceID != "" || leaseToken != "" || overrideToken != ""
 	if hasGuardTuple && actorType == domain.ActorTypeUser {
-		return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple: %w", ErrInvalidCaptureStateRequest)
+		return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple; remove the guard tuple to act as a human or claim/validate an authenticated agent session first: %w", ErrInvalidCaptureStateRequest)
 	}
 	if actorType != domain.ActorTypeUser || hasGuardTuple {
 		if allowUnguardedAgent && actorType == domain.ActorTypeAgent && !hasGuardTuple {
 			goto attachIdentity
 		}
 		if agentName == "" || agentInstanceID == "" || leaseToken == "" {
-			return nil, "", fmt.Errorf("agent_name, agent_instance_id, and lease_token are required for non-user or guarded mutations: %w", ErrInvalidCaptureStateRequest)
+			return nil, "", fmt.Errorf("agent_name, agent_instance_id, and lease_token are required for non-user or guarded mutations; a lease alone does not upgrade a user session into an agent session: %w", ErrInvalidCaptureStateRequest)
 		}
 		ctx = app.WithMutationGuard(ctx, app.MutationGuard{
 			AgentName:       agentName,
