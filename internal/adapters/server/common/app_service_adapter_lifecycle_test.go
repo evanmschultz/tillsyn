@@ -399,6 +399,59 @@ func TestAppServiceAdapterBuiltinTemplateLifecycle(t *testing.T) {
 	}
 }
 
+// TestAppServiceAdapterBuiltinTemplateLifecycleDefaultFrontend verifies builtin frontend template status and ensure wrappers over the real app service stack.
+func TestAppServiceAdapterBuiltinTemplateLifecycleDefaultFrontend(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	status, err := fixture.adapter.GetBuiltinTemplateLibraryStatus(ctx, "default-frontend")
+	if err != nil {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() error = %v", err)
+	}
+	if status.State != domain.BuiltinTemplateLibraryStateMissing {
+		t.Fatalf("GetBuiltinTemplateLibraryStatus() state = %q, want missing", status.State)
+	}
+	for _, spec := range []app.CreateKindDefinitionInput{
+		{ID: "frontend-project", DisplayName: "Frontend Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
+		{ID: "project-setup-phase", DisplayName: "Project Setup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "plan-phase", DisplayName: "Plan Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-phase", DisplayName: "Build Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "closeout-phase", DisplayName: "Closeout Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "visual-qa", DisplayName: "Visual QA", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "a11y-check", DisplayName: "Accessibility Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+		{ID: "design-review", DisplayName: "Design Review", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
+	} {
+		if _, err := fixture.svc.UpsertKindDefinition(ctx, spec); err != nil {
+			t.Fatalf("UpsertKindDefinition(%q) error = %v", spec.ID, err)
+		}
+	}
+	authCtx := app.WithAuthenticatedCaller(ctx, domain.AuthenticatedCaller{
+		PrincipalID:   "dev-1",
+		PrincipalName: "Dev One",
+		PrincipalType: domain.ActorTypeUser,
+	})
+	result, err := fixture.adapter.EnsureBuiltinTemplateLibrary(authCtx, EnsureBuiltinTemplateLibraryRequest{
+		LibraryID: "default-frontend",
+	})
+	if err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("EnsureBuiltinTemplateLibrary() changed = false, want true")
+	}
+	if result.Status.State != domain.BuiltinTemplateLibraryStateCurrent {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() state = %q, want current", result.Status.State)
+	}
+	if result.Library.ID != "default-frontend" || !result.Library.BuiltinManaged {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() library = %#v, want builtin default-frontend", result.Library)
+	}
+}
+
 // TestAppServiceAdapterProjectTemplateReapplyPreview verifies the common adapter surfaces project reapply preview data from the real app stack.
 func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 	t.Parallel()

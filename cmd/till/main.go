@@ -1094,6 +1094,7 @@ or refresh the locked builtin definition when the runtime contract changes.
 		Example: strings.Join([]string{
 			"  till template builtin status",
 			"  till template builtin ensure --library-id default-go",
+			"  till template builtin ensure --library-id default-frontend",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -1101,7 +1102,7 @@ or refresh the locked builtin definition when the runtime contract changes.
 		Use:   "status",
 		Short: "Show builtin template install and drift state",
 		Long: strings.TrimSpace(`
-Show whether the supported builtin template library is installed, current, or
+Show whether the selected builtin template library is installed, current, or
 behind the builtin contract embedded in this build.
 
 Run this before builtin ensure so you can see the required and missing kind
@@ -1118,7 +1119,7 @@ definitions for the active runtime DB.
 		Use:   "ensure",
 		Short: "Install or refresh one builtin template library",
 		Long: strings.TrimSpace(`
-Install the supported builtin template library when missing or refresh it
+Install the selected builtin template library when missing or refresh it
 explicitly when the embedded builtin contract changed.
 
 Run builtin status first. If required kinds are still missing, the active

@@ -1,0 +1,790 @@
+{
+  "id": "default-frontend",
+  "name": "Default Frontend",
+  "description": "Builtin frontend workflow contract for project setup, branch planning, implementation, visual and accessibility QA, closeout, and cleanup.",
+  "builtin_source": "builtin://tillsyn/default-frontend",
+  "builtin_version": "2026-04-12.1",
+  "node_templates": [
+    {
+      "id": "frontend-project-template",
+      "scope_level": "project",
+      "node_kind_id": "frontend-project",
+      "display_name": "Frontend Project",
+      "description_markdown": "Project-level frontend workflow contract with explicit setup before normal branch execution.",
+      "project_metadata_defaults": {
+        "owner": "Evan",
+        "standards_markdown": "- Use Hylla MCP first for repo-local code understanding; use git diff for local deltas.\n- Use Context7 for framework, language, toolchain, and CSS references the repository cannot prove. Use MDN and CanIUse for browser semantics and compatibility.\n- CSS should do the work. Prefer semantic HTML, layered CSS, and shared tokens over framework-specific styling indirection.\n- Ship the least browser JavaScript that solves the current need. Prefer static or progressively-enhanced rendering over default hydration.\n- Treat responsive behavior, keyboard navigation, screen-reader landmarks, and contrast as first-class acceptance criteria.\n- Use browser-based visual verification for meaningful UI changes. Prefer Playwright MCP or an equivalent browser automation path when available.\n- For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.\n- During project setup or template refresh decisions, compare current Hylla state with the currently installed DB template/binding state and ask the dev before running DB-mutating updates such as builtin ensure, template reapply, or similar refresh steps.\n- Shared cross-client named agents should stay aligned across Codex and Claude: `orchestration-agent`, `planning-agent`, `research-agent`, `builder-agent`, `qa-proof-agent`, `qa-falsification-agent`, `closeout-agent`, and `commit-and-reingest-agent`.\n- Build in small tested increments.\n- Prefer the smallest concrete design that satisfies the current requirement.\n- Reuse or refactor existing code when that is the best option instead of adding speculative structure.\n- Do not add abstraction for hypothetical future variation.\n- Unresolved uncertainty must become explicit coordination state such as comments, handoffs, or attention instead of optimistic completion.\n- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.\n- Comments, handoffs, and attention are distinct coordination surfaces: comments are shared discussion, handoffs are explicit next-action routing, and attention is the durable inbox substrate.\n- Template-generated blockers must be completed truthfully before done.\n- Use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite ordering until richer workflow ordering rules land.\n- Never use another agent's auth or `auth_context_id`, and never paste auth material into comments, handoffs, tasks, or docs.\n- Orchestrators own child auth cleanup and must leave no stale sessions, leases, or coordination trash behind."
+      },
+      "child_rules": [
+        {
+          "id": "project-setup",
+          "position": 1,
+          "child_scope_level": "phase",
+          "child_kind_id": "project-setup-phase",
+          "title_template": "PROJECT SETUP",
+          "description_template": "Project-only onboarding work for template fit, Hylla decisions, metadata lock, and preparation for the first branch lane.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "frontend-project-setup-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "project-setup-phase",
+      "display_name": "Project Setup Phase",
+      "description_markdown": "Project-only onboarding phase that must happen before normal branch work starts.",
+      "task_metadata_defaults": {
+        "objective": "Bootstrap the project, confirm template fit, compare Hylla and DB state, and prepare the first branch lane.",
+        "definition_of_done": "Template fit reviewed, Hylla decisions recorded, current Hylla versus DB state reviewed with the dev before any DB update, project metadata locked, and the first branch lane plus PLAN phase are explicitly queued.",
+        "validation_plan": "Confirm standards, Hylla freshness, current DB template/binding state, and the initial workflow shape with the dev before broad implementation or DB-mutating refresh actions.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "project-setup-template-fit-review",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "TEMPLATE FIT REVIEW",
+          "description_template": "Review whether default-frontend still matches this project's needs before normal execution begins.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-ingest-mode-decision",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA INGEST MODE DECISION",
+          "description_template": "Choose `structural_only`, `embeddings_only`, or `full_enrichment` with the dev.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-initial-refresh",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA INITIAL INGEST OR REFRESH",
+          "description_template": "Run the initial Hylla ingest or refresh for the intended repo state.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-freshness-check",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA VS GIT FRESHNESS CHECK",
+          "description_template": "Confirm the Hylla artifact is current to the intended git ref.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "research",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-hylla-db-state-review",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA VS DB STATE REVIEW",
+          "description_template": "Compare current Hylla state with the currently installed DB template and binding state, then ask the dev before applying any DB-mutating update or refresh.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-metadata-standards-lock",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "PROJECT METADATA AND STANDARDS LOCK",
+          "description_template": "Lock project metadata, standards, auth hygiene expectations, and coordination rules before normal execution.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-first-branch-lane",
+          "position": 7,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CREATE OR CONFIRM FIRST BRANCH LANE",
+          "description_template": "Create or confirm the first branch lane and its working agreement before broad implementation starts.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-first-plan-phase",
+          "position": 8,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CREATE OR CONFIRM FIRST PLAN PHASE",
+          "description_template": "Queue the first branch lane so its PLAN phase is explicit before broad implementation starts.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "frontend-branch-template",
+      "scope_level": "branch",
+      "node_kind_id": "branch",
+      "display_name": "Branch Lane",
+      "description_markdown": "A branch/work lane that auto-generates the normal PLAN -> BUILD -> CLOSEOUT -> BRANCH CLEANUP phases.",
+      "child_rules": [
+        {
+          "id": "branch-plan",
+          "position": 1,
+          "child_scope_level": "phase",
+          "child_kind_id": "plan-phase",
+          "title_template": "PLAN",
+          "description_template": "Planning phase for current-state understanding, task shaping, design intent, and validation design before BUILD starts.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "branch-build",
+          "position": 2,
+          "child_scope_level": "phase",
+          "child_kind_id": "build-phase",
+          "title_template": "BUILD",
+          "description_template": "Implementation phase for concrete build-task work.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "branch-closeout",
+          "position": 3,
+          "child_scope_level": "phase",
+          "child_kind_id": "closeout-phase",
+          "title_template": "CLOSEOUT",
+          "description_template": "Verification, review, and readiness phase after BUILD.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "branch-cleanup",
+          "position": 4,
+          "child_scope_level": "phase",
+          "child_kind_id": "branch-cleanup-phase",
+          "title_template": "BRANCH CLEANUP",
+          "description_template": "Final cleanup phase for branch/work retirement once closeout is truly done.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "frontend-plan-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "plan-phase",
+      "display_name": "Plan Phase",
+      "description_markdown": "Explicit planning phase that should exist before broad implementation begins. Planning should ground the work in committed repo evidence, test the intended UX, and shape the validation path before BUILD starts.",
+      "task_metadata_defaults": {
+        "objective": "Understand current state, gather repo-local and external evidence, explore design intent, and shape the executable task tree before BUILD begins.",
+        "definition_of_done": "Current state is understood, scope is confirmed, design intent is documented, implementation tasks exist, validation is defined, prerequisites are explicit, and semantic or high-risk claims are supported by written evidence plus explicit unknowns.",
+        "validation_plan": "Use Hylla first for repo-local behavior, Context7 for framework and tool docs, and MDN/CanIUse for browser semantics and compatibility. Identify proof-oriented and falsification-oriented QA expectations, visual verification, and accessibility checks before BUILD.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "plan-hylla-understanding",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA-FIRST CODE UNDERSTANDING",
+          "description_template": "Have `research-agent` trace the relevant components, styles, assets, tokens, and reuse candidates through Hylla before local implementation begins.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-context7-browser-research",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CONTEXT7 AND BROWSER RESEARCH",
+          "description_template": "Have `research-agent` gather the external documentation needed for semantics the repository itself cannot prove: framework APIs, browser features, CSS behavior, and compatibility constraints.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-design-exploration",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "design-review",
+          "title_template": "DESIGN EXPLORATION",
+          "description_template": "Explore design intent, interaction states, and layout tradeoffs before BUILD starts. Record the intended visual direction and open design unknowns.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research",
+            "builder"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-scope-confirmation",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "SCOPE CONFIRMATION WITH DEV",
+          "description_template": "Confirm the actual scope and intended outcome before implementation.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-build-task-tree",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "BUILD TASK TREE",
+          "description_template": "Create the detailed build-task and supporting task tree for the upcoming BUILD phase so the work is decomposable, verifiable, incremental, and assignable.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-validation-plan",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "VALIDATION PLAN",
+          "description_template": "Define how the work will be validated before handoff and closeout, including proof-oriented QA, falsification-oriented QA, visual verification, accessibility checks, and counterexample traces.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-branch-setup",
+          "position": 7,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "BRANCH SETUP",
+          "description_template": "Plan or confirm branch-lane basics, local workflow assumptions, and any required tooling before BUILD begins.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "plan-closeout-cleanup-expectations",
+          "position": 8,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CLOSEOUT AND CLEANUP EXPECTATIONS",
+          "description_template": "Define closeout, branch cleanup, and coordination expectations up front.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "frontend-build-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "build-phase",
+      "display_name": "Build Phase",
+      "description_markdown": "Implementation phase where concrete `build-task` items should live. Builder work should stay incremental, minimize browser-side complexity, and preserve accessibility and visual consistency.",
+      "task_metadata_defaults": {
+        "objective": "Implement the planned changes using concrete build-task items and the smallest justified design.",
+        "definition_of_done": "Planned build tasks are completed truthfully, semantic claims match the final code, browser-side complexity stays justified, accessibility baseline is preserved, and all generated QA blockers are resolved.",
+        "validation_plan": "Run the planned project-specific checks, verify visible output, reconcile semantic claims against final code, and keep the implementation incremental and reviewable before handing work to closeout.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": []
+    },
+    {
+      "id": "frontend-build-task-template",
+      "scope_level": "task",
+      "node_kind_id": "build-task",
+      "display_name": "Build Task",
+      "description_markdown": "Concrete implementation task that auto-generates distinct proof-oriented and falsification-oriented QA subtasks, visual QA, accessibility review, plus a commit-and-reingest closeout step.",
+      "task_metadata_defaults": {
+        "definition_of_done": "The planned change is implemented truthfully, semantic claims match the final code, generated QA blockers are resolved, and confirmed-good work is committed and refreshed into Hylla.",
+        "validation_plan": "Run the project's frontend checks, verify rendered output, verify accessibility, run proof-oriented and falsification-oriented QA, then commit and refresh Hylla before handing the task to closeout.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "qa-proof-review",
+          "position": 1,
+          "child_scope_level": "subtask",
+          "child_kind_id": "qa-check",
+          "title_template": "QA PROOF REVIEW",
+          "description_template": "Have `qa-proof-agent` verify evidence completeness, trace coherence, claimed behavior support, component contract fit, and justified simplicity for the parent build task.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "qa-falsification-review",
+          "position": 2,
+          "child_scope_level": "subtask",
+          "child_kind_id": "qa-check",
+          "title_template": "QA FALSIFICATION REVIEW",
+          "description_template": "Have `qa-falsification-agent` try to falsify the conclusion through counterexamples, unnecessary browser complexity, hidden layout regressions, accessibility gaps, and contract mismatches for the parent build task.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "visual-qa-review",
+          "position": 3,
+          "child_scope_level": "subtask",
+          "child_kind_id": "visual-qa",
+          "title_template": "VISUAL QA",
+          "description_template": "Verify rendered output against the intended design, including breakpoint behavior, typography, spacing, state changes, and obvious visual regressions.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "a11y-check-review",
+          "position": 4,
+          "child_scope_level": "subtask",
+          "child_kind_id": "a11y-check",
+          "title_template": "ACCESSIBILITY CHECK",
+          "description_template": "Audit semantic structure, keyboard navigation, focus handling, landmark roles, and contrast for the parent build task.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "commit-and-reingest",
+          "position": 5,
+          "child_scope_level": "subtask",
+          "child_kind_id": "commit-and-reingest",
+          "title_template": "COMMIT AND REINGEST",
+          "description_template": "Have `commit-and-reingest-agent` commit confirmed-good work, trigger Hylla refresh, wait for the artifact to catch up to that commit, and record the resulting freshness evidence for downstream reasoning.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "frontend-closeout-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "closeout-phase",
+      "display_name": "Closeout Phase",
+      "description_markdown": "Post-build verification and readiness phase. Closeout should reconcile final code, final Hylla state, proof-oriented QA findings, falsification-oriented QA findings, and explicit readiness evidence before handoff or cleanup.",
+      "task_metadata_defaults": {
+        "objective": "Verify the completed build work, attach evidence, reconcile reasoning with final code state, and confirm readiness for push, PR, or handoff.",
+        "definition_of_done": "Build gates are green, Hylla is current to final git state, review and testing happened, semantic claims still match the final code, accessibility baseline is met, visual verification passes, unresolved risks are explicit, and the branch lane is ready for cleanup.",
+        "validation_plan": "Use the completed work plus Hylla-backed understanding to run proof-oriented and falsification-oriented QA, visual verification, and accessibility verification. Reconcile reasoning against final git state and escalate remaining uncertainty instead of forcing readiness.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "closeout-build-gates",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REQUIRED BUILD GATES GREEN",
+          "description_template": "Run the project's required frontend gates such as typecheck, lint, tests, and visual checks when present. Record the green result.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-local-commit",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "LOCAL COMMIT RECORDED",
+          "description_template": "Create or verify the local commit that captures the completed branch work.",
+          "responsible_actor_kind": "builder",
+          "editable_by_actor_kinds": [
+            "builder",
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "builder",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-hylla-refresh",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA REFRESHED AND CURRENT TO GIT",
+          "description_template": "Refresh the Hylla artifact, confirm it matches the current git state, and reconcile recorded reasoning against the refreshed graph.",
+          "responsible_actor_kind": "research",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "research",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-qa-proof",
+          "position": 4,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "QA PROOF REVIEW",
+          "description_template": "Have `qa-proof-agent` verify evidence completeness, trace coherence, contract coverage, accessibility support, and justified simplicity using task state plus Hylla-backed understanding.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-qa-falsification",
+          "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "QA FALSIFICATION REVIEW",
+          "description_template": "Have `qa-falsification-agent` attempt falsification through counterexamples, visual regressions, unnecessary browser complexity, accessibility gaps, and contract mismatches.",
+          "responsible_actor_kind": "qa",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "qa"
+          ],
+          "completable_by_actor_kinds": [
+            "qa",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-dev-review",
+          "position": 6,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "DEV REVIEW",
+          "description_template": "Review the completed change with the dev before cleanup or push.",
+          "responsible_actor_kind": "human",
+          "editable_by_actor_kinds": [
+            "human"
+          ],
+          "completable_by_actor_kinds": [
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-collaborative-testing",
+          "position": 7,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "ORCHESTRATOR AND DEV COLLABORATIVE TESTING",
+          "description_template": "Run the final collaborative testing pass with the dev, including visual verification in the browser when relevant, before declaring readiness.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "closeout-readiness",
+          "position": 8,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "PUSH PR HANDOFF READINESS",
+          "description_template": "Confirm the lane is ready for push, PR, or explicit handoff only when checks, evidence, Hylla state, and risk handling all support readiness without leaving coordination trash behind.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    },
+    {
+      "id": "frontend-branch-cleanup-phase-template",
+      "scope_level": "phase",
+      "node_kind_id": "branch-cleanup-phase",
+      "display_name": "Branch Cleanup Phase",
+      "description_markdown": "Final cleanup phase for branch/work retirement once closeout is truly complete.",
+      "task_metadata_defaults": {
+        "objective": "Retire the finished lane cleanly without leaving stale branches or work state behind.",
+        "definition_of_done": "Branch cleanup is complete and no stale coordination rows remain.",
+        "validation_plan": "Confirm closeout is truly done first, then verify local git and coordination state after cleanup.",
+        "completion_contract": {
+          "policy": {
+            "require_children_done": true
+          }
+        }
+      },
+      "child_rules": [
+        {
+          "id": "cleanup-confirm-closeout",
+          "position": 1,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
+          "description_template": "Confirm the closeout work is actually complete before branch retirement begins.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-remove-worktree",
+          "position": 2,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REMOVE LINKED WORKTREE",
+          "description_template": "Remove the worktree or local lane checkout for the finished branch when it is no longer needed.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "cleanup-remove-branch",
+          "position": 3,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "REMOVE FINISHED BRANCH",
+          "description_template": "Remove the finished branch when it is no longer needed.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        }
+      ]
+    }
+  ]
+}
