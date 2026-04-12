@@ -1103,6 +1103,9 @@ or refresh the locked builtin definition when the runtime contract changes.
 		Long: strings.TrimSpace(`
 Show whether the supported builtin template library is installed, current, or
 behind the builtin contract embedded in this build.
+
+Run this before builtin ensure so you can see the required and missing kind
+definitions for the active runtime DB.
 `),
 		Example: "  till template builtin status --library-id default-go",
 		Args:    cobra.NoArgs,
@@ -1117,6 +1120,11 @@ behind the builtin contract embedded in this build.
 		Long: strings.TrimSpace(`
 Install the supported builtin template library when missing or refresh it
 explicitly when the embedded builtin contract changed.
+
+Run builtin status first. If required kinds are still missing, the active
+runtime DB is missing builtin prerequisite kinds or you are on the wrong
+stable/dev runtime; that does not mean the builtin template library itself is
+missing.
 `),
 		Example: "  till template builtin ensure --library-id default-go",
 		Args:    cobra.NoArgs,

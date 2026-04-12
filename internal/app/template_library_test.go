@@ -493,6 +493,33 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	}
 }
 
+// TestEnsureBuiltinTemplateLibraryReportsBootstrapRequiredWhenBuiltinKindsMissing verifies builtin ensure
+// fails with bootstrap guidance instead of a misleading not-found error when the active DB lacks typed kinds.
+func TestEnsureBuiltinTemplateLibraryReportsBootstrapRequiredWhenBuiltinKindsMissing(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := newDeterministicService(repo, time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), ServiceConfig{})
+
+	_, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-go",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	})
+	if !errors.Is(err, domain.ErrBuiltinTemplateBootstrapRequired) {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v, want ErrBuiltinTemplateBootstrapRequired", err)
+	}
+	for _, want := range []string{
+		`builtin template "default-go"`,
+		"active runtime DB",
+		"confirm you are on the intended stable or dev runtime",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("EnsureBuiltinTemplateLibrary() error = %q, want substring %q", err.Error(), want)
+		}
+	}
+}
+
 // TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow verifies the shipped builtin default-go contract
 // generates project setup at project creation, branch lifecycle phases at lane creation, and QA work for build tasks.
 func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {

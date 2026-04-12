@@ -334,6 +334,7 @@ Template-library operator examples:
 - Project template policy:
   - at project creation, the orchestrator should confirm with the dev which template library should govern the project and whether any non-template generic kinds are intentionally allowed.
   - during `PROJECT SETUP`, compare current Hylla-backed repo state with the currently installed DB template/binding state and ask the dev before applying DB-mutating updates such as builtin ensure or template reapply.
+  - before `till template builtin ensure` or `till.template(operation=ensure_builtin)`, run builtin status first. If required or missing kinds are reported, the active runtime DB is missing prerequisite kind definitions or you are on the wrong stable/dev runtime; that does not mean the builtin template library itself is missing.
   - when a project is created with a template library, the initial `allowed_kinds` list now seeds from the project kind plus the node kinds referenced by that library's node templates and child rules.
   - use `till kind allowlist list|set` or `till.project(operation=list_allowed_kinds|set_allowed_kinds)` to inspect that policy, keep the project template-only, or explicitly opt specific generic kinds back in.
 - Kind catalog note:
@@ -551,6 +552,7 @@ Path resolution controls:
   - `root` is the active runtime root
   - `database` is the effective sqlite path after CLI/env/config resolution
   - `logs` follows the active runtime root by default and lands under `<root>/logs`
+  - use this before interpreting missing templates, missing kinds, or binding drift if both stable and dev runtimes may exist on the machine
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
 - task resource attachments require a configured per-project root mapping (`project_roots`)

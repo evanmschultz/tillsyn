@@ -11,6 +11,9 @@ import (
 // ErrBootstrapRequired reports that no project data exists and guided bootstrap is required.
 var ErrBootstrapRequired = errors.New("bootstrap is required")
 
+// ErrBuiltinTemplateBootstrapRequired reports that builtin template operations hit a runtime DB missing prerequisite kinds.
+var ErrBuiltinTemplateBootstrapRequired = errors.New("builtin template bootstrap is required")
+
 // ErrGuardrailViolation reports fail-closed lease/scope/completion guardrail failures.
 var ErrGuardrailViolation = errors.New("guardrail violation")
 

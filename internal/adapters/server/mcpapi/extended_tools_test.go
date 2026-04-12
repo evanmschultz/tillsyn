@@ -2422,9 +2422,28 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 		t.Fatalf("comment description = %q, want guarded mutation guidance", commentDesc)
 	}
 	projectSchema := findToolSchemaByName(t, toolsRaw, "till.project")
+	projectDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.project"))
+	if !strings.Contains(strings.ToLower(projectDesc), "preview drift first") {
+		t.Fatalf("project description = %q, want preview-first template guidance", projectDesc)
+	}
+	templateLibraryDesc := schemaStringPropertyDescription(t, projectSchema, "template_library_id")
+	if !strings.Contains(strings.ToLower(templateLibraryDesc), "whether this library should govern the project workflow") {
+		t.Fatalf("template_library_id description = %q, want dev-confirmed binding guidance", templateLibraryDesc)
+	}
+	kindIDsDesc := schemaStringPropertyDescription(t, projectSchema, "kind_ids")
+	if !strings.Contains(strings.ToLower(kindIDsDesc), "template-limited") && !strings.Contains(strings.ToLower(kindIDsDesc), "template kinds") {
+		t.Fatalf("kind_ids description = %q, want template-limited allowlist guidance", kindIDsDesc)
+	}
 	projectAgentDesc := schemaStringPropertyDescription(t, projectSchema, "agent_instance_id")
 	if !strings.Contains(strings.ToLower(projectAgentDesc), "project-scoped approved agent session") {
 		t.Fatalf("project agent_instance_id description = %q, want project-scoped agent guidance", projectAgentDesc)
+	}
+	templateDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.template"))
+	if !strings.Contains(strings.ToLower(templateDesc), "call get_builtin_status before ensure_builtin") {
+		t.Fatalf("template description = %q, want builtin-status-first guidance", templateDesc)
+	}
+	if !strings.Contains(strings.ToLower(templateDesc), "bootstrap/runtime mismatch issue") {
+		t.Fatalf("template description = %q, want runtime-mismatch guidance", templateDesc)
 	}
 	leaseDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.capability_lease"))
 	if !strings.Contains(strings.ToLower(leaseDesc), "does not upgrade a user session into an agent session") {
