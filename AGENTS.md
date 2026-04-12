@@ -2,7 +2,9 @@
 
 This file defines persistent repo-wide instructions for coding agents working in this repository. It is not runtime behavior for `tillsyn`.
 
-Use markdown planning docs as migration/input material, not the default long-term execution surface, once the canonical in-app `TILLSYN` project exists.
+Use Tillsyn as the exclusive execution surface for active work in this repository.
+
+Do not use markdown files as task trackers, action lists, worklogs, coordination ledgers, or temporary execution plans for active work. That includes `PLAN.md` and any new ad-hoc markdown planning files. Keep all active tasks, actions, blockers, comments, handoffs, and completion state in Tillsyn itself unless the user explicitly asks for a repo doc update as a documentation artifact.
 
 You are a senior Go dev. YOU ALWAYS:
 
@@ -57,13 +59,10 @@ You are a senior Go dev. YOU ALWAYS:
 - For runtime/protocol validation in this phase, run MCP-only checks (no HTTP/curl validation probes).
 - It is allowed to `mage build` and run `./till serve` locally for MCP-side validation.
 - Never push to any remote unless the user explicitly requests it in the current conversation.
-- Keep the canonical collaborative execution backlog in Tillsyn itself once the real `TILLSYN` project has been bootstrapped.
-- Treat repo markdown planning docs as source material to review, migrate, discuss with the user, and then retire or trim when their content is safely captured in Tillsyn.
-- Use `PLAN.md` as a temporary execution ledger only when the active work has not yet been migrated into Tillsyn or when the user explicitly wants a repo-local run log.
-- Keep `PLAN.md` single-writer by default:
-  - only the orchestrator/integrator updates run completion state there,
-  - worker lanes provide handoff notes unless explicitly assigned to update `PLAN.md`.
-- When proposing new implementation phases, explicitly review the active backlog and open discussion items in `PLAN.md` first.
+- Keep the canonical collaborative execution backlog in Tillsyn itself.
+- Treat repo markdown planning docs as historical/source material to migrate into Tillsyn or as static product documentation only. Do not continue active execution in markdown once the work is underway.
+- Do not create or update `PLAN.md` for active execution tracking unless the user explicitly overrides this rule for a specific task.
+- When proposing new implementation phases, review the active backlog and open discussion items in Tillsyn first, not markdown files.
 - Treat user-mentioned opportunities to improve Tillsyn templates, communication, agent workflow, client-native guidance, or skill integration as first-class optimization signals:
   - discuss those opportunities with the user before assuming the right product change,
   - capture them in tracked guidance or the in-app Tillsyn backlog when asked,
@@ -100,9 +99,9 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Worklogs
 
-- Prefer Tillsyn project/task state, comments, handoffs, and coordination records as the live execution ledger once the canonical project exists.
-- Use `PLAN.md` for temporary bootstrap/risk tracking only until that state is migrated into Tillsyn, or when the user explicitly wants a repo-local ledger.
-- Temporary or wave-specific workflow detail that has not yet been migrated may live in `PLAN.md`, but the long-term goal is to fold relevant planning into Tillsyn and clean up stale markdown plans.
+- Use Tillsyn project/task state, comments, handoffs, and coordination records as the live execution ledger for all active work.
+- Do not use markdown files for active worklogs, action queues, or coordination unless the user explicitly requests a documentation artifact outside Tillsyn.
+- If markdown planning or workflow material already exists, treat it as migration/input material to move into Tillsyn and then stop using it as the active source of truth.
 
 ## Tech Stack
 
