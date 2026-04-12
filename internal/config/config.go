@@ -248,6 +248,15 @@ func DefaultDevLogDir() string {
 	return defaultDevLogDir
 }
 
+// DefaultTemplate renders the default config as TOML for first-run bootstrap and install flows.
+func DefaultTemplate() ([]byte, error) {
+	encoded, err := toml.Marshal(Default(""))
+	if err != nil {
+		return nil, fmt.Errorf("encode default config template: %w", err)
+	}
+	return encoded, nil
+}
+
 // Load loads required data for the current operation.
 func Load(path string, defaults Config) (Config, error) {
 	cfg := defaults

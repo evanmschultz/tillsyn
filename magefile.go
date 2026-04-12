@@ -25,6 +25,7 @@ var Default = CI
 // Aliases preserves the familiar hyphenated task names while keeping the visible target list small.
 var Aliases = map[string]interface{}{
 	"check":              CI,
+	"dev":                Dev,
 	"test-golden":        TestGolden,
 	"test-golden-update": TestGoldenUpdate,
 	"test-pkg":           TestPkg,
@@ -79,6 +80,41 @@ func Build() error {
 // Run executes till directly from source.
 func Run() error {
 	return runCommand("go", "run", localBuildVCSFlag, "./cmd/till")
+}
+
+// Dev executes till from source against the repo-local dev runtime home.
+func Dev() error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("working directory: %w", err)
+	}
+	return runCommandWithEnv(map[string]string{
+		"TILL_DEV_MODE": "true",
+		"TILL_HOME":     filepath.Join(wd, ".tillsyn"),
+	}, "go", "run", localBuildVCSFlag, "./cmd/till")
+}
+
+// Install builds till and installs it into the local operator bin directory.
+func Install() error {
+	printer := newMagePrinter()
+	installDir, err := defaultInstallDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		return fmt.Errorf("create install dir %q: %w", installDir, err)
+	}
+	if err := runCommandWithProgress(printer, "Building till for install", "Built till for install", "go", "build", localBuildVCSFlag, "-o", filepath.Join(installDir, "till"), "./cmd/till"); err != nil {
+		return err
+	}
+	if err := printer.Notice(laslig.Notice{
+		Level: laslig.NoticeSuccessLevel,
+		Title: "Install complete",
+		Body:  filepath.Join(installDir, "till"),
+	}); err != nil {
+		return fmt.Errorf("write install notice: %w", err)
+	}
+	return nil
 }
 
 // CI runs the canonical full gate.
@@ -258,7 +294,19 @@ func coverageRows(raw string) ([][]string, []string, error) {
 
 // runCommand executes one command and streams its stdout/stderr to the current terminal.
 func runCommand(name string, args ...string) error {
+	return runCommandWithEnv(nil, name, args...)
+}
+
+// runCommandWithEnv executes one command with optional environment overrides.
+func runCommandWithEnv(overrides map[string]string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
+	if len(overrides) > 0 {
+		env := os.Environ()
+		for key, value := range overrides {
+			env = append(env, key+"="+value)
+		}
+		cmd.Env = env
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -399,4 +447,16 @@ func stopMageSpinner(spinner *laslig.Spinner, message string, level laslig.Notic
 		return
 	}
 	_ = spinner.Stop(message, level)
+}
+
+// defaultInstallDir returns the preferred local operator bin directory for till installs.
+func defaultInstallDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("TILL_INSTALL_DIR")); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("user home dir: %w", err)
+	}
+	return filepath.Join(home, ".local", "bin"), nil
 }

@@ -158,6 +158,8 @@ Current auth note:
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
   - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
+  - a user session plus `agent_instance_id`/`lease_token` is invalid for guarded mutations; either remove the guard tuple to act as a human or claim/validate a project-scoped approved agent session before retrying;
+  - issuing or renewing a capability lease does not convert a user session into an agent session;
   - on raw stdio MCP, first claim or validate the acting session to get `auth_context_id`, then prefer `session_id` + `auth_context_id` for subsequent mutation calls;
   - when an orchestrator needs child builder/qa/research auth, create that child request through `till.auth_request(operation=create, acting_session_id=..., acting_auth_context_id=...)` so requester ownership is derived from the acting orchestrator session and the child path stays bounded within the acting approved path;
   - builder, qa, and research agents may still request their own single-project rooted auth directly, but they must not mint sibling or broader child sessions for other principals;
@@ -223,7 +225,7 @@ Current auth note:
   - and only after that slice finishes, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, OS-level notification ergonomics, and richer rule/template composition UX.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
-- Current bounded-delegation status: `till.auth_request(operation=create)` now also supports explicit child delegation through `acting_session_id` and `acting_session_secret`; when used, requester attribution is derived from the acting session, child paths must stay within the acting approved path, and only orchestrators may create sibling child auth for other principals.
+- Current bounded-delegation status: `till.auth_request(operation=create)` now also supports explicit child delegation through `acting_session_id` and `acting_session_secret`; when used, requester attribution is derived from the acting session, child paths must stay within the acting approved path, and only orchestrators may create sibling child auth for other principals. Non-orchestrators may still request only their own auth directly.
 - Current cancel constraint: the MCP cancel path is requester-bound and continuation-bound. It is meant for orchestrator/requester cleanup of pending requests, not human/operator review cancellation or descendant-session management, and it should not be used as a claim-ownership proof path.
 - Active approved-session shutdown is a separate path:
   - use `till.auth_request(operation=revoke_session)` for live session revocation,
@@ -331,6 +333,7 @@ Template-library operator examples:
   - `till template contract show --node-id <node-id>`
 - Project template policy:
   - at project creation, the orchestrator should confirm with the dev which template library should govern the project and whether any non-template generic kinds are intentionally allowed.
+  - during `PROJECT SETUP`, compare current Hylla-backed repo state with the currently installed DB template/binding state and ask the dev before applying DB-mutating updates such as builtin ensure or template reapply.
   - when a project is created with a template library, the initial `allowed_kinds` list now seeds from the project kind plus the node kinds referenced by that library's node templates and child rules.
   - use `till kind allowlist list|set` or `till.project(operation=list_allowed_kinds|set_allowed_kinds)` to inspect that policy, keep the project template-only, or explicitly opt specific generic kinds back in.
 - Kind catalog note:
@@ -439,10 +442,20 @@ mage build
 ./till
 ```
 
+Install the stable binary into `~/.local/bin/till`:
+```bash
+mage install
+```
+
+Run the isolated repo-local dev runtime:
+```bash
+mage dev
+```
+
 ## Startup Behavior
 - TUI launch opens the project picker before normal board mode.
 - If no projects exist yet, the picker stays open and supports `N` to create the first project.
-- Normal TUI startup seeds a missing resolved config file from `config.example.toml` when that template is available in the current workspace root.
+- Normal TUI startup seeds a missing resolved config file from the shipped default template; it does not require a repo-local `config.example.toml`.
 - On TUI startup, missing required bootstrap fields are prompted and persisted:
   - `identity.display_name`
   - one default path (stored as the single active entry in `paths.search_roots`)
@@ -517,7 +530,7 @@ Current auth caveat:
 - the intended end-user flow is request-and-approval inside the product, not routine manual session minting from the shell
 
 ## Config
-`till` loads TOML config from platform defaults, or from `--config` / `TILL_CONFIG`.
+`till` loads TOML config from the resolved runtime home, or from `--config` / `TILL_CONFIG`.
 Help-only paths (`--help`) render usage without running runtime bootstrap side effects (including config seeding).
 
 Database path precedence:
@@ -528,8 +541,12 @@ Database path precedence:
 
 Path resolution controls:
 - `--app` / `TILL_APP_NAME` to namespace paths (default `tillsyn`)
-- `--dev` / `TILL_DEV_MODE` to explicitly use `<app>-dev` path roots
-- `./till`, `./till mcp`, and `./till serve` all use the same default platform runtime when `--dev` is not enabled
+- `--home` / `TILL_HOME` to pin the runtime home directory directly
+- without `--home`, stable runs default to `$HOME/.tillsyn` for the default app
+- `--dev` / `TILL_DEV_MODE` switches to a repo-local dev runtime home such as `./.tillsyn` when `--home` is not set
+- `./till`, `./till mcp`, and `./till serve` all use the same stable runtime home when `--dev` is not enabled
+- `mage install` builds and installs `till` into `~/.local/bin`
+- `mage dev` runs from source with `TILL_DEV_MODE=true` and `TILL_HOME=$PWD/.tillsyn`
 - `till paths` prints `app`, `root`, `config`, `database`, `logs`, and `dev_mode` in that order
   - `root` is the active runtime root
   - `database` is the effective sqlite path after CLI/env/config resolution
@@ -537,7 +554,7 @@ Path resolution controls:
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
 - task resource attachments require a configured per-project root mapping (`project_roots`)
-- dev mode logging writes to the shared runtime `logs/` directory under the resolved app root when `logging.dev_file.enabled = true`
+- dev mode logging writes to the repo-local dev runtime `logs/` directory when `logging.dev_file.enabled = true`
   - explicit relative dev log dir overrides are still anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
 

@@ -87,6 +87,7 @@ func main() {
 type rootCommandOptions struct {
 	configPath  string
 	dbPath      string
+	homeDir     string
 	appName     string
 	devMode     bool
 	showVersion bool
@@ -420,6 +421,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if envApp := strings.TrimSpace(os.Getenv("TILL_APP_NAME")); envApp != "" {
 		rootOpts.appName = envApp
 	}
+	if envHome := strings.TrimSpace(os.Getenv("TILL_HOME")); envHome != "" {
+		rootOpts.homeDir = envHome
+	}
 
 	serveOpts := serveCommandOptions{
 		httpBind:    "127.0.0.1:5437",
@@ -526,8 +530,9 @@ template-library contracts, snapshot transport, or embeddings operations.
 
 	rootCmd.PersistentFlags().StringVar(&rootOpts.configPath, "config", "", "Path to config TOML")
 	rootCmd.PersistentFlags().StringVar(&rootOpts.dbPath, "db", "", "Path to sqlite database")
+	rootCmd.PersistentFlags().StringVar(&rootOpts.homeDir, "home", rootOpts.homeDir, "Runtime home directory for config, database, and logs")
 	rootCmd.PersistentFlags().StringVar(&rootOpts.appName, "app", rootOpts.appName, "Application name for config/data path resolution")
-	rootCmd.PersistentFlags().BoolVar(&rootOpts.devMode, "dev", rootOpts.devMode, "Use dev mode paths (APP-dev)")
+	rootCmd.PersistentFlags().BoolVar(&rootOpts.devMode, "dev", rootOpts.devMode, "Use repo-local dev runtime home when --home is not set")
 	rootCmd.PersistentFlags().BoolVar(&rootOpts.showVersion, "version", false, "Show version")
 
 	serveCmd := &cobra.Command{
@@ -1930,11 +1935,13 @@ Print the resolved runtime paths for the active app name, config path, database
 path, and log directory.
 
 Use this when debugging which config or database a CLI invocation will touch,
-especially in dev mode or when overriding paths through flags or environment.
+especially when switching between the stable runtime home, repo-local dev mode,
+or explicit path overrides through flags and environment.
 `),
 		Example: strings.Join([]string{
 			"  till paths",
 			"  till --dev paths",
+			"  till --home ~/.tillsyn paths",
 			"  till --db /tmp/tillsyn.db --config /tmp/tillsyn.toml paths",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1945,6 +1952,7 @@ especially in dev mode or when overriding paths through flags or environment.
 			paths, err := platform.DefaultPathsWithOptions(platform.Options{
 				AppName: rootOpts.appName,
 				DevMode: rootOpts.devMode,
+				HomeDir: rootOpts.homeDir,
 			})
 			if err != nil {
 				return err
@@ -1976,8 +1984,8 @@ especially in dev mode or when overriding paths through flags or environment.
 		Use:   "init-dev-config",
 		Short: "Create the dev config file and enforce [logging] level = \"debug\"",
 		Long: strings.TrimSpace(`
-Create the dev config file from the checked-in example when missing, then force
-the local dev logging level to debug.
+Create the dev config file from the shipped default template when missing, then
+force the local dev logging level to debug.
 
 Use this when bootstrapping a fresh local workstation or when you want the repo
 default development config file restored quickly.
@@ -1985,6 +1993,7 @@ default development config file restored quickly.
 		Example: strings.Join([]string{
 			"  till init-dev-config",
 			"  till --app tillsyn init-dev-config",
+			"  till --home /tmp/tillsyn-dev init-dev-config",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -2102,8 +2111,14 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 
 // ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	_ = command
-	_ = paths
+	if command == "" || command == "serve" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "template" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" {
+		if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
+			return fmt.Errorf("create config directory: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(paths.DBPath), 0o755); err != nil {
+			return fmt.Errorf("create database directory: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -2125,6 +2140,7 @@ func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
 	paths, err := platform.DefaultPathsWithOptions(platform.Options{
 		AppName: opts.appName,
 		DevMode: true,
+		HomeDir: opts.homeDir,
 	})
 	if err != nil {
 		return fmt.Errorf("resolve dev paths: %w", err)
@@ -2140,13 +2156,9 @@ func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("stat dev config: %w", err)
 		}
-		templatePath, pathErr := configExamplePath()
-		if pathErr != nil {
-			return pathErr
-		}
-		templateBytes, readErr := os.ReadFile(templatePath)
-		if readErr != nil {
-			return fmt.Errorf("read config example %q: %w", templatePath, readErr)
+		templateBytes, templateErr := config.DefaultTemplate()
+		if templateErr != nil {
+			return templateErr
 		}
 		if writeErr := os.WriteFile(configPath, templateBytes, 0o644); writeErr != nil {
 			return fmt.Errorf("write dev config: %w", writeErr)
@@ -2201,17 +2213,8 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// configExamplePath resolves the repository-local config example path.
-func configExamplePath() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve working directory: %w", err)
-	}
-	return filepath.Join(workspaceRootFrom(cwd), "config.example.toml"), nil
-}
-
-// seedStartupConfigFromExampleIfMissing seeds the runtime config from config.example.toml on first-launch TUI startup.
-func seedStartupConfigFromExampleIfMissing(command, configPath string) error {
+// seedStartupConfigIfMissing seeds the runtime config from the shipped default template on first-launch TUI startup.
+func seedStartupConfigIfMissing(command, configPath string) error {
 	if command != "" {
 		return nil
 	}
@@ -2226,17 +2229,9 @@ func seedStartupConfigFromExampleIfMissing(command, configPath string) error {
 		return fmt.Errorf("stat startup config %q: %w", configPath, err)
 	}
 
-	templatePath, err := configExamplePath()
+	templateBytes, err := config.DefaultTemplate()
 	if err != nil {
-		return fmt.Errorf("resolve config example path: %w", err)
-	}
-	templateBytes, err := os.ReadFile(templatePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			// Keep startup behavior compatible outside repository checkouts where the template may be unavailable.
-			return nil
-		}
-		return fmt.Errorf("read config example %q: %w", templatePath, err)
+		return fmt.Errorf("render default config template: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -2363,6 +2358,7 @@ func executeCommandFlow(
 	paths, err := platform.DefaultPathsWithOptions(platform.Options{
 		AppName: rootOpts.appName,
 		DevMode: rootOpts.devMode,
+		HomeDir: rootOpts.homeDir,
 	})
 	if err != nil {
 		return err
@@ -2378,7 +2374,7 @@ func executeCommandFlow(
 	if err := ensureRuntimePathParents(command, resolvedPaths); err != nil {
 		return err
 	}
-	if err := seedStartupConfigFromExampleIfMissing(command, configPath); err != nil {
+	if err := seedStartupConfigIfMissing(command, configPath); err != nil {
 		return fmt.Errorf("seed startup config %q: %w", configPath, err)
 	}
 

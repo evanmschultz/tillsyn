@@ -409,8 +409,8 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	if spec.BuiltinSource != "builtin://tillsyn/default-go" {
 		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-go", spec.BuiltinSource)
 	}
-	if spec.BuiltinVersion != "2026-04-10.2" {
-		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-10.2", spec.BuiltinVersion)
+	if spec.BuiltinVersion != "2026-04-12.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-12.1", spec.BuiltinVersion)
 	}
 	if got, want := len(spec.NodeTemplates), 8; got != want {
 		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
@@ -715,6 +715,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		"CREATE OR CONFIRM FIRST PLAN PHASE",
 		"HYLLA INGEST MODE DECISION",
 		"HYLLA INITIAL INGEST OR REFRESH",
+		"HYLLA VS DB STATE REVIEW",
 		"HYLLA VS GIT FRESHNESS CHECK",
 		"PROJECT METADATA AND STANDARDS LOCK",
 		"TEMPLATE FIT REVIEW",

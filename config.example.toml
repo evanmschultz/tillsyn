@@ -1,12 +1,13 @@
 # tillsyn example configuration
 #
 # Resolution order:
-# 1) CLI flags (--config, --db, --app, --dev)
-# 2) Environment (TILL_CONFIG, TILL_DB_PATH, TILL_APP_NAME, TILL_DEV_MODE)
+# 1) CLI flags (--config, --db, --home, --app, --dev)
+# 2) Environment (TILL_CONFIG, TILL_DB_PATH, TILL_HOME, TILL_APP_NAME, TILL_DEV_MODE)
 # 3) This TOML file
 # 4) Platform defaults (use `till paths` to print active paths)
 #
-# Dev mode stores data under "<app>-dev" so local builds do not clash with released installs.
+# Stable installs default to "$HOME/.tillsyn" (or ".$APP" for non-default app names).
+# Dev mode defaults to a repo-local runtime home such as "./.tillsyn" unless --home / TILL_HOME overrides it.
 
 [database]
 # Leave empty to use platform defaults; set explicit path to pin DB location.

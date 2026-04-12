@@ -15513,7 +15513,7 @@ func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
 	library.BuiltinManaged = true
-	library.BuiltinVersion = "2026-04-10.2"
+	library.BuiltinVersion = "2026-04-12.1"
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
@@ -15526,7 +15526,7 @@ func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
 		LibraryID:         library.ID,
 		Name:              library.Name,
-		BuiltinVersion:    "2026-04-10.2",
+		BuiltinVersion:    "2026-04-12.1",
 		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
 		Installed:         true,
 		InstalledRevision: 2,
@@ -15542,7 +15542,7 @@ func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 
 	for _, want := range []string{
 		"active_binding: default-go — Default Go • rev:2 • drift:current",
-		"shipped_builtin: state:update_available • version:2026-04-10.2 • installed_rev:2",
+		"shipped_builtin: state:update_available • version:2026-04-12.1 • installed_rev:2",
 		"run ensure builtin before rebinding projects to the newer shipped template",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -15616,13 +15616,13 @@ func TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
 	library.BuiltinManaged = true
-	library.BuiltinVersion = "2026-04-10.2"
+	library.BuiltinVersion = "2026-04-12.1"
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	svc.templateLibraries = []domain.TemplateLibrary{library}
 	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
 		LibraryID:         library.ID,
 		Name:              library.Name,
-		BuiltinVersion:    "2026-04-10.2",
+		BuiltinVersion:    "2026-04-12.1",
 		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
 		Installed:         true,
 		InstalledRevision: 2,
@@ -15638,7 +15638,7 @@ func TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus(t *testing.T) {
 	overlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 90)
 	for _, want := range []string{
 		"default-go — Default Go • shipped update available",
-		"shipped_builtin: state:update_available • version:2026-04-10.2 • installed_rev:2",
+		"shipped_builtin: state:update_available • version:2026-04-12.1 • installed_rev:2",
 		"run ensure builtin before rebinding projects to the newer shipped template",
 	} {
 		if !strings.Contains(overlay, want) {
