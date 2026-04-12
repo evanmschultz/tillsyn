@@ -202,6 +202,7 @@ func explainProjectInstructions(ctx context.Context, services instructionsExplai
 	if bindingFound {
 		workflow = append(workflow, fmt.Sprintf("Template drift status is %q for the active project binding.", fallbackText(strings.TrimSpace(binding.DriftStatus), "current")))
 		workflow = append(workflow, "At project creation or rebinding time, the orchestrator should confirm with the dev which template library governs the project, whether the project should stay template-only, and which generic kinds, if any, are intentionally allowed.")
+		workflow = append(workflow, "During project setup or template refresh decisions, compare current Hylla state with the current DB template/binding state and ask the dev before running DB-mutating updates such as ensure_builtin, rebind, or template reapply.")
 		workflow = append(workflow, "Use till.project(operation=set_allowed_kinds) or till kind allowlist set to keep the project limited to template-defined node kinds or to explicitly opt specific generic kinds back in.")
 	}
 
@@ -309,6 +310,7 @@ func explainTemplateInstructions(ctx context.Context, services instructionsExpla
 		"Use till.project(operation=bind_template) or the TUI project edit flow to bind or rebind this library explicitly.",
 		"Use till.project(operation=preview_template_reapply) before adopting newer template revisions into an existing project.",
 		"At project creation, the orchestrator should confirm with the dev whether this library should define the whole project workflow or whether extra generic kinds should remain explicitly allowed.",
+		"Before ensure_builtin, rebind, or other DB-mutating template updates, compare the current Hylla-backed repo state against the current DB library/binding state and ask the dev whether they want that update applied.",
 		"After binding, use till.project(operation=set_allowed_kinds) or till kind allowlist set to keep the project restricted to this library's node kinds or to intentionally opt generic kinds in.",
 	}
 	if bindingFound {

@@ -2675,6 +2675,32 @@ func TestRunHelpPathsDoNotSeedMissingConfig(t *testing.T) {
 	}
 }
 
+// TestRunSeedsStartupConfigFromBuiltInTemplate verifies first-run TUI bootstrap no longer depends on a repo-local config.example.toml.
+func TestRunSeedsStartupConfigFromBuiltInTemplate(t *testing.T) {
+	origFactory := programFactory
+	t.Cleanup(func() { programFactory = origFactory })
+	programFactory = func(_ tea.Model) program { return fakeProgram{} }
+
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	runtimeHome := filepath.Join(tmp, ".tillsyn")
+
+	if err := run(context.Background(), []string{"--home", runtimeHome}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(runtimeHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	got := string(content)
+	for _, want := range []string{"[identity]", "default_actor_type", "[logging.dev_file]"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in seeded config, got\n%s", want, got)
+		}
+	}
+}
+
 // TestResolveRuntimePathsMCPUsesSharedDefaultRuntime verifies stdio MCP uses the same default runtime as the base app.
 func TestResolveRuntimePathsMCPUsesSharedDefaultRuntime(t *testing.T) {
 	workspace := t.TempDir()
@@ -3370,6 +3396,29 @@ func TestRunPathsCommandUsesActiveRuntimeRootForDBOverride(t *testing.T) {
 		root,
 		dbPath,
 		filepath.Join(root, "logs"),
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in paths output, got %q", want, output)
+		}
+	}
+}
+
+// TestRunPathsCommandUsesHomeOverride verifies `paths` reports the explicit runtime home when provided.
+func TestRunPathsCommandUsesHomeOverride(t *testing.T) {
+	home := filepath.Join(t.TempDir(), ".tillsyn-stable")
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--home", home, "paths"}, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("run(paths with home override) error = %v", err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"Resolved Paths",
+		home,
+		filepath.Join(home, "config.toml"),
+		filepath.Join(home, "tillsyn.db"),
+		filepath.Join(home, "logs"),
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in paths output, got %q", want, output)

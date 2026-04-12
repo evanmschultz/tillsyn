@@ -3,7 +3,7 @@
   "name": "Default Go",
   "description": "Builtin Go workflow contract for project setup, branch planning, implementation, closeout, and cleanup.",
   "builtin_source": "builtin://tillsyn/default-go",
-  "builtin_version": "2026-04-10.2",
+  "builtin_version": "2026-04-12.1",
   "node_templates": [
     {
       "id": "go-project-template",
@@ -13,7 +13,7 @@
       "description_markdown": "Project-level Go workflow contract with explicit setup before normal branch execution.",
       "project_metadata_defaults": {
         "owner": "Evan",
-        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.\n- Use Hylla for committed repo-local evidence, use git diff for uncommitted local deltas, and use Context7 only for external semantics the repo cannot prove.\n- Shared cross-client named agents should stay aligned across Codex and Claude: `orchestration-agent`, `planning-agent`, `research-agent`, `builder-agent`, `qa-proof-agent`, `qa-falsification-agent`, `closeout-agent`, `commit-and-reingest-agent`, and `gopls-worktree-agent`.\n- Build in small tested increments and prefer TDD where practical.\n- Coverage expectations remain real gates; maintain the repo minimum and use the canonical `mage` verification path.\n- Prefer the smallest concrete design that satisfies the current requirement.\n- Reuse or refactor existing code when that is the best option instead of adding speculative structure.\n- Do not add abstraction for hypothetical future variation.\n- Prefer idiomatic Go naming, package structure, interface placement, error handling, and test shape.\n- Wrap and bubble errors with context and keep logging at meaningful operational boundaries instead of deep utility layers.\n- Unresolved uncertainty must become explicit coordination state such as comments, handoffs, or attention instead of optimistic completion.\n- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated blockers must be completed truthfully before done.\n- Use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite ordering until richer workflow ordering rules land.\n- Never use another agent's auth or `auth_context_id`, and never paste auth material into comments, handoffs, tasks, or docs.\n- Orchestrators own child auth cleanup and must leave no stale sessions, leases, or coordination trash behind."
+        "standards_markdown": "- Bare control repo with visible sibling worktrees.\n- One dedicated `gopls` MCP server per active worktree.\n- Use Hylla MCP first for Tillsyn code understanding; use other tools only as needed.\n- Use Context7 and `go doc` during planning before building, before fixing tests after failures, and during QA.\n- For semantic, high-risk, or ambiguous work, record a semi-formal reasoning certificate covering premises, evidence, trace or cases, conclusion, and unknowns.\n- Use Hylla for committed repo-local evidence, use git diff for uncommitted local deltas, and use Context7 only for external semantics the repo cannot prove.\n- During project setup or template refresh decisions, compare current Hylla state with the currently installed DB template/binding state and ask the dev before running DB-mutating updates such as builtin ensure, template reapply, or similar refresh steps.\n- Shared cross-client named agents should stay aligned across Codex and Claude: `orchestration-agent`, `planning-agent`, `research-agent`, `builder-agent`, `qa-proof-agent`, `qa-falsification-agent`, `closeout-agent`, `commit-and-reingest-agent`, and `gopls-worktree-agent`.\n- Build in small tested increments and prefer TDD where practical.\n- Coverage expectations remain real gates; maintain the repo minimum and use the canonical `mage` verification path.\n- Prefer the smallest concrete design that satisfies the current requirement.\n- Reuse or refactor existing code when that is the best option instead of adding speculative structure.\n- Do not add abstraction for hypothetical future variation.\n- Prefer idiomatic Go naming, package structure, interface placement, error handling, and test shape.\n- Wrap and bubble errors with context and keep logging at meaningful operational boundaries instead of deep utility layers.\n- Unresolved uncertainty must become explicit coordination state such as comments, handoffs, or attention instead of optimistic completion.\n- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.\n- MCP-first dogfooding for runtime and operator workflows.\n- `mage` is the canonical build/test gate.\n- Laslig styling for all Mage functions and CLI output.\n- Fang for help and CLI command surfaces.\n- Bubble Tea v2, Bubbles v2, Lip Gloss v2, and Charmbracelet stack on v2.\n- GitHub Actions CI and release snapshot checks must stay green.\n- No ad-hoc `.codex/` directories inside worktrees.\n- Follow `AGENTS.md` workflow and worktree rules.\n- Comments and handoffs are the coordination layer.\n- Template-generated blockers must be completed truthfully before done.\n- Use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite ordering until richer workflow ordering rules land.\n- Never use another agent's auth or `auth_context_id`, and never paste auth material into comments, handoffs, tasks, or docs.\n- Orchestrators own child auth cleanup and must leave no stale sessions, leases, or coordination trash behind."
       },
       "child_rules": [
         {
@@ -42,9 +42,9 @@
       "display_name": "Project Setup Phase",
       "description_markdown": "Project-only onboarding phase that must happen before normal branch work starts.",
       "task_metadata_defaults": {
-        "objective": "Bootstrap the project, confirm template fit, and prepare the first branch lane.",
-        "definition_of_done": "Template fit reviewed, Hylla decisions recorded, project metadata locked, and the first branch lane plus PLAN phase are explicitly queued.",
-        "validation_plan": "Confirm standards, Hylla freshness, and the initial workflow shape with the dev before broad implementation.",
+        "objective": "Bootstrap the project, confirm template fit, compare Hylla and DB state, and prepare the first branch lane.",
+        "definition_of_done": "Template fit reviewed, Hylla decisions recorded, current Hylla versus DB state reviewed with the dev before any DB update, project metadata locked, and the first branch lane plus PLAN phase are explicitly queued.",
+        "validation_plan": "Confirm standards, Hylla freshness, current DB template/binding state, and the initial workflow shape with the dev before broad implementation or DB-mutating refresh actions.",
         "completion_contract": {
           "policy": {
             "require_children_done": true
@@ -124,8 +124,26 @@
           "required_for_parent_done": true
         },
         {
-          "id": "project-setup-metadata-standards-lock",
+          "id": "project-setup-hylla-db-state-review",
           "position": 5,
+          "child_scope_level": "task",
+          "child_kind_id": "task",
+          "title_template": "HYLLA VS DB STATE REVIEW",
+          "description_template": "Compare current Hylla state with the currently installed DB template and binding state, then ask the dev before applying any DB-mutating update or refresh.",
+          "responsible_actor_kind": "orchestrator",
+          "editable_by_actor_kinds": [
+            "orchestrator",
+            "research"
+          ],
+          "completable_by_actor_kinds": [
+            "orchestrator",
+            "human"
+          ],
+          "required_for_parent_done": true
+        },
+        {
+          "id": "project-setup-metadata-standards-lock",
+          "position": 6,
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "PROJECT METADATA AND STANDARDS LOCK",
@@ -142,7 +160,7 @@
         },
         {
           "id": "project-setup-first-branch-lane",
-          "position": 6,
+          "position": 7,
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "CREATE OR CONFIRM FIRST BRANCH LANE",
@@ -159,7 +177,7 @@
         },
         {
           "id": "project-setup-first-plan-phase",
-          "position": 7,
+          "position": 8,
           "child_scope_level": "task",
           "child_kind_id": "task",
           "title_template": "CREATE OR CONFIRM FIRST PLAN PHASE",

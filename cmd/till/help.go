@@ -503,13 +503,14 @@ Show the resolved runtime root, config, database, and log paths for this
 invocation.
 
 Use this when debugging path resolution, dev-mode separation, or one-off
-runtime overrides from --db or --config.
+runtime overrides from --home, --db, or --config.
 
 This is the resolved runtime paths view for the current invocation.
 `),
 		Example: []string{
 			"  till paths",
 			"  till --dev paths",
+			"  till --home ~/.tillsyn paths",
 			"  till --app tillsyn paths",
 			"  till --db /tmp/tillsyn.db --config /tmp/tillsyn.toml paths",
 		},
@@ -524,7 +525,8 @@ surfaces.
 `),
 		Example: []string{
 			"  till init-dev-config",
-			"  till --app tillsyn --dev init-dev-config",
+			"  till --app tillsyn init-dev-config",
+			"  till --home /tmp/tillsyn-dev init-dev-config",
 		},
 	},
 }

@@ -743,7 +743,7 @@ func (s *stubExpandedService) GetBuiltinTemplateLibraryStatus(_ context.Context,
 		LibraryID:             firstNonEmptyString(strings.TrimSpace(libraryID), "default-go"),
 		Name:                  "Default Go",
 		BuiltinSource:         "builtin://tillsyn/default-go",
-		BuiltinVersion:        "2026-04-10.2",
+		BuiltinVersion:        "2026-04-12.1",
 		BuiltinRevisionDigest: "builtin-digest",
 		RequiredKindIDs:       []domain.KindID{"branch", "build-phase", "build-task", "branch-cleanup-phase", "closeout-phase", "commit-and-reingest", "go-project", "plan-phase", "project-setup-phase", "qa-check", "task"},
 		State:                 domain.BuiltinTemplateLibraryStateCurrent,
@@ -1080,7 +1080,7 @@ func (s *stubExpandedService) UpdateHandoff(_ context.Context, in common.UpdateH
 }
 
 // findToolSchemaByName returns one tool schema map from tools/list payload rows.
-func findToolSchemaByName(t *testing.T, tools []any, toolName string) map[string]any {
+func findToolByName(t *testing.T, tools []any, toolName string) map[string]any {
 	t.Helper()
 	for _, toolRaw := range tools {
 		toolMap, ok := toolRaw.(map[string]any)
@@ -1088,17 +1088,28 @@ func findToolSchemaByName(t *testing.T, tools []any, toolName string) map[string
 			continue
 		}
 		name, _ := toolMap["name"].(string)
-		if name != toolName {
-			continue
+		if name == toolName {
+			return toolMap
 		}
-		schema, ok := toolMap["inputSchema"].(map[string]any)
-		if !ok {
-			t.Fatalf("tool %q inputSchema missing: %#v", toolName, toolMap)
-		}
-		return schema
 	}
 	t.Fatalf("tool %q missing from tool list", toolName)
 	return nil
+}
+
+func findToolSchemaByName(t *testing.T, tools []any, toolName string) map[string]any {
+	t.Helper()
+	toolMap := findToolByName(t, tools, toolName)
+	schema, ok := toolMap["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool %q inputSchema missing: %#v", toolName, toolMap)
+	}
+	return schema
+}
+
+func toolDescription(t *testing.T, tool map[string]any) string {
+	t.Helper()
+	description, _ := tool["description"].(string)
+	return description
 }
 
 // schemaStringPropertyDescription returns one schema property description for assertions.
@@ -2399,6 +2410,26 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 	if !strings.Contains(strings.ToLower(authContextDesc), "auth context") {
 		t.Fatalf("auth_context_id description = %q, want auth-context guidance", authContextDesc)
 	}
+	agentInstanceDesc := schemaStringPropertyDescription(t, createSchema, "agent_instance_id")
+	if !strings.Contains(strings.ToLower(agentInstanceDesc), "authenticated agent sessions") {
+		t.Fatalf("agent_instance_id description = %q, want authenticated-agent guidance", agentInstanceDesc)
+	}
+	if !strings.Contains(strings.ToLower(agentInstanceDesc), "user session is invalid") {
+		t.Fatalf("agent_instance_id description = %q, want user-session invalid guidance", agentInstanceDesc)
+	}
+	commentDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.comment"))
+	if !strings.Contains(commentDesc, "user session plus agent_instance_id/lease_token is invalid") {
+		t.Fatalf("comment description = %q, want guarded mutation guidance", commentDesc)
+	}
+	projectSchema := findToolSchemaByName(t, toolsRaw, "till.project")
+	projectAgentDesc := schemaStringPropertyDescription(t, projectSchema, "agent_instance_id")
+	if !strings.Contains(strings.ToLower(projectAgentDesc), "project-scoped approved agent session") {
+		t.Fatalf("project agent_instance_id description = %q, want project-scoped agent guidance", projectAgentDesc)
+	}
+	leaseDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.capability_lease"))
+	if !strings.Contains(strings.ToLower(leaseDesc), "does not upgrade a user session into an agent session") {
+		t.Fatalf("capability_lease description = %q, want lease-does-not-upgrade guidance", leaseDesc)
+	}
 }
 
 // TestHandlerExpandedSearchToolSchemaOptions verifies search mode/sort/pagination tool schema guidance.
@@ -3049,7 +3080,7 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		}
 	}
 	if isError, _ := guardedUserResp.Result["isError"].(bool); isError {
-		if got := toolResultText(t, guardedUserResp.Result); !strings.Contains(got, "guarded mutation tuple requires an authenticated agent session") {
+		if got := toolResultText(t, guardedUserResp.Result); !strings.Contains(got, "current session principal_type=user") {
 			t.Fatalf("guarded user error = %q, want guarded tuple guidance", got)
 		}
 	}
@@ -3078,7 +3109,7 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		}
 	}
 	if isError, _ := missingLeaseResp.Result["isError"].(bool); isError {
-		if got := toolResultText(t, missingLeaseResp.Result); !strings.Contains(got, "agent_name, agent_instance_id, and lease_token are required") {
+		if got := toolResultText(t, missingLeaseResp.Result); !strings.Contains(got, "agent_instance_id and lease_token are required") {
 			t.Fatalf("missing lease tuple error = %q, want lease tuple requirement", got)
 		}
 	}

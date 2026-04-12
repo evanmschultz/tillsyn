@@ -21,6 +21,8 @@ mage ci
 - `mage ci`: canonical full gate (`verify-sources`, `gofmt` check, coverage-enforced tests, `build`)
 - `mage build`: local binary build
 - `mage run`: run from source
+- `mage dev`: run from source against the repo-local `./.tillsyn` dev runtime
+- `mage install`: install `till` into `~/.local/bin`
 - `mage test-golden`, `mage test-golden-update`: focused TUI golden workflows
 
 ## Windows Note (Line Endings)

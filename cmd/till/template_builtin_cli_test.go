@@ -17,7 +17,7 @@ func TestWriteBuiltinTemplateLibraryStatusDetail(t *testing.T) {
 		Name:                  "Default Go",
 		State:                 domain.BuiltinTemplateLibraryStateUpdateAvailable,
 		BuiltinSource:         "builtin://tillsyn/default-go",
-		BuiltinVersion:        "2026-04-10.2",
+		BuiltinVersion:        "2026-04-12.1",
 		BuiltinRevisionDigest: "builtin-digest",
 		RequiredKindIDs:       []domain.KindID{"build-task", "go-project", "plan-phase"},
 		MissingKindIDs:        []domain.KindID{"qa-check"},
@@ -36,7 +36,7 @@ func TestWriteBuiltinTemplateLibraryStatusDetail(t *testing.T) {
 	for _, want := range []string{
 		"Builtin Template Library",
 		"state update_available",
-		"builtin version 2026-04-10.2",
+		"builtin version 2026-04-12.1",
 		"missing kinds qa-check",
 		"installed builtin no",
 	} {
@@ -54,7 +54,7 @@ func TestWriteBuiltinTemplateLibraryEnsureDetail(t *testing.T) {
 			ID:             "default-go",
 			Name:           "Default Go",
 			Status:         domain.TemplateLibraryStatusApproved,
-			BuiltinVersion: "2026-04-10.2",
+			BuiltinVersion: "2026-04-12.1",
 			Revision:       3,
 		},
 		Status: domain.BuiltinTemplateLibraryStatus{
