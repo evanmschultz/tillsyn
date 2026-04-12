@@ -150,7 +150,9 @@ not be used for new work.
 Inspect or replace one project's explicit kind allowlist.
 
 Use this when a project needs tighter kind governance than the global registry
-alone provides.
+alone provides. After choosing a template library, use this to keep the
+project template-only or to explicitly allow a small set of generic kinds on
+top of the template-defined workflow.
 `),
 		Example: []string{
 			"  till kind allowlist list --project-id PROJECT_ID",
@@ -165,7 +167,8 @@ If no explicit allowlist exists, the project is effectively using the default
 registry behavior.
 
 Check this before changing template libraries or other project-level workflow
-rules.
+rules, especially when you need to see whether extra generic kinds remain
+allowed beyond a bound template library.
 `),
 		Example: []string{
 			"  till kind allowlist list --project-id PROJECT_ID",
@@ -175,8 +178,9 @@ rules.
 		Long: strings.TrimSpace(`
 Replace the explicit kind allowlist for one project.
 
-This is a replace operation. Pass every allowed kind id you want to
-keep in the resulting project policy.
+This is a replace operation. Use it after project creation or template binding
+when you need to keep a project limited to template-defined node kinds or
+deliberately opt specific generic kinds back in.
 `),
 		Example: []string{
 			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id subtask",

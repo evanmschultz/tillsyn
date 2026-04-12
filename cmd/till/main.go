@@ -663,6 +663,12 @@ metadata defaults from flags or --metadata-json.
 
 The name may be passed either as --name or as one positional argument.
 
+If a template library is selected, project setup seeds the allowlist from the
+node kinds referenced by that library plus the project kind. Confirm with the
+dev which template library should govern the project and whether any extra
+generic kinds should be opted in afterward with till kind allowlist set or
+till.project(operation=set_allowed_kinds).
+
 Next step: use till project list to confirm the new record, or till project
 discover --project-id PROJECT_ID to inspect the collaboration-readiness
 bridge after creation.
@@ -687,7 +693,7 @@ bridge after creation.
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.name, "name", "", "Project name")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.description, "description", "", "Optional project description")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.kind, "kind", "", "Optional project kind")
-	projectCreateCmd.Flags().StringVar(&projectCreateOpts.templateLibraryID, "template-library-id", "", "Optional approved global template library to bind during project creation")
+	projectCreateCmd.Flags().StringVar(&projectCreateOpts.templateLibraryID, "template-library-id", "", "Optional approved global template library to bind during project creation; when set, allowed kinds seed from the library's referenced node kinds")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.metadataJSON, "metadata-json", "", "Optional project metadata JSON")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.owner, "owner", "", "Optional project owner")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.icon, "icon", "", "Optional project icon")
@@ -925,7 +931,9 @@ remains compatibility-only and should not be used for new work.
 Inspect or replace the explicit kind allowlist for one project.
 
 Use this when a project should permit only a curated subset of registered kinds
-instead of every globally known kind definition.
+instead of every globally known kind definition. After choosing a template
+library, use this to keep the project template-only or to explicitly allow a
+small set of generic kinds on top of the template-defined workflow.
 `),
 		Example: strings.Join([]string{
 			"  till kind allowlist list --project-id PROJECT_ID",
@@ -940,7 +948,9 @@ instead of every globally known kind definition.
 List the explicit kind allowlist for one project.
 
 Use this before changing template libraries or project-scoped workflow rules so
-you know which node kinds are currently permitted inside the project.
+you know which node kinds are currently permitted inside the project, including
+whether the project currently allows extra generic kinds beyond a bound
+template library.
 `),
 		Example: "  till kind allowlist list --project-id PROJECT_ID",
 		Args:    cobra.NoArgs,
@@ -957,7 +967,9 @@ Replace the explicit kind allowlist for one project with the provided set of
 kind ids.
 
 This is a replace operation, not an additive patch. Re-supply the full desired
-allowlist each time.
+allowlist each time. Use it after project creation or template binding when you
+need to keep a project limited to template-defined node kinds or deliberately
+opt specific generic kinds back in.
 `),
 		Example: strings.Join([]string{
 			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",

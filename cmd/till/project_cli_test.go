@@ -237,6 +237,13 @@ func TestRunProjectCreateUsesTemplateLibrary(t *testing.T) {
 	if binding.LibraryID != "go-defaults" {
 		t.Fatalf("binding.LibraryID = %q, want go-defaults", binding.LibraryID)
 	}
+	allowedKinds, err := svc.ListProjectAllowedKinds(context.Background(), projects[0].ID)
+	if err != nil {
+		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
+	}
+	if got, want := allowedKinds, []domain.KindID{"branch", "go-service"}; !slices.Equal(got, want) {
+		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
+	}
 	tasks, err := svc.ListTasks(context.Background(), projects[0].ID, false)
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)

@@ -722,23 +722,58 @@ func (s *Service) resolveProjectAllowedKinds(ctx context.Context, projectID stri
 	return allowed, nil
 }
 
-// initializeProjectAllowedKinds assigns default allowlist entries for a new project.
-func (s *Service) initializeProjectAllowedKinds(ctx context.Context, project domain.Project) error {
+// defaultProjectAllowedKindIDs returns the catalog-wide default allowlist for one project.
+func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context, projectKind domain.KindID) ([]domain.KindID, error) {
 	kinds, err := s.repo.ListKindDefinitions(ctx, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	kindIDs := make([]domain.KindID, 0, len(kinds))
 	for _, kind := range kinds {
 		kindIDs = append(kindIDs, kind.ID)
 	}
 	if len(kindIDs) == 0 {
-		kindIDs = []domain.KindID{domain.DefaultProjectKind, domain.KindID(domain.WorkKindTask), domain.KindID(domain.WorkKindSubtask), domain.KindID(domain.WorkKindPhase), domain.KindID(domain.WorkKindDecision), domain.KindID(domain.WorkKindNote)}
+		kindIDs = []domain.KindID{
+			domain.DefaultProjectKind,
+			domain.KindID(domain.WorkKindTask),
+			domain.KindID(domain.WorkKindSubtask),
+			domain.KindID(domain.WorkKindPhase),
+			domain.KindID(domain.WorkKindDecision),
+			domain.KindID(domain.WorkKindNote),
+		}
 	}
-	if !slices.Contains(kindIDs, project.Kind) {
-		kindIDs = append(kindIDs, project.Kind)
+	projectKind = domain.NormalizeKindID(projectKind)
+	if projectKind != "" && !slices.Contains(kindIDs, projectKind) {
+		kindIDs = append(kindIDs, projectKind)
 	}
-	return s.repo.SetProjectAllowedKinds(ctx, project.ID, normalizeKindIDList(kindIDs))
+	return normalizeKindIDList(kindIDs), nil
+}
+
+// templateDerivedProjectAllowedKindIDs returns the template-scoped allowlist for one project.
+func templateDerivedProjectAllowedKindIDs(projectKind domain.KindID, library *domain.TemplateLibrary) []domain.KindID {
+	if library == nil {
+		return nil
+	}
+	kindIDs := make([]domain.KindID, 0, len(library.NodeTemplates)+1)
+	kindIDs = append(kindIDs, library.ReferencedKindIDs()...)
+	projectKind = domain.NormalizeKindID(projectKind)
+	if projectKind != "" {
+		kindIDs = append(kindIDs, projectKind)
+	}
+	return normalizeKindIDList(kindIDs)
+}
+
+// initializeProjectAllowedKinds assigns default allowlist entries for a new project.
+func (s *Service) initializeProjectAllowedKinds(ctx context.Context, project domain.Project, library *domain.TemplateLibrary) error {
+	kindIDs := templateDerivedProjectAllowedKindIDs(project.Kind, library)
+	if len(kindIDs) == 0 {
+		var err error
+		kindIDs, err = s.defaultProjectAllowedKindIDs(ctx, project.Kind)
+		if err != nil {
+			return err
+		}
+	}
+	return s.repo.SetProjectAllowedKinds(ctx, project.ID, kindIDs)
 }
 
 // validateKindPayload validates one payload against a kind definition schema.

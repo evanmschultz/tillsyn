@@ -81,6 +81,36 @@ func TestBuildInstructionsToolResponseExplainTemplate(t *testing.T) {
 	}
 }
 
+// TestBuildInstructionsToolResponseExplainProjectHighlightsTemplatePolicy verifies project explanations call out template-only policy and generic-kind exceptions.
+func TestBuildInstructionsToolResponseExplainProjectHighlightsTemplatePolicy(t *testing.T) {
+	t.Parallel()
+
+	resp, err := buildInstructionsToolResponse(context.Background(), newInstructionsTestServices(), instructionsToolRequest{
+		Focus:                  "project",
+		ProjectID:              "p1",
+		IncludeEvidence:        false,
+		IncludeMarkdown:        false,
+		IncludeRecommendations: false,
+	})
+	if err != nil {
+		t.Fatalf("buildInstructionsToolResponse() error = %v", err)
+	}
+	if resp.Explanation == nil {
+		t.Fatal("Explanation nil, want project explanation")
+	}
+	rules := strings.ToLower(strings.Join(resp.Explanation.ScopedRules, " | "))
+	if !strings.Contains(rules, "additional non-template kinds") {
+		t.Fatalf("ScopedRules = %q, want generic-kind exception guidance", rules)
+	}
+	workflow := strings.ToLower(strings.Join(resp.Explanation.WorkflowContract, " | "))
+	if !strings.Contains(workflow, "which template library governs the project") {
+		t.Fatalf("WorkflowContract = %q, want project-creation template discussion guidance", workflow)
+	}
+	if !strings.Contains(workflow, "set_allowed_kinds") {
+		t.Fatalf("WorkflowContract = %q, want allowlist adjustment guidance", workflow)
+	}
+}
+
 // TestBuildInstructionsToolResponseExplainBootstrap verifies bootstrap topic uses the richer shared bootstrap guidance.
 func TestBuildInstructionsToolResponseExplainBootstrap(t *testing.T) {
 	t.Parallel()

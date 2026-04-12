@@ -687,7 +687,7 @@ func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, in commo
 
 // ListProjectAllowedKinds returns deterministic allowlist rows.
 func (s *stubExpandedService) ListProjectAllowedKinds(_ context.Context, _ string) ([]string, error) {
-	return []string{"phase", "task"}, nil
+	return []string{"build-task", "go-project", "qa-check", "task"}, nil
 }
 
 // ListTemplateLibraries returns one deterministic template-library row.

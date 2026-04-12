@@ -207,7 +207,7 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.initializeProjectAllowedKinds(ctx, project); err != nil {
+	if err := s.initializeProjectAllowedKinds(ctx, project, nil); err != nil {
 		return domain.Project{}, err
 	}
 
@@ -296,7 +296,11 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
-	if err := s.initializeProjectAllowedKinds(ctx, project); err != nil {
+	var allowlistLibrary *domain.TemplateLibrary
+	if strings.TrimSpace(templateLibrary.ID) != "" {
+		allowlistLibrary = &templateLibrary
+	}
+	if err := s.initializeProjectAllowedKinds(ctx, project, allowlistLibrary); err != nil {
 		return domain.Project{}, err
 	}
 	if strings.TrimSpace(templateLibrary.ID) != "" {

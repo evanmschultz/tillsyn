@@ -329,6 +329,10 @@ Template-library operator examples:
   - `till template project preview --project-id <project-id>`
   - `till template project approve-migrations --project-id <project-id> --all`
   - `till template contract show --node-id <node-id>`
+- Project template policy:
+  - at project creation, the orchestrator should confirm with the dev which template library should govern the project and whether any non-template generic kinds are intentionally allowed.
+  - when a project is created with a template library, the initial `allowed_kinds` list now seeds from the project kind plus the node kinds referenced by that library's node templates and child rules.
+  - use `till kind allowlist list|set` or `till.project(operation=list_allowed_kinds|set_allowed_kinds)` to inspect that policy, keep the project template-only, or explicitly opt specific generic kinds back in.
 - Kind catalog note:
   - `till kind` is now the node-kind registry/allowlist surface.
   - template-library workflow contracts should be created and inspected through `till template`, the TUI project form, or MCP JSON transport instead of the legacy kind-template seam.

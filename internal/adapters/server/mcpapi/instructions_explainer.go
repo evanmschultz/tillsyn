@@ -163,8 +163,19 @@ func explainProjectInstructions(ctx context.Context, services instructionsExplai
 	if err != nil {
 		return instructionsExplainResult{}, err
 	}
+	var library domain.TemplateLibrary
+	var templateScopedKinds []string
+	var extraGenericKinds []string
+	if bindingFound {
+		library, err = loadTemplateLibraryForExplanation(ctx, services.templates, binding.LibraryID, binding, bindingFound)
+		if err != nil {
+			return instructionsExplainResult{}, err
+		}
+		templateScopedKinds = templateScopedProjectKinds(project.Kind, library)
+		extraGenericKinds = differenceStrings(allowedKinds, templateScopedKinds)
+	}
 
-	rules := make([]string, 0, 8)
+	rules := make([]string, 0, 10)
 	if standards := strings.TrimSpace(project.Metadata.StandardsMarkdown); standards != "" {
 		rules = append(rules, "Project standards are defined in standards_markdown and should be treated as scoped execution policy for this project.")
 	}
@@ -176,6 +187,12 @@ func explainProjectInstructions(ctx context.Context, services instructionsExplai
 	}
 	if bindingFound {
 		rules = append(rules, fmt.Sprintf("This project is bound to template library %q; generated node rules and future workflow defaults should be interpreted through that binding.", binding.LibraryID))
+		if len(templateScopedKinds) > 0 && slices.Equal(allowedKinds, templateScopedKinds) {
+			rules = append(rules, fmt.Sprintf("This project's current allowlist is template-scoped: only kinds referenced by %q plus the project kind are allowed.", binding.LibraryID))
+		}
+		if len(extraGenericKinds) > 0 {
+			rules = append(rules, fmt.Sprintf("This project explicitly allows additional non-template kinds beyond %q: %s.", binding.LibraryID, strings.Join(extraGenericKinds, ", ")))
+		}
 	}
 
 	workflow := []string{
@@ -184,12 +201,17 @@ func explainProjectInstructions(ctx context.Context, services instructionsExplai
 	}
 	if bindingFound {
 		workflow = append(workflow, fmt.Sprintf("Template drift status is %q for the active project binding.", fallbackText(strings.TrimSpace(binding.DriftStatus), "current")))
+		workflow = append(workflow, "At project creation or rebinding time, the orchestrator should confirm with the dev which template library governs the project, whether the project should stay template-only, and which generic kinds, if any, are intentionally allowed.")
+		workflow = append(workflow, "Use till.project(operation=set_allowed_kinds) or till kind allowlist set to keep the project limited to template-defined node kinds or to explicitly opt specific generic kinds back in.")
 	}
 
 	expectations := []string{
 		"Builders should implement work and report progress in thread comments or handoffs.",
 		"QA should verify outcomes and resolve or return handoffs instead of silently editing workflow state.",
 		"Research should gather evidence, summarize findings, and hand off the result back into the same project scope.",
+	}
+	if bindingFound {
+		expectations = append(expectations, "Orchestrators should not assume generic kinds are allowed once a template library is chosen; template policy and any generic-kind exceptions should be made explicit with the dev.")
 	}
 
 	evidence := make([]instructionsToolEvidence, 0, 3)
@@ -286,6 +308,8 @@ func explainTemplateInstructions(ctx context.Context, services instructionsExpla
 	workflow := []string{
 		"Use till.project(operation=bind_template) or the TUI project edit flow to bind or rebind this library explicitly.",
 		"Use till.project(operation=preview_template_reapply) before adopting newer template revisions into an existing project.",
+		"At project creation, the orchestrator should confirm with the dev whether this library should define the whole project workflow or whether extra generic kinds should remain explicitly allowed.",
+		"After binding, use till.project(operation=set_allowed_kinds) or till kind allowlist set to keep the project restricted to this library's node kinds or to intentionally opt generic kinds in.",
 	}
 	if bindingFound {
 		workflow = append(workflow, fmt.Sprintf("Project binding drift for this library is currently %q.", fallbackText(strings.TrimSpace(binding.DriftStatus), "current")))
@@ -620,6 +644,49 @@ func listProjectAllowedKinds(ctx context.Context, service common.KindCatalogServ
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// templateScopedProjectKinds returns the sorted unique template-scoped allowlist for one project/library pair.
+func templateScopedProjectKinds(projectKind domain.KindID, library domain.TemplateLibrary) []string {
+	seen := make(map[string]struct{})
+	for _, kindID := range library.ReferencedKindIDs() {
+		if normalized := strings.TrimSpace(string(kindID)); normalized != "" {
+			seen[normalized] = struct{}{}
+		}
+	}
+	if normalized := strings.TrimSpace(string(domain.NormalizeKindID(projectKind))); normalized != "" {
+		seen[normalized] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for kindID := range seen {
+		out = append(out, kindID)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// differenceStrings returns rows that are present in left but not in right.
+func differenceStrings(left, right []string) []string {
+	rightSet := make(map[string]struct{}, len(right))
+	for _, value := range right {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		rightSet[value] = struct{}{}
+	}
+	out := make([]string, 0)
+	for _, value := range left {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := rightSet[value]; ok {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 // loadProjectBinding loads one project binding when it exists.

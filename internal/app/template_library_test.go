@@ -214,6 +214,13 @@ func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
 	if binding.LibraryID != library.ID {
 		t.Fatalf("binding.LibraryID = %q, want %q", binding.LibraryID, library.ID)
 	}
+	allowedKinds, err := svc.ListProjectAllowedKinds(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
+	}
+	if got, want := allowedKinds, []domain.KindID{"branch", "go-service"}; !slices.Equal(got, want) {
+		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
+	}
 	tasks, err := svc.ListTasks(ctx, project.ID, false)
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)
@@ -233,6 +240,127 @@ func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
 	}
 	if snapshot.SourceLibraryID != library.ID {
 		t.Fatalf("snapshot.SourceLibraryID = %q, want %q", snapshot.SourceLibraryID, library.ID)
+	}
+}
+
+// TestBindProjectTemplateLibraryRefreshesDefaultAllowlist verifies binding tightens the default catalog-wide allowlist to the library-scoped kinds.
+func TestBindProjectTemplateLibraryRefreshesDefaultAllowlist(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 11, 10, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Template Policy", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	defaultKinds, err := svc.ListProjectAllowedKinds(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectAllowedKinds(default) error = %v", err)
+	}
+	if !slices.Contains(defaultKinds, domain.KindID("note")) {
+		t.Fatalf("default allowlist = %#v, want generic kind note present", defaultKinds)
+	}
+	library, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "workflow-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Workflow Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "user-1",
+		CreatedByActorName:  "Operator",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "user-1",
+		ApprovedByActorName: "Operator",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "phase-template",
+			ScopeLevel: domain.KindAppliesToPhase,
+			NodeKindID: domain.KindID("phase"),
+			ChildRules: []UpsertTemplateChildRuleInput{{
+				ID:                      "build-child",
+				Position:                1,
+				ChildScopeLevel:         domain.KindAppliesToTask,
+				ChildKindID:             domain.KindID("task"),
+				TitleTemplate:           "Build child",
+				ResponsibleActorKind:    domain.TemplateActorKindBuilder,
+				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
+				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTemplateLibrary() error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        library.ID,
+		BoundByActorID:   "user-1",
+		BoundByActorName: "Operator",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	allowedKinds, err := svc.ListProjectAllowedKinds(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectAllowedKinds(bound) error = %v", err)
+	}
+	if got, want := allowedKinds, []domain.KindID{"phase", "project", "task"}; !slices.Equal(got, want) {
+		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
+	}
+}
+
+// TestBindProjectTemplateLibraryPreservesCustomizedAllowlist verifies binding does not overwrite an explicitly curated project allowlist.
+func TestBindProjectTemplateLibraryPreservesCustomizedAllowlist(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 11, 10, 30, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Custom Policy", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	if err := svc.SetProjectAllowedKinds(ctx, SetProjectAllowedKindsInput{
+		ProjectID: project.ID,
+		KindIDs:   []domain.KindID{"note", "project"},
+	}); err != nil {
+		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
+	}
+	library, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
+		ID:                  "go-defaults",
+		Scope:               domain.TemplateLibraryScopeGlobal,
+		Name:                "Go Defaults",
+		Status:              domain.TemplateLibraryStatusApproved,
+		CreatedByActorID:    "user-1",
+		CreatedByActorName:  "Operator",
+		CreatedByActorType:  domain.ActorTypeUser,
+		ApprovedByActorID:   "user-1",
+		ApprovedByActorName: "Operator",
+		ApprovedByActorType: domain.ActorTypeUser,
+		NodeTemplates: []UpsertNodeTemplateInput{{
+			ID:         "task-template",
+			ScopeLevel: domain.KindAppliesToTask,
+			NodeKindID: domain.KindID("task"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTemplateLibrary() error = %v", err)
+	}
+	if _, err := svc.BindProjectTemplateLibrary(ctx, BindProjectTemplateLibraryInput{
+		ProjectID:        project.ID,
+		LibraryID:        library.ID,
+		BoundByActorID:   "user-1",
+		BoundByActorName: "Operator",
+		BoundByActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
+	}
+	allowedKinds, err := svc.ListProjectAllowedKinds(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
+	}
+	if got, want := allowedKinds, []domain.KindID{"note", "project"}; !slices.Equal(got, want) {
+		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
 	}
 }
 

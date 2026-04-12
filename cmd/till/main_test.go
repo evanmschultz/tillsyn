@@ -568,7 +568,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "project create",
 			args: []string{"project", "create", "--help"},
-			want: []string{"till project create", "--name", "--kind", "--template-library-id", "--metadata-json", "one positional argument"},
+			want: []string{"till project create", "--name", "--kind", "--template-library-id", "--metadata-json", "one positional argument", "Confirm with the", "till kind allowlist set"},
 		},
 		{
 			name: "project show",
@@ -678,7 +678,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "kind allowlist set",
 			args: []string{"kind", "allowlist", "set", "--help"},
-			want: []string{"till kind allowlist set", "--project-id", "--kind-id", "replace operation"},
+			want: []string{"till kind allowlist set", "--project-id", "--kind-id", "replace operation", "template-defined node kinds", "generic kinds"},
 		},
 		{
 			name: "template",
