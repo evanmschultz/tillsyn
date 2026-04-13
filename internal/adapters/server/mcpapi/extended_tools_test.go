@@ -2241,6 +2241,32 @@ func TestHandlerInstructionsToolExplainsProjectScope(t *testing.T) {
 	if !strings.Contains(rulesText, "template library") {
 		t.Fatalf("scoped_rules = %q, want template binding guidance", rulesText)
 	}
+	recommendedAny, ok := structured["recommended_agent_settings"].([]any)
+	if !ok || len(recommendedAny) == 0 {
+		t.Fatalf("recommended_agent_settings missing: %#v", structured)
+	}
+	recommendedText := strings.ToLower(joinAnyStrings(recommendedAny))
+	if !strings.Contains(recommendedText, "does not auto-create that repair item today") {
+		t.Fatalf("recommended_agent_settings = %q, want repair-item caveat", recommendedText)
+	}
+	if !strings.Contains(recommendedText, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("recommended_agent_settings = %q, want metrics caveat", recommendedText)
+	}
+	mdGuidance, ok := structured["md_file_guidance"].(map[string]any)
+	if !ok {
+		t.Fatalf("md_file_guidance missing: %#v", structured)
+	}
+	readmeGuidance, ok := mdGuidance["README.md"].([]any)
+	if !ok || len(readmeGuidance) == 0 {
+		t.Fatalf("README.md guidance missing: %#v", mdGuidance)
+	}
+	readmeGuidanceText := strings.ToLower(joinAnyStrings(readmeGuidance))
+	if !strings.Contains(readmeGuidanceText, "does not auto-create that item today") {
+		t.Fatalf("README.md guidance = %q, want repair-item caveat", readmeGuidanceText)
+	}
+	if !strings.Contains(readmeGuidanceText, "does not auto-verify every field or rollup total today") {
+		t.Fatalf("README.md guidance = %q, want metrics caveat", readmeGuidanceText)
+	}
 }
 
 // TestHandlerInstructionsToolExplainsNodeScope verifies till.get_instructions can explain node-local workflow rules.
