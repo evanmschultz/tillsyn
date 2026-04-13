@@ -635,6 +635,9 @@ func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest
 	if err != nil {
 		return domain.Task{}, err
 	}
+	if err := validateMetadataOutcome(&in.Metadata); err != nil {
+		return domain.Task{}, err
+	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	task, err := a.service.CreateTask(ctx, app.CreateTaskInput{
 		ProjectID:      strings.TrimSpace(in.ProjectID),
@@ -671,6 +674,9 @@ func (a *AppServiceAdapter) UpdateTask(ctx context.Context, in UpdateTaskRequest
 	}
 	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
+		return domain.Task{}, err
+	}
+	if err := validateMetadataOutcome(in.Metadata); err != nil {
 		return domain.Task{}, err
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
@@ -823,6 +829,26 @@ func normalizeTaskStateInput(raw string) (domain.LifecycleState, error) {
 		return "", fmt.Errorf("state %q is unsupported for move_state; use delete/restore for archive flows: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
 	default:
 		return "", fmt.Errorf("state %q is unsupported: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
+	}
+}
+
+// validateMetadataOutcome rejects unrecognized metadata.outcome values at the
+// MCP adapter boundary. Empty is valid (outcome not yet set). The valid set is
+// small and stable: success, failure, blocked, superseded.
+func validateMetadataOutcome(md *domain.TaskMetadata) error {
+	if md == nil {
+		return nil
+	}
+	outcome := strings.TrimSpace(strings.ToLower(md.Outcome))
+	if outcome == "" {
+		return nil
+	}
+	switch outcome {
+	case "success", "failure", "blocked", "superseded":
+		md.Outcome = outcome // normalize to lowercase
+		return nil
+	default:
+		return fmt.Errorf("metadata.outcome %q is not a recognized value (valid: success, failure, blocked, superseded): %w", md.Outcome, ErrInvalidCaptureStateRequest)
 	}
 }
 

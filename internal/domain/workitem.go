@@ -153,6 +153,7 @@ type TaskMetadata struct {
 	ResourceRefs             []ResourceRef      `json:"resource_refs"`
 	KindPayload              json.RawMessage    `json:"kind_payload,omitempty"`
 	CompletionContract       CompletionContract `json:"completion_contract"`
+	Outcome                  string             `json:"outcome,omitempty"`
 }
 
 // normalizeLifecycleState canonicalizes lifecycle state aliases.
@@ -207,6 +208,7 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 	meta.BlockedReason = strings.TrimSpace(meta.BlockedReason)
 	meta.RiskNotes = strings.TrimSpace(meta.RiskNotes)
 	meta.TransitionNotes = strings.TrimSpace(meta.TransitionNotes)
+	meta.Outcome = strings.TrimSpace(meta.Outcome)
 	meta.CommandSnippets = normalizeStringList(meta.CommandSnippets)
 	meta.ExpectedOutputs = normalizeStringList(meta.ExpectedOutputs)
 	meta.DecisionLog = normalizeStringList(meta.DecisionLog)
@@ -349,6 +351,9 @@ func MergeTaskMetadata(base TaskMetadata, defaults *TaskMetadata) (TaskMetadata,
 	merged.RelatedItems = mergeStringLists(merged.RelatedItems, normalizedDefaults.RelatedItems)
 	if merged.TransitionNotes == "" {
 		merged.TransitionNotes = normalizedDefaults.TransitionNotes
+	}
+	if merged.Outcome == "" {
+		merged.Outcome = normalizedDefaults.Outcome
 	}
 	merged.DependsOn = mergeStringLists(merged.DependsOn, normalizedDefaults.DependsOn)
 	merged.BlockedBy = mergeStringLists(merged.BlockedBy, normalizedDefaults.BlockedBy)
