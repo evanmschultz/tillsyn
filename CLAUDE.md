@@ -5,7 +5,7 @@
 All work is tracked in Tillsyn. No exceptions.
 
 - Never use markdown files for work tracking, coordination, worklogs, or execution state.
-- Never use Claude Code's built-in task tools (TaskCreate, TaskUpdate, etc.) for work tracking. All tracking goes through Tillsyn MCP tools.
+- Claude Code's built-in task tools (TaskCreate, TaskUpdate, etc.) are fine for local progress tracking within a conversation. Use them alongside Tillsyn — they complement each other. Tillsyn is the cross-session source of truth; built-in tasks are ephemeral per-conversation aids.
 - Every piece of work gets a Tillsyn plan item before it starts.
 - **When work starts on a plan item, move it to `in_progress` immediately** so the dev can see what is actively being worked on. Do not leave items in `todo` while working on them.
 - PLAN.md and other markdown planning docs are frozen reference material, not live trackers.
@@ -61,6 +61,26 @@ The parent Claude Code session is always the **orchestrator**. All other roles (
 3. **Task state is the signal.** When a subagent finishes, it moves the task to `done` or `failed` and puts results in task metadata. The orchestrator reads the task state to know what happened.
 4. **No subagent polls or watches anything.** Subagents read their task details at spawn, execute, update, return.
 5. **Only the orchestrator uses attention items** — for human approval requests and inter-orchestrator communication.
+
+### Agent State Management — CRITICAL
+
+**Every subagent MUST manage its own Tillsyn plan item state.** The orchestrator cannot move role-gated items (e.g., QA subtasks gated to `qa` role).
+
+**Before spawning any subagent:**
+1. Move the target plan item to `in_progress` if the orchestrator has permission. If not (role-gated), the agent prompt MUST instruct the subagent to move it themselves.
+2. Include in the agent prompt: the Tillsyn task ID, auth credentials (session_id, session_secret, auth_context_id, agent_instance_id, lease_token), and explicit instructions to move state.
+
+**Every subagent prompt MUST include these instructions:**
+- "Move your Tillsyn task to `in_progress` immediately when you start work."
+- "When done: update metadata with results, move to `done`."
+- "If you find issues that need fixing: leave in `in_progress`, update metadata with findings, return to orchestrator."
+
+**For QA subagents specifically:**
+- QA subtasks are gated to the `qa` role. The orchestrator must request a `qa`-role auth session and pass those credentials to the QA agent.
+- The QA agent moves its own subtask to `in_progress` at start and `done` on PASS.
+- On findings that need fixes: leave in `in_progress`, report findings, orchestrator spawns builder to fix, then re-runs QA.
+
+**If a subagent fails to update state:** The orchestrator must get auth as the appropriate role and fix the state before proceeding. This is a recovery path, not the normal flow — fix the agent prompts so it doesn't happen again.
 
 ## Task Lifecycle
 
