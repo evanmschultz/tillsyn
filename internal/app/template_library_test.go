@@ -1014,6 +1014,354 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 	}
 }
 
+// TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds verifies the shipped default-go runtime
+// generates refactor and dogfood-refactor phase/task children with the expected role contracts.
+func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{AutoCreateProjectColumns: false})
+	seedBuiltinTemplateKinds(t, ctx, svc)
+
+	if _, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-go",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:              "Go Refactor",
+		Kind:              "go-project",
+		TemplateLibraryID: "default-go",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	columns, err := svc.ListColumns(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "REFACTOR LANE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+
+	refactorPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("refactor-phase"),
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "REFACTOR PHASE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(refactor-phase) error = %v", err)
+	}
+	dogfoodPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("dogfood-refactor-phase"),
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "DOGFOOD REFACTOR PHASE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(dogfood-refactor-phase) error = %v", err)
+	}
+
+	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(phase children) error = %v", err)
+	}
+	if got, want := childTitles(tasks, refactorPhase.ID), []string{
+		"HYLLA-FIRST REFACTOR BASELINE",
+		"PHASE METRICS ROLLUP",
+		"PHASE PARITY VALIDATION PLAN",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
+		"REFACTOR METRICS BASELINE AND REPORT PATH",
+		"REFACTOR SUBPHASE AND SLICE TREE",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("refactor-phase child titles = %#v, want %#v", got, want)
+	}
+	if got, want := childTitles(tasks, dogfoodPhase.ID), []string{
+		"CONFIRM LOCAL USED VERSION UPDATED",
+		"DEV VERSION VALIDATION PLAN",
+		"HYLLA-FIRST REFACTOR BASELINE",
+		"PHASE METRICS ROLLUP",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
+		"REFACTOR METRICS BASELINE AND REPORT PATH",
+		"REFACTOR SUBPHASE AND SLICE TREE",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("dogfood-refactor-phase child titles = %#v, want %#v", got, want)
+	}
+
+	refactorPhasePush := findChildTaskByTitle(t, tasks, refactorPhase.ID, "PHASE PUSH AND REINGEST CONFIRMATION")
+	refactorPhasePushSnapshot := mustNodeContractSnapshot(t, repo, refactorPhasePush.ID)
+	if refactorPhasePushSnapshot.ResponsibleActorKind != domain.TemplateActorKindOrchestrator {
+		t.Fatalf("refactor phase push responsible actor = %q, want orchestrator", refactorPhasePushSnapshot.ResponsibleActorKind)
+	}
+	if !slices.Contains(refactorPhasePushSnapshot.EditableByActorKinds, domain.TemplateActorKindBuilder) || !slices.Contains(refactorPhasePushSnapshot.EditableByActorKinds, domain.TemplateActorKindResearch) {
+		t.Fatalf("refactor phase push editable actors = %#v, want builder+research+orchestrator", refactorPhasePushSnapshot.EditableByActorKinds)
+	}
+	dogfoodPhaseLocal := findChildTaskByTitle(t, tasks, dogfoodPhase.ID, "CONFIRM LOCAL USED VERSION UPDATED")
+	dogfoodPhaseLocalSnapshot := mustNodeContractSnapshot(t, repo, dogfoodPhaseLocal.ID)
+	if dogfoodPhaseLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
+		t.Fatalf("dogfood phase local-version responsible actor = %q, want human", dogfoodPhaseLocalSnapshot.ResponsibleActorKind)
+	}
+	if !slices.Equal(dogfoodPhaseLocalSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
+		t.Fatalf("dogfood phase local-version completable actors = %#v, want human only", dogfoodPhaseLocalSnapshot.CompletableByActorKinds)
+	}
+
+	refactorTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  refactorPhase.ID,
+		ColumnID:  refactorPhase.ColumnID,
+		Kind:      domain.WorkKind("refactor-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "DECOUPLE FLOW",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(refactor-task) error = %v", err)
+	}
+	dogfoodTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  dogfoodPhase.ID,
+		ColumnID:  dogfoodPhase.ColumnID,
+		Kind:      domain.WorkKind("dogfood-refactor-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "DOGFOOD DECOUPLE FLOW",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(dogfood-refactor-task) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(task children) error = %v", err)
+	}
+	if got, want := childTitles(tasks, refactorTask.ID), []string{
+		"COMMIT PUSH AND REINGEST",
+		"METRICS CAPTURE AND REPORT",
+		"PARITY VALIDATION IN ACTION",
+		"QA FALSIFICATION REVIEW",
+		"QA PROOF REVIEW",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("refactor-task child titles = %#v, want %#v", got, want)
+	}
+	if got, want := childTitles(tasks, dogfoodTask.ID), []string{
+		"COMMIT PUSH AND REINGEST",
+		"CONFIRM LOCAL USED VERSION UPDATED",
+		"METRICS CAPTURE AND REPORT",
+		"QA FALSIFICATION REVIEW",
+		"QA PROOF REVIEW",
+		"TEST AGAINST DEV VERSION",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("dogfood-refactor-task child titles = %#v, want %#v", got, want)
+	}
+
+	refactorCommit := findChildTaskByTitle(t, tasks, refactorTask.ID, "COMMIT PUSH AND REINGEST")
+	refactorCommitSnapshot := mustNodeContractSnapshot(t, repo, refactorCommit.ID)
+	if refactorCommitSnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
+		t.Fatalf("refactor commit responsible actor = %q, want builder", refactorCommitSnapshot.ResponsibleActorKind)
+	}
+	if !slices.Contains(refactorCommitSnapshot.CompletableByActorKinds, domain.TemplateActorKindBuilder) || !slices.Contains(refactorCommitSnapshot.CompletableByActorKinds, domain.TemplateActorKindHuman) {
+		t.Fatalf("refactor commit completable actors = %#v, want builder+human", refactorCommitSnapshot.CompletableByActorKinds)
+	}
+	refactorQA := findChildTaskByTitle(t, tasks, refactorTask.ID, "QA PROOF REVIEW")
+	refactorQASnapshot := mustNodeContractSnapshot(t, repo, refactorQA.ID)
+	if refactorQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA || refactorQA.Kind != domain.WorkKind("qa-check") {
+		t.Fatalf("refactor QA child = %#v snapshot=%#v, want qa-check owned by qa", refactorQA, refactorQASnapshot)
+	}
+	parityValidation := findChildTaskByTitle(t, tasks, refactorTask.ID, "PARITY VALIDATION IN ACTION")
+	paritySnapshot := mustNodeContractSnapshot(t, repo, parityValidation.ID)
+	if paritySnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder || parityValidation.Kind != domain.WorkKind("subtask") {
+		t.Fatalf("parity validation child = %#v snapshot=%#v, want subtask owned by builder", parityValidation, paritySnapshot)
+	}
+	dogfoodLocalTask := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "CONFIRM LOCAL USED VERSION UPDATED")
+	dogfoodLocalTaskSnapshot := mustNodeContractSnapshot(t, repo, dogfoodLocalTask.ID)
+	if dogfoodLocalTaskSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman || dogfoodLocalTask.Kind != domain.WorkKind("subtask") {
+		t.Fatalf("dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", dogfoodLocalTask, dogfoodLocalTaskSnapshot)
+	}
+	if !slices.Equal(dogfoodLocalTaskSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
+		t.Fatalf("dogfood local-version completable actors = %#v, want human only", dogfoodLocalTaskSnapshot.CompletableByActorKinds)
+	}
+}
+
+// TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds verifies the shipped default-frontend runtime
+// generates refactor and dogfood-refactor phase/task children with the expected role contracts.
+func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	now := time.Date(2026, 4, 3, 10, 15, 0, 0, time.UTC)
+	svc := newDeterministicService(repo, now, ServiceConfig{AutoCreateProjectColumns: false})
+	seedDefaultFrontendBuiltinTemplateKinds(t, ctx, svc)
+
+	if _, err := svc.EnsureBuiltinTemplateLibrary(ctx, EnsureBuiltinTemplateLibraryInput{
+		LibraryID: "default-frontend",
+		ActorID:   "dev-1",
+		ActorName: "Dev",
+		ActorType: domain.ActorTypeUser,
+	}); err != nil {
+		t.Fatalf("EnsureBuiltinTemplateLibrary() error = %v", err)
+	}
+
+	project, err := svc.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:              "Frontend Refactor",
+		Kind:              "frontend-project",
+		TemplateLibraryID: "default-frontend",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	columns, err := svc.ListColumns(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "FRONTEND REFACTOR LANE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+
+	refactorPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("refactor-phase"),
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "FRONTEND REFACTOR PHASE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(refactor-phase) error = %v", err)
+	}
+	dogfoodPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  columns[0].ID,
+		Kind:      domain.WorkKind("dogfood-refactor-phase"),
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "FRONTEND DOGFOOD REFACTOR PHASE",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(dogfood-refactor-phase) error = %v", err)
+	}
+
+	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(phase children) error = %v", err)
+	}
+	if got, want := childTitles(tasks, refactorPhase.ID), []string{
+		"HYLLA-FIRST REFACTOR BASELINE",
+		"PHASE METRICS ROLLUP",
+		"PHASE PARITY VALIDATION PLAN",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
+		"REFACTOR METRICS BASELINE AND REPORT PATH",
+		"REFACTOR SUBPHASE AND SLICE TREE",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("frontend refactor-phase child titles = %#v, want %#v", got, want)
+	}
+	if got, want := childTitles(tasks, dogfoodPhase.ID), []string{
+		"CONFIRM LOCAL USED VERSION UPDATED",
+		"DEV VERSION VALIDATION PLAN",
+		"HYLLA-FIRST REFACTOR BASELINE",
+		"PHASE METRICS ROLLUP",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
+		"REFACTOR METRICS BASELINE AND REPORT PATH",
+		"REFACTOR SUBPHASE AND SLICE TREE",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("frontend dogfood-refactor-phase child titles = %#v, want %#v", got, want)
+	}
+
+	refactorTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  refactorPhase.ID,
+		ColumnID:  refactorPhase.ColumnID,
+		Kind:      domain.WorkKind("refactor-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "REDUCE UI COUPLING",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(refactor-task) error = %v", err)
+	}
+	dogfoodTask, err := svc.CreateTask(ctx, CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  dogfoodPhase.ID,
+		ColumnID:  dogfoodPhase.ColumnID,
+		Kind:      domain.WorkKind("dogfood-refactor-task"),
+		Scope:     domain.KindAppliesToTask,
+		Title:     "DOGFOOD REDUCE UI COUPLING",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(dogfood-refactor-task) error = %v", err)
+	}
+
+	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListTasks(task children) error = %v", err)
+	}
+	if got, want := childTitles(tasks, refactorTask.ID), []string{
+		"ACCESSIBILITY CHECK",
+		"COMMIT PUSH AND REINGEST",
+		"METRICS CAPTURE AND REPORT",
+		"PARITY VALIDATION IN ACTION",
+		"QA FALSIFICATION REVIEW",
+		"QA PROOF REVIEW",
+		"VISUAL QA",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("frontend refactor-task child titles = %#v, want %#v", got, want)
+	}
+	if got, want := childTitles(tasks, dogfoodTask.ID), []string{
+		"ACCESSIBILITY CHECK",
+		"COMMIT PUSH AND REINGEST",
+		"CONFIRM LOCAL USED VERSION UPDATED",
+		"METRICS CAPTURE AND REPORT",
+		"QA FALSIFICATION REVIEW",
+		"QA PROOF REVIEW",
+		"TEST AGAINST DEV VERSION",
+		"VISUAL QA",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("frontend dogfood-refactor-task child titles = %#v, want %#v", got, want)
+	}
+
+	visualQA := findChildTaskByTitle(t, tasks, refactorTask.ID, "VISUAL QA")
+	visualQASnapshot := mustNodeContractSnapshot(t, repo, visualQA.ID)
+	if visualQA.Kind != domain.WorkKind("visual-qa") || visualQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+		t.Fatalf("visual QA child = %#v snapshot=%#v, want visual-qa owned by qa", visualQA, visualQASnapshot)
+	}
+	a11yCheck := findChildTaskByTitle(t, tasks, refactorTask.ID, "ACCESSIBILITY CHECK")
+	a11ySnapshot := mustNodeContractSnapshot(t, repo, a11yCheck.ID)
+	if a11yCheck.Kind != domain.WorkKind("a11y-check") || a11ySnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+		t.Fatalf("a11y child = %#v snapshot=%#v, want a11y-check owned by qa", a11yCheck, a11ySnapshot)
+	}
+	frontendCommit := findChildTaskByTitle(t, tasks, refactorTask.ID, "COMMIT PUSH AND REINGEST")
+	frontendCommitSnapshot := mustNodeContractSnapshot(t, repo, frontendCommit.ID)
+	if frontendCommitSnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
+		t.Fatalf("frontend commit responsible actor = %q, want builder", frontendCommitSnapshot.ResponsibleActorKind)
+	}
+	frontendDogfoodLocal := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "CONFIRM LOCAL USED VERSION UPDATED")
+	frontendDogfoodLocalSnapshot := mustNodeContractSnapshot(t, repo, frontendDogfoodLocal.ID)
+	if frontendDogfoodLocal.Kind != domain.WorkKind("subtask") || frontendDogfoodLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
+		t.Fatalf("frontend dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", frontendDogfoodLocal, frontendDogfoodLocalSnapshot)
+	}
+	if !slices.Equal(frontendDogfoodLocalSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
+		t.Fatalf("frontend dogfood local-version completable actors = %#v, want human only", frontendDogfoodLocalSnapshot.CompletableByActorKinds)
+	}
+}
+
 // TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow verifies the shipped builtin
 // generates project setup, branch lifecycle phases, and build-task QA work end to end.
 func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing.T) {
@@ -1704,6 +2052,15 @@ func findNodeTemplateByKind(t *testing.T, templates []UpsertNodeTemplateInput, k
 	}
 	t.Fatalf("expected node template for kind %q", kind)
 	return UpsertNodeTemplateInput{}
+}
+
+func mustNodeContractSnapshot(t *testing.T, repo *fakeRepo, nodeID string) domain.NodeContractSnapshot {
+	t.Helper()
+	snapshot, ok := repo.nodeContracts[nodeID]
+	if !ok {
+		t.Fatalf("repo.nodeContracts missing node %q", nodeID)
+	}
+	return snapshot
 }
 
 // findTaskByTitle returns one task with the requested title or fails the test.
