@@ -27,6 +27,10 @@ The runtime setup should be performed through Tillsyn MCP tools, not through dir
   - `closeout-phase`
   - `branch-cleanup-phase`
 - Task kind: `build-task`
+- Phase kind: `refactor-phase`
+- Phase kind: `dogfood-refactor-phase`
+- Task kind: `refactor-task`
+- Task kind: `dogfood-refactor-task`
 - Subtask kind: `qa-check`
 - Subtask kind: `commit-and-reingest`
 - Dogfood project names should use all caps.
@@ -91,11 +95,16 @@ The Go standards payload should reflect how `tillsyn` itself is organized:
 - Maintain the repo coverage gate and use the canonical `mage` verification flow.
 - Prefer the smallest concrete design that satisfies the current requirement.
 - Reuse or refactor existing code when that is the best option.
+- No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit task or subtask at the correct level.
+- If tests, CI, or QA fail, create a new explicit fix task or subtask before repair work begins.
+- If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one.
+- Every phase should end with explicit push-and-reingest confirmation or an explicit no-repo-delta record before downstream work treats the baseline as current.
+- Refactor work should use the shipped `refactor-phase`, `dogfood-refactor-phase`, `refactor-task`, and `dogfood-refactor-task` contracts when that workflow is the real fit.
 - Do not add abstraction for hypothetical future variation.
 - Prefer idiomatic Go naming, package structure, interface placement, error handling, logging boundaries, and test shape.
 - Wrap and bubble errors with context instead of swallowing them.
 - Unresolved uncertainty must become explicit coordination state instead of optimistic completion.
-- Confirmed-good build work must be committed and refreshed into Hylla before downstream reasoning treats the graph as current.
+- Confirmed-good build work must be committed, pushed, and refreshed into Hylla where needed before downstream reasoning treats the graph as current.
 - MCP-first dogfooding for runtime and operator workflows.
 - `mage` is the canonical build/test gate.
 - Laslig styling for all Mage functions and CLI output.
@@ -104,14 +113,14 @@ The Go standards payload should reflect how `tillsyn` itself is organized:
 - GitHub Actions CI and release snapshot checks must stay green.
 - No ad-hoc `.codex/` directories inside worktrees.
 - Follow `AGENTS.md` workflow and worktree rules.
-- Comments and handoffs are the coordination layer.
+- Comments, handoffs, and attention are distinct coordination surfaces: comments are shared discussion, handoffs are explicit next-action routing, and attention is the durable inbox substrate.
 - Template-generated QA blockers must be completed truthfully before done.
 
 ## Project Description
 
 Use this description for `TILLSYN`:
 
-> Local-first human-agent planning and execution workspace with MCP-first dogfooding, scoped auth, template-driven workflow contracts, shared comments and handoffs, and semantic project search.
+> Local-first human-agent planning and execution workspace with MCP-first dogfooding, scoped auth, template-driven workflow contracts, shared comments and handoffs, durable attention/inbox state, and semantic project search.
 
 ## Template Contract
 
@@ -258,16 +267,38 @@ The `PLAN` phase should cover at least:
 - validation-plan definition;
 - branch/worktree setup planning when needed;
 - closeout and cleanup expectations defined up front.
+- explicit task and subtask creation before any implementation, QA, parity-check, or repair work begins.
 
 ### Build-Phase Contract
 
 The `BUILD` phase holds the actual implementation tasks.
 
-Each concrete implementation task should normally be a `build-task`, so it auto-generates:
+Each concrete implementation task should normally be a `build-task`, `refactor-task`, or `dogfood-refactor-task`, and nested refactor work should use `refactor-phase` or `dogfood-refactor-phase` when that is the real fit.
+
+Each generated phase should also include:
+
+- `PHASE PUSH AND REINGEST CONFIRMATION`
+
+`build-task` auto-generates:
 
 - `QA PROOF REVIEW`
 - `QA FALSIFICATION REVIEW`
-- `COMMIT AND REINGEST`
+- `COMMIT PUSH AND REINGEST`
+
+`refactor-task` adds:
+
+- `PARITY VALIDATION IN ACTION`
+- `METRICS CAPTURE AND REPORT`
+
+`dogfood-refactor-task` adds:
+
+- `TEST AGAINST DEV VERSION`
+- `CONFIRM LOCAL USED VERSION UPDATED`
+- `METRICS CAPTURE AND REPORT`
+
+For refactor and dogfood-refactor work, the builder should update the slice task description after QA and parity or dev validation with truthful metrics such as `git diff` added/removed/net lines, tracked-source line counts before and after, touched files/packages, Hylla node/block/orphan counts before and after, active/wait/ingest timing windows, ingest cost when available, and cleanup/security findings. The orchestrator should then roll those values up into the parent refactor phase description and the markdown report artifact.
+
+Any failing tests, CI, QA, parity validation, or dev-version validation should create a new explicit follow-up task or subtask before repair work begins.
 
 ### Closeout-Phase Contract
 
@@ -277,6 +308,7 @@ That phase should include tasks for at least:
 
 - all required `mage` tests/checks passing;
 - local commit recorded;
+- push confirmed when a new baseline exists;
 - Hylla artifact ingested or refreshed and confirmed current to git;
 - proof-oriented QA across completed work, using the done tasks plus Hylla-backed code understanding;
 - falsification-oriented QA across completed work, using the done tasks plus Hylla-backed code understanding;
@@ -316,7 +348,26 @@ For every `build-task`:
 - auto-create:
   - `QA PROOF REVIEW`
   - `QA FALSIFICATION REVIEW`
-  - `COMMIT AND REINGEST`
+  - `COMMIT PUSH AND REINGEST`
+
+For every `refactor-task`:
+
+- auto-create:
+  - `QA PROOF REVIEW`
+  - `QA FALSIFICATION REVIEW`
+  - `PARITY VALIDATION IN ACTION`
+  - `COMMIT PUSH AND REINGEST`
+  - `METRICS CAPTURE AND REPORT`
+
+For every `dogfood-refactor-task`:
+
+- auto-create:
+  - `QA PROOF REVIEW`
+  - `QA FALSIFICATION REVIEW`
+  - `TEST AGAINST DEV VERSION`
+  - `CONFIRM LOCAL USED VERSION UPDATED`
+  - `COMMIT PUSH AND REINGEST`
+  - `METRICS CAPTURE AND REPORT`
 
 Both QA subtasks should be:
 
@@ -325,13 +376,13 @@ Both QA subtasks should be:
 - `completable_by_actor_kinds = ["qa", "human"]`
 - `required_for_parent_done = true`
 
-The `COMMIT AND REINGEST` subtask should be:
+The `COMMIT PUSH AND REINGEST` subtask should be:
 
 - `responsible_actor_kind = "builder"`
 - `editable_by_actor_kinds = ["builder", "orchestrator"]`
 - `completable_by_actor_kinds = ["builder", "human"]`
 - `required_for_parent_done = true`
-- focused on committing confirmed-good work, triggering Hylla refresh, waiting for ingest completion, and recording the resulting freshness evidence
+- focused on committing confirmed-good work, pushing the baseline that downstream tooling should rely on, triggering Hylla refresh, waiting for ingest completion, and recording the resulting freshness evidence
 
 ## Exact Template Object
 
@@ -344,9 +395,9 @@ That repo file is the authoritative shipped contract. It now contains:
 - project root generation for `PROJECT SETUP`;
 - project-setup task generation for template fit, Hylla decisions, metadata lock, first branch lane, and first `PLAN` phase preparation;
 - branch-lane generation for `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`;
+- phase-level `PHASE PUSH AND REINGEST CONFIRMATION` generation;
 - closeout and branch-cleanup default task generation; and
-- `build-task` QA review generation.
-- `build-task` commit-and-reingest generation.
+- `build-task`, `refactor-task`, and `dogfood-refactor-task` generated blocker work.
 
 ## Initial Dogfood Tree
 
@@ -369,7 +420,7 @@ Because these are `build-task` items, each one should auto-generate:
 
 - `QA PROOF REVIEW`
 - `QA FALSIFICATION REVIEW`
-- `COMMIT AND REINGEST`
+- `COMMIT PUSH AND REINGEST`
 
 ## MCP-Only Execution Sequence
 
@@ -388,6 +439,10 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
    - `closeout-phase`
    - `branch-cleanup-phase`
    - `build-task`
+   - `refactor-phase`
+   - `dogfood-refactor-phase`
+   - `refactor-task`
+   - `dogfood-refactor-task`
    - `qa-check`
    - `commit-and-reingest`
 5. Upsert the global template library `default-go`.
@@ -408,7 +463,7 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
 11. For each build task, confirm the template-generated subtasks appear:
    - `QA PROOF REVIEW`
    - `QA FALSIFICATION REVIEW`
-   - `COMMIT AND REINGEST`
+   - `COMMIT PUSH AND REINGEST`
 12. Confirm the generated QA subtasks carry the expected node contract:
    - `responsible_actor_kind = "qa"`
    - `editable_by_actor_kinds = ["qa"]`
@@ -420,7 +475,7 @@ In a fresh agent session where the `till_*` MCP tools are callable, execute this
 The executing agent should verify all of the following through MCP-visible state:
 
 - `default-go` exists as an approved global template library.
-- `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, and `qa-check` exist in the kind catalog.
+- `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, `refactor-phase`, `dogfood-refactor-phase`, `refactor-task`, `dogfood-refactor-task`, and `qa-check` exist in the kind catalog.
 - `commit-and-reingest` exists in the kind catalog.
 - `TILLSYN` exists with kind `go-project`.
 - `TILLSYN` has the agreed project description.
@@ -429,9 +484,9 @@ The executing agent should verify all of the following through MCP-visible state
 - `PROJECT SETUP` exists under `TILLSYN`.
 - A branch lane exists under `TILLSYN`.
 - That branch lane auto-generated `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`.
+- Each generated phase includes `PHASE PUSH AND REINGEST CONFIRMATION`.
 - Each initial build task exists under the generated `BUILD` phase.
-- Each build task auto-generated `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`.
-- Each build task auto-generated `COMMIT AND REINGEST`.
+- Each build task auto-generated `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT PUSH AND REINGEST`.
 - Each QA subtask has the expected contract snapshot.
 
 ## Deferred / Not In Scope Yet
@@ -456,7 +511,7 @@ Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/ev
 2. Use the expected auth scopes:
    - global approved agent auth for kind/template-library admin and project creation/binding;
    - project-scoped approved agent auth for guarded in-project mutations after the project exists.
-3. Upsert kinds `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, `qa-check`, and `commit-and-reingest`.
+3. Upsert kinds `go-project`, `project-setup-phase`, `plan-phase`, `build-phase`, `closeout-phase`, `branch-cleanup-phase`, `build-task`, `refactor-phase`, `dogfood-refactor-phase`, `refactor-task`, `dogfood-refactor-task`, `qa-check`, and `commit-and-reingest`.
 4. Upsert the approved global template library `default-go` exactly as specified in the markdown file.
 5. Create project `TILLSYN` in all caps as kind `go-project`, using the locked description and standards.
 6. Bind `default-go` during project creation if possible, otherwise bind immediately after creation.
@@ -473,7 +528,7 @@ Use only the Tillsyn MCP tools in this session. Follow AGENTS.md. Read /Users/ev
    - REDUCE LEASE TOOL VISIBILITY
    - ALIGN README WITH MCP SURFACE
    - ALIGN BOOTSTRAP GUIDE WITH MCP SURFACE
-10. Verify each build-task auto-generated `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`.
+10. Verify each build-task auto-generated `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT PUSH AND REINGEST`.
 11. Verify the generated QA subtasks have the expected node contract.
 
 Do not use CLI mutation commands. Report exact MCP results, any schema mismatches, and any missing tool/path needed to complete the setup.

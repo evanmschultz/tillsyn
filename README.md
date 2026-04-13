@@ -8,6 +8,9 @@ The project/repo name is `tillsyn`, and the runtime command name is `till`.
 `tillsyn` is a local-first multi-actor coordination runtime with TUI, MCP, and CLI surfaces. Planning is only one part of the model: the runtime also carries typed workflow contracts, scoped auth, generated blockers, shared discussion threads, structured handoffs, durable inbox/attention state, and restart-safe recovery.
 A core product purpose is maintaining one DB-backed source of truth for coordination and execution state instead of fragmented markdown files or passive status logs.
 Active tasks, actions, blockers, comments, handoffs, and worklogs should stay in Tillsyn itself rather than in markdown planning files.
+No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit task or subtask at the correct level in Tillsyn.
+If tests, CI, or QA fail, create a new explicit follow-up task or subtask before repair work begins.
+If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one.
 
 Current scope:
 - local human + coding-agent coordination workflows in one runtime.
@@ -285,16 +288,29 @@ Template-library operator examples:
   - `default-go`:
   - a `go-project` auto-generates one project-root `PROJECT SETUP` phase,
   - each `branch` lane auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
-  - each `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT AND REINGEST`,
+  - each generated phase now also includes `PHASE PUSH AND REINGEST CONFIRMATION` so pushed-baseline freshness is explicit before downstream work relies on it,
+  - `build-task`, `refactor-task`, and `dogfood-refactor-task` are first-class default task kinds,
+  - `refactor-phase` and `dogfood-refactor-phase` are first-class default nested-phase kinds,
+  - `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT PUSH AND REINGEST`,
+  - `refactor-task` adds parity-in-action and metrics capture expectations on top of the normal QA and commit flow,
+  - `dogfood-refactor-task` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
+  - refactor metrics should live in the slice task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings,
   - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` and shipped from [templates/builtin/default-go.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-go.json).
   - `default-frontend`:
   - a `frontend-project` auto-generates one project-root `PROJECT SETUP` phase,
   - each `branch` lane auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
-  - each `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, `VISUAL QA`, `ACCESSIBILITY CHECK`, and `COMMIT AND REINGEST`,
+  - each generated phase now also includes `PHASE PUSH AND REINGEST CONFIRMATION` so pushed-baseline freshness is explicit before downstream work relies on it,
+  - `build-task`, `refactor-task`, and `dogfood-refactor-task` are first-class default task kinds,
+  - `refactor-phase` and `dogfood-refactor-phase` are first-class default nested-phase kinds,
+  - `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, `VISUAL QA`, `ACCESSIBILITY CHECK`, and `COMMIT PUSH AND REINGEST`,
+  - `refactor-task` adds parity-in-action and metrics capture expectations on top of the normal QA, visual, accessibility, and commit flow,
+  - `dogfood-refactor-task` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
+  - refactor metrics should live in the slice task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings,
   - and the shipped summary plus builtin source are in [TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md) and [templates/builtin/default-frontend.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-frontend.json).
+  - no work should happen outside explicit tasks or subtasks, and failing tests, CI, or QA should produce a new explicit follow-up item before repair begins.
   - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete.
 - Example shape:
-  - a `build-task` template can generate one proof-oriented `qa-check` child, one falsification-oriented `qa-check` child, plus one `commit-and-reingest` child, all commentable because comments remain the shared coordination lane, while completion blockers still enforce truthful closeout.
+  - a `build-task` template can generate one proof-oriented `qa-check` child, one falsification-oriented `qa-check` child, plus one `commit-and-reingest` child, while a refactor task can add parity/dev-version and metrics children; comments remain the shared coordination lane, and completion blockers still enforce truthful closeout.
 - Shared cross-client named-agent convention:
   - the current runtime still routes work by actor kind such as `orchestrator`, `research`, `builder`, and `qa`,
   - but template text and docs should explicitly describe the intended named-agent pattern so orchestrators and clients do not forget which style of agent belongs to which task:
@@ -360,6 +376,9 @@ Template-library operator examples:
 - Documentation expectations:
   - keep README workflow examples aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
   - keep at least one canonical example that shows multi-child gatekeeping such as a build task that auto-generates multiple QA subtasks.
+  - keep the docs explicit that no implementation, cleanup, QA, parity-check, or repair work should happen outside explicit tasks or subtasks.
+  - keep the docs explicit that failing tests, CI, or QA require a new follow-up task or subtask before repair work starts.
+  - keep the docs explicit that phase-level push-and-reingest confirmation is part of the shipped default workflow and that refactor and dogfood-refactor kinds carry metrics expectations.
   - keep examples readable enough for humans to audit quickly in the TUI and CLI; template contracts should clarify ownership and completion gates instead of hiding them in large markdown files.
   - keep the docs explicit that comments are the durable shared communication layer inside Tillsyn, which is a core value-add over external markdown plans for human-to-agent and agent-to-agent coordination.
 

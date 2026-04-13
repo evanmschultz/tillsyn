@@ -4,6 +4,12 @@ This file defines persistent repo-wide instructions for coding agents working in
 
 Use Tillsyn as the exclusive execution surface for active work in this repository.
 
+No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit task or subtask at the correct level in Tillsyn.
+If tests, CI, or QA fail, create a new explicit follow-up task or subtask before repair work begins.
+If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one.
+Treat phase-level pushed-baseline confirmation as part of the default shipped workflow: phases should end with explicit push-and-reingest confirmation or an explicit no-repo-delta record.
+When refactor work is the real fit, use the shipped `refactor-phase`, `dogfood-refactor-phase`, `refactor-task`, and `dogfood-refactor-task` contracts and keep metrics truthful in task and phase descriptions plus the orchestrator report artifact. Builders should record git-diff line deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings after QA or validation, and orchestrators should roll those totals up to the parent refactor phase description and the report artifact.
+
 Do not use markdown files as task trackers, action lists, worklogs, coordination ledgers, or temporary execution plans for active work. That includes `PLAN.md` and any new ad-hoc markdown planning files. Keep all active tasks, actions, blockers, comments, handoffs, and completion state in Tillsyn itself unless the user explicitly asks for a repo doc update as a documentation artifact.
 
 When workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the relevant README/bootstrap/instruction surfaces in the same change so all coding clients receive the same guidance. Those files describe durable policy only; they must not become live task trackers or worklogs.
