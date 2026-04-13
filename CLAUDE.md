@@ -47,10 +47,12 @@ Do not batch commits. Do not defer pushes. Do not skip reingest. Each confirmed-
 
 The parent Claude Code session is always the **orchestrator**. All other roles (builder, qa, research) are ephemeral subagents.
 
+**CRITICAL: The orchestrator NEVER writes code.** The parent session must NEVER use Edit, Write, or any other tool to modify Go source files, test files, or production code. All code changes — every single one — go through a builder subagent spawned via the Agent tool. The orchestrator reads code for planning and research only. If you catch yourself about to edit a `.go` file from the parent session, stop and spawn a subagent instead.
+
 ### How It Works
 
-1. **Orchestrator** (parent session) holds a project-scoped orchestrator auth session.
-2. **Subagents** are ephemeral — they spawn, read their task, do work, update the task, die.
+1. **Orchestrator** (parent session) plans, routes, delegates, and cleans up. It does NOT implement. It does NOT edit code. It reads code and Hylla for research, creates Tillsyn plan items, spawns subagents, and coordinates results.
+2. **Subagents** are ephemeral — they spawn, read their task, do work, update the task, die. Builder subagents are the ONLY actors that edit code.
 3. **Task state is the signal.** When a subagent finishes, it moves the task to `done` or `failed` and puts results in task metadata. The orchestrator reads the task state to know what happened.
 4. **No subagent polls or watches anything.** Subagents read their task details at spawn, execute, update, return.
 5. **Only the orchestrator uses attention items** — for human approval requests and inter-orchestrator communication.
@@ -123,8 +125,8 @@ Subagents do NOT use attention_items, handoffs, @mentions, or downward/sideways 
 
 ## Role Model
 
-- **Orchestrator** (parent session) — plans, routes, delegates, cleans up. Owns phase transitions.
-- **Builder** (subagent) — ephemeral. Reads task, implements, updates task, dies.
+- **Orchestrator** (parent session) — plans, routes, delegates, cleans up. Owns phase transitions. **NEVER edits code. NEVER writes to source files.** All code changes are delegated to builder subagents.
+- **Builder** (subagent) — ephemeral. The ONLY role that edits code. Reads task, implements, updates task, dies.
 - **QA** (subagent) — ephemeral. Reads task, reviews, updates task with verdict, dies.
 - **Research** (subagent) — ephemeral. Reads task, gathers evidence, updates task, dies.
 - **Human** — approves auth requests, reviews results, makes design decisions.
