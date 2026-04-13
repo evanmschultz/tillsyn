@@ -19,10 +19,8 @@ All work is tracked in Tillsyn. No exceptions.
 
 ## Hylla Baseline
 
-- **Artifact**: `github.com/evanmschultz/tillsyn@main`
-- **Snapshot**: 4
-- **Last ingested commit**: `ae83003`
-- **Enrichment**: structural (enrichment pending from `890f9da`)
+- **Artifact ref**: `github.com/evanmschultz/tillsyn@main`
+- Hylla resolves `@main` to the latest ingest automatically. Do not track snapshot numbers or commit hashes here.
 
 ### Code Understanding Rules
 
@@ -69,6 +67,7 @@ The parent Claude Code session is always the **orchestrator**. All other roles (
 **Before spawning any subagent:**
 1. Move the target plan item to `in_progress` if the orchestrator has permission. If not (role-gated), the agent prompt MUST instruct the subagent to move it themselves.
 2. Include in the agent prompt: the Tillsyn task ID, auth credentials (session_id, session_secret, auth_context_id, agent_instance_id, lease_token), and explicit instructions to move state.
+3. Include the Hylla artifact ref (`github.com/evanmschultz/tillsyn@main`) so the subagent can query Hylla for Go code understanding. Omit `snapshot` — Hylla resolves `@main` to the latest ingest automatically.
 
 **Every subagent prompt MUST include these instructions:**
 - "Move your Tillsyn task to `in_progress` immediately when you start work."
