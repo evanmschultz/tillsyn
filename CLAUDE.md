@@ -20,9 +20,9 @@ All work is tracked in Tillsyn. No exceptions.
 ## Hylla Baseline
 
 - **Artifact**: `github.com/evanmschultz/tillsyn@main`
-- **Snapshot**: 3
-- **Last ingested commit**: `7536932`
-- **Enrichment**: complete, full enrichment
+- **Snapshot**: 4
+- **Last ingested commit**: `ae83003`
+- **Enrichment**: structural (enrichment pending from `890f9da`)
 
 ### Code Understanding Rules
 
@@ -159,7 +159,7 @@ These agents are available via the `Agent` tool with `subagent_type`:
 | **Gopls Worktree** | `gopls-worktree-agent` | Keep gopls MCP pointed at the active visible checkout |
 
 Additional inline roles (no separate subagent file):
-- **builder-agent** — the parent Claude session acts as builder
+- **builder-agent** — ephemeral subagent spawned via Agent tool (the parent session NEVER acts as builder)
 - **research-agent** — uses Claude's built-in `Explore` subagent
 - **commit-and-reingest-agent** — parent role via `/commit-and-reingest`
 
@@ -254,13 +254,15 @@ claude mcp add --scope local tillsyn-dev -- /path/to/worktree/till serve-mcp
 
 ## Build and Verification
 
+**CRITICAL: NEVER run `go test`, `go build`, `go run`, or any raw `go` toolchain command directly.** All Go operations go through `mage` targets. This applies to the orchestrator, builder subagents, QA subagents — everyone. No exceptions. If a `mage` target fails, investigate and fix the target or the code, do not bypass it with a raw `go` command.
+
 - `mage run` — run from source
 - `mage build` — build local binary `./till`
 - `mage test-pkg <pkg>` — test a specific package
 - `mage test-golden` / `mage test-golden-update` — golden fixture validation
 - `mage ci` — canonical full gate (source verification, gofmt, coverage, build)
 
-Always run tests through `mage` targets. Never run `go test` directly. Run `mage ci` before push. Coverage below 70% is a hard failure.
+Run `mage ci` before push. Coverage below 70% is a hard failure.
 
 ## Go Development Rules
 
@@ -301,7 +303,7 @@ You are a senior Go dev. These rules are always active:
 ### Build, Test, and Mage
 
 - Review `magefile.go` at startup and use its targets as the source of truth for local automation.
-- Run tests/checks through `mage` targets only — never run `go test` directly.
+- **NEVER run `go test`, `go build`, `go run`, or any raw `go` toolchain command.** Always use the corresponding `mage` target. If a `mage` target has a bug, fix the target — do not fall back to raw `go` commands.
 - Run `mage` targets from the worktree root as plain `mage <target>` without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks.
 - Do not create workspace-local ad-hoc Go cache directories (e.g. `.go-cache-*`).
 - During implementation loops, run `mage test-pkg <pkg>` after meaningful increments.
