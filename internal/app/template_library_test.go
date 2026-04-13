@@ -1040,6 +1040,12 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
+	if !strings.Contains(project.Metadata.StandardsMarkdown, "does not auto-create or force that repair item today") {
+		t.Fatalf("project standards missing repair-item caveat: %q", project.Metadata.StandardsMarkdown)
+	}
+	if !strings.Contains(project.Metadata.StandardsMarkdown, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("project standards missing metrics caveat: %q", project.Metadata.StandardsMarkdown)
+	}
 	columns, err := svc.ListColumns(ctx, project.ID, false)
 	if err != nil {
 		t.Fatalf("ListColumns() error = %v", err)
@@ -1186,6 +1192,14 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	if paritySnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder || parityValidation.Kind != domain.WorkKind("subtask") {
 		t.Fatalf("parity validation child = %#v snapshot=%#v, want subtask owned by builder", parityValidation, paritySnapshot)
 	}
+	refactorMetrics := findChildTaskByTitle(t, tasks, refactorTask.ID, "METRICS CAPTURE AND REPORT")
+	if !strings.Contains(refactorMetrics.Description, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("refactor metrics description missing caveat: %q", refactorMetrics.Description)
+	}
+	refactorPhaseRollup := findChildTaskByTitle(t, tasks, refactorPhase.ID, "PHASE METRICS ROLLUP")
+	if !strings.Contains(refactorPhaseRollup.Description, "does not auto-verify every field or rollup total today") {
+		t.Fatalf("refactor phase rollup description missing caveat: %q", refactorPhaseRollup.Description)
+	}
 	dogfoodLocalTask := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "CONFIRM LOCAL USED VERSION UPDATED")
 	dogfoodLocalTaskSnapshot := mustNodeContractSnapshot(t, repo, dogfoodLocalTask.ID)
 	if dogfoodLocalTaskSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman || dogfoodLocalTask.Kind != domain.WorkKind("subtask") {
@@ -1193,6 +1207,10 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	}
 	if !slices.Equal(dogfoodLocalTaskSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
 		t.Fatalf("dogfood local-version completable actors = %#v, want human only", dogfoodLocalTaskSnapshot.CompletableByActorKinds)
+	}
+	dogfoodMetrics := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "METRICS CAPTURE AND REPORT")
+	if !strings.Contains(dogfoodMetrics.Description, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("dogfood metrics description missing caveat: %q", dogfoodMetrics.Description)
 	}
 }
 
@@ -1221,6 +1239,12 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	if !strings.Contains(project.Metadata.StandardsMarkdown, "does not auto-create or force that repair item today") {
+		t.Fatalf("frontend project standards missing repair-item caveat: %q", project.Metadata.StandardsMarkdown)
+	}
+	if !strings.Contains(project.Metadata.StandardsMarkdown, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("frontend project standards missing metrics caveat: %q", project.Metadata.StandardsMarkdown)
 	}
 	columns, err := svc.ListColumns(ctx, project.ID, false)
 	if err != nil {
@@ -1352,6 +1376,14 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	if frontendCommitSnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 		t.Fatalf("frontend commit responsible actor = %q, want builder", frontendCommitSnapshot.ResponsibleActorKind)
 	}
+	frontendRefactorMetrics := findChildTaskByTitle(t, tasks, refactorTask.ID, "METRICS CAPTURE AND REPORT")
+	if !strings.Contains(frontendRefactorMetrics.Description, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("frontend refactor metrics description missing caveat: %q", frontendRefactorMetrics.Description)
+	}
+	frontendPhaseRollup := findChildTaskByTitle(t, tasks, refactorPhase.ID, "PHASE METRICS ROLLUP")
+	if !strings.Contains(frontendPhaseRollup.Description, "does not auto-verify every field or rollup total today") {
+		t.Fatalf("frontend phase rollup description missing caveat: %q", frontendPhaseRollup.Description)
+	}
 	frontendDogfoodLocal := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "CONFIRM LOCAL USED VERSION UPDATED")
 	frontendDogfoodLocalSnapshot := mustNodeContractSnapshot(t, repo, frontendDogfoodLocal.ID)
 	if frontendDogfoodLocal.Kind != domain.WorkKind("subtask") || frontendDogfoodLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
@@ -1359,6 +1391,10 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	}
 	if !slices.Equal(frontendDogfoodLocalSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
 		t.Fatalf("frontend dogfood local-version completable actors = %#v, want human only", frontendDogfoodLocalSnapshot.CompletableByActorKinds)
+	}
+	frontendDogfoodMetrics := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "METRICS CAPTURE AND REPORT")
+	if !strings.Contains(frontendDogfoodMetrics.Description, "does not auto-verify every metric field or rollup total today") {
+		t.Fatalf("frontend dogfood metrics description missing caveat: %q", frontendDogfoodMetrics.Description)
 	}
 }
 

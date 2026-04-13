@@ -47,12 +47,12 @@ Lifecycle summary:
   - `TEST AGAINST DEV VERSION`
   - `CONFIRM LOCAL USED VERSION UPDATED`
   - `METRICS CAPTURE AND REPORT`
-- for refactor and dogfood-refactor work, the builder should update the slice task description after QA and parity or dev validation with truthful `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings, and the orchestrator should roll those values up into the parent phase description plus the report artifact
+- for refactor and dogfood-refactor work, the builder should update the slice task description after QA and parity or dev validation with truthful `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings, and the orchestrator should roll those values up into the parent phase description plus the report artifact; Tillsyn generates the explicit metrics checkpoints for that work, but it does not auto-verify every metric field or rollup total today
 
 Design intent:
 - generic frontend workflow contract, not Astro-specific and not design-tool-specific
 - broad standards around semantic HTML, accessibility, responsive behavior, minimal browser JavaScript, and visual verification
 - no implementation, cleanup, QA, parity-check, visual review, or repair work should happen outside explicit tasks or subtasks
-- failing tests, CI, or QA should create a new explicit follow-up item before repair begins, including after a previously completed item needs more fixes
-- refactor and dogfood-refactor are first-class default kinds, and their slice or phase metrics should stay truthful in task and phase descriptions plus the orchestrator report artifact
+- failing tests, CI, or QA should create a new explicit follow-up item before repair begins, including after a previously completed item needs more fixes; Tillsyn does not auto-create or force that follow-up item today, so the orchestrator or human must add it explicitly
+- refactor and dogfood-refactor are first-class default kinds, and their slice or phase metrics should stay truthful in task and phase descriptions plus the orchestrator report artifact; Tillsyn generates the explicit metrics checkpoints for that work, but it does not auto-verify every metric field or rollup total today
 - tool-specific workflows such as Astro/Solid or Paper.design should live in specialized template libraries layered on top of this baseline, not in the builtin itself

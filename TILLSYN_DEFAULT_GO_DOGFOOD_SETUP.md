@@ -96,10 +96,11 @@ The Go standards payload should reflect how `tillsyn` itself is organized:
 - Prefer the smallest concrete design that satisfies the current requirement.
 - Reuse or refactor existing code when that is the best option.
 - No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit task or subtask at the correct level.
-- If tests, CI, or QA fail, create a new explicit fix task or subtask before repair work begins.
-- If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one.
+- If tests, CI, or QA fail, create a new explicit fix task or subtask before repair work begins. Tillsyn does not auto-create or force that repair item today, so the orchestrator or human must add it explicitly.
+- If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one. The shipped default workflow treats that as policy, not as an automatically enforced reopen ban.
 - Every phase should end with explicit push-and-reingest confirmation or an explicit no-repo-delta record before downstream work treats the baseline as current.
 - Refactor work should use the shipped `refactor-phase`, `dogfood-refactor-phase`, `refactor-task`, and `dogfood-refactor-task` contracts when that workflow is the real fit.
+- For refactor and dogfood-refactor work, builders should update slice and phase descriptions with git-diff line deltas, before-and-after repo and Hylla counts, timing windows, and cleanup/security findings after QA or validation, and orchestrators should roll those metrics up to the parent phase description plus the report artifact. Tillsyn generates the explicit metrics checkpoints for that work, but it does not auto-verify every metric field or rollup total today.
 - Do not add abstraction for hypothetical future variation.
 - Prefer idiomatic Go naming, package structure, interface placement, error handling, logging boundaries, and test shape.
 - Wrap and bubble errors with context instead of swallowing them.
@@ -296,9 +297,9 @@ Each generated phase should also include:
 - `CONFIRM LOCAL USED VERSION UPDATED`
 - `METRICS CAPTURE AND REPORT`
 
-For refactor and dogfood-refactor work, the builder should update the slice task description after QA and parity or dev validation with truthful metrics such as `git diff` added/removed/net lines, tracked-source line counts before and after, touched files/packages, Hylla node/block/orphan counts before and after, active/wait/ingest timing windows, ingest cost when available, and cleanup/security findings. The orchestrator should then roll those values up into the parent refactor phase description and the markdown report artifact.
+For refactor and dogfood-refactor work, the builder should update the slice task description after QA and parity or dev validation with truthful metrics such as `git diff` added/removed/net lines, tracked-source line counts before and after, touched files/packages, Hylla node/block/orphan counts before and after, active/wait/ingest timing windows, ingest cost when available, and cleanup/security findings. The orchestrator should then roll those values up into the parent refactor phase description and the markdown report artifact. Tillsyn generates the explicit metrics checkpoints for that work, but it does not auto-verify every metric field or rollup total today.
 
-Any failing tests, CI, QA, parity validation, or dev-version validation should create a new explicit follow-up task or subtask before repair work begins.
+Any failing tests, CI, QA, parity validation, or dev-version validation should create a new explicit follow-up task or subtask before repair work begins. Tillsyn does not auto-create or force that follow-up item today, so the orchestrator or human must add it explicitly.
 
 ### Closeout-Phase Contract
 
