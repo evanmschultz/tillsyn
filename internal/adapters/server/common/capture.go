@@ -259,6 +259,8 @@ func buildWorkOverview(tasks []domain.Task) WorkOverview {
 			overview.InProgressTasks++
 		case domain.StateDone:
 			overview.DoneTasks++
+		case domain.StateFailed:
+			overview.FailedTasks++
 		case domain.StateArchived:
 			overview.ArchivedTasks++
 		default:
@@ -300,6 +302,8 @@ func canonicalLifecycleState(state domain.LifecycleState) domain.LifecycleState 
 		return domain.StateProgress
 	case "done", "complete", "completed":
 		return domain.StateDone
+	case "failed", "fail":
+		return domain.StateFailed
 	case "archived", "archive":
 		return domain.StateArchived
 	default:

@@ -1262,3 +1262,81 @@ func TestAppServiceAdapterCapabilityLeaseLifecycle(t *testing.T) {
 		t.Fatalf("RevokeAllCapabilityLeases() error = %v", err)
 	}
 }
+
+// TestNormalizeTaskStateInputAcceptsFailed verifies that normalizeTaskStateInput accepts "failed" as a valid move state.
+func TestNormalizeTaskStateInputAcceptsFailed(t *testing.T) {
+	t.Parallel()
+	state, err := normalizeTaskStateInput("failed")
+	if err != nil {
+		t.Fatalf("normalizeTaskStateInput(failed) error = %v", err)
+	}
+	if state != domain.StateFailed {
+		t.Fatalf("normalizeTaskStateInput(failed) = %q, want %q", state, domain.StateFailed)
+	}
+}
+
+// TestTaskLifecycleStateForColumnNameFailed verifies that taskLifecycleStateForColumnName maps "Failed" to StateFailed.
+func TestTaskLifecycleStateForColumnNameFailed(t *testing.T) {
+	t.Parallel()
+	state := taskLifecycleStateForColumnName("Failed")
+	if state != domain.StateFailed {
+		t.Fatalf("taskLifecycleStateForColumnName(Failed) = %q, want %q", state, domain.StateFailed)
+	}
+}
+
+// TestMoveTaskStateToFailed verifies that the adapter MoveTaskState handles the failed state end-to-end.
+func TestMoveTaskStateToFailed(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
+		Name:        "FailedTest",
+		Description: "Test project",
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	todo, err := fixture.svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn(To Do) error = %v", err)
+	}
+	failed, err := fixture.svc.CreateColumn(ctx, project.ID, "Failed", 3, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn(Failed) error = %v", err)
+	}
+
+	task, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Title:     "Task to fail",
+		Priority:  "medium",
+		Actor:     actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	task, err = fixture.adapter.MoveTaskState(ctx, MoveTaskStateRequest{
+		TaskID: task.ID,
+		State:  "failed",
+		Actor:  actor,
+	})
+	if err != nil {
+		t.Fatalf("MoveTaskState(failed) error = %v", err)
+	}
+	if task.LifecycleState != domain.StateFailed {
+		t.Fatalf("MoveTaskState(failed) lifecycle_state = %q, want %q", task.LifecycleState, domain.StateFailed)
+	}
+	if task.ColumnID != failed.ID {
+		t.Fatalf("MoveTaskState(failed) column_id = %q, want %q", task.ColumnID, failed.ID)
+	}
+}

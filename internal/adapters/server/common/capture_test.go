@@ -144,6 +144,14 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 			Title:          "Child",
 			LifecycleState: domain.StateTodo,
 		},
+		{
+			ID:             "t-failed",
+			ProjectID:      project.ID,
+			ColumnID:       "c1",
+			Position:       5,
+			Title:          "Failed",
+			LifecycleState: domain.StateFailed,
+		},
 	}
 	comments := []domain.Comment{
 		{ID: "cm-1", ProjectID: project.ID, TargetType: domain.CommentTargetTypeBranch, TargetID: "b1", BodyMarkdown: "urgent: review this"},
@@ -184,8 +192,8 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 	if len(capture.AttentionOverview.Items) != 2 || capture.AttentionOverview.Items[0].ID != "att-1" {
 		t.Fatalf("AttentionOverview.Items = %#v, want sorted attention rows", capture.AttentionOverview.Items)
 	}
-	if capture.WorkOverview.TotalTasks != 5 || capture.WorkOverview.TodoTasks != 2 || capture.WorkOverview.InProgressTasks != 1 || capture.WorkOverview.DoneTasks != 1 || capture.WorkOverview.ArchivedTasks != 1 {
-		t.Fatalf("WorkOverview counts = %#v, want todo=2 progress=1 done=1 archived=1", capture.WorkOverview)
+	if capture.WorkOverview.TotalTasks != 6 || capture.WorkOverview.TodoTasks != 2 || capture.WorkOverview.InProgressTasks != 1 || capture.WorkOverview.DoneTasks != 1 || capture.WorkOverview.FailedTasks != 1 || capture.WorkOverview.ArchivedTasks != 1 {
+		t.Fatalf("WorkOverview counts = %#v, want todo=2 progress=1 done=1 failed=1 archived=1", capture.WorkOverview)
 	}
 	if capture.WorkOverview.TasksWithOpenBlockers != 1 || capture.WorkOverview.IncompleteCompletionCriteria != 1 {
 		t.Fatalf("WorkOverview blockers = %#v, want one blocker and one incomplete completion criterion", capture.WorkOverview)

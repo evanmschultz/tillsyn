@@ -672,6 +672,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.ensureGlobalAuthProject(ctx); err != nil {
 		return err
 	}
+	if err := r.migrateFailedColumn(ctx); err != nil {
+		return err
+	}
 	if err := r.probeVecCapability(ctx); err != nil {
 		if errors.Is(err, errSQLiteVecUnavailable) {
 			return nil
@@ -992,6 +995,32 @@ func (r *Repository) ensureCommentIndexes(ctx context.Context) error {
 		if _, err := r.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate sqlite comments indexes: %w", err)
 		}
+	}
+	return nil
+}
+
+// migrateFailedColumn inserts a hidden "Failed" column for every project that does not already have one.
+func (r *Repository) migrateFailedColumn(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO columns_v1 (id, project_id, name, wip_limit, position, created_at, updated_at, archived_at)
+		SELECT
+			lower(hex(randomblob(16))),
+			p.project_id,
+			'Failed',
+			0,
+			3,
+			datetime('now'),
+			datetime('now'),
+			datetime('now')
+		FROM (SELECT DISTINCT project_id FROM columns_v1) p
+		WHERE NOT EXISTS (
+			SELECT 1 FROM columns_v1 c2
+			WHERE c2.project_id = p.project_id
+			AND lower(c2.name) = 'failed'
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate sqlite failed column: %w", err)
 	}
 	return nil
 }

@@ -817,7 +817,7 @@ func (a *AppServiceAdapter) resolveTaskColumnIDForState(ctx context.Context, pro
 
 func normalizeTaskStateInput(raw string) (domain.LifecycleState, error) {
 	switch taskLifecycleStateForColumnName(raw) {
-	case domain.StateTodo, domain.StateProgress, domain.StateDone:
+	case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateFailed:
 		return taskLifecycleStateForColumnName(raw), nil
 	case domain.StateArchived:
 		return "", fmt.Errorf("state %q is unsupported for move_state; use delete/restore for archive flows: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
@@ -834,6 +834,8 @@ func taskLifecycleStateForColumnName(name string) domain.LifecycleState {
 		return domain.StateProgress
 	case "done":
 		return domain.StateDone
+	case "failed":
+		return domain.StateFailed
 	case "archived":
 		return domain.StateArchived
 	default:
