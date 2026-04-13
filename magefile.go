@@ -31,7 +31,7 @@ var Aliases = map[string]interface{}{
 	"test-pkg":           TestPkg,
 }
 
-// coverageThreshold is the minimum allowed statement coverage for each package.
+// coverageThreshold is the minimum allowed statement coverage for each and all packages.
 const coverageThreshold = 70.0
 
 // localBuildVCSFlag disables VCS stamping for local bare-worktree commands.

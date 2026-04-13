@@ -32,16 +32,21 @@ All work is tracked in Tillsyn. No exceptions.
 4. **External semantics**: use Context7, `go doc`, and gopls MCP for library docs, language semantics, and tooling questions the repository itself cannot prove.
 5. **gopls MCP**: use for symbol search, references, diagnostics, rename safety, and workspace understanding. gopls must target the active visible checkout, not the bare root.
 
-### Commit-Push-Reingest Discipline
+### Build-QA-Commit Discipline
 
-Every completed unit of work follows this exact sequence before moving to the next thing:
+**CRITICAL: Code is NEVER committed or pushed without QA completing first.** The sequence is:
 
-1. **Commit** — `git add` the specific changed files, commit with conventional-commit format.
-2. **Push** — `git push` to the remote so CI runs and the remote is current.
-3. **Reingest Hylla** — run `hylla_ingest` to update the Hylla graph with the new commit. The snapshot number increments. All subsequent Go code lookups use the fresh snapshot.
-4. **Move on** — only after reingest confirms success do you proceed to the next task.
+1. **Build** — builder subagent implements the increment.
+2. **QA Proof** — `qa-proof-agent` verifies evidence completeness and design support.
+3. **QA Falsification** — `qa-falsification-agent` actively tries to break the conclusion.
+4. **Fix** — if QA finds issues, spawn another builder to fix. Repeat QA.
+5. **Commit** — only after BOTH QA passes clear: `git add` the specific changed files, commit with conventional-commit format.
+6. **Push** — `git push` to the remote so CI runs and the remote is current.
+7. **Reingest Hylla** — **do NOT run `hylla_ingest` yourself.** Ask the dev to run the ingest. NEVER use `structural_only` mode — full enrichment is the only acceptable ingest. Wait for the dev to confirm ingest is complete before proceeding.
+8. **Update Tillsyn** — update the plan item's checklist, metadata, and lifecycle state to reflect what happened. If it's not in Tillsyn, it didn't happen.
+9. **Move on** — only after the dev confirms reingest and Tillsyn reflects the completed state do you proceed to the next task.
 
-Do not batch commits. Do not defer pushes. Do not skip reingest. Each confirmed-good increment gets committed, pushed, and reingested before downstream work begins. Use `/commit-and-reingest` to coordinate this.
+Do not batch commits. Do not defer pushes. Do not skip QA. Do not skip reingest. Do not claim completion in chat without Tillsyn reflecting it.
 
 ## Orchestrator-as-Hub Architecture
 
