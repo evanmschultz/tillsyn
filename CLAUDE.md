@@ -7,6 +7,7 @@ All work is tracked in Tillsyn. No exceptions.
 - Never use markdown files for work tracking, coordination, worklogs, or execution state.
 - Never use Claude Code's built-in task tools (TaskCreate, TaskUpdate, etc.) for work tracking. All tracking goes through Tillsyn MCP tools.
 - Every piece of work gets a Tillsyn plan item before it starts.
+- **When work starts on a plan item, move it to `in_progress` immediately** so the dev can see what is actively being worked on. Do not leave items in `todo` while working on them.
 - PLAN.md and other markdown planning docs are frozen reference material, not live trackers.
 
 ## Tillsyn Project
@@ -25,7 +26,7 @@ All work is tracked in Tillsyn. No exceptions.
 
 ### Code Understanding Rules
 
-1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source of truth for committed code understanding. Do not use `cat`, `grep`, `Read`, or other file tools for Go code discovery or navigation when Hylla can answer the question.
+1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source of truth for committed code understanding. Do not use `cat`, `grep`, `Read`, or other file tools for Go code discovery or navigation when Hylla can answer the question. **If Hylla does not return the expected code on the first search, exhaust all Hylla search modes before falling back to standard tools**: try vector similarity search (`hylla_search` with `search_types: ["vector"]`), keyword search across content/summary/docstring fields (`hylla_search_keyword`), graph navigation (`hylla_graph_nav`), and reference lookup (`hylla_refs_find`). Only after multiple Hylla search strategies fail may you use `Read`, `Grep`, or `Glob` for Go code.
 2. **Changed since last ingest**: if Go code has been modified since the last Hylla ingest (check via `git diff`), use `git diff` for those specific deltas. Hylla is stale for those files until reingest.
 3. **Non-Go code** (markdown, TOML, YAML, magefile, templates, SQL, etc.): use normal tools (Read, Grep, Glob, Bash) freely. Hylla does not cover non-Go files.
 4. **External semantics**: use Context7, `go doc`, and gopls MCP for library docs, language semantics, and tooling questions the repository itself cannot prove.
@@ -80,6 +81,7 @@ Four lifecycle states:
 - Auth is **immediately revoked** when a task/level is marked `done` or `failed` *(being implemented — D4)*.
 - Orchestrator cleans up ALL child auth sessions and leases at end of phase/run.
 - Auth claim response includes contextual data for the scope level *(being implemented — D7)*.
+- **Always report the auth session ID to the dev** when requesting or claiming auth via `till.auth_request`. The dev needs visibility into which auth sessions are active.
 
 ## Affected Artifacts Tracking
 
@@ -139,7 +141,7 @@ Subagents do NOT use attention_items, handoffs, @mentions, or downward/sideways 
 
 Only create plan items with these kinds from the `default-go` template:
 
-`branch`, `branch-cleanup-phase`, `build-phase`, `build-task`, `closeout-phase`, `commit-and-reingest`, `decision`, `go-project`, `note`, `phase`, `plan-phase`, `project`, `project-setup-phase`, `qa-check`, `subtask`, `task`
+`branch`, `branch-cleanup-phase`, `build-phase`, `build-task`, `closeout-phase`, `commit-and-reingest`, `decision`, `dogfood-refactor-phase`, `dogfood-refactor-task`, `go-project`, `note`, `phase`, `plan-phase`, `project`, `project-setup-phase`, `qa-check`, `refactor-phase`, `refactor-task`, `subtask`, `task`
 
 ## Claude Code Agents
 
