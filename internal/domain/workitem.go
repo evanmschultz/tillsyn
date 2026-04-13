@@ -17,6 +17,7 @@ const (
 	StateTodo     LifecycleState = "todo"
 	StateProgress LifecycleState = "progress"
 	StateDone     LifecycleState = "done"
+	StateFailed   LifecycleState = "failed"
 	StateArchived LifecycleState = "archived"
 )
 
@@ -163,6 +164,8 @@ func normalizeLifecycleState(state LifecycleState) LifecycleState {
 		return StateProgress
 	case "done", "complete", "completed":
 		return StateDone
+	case "failed", "fail":
+		return StateFailed
 	case "archived", "archive":
 		return StateArchived
 	default:
@@ -173,7 +176,13 @@ func normalizeLifecycleState(state LifecycleState) LifecycleState {
 // isValidLifecycleState reports whether the lifecycle state is canonical.
 func isValidLifecycleState(state LifecycleState) bool {
 	state = normalizeLifecycleState(state)
-	return slices.Contains([]LifecycleState{StateTodo, StateProgress, StateDone, StateArchived}, state)
+	return slices.Contains([]LifecycleState{StateTodo, StateProgress, StateDone, StateFailed, StateArchived}, state)
+}
+
+// IsTerminalState reports whether a lifecycle state is terminal (done or failed).
+func IsTerminalState(state LifecycleState) bool {
+	state = normalizeLifecycleState(state)
+	return state == StateDone || state == StateFailed
 }
 
 // isValidActorType reports whether actor type is supported.

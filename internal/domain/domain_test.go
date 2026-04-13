@@ -306,6 +306,58 @@ func TestTaskLifecycleTransitions(t *testing.T) {
 	if task.LifecycleState != StateTodo {
 		t.Fatalf("expected restore to todo, got %q", task.LifecycleState)
 	}
+
+	// todo → failed is valid (discovered invalid before work starts).
+	if err := task.SetLifecycleState(StateFailed, now.Add(7*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(failed from todo) error = %v", err)
+	}
+	if task.LifecycleState != StateFailed {
+		t.Fatalf("expected failed state, got %q", task.LifecycleState)
+	}
+	if task.CompletedAt == nil {
+		t.Fatal("expected CompletedAt to be set when entering failed")
+	}
+
+	// Leaving a terminal state back to todo clears CompletedAt.
+	if err := task.SetLifecycleState(StateTodo, now.Add(8*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(todo from failed) error = %v", err)
+	}
+	if task.CompletedAt != nil {
+		t.Fatal("expected CompletedAt to be nil after leaving failed to todo")
+	}
+
+	// in_progress → failed is valid (failure during work).
+	if err := task.SetLifecycleState(StateProgress, now.Add(9*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(progress) error = %v", err)
+	}
+	if err := task.SetLifecycleState(StateFailed, now.Add(10*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(failed from progress) error = %v", err)
+	}
+	if task.LifecycleState != StateFailed {
+		t.Fatalf("expected failed state from progress, got %q", task.LifecycleState)
+	}
+	if task.CompletedAt == nil {
+		t.Fatal("expected CompletedAt to be set when entering failed from progress")
+	}
+}
+
+// TestIsTerminalState verifies the IsTerminalState helper for all canonical states.
+func TestIsTerminalState(t *testing.T) {
+	if IsTerminalState(StateTodo) {
+		t.Fatal("todo should not be terminal")
+	}
+	if IsTerminalState(StateProgress) {
+		t.Fatal("progress should not be terminal")
+	}
+	if !IsTerminalState(StateDone) {
+		t.Fatal("done should be terminal")
+	}
+	if !IsTerminalState(StateFailed) {
+		t.Fatal("failed should be terminal")
+	}
+	if IsTerminalState(StateArchived) {
+		t.Fatal("archived should not be terminal")
+	}
 }
 
 // TestTaskContractUnmetChecks verifies behavior for the covered scenario.
