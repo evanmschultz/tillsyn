@@ -583,3 +583,39 @@ func TestExportSnapshotPropagatesError(t *testing.T) {
 		t.Fatalf("expected error %v, got %v", expected, err)
 	}
 }
+
+// TestSnapshotValidateAcceptsFailedState verifies that the failed lifecycle state is accepted by snapshot validation.
+func TestSnapshotValidateAcceptsFailedState(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	snap := Snapshot{
+		Version:  SnapshotVersion,
+		Projects: []SnapshotProject{{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now}},
+		Columns:  []SnapshotColumn{{ID: "c1", ProjectID: "p1", Name: "Failed", Position: 3, CreatedAt: now, UpdatedAt: now}},
+		Tasks: []SnapshotTask{
+			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "Failed task", Priority: domain.PriorityMedium, LifecycleState: domain.StateFailed, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	if err := snap.Validate(); err != nil {
+		t.Fatalf("Validate() should accept failed lifecycle state, got error = %v", err)
+	}
+}
+
+// TestSnapshotValidateRejectsInvalidState verifies the error message includes failed in the valid states list.
+func TestSnapshotValidateRejectsInvalidState(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	snap := Snapshot{
+		Version:  SnapshotVersion,
+		Projects: []SnapshotProject{{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now}},
+		Columns:  []SnapshotColumn{{ID: "c1", ProjectID: "p1", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now}},
+		Tasks: []SnapshotTask{
+			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "Bad state", Priority: domain.PriorityMedium, LifecycleState: "invalid", CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	err := snap.Validate()
+	if err == nil {
+		t.Fatal("Validate() should reject invalid lifecycle state")
+	}
+	if !strings.Contains(err.Error(), "failed") {
+		t.Fatalf("error message should include 'failed' in valid states list, got %q", err.Error())
+	}
+}

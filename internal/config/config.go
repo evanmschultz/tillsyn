@@ -1050,7 +1050,7 @@ func decodeTrimmedStringList(value any, field string) ([]string, error) {
 
 // isKnownLifecycleState reports whether the requested condition is satisfied.
 func isKnownLifecycleState(state string) bool {
-	return slices.Contains([]string{"todo", "progress", "done", "archived"}, state)
+	return slices.Contains([]string{"todo", "progress", "done", "failed", "archived"}, state)
 }
 
 // normalizeKeyBinding trims keybinding text and applies fallback defaults.

@@ -94,6 +94,7 @@ type CaptureStateWorkOverview struct {
 	ActiveItems     int    `json:"active_items"`
 	InProgressItems int    `json:"in_progress_items"`
 	DoneItems       int    `json:"done_items"`
+	FailedItems     int    `json:"failed_items"`
 	BlockedItems    int    `json:"blocked_items"`
 	FocusItemID     string `json:"focus_item_id,omitempty"`
 	OpenChildItems  int    `json:"open_child_items"`
@@ -352,6 +353,9 @@ func buildCaptureStateWorkOverview(level domain.LevelTuple, tasks []domain.Task)
 		}
 		if task.LifecycleState == domain.StateDone {
 			out.DoneItems++
+		}
+		if task.LifecycleState == domain.StateFailed {
+			out.FailedItems++
 		}
 		if len(task.Metadata.BlockedBy) > 0 || strings.TrimSpace(task.Metadata.BlockedReason) != "" {
 			out.BlockedItems++

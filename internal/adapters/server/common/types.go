@@ -130,6 +130,7 @@ type WorkOverview struct {
 	TodoTasks                    int `json:"todo_tasks"`
 	InProgressTasks              int `json:"in_progress_tasks"`
 	DoneTasks                    int `json:"done_tasks"`
+	FailedTasks                  int `json:"failed_tasks"`
 	ArchivedTasks                int `json:"archived_tasks"`
 	TasksWithOpenBlockers        int `json:"tasks_with_open_blockers"`
 	IncompleteCompletionCriteria int `json:"incomplete_completion_criteria"`

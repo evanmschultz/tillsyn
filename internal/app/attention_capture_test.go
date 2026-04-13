@@ -363,3 +363,32 @@ func TestCaptureStateSummary(t *testing.T) {
 		t.Fatalf("expected follow-up pointers, got %#v", captured.FollowUpPointers)
 	}
 }
+
+// TestBuildCaptureStateWorkOverviewCountsFailedItems verifies that failed items are counted in the work overview.
+func TestBuildCaptureStateWorkOverviewCountsFailedItems(t *testing.T) {
+	level := domain.LevelTuple{
+		ProjectID: "p1",
+		ScopeType: domain.ScopeLevelProject,
+		ScopeID:   "p1",
+	}
+	tasks := []domain.Task{
+		{ID: "t1", ProjectID: "p1", LifecycleState: domain.StateTodo},
+		{ID: "t2", ProjectID: "p1", LifecycleState: domain.StateProgress},
+		{ID: "t3", ProjectID: "p1", LifecycleState: domain.StateDone},
+		{ID: "t4", ProjectID: "p1", LifecycleState: domain.StateFailed},
+		{ID: "t5", ProjectID: "p1", LifecycleState: domain.StateFailed},
+	}
+	overview := buildCaptureStateWorkOverview(level, tasks)
+	if overview.FailedItems != 2 {
+		t.Fatalf("FailedItems = %d, want 2", overview.FailedItems)
+	}
+	if overview.DoneItems != 1 {
+		t.Fatalf("DoneItems = %d, want 1", overview.DoneItems)
+	}
+	if overview.InProgressItems != 1 {
+		t.Fatalf("InProgressItems = %d, want 1", overview.InProgressItems)
+	}
+	if overview.TotalItems != 5 {
+		t.Fatalf("TotalItems = %d, want 5", overview.TotalItems)
+	}
+}

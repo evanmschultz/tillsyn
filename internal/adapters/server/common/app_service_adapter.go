@@ -393,7 +393,7 @@ func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStat
 		})
 	}
 
-	todoTasks := summary.WorkOverview.ActiveItems - summary.WorkOverview.InProgressItems - summary.WorkOverview.DoneItems
+	todoTasks := summary.WorkOverview.ActiveItems - summary.WorkOverview.InProgressItems - summary.WorkOverview.DoneItems - summary.WorkOverview.FailedItems
 	if todoTasks < 0 {
 		todoTasks = 0
 	}
@@ -406,6 +406,7 @@ func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStat
 		TodoTasks:                    todoTasks,
 		InProgressTasks:              summary.WorkOverview.InProgressItems,
 		DoneTasks:                    summary.WorkOverview.DoneItems,
+		FailedTasks:                  summary.WorkOverview.FailedItems,
 		ArchivedTasks:                archivedTasks,
 		TasksWithOpenBlockers:        summary.WorkOverview.BlockedItems,
 		IncompleteCompletionCriteria: summary.WorkOverview.OpenChildItems,

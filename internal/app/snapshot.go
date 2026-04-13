@@ -13,7 +13,7 @@ import (
 )
 
 // SnapshotVersion defines the canonical snapshot schema version.
-const SnapshotVersion = "tillsyn.snapshot.v3"
+const SnapshotVersion = "tillsyn.snapshot.v4"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
@@ -467,9 +467,9 @@ func (s *Snapshot) Validate() error {
 			s.Tasks[i].LifecycleState = t.LifecycleState
 		}
 		switch t.LifecycleState {
-		case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateArchived:
+		case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateFailed, domain.StateArchived:
 		default:
-			return fmt.Errorf("tasks[%d].lifecycle_state must be todo|progress|done|archived", i)
+			return fmt.Errorf("tasks[%d].lifecycle_state must be todo|progress|done|failed|archived", i)
 		}
 		if t.CreatedAt.IsZero() || t.UpdatedAt.IsZero() {
 			return fmt.Errorf("tasks[%d] timestamps are required", i)

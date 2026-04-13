@@ -83,6 +83,7 @@ type StateTemplate struct {
 	Name     string
 	WIPLimit int
 	Position int
+	Hidden   bool
 }
 
 // IDGenerator returns unique identifiers for new entities.
@@ -732,11 +733,19 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	switch {
 	case toState == domain.StateDone:
 		moveAction = domain.CapabilityActionMarkComplete
+	case toState == domain.StateFailed:
+		moveAction = domain.CapabilityActionMarkFailed
 	case fromState == domain.StateTodo && toState == domain.StateProgress:
 		moveAction = domain.CapabilityActionMarkInProgress
 	}
 	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, moveAction); err != nil {
 		return domain.Task{}, err
+	}
+	// Terminal-state guard: transitions FROM done or failed are blocked until
+	// override auth (D3) is implemented. Once D3 lands, this guard will check
+	// for an override token instead of blocking unconditionally.
+	if domain.IsTerminalState(fromState) && fromState != toState {
+		return domain.Task{}, fmt.Errorf("%w: cannot transition from terminal state %q without override auth", domain.ErrTransitionBlocked, fromState)
 	}
 	if fromState == domain.StateTodo && toState == domain.StateProgress {
 		if unmet := task.StartCriteriaUnmet(); len(unmet) > 0 {
@@ -2007,6 +2016,7 @@ func defaultStateTemplates() []StateTemplate {
 		{ID: "todo", Name: "To Do", WIPLimit: 0, Position: 0},
 		{ID: "progress", Name: "In Progress", WIPLimit: 0, Position: 1},
 		{ID: "done", Name: "Done", WIPLimit: 0, Position: 2},
+		{ID: "failed", Name: "Failed", WIPLimit: 0, Position: 3, Hidden: true},
 	}
 }
 
@@ -2097,6 +2107,8 @@ func lifecycleStateForColumnID(columns []domain.Column, columnID string) domain.
 			return domain.StateProgress
 		case "done":
 			return domain.StateDone
+		case "failed":
+			return domain.StateFailed
 		case "archived":
 			return domain.StateArchived
 		default:
@@ -2194,6 +2206,9 @@ func (s *Service) createDefaultColumns(ctx context.Context, projectID string, no
 		column, err := domain.NewColumn(s.idGen(), projectID, state.Name, position, state.WIPLimit, now)
 		if err != nil {
 			return fmt.Errorf("create default column %q: %w", state.Name, err)
+		}
+		if state.Hidden {
+			column.ArchivedAt = &now
 		}
 		if err := s.repo.CreateColumn(ctx, column); err != nil {
 			return fmt.Errorf("persist default column %q: %w", state.Name, err)

@@ -4112,3 +4112,181 @@ func TestReparentTaskRejectsCycle(t *testing.T) {
 		t.Fatalf("expected ErrInvalidParentID, got %v", err)
 	}
 }
+
+// TestMoveTaskToFailedUsesMarkFailedCapability verifies that moving to the failed column uses CapabilityActionMarkFailed.
+func TestMoveTaskToFailedUsesMarkFailedCapability(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
+	repo.columns[progress.ID] = progress
+	repo.columns[failed.ID] = failed
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      project.ID,
+		ColumnID:       progress.ID,
+		Position:       0,
+		Title:          "failing task",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateProgress,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	moved, err := svc.MoveTask(context.Background(), task.ID, failed.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveTask() error = %v", err)
+	}
+	if moved.LifecycleState != domain.StateFailed {
+		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
+	}
+	if moved.CompletedAt == nil {
+		t.Fatal("expected completed_at to be set for failed state")
+	}
+}
+
+// TestMoveTaskToFailedSkipsCompletionCriteria verifies that moving to failed does not check completion criteria.
+func TestMoveTaskToFailedSkipsCompletionCriteria(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
+	repo.columns[progress.ID] = progress
+	repo.columns[failed.ID] = failed
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-parent",
+		ProjectID:      project.ID,
+		ColumnID:       progress.ID,
+		Position:       0,
+		Title:          "parent with incomplete children",
+		Priority:       domain.PriorityHigh,
+		LifecycleState: domain.StateProgress,
+		Metadata: domain.TaskMetadata{
+			CompletionContract: domain.CompletionContract{
+				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Done: false}},
+				Policy:             domain.CompletionPolicy{RequireChildrenDone: true},
+			},
+		},
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-child",
+		ProjectID:      project.ID,
+		ParentID:       parent.ID,
+		ColumnID:       progress.ID,
+		Position:       1,
+		Title:          "incomplete child",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateProgress,
+	}, now)
+	repo.tasks[parent.ID] = parent
+	repo.tasks[child.ID] = child
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	moved, err := svc.MoveTask(context.Background(), parent.ID, failed.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveTask() to failed should succeed with incomplete children, got error = %v", err)
+	}
+	if moved.LifecycleState != domain.StateFailed {
+		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
+	}
+}
+
+// TestMoveTaskFromFailedToTodoBlocked verifies that transitions FROM the failed terminal state are blocked.
+func TestMoveTaskFromFailedToTodoBlocked(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
+	repo.columns[todo.ID] = todo
+	repo.columns[failed.ID] = failed
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      project.ID,
+		ColumnID:       failed.ID,
+		Position:       0,
+		Title:          "failed task",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateFailed,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	_, err := svc.MoveTask(context.Background(), task.ID, todo.ID, 0)
+	if err == nil {
+		t.Fatal("MoveTask() from failed to todo should return an error")
+	}
+	if !errors.Is(err, domain.ErrTransitionBlocked) {
+		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
+	}
+}
+
+// TestMoveTaskFromDoneToTodoBlocked verifies that transitions FROM the done terminal state are blocked.
+func TestMoveTaskFromDoneToTodoBlocked(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	done, _ := domain.NewColumn("c3", project.ID, "Done", 2, 0, now)
+	repo.columns[todo.ID] = todo
+	repo.columns[done.ID] = done
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      project.ID,
+		ColumnID:       done.ID,
+		Position:       0,
+		Title:          "done task",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateDone,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	_, err := svc.MoveTask(context.Background(), task.ID, todo.ID, 0)
+	if err == nil {
+		t.Fatal("MoveTask() from done to todo should return an error")
+	}
+	if !errors.Is(err, domain.ErrTransitionBlocked) {
+		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
+	}
+}
+
+// TestMoveTaskFromFailedIdempotentAllowed verifies that idempotent moves (same column, same state) are permitted for terminal states.
+func TestMoveTaskFromFailedIdempotentAllowed(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
+	repo.columns[failed.ID] = failed
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      project.ID,
+		ColumnID:       failed.ID,
+		Position:       0,
+		Title:          "failed task",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateFailed,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	moved, err := svc.MoveTask(context.Background(), task.ID, failed.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveTask() idempotent move on failed task should succeed, got error = %v", err)
+	}
+	if moved.LifecycleState != domain.StateFailed {
+		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
+	}
+}

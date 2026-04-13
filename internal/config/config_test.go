@@ -805,3 +805,18 @@ func TestUpsertAllowedLabelsRejectsInvalidInput(t *testing.T) {
 		t.Fatal("expected error for empty project slug")
 	}
 }
+
+// TestIsKnownLifecycleStateIncludesFailed verifies that "failed" is recognized as a known lifecycle state.
+func TestIsKnownLifecycleStateIncludesFailed(t *testing.T) {
+	if !isKnownLifecycleState("failed") {
+		t.Fatal("isKnownLifecycleState(\"failed\") = false, want true")
+	}
+	for _, state := range []string{"todo", "progress", "done", "archived"} {
+		if !isKnownLifecycleState(state) {
+			t.Fatalf("isKnownLifecycleState(%q) = false, want true", state)
+		}
+	}
+	if isKnownLifecycleState("invalid") {
+		t.Fatal("isKnownLifecycleState(\"invalid\") = true, want false")
+	}
+}
