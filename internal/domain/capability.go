@@ -19,6 +19,7 @@ const (
 	CapabilityActionApproveAuthWithinBounds CapabilityAction = "approve-auth-within-bounds"
 	CapabilityActionMarkInProgress          CapabilityAction = "mark-in-progress"
 	CapabilityActionMarkComplete            CapabilityAction = "mark-complete"
+	CapabilityActionMarkFailed              CapabilityAction = "mark-failed"
 	CapabilityActionReopen                  CapabilityAction = "reopen"
 	CapabilityActionAttachEvidence          CapabilityAction = "attach-evidence"
 	CapabilityActionSignoff                 CapabilityAction = "signoff"
@@ -36,6 +37,7 @@ var validCapabilityActions = []CapabilityAction{
 	CapabilityActionApproveAuthWithinBounds,
 	CapabilityActionMarkInProgress,
 	CapabilityActionMarkComplete,
+	CapabilityActionMarkFailed,
 	CapabilityActionReopen,
 	CapabilityActionAttachEvidence,
 	CapabilityActionSignoff,
@@ -228,6 +230,7 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 			CapabilityActionApproveAuthWithinBounds,
 			CapabilityActionMarkInProgress,
 			CapabilityActionMarkComplete,
+			CapabilityActionMarkFailed,
 			CapabilityActionResolveAttention,
 			CapabilityActionArchiveOrCleanup,
 		}
@@ -240,6 +243,7 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 			CapabilityActionRequestAuth,
 			CapabilityActionMarkInProgress,
 			CapabilityActionMarkComplete,
+			CapabilityActionMarkFailed,
 			CapabilityActionAttachEvidence,
 		}
 	case CapabilityRoleQA:
@@ -250,6 +254,7 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 			CapabilityActionRequestAuth,
 			CapabilityActionMarkInProgress,
 			CapabilityActionMarkComplete,
+			CapabilityActionMarkFailed,
 			CapabilityActionReopen,
 			CapabilityActionAttachEvidence,
 			CapabilityActionSignoff,
@@ -264,6 +269,7 @@ func DefaultCapabilityActions(role CapabilityRole) []CapabilityAction {
 			CapabilityActionRequestAuth,
 			CapabilityActionMarkInProgress,
 			CapabilityActionMarkComplete,
+			CapabilityActionMarkFailed,
 			CapabilityActionAttachEvidence,
 		}
 	case CapabilityRoleSystem:

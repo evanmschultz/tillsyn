@@ -270,10 +270,14 @@ func (t *Task) SetLifecycleState(state LifecycleState, now time.Time) error {
 	if prev != StateProgress && state == StateProgress && t.StartedAt == nil {
 		t.StartedAt = &ts
 	}
-	if prev != StateDone && state == StateDone {
+	// CompletedAt is reused for both done and failed (D1). The metadata.outcome
+	// field (D6) distinguishes success from failure. Both branches must be
+	// updated atomically — setting one without the other causes CompletedAt to
+	// be set and immediately nilled in the same call.
+	if (prev != StateDone && state == StateDone) || (prev != StateFailed && state == StateFailed) {
 		t.CompletedAt = &ts
 	}
-	if state != StateDone {
+	if state != StateDone && state != StateFailed {
 		t.CompletedAt = nil
 	}
 	if state == StateArchived {
