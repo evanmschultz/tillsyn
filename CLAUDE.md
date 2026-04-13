@@ -35,8 +35,8 @@ All work is tracked in Tillsyn. No exceptions.
 **CRITICAL: Code is NEVER committed or pushed without QA completing first.** The sequence is:
 
 1. **Build** — builder subagent implements the increment.
-2. **QA Proof** — `qa-proof-agent` verifies evidence completeness and design support.
-3. **QA Falsification** — `qa-falsification-agent` actively tries to break the conclusion.
+2. **QA Proof** — `go-qa-proof-agent` verifies evidence completeness and design support.
+3. **QA Falsification** — `go-qa-falsification-agent` actively tries to break the conclusion.
 4. **Fix** — if QA finds issues, spawn another builder to fix. Repeat QA.
 5. **Commit** — only after BOTH QA passes clear: `git add` the specific changed files, commit with conventional-commit format.
 6. **Push** — `git push` to the remote so CI runs and the remote is current.
@@ -176,14 +176,14 @@ These agents are available via the `Agent` tool with `subagent_type`:
 | Agent | Subagent Type | Purpose |
 |---|---|---|
 | **Orchestration** | `orchestration-agent` | Tillsyn system of record, routing planning/QA/closeout through skills |
-| **Planning** | `planning-agent` | Hylla-first planning grounded in committed code reality |
-| **QA Proof** | `qa-proof-agent` | Proof-completeness check — verify evidence supports the claim |
-| **QA Falsification** | `qa-falsification-agent` | Falsification attempt — actively try to break the conclusion |
+| **Builder** | `go-builder-agent` | Ephemeral builder — the ONLY role that edits code |
+| **Planning** | `go-planning-agent` | Hylla-first planning grounded in committed code reality |
+| **QA Proof** | `go-qa-proof-agent` | Proof-completeness check — verify evidence supports the claim |
+| **QA Falsification** | `go-qa-falsification-agent` | Falsification attempt — actively try to break the conclusion |
 | **Closeout** | `closeout-agent` | Coordinate QA, freshness, and final baseline updates |
 | **Gopls Worktree** | `gopls-worktree-agent` | Keep gopls MCP pointed at the active visible checkout |
 
 Additional inline roles (no separate subagent file):
-- **builder-agent** — ephemeral subagent spawned via Agent tool (the parent session NEVER acts as builder)
 - **research-agent** — uses Claude's built-in `Explore` subagent
 - **commit-and-reingest-agent** — parent role via `/commit-and-reingest`
 
@@ -191,8 +191,8 @@ Additional inline roles (no separate subagent file):
 
 QA has two distinct, asymmetric passes — they are not duplicate reviewers:
 
-- **QA PROOF REVIEW** (`qa-proof-agent`, `/qa-proof`) — verify evidence completeness, reasoning coherence, trace coverage.
-- **QA FALSIFICATION REVIEW** (`qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
+- **QA PROOF REVIEW** (`go-qa-proof-agent`, `/qa-proof`) — verify evidence completeness, reasoning coherence, trace coverage.
+- **QA FALSIFICATION REVIEW** (`go-qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
 - **QA Sweep** (`/qa-sweep`) — coordinate both passes for closeout.
 
 Prefer subagents for QA when fresh-context isolation matters.
@@ -223,11 +223,13 @@ For semantic, high-risk, or ambiguous work, use this reasoning shape:
 
 Keep certificates short and inspectable.
 
-## Evidence Order
+## Evidence Sources
 
-1. **Hylla** for committed Go code understanding (always use latest snapshot, filter `snapshot=<current>`)
-2. **`git diff`** for uncommitted local deltas or files changed since last ingest
-3. **Context7**, `go doc`, **gopls MCP** for external/language/tooling semantics
+Use these in order:
+
+1. **Hylla** for committed repo-local code understanding (always use latest snapshot, filter `snapshot=<current>`).
+2. **`git diff`** for uncommitted local deltas or files changed since last ingest.
+3. **Context7** for external semantics. Also use `go doc` and **gopls MCP**.
 
 ## Project Structure
 
@@ -250,6 +252,16 @@ Keep certificates short and inspectable.
 - TOML config (`github.com/pelletier/go-toml/v2`)
 - Laslig for Mage and CLI styling
 - Fang for CLI help surfaces
+
+## Agent Selection
+
+This is a Go project. Use `go-*` agent variants:
+
+- Builder: `go-builder-agent`
+- QA Proof: `go-qa-proof-agent`
+- QA Falsification: `go-qa-falsification-agent`
+- Planning: `go-planning-agent`
+- Closeout: `closeout-agent` (shared, lang-aware)
 
 ## Dev MCP Server
 
@@ -276,7 +288,13 @@ claude mcp add --scope local tillsyn-dev -- /path/to/worktree/till serve-mcp
 - Always test against `tillsyn-dev`, not the installed `till` binary.
 - When retiring a branch, remove its dev MCP server entry.
 
-## Build and Verification
+## Build Verification
+
+Before any build-task can be marked done:
+
+1. All mage verification targets pass (discover via `mage -l`).
+2. Never use raw `go build`, `go test`, `go vet` — always mage targets.
+3. All template-generated QA subtasks completed.
 
 **CRITICAL: NEVER run `go test`, `go build`, `go run`, or any raw `go` toolchain command directly.** All Go operations go through `mage` targets. This applies to the orchestrator, builder subagents, QA subagents — everyone. No exceptions. If a `mage` target fails, investigate and fix the target or the code, do not bypass it with a raw `go` command.
 
@@ -353,9 +371,20 @@ You are a senior Go dev. These rules are always active:
 
 ### Git Commit Format
 
-- `type(scope): short imperative summary` — lowercase by default, preserve uppercase for required literals (GitHub, MCP, TUI, Codex, code identifiers, file/path names).
-- No period at end. No co-authored-by trailers. One primary intent per commit.
-- Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`, `build`, `ci`.
+Use conventional-commit style: `type(scope): message`. All lowercase except proper nouns, acronyms, or terms that are conventionally capitalized (e.g. HTTP, TUI, WASM). Keep messages concise and human — describe what changed, not how.
+
+Format: `type(scope): short message`
+
+Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `style`, `perf`
+
+Examples:
+- `feat(ingest): add per-file progress reporting`
+- `fix(tui): correct viewport wrap on narrow terminals`
+- `chore(deps): update to charm/v2`
+- `refactor(core): split parse and render phases`
+- `docs(readme): add quickstart section`
+
+No co-authored-by trailers. No period at the end. No capitalized first word after the colon unless it's a proper noun or acronym.
 
 ### Dependencies
 
