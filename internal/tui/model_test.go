@@ -15070,6 +15070,7 @@ func TestTaskMetadataSchemaCoverageIsExplicit(t *testing.T) {
 		"TransitionNotes":          {},
 		"ContextBlocks":            {},
 		"KindPayload":              {},
+		"Outcome":                  {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.TaskMetadata{}), editable, readOnly, internal)
 }
