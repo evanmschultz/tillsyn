@@ -379,18 +379,18 @@ func TestGetBuiltinTemplateLibraryStatusMissing(t *testing.T) {
 	if status.Installed {
 		t.Fatal("status.Installed = true, want false")
 	}
-	if got, want := len(status.RequiredKindIDs), 11; got != want {
+	if got, want := len(status.RequiredKindIDs), 16; got != want {
 		t.Fatalf("len(status.RequiredKindIDs) = %d, want %d", got, want)
 	}
-	if got, want := len(status.MissingKindIDs), 9; got != want {
+	if got, want := len(status.MissingKindIDs), 13; got != want {
 		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
 	}
-	for _, want := range []domain.KindID{"branch", "task", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"branch", "task", "subtask", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "commit-and-reingest"} {
 		if !slices.Contains(status.RequiredKindIDs, want) {
 			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
 		}
 	}
-	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "commit-and-reingest"} {
 		if !slices.Contains(status.MissingKindIDs, want) {
 			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
 		}
@@ -409,10 +409,10 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	if spec.BuiltinSource != "builtin://tillsyn/default-go" {
 		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-go", spec.BuiltinSource)
 	}
-	if spec.BuiltinVersion != "2026-04-12.1" {
-		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-12.1", spec.BuiltinVersion)
+	if spec.BuiltinVersion != "2026-04-13.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-13.1", spec.BuiltinVersion)
 	}
-	if got, want := len(spec.NodeTemplates), 8; got != want {
+	if got, want := len(spec.NodeTemplates), 12; got != want {
 		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
 	}
 	projectDefaults := spec.NodeTemplates[0].ProjectMetadataDefaults
@@ -437,6 +437,18 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	}; !slices.Equal(got, []string{"PLAN", "BUILD", "CLOSEOUT", "BRANCH CLEANUP"}) {
 		t.Fatalf("branch child titles = %#v, want PLAN/BUILD/CLOSEOUT/BRANCH CLEANUP", got)
 	}
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-phase").ChildRules); !slices.Equal(got, []string{"HYLLA-FIRST REFACTOR BASELINE", "PHASE METRICS ROLLUP", "PHASE PARITY VALIDATION PLAN", "PHASE PUSH AND REINGEST CONFIRMATION", "REFACTOR METRICS BASELINE AND REPORT PATH", "REFACTOR SUBPHASE AND SLICE TREE"}) {
+		t.Fatalf("refactor-phase child titles = %#v", got)
+	}
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-phase").ChildRules); !slices.Equal(got, []string{"CONFIRM LOCAL USED VERSION UPDATED", "DEV VERSION VALIDATION PLAN", "HYLLA-FIRST REFACTOR BASELINE", "PHASE METRICS ROLLUP", "PHASE PUSH AND REINGEST CONFIRMATION", "REFACTOR METRICS BASELINE AND REPORT PATH", "REFACTOR SUBPHASE AND SLICE TREE"}) {
+		t.Fatalf("dogfood-refactor-phase child titles = %#v", got)
+	}
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-task").ChildRules); !slices.Equal(got, []string{"COMMIT PUSH AND REINGEST", "METRICS CAPTURE AND REPORT", "PARITY VALIDATION IN ACTION", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}) {
+		t.Fatalf("refactor-task child titles = %#v", got)
+	}
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-task").ChildRules); !slices.Equal(got, []string{"COMMIT PUSH AND REINGEST", "CONFIRM LOCAL USED VERSION UPDATED", "METRICS CAPTURE AND REPORT", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "TEST AGAINST DEV VERSION"}) {
+		t.Fatalf("dogfood-refactor-task child titles = %#v", got)
+	}
 }
 
 // TestGetBuiltinTemplateLibraryStatusMissingDefaultFrontend verifies builtin lifecycle status reports a missing install and missing frontend kind prerequisites.
@@ -454,18 +466,18 @@ func TestGetBuiltinTemplateLibraryStatusMissingDefaultFrontend(t *testing.T) {
 	if status.Installed {
 		t.Fatal("status.Installed = true, want false")
 	}
-	if got, want := len(status.RequiredKindIDs), 14; got != want {
+	if got, want := len(status.RequiredKindIDs), 19; got != want {
 		t.Fatalf("len(status.RequiredKindIDs) = %d, want %d", got, want)
 	}
-	if got, want := len(status.MissingKindIDs), 12; got != want {
+	if got, want := len(status.MissingKindIDs), 16; got != want {
 		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
 	}
-	for _, want := range []domain.KindID{"branch", "task", "frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"branch", "task", "subtask", "frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
 		if !slices.Contains(status.RequiredKindIDs, want) {
 			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
 		}
 	}
-	for _, want := range []domain.KindID{"frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "build-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
 		if !slices.Contains(status.MissingKindIDs, want) {
 			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
 		}
@@ -484,10 +496,10 @@ func TestDefaultFrontendBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) 
 	if spec.BuiltinSource != "builtin://tillsyn/default-frontend" {
 		t.Fatalf("spec.BuiltinSource = %q, want builtin://tillsyn/default-frontend", spec.BuiltinSource)
 	}
-	if spec.BuiltinVersion != "2026-04-12.1" {
-		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-12.1", spec.BuiltinVersion)
+	if spec.BuiltinVersion != "2026-04-13.1" {
+		t.Fatalf("spec.BuiltinVersion = %q, want 2026-04-13.1", spec.BuiltinVersion)
 	}
-	if got, want := len(spec.NodeTemplates), 8; got != want {
+	if got, want := len(spec.NodeTemplates), 12; got != want {
 		t.Fatalf("len(spec.NodeTemplates) = %d, want %d", got, want)
 	}
 	projectDefaults := spec.NodeTemplates[0].ProjectMetadataDefaults
@@ -512,8 +524,14 @@ func TestDefaultFrontendBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) 
 		gotChildTitles = append(gotChildTitles, childRule.TitleTemplate)
 	}
 	slices.Sort(gotChildTitles)
-	if want := []string{"ACCESSIBILITY CHECK", "COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(gotChildTitles, want) {
+	if want := []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(gotChildTitles, want) {
 		t.Fatalf("build-task child titles = %#v, want %#v", gotChildTitles, want)
+	}
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-task").ChildRules); !slices.Equal(got, []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "METRICS CAPTURE AND REPORT", "PARITY VALIDATION IN ACTION", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}) {
+		t.Fatalf("refactor-task child titles = %#v", got)
+	}
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-task").ChildRules); !slices.Equal(got, []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "CONFIRM LOCAL USED VERSION UPDATED", "METRICS CAPTURE AND REPORT", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "TEST AGAINST DEV VERSION", "VISUAL QA"}) {
+		t.Fatalf("dogfood-refactor-task child titles = %#v", got)
 	}
 }
 
@@ -559,7 +577,7 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultGo(t *testing.T) {
 	if result.Library.BuiltinVersion != spec.BuiltinVersion {
 		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, spec.BuiltinVersion)
 	}
-	if got, want := len(result.Library.NodeTemplates), 8; got != want {
+	if got, want := len(result.Library.NodeTemplates), 12; got != want {
 		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
 	}
 	loaded, err := svc.GetTemplateLibrary(ctx, "default-go")
@@ -613,7 +631,7 @@ func TestEnsureBuiltinTemplateLibraryInstallsDefaultFrontend(t *testing.T) {
 	if result.Library.BuiltinVersion != spec.BuiltinVersion {
 		t.Fatalf("result.Library.BuiltinVersion = %q, want %q", result.Library.BuiltinVersion, spec.BuiltinVersion)
 	}
-	if got, want := len(result.Library.NodeTemplates), 8; got != want {
+	if got, want := len(result.Library.NodeTemplates), 12; got != want {
 		t.Fatalf("len(result.Library.NodeTemplates) = %d, want %d", got, want)
 	}
 	loaded, err := svc.GetTemplateLibrary(ctx, "default-frontend")
@@ -762,6 +780,9 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 	if buildPhase.ID == "" {
 		t.Fatal("expected generated BUILD phase")
 	}
+	if got, want := childTitles(tasks, buildPhase.ID), []string{"PHASE PUSH AND REINGEST CONFIRMATION"}; !slices.Equal(got, want) {
+		t.Fatalf("build phase child titles = %#v, want %#v", got, want)
+	}
 
 	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
 		ProjectID: project.ID,
@@ -790,7 +811,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		gotQATitles = append(gotQATitles, task.Title)
 	}
 	slices.Sort(gotQATitles)
-	if want := []string{"COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(gotQATitles, want) {
+	if want := []string{"COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(gotQATitles, want) {
 		t.Fatalf("build-task child titles = %#v, want %#v", gotQATitles, want)
 	}
 	for _, task := range buildTaskChildren {
@@ -801,7 +822,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		if !snapshot.RequiredForParentDone {
 			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
 		}
-		if task.Title == "COMMIT AND REINGEST" {
+		if task.Title == "COMMIT PUSH AND REINGEST" {
 			if snapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 				t.Fatalf("commit-and-reingest responsible actor = %q, want builder", snapshot.ResponsibleActorKind)
 			}
@@ -911,6 +932,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		"CONTEXT7 AND BROWSER RESEARCH",
 		"DESIGN EXPLORATION",
 		"HYLLA-FIRST CODE UNDERSTANDING",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
 		"SCOPE CONFIRMATION WITH DEV",
 		"VALIDATION PLAN",
 	}; !slices.Equal(got, want) {
@@ -918,6 +940,32 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 	}
 
 	buildPhase := findTaskByTitle(t, branchChildren, "BUILD")
+	if got, want := childTitles(tasks, buildPhase.ID), []string{"PHASE PUSH AND REINGEST CONFIRMATION"}; !slices.Equal(got, want) {
+		t.Fatalf("build phase child titles = %#v, want %#v", got, want)
+	}
+	closeoutPhase := findTaskByTitle(t, branchChildren, "CLOSEOUT")
+	if got, want := childTitles(tasks, closeoutPhase.ID), []string{
+		"DEV REVIEW",
+		"HYLLA REFRESHED AND CURRENT TO GIT",
+		"LOCAL COMMIT RECORDED",
+		"ORCHESTRATOR AND DEV COLLABORATIVE TESTING",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
+		"PUSH PR HANDOFF READINESS",
+		"QA FALSIFICATION REVIEW",
+		"QA PROOF REVIEW",
+		"REQUIRED BUILD GATES GREEN",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("closeout child titles = %#v, want %#v", got, want)
+	}
+	cleanupPhase := findTaskByTitle(t, branchChildren, "BRANCH CLEANUP")
+	if got, want := childTitles(tasks, cleanupPhase.ID), []string{
+		"CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
+		"REMOVE FINISHED BRANCH",
+		"REMOVE LINKED WORKTREE",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("cleanup child titles = %#v, want %#v", got, want)
+	}
 	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
@@ -940,7 +988,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 			buildTaskChildren = append(buildTaskChildren, task)
 		}
 	}
-	if want := []string{"ACCESSIBILITY CHECK", "COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(childTitles(tasks, buildTask.ID), want) {
+	if want := []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(childTitles(tasks, buildTask.ID), want) {
 		t.Fatalf("build-task child titles = %#v, want %#v", childTitles(tasks, buildTask.ID), want)
 	}
 	for _, task := range buildTaskChildren {
@@ -952,7 +1000,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
 		}
 		switch task.Title {
-		case "COMMIT AND REINGEST":
+		case "COMMIT PUSH AND REINGEST":
 			if snapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 				t.Fatalf("commit-and-reingest responsible actor = %q, want builder", snapshot.ResponsibleActorKind)
 			}
@@ -1017,6 +1065,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		"HYLLA INITIAL INGEST OR REFRESH",
 		"HYLLA VS DB STATE REVIEW",
 		"HYLLA VS GIT FRESHNESS CHECK",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
 		"PROJECT METADATA AND STANDARDS LOCK",
 		"TEMPLATE FIT REVIEW",
 	}; !slices.Equal(got, want) {
@@ -1056,10 +1105,15 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		"CLOSEOUT AND CLEANUP EXPECTATIONS",
 		"CONTEXT7 AND GO DOC RESEARCH",
 		"HYLLA-FIRST CODE UNDERSTANDING",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
 		"SCOPE CONFIRMATION WITH DEV",
 		"VALIDATION PLAN",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("plan child titles = %#v, want %#v", got, want)
+	}
+	buildPhase := findChildTaskByTitle(t, tasks, branch.ID, "BUILD")
+	if got, want := childTitles(tasks, buildPhase.ID), []string{"PHASE PUSH AND REINGEST CONFIRMATION"}; !slices.Equal(got, want) {
+		t.Fatalf("build phase child titles = %#v, want %#v", got, want)
 	}
 	closeoutPhase := findChildTaskByTitle(t, tasks, branch.ID, "CLOSEOUT")
 	if got, want := childTitles(tasks, closeoutPhase.ID), []string{
@@ -1067,6 +1121,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		"HYLLA REFRESHED AND CURRENT TO GIT",
 		"LOCAL COMMIT RECORDED",
 		"ORCHESTRATOR AND DEV COLLABORATIVE TESTING",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
 		"PUSH PR HANDOFF READINESS",
 		"QA FALSIFICATION REVIEW",
 		"QA PROOF REVIEW",
@@ -1078,6 +1133,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	if got, want := childTitles(tasks, cleanupPhase.ID), []string{
 		"CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
 		"CONFIRM STALE MCP SERVER GONE",
+		"PHASE PUSH AND REINGEST CONFIRMATION",
 		"REFRESH CODEX MCP LIST",
 		"REMOVE FINISHED BRANCH",
 		"REMOVE LANE GOPLS MCP ENTRY",
@@ -1085,8 +1141,6 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	}; !slices.Equal(got, want) {
 		t.Fatalf("cleanup child titles = %#v, want %#v", got, want)
 	}
-
-	buildPhase := findChildTaskByTitle(t, tasks, branch.ID, "BUILD")
 	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
@@ -1103,7 +1157,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	if err != nil {
 		t.Fatalf("ListTasks(build task) error = %v", err)
 	}
-	if got, want := childTitles(tasks, buildTask.ID), []string{"COMMIT AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(got, want) {
+	if got, want := childTitles(tasks, buildTask.ID), []string{"COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(got, want) {
 		t.Fatalf("build-task QA child titles = %#v, want %#v", got, want)
 	}
 }
@@ -1578,7 +1632,11 @@ func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
 		{ID: "build-phase", DisplayName: "Build Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "closeout-phase", DisplayName: "Closeout Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "refactor-phase", DisplayName: "Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "dogfood-refactor-phase", DisplayName: "Dogfood Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "refactor-task", DisplayName: "Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "dogfood-refactor-task", DisplayName: "Dogfood Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
@@ -1598,7 +1656,11 @@ func seedDefaultFrontendBuiltinTemplateKinds(t *testing.T, ctx context.Context, 
 		{ID: "build-phase", DisplayName: "Build Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "closeout-phase", DisplayName: "Closeout Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "refactor-phase", DisplayName: "Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
+		{ID: "dogfood-refactor-phase", DisplayName: "Dogfood Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "refactor-task", DisplayName: "Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "dogfood-refactor-task", DisplayName: "Dogfood Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "visual-qa", DisplayName: "Visual QA", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "a11y-check", DisplayName: "Accessibility Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
@@ -1622,6 +1684,26 @@ func childTitles(tasks []domain.Task, parentID string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+func childRuleTitles(rules []UpsertTemplateChildRuleInput) []string {
+	out := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, rule.TitleTemplate)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func findNodeTemplateByKind(t *testing.T, templates []UpsertNodeTemplateInput, kind domain.KindID) UpsertNodeTemplateInput {
+	t.Helper()
+	for _, template := range templates {
+		if template.NodeKindID == kind {
+			return template
+		}
+	}
+	t.Fatalf("expected node template for kind %q", kind)
+	return UpsertNodeTemplateInput{}
 }
 
 // findTaskByTitle returns one task with the requested title or fails the test.
