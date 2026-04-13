@@ -13,3 +13,4 @@ bin/
 # Codex config belongs at the bare repo root, not inside tracked worktrees.
 .codex/
 .nvimlog
+.claude/
