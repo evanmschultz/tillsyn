@@ -29,7 +29,7 @@ func (r *markdownRenderer) render(markdown string, width int) string {
 		renderer, err := glamour.NewTermRenderer(
 			// Use a stable built-in style to avoid terminal environment probing
 			// sequences leaking into interactive TUI input streams.
-			glamour.WithStandardStyle(styles.DarkStyle),
+			glamour.WithStandardStyle(styles.DraculaStyle),
 			glamour.WithWordWrap(wrapWidth),
 		)
 		if err != nil {
