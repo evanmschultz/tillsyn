@@ -1,19 +1,88 @@
-# Tillsyn — Project CLAUDE.md
+# Tillsyn — Project CLAUDE.md (main worktree)
+
+This file lives in the **`main/` worktree** at `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. This is the primary work checkout — all real coding, building, testing, and committing happens here. **The dev launches orchestrators from this directory.** The bare-root `CLAUDE.md` (one directory up) carries the same rules body; only the preamble differs.
 
 ## Tillsyn Is the System of Record
 
 All work is tracked in Tillsyn. No exceptions.
 
-- Never use markdown files for work tracking, coordination, worklogs, or execution state.
-- Claude Code's built-in task tools (TaskCreate, TaskUpdate, etc.) are fine for local progress tracking within a conversation. Use them alongside Tillsyn — they complement each other. Tillsyn is the cross-session source of truth; built-in tasks are ephemeral per-conversation aids.
+- No markdown files for work tracking, coordination, worklogs, or execution state.
+- No Claude Code built-in task tools (TaskCreate, TaskUpdate, etc.) for work tracking. All tracking goes through Tillsyn MCP tools.
 - Every piece of work gets a Tillsyn plan item before it starts.
-- **When work starts on a plan item, move it to `in_progress` immediately** so the dev can see what is actively being worked on. Do not leave items in `todo` while working on them.
-- PLAN.md and other markdown planning docs are frozen reference material, not live trackers.
+- **When work starts on a plan item, move it to `in_progress` immediately.** No items left in `todo` while being worked on.
+
+## Cascade Plan
+
+The cascade (state-triggered autonomous agent dispatch) is designed in `../CLAUDE_MINIONS_PLAN.md` (at the bare root, one level up). That plan is the source of truth for cascade architecture, slice ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
+
+## Cascade Tree Structure (Template Architecture)
+
+This is the cascade's template architecture by plan-item `kind`. **Slice 3 encodes this tree as a template** and **Slice 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually using whatever generic kinds the fresh project starts with — the structure, blockers, and agent roles below are the contract.
+
+### Kind Hierarchy
+
+```
+project                                 kind: project
+└── slice (infinitely nestable)         kind: slice
+      ├── plan-task                     kind: plan-task          ─→ agent: go-planning-agent          (opus)
+      │   ├── plan-qa-proof             kind: qa-check           ─→ agent: go-qa-proof-agent          (opus)
+      │   └── plan-qa-falsification     kind: qa-check           ─→ agent: go-qa-falsification-agent  (opus)
+      │
+      ├── slice (sub-slice)             kind: slice               (same shape, recurses infinitely)
+      │
+      └── task (build-task)             kind: task               ─→ agent: go-builder-agent           (sonnet)
+            ├── qa-proof                kind: qa-check           ─→ agent: go-qa-proof-agent          (sonnet)
+            └── qa-falsification        kind: qa-check           ─→ agent: go-qa-falsification-agent  (sonnet)
+```
+
+### Required Children (Auto-Create Rules)
+
+- **Every `slice`** auto-creates three children on creation: `plan-task`, `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Slice 3.
+- **Every `task`** (build-task) auto-creates two children on creation: `qa-proof`, `qa-falsification`.
+- `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan-task` — they fire in parallel after the plan-task completes.
+- `qa-proof` and `qa-falsification` under a build-task are `blocked_by: task` — they fire in parallel after the build-task completes **and** its post-build gates pass (see below).
+- Slices nest infinitely. A planner creates sub-slices when decomposition needs to continue, or build-tasks when the work is granular enough.
+
+### Agent Bindings
+
+Pre-cascade: orchestrator spawns these manually via the `Agent` tool using Tillsyn auth credentials in the prompt.
+Post-Slice-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
+
+| Kind | Agent | Model | Role | Edits Code? |
+|---|---|---|---|---|
+| `plan-task` (slice-level) | `go-planning-agent` | opus | `planner` | No |
+| `qa-check` under `plan-task` | `go-qa-proof-agent` / `go-qa-falsification-agent` | opus | `qa` | No |
+| `task` (build-task) | `go-builder-agent` | sonnet | `builder` | **Yes** |
+| `qa-check` under `task` | `go-qa-proof-agent` / `go-qa-falsification-agent` | sonnet | `qa` | No |
+| commit-agent *(Slice-4+, post-build gate)* | `commit-message-agent` | haiku | `commit` | No |
+
+### Post-Build Gates (Deterministic, Between Build-Task And Its QA)
+
+After a build-task reports success, before its `qa-*` children become eligible, gates run programmatically. No LLM except the commit agent.
+
+1. **`mage ci`** — on fail, the build-task moves to `failed`, gate output posted as a comment.
+2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below).
+3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
+4. **Hylla reingest** — the dev runs it. Full enrichment only. Agents never call `hylla_ingest`.
+
+Only after all gates pass do the build-task's QA children fire.
+
+### Blocker Semantics
+
+- **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on parent-blocks-on-failed-child arrives in Slice 1.
+- **`blocked_by`** — the only sibling and cross-slice ordering primitive. Planner sets these at creation time; dispatcher adds runtime blockers when file/package locks conflict (Slice 4+).
+- **File- and package-level blocking** — sibling build-tasks sharing a file in `paths` OR a package in `packages` MUST have an explicit `blocked_by` between them. Plan QA falsification attacks missing blockers. Package-level locking exists because a single Go package (e.g. `internal/domain` with ~25 files) shares one compile — editing different files in the same package still breaks the other agent's test run.
+
+### State-Trigger Dispatch
+
+Moving a plan item to `in_progress` is the dispatch trigger (Slice 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt.
 
 ## Tillsyn Project
 
-- **Project ID**: `a0cfbf87-b470-45f9-aae0-4aa236b56ed9`
-- **Template**: `default-go` (revision 3, scope global)
+The tillsyn project was **reset in Slice 0** — the prior messy project (`a0cfbf87-b470-45f9-aae0-4aa236b56ed9`, `default-go` template) was renamed to `TILLSYN-OLD` and a fresh, template-free project was created. Retiring `TILLSYN-OLD` via delete or archive is a Slice 10 refinement (project lifecycle ops bullet).
+
+- **Project ID**: `a5e87c34-3456-4663-9f32-df1b46929e30`
+- **Template**: none (fresh project, no template bound)
 - **Slug**: `tillsyn`
 - **Kind**: `go-project`
 
@@ -24,410 +93,247 @@ All work is tracked in Tillsyn. No exceptions.
 
 ### Code Understanding Rules
 
-1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source of truth for committed code understanding. Do not use `cat`, `grep`, `Read`, or other file tools for Go code discovery or navigation when Hylla can answer the question. **If Hylla does not return the expected code on the first search, exhaust all Hylla search modes before falling back to standard tools**: try vector similarity search (`hylla_search` with `search_types: ["vector"]`), keyword search across content/summary/docstring fields (`hylla_search_keyword`), graph navigation (`hylla_graph_nav`), and reference lookup (`hylla_refs_find`). Only after multiple Hylla search strategies fail may you use `Read`, `Grep`, or `Glob` for Go code.
-2. **Changed since last ingest**: if Go code has been modified since the last Hylla ingest (check via `git diff`), use `git diff` for those specific deltas. Hylla is stale for those files until reingest.
-3. **Non-Go code** (markdown, TOML, YAML, magefile, templates, SQL, etc.): use normal tools (Read, Grep, Glob, Bash) freely. Hylla does not cover non-Go files.
-4. **External semantics**: use Context7, `go doc`, and gopls MCP for library docs, language semantics, and tooling questions the repository itself cannot prove.
-5. **gopls MCP**: use for symbol search, references, diagnostics, rename safety, and workspace understanding. gopls must target the active visible checkout, not the bare root.
+1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `Read`, `Grep`, `Glob`.
+2. **Changed since last ingest**: use `git diff` for files touched after the last Hylla ingest. Hylla is stale for those files until reingest.
+3. **Non-Go code** (markdown, TOML, YAML, magefile, SQL, etc.): use `Read`, `Grep`, `Glob`, `Bash` directly. Hylla doesn't cover non-Go files.
+4. **External semantics**: Context7 + `go doc` + gopls MCP for library and language questions the repo can't answer itself.
+5. **gopls MCP**: symbol search, references, diagnostics, rename safety. Must target this checkout, not the bare root.
 
-### Build-QA-Commit Discipline
+## Build-QA-Commit Discipline
 
-**CRITICAL: Code is NEVER committed or pushed without QA completing first.** The sequence is:
+**CRITICAL: Code is NEVER committed or pushed without QA completing first.**
 
 1. **Build** — builder subagent implements the increment.
-2. **QA Proof** — `go-qa-proof-agent` verifies evidence completeness and design support.
-3. **QA Falsification** — `go-qa-falsification-agent` actively tries to break the conclusion.
-4. **Fix** — if QA finds issues, spawn another builder to fix. Repeat QA.
-5. **Commit** — only after BOTH QA passes clear: `git add` the specific changed files, commit with conventional-commit format.
-6. **Push** — `git push` to the remote so CI runs and the remote is current.
-7. **Reingest Hylla** — **do NOT run `hylla_ingest` yourself.** Ask the dev to run the ingest. NEVER use `structural_only` mode — full enrichment is the only acceptable ingest. Wait for the dev to confirm ingest is complete before proceeding.
-8. **Update Tillsyn** — update the plan item's checklist, metadata, and lifecycle state to reflect what happened. If it's not in Tillsyn, it didn't happen.
-9. **Move on** — only after the dev confirms reingest and Tillsyn reflects the completed state do you proceed to the next task.
+2. **QA Proof** — `go-qa-proof-agent` verifies evidence completeness.
+3. **QA Falsification** — `go-qa-falsification-agent` tries to break the conclusion.
+4. **Fix** — if QA finds issues, spawn another builder to fix, then re-run QA.
+5. **Commit** — only after both QA passes clear: `git add` the specific changed files, commit with conventional-commit format.
+6. **Push** — `git push` so CI runs.
+7. **Reingest Hylla** — do NOT run `hylla_ingest` yourself. Ask the dev. NEVER use `structural_only` — full enrichment only. Wait for dev confirmation.
+8. **Update Tillsyn** — checklist + metadata + lifecycle state. If it's not in Tillsyn, it didn't happen.
+9. **Move on** — only after dev confirms reingest and Tillsyn reflects the completed state.
 
-Do not batch commits. Do not defer pushes. Do not skip QA. Do not skip reingest. Do not claim completion in chat without Tillsyn reflecting it.
+No batched commits. No deferred pushes. No skipped QA. No skipped reingest. No claiming done in chat without Tillsyn reflecting it.
+
+## Git Management (Pre-Cascade)
+
+Until the cascade dispatcher takes over commits (`../CLAUDE_MINIONS_PLAN.md` Slice 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files a plan item declares) is a precondition for creating a plan item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
 
 ## Orchestrator-as-Hub Architecture
 
-The parent Claude Code session is always the **orchestrator**. All other roles (builder, qa, research) are ephemeral subagents.
+The parent Claude Code session launched by the dev from this directory is always **the orchestrator**. There is no `.claude/agents/orchestration-agent.md` file — the orchestrator is defined by the invocation context, not by a markdown spec. Every other role (builder, qa, planner, closeout, research) is a subagent spawned via the `Agent` tool.
 
-**CRITICAL: The orchestrator NEVER writes code.** The parent session must NEVER use Edit, Write, or any other tool to modify Go source files, test files, or production code. All code changes — every single one — go through a builder subagent spawned via the Agent tool. The orchestrator reads code for planning and research only. If you catch yourself about to edit a `.go` file from the parent session, stop and spawn a subagent instead.
+**CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only. Markdown documentation edits (this file, `../CLAUDE_MINIONS_PLAN.md`, agent `.md` files) are orchestrator-scope.
 
 ### How It Works
 
-1. **Orchestrator** (parent session) plans, routes, delegates, and cleans up. It does NOT implement. It does NOT edit code. It reads code and Hylla for research, creates Tillsyn plan items, spawns subagents, and coordinates results.
-2. **Subagents** are ephemeral — they spawn, read their task, do work, update the task, die. Builder subagents are the ONLY actors that edit code.
-3. **Task state is the signal.** When a subagent finishes, it moves the task to `done` or `failed` and puts results in task metadata. The orchestrator reads the task state to know what happened.
-4. **No subagent polls or watches anything.** Subagents read their task details at spawn, execute, update, return.
-5. **Only the orchestrator uses attention items** — for human approval requests and inter-orchestrator communication.
+1. Orchestrator plans, routes, delegates, and cleans up. Reads code + Hylla for research. Creates Tillsyn plan items. Spawns subagents. Coordinates results.
+2. Subagents are ephemeral — they spawn, read their task, do work, update the task, die.
+3. Task state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Slice 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
+4. Subagents do not poll or watch anything. Read task at spawn, execute, update, return.
+5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
 
-### Agent State Management — CRITICAL
+### Agent State Management — Critical
 
-**Every subagent MUST manage its own Tillsyn plan item state.** The orchestrator cannot move role-gated items (e.g., QA subtasks gated to `qa` role).
+Every subagent manages its own Tillsyn plan item state. The orchestrator can't move role-gated items (e.g. QA subtasks gated to `qa`).
 
 **Before spawning any subagent:**
-1. Move the target plan item to `in_progress` if the orchestrator has permission. If not (role-gated), the agent prompt MUST instruct the subagent to move it themselves.
-2. Include in the agent prompt: the Tillsyn task ID, auth credentials (session_id, session_secret, auth_context_id, agent_instance_id, lease_token), and explicit instructions to move state.
-3. Include the Hylla artifact ref (`github.com/evanmschultz/tillsyn@main`) so the subagent can query Hylla for Go code understanding. Omit `snapshot` — Hylla resolves `@main` to the latest ingest automatically.
+- Move the target item to `in_progress` if permission allows; otherwise the agent prompt must instruct the subagent to do it itself.
+- Include Tillsyn task ID, auth credentials (session_id, session_secret, auth_context_id, agent_instance_id, lease_token), and explicit move-state instructions in the prompt.
+- Include Hylla artifact ref `github.com/evanmschultz/tillsyn@main` (omit snapshot — Hylla resolves `@main` to latest).
 
-**Every subagent prompt MUST include these instructions:**
-- "Move your Tillsyn task to `in_progress` immediately when you start work."
-- "When done: update metadata with results, move to `done`."
-- "If you find issues that need fixing: leave in `in_progress`, update metadata with findings, return to orchestrator."
+**Every subagent prompt must include:**
+- "Move your Tillsyn task to `in_progress` immediately when you start."
+- "When done: update metadata, move to terminal state."
+- "If you find issues that need fixing: leave `in_progress`, update metadata with findings, return to orchestrator."
 
-**For QA subagents specifically:**
-- QA subtasks are gated to the `qa` role. The orchestrator must request a `qa`-role auth session and pass those credentials to the QA agent.
-- The QA agent moves its own subtask to `in_progress` at start and `done` on PASS.
-- On findings that need fixes: leave in `in_progress`, report findings, orchestrator spawns builder to fix, then re-runs QA.
+**QA subagents specifically:** gated to `qa` role. Request a `qa`-role auth session and pass those credentials. QA agent moves its subtask to `in_progress` at start and `done` on pass. On findings that need fixes: leave `in_progress`, report findings, orchestrator spawns builder, re-runs QA.
 
-**If a subagent fails to update state:** The orchestrator must get auth as the appropriate role and fix the state before proceeding. This is a recovery path, not the normal flow — fix the agent prompts so it doesn't happen again.
+## Task Lifecycle (Current HEAD)
 
-## Task Lifecycle
+Three terminal-reachable states today: `todo`, `in_progress`, `done`. A fourth state `failed` lands in Slice 1 of the cascade plan. Until then:
 
-Four lifecycle states:
+- **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `done`.
+- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the task stays in `in_progress` with a failure-flavored outcome; Slice 1 adds the real `failed` transition.
+- **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
+- **Supersede** (post-Slice-1): human-only CLI `till task supersede <id> --reason "..."` unsticks `failed → complete`. Before Slice 1 this doesn't exist.
 
-- **`todo`** — work not started
-- **`in_progress`** — work actively being done
-- **`done`** — work completed successfully
-- **`failed`** — work completed unsuccessfully (attempt made, didn't succeed) *(being implemented — D1)*
+No parent can move to terminal-success if any child is in a failure/blocked state — enforcement becomes always-on in Slice 1.
 
-### Success and Failure
+## Paths and Packages (Slice-1 Target)
 
-- On success: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `done`.
-- On failure: set `metadata.outcome: "failure"`, update notes, move to `failed`.
-- On blocked: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, signal UP, move to `failed`, die.
-- On supersede: orchestrator (with override auth) sets `metadata.outcome: "superseded"`, moves `failed` to `done`.
+Today, builders and planners track affected code loosely in metadata. In Slice 1, `paths []string` and `packages []string` become first-class domain fields on every plan item, set by the planner, readable by builder + QA, and required for the file- and package-level blocking the cascade relies on. Until Slice 1 ships, note affected paths in `completion_notes` — the cascade plan (`../CLAUDE_MINIONS_PLAN.md`, Section 5 + Section 17.1) is the contract.
 
-### Failure Handling
+## Auth and Leases
 
-`failed` tasks stay with full context. The orchestrator creates a new task with failure context and `depends_on` pointing to the failed task. No plan item can be marked `done` if any child is `failed` — this applies at ALL hierarchy levels.
-
-## Auth and Lease Lifecycle
-
-- **One active auth session** per scope level at a time.
-- Auth is **immediately revoked** when a task/level is marked `done` or `failed` *(being implemented — D4)*.
-- Orchestrator cleans up ALL child auth sessions and leases at end of phase/run.
-- Auth claim response includes contextual data for the scope level *(being implemented — D7)*.
-- **Always report the auth session ID to the dev** when requesting or claiming auth via `till.auth_request`. The dev needs visibility into which auth sessions are active.
-
-## Affected Artifacts Tracking
-
-Builders and planners track which code they affect via `metadata.affected_artifacts` *(being implemented — D10)*:
-
-```json
-[{"path": "internal/domain/lifecycle.go", "symbols": ["LifecycleState"], "change_type": "modify"}]
-```
-
-- **Planners** set `change_type: "planned"` during planning.
-- **Builders** update with `create`/`modify`/`delete` during implementation.
-- **QA agents** receive parent build-task's `affected_artifacts` via claim response.
-
-Cross-item context is the orchestrator's job — update dependent items' details before spawning agents.
-
-## Ordering and Dependencies
-
-- **`depends_on`** — planned prerequisite ordering at creation. Tillsyn enforces this.
-- **`blocked_by`** + **`blocked_reason`** — dynamic runtime blockers discovered during execution.
+- One active auth session per scope level at a time.
+- Orchestrator cleans up all child auth sessions and leases at end of phase/run.
+- Auth auto-revoke on terminal state is a Slice-1 item; until then, the orchestrator manually revokes stale sessions.
+- **Always report the auth session ID to the dev** when requesting or claiming auth. The dev needs visibility into active sessions.
 
 ## Coordination Surfaces
 
-### Subagents (Builder, QA, Research)
+**Subagents:**
+- `till.plan_item` — read task, update metadata, move state.
+- `till.comment` — result comments on their own task.
+- No attention_items, no handoffs, no @mentions, no downward/sideways signaling.
 
-- `till.plan_item` — read task details, update metadata, move state
-- `till.comment` — post result comments on their task
-- Signal UP to orchestrator if blocked *(being implemented — D8)*
-
-Subagents do NOT use attention_items, handoffs, @mentions, or downward/sideways signaling.
-
-### Orchestrators
-
-- `till.plan_item` — create/update tasks, read state, move phases
-- `till.comment` — post guidance before spawning subagents
-- `till.attention_item` — check inbox for human approvals
-- `till.handoff` — structured next-action routing
-- Level-based signaling *(being implemented — D8)*
-- `/loop` polling at 60-120s for attention items
+**Orchestrator (this session):**
+- `till.plan_item` — create/update tasks, read state, move phases.
+- `till.comment` — guidance before spawning subagents.
+- `till.attention_item` — inbox for human approvals.
+- `till.handoff` — structured next-action routing.
+- `/loop` polling (60-120s cadence) for attention items during long-running work.
 
 ## Role Model
 
-- **Orchestrator** (parent session) — plans, routes, delegates, cleans up. Owns phase transitions. **NEVER edits code. NEVER writes to source files.** All code changes are delegated to builder subagents.
-- **Builder** (subagent) — ephemeral. The ONLY role that edits code. Reads task, implements, updates task, dies.
-- **QA** (subagent) — ephemeral. Reads task, reviews, updates task with verdict, dies.
-- **Research** (subagent) — ephemeral. Reads task, gathers evidence, updates task, dies.
-- **Human** — approves auth requests, reviews results, makes design decisions.
+- **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. May edit markdown docs (this file, plan docs, agent files).
+- **Builder** — subagent. The ONLY role that edits Go code. Reads task, implements, updates, dies.
+- **QA Proof / QA Falsification** — subagents. Ephemeral. Read task, review, update with verdict, die.
+- **Planning** — subagent. Decomposes a slice into tasks with paths/packages/acceptance criteria.
+- **Research** — Claude's built-in `Explore` subagent.
+- **Human** — approves auth, reviews results, makes design decisions.
 
 ## Recovery After Session Restart
 
-1. `till.capture_state` — re-anchor project and scope context
-2. `till.attention_item(operation=list, all_scopes=true)` — inbox state
-3. Check for `in_progress` tasks that may be stale
-4. Revoke any orphaned auth sessions/leases
-5. Resume from current task state
+1. `till.capture_state` — re-anchor project and scope context.
+2. `till.attention_item(operation=list, all_scopes=true)` — inbox state.
+3. Check `in_progress` tasks for staleness.
+4. Revoke orphaned auth sessions/leases.
+5. Resume from current task state.
 
-## Allowed Kinds
+## Claude Code Agents (Go Project)
 
-Only create plan items with these kinds from the `default-go` template:
-
-`branch`, `branch-cleanup-phase`, `build-phase`, `build-task`, `closeout-phase`, `commit-and-reingest`, `decision`, `dogfood-refactor-phase`, `dogfood-refactor-task`, `go-project`, `note`, `phase`, `plan-phase`, `project`, `project-setup-phase`, `qa-check`, `refactor-phase`, `refactor-task`, `subtask`, `task`
-
-## Claude Code Agents
-
-These agents are available via the `Agent` tool with `subagent_type`:
+Spawn via the `Agent` tool with `subagent_type`. There is no orchestration-agent row — the orchestrator is the parent session, not a subagent.
 
 | Agent | Subagent Type | Purpose |
 |---|---|---|
-| **Orchestration** | `orchestration-agent` | Tillsyn system of record, routing planning/QA/closeout through skills |
-| **Builder** | `go-builder-agent` | Ephemeral builder — the ONLY role that edits code |
+| **Builder** | `go-builder-agent` | Ephemeral builder — the only role that edits Go code |
 | **Planning** | `go-planning-agent` | Hylla-first planning grounded in committed code reality |
-| **QA Proof** | `go-qa-proof-agent` | Proof-completeness check — verify evidence supports the claim |
-| **QA Falsification** | `go-qa-falsification-agent` | Falsification attempt — actively try to break the conclusion |
-| **Closeout** | `closeout-agent` | Coordinate QA, freshness, and final baseline updates |
-| **Gopls Worktree** | `gopls-worktree-agent` | Keep gopls MCP pointed at the active visible checkout |
+| **QA Proof** | `go-qa-proof-agent` | Proof-completeness check — evidence supports the claim |
+| **QA Falsification** | `go-qa-falsification-agent` | Falsification attempt — try to break the conclusion |
 
-Additional inline roles (no separate subagent file):
-- **research-agent** — uses Claude's built-in `Explore` subagent
-- **commit-and-reingest-agent** — parent role via `/commit-and-reingest`
+Inline (no subagent file):
+- **research-agent** — Claude's built-in `Explore` subagent.
 
 ### QA Discipline
 
-QA has two distinct, asymmetric passes — they are not duplicate reviewers:
+Two asymmetric passes, not duplicates:
 
-- **QA PROOF REVIEW** (`go-qa-proof-agent`, `/qa-proof`) — verify evidence completeness, reasoning coherence, trace coverage.
-- **QA FALSIFICATION REVIEW** (`go-qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
-- **QA Sweep** (`/qa-sweep`) — coordinate both passes for closeout.
+- **QA Proof** (`go-qa-proof-agent`, `/qa-proof`) — evidence completeness, reasoning coherence, trace coverage.
+- **QA Falsification** (`go-qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
 
-Prefer subagents for QA when fresh-context isolation matters.
+Run both for every build-task. They are asymmetric — proof checks whether the evidence supports the claim; falsification tries to construct a counterexample. Spawn them as parallel subagents so each gets a fresh context window.
 
 ## Skill and Slash Command Routing
 
 | Command | When to Use |
 |---|---|
-| `/tillsyn-bootstrap` | Tillsyn project setup checks |
 | `/plan-from-hylla` | Hylla-grounded planning |
 | `/qa-proof` | Proof-oriented QA |
 | `/qa-falsification` | Falsification-oriented QA |
-| `/qa-sweep` | Coordinated QA across both passes |
-| `/commit-and-reingest` | Confirmed-good baseline updates (commit + push + Hylla reingest) |
-| `/select-checkout` | Checkout selection in bare-root setup |
-| `/gopls-sync` | gopls MCP hygiene after checkout changes |
 | `semi-formal-reasoning` | Explicit reasoning certificate for semantic/high-risk work |
 
 ## Semi-Formal Reasoning
 
-For semantic, high-risk, or ambiguous work, use this reasoning shape:
+For semantic, high-risk, or ambiguous work:
 
 - **Premises** — what must be true
-- **Evidence** — grounded in Hylla / `git diff` / Context7
+- **Evidence** — grounded in Hylla / `git diff` / Context7 / `go doc` / gopls
 - **Trace or cases** — concrete paths through the code
 - **Conclusion** — the claim
-- **Unknowns** — what remains uncertain, routed into Tillsyn
+- **Unknowns** — what remains uncertain, routed into Tillsyn as a comment, handoff, or attention item
 
-Keep certificates short and inspectable.
+Short and inspectable.
 
 ## Evidence Sources
 
-Use these in order:
+In order:
 
-1. **Hylla** for committed repo-local code understanding (always use latest snapshot, filter `snapshot=<current>`).
-2. **`git diff`** for uncommitted local deltas or files changed since last ingest.
-3. **Context7** for external semantics. Also use `go doc` and **gopls MCP**.
+1. **Hylla** — committed repo-local code.
+2. **`git diff`** — uncommitted local deltas and files changed since last ingest.
+3. **Context7 + `go doc` + gopls MCP** — external/language/tooling semantics.
 
 ## Project Structure
 
-- `cmd/till`: CLI/TUI entrypoint
-- `internal/domain`: core entities and invariants
-- `internal/app`: application services and use-cases (ports-first, hexagonal core)
-- `internal/adapters/storage/sqlite`: SQLite persistence adapter
-- `internal/adapters/server/mcpapi`: MCP API handler layer
-- `internal/config`: TOML loading, defaults, validation
-- `internal/platform`: OS-specific config/data/db path resolution
-- `internal/tui`: Bubble Tea/Bubbles/Lip Gloss presentation layer
-- `.artifacts/`: generated local outputs
-- `magefile.go`: canonical build/test automation
+- `cmd/till` — CLI/TUI entrypoint
+- `internal/domain` — core entities and invariants
+- `internal/app` — application services and use-cases (hexagonal core)
+- `internal/adapters/storage/sqlite` — SQLite persistence
+- `internal/adapters/server/mcpapi` — MCP handler
+- `internal/config` — TOML loading, defaults, validation
+- `internal/platform` — OS-specific paths
+- `internal/tui` — Bubble Tea / Bubbles / Lip Gloss
+- `.artifacts/` — generated local outputs
+- `magefile.go` — canonical build/test automation
 
 ## Tech Stack
 
-- Go 1.26+
-- Bubble Tea v2, Bubbles v2, Lip Gloss v2
-- SQLite (`modernc.org/sqlite`, no CGO)
-- TOML config (`github.com/pelletier/go-toml/v2`)
-- Laslig for Mage and CLI styling
-- Fang for CLI help surfaces
-
-## Agent Selection
-
-This is a Go project. Use `go-*` agent variants:
-
-- Builder: `go-builder-agent`
-- QA Proof: `go-qa-proof-agent`
-- QA Falsification: `go-qa-falsification-agent`
-- Planning: `go-planning-agent`
-- Closeout: `closeout-agent` (shared, lang-aware)
+Go 1.26+ · Bubble Tea v2 · Bubbles v2 · Lip Gloss v2 · SQLite (`modernc.org/sqlite`, no CGO) · TOML (`github.com/pelletier/go-toml/v2`) · Laslig · Fang · `github.com/charmbracelet/log`
 
 ## Dev MCP Server
 
-Every worktree needs a local dev MCP server pointing at its own built binary so changes can be tested against the dev version, not the installed one. This is mandatory — every branch gets its own dev binary and MCP server.
-
-### Setup
+Every worktree needs a local dev MCP server pointing at its own built binary — test against the dev version, not the installed one.
 
 ```bash
-# 1. Build the binary in the worktree
 mage build
-
-# 2. Add the dev MCP server scoped to the worktree
 claude mcp add --scope local tillsyn-dev -- /path/to/worktree/till serve-mcp
 ```
 
-### Current Dev Servers
+- **main**: `tillsyn-dev` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/till serve-mcp`
 
-- **main**: `tillsyn-dev` -> `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/till serve-mcp`
-
-### Rules
-
-- After every `mage build`, the dev binary is updated in place — the MCP server picks up changes on next invocation.
-- When creating a new branch/worktree, `mage build` and `claude mcp add` are part of the setup before any testing begins.
-- Always test against `tillsyn-dev`, not the installed `till` binary.
-- When retiring a branch, remove its dev MCP server entry.
+After every `mage build`, the dev binary is updated in place; MCP picks up changes on next invocation. Always test against `tillsyn-dev`, not the installed `till`. When retiring a branch, remove its dev MCP entry.
 
 ## Build Verification
 
-Before any build-task can be marked done:
+Before any build-task is marked done:
 
-1. All mage verification targets pass (discover via `mage -l`).
-2. Never use raw `go build`, `go test`, `go vet` — always mage targets.
+1. All relevant mage targets pass (discover via `mage -l`).
+2. **NEVER run `go test`, `go build`, `go run`, `go vet`, or any raw `go` toolchain command.** Always `mage <target>`. If a mage target has a bug, fix the target — don't bypass. No exceptions, orchestrator or subagent.
 3. All template-generated QA subtasks completed.
 
-**CRITICAL: NEVER run `go test`, `go build`, `go run`, or any raw `go` toolchain command directly.** All Go operations go through `mage` targets. This applies to the orchestrator, builder subagents, QA subagents — everyone. No exceptions. If a `mage` target fails, investigate and fix the target or the code, do not bypass it with a raw `go` command.
-
-- `mage run` — run from source
-- `mage build` — build local binary `./till`
-- `mage test-pkg <pkg>` — test a specific package
-- `mage test-golden` / `mage test-golden-update` — golden fixture validation
-- `mage ci` — canonical full gate (source verification, gofmt, coverage, build)
-
-Run `mage ci` before push. Coverage below 70% is a hard failure.
+Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-golden`, `mage test-golden-update`, `mage ci`. Run `mage ci` before push. Coverage below 70% is a hard failure.
 
 ## Go Development Rules
 
-You are a senior Go dev. These rules are always active:
+- **Hexagonal architecture, interface-first boundaries, dependency inversion.**
+- **TDD-first** where practical. Ship small tested increments.
+- **Smallest concrete design.** No abstraction for hypothetical future variation.
+- **Idiomatic Go** — naming, package structure, import grouping (stdlib / third-party / local).
+- **Go doc comments** on every top-level declaration and method, production and test.
+- **Errors**: wrap with `%w`, bubble up at clean boundaries, log context-rich failures at adapter/runtime edges, don't swallow.
+- **Logger**: `github.com/charmbracelet/log` with styled console output. Dev-mode logs to `.tillsyn/log/`.
+- **Tests**: `*_test.go` co-located, table-driven, behavior-oriented assertions. `-race` via mage targets. For substantial TUI changes, update tea-driven tests + golden fixtures.
+- **Mage discipline**: run from the worktree root as plain `mage <target>` — no `GOCACHE=...` overrides. No workspace-local cache dirs (e.g. `.go-cache-*`).
+- **After touching Go code**: `mage ci` before handoff. For `.github/workflows/` or `magefile.go` changes: `mage ci` first. After pushing to fix/validate CI: `gh run watch --exit-status` until it lands green.
+- **Dependencies**: ask the dev to run `go get` / module updates in their own shell. No `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags.
+- **Context7**: before any code, after any test failure. If unavailable, record the fallback source.
+- **Markdown-first authoring** for Tillsyn `description`, `summary`, `body_markdown`, thread comments.
+- **Clarification**: when stuck, first ask goal-alignment questions, then specific implementation-detail questions.
 
-### Context7 and Documentation
+## Git Commit Format
 
-- ALWAYS use Context7 for library and API documentation before writing any code.
-- ALWAYS re-run Context7 after any test failure or runtime error before making the next edit.
-- If Context7 is unavailable (quota, network, outage), record the fallback source before proceeding (e.g. official docs, `go doc`, or package-local docs).
-
-### Tillsyn Instructions
-
-- Use `till.get_instructions` on-demand (missing/stale/ambiguous guidance), not on every step.
-- Keep context bounded: set `doc_names` explicitly, use `max_chars_per_doc` on long docs, use `include_markdown=false` for inventory checks and `true` only when full text is needed.
-
-### Code Style and Idioms
-
-- Hexagonal architecture, interface-first boundaries, dependency inversion.
-- TDD-first where practical. Ship small, testable increments.
-- Prefer smallest concrete design; no abstraction for hypothetical future variation.
-- Idiomatic Go naming, package structure, import grouping (stdlib, third-party, local).
-- Write idiomatic Go doc comments for all top-level declarations and methods in production and test code. Add inline comments for non-obvious behavior blocks (including in `*_test.go`).
-- Treat all project/task details and thread comment content as markdown-first authoring surfaces.
-- In MCP calls, write markdown-formatted content for `description`, `summary`, and `body_markdown` fields.
-
-### Error Handling and Logging
-
-- Wrap errors with `%w`.
-- Return errors upward at clean boundaries.
-- Log context-rich failures at adapter/runtime edges instead of swallowing errors.
-- Use `github.com/charmbracelet/log` as the canonical logger for application/runtime logs.
-- Keep colored/styled console output enabled for local developer ergonomics.
-- In dev mode, write logs to `.tillsyn/log/` so logs are easy to inspect during debugging.
-- Log meaningful runtime operations and failures (startup paths/config load, persistence/migrations, mutating actions, recoverable/non-recoverable errors).
-- During troubleshooting, inspect recent local log files before proposing fixes and include relevant findings in reasoning.
-
-### Build, Test, and Mage
-
-- Review `magefile.go` at startup and use its targets as the source of truth for local automation.
-- **NEVER run `go test`, `go build`, `go run`, or any raw `go` toolchain command.** Always use the corresponding `mage` target. If a `mage` target has a bug, fix the target — do not fall back to raw `go` commands.
-- Run `mage` targets from the worktree root as plain `mage <target>` without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks.
-- Do not create workspace-local ad-hoc Go cache directories (e.g. `.go-cache-*`).
-- During implementation loops, run `mage test-pkg <pkg>` after meaningful increments.
-- When you touch Go code, finish by running `mage ci` unless the user approves a narrower suite.
-- Before asking the user to push or opening/refreshing a PR, run `mage ci` and report results.
-- After pushing a change to fix or validate CI, run `gh run watch --exit-status` and do not claim CI passes until the remote run finishes green.
-- If you touch `.github/workflows/` or `magefile.go`, run `mage ci` before handoff.
-- Add package-scoped Mage targets only when they materially simplify the repo.
-- Coverage below 70% is a hard failure.
-
-### Testing Guidelines
-
-- Tests are co-located as `*_test.go`.
-- Prefer table-driven tests and behavior-oriented assertions.
-- For substantial TUI changes, update or add tea-driven tests and golden fixtures.
-
-### GitHub and Git
-
-- Prefer `gh` for GitHub-hosted operations (PRs, workflow/check inspection, run logs, review actions, repo metadata, auth).
-- Invoke `gh` directly without wrapping in `/bin/zsh -lc` layers.
-- Use `git` for core local operations (status, diff, add, commit, branch, merge-base).
-- Do not use the GitHub web UI when `gh` can do the same task.
-
-### Git Commit Format
-
-Use conventional-commit style: `type(scope): message`. All lowercase except proper nouns, acronyms, or terms that are conventionally capitalized (e.g. HTTP, TUI, WASM). Keep messages concise and human — describe what changed, not how.
-
-Format: `type(scope): short message`
+Conventional-commit: `type(scope): message`. All lowercase except proper nouns, acronyms (HTTP, TUI, WASM). Concise, describe what changed, not how.
 
 Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `style`, `perf`
 
 Examples:
 - `feat(ingest): add per-file progress reporting`
 - `fix(tui): correct viewport wrap on narrow terminals`
-- `chore(deps): update to charm/v2`
-- `refactor(core): split parse and render phases`
-- `docs(readme): add quickstart section`
 
-No co-authored-by trailers. No period at the end. No capitalized first word after the colon unless it's a proper noun or acronym.
+No co-authored-by trailers. No period at end. No capitalized first word after the colon unless proper noun/acronym.
 
-### Dependencies
+## Safety
 
-- If dependency updates need network access, ask the user to run `go get` and module update commands in their own shell.
-- Never use dependency-fetch bypasses (`GOPROXY=direct`, `GOSUMDB=off`, checksum bypass flags).
-
-### Safety
-
-- Never delete files or directories without explicit user approval.
-- Never run commands outside the repository root: `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
-- Never push to any remote unless the user explicitly requests it in the current conversation.
-- Keep secrets out of config files committed to the repository.
-
-### Dogfooding
-
-- For live-runtime dogfooding, project setup, auth setup, and operator workflow validation, use MCP surfaces by default unless the user explicitly asks to validate the CLI.
-- For runtime/protocol validation, run MCP-only checks (no HTTP/curl validation probes).
-- It is allowed to `mage build` and run `./till serve` locally for MCP-side validation.
-
-### Clarification Protocol
-
-- When clarification is needed, ask in two stages: first ask general goal-alignment questions and lock shared objectives, only then ask specific implementation-detail questions.
+- Never delete files or directories without explicit dev approval.
+- Never run commands outside the repo root `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
+- Never push to any remote without explicit request.
+- Keep secrets out of committed config files.
 
 ## Bare-Root and Worktree Discipline
 
-- Bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` is the orchestration root, not a coding checkout.
-- Real work happens in `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` (or other visible worktrees).
-- Always confirm and `cd` into the intended checkout before edits, tests, commits, or gopls work.
-- After switching/creating/retiring a checkout, use `/gopls-sync`.
-
-## Features Being Implemented (from TILLSYN_FIX_PROMPT.md)
-
-These design decisions are confirmed and being built. Sections above marked *(being implemented)* reference these:
-
-- **D1**: `failed` lifecycle state (fourth terminal state)
-- **D2**: Task state as signal (not @mentions) for ephemeral subagents
-- **D3**: Item-list-based short-TTL override auth (human-approved, scoped to specific items)
-- **D4**: Auth revocation on terminal state
-- **D5**: Task details are the prompt (via auth claim enrichment)
-- **D6**: Standardized outcome in metadata
-- **D7**: Auth claim response enrichment (bootstrap context in claim response)
-- **D8**: Level-based signaling (UP/DOWN between orchestrators, UP-only for subagents)
-- **D9**: `require_children_done` blocks on `failed` children at all levels
-- **D10**: Affected artifacts tracking in `metadata.affected_artifacts`
-
-See `TILLSYN_FIX_PROMPT.md` for full specifications.
+- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up) is the orchestration root — **not** a coding checkout.
+- This directory (`main/`) is the primary work checkout. Real coding / building / testing / committing happens here.
+- Always confirm `pwd` is this checkout before edits, tests, commits, or gopls work.
+- **Dev launches orchestrators from here** — this is the canonical orchestrator working directory.
+- This project uses a single visible checkout during cascade development. Additional worktrees and gopls-sync tooling are not needed — dispatched cascade agents `cd` into this directory directly.
