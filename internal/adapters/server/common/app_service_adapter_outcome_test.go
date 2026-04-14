@@ -16,9 +16,9 @@ func TestValidateMetadataOutcome(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		metadata   *domain.TaskMetadata
-		wantErr    bool
+		name        string
+		metadata    *domain.TaskMetadata
+		wantErr     bool
 		wantOutcome string
 	}{
 		{
@@ -62,19 +62,19 @@ func TestValidateMetadataOutcome(t *testing.T) {
 			wantOutcome: "failure",
 		},
 		{
-			name:    "banana is rejected",
+			name:     "banana is rejected",
 			metadata: &domain.TaskMetadata{Outcome: "banana"},
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
-			name:    "done is rejected",
+			name:     "done is rejected",
 			metadata: &domain.TaskMetadata{Outcome: "done"},
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
-			name:    "in_progress is rejected",
+			name:     "in_progress is rejected",
 			metadata: &domain.TaskMetadata{Outcome: "in_progress"},
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
 			name:     "nil metadata is valid",
