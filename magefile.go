@@ -29,6 +29,8 @@ var Aliases = map[string]interface{}{
 	"test-golden":        TestGolden,
 	"test-golden-update": TestGoldenUpdate,
 	"test-pkg":           TestPkg,
+	"test-func":          TestFunc,
+	"fmt":                Format,
 }
 
 // coverageThreshold is the minimum allowed statement coverage for each and all packages.
@@ -59,6 +61,32 @@ func TestPkg(pkg string) error {
 		return runGoTest(dirArg + "/...")
 	}
 	return runGoTest(pkg)
+}
+
+// TestFunc runs one named test function scoped to one package path, directory, or pattern with race detection and no result caching.
+func TestFunc(pkg, testName string) error {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" {
+		return errors.New("package path is required")
+	}
+	testName = strings.TrimSpace(testName)
+	if testName == "" {
+		return errors.New("test name is required")
+	}
+	runPattern := "^" + testName + "$"
+	info, err := os.Stat(pkg)
+	if err == nil && info.IsDir() {
+		dirArg := normalizedGoDirArg(pkg)
+		matches, globErr := filepath.Glob(filepath.Join(pkg, "*.go"))
+		if globErr != nil {
+			return fmt.Errorf("glob package dir %q: %w", pkg, globErr)
+		}
+		if len(matches) > 0 {
+			return runGoTest(dirArg, "-run", runPattern, "-race", "-count=1")
+		}
+		return runGoTest(dirArg+"/...", "-run", runPattern, "-race", "-count=1")
+	}
+	return runGoTest(pkg, "-run", runPattern, "-race", "-count=1")
 }
 
 // TestGolden runs the focused golden-file suite for the TUI package.
@@ -168,9 +196,27 @@ func verifySources() error {
 	return err
 }
 
-// formatCheck reports tracked Go files that still need gofmt.
+// Format rewrites Go sources with `go tool gofumpt -w`. With path == "." (or empty) it targets every tracked Go file; otherwise path is treated as a single file or directory to rewrite.
+func Format(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "." {
+		files, err := trackedGoFiles()
+		if err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return nil
+		}
+		return runGofumptWrite(files)
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("gofumpt path %q: %w", path, err)
+	}
+	return runGofumptWrite([]string{path})
+}
+
+// formatCheck reports tracked Go files that still need gofumpt formatting.
 func formatCheck() error {
-	printer := newMagePrinter()
 	files, err := trackedGoFiles()
 	if err != nil {
 		return err
@@ -178,7 +224,7 @@ func formatCheck() error {
 	if len(files) == 0 {
 		return nil
 	}
-	out, err := captureCommandWithProgress(printer, "Checking Go formatting", "Checked Go formatting", "gofmt", append([]string{"-l"}, files...)...)
+	out, err := runGofumptList(files)
 	if err != nil {
 		return err
 	}
@@ -186,7 +232,29 @@ func formatCheck() error {
 	if out == "" {
 		return nil
 	}
-	return fmt.Errorf("gofmt required for:\n%s", out)
+	return fmt.Errorf("gofumpt required for:\n%s", out)
+}
+
+// runGofumptList invokes `go tool gofumpt -l` against paths and returns the captured output.
+func runGofumptList(paths []string) (string, error) {
+	printer := newMagePrinter()
+	args := gofumptArgs("-l", paths)
+	return captureCommandWithProgress(printer, "Checking Go formatting", "Checked Go formatting", "go", args...)
+}
+
+// runGofumptWrite invokes `go tool gofumpt -w` against paths and streams tool output.
+func runGofumptWrite(paths []string) error {
+	printer := newMagePrinter()
+	args := gofumptArgs("-w", paths)
+	return runCommandWithProgress(printer, "Formatting Go sources", "Formatted Go sources", "go", args...)
+}
+
+// gofumptArgs assembles the `go tool gofumpt <mode> <paths...>` argv used by every formatter invocation.
+func gofumptArgs(mode string, paths []string) []string {
+	args := make([]string, 0, 3+len(paths))
+	args = append(args, "tool", "gofumpt", mode)
+	args = append(args, paths...)
+	return args
 }
 
 // coverage runs the full suite with coverage enabled and enforces the per-package floor.

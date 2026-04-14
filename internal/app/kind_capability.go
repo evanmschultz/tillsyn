@@ -89,8 +89,10 @@ type kindBootstrapState struct {
 }
 
 // defaultCapabilityLeaseTTL defines default lease expiration behavior.
-const defaultCapabilityLeaseTTL = 24 * time.Hour
-const maxKindTemplateApplyDepth = 8
+const (
+	defaultCapabilityLeaseTTL = 24 * time.Hour
+	maxKindTemplateApplyDepth = 8
+)
 
 // ListKindDefinitions lists catalog entries with deterministic ordering.
 func (s *Service) ListKindDefinitions(ctx context.Context, includeArchived bool) ([]domain.KindDefinition, error) {

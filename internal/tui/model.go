@@ -15386,7 +15386,7 @@ func (m *Model) focusTaskByID(taskID string) bool {
 	if strings.TrimSpace(taskID) == "" {
 		return false
 	}
-	var targetColIdx = -1
+	targetColIdx := -1
 	for idx, column := range m.columns {
 		tasks := m.tasksForColumn(column.ID)
 		for taskIdx, task := range tasks {

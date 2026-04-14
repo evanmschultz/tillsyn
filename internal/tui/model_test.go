@@ -12342,7 +12342,7 @@ func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{phase, child})
 	m := loadReadyModel(t, NewModel(svc, WithLabelConfig(LabelConfig{
 		Global:   []string{"global-label"},
-		Projects: map[string][]string{"inbox": []string{"project-label"}},
+		Projects: map[string][]string{"inbox": {"project-label"}},
 	})))
 
 	m = applyMsg(t, m, keyRune('j')) // select child task

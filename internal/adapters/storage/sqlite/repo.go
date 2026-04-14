@@ -24,9 +24,11 @@ import (
 )
 
 // driverName defines a package constant value.
-const driverName = "sqlite3"
-const defaultEmbeddingSearchLimit = 200
-const defaultBusyTimeout = 60 * time.Second
+const (
+	driverName                  = "sqlite3"
+	defaultEmbeddingSearchLimit = 200
+	defaultBusyTimeout          = 60 * time.Second
+)
 
 const (
 	// globalAuthProjectSlug stores the internal hidden slug that backs global auth routing.
