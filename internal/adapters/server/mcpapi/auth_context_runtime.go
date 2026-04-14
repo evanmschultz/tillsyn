@@ -24,9 +24,11 @@ type storedMCPAuthContext struct {
 	sessionSecret string
 }
 
-type mcpAuthContextStoreKey struct{}
-type mcpAuthContextIDKey struct{}
-type mcpActingAuthContextIDKey struct{}
+type (
+	mcpAuthContextStoreKey    struct{}
+	mcpAuthContextIDKey       struct{}
+	mcpActingAuthContextIDKey struct{}
+)
 
 func newMCPAuthContextStore(enabled bool) *mcpAuthContextStore {
 	return &mcpAuthContextStore{
