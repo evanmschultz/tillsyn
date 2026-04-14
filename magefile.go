@@ -235,11 +235,13 @@ func formatCheck() error {
 	return fmt.Errorf("gofumpt required for:\n%s", out)
 }
 
-// runGofumptList invokes `go tool gofumpt -l` against paths and returns the captured output.
+// runGofumptList invokes `go tool gofumpt -l` against paths and returns the captured stdout.
+// Stdout-only capture keeps `go tool` download chatter on a cold `$GOMODCACHE` out of the filename
+// list parsed by `formatCheck`; stderr is routed to a separate buffer that surfaces on error only.
 func runGofumptList(paths []string) (string, error) {
 	printer := newMagePrinter()
 	args := gofumptArgs("-l", paths)
-	return captureCommandWithProgress(printer, "Checking Go formatting", "Checked Go formatting", "go", args...)
+	return captureStdoutWithProgress(printer, "Checking Go formatting", "Checked Go formatting", "go", args...)
 }
 
 // runGofumptWrite invokes `go tool gofumpt -w` against paths and streams tool output.
@@ -301,9 +303,11 @@ func coverage() error {
 }
 
 // trackedGoFiles returns all tracked Go files in stable git order.
+// Uses stdout-only capture so any git stderr chatter (hints, warnings) cannot leak into the
+// filename list consumed by downstream callers such as `formatCheck`.
 func trackedGoFiles() ([]string, error) {
 	printer := newMagePrinter()
-	out, err := captureCommandWithProgress(printer, "Listing tracked Go files", "Listed tracked Go files", "git", "ls-files", "*.go")
+	out, err := captureStdoutWithProgress(printer, "Listing tracked Go files", "Listed tracked Go files", "git", "ls-files", "*.go")
 	if err != nil {
 		return nil, err
 	}
@@ -385,6 +389,9 @@ func runCommandWithEnv(overrides map[string]string, name string, args ...string)
 }
 
 // captureCommand runs one command and returns its combined stdout/stderr.
+// Use this only when the caller cares about the command's exit code and treats output as opaque
+// diagnostic text; for any gate that parses the captured stream, use captureStdoutCommand instead
+// so toolchain chatter on stderr cannot poison the semantic output.
 func captureCommand(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	var buf bytes.Buffer
@@ -394,12 +401,42 @@ func captureCommand(name string, args ...string) (string, error) {
 	return buf.String(), wrapCommandError(name, args, err)
 }
 
+// captureStdoutCommand runs one command, returns its stdout only, and routes stderr to a separate
+// buffer. On error, the stderr contents are appended to the wrapped error message so failure
+// diagnostics are preserved; on success, stderr is discarded. This is the helper every gate that
+// parses semantic output (filenames, JSON, counts) must use — it keeps `go tool` download banners,
+// git hints, and other stderr-only chatter out of the stream callers depend on.
+func captureStdoutCommand(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return stdout.String(), wrapCommandErrorWithStderr(name, args, err, stderr.String())
+	}
+	return stdout.String(), nil
+}
+
 // wrapCommandError annotates one command failure while preserving the nil success case.
 func wrapCommandError(name string, args []string, err error) error {
 	if err == nil {
 		return nil
 	}
 	return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+}
+
+// wrapCommandErrorWithStderr annotates one command failure and appends captured stderr so callers
+// using stdout-only capture still surface meaningful diagnostics when the command fails.
+func wrapCommandErrorWithStderr(name string, args []string, err error, stderr string) error {
+	if err == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(stderr)
+	if trimmed == "" {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return fmt.Errorf("%s %s: %w\nstderr:\n%s", name, strings.Join(args, " "), err, trimmed)
 }
 
 // runGoTest renders one `go test -json` invocation through laslig/gotestout.
@@ -486,9 +523,25 @@ func runCommandWithProgress(printer *laslig.Printer, startText, successText, nam
 }
 
 // captureCommandWithProgress renders one transient spinner while a captured command stays quiet.
+// Returns combined stdout+stderr; prefer captureStdoutWithProgress when the output is parsed.
 func captureCommandWithProgress(printer *laslig.Printer, startText, successText, name string, args ...string) (string, error) {
 	spinner := startMageSpinner(printer, startText)
 	out, err := captureCommand(name, args...)
+	if err != nil {
+		stopMageSpinner(spinner, startText+" failed", laslig.NoticeErrorLevel)
+		return "", err
+	}
+	stopMageSpinner(spinner, successText, laslig.NoticeSuccessLevel)
+	return out, nil
+}
+
+// captureStdoutWithProgress renders one transient spinner while capturing stdout only; stderr is
+// kept out of the returned stream and surfaces only when the command fails. Use this for every
+// gate whose captured output is parsed (filename lists, JSON, counts) so toolchain chatter cannot
+// pollute the decision stream.
+func captureStdoutWithProgress(printer *laslig.Printer, startText, successText, name string, args ...string) (string, error) {
+	spinner := startMageSpinner(printer, startText)
+	out, err := captureStdoutCommand(name, args...)
 	if err != nil {
 		stopMageSpinner(spinner, startText+" failed", laslig.NoticeErrorLevel)
 		return "", err

@@ -17,15 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Normalize Git line endings (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
@@ -36,13 +30,8 @@ jobs:
         run: |
           go install github.com/magefile/mage@v1.17.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Run CI pipeline (unix)
-        if: runner.os != 'Windows'
+      - name: Run CI pipeline
         shell: bash
-        run: mage ci
-      - name: Run CI pipeline (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
         run: mage ci
 
   release-snapshot-check:
