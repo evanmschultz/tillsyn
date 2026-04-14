@@ -63,7 +63,7 @@ After a build-task reports success, before its `qa-*` children become eligible, 
 1. **`mage ci`** — on fail, the build-task moves to `failed`, gate output posted as a comment.
 2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below).
 3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
-4. **Hylla reingest** — the dev runs it. Full enrichment only. Agents never call `hylla_ingest`.
+4. **Hylla reingest** — NOT per-task. Slice-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Slice End — Ledger Update Task" below. Agents never call `hylla_ingest`.
 
 Only after all gates pass do the build-task's QA children fire.
 
@@ -88,32 +88,74 @@ The tillsyn project was **reset in Slice 0** — the prior messy project (`a0cfb
 
 ## Hylla Baseline
 
-- **Artifact ref**: `github.com/evanmschultz/tillsyn@main`
-- Hylla resolves `@main` to the latest ingest automatically. Do not track snapshot numbers or commit hashes here.
+- **Artifact ref**: `github.com/evanmschultz/tillsyn@main` — Hylla resolves `@main` to the latest ingest automatically. Do not track snapshot numbers or commit hashes here.
+- **Also stored on the Tillsyn project metadata** under `metadata.hylla_artifact_ref` so planners read it programmatically rather than copy-paste from this file.
+- **Ledger**: `main/LEDGER.md` tracks per-slice cost, node count (total / code / tests / packages), orphan deltas, refactors, and slice descriptions. Populated by the orchestrator during the per-slice `SLICE <N> END — LEDGER UPDATE` task after ingest completes.
+- **Hylla feedback**: `main/HYLLA_FEEDBACK.md` aggregates subagent-reported Hylla ergonomics and search-quality issues. Subagents report misses in their closing comment; the orchestrator rolls them up at slice end before running the slice-end ingest.
 
 ### Code Understanding Rules
 
-1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `Read`, `Grep`, `Glob`.
+1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Whenever a Hylla miss forces a fallback, the subagent must record the miss in its closing comment** under a `## Hylla Feedback` heading so the orchestrator can aggregate it into `main/HYLLA_FEEDBACK.md` at slice end.
 2. **Changed since last ingest**: use `git diff` for files touched after the last Hylla ingest. Hylla is stale for those files until reingest.
 3. **Non-Go code** (markdown, TOML, YAML, magefile, SQL, etc.): use `Read`, `Grep`, `Glob`, `Bash` directly. Hylla doesn't cover non-Go files.
-4. **External semantics**: Context7 + `go doc` + gopls MCP for library and language questions the repo can't answer itself.
-5. **gopls MCP**: symbol search, references, diagnostics, rename safety. Must target this checkout, not the bare root.
+4. **External semantics**: Context7 + `go doc` + `LSP` for library and language questions the repo can't answer itself.
+5. **`LSP` tool** (gopls-backed, provided by the `gopls-lsp@claude-plugins-official` plugin): symbol search, references, diagnostics, rename safety, definitions for live / uncommitted code. Auto-targets the active checkout (`main/`). Subagents: use `LSP` rather than shelling out to `gopls` or scraping with `grep`.
 
 ## Build-QA-Commit Discipline
 
-**CRITICAL: Code is NEVER committed or pushed without QA completing first.**
+**CRITICAL: Code is NEVER committed or pushed without QA completing first. Hylla ingest is slice-end only, not per-task.**
 
 1. **Build** — builder subagent implements the increment.
 2. **QA Proof** — `go-qa-proof-agent` verifies evidence completeness.
 3. **QA Falsification** — `go-qa-falsification-agent` tries to break the conclusion.
 4. **Fix** — if QA finds issues, spawn another builder to fix, then re-run QA.
-5. **Commit** — only after both QA passes clear: `git add` the specific changed files, commit with conventional-commit format.
+5. **Commit** — only after both QA passes clear: `git add` the specific changed files, commit with conventional-commit format (pre-cascade: orchestrator + dev; post-Slice-4: commit-agent).
 6. **Push** — `git push` so CI runs.
-7. **Reingest Hylla** — do NOT run `hylla_ingest` yourself. Ask the dev. NEVER use `structural_only` — full enrichment only. Wait for dev confirmation.
+7. **CI green** — `gh run watch --exit-status` until CI lands green. If CI fails, fix before continuing — no ingest on a red commit.
 8. **Update Tillsyn** — checklist + metadata + lifecycle state. If it's not in Tillsyn, it didn't happen.
-9. **Move on** — only after dev confirms reingest and Tillsyn reflects the completed state.
+9. **Move on to the next task.** Per-task Hylla reingest does NOT happen. Ingest happens once per slice, at slice end, inside the `SLICE <N> END — LEDGER UPDATE` task — see "Cascade Ledger + Hylla Feedback" and "Slice End — Ledger Update Task" below.
 
-No batched commits. No deferred pushes. No skipped QA. No skipped reingest. No claiming done in chat without Tillsyn reflecting it.
+No batched commits. No deferred pushes. No skipped QA. No skipped CI watch. No claiming done in chat without Tillsyn reflecting it.
+
+## Cascade Ledger + Hylla Feedback
+
+Two per-slice artifacts live in `main/`:
+
+- **`main/LEDGER.md`** — per-slice snapshot of project state, cost, and code-quality deltas. Populated by the orchestrator at slice end. Fields per slice: closed date, slice plan-item ID, ingest snapshot, ingest cost + cost-to-date, node counts (total / code / tests / packages), orphan delta, refactors, description, commit SHAs, notable plan-item IDs, unknowns forwarded.
+- **`main/HYLLA_FEEDBACK.md`** — running log of Hylla ergonomics and search-quality feedback from subagents and the orchestrator. Each subagent that falls back from Hylla to `LSP` / `Read` / `Grep` / `Glob` records the miss in its closing comment under a `## Hylla Feedback` heading. The orchestrator aggregates those entries into `HYLLA_FEEDBACK.md` during the slice-end task, before calling ingest.
+
+**Subagent responsibility:** in every closing comment, always include a `## Hylla Feedback` section. If you had no Hylla misses, write `None — Hylla answered everything needed.`. If you did, record each miss with:
+
+- **Query**: tool name + key inputs.
+- **Missed because**: your hypothesis (wrong search mode, schema gap, missing summary, stale ingest, etc.).
+- **Worked via**: the fallback tool + inputs that found the thing.
+- **Suggestion**: one-liner for what Hylla could do better.
+
+Explicit "no miss" is still useful signal. Ergonomic-only gripes (awkward parameters, confusing response shapes, weird IDs) also go here.
+
+## Slice End — Ledger Update Task
+
+Every slice gets a final task named `SLICE <N> END — LEDGER UPDATE`. Orchestrator-role-gated. `blocked_by` every other task in the slice. Only runs once all siblings are `done`.
+
+**Orchestrator steps when working this task:**
+
+1. Move the task to `in_progress`.
+2. Confirm all sibling tasks in the slice are `done`. Confirm `git status --porcelain` is clean.
+3. Confirm every commit from this slice has landed on the remote branch.
+4. Run `gh run watch --exit-status` on the latest CI run. Do NOT proceed unless CI is green.
+5. Aggregate `## Hylla Feedback` sections from every subagent closing comment in this slice into `main/HYLLA_FEEDBACK.md` under a new `## Slice <N>` heading.
+6. Call `hylla_ingest` on the remote ref `github.com/evanmschultz/tillsyn@main`. **ALWAYS full enrichment. NEVER `structural_only`. NEVER from a local working copy — always from remote, after push + CI green.**
+7. Poll `hylla_run_get` via `/loop 120` while ingest progresses. When the run reports "nearly done" (enrichment stage entered), kill the loop and `ScheduleWakeup` once for the estimated remaining time.
+8. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta.
+9. Append a new `## Slice <N> — <Title>` entry to `main/LEDGER.md` with the format shown there.
+10. Mark the slice-end task `done`; reference the ledger entry in `completion_notes`.
+
+**Hylla ingest invariants (repeat for emphasis):**
+
+- Always `enrichment_mode=full_enrichment`.
+- Always source from the GitHub remote.
+- Never before `git push` + `gh run watch --exit-status` green.
+- Only the orchestrator calls `hylla_ingest`. Subagents never do.
 
 ## Git Management (Pre-Cascade)
 
@@ -137,15 +179,36 @@ The parent Claude Code session launched by the dev from this directory is always
 
 Every subagent manages its own Tillsyn plan item state. The orchestrator can't move role-gated items (e.g. QA subtasks gated to `qa`).
 
-**Before spawning any subagent:**
-- Move the target item to `in_progress` if permission allows; otherwise the agent prompt must instruct the subagent to do it itself.
-- Include Tillsyn task ID, auth credentials (session_id, session_secret, auth_context_id, agent_instance_id, lease_token), and explicit move-state instructions in the prompt.
-- Include Hylla artifact ref `github.com/evanmschultz/tillsyn@main` (omit snapshot — Hylla resolves `@main` to latest).
+**Split of concerns — spawn prompt vs. plan-item description:**
 
-**Every subagent prompt must include:**
-- "Move your Tillsyn task to `in_progress` immediately when you start."
-- "When done: update metadata, move to terminal state."
-- "If you find issues that need fixing: leave `in_progress`, update metadata with findings, return to orchestrator."
+- The **spawn prompt** (what the orchestrator passes to the `Agent` tool) carries only spawn-unique and ephemeral fields. It does NOT duplicate content already in the plan-item description or project metadata.
+- The **plan-item description** (what the agent reads via `till.auth_request(operation=claim)`) carries the durable task content: what to do, acceptance criteria, Hylla artifact ref, paths, packages, mage targets, cross-references.
+- Rule of thumb: if a field changes every spawn, put it in the prompt. If it's stable across time and authors, put it in the description.
+
+**Spawn prompt must include (ephemeral / spawn-unique):**
+
+- Tillsyn `task_id` of the plan item the agent owns.
+- Auth credentials: `session_id`, `session_secret`, `auth_context_id`, `agent_instance_id`, `lease_token`.
+- Project working directory: absolute path to `main/` (`/Users/evanschultz/Documents/Code/hylla/tillsyn/main`). The agent `cd`s into this before any file or mage work.
+- Move-state directive:
+  - "Move your Tillsyn task to `in_progress` immediately when you start."
+  - "When done: update metadata, move to terminal state."
+  - "If you find issues that need fixing: leave `in_progress`, update metadata with findings, return to orchestrator."
+- Short pointer: "Everything else is in your task description — follow it."
+
+**Plan-item description must include (durable / authored):**
+
+- Hylla artifact ref (`github.com/evanmschultz/tillsyn@main`). Also retrievable via Tillsyn project metadata (`metadata.hylla_artifact_ref`); planners copy it into each child description for convenience.
+- Paths (post-Slice-1, `paths []string`) or affected files (pre-Slice-1, in prose).
+- Packages (post-Slice-1, `packages []string`).
+- Acceptance criteria.
+- Mage targets for verification (discover via `mage -l`).
+- Cross-references to sibling tasks, blockers, or upstream plan items.
+
+**Before spawning any subagent:**
+
+- Move the target item to `in_progress` if permission allows; otherwise the agent prompt's move-state directive instructs the subagent to do it itself.
+- Verify the plan-item description carries everything the agent needs — do not patch missing description content by cramming it into the spawn prompt; fix the description instead so it's correct for future spawns.
 
 **QA subagents specifically:** gated to `qa` role. Request a `qa`-role auth session and pass those credentials. QA agent moves its subtask to `in_progress` at start and `done` on pass. On findings that need fixes: leave `in_progress`, report findings, orchestrator spawns builder, re-runs QA.
 

@@ -1,16 +1,32 @@
+# macOS
 .DS_Store
-coverage.out
-dist/
+
+# Go build outputs
 /till
 /till.exe
 bin/
+dist/
+coverage.out
+
+# Tillsyn runtime state
+.tillsyn/
 .artifacts/
 .tmp/
-.go-cache
-.go-mod-cache/
-.go-build-cache/
-.tillsyn/
-# Codex config belongs at the bare repo root, not inside tracked worktrees.
+
+# Editor / IDE cruft
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Agent / tool state (keep local, never commit)
+.claude/
 .codex/
 .nvimlog
-.claude/
+
+# Secrets — belt-and-suspenders
+.env
+.env.local
+*.pem
+*.key
