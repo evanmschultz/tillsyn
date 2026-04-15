@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // CreateHandoff creates one handoff row.

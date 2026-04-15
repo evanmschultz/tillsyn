@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestRepository_TemplateLibraryBindingAndContractRoundTrip verifies template-library storage, binding, and snapshot persistence.

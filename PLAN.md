@@ -1137,7 +1137,7 @@ Investigation notes:
 1. Verified the condensed native MCP surface is callable in this session with `till.get_bootstrap_guide`; no stdio fallback is needed for later runtime dogfooding.
 2. Reconfirmed the failing GitHub Actions run `23829409074` via `gh run view 23829409074 --log-failed`:
    - failing job: `ci (windows-latest)`,
-   - failing test: `github.com/hylla/tillsyn/internal/tui :: TestModelResourcePickerAttachFromEdit`,
+   - failing test: `github.com/evanmschultz/tillsyn/internal/tui :: TestModelResourcePickerAttachFromEdit`,
    - failure: expected `local_file`, got `local_dir`.
 3. Reviewed `magefile.go`, `internal/tui/model.go`, and `internal/tui/model_test.go` before the fix.
 4. Checked for recent local dev logs under `.tillsyn/log/`; none were present in this worktree during the test-only investigation.

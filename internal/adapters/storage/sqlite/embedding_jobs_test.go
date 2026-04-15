@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {

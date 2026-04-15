@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
-	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 var authRequestTestNow = time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)

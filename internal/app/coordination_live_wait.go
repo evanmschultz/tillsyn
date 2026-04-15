@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // waitForLiveEvent waits for one broker event and treats local wait timeouts as a

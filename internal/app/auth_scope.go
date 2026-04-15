@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // AuthScopeContext stores the narrowest project-rooted auth path one resource proves.

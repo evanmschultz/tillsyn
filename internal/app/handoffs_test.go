@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestServiceHandoffLifecycle verifies create, list, and update behavior for durable handoffs.

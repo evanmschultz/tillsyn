@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	repoassets "github.com/hylla/tillsyn/templates"
+	repoassets "github.com/evanmschultz/tillsyn/templates"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // builtinTemplateLibraryDocument stores one repo-authored builtin template library payload.

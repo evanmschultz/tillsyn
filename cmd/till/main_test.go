@@ -17,15 +17,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	charmLog "github.com/charmbracelet/log"
 	autentdomain "github.com/evanmschultz/autent/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
+	serveradapter "github.com/evanmschultz/tillsyn/internal/adapters/server"
+	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/buildinfo"
+	"github.com/evanmschultz/tillsyn/internal/config"
+	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/platform"
 	"github.com/google/uuid"
-	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
-	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
-	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/config"
-	"github.com/hylla/tillsyn/internal/domain"
-	"github.com/hylla/tillsyn/internal/platform"
 )
 
 // TestMain sets deterministic environment defaults for CLI tests.
@@ -283,8 +284,29 @@ func TestRunVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run(version) error = %v", err)
 	}
-	if !strings.Contains(out.String(), "till") {
-		t.Fatalf("expected version output, got %q", out.String())
+	rendered := out.String()
+	if !strings.Contains(rendered, "till") {
+		t.Fatalf("expected version output to mention till, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "commit") {
+		t.Fatalf("expected version output to include commit key, got %q", rendered)
+	}
+}
+
+// TestRunVersionSurfacesInjectedCommit confirms the --version rendering carries the
+// ldflags-injected commit SHA stamped by `mage install`.
+func TestRunVersionSurfacesInjectedCommit(t *testing.T) {
+	previous := buildinfo.Commit
+	t.Cleanup(func() { buildinfo.Commit = previous })
+	buildinfo.Commit = "7188ab5"
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--version"}, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("run(version) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "7188ab5") {
+		t.Fatalf("expected version output to include injected commit, got %q", out.String())
 	}
 }
 

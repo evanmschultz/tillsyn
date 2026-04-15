@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/config"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/google/uuid"
-	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/config"
-	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // TestWriteProjectList renders a stable human-scannable project table.

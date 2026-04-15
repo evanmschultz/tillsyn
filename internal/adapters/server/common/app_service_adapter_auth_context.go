@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // normalizeMutationAuthorizationRequest canonicalizes auth input and enriches project-rooted scope context.

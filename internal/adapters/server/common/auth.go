@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // ErrSessionRequired reports that one mutating request did not present a required auth session.

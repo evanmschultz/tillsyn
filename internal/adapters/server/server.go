@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/adapters/server/httpapi"
-	"github.com/hylla/tillsyn/internal/adapters/server/mcpapi"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/httpapi"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/mcpapi"
 )
 
 // defaultBindAddress defines the localhost-first serve default.

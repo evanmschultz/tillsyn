@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // ErrBootstrapRequired reports that no project data exists and guided bootstrap is required.

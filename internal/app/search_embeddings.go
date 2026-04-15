@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // EmbeddingGenerator describes one embedding provider used by application search.

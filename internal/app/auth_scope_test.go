@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 func TestAuthScopeContextFromTaskLineageProjectDirectPhaseCollapsesToProject(t *testing.T) {

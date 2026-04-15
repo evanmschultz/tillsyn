@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	tillsyndocs "github.com/hylla/tillsyn"
+	tillsyndocs "github.com/evanmschultz/tillsyn"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )

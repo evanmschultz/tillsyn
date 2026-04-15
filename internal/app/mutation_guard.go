@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // MutationGuard carries the capability-lease tuple required for agent mutations.

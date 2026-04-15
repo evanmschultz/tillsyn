@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // boolPtr returns a pointer to one bool value.

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestRepositoryEmbeddingLifecycleAdapterClaimLossReturnsConflict verifies stale workers surface lost claims instead of silently succeeding.

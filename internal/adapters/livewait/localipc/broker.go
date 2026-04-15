@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/app"
 )
 
 // Package-level constants define the durable storage and loopback delivery defaults for the broker.

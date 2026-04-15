@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestRenderCoordinationLeaseListAt renders deterministic, name-first lease inventory output.

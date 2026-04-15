@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/config"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/config"
 )
 
 // embeddingsStatusCommandOptions stores embeddings status flag values.

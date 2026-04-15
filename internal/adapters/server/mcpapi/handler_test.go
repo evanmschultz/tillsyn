@@ -14,8 +14,8 @@ import (
 	"time"
 
 	charmLog "github.com/charmbracelet/log"
-	"github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )

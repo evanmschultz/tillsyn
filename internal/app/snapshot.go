@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // SnapshotVersion defines the canonical snapshot schema version.

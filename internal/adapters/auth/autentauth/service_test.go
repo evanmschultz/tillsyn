@@ -10,9 +10,9 @@ import (
 
 	autent "github.com/evanmschultz/autent"
 	autentdomain "github.com/evanmschultz/autent/domain"
-	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestServiceSharedDBAuthorizeAllow verifies shared-DB setup, default policy seeding, and one allowed authorization flow.

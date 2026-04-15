@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // CaptureStateService builds summary-first capture_state responses from app read models.

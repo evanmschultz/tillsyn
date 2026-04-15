@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // maxRequestBodyBytes limits decoded JSON payload size for fail-closed request handling.

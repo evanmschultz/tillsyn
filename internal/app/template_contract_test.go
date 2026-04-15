@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // templateContractFixture stores common project/task state for node-contract enforcement tests.
