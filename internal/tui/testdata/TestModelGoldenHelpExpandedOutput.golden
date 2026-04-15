@@ -3,9 +3,9 @@
     │ screen: board                                                                        │
     │                                                                                      │
     │ - h/l or left/right move columns; j/k or up/down move task selection                 │
-    │ - n new task; i/enter task info; e edit task                                         │
+    │ - n new task; i task info; e edit task                                               │
     │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore            │
-    │ - f focus subtree; F full board; t toggle archived                                   │
+    │ - f/enter focus subtree; F full board; t toggle archived                             │
     │ - / search; p project picker; : command palette; . quick actions                     │
     │ - tab/shift+tab cycle board/project/global panels; left/right wraps panel focus      │
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs        │
