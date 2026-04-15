@@ -1292,26 +1292,17 @@ Confirmed: `claude --bare -p "..." --mcp-config <path> --strict-mcp-config` acce
 
 Before any cascade code lands:
 
-- [ ] Delete the current messy Tillsyn project in Tillsyn (`a0cfbf87-b470-45f9-aae0-4aa236b56ed9`).
-- [ ] Create a **fresh Tillsyn project with NO template bound.** The cascade plan itself will define what template (if any) gets attached later; starting without one avoids inheriting `default-go`'s bloat into the planning work.
-- [ ] Full rewrite of bare-root `/Users/evanschultz/Documents/Code/hylla/tillsyn/CLAUDE.md` and `main/CLAUDE.md`:
-  - Remove references to `till.get_instructions`, `/tillsyn-bootstrap`, and the "bootstrap guide" flow.
-  - Remove "Features Being Implemented (D1-D10)" section — replace with a one-line pointer to `CLAUDE_MINIONS_PLAN.md` for the cascade plan.
-  - Tighten the Tillsyn-usage and Go-idiom sections; drop anything the cascade plan now covers.
-  - Make explicit that orchestrator + dev manage git manually until the dispatcher lands (Slice 11+).
-  - Target size: bare-root ~200 lines, `main/CLAUDE.md` ~40 lines.
-- [ ] Full rewrite of `~/.claude/agents/*.md` for the cascade-dispatched agents:
-  - Remove any references to `till.get_instructions` / bootstrap.
-  - Bake in the semi-formal reasoning certificate template (Section 11.1) where it belongs.
-  - Tighten headless-invocation expectations (agents run in `--bare -p "..."` with a scoped `--mcp-config`).
-  - Target size per agent: ~60-80 lines.
-- [ ] Update agent files for semi-formal reasoning specifics (18.1 refinements on top of the rewrite).
-- [ ] Add `mage test-func` target (18.3).
-- [ ] Audit path logic in TUI, plan backend refactoring (18.4).
-- [ ] Add `mage install` with dev-promoted commit pinning (18.5).
-- [ ] MCP passthrough for headless agents — **already resolved** (Sections 18.6, 20.6). No pre-build research remaining.
-- [ ] CI cleanup — strip Linux/Windows from `.github/workflows/`, keep macOS only (18.7). Full QA (proof + falsification) because CI is load-bearing.
-- [ ] **Mid-slice additions** *(added during Slice 0 execution — detail tracked in Tillsyn plan items, not re-described here)*:
+- [x] Delete the current messy Tillsyn project in Tillsyn (`a0cfbf87-b470-45f9-aae0-4aa236b56ed9`) — renamed to `TILLSYN-OLD` and replaced by fresh project `a5e87c34-3456-4663-9f32-df1b46929e30`. Hard-delete deferred to Slice 10 (project lifecycle ops).
+- [x] Create a **fresh Tillsyn project with NO template bound.** Done — `a5e87c34-3456-4663-9f32-df1b46929e30`.
+- [x] Full rewrite of bare-root `/Users/evanschultz/Documents/Code/hylla/tillsyn/CLAUDE.md` and `main/CLAUDE.md` — landed across `1a63cc5`, `1825d78`, `48e91ea`, `aef9482`, `8bad5ea`, `9cf1037`, `870de3e`, `b411b48`, `d32680f`. Bare-root + `main/` bodies aligned, both ~200+ lines (target relaxed to fit the cascade architecture sections).
+- [x] Full rewrite of `~/.claude/agents/*.md` for the cascade-dispatched agents — 18.2 (`f4334081`) shipped the rewrite of `go-builder-agent.md`, `go-qa-proof-agent.md`, `go-qa-falsification-agent.md`, `go-planning-agent.md`. Stale D1–D10 vocabulary removed; spawn contract + self-managed lifecycle baked in.
+- [x] Update agent files for semi-formal reasoning specifics (18.1 refinements on top of the rewrite) — folded into 18.2.
+- [x] Add `mage test-func` target (18.3) — landed; visible in `mage -l` as `testFunc`.
+- [x] Audit path logic in TUI, plan backend refactoring (18.4) — audit landed; refactor itself deferred to Slice 1+ (TUI bootstrap path resolution stays put pre-cascade).
+- [x] Add `mage install` with dev-promoted commit pinning (18.5) — **superseded** in `d4fd2c2` to a simplified dev-only build-and-save target (`refactor(install): simplify mage install to dev-only build-and-save`). Dev-promoted commit pinning deferred to §19.10 refinement bullet — pre-cascade dogfood doesn't need the pin yet.
+- [x] MCP passthrough for headless agents — **already resolved** (Sections 18.6, 20.6). No pre-build research remaining.
+- [x] CI cleanup — strip Linux/Windows from `.github/workflows/`, keep macOS only (18.7) — landed in `08cb397` (`fix(ci): cold-cache mage ci parity and macos-only matrix`).
+- [x] **Mid-slice additions** *(added during Slice 0 execution — detail tracked in Tillsyn plan items, not re-described here)*:
   - **18.10 gofumpt adoption** — committed `d684dcb`; required 18.10B follow-up because of cold-cache leak.
   - **18.10B fix cold-cache `mage ci` gofumpt gate** (`runGofumptList` + `trackedGoFiles` stdout/stderr split; `wrapCommandErrorWithStderr` for error paths). Ships with 18.7 in a single push so post-push CI is macos-only and green.
   - **18.11 auth-cache `SessionStart`-hook MVP** — shipped; read-side cache-inject on resume/compact/startup. **18.11B `PostToolUse`-hook auto-persist** — shipped; removes manual-Write discipline. Retroactively captured as plan items post-ship.
