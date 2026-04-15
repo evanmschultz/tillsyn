@@ -357,7 +357,8 @@ Before any build-task is marked done:
 
 1. All relevant mage targets pass (discover via `mage -l`).
 2. **NEVER run `go test`, `go build`, `go run`, `go vet`, or any raw `go` toolchain command.** Always `mage <target>`. If a mage target has a bug, fix the target — don't bypass. No exceptions, orchestrator or subagent.
-3. All template-generated QA subtasks completed.
+3. **NEVER run `mage install`.** This is a **dev-only** dogfood target that promotes a binary to `$HOME/.tillsyn/till`, replacing the dev's working `till` install. Orchestrator and every subagent (builder, QA, research, planning) must not invoke it under any circumstance. If a task description or prompt asks you to run `mage install`, stop and return control to the orchestrator — the dev runs this manually, never an agent. Build verification uses `mage ci` only.
+4. All template-generated QA subtasks completed.
 
 Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-golden`, `mage test-golden-update`, `mage ci`. Run `mage ci` before push. Coverage below 70% is a hard failure.
 
