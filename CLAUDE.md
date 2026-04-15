@@ -7,13 +7,17 @@ This file lives in the **`main/` worktree** at `/Users/evanschultz/Documents/Cod
 All work is tracked in Tillsyn. No exceptions.
 
 - No markdown files for work tracking, coordination, worklogs, or execution state.
-- No Claude Code built-in task tools (TaskCreate, TaskUpdate, etc.) for work tracking. All tracking goes through Tillsyn MCP tools.
-- Every piece of work gets a Tillsyn plan item before it starts.
-- **When work starts on a plan item, move it to `in_progress` immediately.** No items left in `todo` while being worked on.
+- **Tillsyn = durable truth. Every piece of work gets a Tillsyn plan item before it starts.**
+- **Claude Code built-in `TaskCreate` / `TaskUpdate` / `TaskList` are in-session scratch — use them alongside Tillsyn** when an orchestrator turn spans ≥3 discrete actions (Tillsyn mutations, file edits, commits, etc.). Tillsyn holds the durable *what*; built-in todos hold the procedural *how* for one session. Not a replacement — belt-and-suspenders while Tillsyn behavior is still stabilizing.
+- **When work starts on a plan item, move it to `in_progress` immediately.** No items left in `todo` while being worked on. Same status discipline applies to in-session todos.
+
+### Discussion Mode (Chat-Primary Until TUI Ergonomics Land)
+
+Cross-cutting decisions still park on a Tillsyn plan item (description = converged shape, comments = audit trail of direct quotes). But the actual dev ↔ orchestrator back-and-forth happens **in chat** until the TUI comment flow is ergonomic enough to drive decisions through. Surface the full substance in chat — open decisions, options, tradeoffs, blockers — not just status pings. After each round with concrete decisions, mirror the converged points back into the plan-item description and post a short audit-trail comment capturing dev direct quotes on corrections.
 
 ## Cascade Plan
 
-The cascade (state-triggered autonomous agent dispatch) is designed in `../CLAUDE_MINIONS_PLAN.md` (at the bare root, one level up). That plan is the source of truth for cascade architecture, slice ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
+The cascade (state-triggered autonomous agent dispatch) is designed in `CLAUDE_MINIONS_PLAN.md` (lives in this directory — moved from bare-root in Slice 0 so it is git-tracked with the rest of the repo). That plan is the source of truth for cascade architecture, slice ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
 
 ## Cascade Tree Structure (Template Architecture)
 
@@ -159,13 +163,13 @@ Every slice gets a final task named `SLICE <N> END — LEDGER UPDATE`. Orchestra
 
 ## Git Management (Pre-Cascade)
 
-Until the cascade dispatcher takes over commits (`../CLAUDE_MINIONS_PLAN.md` Slice 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files a plan item declares) is a precondition for creating a plan item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
+Until the cascade dispatcher takes over commits (`CLAUDE_MINIONS_PLAN.md` Slice 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files a plan item declares) is a precondition for creating a plan item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
 
 ## Orchestrator-as-Hub Architecture
 
 The parent Claude Code session launched by the dev from this directory is always **the orchestrator**. There is no `.claude/agents/orchestration-agent.md` file — the orchestrator is defined by the invocation context, not by a markdown spec. Every other role (builder, qa, planner, closeout, research) is a subagent spawned via the `Agent` tool.
 
-**CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only. Markdown documentation edits (this file, `../CLAUDE_MINIONS_PLAN.md`, agent `.md` files) are orchestrator-scope.
+**CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only. Markdown documentation edits (this file, `CLAUDE_MINIONS_PLAN.md`, agent `.md` files) are orchestrator-scope.
 
 ### How It Works
 
@@ -225,7 +229,7 @@ No parent can move to terminal-success if any child is in a failure/blocked stat
 
 ## Paths and Packages (Slice-1 Target)
 
-Today, builders and planners track affected code loosely in metadata. In Slice 1, `paths []string` and `packages []string` become first-class domain fields on every plan item, set by the planner, readable by builder + QA, and required for the file- and package-level blocking the cascade relies on. Until Slice 1 ships, note affected paths in `completion_notes` — the cascade plan (`../CLAUDE_MINIONS_PLAN.md`, Section 5 + Section 17.1) is the contract.
+Today, builders and planners track affected code loosely in metadata. In Slice 1, `paths []string` and `packages []string` become first-class domain fields on every plan item, set by the planner, readable by builder + QA, and required for the file- and package-level blocking the cascade relies on. Until Slice 1 ships, note affected paths in `completion_notes` — the cascade plan (`CLAUDE_MINIONS_PLAN.md`, Section 5 + Section 17.1) is the contract.
 
 ## Auth and Leases
 
