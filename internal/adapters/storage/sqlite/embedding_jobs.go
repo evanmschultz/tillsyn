@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // EmbeddingJobStatus identifies one persisted embeddings lifecycle state.

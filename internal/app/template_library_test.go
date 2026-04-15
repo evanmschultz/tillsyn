@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestCreateTaskUsesBoundTemplateLibrary verifies bound node templates override legacy kind templates and persist node contracts.

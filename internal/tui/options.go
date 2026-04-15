@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/app"
 )
 
 // TaskFieldConfig holds configuration for task field.

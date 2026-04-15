@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestExportSnapshotIncludesExpectedData verifies behavior for the covered scenario.

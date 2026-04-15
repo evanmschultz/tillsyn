@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // templateContractActor stores the resolved workflow actor context for node-contract checks.

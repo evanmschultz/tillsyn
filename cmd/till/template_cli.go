@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/evanmschultz/laslig"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 type childRuleRow struct {

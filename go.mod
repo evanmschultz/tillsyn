@@ -1,4 +1,4 @@
-module github.com/hylla/tillsyn
+module github.com/evanmschultz/tillsyn
 
 go 1.26.1
 

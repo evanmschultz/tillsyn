@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/adapters/livewait/localipc"
+	"github.com/evanmschultz/tillsyn/internal/adapters/livewait/localipc"
 )
 
 // runtimeLiveWaitSecretFilename stores the shared per-runtime secret file name for local live-wait brokers.

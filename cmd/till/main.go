@@ -18,17 +18,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
+	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
+	fantasyembed "github.com/evanmschultz/tillsyn/internal/adapters/embeddings/fantasy"
+	serveradapter "github.com/evanmschultz/tillsyn/internal/adapters/server"
+	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/buildinfo"
+	"github.com/evanmschultz/tillsyn/internal/config"
+	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/platform"
+	"github.com/evanmschultz/tillsyn/internal/tui"
 	"github.com/google/uuid"
-	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
-	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
-	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
-	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/config"
-	"github.com/hylla/tillsyn/internal/domain"
-	"github.com/hylla/tillsyn/internal/platform"
-	"github.com/hylla/tillsyn/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -2034,11 +2035,15 @@ func mustMarkFlagHidden(cmd *cobra.Command, name string) {
 	}
 }
 
-// writeVersion writes the current CLI version to stdout.
+// writeVersion writes the current CLI version to stdout. The commit field is
+// sourced from `internal/buildinfo`, which is populated at install time by the
+// `mage install` target via `-ldflags "-X ...Commit=<sha>"`. An unstamped dev
+// binary (plain `mage build`) renders commit="unknown".
 func writeVersion(stdout io.Writer) error {
 	return writeCLIKV(stdout, "Till Version", [][2]string{
 		{"app", "till"},
 		{"version", version},
+		{"commit", buildinfo.Summary()},
 	})
 }
 

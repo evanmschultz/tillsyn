@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // ApproveProjectTemplateMigrationsInput stores one explicit migration-approval request for existing generated nodes.

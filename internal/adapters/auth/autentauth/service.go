@@ -14,8 +14,8 @@ import (
 	autentdomain "github.com/evanmschultz/autent/domain"
 	autentsqlite "github.com/evanmschultz/autent/sqlite"
 	autenttoken "github.com/evanmschultz/autent/token"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	sqlite3 "github.com/ncruces/go-sqlite3"
 )
 

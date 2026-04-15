@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestCommentTargetTypeForWorkKindSupportsHierarchyKinds verifies branch/phase kind coverage.

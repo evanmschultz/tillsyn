@@ -14,8 +14,8 @@ import (
 	"time"
 
 	_ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/ncruces/go-sqlite3"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/tetratelabs/wazero"

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/config"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/config"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // projectDiscoveryError returns a discoverability hint for missing project ids.

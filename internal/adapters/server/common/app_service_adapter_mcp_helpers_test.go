@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestMCPHelperParsing verifies duration, continuation, and RFC3339 parsing helpers.

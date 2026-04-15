@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // instructionsExplainServices stores the runtime readers used for scoped explanations.

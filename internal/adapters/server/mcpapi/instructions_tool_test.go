@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
 )
 
 // newInstructionsTestServices returns one deterministic scoped-instructions test service bundle.

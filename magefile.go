@@ -123,26 +123,170 @@ func Dev() error {
 }
 
 // Install builds till and installs it into the local operator bin directory.
+// The build runs inside a throw-away `git worktree add --detach <sha>` checkout
+// of the current HEAD so the promoted binary always reflects a real committed
+// revision, regardless of whether the caller's working tree is dirty. The temp
+// worktree is removed via deferred cleanup whether the build succeeds or fails.
+// The installed binary is stamped with the HEAD commit SHA via
+// `-ldflags "-X ...buildinfo.Commit"` so `till --version` reports exactly
+// which revision is live.
 func Install() error {
 	printer := newMagePrinter()
-	installDir, err := defaultInstallDir()
+	commit, err := currentCommitSHA()
+	if err != nil {
+		return err
+	}
+	installDir, err := resolveInstallDir()
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
 		return fmt.Errorf("create install dir %q: %w", installDir, err)
 	}
-	if err := runCommandWithProgress(printer, "Building till for install", "Built till for install", "go", "build", localBuildVCSFlag, "-o", filepath.Join(installDir, "till"), "./cmd/till"); err != nil {
+	installedPath := filepath.Join(installDir, "till")
+	tempRoot, buildDir, err := prepareInstallWorktree(printer, commit)
+	if err != nil {
+		return err
+	}
+	defer cleanupInstallWorktree(printer, tempRoot, buildDir)
+	ldflags := fmt.Sprintf("-X github.com/evanmschultz/tillsyn/internal/buildinfo.Commit=%s", commit)
+	if err := runCommandInDirWithProgress(printer, buildDir, "Building till for install", "Built till for install", "go", "build", localBuildVCSFlag, "-ldflags", ldflags, "-o", installedPath, "./cmd/till"); err != nil {
 		return err
 	}
 	if err := printer.Notice(laslig.Notice{
 		Level: laslig.NoticeSuccessLevel,
 		Title: "Install complete",
-		Body:  filepath.Join(installDir, "till"),
+		Body:  fmt.Sprintf("installed: %s @ %s", installedPath, commit),
 	}); err != nil {
 		return fmt.Errorf("write install notice: %w", err)
 	}
 	return nil
+}
+
+// prepareInstallWorktree materialises a detached checkout of commit on disk.
+// Returns (tempRoot, buildDir, error). tempRoot is the parent directory to be
+// os.RemoveAll'd; buildDir is the sibling path passed to `git worktree add`.
+// On any failure the partially-created temp root is cleaned up so callers do
+// not need a defer before the successful return.
+func prepareInstallWorktree(printer *laslig.Printer, commit string) (string, string, error) {
+	tempRoot, err := os.MkdirTemp("", "tillsyn-install-")
+	if err != nil {
+		return "", "", fmt.Errorf("create install temp dir: %w", err)
+	}
+	buildDir := filepath.Join(tempRoot, "build")
+	if err := runCommandWithProgress(printer, fmt.Sprintf("Creating temp worktree at %s", buildDir), "Created temp worktree", "git", "worktree", "add", "--detach", buildDir, commit); err != nil {
+		// Worktree add failed — best-effort remove the temp root so callers do not leak.
+		_ = os.RemoveAll(tempRoot)
+		return "", "", fmt.Errorf("add install worktree %q at %s: %w", buildDir, commit, err)
+	}
+	return tempRoot, buildDir, nil
+}
+
+// cleanupInstallWorktree removes the git worktree registration and the temp
+// root regardless of build outcome. Errors are reported via laslig warnings so
+// they surface in the build log without masking the primary Install error.
+func cleanupInstallWorktree(printer *laslig.Printer, tempRoot, buildDir string) {
+	if buildDir != "" {
+		if err := runCommand("git", "worktree", "remove", "--force", buildDir); err != nil {
+			_ = printer.Notice(laslig.Notice{
+				Level: laslig.NoticeWarningLevel,
+				Title: "Install worktree cleanup warning",
+				Body:  fmt.Sprintf("git worktree remove --force %s: %v", buildDir, err),
+			})
+		}
+	}
+	if tempRoot != "" {
+		if err := os.RemoveAll(tempRoot); err != nil {
+			_ = printer.Notice(laslig.Notice{
+				Level: laslig.NoticeWarningLevel,
+				Title: "Install temp-root cleanup warning",
+				Body:  fmt.Sprintf("remove %s: %v", tempRoot, err),
+			})
+		}
+	}
+}
+
+// currentCommitSHA returns the current HEAD commit captured via `git rev-parse HEAD`.
+// The value is injected into the installed binary through ldflags so `till --version`
+// can surface exactly which revision is live.
+func currentCommitSHA() (string, error) {
+	out, err := captureStdoutCommand("git", "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolve git HEAD for install: %w", err)
+	}
+	sha := strings.TrimSpace(out)
+	if sha == "" {
+		return "", errors.New("git rev-parse HEAD returned empty output")
+	}
+	return sha, nil
+}
+
+// resolveInstallDir returns the directory into which `mage install` drops the
+// stamped till binary. Discovery order tolerates both bespoke overrides and
+// the most common Go operator layouts without fighting the shell's own idea
+// of where till lives:
+//
+//  1. $TILL_INSTALL_DIR — explicit override for CI/sandbox work.
+//  2. `which till` dirname — matches the shell PATH so an existing install is
+//     replaced in place.
+//  3. $GOBIN, then $GOPATH/bin — standard Go toolchain conventions.
+//  4. $HOME/.local/bin — fallback consistent with the historical default.
+func resolveInstallDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("TILL_INSTALL_DIR")); dir != "" {
+		return dir, nil
+	}
+	if dir, ok := lookupInstalledTillDir(); ok {
+		return dir, nil
+	}
+	if dir := strings.TrimSpace(os.Getenv("GOBIN")); dir != "" {
+		return dir, nil
+	}
+	if dir, ok := gopathBin(); ok {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("user home dir: %w", err)
+	}
+	return filepath.Join(home, ".local", "bin"), nil
+}
+
+// lookupInstalledTillDir returns the directory containing the currently
+// PATH-resolved `till` binary, if any. The second result is false when no
+// such binary is on PATH so callers can fall through to the next candidate.
+func lookupInstalledTillDir() (string, bool) {
+	path, err := exec.LookPath("till")
+	if err != nil {
+		return "", false
+	}
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Dir(resolved), true
+}
+
+// gopathBin returns `$GOPATH/bin` using `go env GOPATH` when available.
+// Handles the multi-entry GOPATH form by picking the first entry, matching
+// the `go install` default.
+func gopathBin() (string, bool) {
+	out, err := captureStdoutCommand("go", "env", "GOPATH")
+	if err != nil {
+		return "", false
+	}
+	gopath := strings.TrimSpace(out)
+	if gopath == "" {
+		return "", false
+	}
+	entries := filepath.SplitList(gopath)
+	if len(entries) == 0 {
+		return "", false
+	}
+	first := strings.TrimSpace(entries[0])
+	if first == "" {
+		return "", false
+	}
+	return filepath.Join(first, "bin"), true
 }
 
 // CI runs the canonical full gate.
@@ -388,6 +532,22 @@ func runCommandWithEnv(overrides map[string]string, name string, args ...string)
 	return nil
 }
 
+// runCommandInDir executes one command with cmd.Dir set to dir and streams
+// stdout/stderr to the current terminal. Used by the install flow so the
+// `go build` step runs inside the temp detached worktree rather than the
+// caller's (possibly dirty) working directory.
+func runCommandInDir(dir, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s (in %s): %w", name, strings.Join(args, " "), dir, err)
+	}
+	return nil
+}
+
 // captureCommand runs one command and returns its combined stdout/stderr.
 // Use this only when the caller cares about the command's exit code and treats output as opaque
 // diagnostic text; for any gate that parses the captured stream, use captureStdoutCommand instead
@@ -522,6 +682,21 @@ func runCommandWithProgress(printer *laslig.Printer, startText, successText, nam
 	return nil
 }
 
+// runCommandInDirWithProgress renders one transient spinner while a command
+// executes with cmd.Dir set to dir. Used by the install build step so the
+// Go toolchain resolves modules against the temp worktree rather than the
+// caller's live working directory.
+func runCommandInDirWithProgress(printer *laslig.Printer, dir, startText, successText, name string, args ...string) error {
+	spinner := startMageSpinner(printer, startText)
+	err := runCommandInDir(dir, name, args...)
+	if err != nil {
+		stopMageSpinner(spinner, startText+" failed", laslig.NoticeErrorLevel)
+		return err
+	}
+	stopMageSpinner(spinner, successText, laslig.NoticeSuccessLevel)
+	return nil
+}
+
 // captureCommandWithProgress renders one transient spinner while a captured command stays quiet.
 // Returns combined stdout+stderr; prefer captureStdoutWithProgress when the output is parsed.
 func captureCommandWithProgress(printer *laslig.Printer, startText, successText, name string, args ...string) (string, error) {
@@ -568,16 +743,4 @@ func stopMageSpinner(spinner *laslig.Spinner, message string, level laslig.Notic
 		return
 	}
 	_ = spinner.Stop(message, level)
-}
-
-// defaultInstallDir returns the preferred local operator bin directory for till installs.
-func defaultInstallDir() (string, error) {
-	if dir := strings.TrimSpace(os.Getenv("TILL_INSTALL_DIR")); dir != "" {
-		return dir, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("user home dir: %w", err)
-	}
-	return filepath.Join(home, ".local", "bin"), nil
 }

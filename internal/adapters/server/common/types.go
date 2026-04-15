@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // ScopeTypeProject identifies project-level scope for capture and attention operations.

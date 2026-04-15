@@ -9,11 +9,11 @@ import (
 	"testing"
 
 	autent "github.com/evanmschultz/autent"
-	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
-	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
-	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
+	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // newRealMCPAttentionHandlerForTest constructs one real auth-backed MCP handler plus its backing store.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestMutationGuardContextRoundTrip verifies normalization and retrieval from context.

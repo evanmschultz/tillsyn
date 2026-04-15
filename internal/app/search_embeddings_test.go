@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // TestThreadContextSubjectIDRoundTrip verifies encoded thread-context identifiers decode back into canonical comment targets.

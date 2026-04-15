@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	fantasyembed "github.com/hylla/tillsyn/internal/adapters/embeddings/fantasy"
-	"github.com/hylla/tillsyn/internal/domain"
+	fantasyembed "github.com/evanmschultz/tillsyn/internal/adapters/embeddings/fantasy"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // fakeRepo represents fake repo data used by this package.

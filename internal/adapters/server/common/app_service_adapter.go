@@ -10,9 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hylla/tillsyn/internal/adapters/auth/autentauth"
-	"github.com/hylla/tillsyn/internal/app"
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // AppServiceAdapter maps transport contracts onto app.Service capture_state and attention APIs.

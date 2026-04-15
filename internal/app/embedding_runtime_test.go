@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // seedEmbeddingRuntimeScope stores one minimal project/column/task scope for embeddings runtime tests.
