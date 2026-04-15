@@ -98,7 +98,7 @@ func TestKeyMapApplyConfig(t *testing.T) {
 // TestKeyMapDefaultsIncludeProjectionKeys verifies subtree projection key defaults.
 func TestKeyMapDefaultsIncludeProjectionKeys(t *testing.T) {
 	k := newKeyMap()
-	if got := k.focusSubtree.Keys(); len(got) != 1 || got[0] != "f" {
+	if got := k.focusSubtree.Keys(); len(got) != 2 || got[0] != "f" || got[1] != "enter" {
 		t.Fatalf("unexpected focus subtree keys %#v", got)
 	}
 	gotClear := k.clearFocus.Keys()

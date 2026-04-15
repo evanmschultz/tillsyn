@@ -6426,12 +6426,14 @@ func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected enter to open task info mode, got %v", m.mode)
+	if m.projectionRootTaskID != task.ID {
+		t.Fatalf("expected enter to focus subtree on %q, got %q", task.ID, m.projectionRootTaskID)
 	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
-		t.Fatalf("expected esc to close task info mode, got %v", m.mode)
+		t.Fatalf("expected enter to leave mode as modeNone, got %v", m.mode)
+	}
+	if !m.clearSubtreeFocus() {
+		t.Fatalf("expected subtree focus to clear")
 	}
 
 	m = applyMsg(t, m, keyRune('i'))
@@ -12944,7 +12946,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 	if !strings.Contains(view, "children: 1") {
 		t.Fatalf("expected direct child count in info line, got\n%s", view)
 	}
-	if !strings.Contains(view, "f focus subtree") {
+	if !strings.Contains(view, "f/enter focus subtree") {
 		t.Fatalf("expected focus subtree hint in info line, got\n%s", view)
 	}
 
