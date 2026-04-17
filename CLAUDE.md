@@ -380,16 +380,21 @@ Go 1.26+ · Bubble Tea v2 · Bubbles v2 · Lip Gloss v2 · SQLite (`modernc.org/
 
 ## Dev MCP Server
 
-Every worktree needs a local dev MCP server pointing at its own built binary — test against the dev version, not the installed one.
+Every worktree needs a local dev MCP server pointing at its own built binary — test against the dev version, not the installed one. **Each worktree gets a unique MCP name so binaries from different worktrees can't collide.** MCP server names cannot contain `.`, so `drop/1.5` maps to `drop-1-5`.
 
 ```bash
+# from each worktree:
 mage build
-claude mcp add --scope local tillsyn-dev -- /path/to/worktree/till serve-mcp
+claude mcp add --scope local <unique-name> -- /path/to/worktree/till serve-mcp
 ```
 
-- **main**: `tillsyn-dev` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/till serve-mcp`
+Active registrations:
 
-After every `mage build`, the dev binary is updated in place; MCP picks up changes on next invocation. Always test against `tillsyn-dev`, not the installed `till`. When retiring a branch, remove its dev MCP entry.
+- **main (STEWARD)**: `tillsyn-dev` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/till serve-mcp`
+- **drop/1 (DROP_1_ORCH)**: `tillsyn-dev-drop-1` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1/till serve-mcp`
+- **drop/1.5 (DROP_1.5_ORCH)**: `tillsyn-dev-drop-1-5` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1.5/till serve-mcp`
+
+Each orchestrator references its own MCP name, not `tillsyn-dev`, unless it's the STEWARD session launched from `main/`. Confirm with `claude mcp list` — three `tillsyn-dev*` entries should be visible. After every `mage build` in a given worktree, that worktree's binary updates in place and MCP picks up changes on next invocation. When retiring a worktree, remove its MCP entry.
 
 ## Build Verification
 
@@ -440,8 +445,11 @@ No co-authored-by trailers. No period at end. No capitalized first word after th
 
 ## Bare-Root and Worktree Discipline
 
-- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up) is the orchestration root — **not** a coding checkout.
-- This directory (`main/`) is the primary work checkout. Real coding / building / testing / committing happens here.
-- Always confirm `pwd` is this checkout before edits, tests, commits, or gopls work.
-- **Dev launches orchestrators from here** — this is the canonical orchestrator working directory.
-- This project uses a single visible checkout during cascade development. Additional worktrees and gopls-sync tooling are not needed — dispatched cascade agents `cd` into this directory directly.
+- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up) is the orchestration root — **not** a coding checkout. Git internals live under `.bare/`; a top-level `.git` pointer file redirects there (matches the fckin layout).
+- **One worktree per concurrent orchestrator.** The three active orchestrators operate in isolated sibling worktrees under the bare root:
+  - `main/` — STEWARD (persistent, branch `main`). Doc writes + post-merge refinements-gate work.
+  - `drop/1/` — DROP_1_ORCH (branch `drop/1`). Drop 1 code work (auth TTL, lifecycle, paths/packages, MCP additions).
+  - `drop/1.5/` — DROP_1.5_ORCH (branch `drop/1.5`). Drop 1.5 TUI work.
+- Always confirm `pwd` is the intended worktree before edits, tests, commits, or gopls work. Drop orchestrators run in their drop worktree; STEWARD runs here in `main/`.
+- **Dev launches each orchestrator from its own worktree.** Cascade agents dispatched by a drop-orch `cd` into that drop's worktree, not into `main/`.
+- Shared-package pinches (e.g. `internal/tui` touched by both Drop 1 and Drop 1.5) coordinate via `till.handoff` with `next_action_type: unblock`, not by shared git state.
