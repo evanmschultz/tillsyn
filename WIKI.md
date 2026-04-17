@@ -191,4 +191,4 @@ Every drop's final task is `DROP <N> END — LEDGER UPDATE`. Orchestrator-role-g
 - `HYLLA_FEEDBACK.md` — per-drop aggregation of subagent-reported Hylla misses.
 - `HYLLA_REFINEMENTS.md` — append-only log of Hylla ergonomics + search-quality refinement candidates.
 - `REFINEMENTS.md` — append-only log of Tillsyn product refinements + TUI/CLI/MCP ergonomics issues.
-- `OLD_MDS/` — pre-consolidation source docs; folded into this wiki + `PLAN.md` + `README.md` in Drop 0. Kept as an audit trail until dev-verified safe to delete.
+- `OLD_MDS/` — **deleted by dev after Drop 0 fold was verified.** Pre-consolidation source docs lived there briefly. Retrievable from git history (commit `fc31679` and earlier) if a drift investigation needs them; see `CLAUDE.md` § "Pre-Consolidation Source Archive" for the fold map.

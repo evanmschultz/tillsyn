@@ -20,18 +20,20 @@ Cross-cutting decisions still park on a Tillsyn plan item (description = converg
 
 The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory — moved from bare-root in Drop 0 so it is git-tracked with the rest of the repo; renamed from `CLAUDE_MINIONS_PLAN.md` during the 2026-04-16 consolidation pass). That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
 
-## Pre-Consolidation Source Archive
+## Pre-Consolidation Source Archive (Deleted — Retrievable From Git)
 
-Fold-source MD files from the 2026-04-16 consolidation pass live in `OLD_MDS/`. They are kept on disk (not deleted) so the dev can verify no content was lost before the eventual deletion. Contents:
+The 2026-04-16 consolidation pass folded six legacy MDs into `PLAN.md` + `README.md` and archived the originals under `OLD_MDS/`. The archive was kept in-tree briefly for verification, then deleted by the dev once the fold was confirmed intact. If a content-drift investigation needs the pre-consolidation text, pull the file from git history — everything under `OLD_MDS/` is reachable up to and including commit `fc31679` (`chore(docs): archive pre-consolidation md sources into old_mds/`).
 
-- `OLD_MDS/HEADLESS_DISCUSSIONS.md` — folded into `PLAN.md` §4.1 / §19.10 / §23 / §24 and drop-4.5 scope.
-- `OLD_MDS/TOS_COMPLIANCE.md` — folded into `PLAN.md` §22 (verbatim quote appendix §22.4.1–22.4.6) and §22.5 engineering-constraint carryover.
-- `OLD_MDS/TOS_DISCUSSIONS.md` — converged rows folded into `PLAN.md` §22; pending Qs threaded into refinement-drop bullets under §19.10.
-- `OLD_MDS/MINIONS_RESEARCH_2026-04-13.md` — folded into `PLAN.md` §20 open questions + §21 source links + risk register.
-- `OLD_MDS/TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md` — folded into `README.md` §Integration Framing For MCP Clients.
-- `OLD_MDS/temp.md` — the pre-apply Consolidation Decisions Ledger that drove this pass (preserved as audit trail).
+Fold map (so you know which legacy file landed where):
 
-When looking for pre-consolidation context that seems missing from `PLAN.md` or `README.md`, check `OLD_MDS/` first before assuming drift.
+- `HEADLESS_DISCUSSIONS.md` — folded into `PLAN.md` §4.1 / §19.10 / §23 / §24 and drop-4.5 scope.
+- `TOS_COMPLIANCE.md` — folded into `PLAN.md` §22 (verbatim quote appendix §22.4.1–22.4.6) and §22.5 engineering-constraint carryover.
+- `TOS_DISCUSSIONS.md` — converged rows folded into `PLAN.md` §22; pending Qs threaded into refinement-drop bullets under §19.10.
+- `MINIONS_RESEARCH_2026-04-13.md` — folded into `PLAN.md` §20 open questions + §21 source links + risk register.
+- `TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md` — folded into `README.md` §Integration Framing For MCP Clients.
+- `temp.md` — the pre-apply Consolidation Decisions Ledger that drove this pass.
+
+If `PLAN.md` or `README.md` looks like it's missing pre-consolidation context, `git show fc31679^:main/OLD_MDS/<file>` is the retrieval path.
 
 ## Cascade Tree Structure (Template Architecture)
 

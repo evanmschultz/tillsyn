@@ -50,7 +50,7 @@ When `DROP_N_ORCH` spins up drop N in Tillsyn, it creates six items that are STE
 - Agent prompt files under `~/.claude/agents/*.md` — `go-builder-agent.md`, `go-planning-agent.md`, `go-qa-proof-agent.md`, `go-qa-falsification-agent.md`, future shared agents.
 - Orchestrator prompt files under `main/` — this file (`STEWARD_ORCH_PROMPT.md`), `DROP_1_ORCH_PROMPT.md`, future `DROP_N_ORCH_PROMPT.md`.
 
-Discipline: edits only land after a DISCUSSIONS child (for design discussions) or a drop-branch merge (for per-drop artifacts) converges. `main/OLD_MDS/TOS_COMPLIANCE.md` is NOT in your write set — content was folded into `PLAN.md` §22 during Drop 0 consolidation; the folder is an audit archive only.
+Discipline: edits only land after a DISCUSSIONS child (for design discussions) or a drop-branch merge (for per-drop artifacts) converges. `main/OLD_MDS/` was a pre-consolidation audit archive; it was deleted by the dev after Drop 0. If a drift investigation needs it, pull from git history (commit `fc31679` and earlier) per `CLAUDE.md` § "Pre-Consolidation Source Archive".
 
 ### 1.4 Other Responsibilities
 
@@ -84,11 +84,28 @@ Discipline: edits only land after a DISCUSSIONS child (for design discussions) o
 - **Discussion-drop kind work** — when the template overhaul (DISCUSSIONS #1) lands the first-class `discussion-drop` kind, migrate existing children.
 - **Type-drop rename migration** (DISCUSSIONS #16) — coordinate the build-task→build-drop, plan-task→plan-drop, qa-check→qa-drop rename against in-flight items.
 
+### 4.1 Concurrent Drop 1 + Drop 1.5 Coordination (Live)
+
+Drop 1 and Drop 1.5 run concurrently post-Drop-0. Each has its own orchestrator (`DROP_1_ORCH` and `DROP_1.5_ORCH`) — both project-scoped, both running alongside you. You are the **coordination surface of last resort** when a cross-drop conflict surfaces.
+
+**Shared-package pinch point:** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) touches `internal/tui` for display of the new fields. Drop 1.5 refactors the entire `internal/tui` package. CLAUDE.md's package-level blocking rule requires explicit `blocked_by` between sibling build-tasks sharing a package — and that rule extends across drops because a single Go package shares one compile.
+
+**Coordination pattern (honor-system across the two drop-orchs, you arbitrate if it slips):**
+
+1. DROP_1.5_ORCH's §4.1 audit-first gate is entirely read-only — it runs concurrently with every Drop 1 builder without conflict. The audit must architect the **post-Drop-1** TUI shape (accounting for the paths/packages display fields Drop 1 will add), not the current pre-Drop-1 shape.
+2. DROP_1.5_ORCH does NOT transition any refactor build-task to `in_progress` until Drop 1's `internal/tui` display task is `done` + merged.
+3. When Drop 1's TUI-display task closes, DROP_1_ORCH posts a `till.handoff` addressed to `@DROP_1.5_ORCH` (`next_action_type: unblock`) signalling that the `internal/tui` package is now available for refactor. Drop 1.5 builder dispatch unblocks.
+4. If the two drop-orchs fail to converge on the handoff timing, you arbitrate in chat with the dev and post a converged comment on the relevant DISCUSSIONS child.
+
+**Sequencing for the first post-Drop-0 session:** STEWARD seeding (§5.0) runs first. DROP_1_ORCH spins up after §5.0 closes. DROP_1.5_ORCH spins up after Drop 1's planning converges and STEWARD's §5.1 / §5.2 audit work quiets. Three concurrent project-scoped orchestrators is the steady-state.
+
 ## 5. First-Session Task Sequence (Cold Start)
 
 On cold start you run this sequence **in order**. Each stage blocks the next. All output routes through Tillsyn (DISCUSSIONS children + comments) first; MD edits land only after the dev confirms convergence.
 
 ### 5.0 Seed The Five New Persistent Level_1 STEWARD-Owned Drops
+
+**Hard sequencing dependency:** this step must close before any numbered-drop orchestrator (`DROP_1_ORCH`, `DROP_1.5_ORCH`, future `DROP_N_ORCH`) spins up. Drop-orchs create level_2 findings drops as children of the five persistent parents below; those children cannot exist until the parents do. The dev coordinates the spawn ordering — you close §5.0 first and signal the dev that drop-orch spin-up is unblocked.
 
 Before any other work, create the five new persistent drops under the project (the existing `DISCUSSIONS` drop `f09ca4a0` is already seeded):
 
@@ -108,37 +125,23 @@ Post a comment on each seeded drop capturing dev direct quotes from `feedback_st
 
 Confirm all five created cleanly before moving to §5.1.
 
-### 5.1 OLD_MDS Compare-And-Contrast Against PLAN.md / README.md
+### 5.1 OLD_MDS Audit — Obsolete (Archive Deleted By Dev)
 
-`main/OLD_MDS/` holds the pre-consolidation source MDs from the 2026-04-16 pass (see `main/CLAUDE.md` § "Pre-Consolidation Source Archive"). Drop 0 folded their content into `PLAN.md` / `README.md`, but the dev wants an audit before the archive is retired.
+**Skip this step unless a content-drift flag surfaces.** The dev deleted `main/OLD_MDS/` after Drop 0 once the fold into `PLAN.md` / `README.md` was verified intact. No proactive compare-and-contrast is required on this session.
 
-1. Seed a DISCUSSIONS child `OLD_MDS COMPARE-AND-CONTRAST AGAINST PLAN.md + README.md`. Priority: high.
-2. For each file under `main/OLD_MDS/`:
-   - `HEADLESS_DISCUSSIONS.md`
-   - `TOS_COMPLIANCE.md`
-   - `TOS_DISCUSSIONS.md`
-   - `MINIONS_RESEARCH_2026-04-13.md`
-   - `TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md`
-   - `temp.md`
-   Read the OLD_MD and the target fold location (per `main/CLAUDE.md` § "Pre-Consolidation Source Archive"). For each, produce a diff-style audit: **content present in OLD_MD → content present in PLAN.md/README.md? verbatim / paraphrased / missing / replaced / out-of-date**.
-3. Post per-file audit summaries as comments on the DISCUSSIONS child. Use direct quotes from OLD_MD passages that look missing or contradicted.
-4. **Discuss discrepancies with the dev in chat.** Expectation per dev: "There will be discrepancies. I just want to make sure they are the correct way. Meaning that plan is good and old are just truly outdated." For each discrepancy: propose `plan-wins` (PLAN.md is correct, OLD_MD is outdated) OR `plan-missing` (PLAN.md drifted, needs fold-fix). Wait for dev call before editing PLAN.md/README.md.
-5. When PLAN.md/README.md are confirmed correct or patched to match, mark the DISCUSSIONS child `done`. Flag to the dev that `main/OLD_MDS/` is ready for deletion — **deletion is dev-gated, do NOT delete the archive yourself**.
+If a drift investigation surfaces (a later reader spots something that looks missing from `PLAN.md` / `README.md` and suspects it was dropped during the 2026-04-16 consolidation fold), the retrieval path is git history: `git show fc31679^:main/OLD_MDS/<file>`. The fold map lives in `CLAUDE.md` § "Pre-Consolidation Source Archive". Only spin up a DISCUSSIONS child for this work if drift is actually detected — do not run it speculatively.
 
-### 5.2 Semi-Formal QA On PLAN.md (Structural Soundness)
+### 5.2 PLAN.md Semi-Formal QA — Residual Check Only
 
-Only after §5.1 closes and PLAN.md reflects the current intended shape.
+**A full structural QA sweep was already run in the 2026-04-16 post-Drop-0 session** (pre-merge on the consolidation commits `fc31679` / `64dd68d` / `d2690f9`). It surfaced 4 real contradictions + 3 vocab gaps + 5 editorial slips across §1.3 / §1.4 / §2.2 / §3.2 / §9.2 / §9.7 / §10.6 / §13.2 / §19.2 / §19.4 / §20 renumber / §21.5 relocate. All findings were applied and the audit-trail lives on the pre-session DISCUSSIONS child (see comments captured around that date).
 
-1. Seed a DISCUSSIONS child `PLAN.md SEMI-FORMAL QA — STRUCTURAL SOUNDNESS`. Priority: high.
-2. Run a semi-formal-reasoning certificate over PLAN.md:
-   - **Premises** — what the cascade must be true about: drops-all-the-way-down; one post-Drop-2 kind; role on metadata; post-build gates deterministic; file+package blocking; drop-end ingest; STEWARD vs numbered-drop-orch role separation.
-   - **Evidence** — PLAN.md section refs, CLAUDE.md refs, WIKI.md refs, memory refs (`project_tillsyn_cascade_vocabulary.md`, `feedback_use_tasks_until_drop_kind_lands.md`, this prompt).
-   - **Trace or cases** — walk through Drop 1 → Drop 2 → Drop 3 → Drop 4 dispatch. Does each drop's output satisfy the next drop's input?
-   - **Conclusion** — plan is structurally sound OR has specific gaps.
-   - **Unknowns** — list anything still unresolved; route each to a refinement bullet or DISCUSSIONS child.
-3. Also run an **internal-consistency sweep**: level addressing (§1.4), type-drop-kinds table (§1.4), §2.3–§2.4 node-type text, §19 refinement drops, §22 TOS block, §23–§24 headless blocks. Flag any place PLAN.md contradicts itself or `main/CLAUDE.md` / `main/WIKI.md`.
-4. Post the certificate + sweep findings as comments on the DISCUSSIONS child. Surface the full substance in chat. Wait for dev approval before applying any PLAN.md patch.
-5. When PLAN.md QA clears, mark the DISCUSSIONS child `done`. Record a LEDGER-style summary in `WIKI_CHANGELOG.md` under the current drop's heading.
+Your task on this session is **residual-check**, not fresh QA:
+
+1. Spot-check the sections the prior sweep touched: §1.3 glossary casing, §1.4 crosswalk table + dotted-address bridge, §2.2 hierarchy tree (plan-qa children under plan-task, refinements-gate row, REVIEW DONE blocked_by), §3.2 ASCII post-build flow, §9.2 GATE 1/2/3 ordering, §9.7 drop-end-only invariants, §10.6 sandwich bookends, §13.2 drop-end reingest shape, §19.2 / §19.4 reingest language, §20 numbering, §21.5 location.
+2. Verify `PLAN.md` covers the 6 persistent STEWARD-owned level_1 drops, the per-drop refinements-gate, the STEWARD-self refinement pass, and Drop 3's template + `steward`-orch-type + auth-state-lock scope. (These should be present from the prior sweep; if missing, raise as a fresh gap.)
+3. Verify `PLAN.md` covers Drop 1.5 — the TUI refactor drop with audit-first gate and concurrent-with-Drop-1 scheduling. (Should be present; if missing, raise as a fresh gap.)
+4. **Only if you find a residual contradiction or gap** that the prior sweep missed, seed a DISCUSSIONS child `PLAN.md RESIDUAL QA — <topic>`, post findings, surface in chat, wait for dev approval before patching.
+5. If the residual check surfaces no new findings, post one comment on the prior DISCUSSIONS child confirming residual-clean, and move on to §5.3 / §5.4.
 
 ### 5.3 Queued MD Backlog (Apply After §5.1 + §5.2 Converge)
 
@@ -155,10 +158,9 @@ These diffs were drafted pre-session. They apply only after §5.1/§5.2 confirm 
 - **PLAN.md §1.4 type-drop-kinds table** — collapse all flavors to `kind: drop` + `metadata.role`, matching wiki + `main/scripts/drops-rewrite.sql`. Rewrite both `CLAUDE.md` cascade-tree blocks to match.
 - **`main/CLAUDE.md` + bare-root `CLAUDE.md` "Cascade Tree Structure"** — same resolution; both files carry the same body, edit in lockstep.
 
-**CLAUDE.md drift (from prior self-QA findings 2.1 + 2.2):**
+**CLAUDE.md drift:**
 
-- **`main/CLAUDE.md` § "Drop End — Ledger Update Task"** is stale — describes orchestrator writing to `HYLLA_FEEDBACK.md` and `LEDGER.md` directly. Rewrite to match the new STEWARD-routing model: drop-orch runs ingest + populates level_2 findings-drop descriptions + closes `DROP N END` before merge; STEWARD reads level_2 descriptions post-merge and writes the MDs. Bare-root `CLAUDE.md` carries the same body — edit in lockstep.
-- **`main/CLAUDE.md` missing § "Pre-Consolidation Source Archive"** (Option A confirmed) — mirror the full section from bare-root `CLAUDE.md` into `main/CLAUDE.md` so both files carry identical bodies.
+- Both `CLAUDE.md` bodies already carry the STEWARD-routing model under § "Drop End — Ledger Update Task" and § "Pre-Consolidation Source Archive" (applied during the 2026-04-16 post-Drop-0 sweep). No action here unless a new drift surfaces.
 
 **PLAN.md scope for the new role-separation model:**
 
