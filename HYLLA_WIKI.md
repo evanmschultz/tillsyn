@@ -2,7 +2,7 @@
 
 Living reference for using Hylla during Tillsyn work. Captures the **current** best practices given Hylla's current behavior. Derived from accumulated entries in `HYLLA_REFINEMENTS.md`. No changelog section — history lives in the findings file.
 
-Update this wiki whenever a Hylla refinement lands that changes best practice (e.g. if the imports facet ships, the "skip Hylla for library names" rule below goes away and this wiki gets updated in the same slice).
+Update this wiki whenever a Hylla refinement lands that changes best practice (e.g. if the imports facet ships, the "skip Hylla for library names" rule below goes away and this wiki gets updated in the same drop).
 
 ## Query Hygiene
 
@@ -29,7 +29,7 @@ For library-name / import-ident lookups: one Hylla query. If it misses, switch t
 Once any Hylla call returns a related node, pivot to `hylla_graph_nav` and `hylla_refs_find` to expand. Re-running keyword search with new terms rarely improves; graph walk almost always does. A partial hit is a better starting point than a fresh keyword query.
 
 ### Check snapshot staleness at session start
-Confirm the current ingest snapshot against the slice baseline. If the branch has moved since ingest, `git diff <snapshot-sha>..HEAD` to see what Hylla does not know yet. Note any stale files in scratch notes so you do not trust Hylla results for them.
+Confirm the current ingest snapshot against the drop baseline. If the branch has moved since ingest, `git diff <snapshot-sha>..HEAD` to see what Hylla does not know yet. Note any stale files in scratch notes so you do not trust Hylla results for them.
 
 ## Search Tool Decision Tree
 
@@ -61,5 +61,5 @@ Every builder / QA / planner spawn prompt should embed these rules:
 ## Related Files
 
 - `main/HYLLA_REFINEMENTS.md` — append-only log of misses + Hylla-product refinement candidates.
-- `main/HYLLA_FEEDBACK.md` — per-slice aggregation of subagent-reported Hylla feedback.
+- `main/HYLLA_FEEDBACK.md` — per-drop aggregation of subagent-reported Hylla feedback.
 - `main/CLAUDE.md` → "Code Understanding Rules" — canonical tool-order rules (this wiki supplements, does not replace).

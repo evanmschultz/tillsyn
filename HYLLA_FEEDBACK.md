@@ -2,7 +2,7 @@
 
 Running log of Hylla ergonomics, tool-shape, search-quality, and definition-quality feedback from subagents and the orchestrator.
 
-At slice-end, the orchestrator aggregates feedback from every subagent closing comment produced during the slice (search each plan-item's comments for a `## Hylla Feedback` section) into a new `## Slice <N>` heading below.
+At drop-end, the orchestrator aggregates feedback from every subagent closing comment produced during the drop (search each plan-item's comments for a `## Hylla Feedback` section) into a new `## Drop <N>` heading below.
 
 ## What Goes In
 
@@ -32,6 +32,6 @@ Subagents who had no Hylla misses on their task still emit a `## Hylla Feedback`
 
 ---
 
-## Slice 0 — Project Reset + Docs Cleanup
+## drop 0 — Project Reset + Docs Cleanup
 
-_To be populated by the `SLICE 0 END — LEDGER UPDATE` task once Slice 0 closes._
+_To be populated by the `drop 0 END — LEDGER UPDATE` task once drop 0 closes._

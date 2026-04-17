@@ -1,6 +1,6 @@
 # Tillsyn Refinements
 
-Append-only log of Tillsyn product refinements, refactor candidates, and TUI / CLI / MCP ergonomics issues discovered during day-to-day use. Paired with the perpetual Tillsyn tracking slice `REFINEMENTS.MD` — entries added here also get mirrored as comments on that slice (dual-update rule from `CLAUDE.md`).
+Append-only log of Tillsyn product refinements, refactor candidates, and TUI / CLI / MCP ergonomics issues discovered during day-to-day use. Paired with the perpetual Tillsyn tracking drop `REFINEMENTS.MD` — entries added here also get mirrored as comments on that drop (dual-update rule from `CLAUDE.md`).
 
 Hylla-specific refinements live in `HYLLA_REFINEMENTS.md`.
 
@@ -9,19 +9,19 @@ Hylla-specific refinements live in `HYLLA_REFINEMENTS.md`.
 Each entry uses this shape. Newest-first ordering.
 
 ```markdown
-## <YYYY-MM-DD> — <Slice N> — <One-line title>
+## <YYYY-MM-DD> — <Drop N> — <One-line title>
 
 ### Context
 What the session was doing when the friction surfaced. One or two sentences.
 
 ### Observation
-The concrete issue. Include tool name + exact input and actual output if applicable. Include enough detail that a future slice can reproduce without re-deriving context.
+The concrete issue. Include tool name + exact input and actual output if applicable. Include enough detail that a future drop can reproduce without re-deriving context.
 
 ### Proposed fix
-Concrete action to take. Scope matters — distinguish "inline safe fix" from "cross-cutting refactor slice." Cite a proposed target slice when known.
+Concrete action to take. Scope matters — distinguish "inline safe fix" from "cross-cutting refactor drop." Cite a proposed target drop when known.
 
-### Target slice
-Where this refinement should land. E.g. `Slice 1`, `pre-Slice-3 template-overhaul`, `post-Slice-4 TUI polish`, or `parking-lot` if unassigned.
+### Target drop
+Where this refinement should land. E.g. `Drop 1`, `pre-Drop-3 template-overhaul`, `post-Drop-4 TUI polish`, or `parking-lot` if unassigned.
 
 ### Tags
 Comma-separated. Examples: `tui`, `cli`, `mcp`, `refactor`, `docs`, `coordination`, `auth`, `ergonomics`, `performance`.
@@ -30,19 +30,19 @@ Comma-separated. Examples: `tui`, `cli`, `mcp`, `refactor`, `docs`, `coordinatio
 ## Status Lifecycle
 
 - **Pending** — entry logged, not yet triaged. Default state.
-- **Scheduled** — triaged into a concrete slice.
-- **In Progress** — currently being worked in a slice.
-- **Shipped** — fix landed. Entry summarized into the slice's closeout `WIKI_CHANGELOG.md` line; original entry either stays as-is or gets trimmed during MD cleanup subslice.
+- **Scheduled** — triaged into a concrete drop.
+- **In Progress** — currently being worked in a drop.
+- **Shipped** — fix landed. Entry summarized into the drop's closeout `WIKI_CHANGELOG.md` line; original entry either stays as-is or gets trimmed during MD cleanup subdrop.
 - **Rejected** — not doing. Kept for audit-trail continuity with the reason.
 
 Transitions are recorded by appending a dated status note to the entry, not by rewriting history.
 
 ---
 
-## 2026-04-14 — Slice 0 — Local git hooks for gofumpt + `mage ci` parity
+## 2026-04-14 — Drop 0 — Local git hooks for gofumpt + `mage ci` parity
 
 ### Context
-Slice 0 closeout surfaced that the 18.3 builder caught gofumpt drift on `internal/adapters/server/common/app_service_adapter_outcome_test.go` (pre-existing on `main`, not introduced by 18.3) only because `mage ci`'s Formatting stage ran `go tool gofumpt -l` and listed the file. No local gate had caught it at commit or push time, so the drift sat on `main` until a later build job tripped over it. CI formatting checks are correctly read-only (`-l` not `-w`) — the gap is upstream of CI, not inside it.
+Drop 0 closeout surfaced that the 18.3 builder caught gofumpt drift on `internal/adapters/server/common/app_service_adapter_outcome_test.go` (pre-existing on `main`, not introduced by 18.3) only because `mage ci`'s Formatting stage ran `go tool gofumpt -l` and listed the file. No local gate had caught it at commit or push time, so the drift sat on `main` until a later build job tripped over it. CI formatting checks are correctly read-only (`-l` not `-w`) — the gap is upstream of CI, not inside it.
 
 ### Observation
 Two distinct issues bundled:
@@ -58,21 +58,21 @@ Two distinct issues bundled:
 5. Hooks must remain bypassable via `--no-verify` per existing discipline (global CLAUDE.md rule: never bypass without explicit dev instruction).
 6. QA-proof + QA-falsification required — the hook scripts are the local build gate, can't silently break.
 
-### Target slice
-**Slice 1 — first item.** Scheduled directly into `CLAUDE_MINIONS_PLAN.md` §19.1 as the first bullet of the Slice 1 work list.
+### Target drop
+**Drop 1 — first item.** Scheduled directly into `PLAN.md` §19.1 as the first bullet of the Drop 1 work list.
 
 ### Status
-**Scheduled — Slice 1 item 1** (2026-04-14).
+**Scheduled — Drop 1 item 1** (2026-04-14).
 
 ### Tags
 `mage`, `git-hooks`, `tooling`, `ci-parity`, `gofumpt`
 
 ---
 
-## 2026-04-14 — Slice 0 — TUI esc-back navigation does not step up one level
+## 2026-04-14 — Drop 0 — TUI esc-back navigation does not step up one level
 
 ### Context
-Dev was navigating the main-screen tree during Slice 0 Tillsyn dogfooding. Drilled into a slice subtree and hit esc to return to the immediately previous level.
+Dev was navigating the main-screen tree during Drop 0 Tillsyn dogfooding. Drilled into a drop subtree and hit esc to return to the immediately previous level.
 
 ### Observation
 From the main screen, once focused down into a subtree, the `{todo | prog | done}` column-state screen does **not** respect navigation history. Pressing esc from the column-state screen returns directly to the top-level project screen instead of stepping up one level to wherever the focus came from.
@@ -80,48 +80,48 @@ From the main screen, once focused down into a subtree, the `{todo | prog | done
 ### Proposed fix
 Esc should behave like browser back: pop one level of navigation history on each press, not short-circuit to project root. Implement a nav-history stack on the main screen so esc pops the most recent push, regardless of column-state depth.
 
-### Target slice
-Slice 1 or a later dedicated TUI polish slice. Not Slice 0 — out of scope for the current closeout.
+### Target drop
+Drop 1 or a later dedicated TUI polish drop. Not Drop 0 — out of scope for the current closeout.
 
 ### Tags
 `tui`, `navigation`, `ergonomics`
 
 ---
 
-## 2026-04-14 — Slice 0 — Dotted-address fast-nav across TUI / CLI / MCP
+## 2026-04-14 — Drop 0 — Dotted-address fast-nav across TUI / CLI / MCP
 
 ### Context
-Slice 0 vocabulary convergence established dotted addresses (`0.1.5.2`, `proj_name-0.1.5.2`) as the human-readable shorthand for slice references, distinct from UUIDs which remain authoritative for mutations. Today, dev ↔ orchestrator cross-reference happens by copy-pasting UUIDs, which is high-friction.
+Drop 0 vocabulary convergence established dotted addresses (`0.1.5.2`, `proj_name-0.1.5.2`) as the human-readable shorthand for drop references, distinct from UUIDs which remain authoritative for mutations. Today, dev ↔ orchestrator cross-reference happens by copy-pasting UUIDs, which is high-friction.
 
 ### Observation
 No TUI / CLI / MCP surface today understands dotted addresses. Examples of the intended UX:
 
-- **TUI**: dev types `0.1.5.2` or `8.9.3` into a go-to / search field and is focused on that slice.
+- **TUI**: dev types `0.1.5.2` or `8.9.3` into a go-to / search field and is focused on that drop.
 - **CLI**: `till view tillsyn-8.9.3`, `till comment tillsyn-8.9.3 "looks good"`, `till state tillsyn-8.9.3 done` — all resolve the dotted path to the current UUID and operate on it.
 - **MCP**: orchestrator can pass dotted addresses to tool calls for **reads** (`till.plan_item(operation=get, address="0.1.5.2")`). Mutations should still require UUID — dotted addresses shift under re-parenting.
 
 Project-name prefix (`tillsyn-`) is unnecessary inside a scope-bound surface (TUI already knows the project; MCP session is project-scoped). Required for cross-project references.
 
 ### Proposed fix
-1. Add a dotted-address resolver in `internal/domain` (or `internal/app`) that walks the slice tree by position to find the UUID.
+1. Add a dotted-address resolver in `internal/domain` (or `internal/app`) that walks the drop tree by position to find the UUID.
 2. Wire the resolver into TUI go-to input, CLI positional args, and MCP read operations.
 3. Document the mutations-are-UUID-only rule so no agent accidentally relies on a dotted address for a `till.plan_item(operation=update)` call.
 
-### Target slice
-Post-Slice-3 template overhaul or a dedicated addressing slice. Not Slice 1.
+### Target drop
+Post-Drop-3 template overhaul or a dedicated addressing drop. Not Drop 1.
 
 ### Tags
 `tui`, `cli`, `mcp`, `addressing`, `ergonomics`
 
 ---
 
-## 2026-04-14 — Slice 0 — Batch operations on plan-item nodes
+## 2026-04-14 — Drop 0 — Batch operations on plan-item nodes
 
 ### Context
-Orchestrator + cascade agents frequently perform many small plan-item mutations in sequence (create N slices, update M descriptions, move K items to `in_progress`). Every call is a separate MCP round-trip.
+Orchestrator + cascade agents frequently perform many small plan-item mutations in sequence (create N drops, update M descriptions, move K items to `in_progress`). Every call is a separate MCP round-trip.
 
 ### Observation
-Post-Slice-4 the cascade dispatcher will be doing hundreds of these per cascade run. One-at-a-time MCP round-trips will become a real latency and rate-limit problem. Pre-cascade, the orchestrator already feels the friction (e.g. creating refinement slices, creating build-task + qa-proof + qa-falsification trios).
+Post-Drop-4 the cascade dispatcher will be doing hundreds of these per cascade run. One-at-a-time MCP round-trips will become a real latency and rate-limit problem. Pre-cascade, the orchestrator already feels the friction (e.g. creating refinement drops, creating build-task + qa-proof + qa-falsification trios).
 
 ### Proposed fix
 Batch operations on `till.plan_item`:
@@ -133,8 +133,8 @@ Batch operations on `till.plan_item`:
 
 Atomicity policy (all-or-nothing vs best-effort with per-item error rows) is a design question — lean toward best-effort with a results array so partial success is observable.
 
-### Target slice
-Post-Slice-4 (dispatcher slice) — the cascade makes the cost real. Could be pulled earlier if pre-cascade friction gets noisy.
+### Target drop
+Post-Drop-4 (dispatcher drop) — the cascade makes the cost real. Could be pulled earlier if pre-cascade friction gets noisy.
 
 ### Tags
 `mcp`, `performance`, `ergonomics`, `refactor`
