@@ -2,9 +2,9 @@
 
 **Date:** 2026-04-14
 **Status:** Initial analysis complete. Recommendations and forward options pending dev discussion.
-**Scope:** Review of `CLAUDE_MINIONS_PLAN.md` against Anthropic's Consumer Terms, Usage Policy, Agentic-Use guidance, Commercial Terms, Claude Code permission-modes documentation, and CLI reference — identify ToS-adjacent risks and sketch compliance-tightening options.
-**Companion to:** `CLAUDE_MINIONS_PLAN.md`.
-**Tracked in Tillsyn:** plan item `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` pre-Slice-2, will be relabelled `slice` once that kind lands) — project `a5e87c34-3456-4663-9f32-df1b46929e30`. Description = converged shape; comments = audit trail.
+**Scope:** Review of `PLAN.md` against Anthropic's Consumer Terms, Usage Policy, Agentic-Use guidance, Commercial Terms, Claude Code permission-modes documentation, and CLI reference — identify ToS-adjacent risks and sketch compliance-tightening options.
+**Companion to:** `PLAN.md`.
+**Tracked in Tillsyn:** plan item `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` pre-Drop-2, will be relabelled `drop` once that kind lands) — project `a5e87c34-3456-4663-9f32-df1b46929e30`. Description = converged shape; comments = audit trail.
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 1. Summary
 
-The cascade plan in `CLAUDE_MINIONS_PLAN.md` does not frontally violate Anthropic's Consumer Terms of Service, Commercial Terms of Service, Usage Policy, or the Agentic-Use support-article guidance. All of the flags the plan intends to use (`--bare`, `-p`, `--mcp-config`, `--strict-mcp-config`, `--permission-mode acceptEdits`, `--allowedTools`, `--max-budget-usd`, `--max-turns`) are documented, supported, and explicitly intended for headless / programmatic use. Multi-agent dispatch is explicitly supported — the Claude Code overview markets it as "Run agent teams and build custom agents."
+The cascade plan in `PLAN.md` does not frontally violate Anthropic's Consumer Terms of Service, Commercial Terms of Service, Usage Policy, or the Agentic-Use support-article guidance. All of the flags the plan intends to use (`--bare`, `-p`, `--mcp-config`, `--strict-mcp-config`, `--permission-mode acceptEdits`, `--allowedTools`, `--max-budget-usd`, `--max-turns`) are documented, supported, and explicitly intended for headless / programmatic use. Multi-agent dispatch is explicitly supported — the Claude Code overview markets it as "Run agent teams and build custom agents."
 
 However, several design choices in the current plan sit in a gray band where the ToS-compliance outcome depends on decisions the plan has not yet made:
 
@@ -31,7 +31,7 @@ However, several design choices in the current plan sit in a gray band where the
 3. The plan runs agents in the **live `main/` checkout** rather than an isolated container / VM. Anthropic's recommended posture for any loose permission mode is "isolated containers and VMs only."
 4. The plan has **no cascade-run-level budget ceiling** and no explicit statement on training-data opt-out. Rate-limit failures are handled reactively (as `blocked` outcomes) but cost-runaway is not structurally bounded.
 
-None of these are ToS violations today. All of them are decisions the plan should make explicitly before Slice 5 (dogfooding begins).
+None of these are ToS violations today. All of them are decisions the plan should make explicitly before Drop 5 (dogfooding begins).
 
 ---
 
@@ -141,7 +141,7 @@ The Claude Code overview explicitly sells "Run agent teams and build custom agen
 
 ### 3.2 Headless dispatch pattern is documented
 
-`--bare -p ... --mcp-config ... --strict-mcp-config` is the documented headless invocation pattern. `CLAUDE_MINIONS_PLAN.md` §4.1 and §19.4 use it verbatim.
+`--bare -p ... --mcp-config ... --strict-mcp-config` is the documented headless invocation pattern. `PLAN.md` §4.1 and §19.4 use it verbatim.
 
 ### 3.3 `acceptEdits` is not a bypass
 
@@ -149,7 +149,7 @@ The Claude Code overview explicitly sells "Run agent teams and build custom agen
 
 ### 3.4 Git stays in the dispatcher, not the agent
 
-`CLAUDE_MINIONS_PLAN.md` §9.3 holds `git add`, `git commit`, and `git push` in deterministic dispatcher code. The commit agent (haiku) only produces a message string. This keeps agents out of the protected-path prompt path for `.git/` writes and avoids the class of bug where an LLM agent guesses a git command.
+`PLAN.md` §9.3 holds `git add`, `git commit`, and `git push` in deterministic dispatcher code. The commit agent (haiku) only produces a message string. This keeps agents out of the protected-path prompt path for `.git/` writes and avoids the class of bug where an LLM agent guesses a git command.
 
 ### 3.5 Commercial-Terms §D.4 ("competing product") is not triggered
 
@@ -179,7 +179,7 @@ Each has a different ToS posture:
 - **Anthropic API key (Commercial Terms).** Removes the Consumer-Terms automation ambiguity entirely. Subjects the deployment to Commercial Terms including "Anthropic may not train models on Customer Content," which is favorable for a system generating large volumes of proprietary code. Cost is per-token rather than flat.
 - **Third-party provider.** Bedrock / Vertex / Foundry have their own ToS stacks on top of Anthropic's, but the Consumer-Terms automation clause is not applicable. Auto mode is not available on these providers per Anthropic's docs.
 
-The plan should state which tier(s) the cascade targets, per project, in a new section of `CLAUDE_MINIONS_PLAN.md` (proposed §22, see §5.1 below).
+The plan should state which tier(s) the cascade targets, per project, in a new section of `PLAN.md` (proposed §22, see §5.1 below).
 
 ### 4.2 Auto-mode classifier is locked out by the tier + permission-mode combination
 
@@ -194,7 +194,7 @@ Auto-mode-in-headless has a specific failure mode worth noting: "In non-interact
 
 ### 4.3 `Bash(mage *)` is the wide door under `acceptEdits`
 
-`CLAUDE_MINIONS_PLAN.md` §5.6 restricts Edit/Write to per-path allowlists but permits `Bash(mage *)`. Claude Code Bash allow rules are not path-gated the way Edit/Write are — any `mage <target>` matches the pattern and runs without prompting.
+`PLAN.md` §5.6 restricts Edit/Write to per-path allowlists but permits `Bash(mage *)`. Claude Code Bash allow rules are not path-gated the way Edit/Write are — any `mage <target>` matches the pattern and runs without prompting.
 
 Prompt-injection vectors:
 
@@ -210,7 +210,7 @@ Mitigation: replace `Bash(mage *)` with an explicit per-kind allowlist — for e
 
 ### 4.4 Host-machine posture vs Anthropic's "isolated environment" recommendation
 
-`CLAUDE_MINIONS_PLAN.md` §5.7 is explicit: multiple builders share the single `main/` checkout, gated only by file- and package-level dispatcher locks. No OS-level sandbox, no filesystem isolation, no egress control.
+`PLAN.md` §5.7 is explicit: multiple builders share the single `main/` checkout, gated only by file- and package-level dispatcher locks. No OS-level sandbox, no filesystem isolation, no egress control.
 
 Anthropic's explicit guidance for loose permission modes is "containers, VMs, or devcontainers without internet access, where Claude Code cannot damage your host system." `acceptEdits` is looser than `default` and the plan effectively runs it unattended; the posture gap is real even though the plan never touches `bypassPermissions`.
 
@@ -218,7 +218,7 @@ Blast-radius scenarios:
 
 - A dispatcher bug that releases a file / package lock early lets two builders touch the same file with no OS-level second line of defense.
 - An agent coerced via prompt injection into calling a mage target outside its path allowlist (see §4.3) has write access to every file the host user can touch.
-- A cascade run producing broken code that gets auto-pushed and auto-reingested could corrupt the very binary running the cascade — which `CLAUDE_MINIONS_PLAN.md` §18.5 ("Add `mage install` with Dev-Promoted Commit Pinning") already acknowledges as a real dogfooding risk.
+- A cascade run producing broken code that gets auto-pushed and auto-reingested could corrupt the very binary running the cascade — which `PLAN.md` §18.5 ("Add `mage install` with Dev-Promoted Commit Pinning") already acknowledges as a real dogfooding risk.
 
 Mitigation options, from cheapest to most thorough:
 
@@ -229,17 +229,17 @@ Mitigation options, from cheapest to most thorough:
 
 ### 4.5 Concurrency, rate limits, and cascade-run budget
 
-`CLAUDE_MINIONS_PLAN.md` §12.1 — "There is no cap on concurrent agents" — collides with the practical reality of subscription-plan quotas and API-key cost ceilings.
+`PLAN.md` §12.1 — "There is no cap on concurrent agents" — collides with the practical reality of subscription-plan quotas and API-key cost ceilings.
 
 - A typical cascade-run peak: one Opus planner + two Opus plan-QA + N Sonnet builders + 2N Sonnet build-QA + a Haiku commit agent. For N = 3 that is 10 concurrent agents at peak; N = 5 reaches 14.
 - Pro / Max plans have 5-hour session windows and weekly Opus quotas. Multiple peak-concurrency cascade runs inside a single session will trip the quota.
-- API-key usage has no per-session quota but real per-token cost. Opus-high planner and Opus-high plan-QA at 30-turn budgets can each cost on the order of a dollar per agent; a cascade-run with a failed slice that escalates and re-plans can spiral.
+- API-key usage has no per-session quota but real per-token cost. Opus-high planner and Opus-high plan-QA at 30-turn budgets can each cost on the order of a dollar per agent; a cascade-run with a failed drop that escalates and re-plans can spiral.
 
 The plan has `max_budget_usd` per invocation, `max_turns` per invocation, `max_tries` per failure, and `blocked_retries` for external failures. It does not have:
 
 - A cascade-run-level budget ceiling (sum of all child invocations).
 - A plan-level escalation-depth cap (planner re-plans → builder retries → planner re-plans again is theoretically unbounded under some escalation configurations).
-- A per-slice budget ceiling.
+- A per-drop budget ceiling.
 
 ### 4.6 Training-data posture is never chosen
 
@@ -249,7 +249,7 @@ Consumer-plan Materials are used for training "unless you opt out of training th
 
 ## 5. Recommended plan adjustments
 
-### 5.1 Add "Section 22: Account tier, auth, and data posture" to `CLAUDE_MINIONS_PLAN.md`
+### 5.1 Add "Section 22: Account tier, auth, and data posture" to `PLAN.md`
 
 A per-project, explicit statement of:
 
@@ -259,9 +259,9 @@ A per-project, explicit statement of:
 - Long-lived auth path (`claude setup-token` vs ambient interactive auth).
 - Whether auto mode is used (tier must support it) or intentionally omitted in favor of the cascade's own safety layers.
 
-### 5.2 Pre-Slice-5 decision on auto-mode eligibility
+### 5.2 Pre-Drop-5 decision on auto-mode eligibility
 
-Before Slice 5 (dogfooding begins), the plan must choose one of:
+Before Drop 5 (dogfooding begins), the plan must choose one of:
 
 - Upgrade the cascade's target deployment to Team / Enterprise / API tier AND switch dispatched agents to `--permission-mode auto` (classifier replaces the raw Bash allowlist).
 - Stay on `acceptEdits` AND document in §10 (Trust Model) that the classifier is intentionally replaced by per-path `--allowedTools`, file/package locks, `max_tries`, deterministic CI gates, and asymmetric QA.
@@ -283,9 +283,9 @@ Sum of all child invocations' `max_budget_usd` must not exceed a per-cascade-run
 
 Complementary: an escalation-depth cap so planner→builder→planner cycles terminate deterministically.
 
-### 5.5 Flag sandboxing as a future slice
+### 5.5 Flag sandboxing as a future drop
 
-Not required day 1, but a concrete slice in the development order that moves cascade agents into a sandbox (per-run git worktree, `sandbox-exec` on macOS, devcontainer, or Firecracker VM) closes the §4.4 gap. Pre-sandbox posture becomes an explicit risk the plan has accepted; post-sandbox posture aligns with Anthropic's published recommendation.
+Not required day 1, but a concrete drop in the development order that moves cascade agents into a sandbox (per-run git worktree, `sandbox-exec` on macOS, devcontainer, or Firecracker VM) closes the §4.4 gap. Pre-sandbox posture becomes an explicit risk the plan has accepted; post-sandbox posture aligns with Anthropic's published recommendation.
 
 ### 5.6 Make training opt-out explicit
 
@@ -303,7 +303,7 @@ The Claude Code overview frames multi-agent use as "A lead agent coordinates the
 
 - Does the dispatcher support per-project API-key credentials?
 - How are API keys stored (macOS keychain, env-vars passed to the subprocess, per-project config file under `~/.claude/tillsyn-auth/`, or an explicit `till secret` subcommand)?
-- Cost observability: does the dispatcher surface per-cascade-run cost back to the dev via a Tillsyn comment on the cascade slice?
+- Cost observability: does the dispatcher surface per-cascade-run cost back to the dev via a Tillsyn comment on the cascade drop?
 - Does the project's `kind` template override the default (OAuth) credential path, or is the credential path a project-level setting?
 
 ### 6.2 Non-Anthropic models
@@ -352,12 +352,12 @@ Tillsyn is headed for external users. Each user will bring their own tier, auth 
 
 ## 7. Decision log
 
-Decisions accrue here as they converge. Source of truth is the Tillsyn slice (comments capture the audit trail; this section mirrors the converged shape).
+Decisions accrue here as they converge. Source of truth is the Tillsyn drop (comments capture the audit trail; this section mirrors the converged shape).
 
-- **2026-04-14** — ToS analysis complete; six gray zones identified (§4). Seven recommended adjustments proposed (§5). Five open design questions surfaced (§6). Pending dev discussion before any `CLAUDE_MINIONS_PLAN.md` edits.
-- **2026-04-15** — Tillsyn tracking task created: `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` at project root, project `a5e87c34-3456-4663-9f32-df1b46929e30`). Will be relabelled `slice` once that kind is added to the project's allowed_kinds (Slice 2). Discussion flow: chat-primary; converged points mirrored back into this MD's §7; audit trail on the plan item via `till.comment`; full discussion writeup in `TOS_DISCUSSIONS.md`.
+- **2026-04-14** — ToS analysis complete; six gray zones identified (§4). Seven recommended adjustments proposed (§5). Five open design questions surfaced (§6). Pending dev discussion before any `PLAN.md` edits.
+- **2026-04-15** — Tillsyn tracking task created: `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` at project root, project `a5e87c34-3456-4663-9f32-df1b46929e30`). Will be relabelled `drop` once that kind is added to the project's allowed_kinds (Drop 2). Discussion flow: chat-primary; converged points mirrored back into this MD's §7; audit trail on the plan item via `till.comment`; full discussion writeup in `TOS_DISCUSSIONS.md`.
 - **2026-04-15** — **Cross-cutting A converged**: pure-headless Claude Code on Max $200 subscription using documented flags carries no meaningful ToS-violation risk. Automation-clause carve-out ("or where we otherwise explicitly permit it") is explicitly populated by `claude setup-token`, `--bare`, `-p`, `--max-budget-usd`, `--max-turns`, and the marketed multi-agent feature. Account-action triggers (AUP: guardrail bypass, scaled abuse, multi-account evasion, competing-product §D.4) do not fire for single-account dev use. Real risks are operational (Max weekly Opus quota / 5-hour session windows), not legal. Training opt-out verified ON on dev's account. The earlier "gray zone" framing in §4 of this doc overstated the legal axis — retracted; the gray zone is operational only.
-- **2026-04-15** — **Q3 converged**: day-one Slice 4 dispatch is **pure-headless** via `claude --bare -p ...` under dev's Max subscription. **Concurrency soft-cap N = 4 hard-coded** during dogfood period. Pre-Slice-4 orchestrator-called flow (per `CLAUDE.md`) unchanged through Slice 3. Refinement slices will layer on, in rough order: API-key path (Q1), CLI-app dispatch-approve flow, notification system, non-Anthropic providers (Q2), tier-dependent feature gating (Q4), user-facing compliance story (Q5). Configurability of the concurrency cap deferred to refinement. Claude's earlier "hybrid-day-one" recommendation withdrawn — it was a usability preference, not a compliance requirement.
+- **2026-04-15** — **Q3 converged**: day-one Drop 4 dispatch is **pure-headless** via `claude --bare -p ...` under dev's Max subscription. **Concurrency soft-cap N = 4 hard-coded** during dogfood period. Pre-Drop-4 orchestrator-called flow (per `CLAUDE.md`) unchanged through Drop 3. Refinement drops will layer on, in rough order: API-key path (Q1), CLI-app dispatch-approve flow, notification system, non-Anthropic providers (Q2), tier-dependent feature gating (Q4), user-facing compliance story (Q5). Configurability of the concurrency cap deferred to refinement. Claude's earlier "hybrid-day-one" recommendation withdrawn — it was a usability preference, not a compliance requirement.
 - **Pending** — Q1 (API-key path) discussion opens next.
 - **Pending** — Q2, Q4, Q5 convergence.
-- **Pending** — `CLAUDE_MINIONS_PLAN.md` §22 draft (records chosen posture + refinement-slice order; will land as a builder-gated edit after all five questions converge, per `TOS_COMPLIANCE.md` §5 recommendations).
+- **Pending** — `PLAN.md` §22 draft (records chosen posture + refinement-drop order; will land as a builder-gated edit after all five questions converge, per `TOS_COMPLIANCE.md` §5 recommendations).

@@ -116,7 +116,7 @@ cd /path/to/project && claude -p --agent my-agent "task prompt"
 - `internal/app/auth_requests.go` currently returns `ClaimedAuthRequestResult{Request, SessionSecret, Waiting}`.
 - That is not yet the richer bootstrap shape described in `TILLSYN_FIX_PROMPT.md`.
 - If minions are ordinary external actors that mutate Tillsyn directly, D7 still matters.
-- If Tillsyn becomes the sole controller of state mutation and Claude is only a subprocess worker, D7 becomes helpful but no longer a hard prerequisite for the first minion slice.
+- If Tillsyn becomes the sole controller of state mutation and Claude is only a subprocess worker, D7 becomes helpful but no longer a hard prerequisite for the first minion drop.
 
 ## 4. Main Architectural Conclusion
 
@@ -238,7 +238,7 @@ I would keep this separate from child rules. Child rules describe hierarchy. Min
 
 - D7 auth claim enrichment is very helpful if minions operate as independent Tillsyn actors.
 - D8 level-based signaling is not a first-cut requirement.
-- D3 item-scoped override auth matters for orchestrator and human repair flows, but not necessarily for the first "Tillsyn-controlled subprocess runner" slice.
+- D3 item-scoped override auth matters for orchestrator and human repair flows, but not necessarily for the first "Tillsyn-controlled subprocess runner" drop.
 
 ### 6.3 Important Design Fork
 
@@ -323,7 +323,7 @@ This validates the trigger, ledger, parser, and notification model before Claude
 - Should read-only QA minions ship before builder minions?
 - Do you want gate parsing to begin with a small typed set of parsers, or do you want a more general template DSL immediately?
 - Should `mage ci` be a post-run gate only, or can templates define pre-run, mid-run, and post-run command stages?
-- Do you want a run-detail TUI surface from the first minion slice, especially for diff, stdout, stderr, and parsed result?
+- Do you want a run-detail TUI surface from the first minion drop, especially for diff, stdout, stderr, and parsed result?
 - Do you want minions to depend on project-local Claude config discovery, or should Tillsyn construct a deterministic explicit Claude invocation for every run?
 
 ## 10. Source Links
