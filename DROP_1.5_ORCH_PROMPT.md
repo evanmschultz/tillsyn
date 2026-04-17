@@ -50,7 +50,7 @@ Drop 1.5 refactors `internal/tui` into small reusable components conforming to C
 
 **No `go-builder-agent` spawns until every step below closes.**
 
-1. **Full audit of `internal/tui`.** Spawn `go-planning-agent` (opus) to read every file in `internal/tui` via Hylla first, `Read` / `LSP` for anything Hylla misses. Audit deliverables (all in the plan-task's description at close):
+1. **Full audit of `internal/tui` — architect the post-Drop-1 shape, not the current one.** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) adds new display fields to `internal/tui` during the same window your audit runs. Read Drop 1's TUI-display plan-item (ID surfaces once DROP_1_ORCH's planning lands) via Hylla / Tillsyn to understand the imminent field additions, then architect with those fields already present. Auditing the pre-Drop-1 snapshot will architect around a moving target and churn the refactor. Spawn `go-planning-agent` (opus) to read every file in `internal/tui` via Hylla first, `Read` / `LSP` for anything Hylla misses. Audit deliverables (all in the plan-task's description at close):
    - Inventory: every file, its declared types, its current responsibilities, its LOC, its fan-in (refs) and fan-out (imports).
    - Elm-architecture conformance per file: does the file declare a Model / Update / View triple, and are they colocated correctly? Where are update cases dispatching into huge switch blocks that should split into sub-components?
    - Coupling map: which components reach into which others' internals? Which props / msgs are passed deep? Which Cmds are emitted from where?
@@ -218,6 +218,17 @@ Work the `DROP 1.5 END — LEDGER UPDATE` task (drop-orch-owned, `blocked_by` ev
 - **Architecture-proposal as a cross-cutting topic** — the §4.1 audit-first gate surfaces a new TUI component architecture that subsequent drops will lean on. File a DISCUSSIONS child under STEWARD's DISCUSSIONS parent (or comment on an existing one) naming the architecture plan-task ID so STEWARD can read the converged architecture at drop end and consider it for `WIKI.md` updates.
 - **STEWARD-to-you handoffs** — when STEWARD converges a cross-cutting decision that requires Go code changes inside Drop 1.5's TUI refactor scope, you receive a handoff and add the work as a Drop 1.5 plan item in your tree.
 - **Refinements-gate blocks Drop 1.5 closure** — the `DROP_1.5_REFINEMENTS_GATE_BEFORE_DROP_2` item you create at spin-up is STEWARD-owned state. It must close (by STEWARD) before Drop 1.5's level_1 can close. Do not attempt to close it yourself.
+
+## 11.1 Coordination With DROP_1_ORCH (Concurrent Drop)
+
+Drop 1 (first cascade-tree drop — `paths[]` / `packages[]`, `failed` state, parent-blocks-on-failed-child, auth auto-revoke, auth-hook project-specific cache) runs concurrently with Drop 1.5. `DROP_1_ORCH` is a second project-scoped orchestrator running alongside you and STEWARD; you are one of three, not one of two.
+
+- **Shared-package pinch point:** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) touches `internal/tui` for display of the new fields. You refactor the entire `internal/tui` package. CLAUDE.md's package-level blocking rule applies across drops — a single Go package shares one compile.
+- **Your §4.1 audit-first gate is read-only** — it runs concurrently with every Drop 1 builder with zero conflict. No coordination needed during audit / architecture / architecture-QA / dev-agreement / plan-fill-out.
+- **Your refactor build-tasks MUST NOT transition to `in_progress` until Drop 1's `internal/tui`-display build-task is `done` + merged** and DROP_1_ORCH posts a `till.handoff` addressed to `@DROP_1.5_ORCH` with `next_action_type: unblock`. Watch for that handoff via `till.handoff(operation=list)` before dispatching refactor builders.
+- **If your architecture QA needs a stable `internal/tui` snapshot** for a specific planning moment (e.g. a Bubble Tea runtime-behavior verification), file a DISCUSSIONS child with `@DROP_1_ORCH` + `@STEWARD` mentions requesting a freeze window; wait for STEWARD's arbitrated decision.
+- **Your refactor plan-items MUST declare `packages: ["internal/tui"]`** in the planner's decomposition so the conflict is visible to both orchestrators and the planner QA-falsification agent can attack missing blockers.
+- **STEWARD arbitrates** if the handoff timing slips. Surface cross-drop conflicts to STEWARD via a DISCUSSIONS child comment with `@STEWARD` mention.
 
 ## 12. Session Restart Recovery
 

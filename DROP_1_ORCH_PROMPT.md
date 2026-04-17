@@ -180,6 +180,17 @@ Work the `DROP 1 END — LEDGER UPDATE` task (drop-orch-owned, `blocked_by` ever
 - **Refinements-gate blocks Drop 1 closure** — the `DROP_1_REFINEMENTS_GATE_BEFORE_DROP_2` item you create at spin-up is STEWARD-owned state. It must close (by STEWARD) before Drop 1's level_1 can close. Do not attempt to close it yourself.
 - TOS_COMPLIANCE decisions (DISCUSSIONS child `3b4052ef-...`) converge under STEWARD; Drop 1 implements only what STEWARD hands you.
 
+## 11.1 Coordination With DROP_1.5_ORCH (Concurrent Drop)
+
+Drop 1.5 (TUI refactor) runs concurrently with Drop 1. `DROP_1.5_ORCH` is a second project-scoped orchestrator running alongside you and STEWARD; you are one of three, not one of two.
+
+- **Shared-package pinch point:** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) touches `internal/tui` for display of the new fields. Drop 1.5 refactors the entire `internal/tui` package. CLAUDE.md's package-level blocking rule applies across drops — a single Go package shares one compile.
+- **Your plan-items that touch `internal/tui` MUST declare `packages: ["internal/tui"]`** in the planner's decomposition so the conflict is visible to both orchestrators.
+- **DROP_1.5_ORCH's §4.1 audit-first gate is read-only** — it runs concurrently with every Drop 1 builder with zero conflict. No coordination needed during Drop 1.5's audit + architecture-QA phase.
+- **When your `internal/tui`-display build-task closes (done + merged), post a `till.handoff` addressed to `@DROP_1.5_ORCH`** with `next_action_type: unblock`, referencing the plan-item ID and the merge commit SHA. Body: one sentence confirming `internal/tui` is now free for refactor dispatch.
+- **If DROP_1.5_ORCH requests a freeze window** on `internal/tui` for a specific planning step (e.g. its architecture QA needs a stable snapshot), coordinate through a DISCUSSIONS child under STEWARD. Do not block your own work unilaterally.
+- **STEWARD arbitrates** if the handoff timing slips. Surface cross-drop conflicts to STEWARD via a DISCUSSIONS child comment with `@STEWARD` mention.
+
 ## 12. Session Restart Recovery
 
 Per CLAUDE.md § "Recovery After Session Restart":
