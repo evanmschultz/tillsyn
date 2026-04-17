@@ -1,6 +1,6 @@
 # Tillsyn — Project CLAUDE.md (main worktree)
 
-This file lives in the **`main/` worktree** at `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. This is the primary work checkout — all real coding, building, testing, and committing happens here. **The dev launches orchestrators from this directory.** The bare-root `CLAUDE.md` (one directory up) carries the same rules body; only the preamble differs.
+This file lives in the **`main/` worktree** at `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. `main/` is the `main`-branch checkout — real coding, building, testing, and committing against `main` happens here. **Drop orchs whose scope is the `main` branch launch from this directory.** STEWARD (the persistent MD-writing orchestrator) does NOT launch from `main/` — STEWARD launches from the bare root one directory up and edits `main/`'s files from there. The bare-root `CLAUDE.md` (one directory up) carries the same rules body; only the preamble differs.
 
 ## Tillsyn Is the System of Record
 
@@ -341,17 +341,41 @@ Run both for every build-task. They are asymmetric — proof checks whether the 
 | `/qa-falsification` | Falsification-oriented QA |
 | `semi-formal-reasoning` | Explicit reasoning certificate for semantic/high-risk work |
 
-## Semi-Formal Reasoning
+## Semi-Formal Reasoning — Section 0 Response Shape
 
-For semantic, high-risk, or ambiguous work:
+Every substantive response (anything beyond a trivial one-line answer or factual lookup) begins with a `# Section 0 — SEMI-FORMAL REASONING` block, then the normal response body in the `tillsyn-flow` numbered format. The shape is the rollout's adaptation of the certificate from arxiv 2603.01896 ("Agentic Code Reasoning," Ugare & Chandra, Meta, 4 Mar 2026), with two additions — **Evidence** and **Unknowns** as first-class fields — and one extension: an explicit multi-role self-review loop the paper does not include. The extension targets the paper's §4.3 residual failure mode: *"elaborate but incomplete reasoning chains ... leading to a confident but wrong answer."* A single writer can converge confidently on a wrong answer; a dedicated adversarial pass is the hedge.
 
-- **Premises** — what must be true
-- **Evidence** — grounded in Hylla / `git diff` / Context7 / `go doc` / gopls
-- **Trace or cases** — concrete paths through the code
-- **Conclusion** — the claim
-- **Unknowns** — what remains uncertain, routed into Tillsyn as a comment, handoff, or attention item
+### Section 0 Structure
 
-Short and inspectable.
+`# Section 0 — SEMI-FORMAL REASONING` contains five named passes as `##` subsections, in order:
+
+- `## Planner` — frame the goal, gather evidence, enumerate open questions.
+- `## Builder` — construct the proposed answer, design, or edit.
+- `## QA Proof` — verify every claim is backed by evidence and the trace covers every case.
+- `## QA Falsification` — actively attack the proposal via counterexamples, hidden dependencies, contract mismatches, YAGNI pressure, memory-rule conflicts. Each attack either mitigates or is explicitly accepted.
+- `## Convergence` — declare: (a) QA Falsification produced no unmitigated counterexample, (b) QA Proof confirmed evidence completeness, (c) remaining Unknowns are explicit and routed. If any of (a)/(b)/(c) fail, loop back to the earliest pass that needs re-work before declaring Convergence.
+
+Each pass uses the 5-field certificate where applicable. Not every pass needs all five, but the bundle as a whole must cover all five before Convergence:
+
+- **Premises** — what must be true.
+- **Evidence** — grounded in Hylla / `git diff` / Context7 / `go doc` / gopls / MDN / CanIUse / cited papers. Not implicit background.
+- **Trace or cases** — concrete paths through the reasoning.
+- **Conclusion** — the claim.
+- **Unknowns** — what remains uncertain, routed as a Tillsyn comment / handoff / attention item or explicitly accepted.
+
+### Body After Section 0
+
+After `# Section 0` closes, the response body uses the `tillsyn-flow` output style unchanged (`## 1. Section`, `- 1.1`, `## TL;DR`, `TN`). **Section 0 precedes the numbered body; it does not replace it.** `tillsyn-flow` remains the canonical source for body format.
+
+### Trivial-Answer Carve-Out
+
+One-line factual lookups, terse confirmations, and simple yes/no answers skip BOTH Section 0 AND the numbered body.
+
+### Subagent Pass-Through
+
+Subagents do NOT inherit CLAUDE.md. When delegating substantive work, the spawn prompt MUST include the Section 0 directive verbatim — and MUST remind the subagent that Section 0 reasoning lives in the orchestrator-facing response ONLY. Do NOT write Proposal / Planner / Builder / QA / Convergence pass text into Tillsyn `description`, `metadata.*`, `completion_contract.completion_notes`, closing comments, or any other Tillsyn artifact. Tillsyn stores finalized artifacts, not process.
+
+Canonical spec lives in `~/.claude/CLAUDE.md` §"Semi-Formal Reasoning — Section 0 Response Shape." This file mirrors it so project readers and subagents see the same rules.
 
 ## Evidence Sources
 
@@ -445,11 +469,12 @@ No co-authored-by trailers. No period at end. No capitalized first word after th
 
 ## Bare-Root and Worktree Discipline
 
-- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up) is the orchestration root — **not** a coding checkout. Git internals live under `.bare/`; a top-level `.git` pointer file redirects there (matches the fckin layout).
-- **One worktree per concurrent orchestrator.** The three active orchestrators operate in isolated sibling worktrees under the bare root:
-  - `main/` — STEWARD (persistent, branch `main`). Doc writes + post-merge refinements-gate work.
-  - `drop/1/` — DROP_1_ORCH (branch `drop/1`). Drop 1 code work (auth TTL, lifecycle, paths/packages, MCP additions).
-  - `drop/1.5/` — DROP_1.5_ORCH (branch `drop/1.5`). Drop 1.5 TUI work.
-- Always confirm `pwd` is the intended worktree before edits, tests, commits, or gopls work. Drop orchestrators run in their drop worktree; STEWARD runs here in `main/`.
-- **Dev launches each orchestrator from its own worktree.** Cascade agents dispatched by a drop-orch `cd` into that drop's worktree, not into `main/`.
+- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up from `main/`) is both the git orchestration root AND STEWARD's launch directory. Git internals live under `.bare/`; a top-level `.git` pointer file redirects there (matches the fckin layout).
+- **Orchestrator launch locations:**
+  - **bare root itself** — `STEWARD` (persistent). STEWARD launches from the bare root, auto-loads the bare-root `CLAUDE.md`, and operates on files in `main/` (and every other worktree when applicable) *without* `cd`ing into them. **STEWARD's `pwd` is the bare root, never `main/`.**
+  - `main/` — drop orchs whose scope is the `main` branch launch from here. None active today.
+  - `drop/1/` — `DROP_1_ORCH` (branch `drop/1`). Drop 1 code work (auth TTL, lifecycle, paths/packages, MCP additions).
+  - `drop/1.5/` — `DROP_1.5_ORCH` (branch `drop/1.5`). Drop 1.5 TUI work.
+- Drop orchs always launch from their branch's worktree. Cascade agents dispatched by a drop orch `cd` into that drop's worktree, not into `main/` and not into the bare root.
+- Always confirm `pwd` matches the intended role: bare root for STEWARD; `<worktree>/` for every drop orch.
 - Shared-package pinches (e.g. `internal/tui` touched by both Drop 1 and Drop 1.5) coordinate via `till.handoff` with `next_action_type: unblock`, not by shared git state.

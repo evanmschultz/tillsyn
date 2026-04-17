@@ -682,6 +682,16 @@ The cascade uses these agent types:
 
 ## 8. Auth and Lifecycle
 
+### 8.0. Pre-Cascade Auth Flow (Today, Pre-Drop-4)
+
+Until Drop 4 ships the dispatcher and Drop 1.6 ships the auth-approval cascade, auth flows manually:
+
+1. **Orchestrator auth** — dev approves every orchestrator launch in the TUI (STEWARD, DROP_N_ORCH). 12h TTL, 4h approval window. STEWARD pre-stages drop-orch auth requests on behalf of the dev so each orch launch is one TUI tap rather than a cold create-then-approve cycle.
+2. **Subagent auth (canonical post-§19.1.6)** — orch approves every non-orch subagent (planner, QA, builder, research, commit) auth request itself, scoped within the orch's subtree. Dev never sees subagent auth requests in the TUI. See §19.1.6 for the auth-layer rule and §8.1 below for the post-Drop-4 dispatcher-issued variant of the same idea.
+3. **Subagent auth (pre-§19.1.6 workaround, today)** — today's auth layer still gates approvals to the dev. Both `STEWARD_ORCH_PROMPT.md` §8.1 and `DROP_N_ORCH_PROMPT.md` Section A2 carry an S2 dev-fallback: orch attempts the approve call; if rejected, surface to dev in chat for manual TUI approval. Documented friction; resolved when §19.1.6 ships.
+
+The pre-cascade orchestrator IS the dispatcher — it picks the kind, picks the agent variant, spawns the subagent, provisions the auth, approves the auth (post-§19.1.6), and watches state transitions manually. Drop 4 replaces the orch-as-dispatcher loop with a real dispatcher; auth flow §8.1 below describes that target.
+
 ### 8.1. Auth Flow for Agents
 
 Agent auth is **pre-approved by the system**. No human approval step because:
@@ -1459,6 +1469,25 @@ The hard prerequisites from Section 17.1, shipped cleanly against the fresh proj
 - [ ] CLI failure listing: `till task list --state failed` (or `till failures list`) so the human can see `failed` tasks without TUI rendering. TUI rendering of `failed` is deferred post-dogfood.
 - [ ] **Deferred post-dogfood (documented here, not built yet):** orchestrator programmatic supersede via system-issued auth. Human CLI is enough for Wave-1-equivalent scope.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files to reflect the new required fields, the always-on block behavior, and the supersede CLI.
+
+### 19.1.6. drop 1.6 — Auth Approval Cascade (Orch Self-Approves Non-Orch Subagents)
+
+Sequenced **after Drop 1 + Drop 1.5** and **before Drop 2**. This drop unblocks the canonical orch-spawn-subagent flow documented in `STEWARD_ORCH_PROMPT.md` §8.1 and `DROP_N_ORCH_PROMPT.md` Section A2 — today the system gates every auth approval to the dev TUI, which makes orchs that need to spawn 5+ subagents per drop (planner / QA proof / QA falsification / builder / commit / research) untenable for the dev's approval bandwidth. The pre-fix workaround in those prompts is "if `approve` is rejected by today's guardrails, surface to dev in chat for manual TUI approval" — that workaround disappears when this drop ships.
+
+**Scope:**
+
+- [ ] **Auth-layer rule: orchs may approve non-orch subagent auth requests scoped within their own subtree.** The auth layer must accept `till_auth_request operation=approve` from a session whose `principal_role: orchestrator` AND whose lease scope encompasses the request's `path`, when the request's `principal_role` is non-orch (`planner | qa | builder | research | commit`). Reject orch-self-approval (an orch cannot approve another orchestrator's auth — that stays a dev-only operation). Cross-orch approval is also rejected (DROP_1_ORCH cannot approve DROP_1.5_ORCH's subagent requests; STEWARD cannot approve DROP_1_ORCH's subagent requests unless explicit dev opt-in lands in a later refinement).
+- [ ] **STEWARD cross-subtree exception:** STEWARD's project-scoped lease covers all six persistent level_1 parents, so STEWARD's approve calls cover any subagent request whose path roots under those parents. Drop orchs' branch-scoped leases cover only their own drop subtree — they cannot approve subagent auth for items they don't own. Drop orchs may add level_2 nodes under STEWARD's persistent parents (per Drop Orch Cross-Subtree Exception in `WIKI.md`), but subagent auth for work on those added nodes still routes through the drop orch (which created them) for approval, not STEWARD.
+- [ ] **No configurability in this drop.** Threshold knobs (e.g. "auto-approve only QA, route builder approval to dev"; "max subagents auto-approved per hour"; "specific subagent roles always go to dev") are explicitly deferred to a later refinement drop in §19.10. This drop ships the binary capability: orch-approves-non-orch-subagent-in-subtree, full-stop.
+- [ ] **Dev opt-out switch (project-scope):** project-scope toggle `metadata.orch_self_approval_enabled: bool` (default `true` once the capability lands) so a dev who wants every approval to flow through TUI for a given project can flip it off without rebuilding. Backstop, not the everyday path.
+- [ ] **Audit trail:** every orch-approved auth request must record the approving orch's `agent_instance_id` + `lease_token` + `principal_id` in the auth approval row so post-hoc audit shows "STEWARD approved STEWARD_PLANNER_DISCUSSIONS_TYPE_OVERHAUL on 2026-04-22" rather than just "approved". Surface in the TUI auth log so the dev can scan recent approvals.
+- [ ] **MCP-layer test coverage:** new golden tests for the four interesting cases — (1) orch-in-subtree approves non-orch in same subtree → success; (2) orch-in-subtree tries to approve another orchestrator → rejected; (3) orch-A tries to approve orch-B's subagent in B's subtree → rejected; (4) STEWARD approves a subagent under one of its persistent parents → success.
+- [ ] **Prompt updates after the capability lands:** delete the S2 dev-fallback paragraph from `STEWARD_ORCH_PROMPT.md` §8.1 + `DROP_N_ORCH_PROMPT.md` Section A2 (replace with a one-line "S2 always succeeds — no dev hop"). Update memory `feedback_steward_spawn_drop_orch_flow.md` and `project_steward_auth_bootstrap.md` to drop the dev-fallback caveat. STEWARD owns the prompt + memory edits per the standard post-merge MD-write flow.
+- [ ] **Per-drop wrap-up:** update CLAUDE.md (Auth and Leases section) + agent files (auth-claim sections) to reflect the new approval flow.
+
+**Why this slot:** Drop 1 ships the `failed` lifecycle + paths/packages + auth auto-revoke — those primitives are all that the approval-cascade rule needs to wire against. Drop 1.5 ships the TUI work that surfaces the new auth-log audit trail cleanly. Drop 2 starts hierarchy refactor (kind collapse + drop rename); doing the auth fix before Drop 2 keeps the approval-rule tests stable on today's kind vocabulary, then Drop 2 sweeps the renames through them. Slotting between 1.5 and 2 is the lowest-risk window.
+
+**Pre-1.6 workaround (current state, pre-merge of this drop):** STEWARD and drop orchs surface every subagent auth request to the dev in chat when today's `approve` call is rejected. Friction is real but bounded — each cycle is one chat round-trip. The workaround is documented in both orch prompts under the relevant auth sections so it survives across compactions.
 
 ### 19.2. drop 2 — Hierarchy Refactor
 

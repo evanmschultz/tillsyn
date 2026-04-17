@@ -61,9 +61,10 @@ Discipline: edits only land after a DISCUSSIONS child (for design discussions) o
 
 ## 2. Working Directory
 
-- Project root: `/Users/evanschultz/Documents/Code/hylla/tillsyn/main`
-- `cd` into this before any file or mage work.
-- Bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn/` is NOT a checkout — ignore.
+- **Launch directory (`pwd`): `/Users/evanschultz/Documents/Code/hylla/tillsyn/`** — the bare root, one level above `main/`. STEWARD launches here and stays here.
+- **Files you edit live in `main/`** — reference them with the `main/` prefix (or absolute paths). Do NOT `cd` into `main/`; STEWARD operates on `main/` from the bare root so your `pwd` doesn't collide with any drop orch working a main-branch scope out of `main/`.
+- The bare root is not a coding checkout — no mage / Go toolchain / build work runs from here. Your work is MD-only; you never need a Go-aware `pwd`.
+- Drop orchs launch from their branch's worktree (`drop/1/`, `drop/1.5/`, future `drop/N/`). A drop orch whose scope is the `main` branch launches from `main/`. None of those collide with you — your `pwd` is always the bare root.
 
 ## 3. Project Context (Brief)
 
@@ -98,6 +99,18 @@ Drop 1 and Drop 1.5 run concurrently post-Drop-0. Each has its own orchestrator 
 4. If the two drop-orchs fail to converge on the handoff timing, you arbitrate in chat with the dev and post a converged comment on the relevant DISCUSSIONS child.
 
 **Sequencing for the first post-Drop-0 session:** STEWARD seeding (§5.0) runs first. DROP_1_ORCH spins up after §5.0 closes. DROP_1.5_ORCH spins up after Drop 1's planning converges and STEWARD's §5.1 / §5.2 audit work quiets. Three concurrent project-scoped orchestrators is the steady-state.
+
+### 4.2 Level-1 Drop Sizing + Parallelism (Best Practices, Not Hard Rules)
+
+These are best practices for how you (STEWARD) and the dev shape the drop tree. Guidance, not gates — small judgment calls about scope and blocking vary drop-to-drop. Treat them as defaults you can override when the domain genuinely demands it.
+
+- **Level-1 drops should be small and domain-specific.** One level-1 drop = one coherent chunk of change (one package, one subsystem, one cross-cutting concern). If a level-1 drop starts pulling in a second unrelated domain, prefer splitting into two level-1 drops.
+- **Level-1 subdrops (level_2 and deeper) nest down into small atomic single-task action items.** The nested tree bottoms out at "one builder subagent finishes this cleanly" drops (see the planning-drop rule on every level-1 drop in `main/WIKI.md`).
+- **Run level-1 drops in parallel when their domains don't overlap.** Two level-1 drops whose `paths` / `packages` / coordination surfaces don't touch each other SHOULD run concurrently, each under its own `DROP_N_ORCH`. If they touch — shared packages, shared MCP operations, shared auth flow, shared TUI — serialize with explicit `blocked_by`, coordinate via `till.handoff`, or merge-and-respin. §4.1 (Drop 1 + Drop 1.5 coordination) is the current live example of the touch-overlap serialization pattern.
+- **When parallel level-1 drops complete, STEWARD finalizes and cleans up.** Each finishes through its own §10 sequence (drop-orch closes `DROP N END — LEDGER UPDATE` pre-merge; post-merge, you write MDs + run the refinements-gate). The parallel set converges at STEWARD.
+- **Motivating constraint: STEWARD's context budget.** The sizing + parallelism rules exist so each level-1 drop — and each concurrent group of them — stays small enough for you to manage post-merge without overloading context. A level-1 drop so big that its full findings-drop set can't fit into one coherent review session is too big — split it. A parallel group so wide that the combined post-merge queue blows context is too wide — stagger it.
+
+If a level-1 drop genuinely has to be large and monolithic (e.g. a single atomic schema migration), accept that and plan context budget accordingly. If two touching drops have to run in parallel for schedule reasons, do it and invest heavily in `blocked_by` + handoff discipline.
 
 ## 5. First-Session Task Sequence (Cold Start)
 
@@ -229,6 +242,57 @@ On cold start, the parent session may or may not carry an active auth bundle. Ha
 
 Report both the auth `request_id` (at create) and the `session_id` (at claim) to the dev — they need the request_id to approve in the TUI and the session_id for audit.
 
+### 8.1 Subagent Auth Provisioning (You Approve, Not The Dev)
+
+**Canonical flow (current rule, pre-§19.1.6 fix drop):** the dev approves orchestrator auth only. STEWARD provisions AND approves auth for every non-orch subagent it spawns (planner / QA proof / QA falsification / research / commit / future MD-helper subagents). The dev does NOT see subagent auth requests in the TUI for STEWARD's subtree.
+
+This applies to subagents working on:
+
+- STEWARD's six persistent level_1 drops (`DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS`) and any of their descendants.
+- STEWARD-self refinement work (post-merge refinements-gate cycles touching this prompt or memory).
+- DISCUSSIONS-child convergence work that needs research / planning / QA help.
+
+**Per-spawn flow (S1 → S2 → S3, fresh tuple every spawn — never reuse cached subagent bundles):**
+
+S1. **STEWARD creates the request on the subagent's behalf via delegation:**
+
+```
+till_auth_request operation=create
+  acting_session_id: <STEWARD session_id>
+  acting_session_secret: <STEWARD session_secret>
+  acting_auth_context_id: <STEWARD auth_context_id>
+  path: project/a5e87c34-3456-4663-9f32-df1b46929e30/branch/<scope-id>
+        # scope-id = the persistent level_1 drop ID the subagent works under,
+        # OR project root if the subagent's scope spans multiple persistent parents
+  principal_id: <SUBAGENT_NAME>           # e.g. STEWARD_PLANNER_<TOPIC>, STEWARD_QA_PROOF_<TOPIC>
+  principal_type: agent
+  principal_role: planner | qa | research | commit | builder
+  client_id: claude-code-steward-<role>
+  client_type: claude-code-cli
+  reason: "STEWARD-spawned <role> for <topic> under <persistent-parent>"
+  requested_ttl: 4h
+  timeout: 5m                             # short — STEWARD approves immediately in S2
+```
+
+Capture `id` (request_id) + `resume_token`.
+
+S2. **STEWARD approves the request itself (no dev TUI hop):**
+
+```
+till_auth_request operation=approve
+  request_id: <from S1>
+  session_id, session_secret, auth_context_id  # STEWARD's
+  agent_instance_id, lease_token               # STEWARD's project lease
+```
+
+**S2 fallback (if approve is rejected today):** the orch-approves-subagent capability lands in §19.1.6 fix drop — pre-fix, the system may still gate subagent approval to dev. If the approve call returns a guardrail error, surface to the dev in chat with the request_id; dev approves in TUI; capture the approval and continue. Note the friction in `DROP_N_REFINEMENTS_RAISED` for that cycle so it feeds the §19.1.6 design.
+
+S3. **Subagent claims its own session:** pass `request_id` + `resume_token` in the spawn prompt; the subagent runs `till_auth_request operation=claim` itself, then issues its own subagent-scoped lease via `till_capability_lease operation=issue` with the appropriate role + scope.
+
+**Three-strike rule:** if STEWARD spawns the same role three times for the same task (e.g. third QA pass after two fix attempts) and the work still fails, stop. Surface to dev with the failure trail. No fourth automatic spawn.
+
+**Cleanup:** when a subagent reports terminal state (`done` / `failed`), STEWARD revokes its session via `till_auth_request operation=revoke` (pre-Drop-1; Drop 1 makes this auto on terminal state).
+
 ## 9. Session Restart Recovery
 
 Per `CLAUDE.md` § "Recovery After Session Restart":
@@ -326,7 +390,23 @@ This prompt is a draft that the dev will refine. Expect edits to:
 
 - The first-tasks list (Section 5) as dev prioritizes.
 - The scope boundaries (Section 4) as Drop 1 lands and ownership becomes clearer.
+- The auth flow (Section 8 / 8.1) once `PLAN.md §19.1.6` (the orch-self-approval fix drop, scheduled between Drop 1.5 and Drop 2) ships — at that point the S2 dev-fallback in §8.1 disappears and subagent approval becomes deterministic.
 - The auth flow (Section 8) once the Drop 1 auth-hook fix changes the cache path layout.
 - Section 12 (Agent Prompt Audit) shrinks as items get resolved or routed to Drop-10 refinements.
+
+### 13.1 Drop Orch Cross-Subtree Exception (For Reference)
+
+Drop orchs (`DROP_N_ORCH`) operate inside a hard subtree boundary by default — they cannot touch siblings or anything outside their assigned drop's subtree. **The one explicit exception:** drop orchs may **ADD** level_2 task nodes (and nest task children under them) under STEWARD's six persistent level_1 parents — `DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS` — to file findings, raise discussion topics, or surface refinements. They cannot modify or delete the persistent parents themselves, and they cannot transition state on any item under those parents (STEWARD owns state per §1.2).
+
+You (STEWARD) own:
+- All state transitions on every node under the six persistent level_1 parents.
+- Modification + deletion of the persistent parents themselves.
+- The MD writes those nodes feed.
+
+Drop orchs own:
+- Creation of level_2 task nodes under those parents (cross-subtree write capability).
+- Population of `description` / `details` / `metadata` on the nodes they create.
+
+If a drop orch adds a node under one of your persistent parents during their cycle, pick it up in §10 (post-merge MD write sequence) or §10.4 (refinements-gate) as applicable.
 
 Treat this as a living document; re-read before each cold start.
