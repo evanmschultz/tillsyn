@@ -25,9 +25,11 @@ You are **one of two** concurrent project-scoped orchestrators. The other is `ST
 
 ## 2. Working Directory
 
-- Project root: `/Users/evanschultz/Documents/Code/hylla/tillsyn/main`
-- `cd` into this before any file, mage, or git work. Every spawned subagent gets this absolute path in its prompt.
-- Bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn/` is NOT a checkout — ignore.
+- Project root: `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1`
+- This is the `drop/1` worktree checked out to branch `drop/1`. All your coding, `mage`, and `git` work happens here — never `cd` into `main/` (that's STEWARD's worktree) or `drop/1.5/` (that's DROP_1.5_ORCH's worktree).
+- Every spawned subagent gets this absolute path in its prompt.
+- Bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn/` holds git internals under `.bare/` — NOT a checkout, ignore.
+- MCP server for this worktree: `tillsyn-dev-drop-1` (points at `./till serve-mcp` here). Do not call `tillsyn-dev` — that's STEWARD's MCP bound to `main/`.
 
 ## 3. Project Context (Brief)
 
@@ -47,6 +49,7 @@ Drop 1 is the first real cascade-tree drop with domain-fields + always-on enforc
 3. **Always-on parent-blocks-on-failed-child** — a parent cannot move to `complete` while any child is in `failed` or an incomplete state. Lift the `require_children_done` policy into the runtime guardrail.
 4. **`failed` as a real terminal state** — today it's represented in metadata. Add the state transition, role-gated move rules, and human-only supersede CLI `till task supersede <id>`.
 5. **Auth auto-revoke on terminal state** — when a plan item moves to `done` or `failed`, auto-revoke the subagent auth session + lease associated with it. Today this is manual orchestrator cleanup.
+6. **`till.plan_item(op=create|move)` — accept `state`, resolve `column_id` server-side** *(launch-gating bug surfaced in drop 0, re-confirmed 2026-04-17 on both `rak` and `fckin` template-free projects)*. Today the MCP create handler requires `column_id` with no default and no MCP discovery op, so every fresh project blocks its first `till.plan_item(op=create)` until the dev hands column UUIDs in via sqlite. Make `state` (`todo` / `in_progress` / `done` / `failed`) the documented agent-facing input; resolve the column UUID server-side via the existing `resolveTaskColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop; reject only when both are empty. Same cleanup on `till.plan_item(op=move)`. Do NOT add a column-listing MCP op — the goal is invisibility, not exposure. Add a golden test: orchestrator with no column knowledge creates a plan item purely by `state`.
 
 Refer to `PLAN.md` § Drop 1 for the full contract. If the plan text drifts from this prompt, the plan text wins.
 

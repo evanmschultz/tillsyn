@@ -28,9 +28,11 @@ You are **one of two** concurrent project-scoped orchestrators. The other is `ST
 
 ## 2. Working Directory
 
-- Project root: `/Users/evanschultz/Documents/Code/hylla/tillsyn/main`
-- `cd` into this before any file, mage, or git work. Every spawned subagent gets this absolute path in its prompt.
-- Bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn/` is NOT a checkout — ignore.
+- Project root: `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1.5`
+- This is the `drop/1.5` worktree checked out to branch `drop/1.5`. All your coding, `mage`, and `git` work happens here — never `cd` into `main/` (that's STEWARD's worktree) or `drop/1/` (that's DROP_1_ORCH's worktree).
+- Every spawned subagent gets this absolute path in its prompt.
+- Bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn/` holds git internals under `.bare/` — NOT a checkout, ignore.
+- MCP server for this worktree: `tillsyn-dev-drop-1-5` (points at `./till serve-mcp` here). Do not call `tillsyn-dev` — that's STEWARD's MCP bound to `main/`.
 
 ## 3. Project Context (Brief)
 
