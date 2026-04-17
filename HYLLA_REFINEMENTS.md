@@ -1,8 +1,8 @@
 # Hylla Findings and Refinements
 
-Append-only log of Hylla ergonomics, search-quality, and product issues discovered during Tillsyn work. Hylla is a sibling project — product fixes land in the Hylla project, not in Tillsyn. Entries here propagate into the Hylla project inside Tillsyn (see bare-root `CLAUDE.md` for the post-Slice-0 HYLLA project setup slice owned by the bare-root orchestrator only).
+Append-only log of Hylla ergonomics, search-quality, and product issues discovered during Tillsyn work. Hylla is a sibling project — product fixes land in the Hylla project, not in Tillsyn. Entries here propagate into the Hylla project inside Tillsyn (see bare-root `CLAUDE.md` for the post-Drop-0 HYLLA project setup drop owned by the bare-root orchestrator only).
 
-Format: newest-first. Each entry dated and tagged with the slice it was discovered in. Structure per entry:
+Format: newest-first. Each entry dated and tagged with the drop it was discovered in. Structure per entry:
 
 - **Context** — what the session was doing.
 - **Calls + inputs** — exact Hylla tools, parameters, and results.
@@ -12,10 +12,10 @@ Format: newest-first. Each entry dated and tagged with the slice it was discover
 
 ---
 
-## 2026-04-14 — Slice 0 — Glamour theme hunt (library-name lookup)
+## 2026-04-14 — Drop 0 — Glamour theme hunt (library-name lookup)
 
 ### Context
-Slice 0 continuation after compaction. Dev flagged a `glamour` theme update + commit pin (`e799a9f`). Orchestrator tried to locate the markdown renderer file to confirm the theme change landed in code.
+Drop 0 continuation after compaction. Dev flagged a `glamour` theme update + commit pin (`e799a9f`). Orchestrator tried to locate the markdown renderer file to confirm the theme change landed in code.
 
 ### Hylla calls + inputs
 1. `hylla_search_keyword` — `query="glamour"`, `artifact_ref="github.com/evanmschultz/tillsyn@main"`, `fields=["content","summary","docstring"]`, `limit=30` → **0 results.**
@@ -36,7 +36,7 @@ Slice 0 continuation after compaction. Dev flagged a `glamour` theme update + co
 - **Behavior-vs-data-carrier ranking bias.** Rank files whose primary symbols are funcs / methods above files whose primary symbols are structs / interfaces when the query is action-shaped (`"render markdown"`, `"parse config"`, `"dispatch task"`).
 - **Schema cleanup.** Unify `field` (vector) vs `fields` (keyword) — or at minimum, error messages that name the parameter (`"field 'fields' must be one of summary|content|docstring"`) and the tool path.
 - **Summary contract.** LLM summaries should include, minimum: (a) third-party imports actually used, (b) one-sentence behavior statement. Improves recall on library-name and concept queries.
-- **Local-overlay dirty mode.** Hylla is always one slice behind (ingest lags push). A local-overlay mode that reads uncommitted / untracked files and merges them into search results would cut the "Hylla is stale for my current diff" friction.
+- **Local-overlay dirty mode.** Hylla is always one drop behind (ingest lags push). A local-overlay mode that reads uncommitted / untracked files and merges them into search results would cut the "Hylla is stale for my current diff" friction.
 
 ### Current-usage implications (see `HYLLA_WIKI.md`)
 - Query by concept, never by library / import name.

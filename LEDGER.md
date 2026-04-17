@@ -1,11 +1,11 @@
 # Tillsyn Cascade Ledger
 
-Per-slice snapshot of project state, cost, and code-quality deltas. Populated by the orchestrator at two moments:
+Per-drop snapshot of project state, cost, and code-quality deltas. Populated by the orchestrator at two moments:
 
 - Once, at project start: **Starting Baseline** below.
-- Per-slice, at slice-end: a new `## Slice <N> — <Title>` section appended by the `SLICE <N> END — LEDGER UPDATE` task.
+- Per-drop, at drop-end: a new `## Drop <N> — <Title>` section appended by the `DROP <N> END — LEDGER UPDATE` task.
 
-**Hylla ingest invariants (every slice-end ingest):**
+**Hylla ingest invariants (every drop-end ingest):**
 
 - Full enrichment (`enrichment_mode=full_enrichment`) — never `structural_only`.
 - From the GitHub remote.
@@ -16,7 +16,7 @@ Per-slice snapshot of project state, cost, and code-quality deltas. Populated by
 
 ---
 
-## Starting Baseline — 2026-04-13 (pre-Slice-0)
+## Starting Baseline — 2026-04-13 (pre-Drop-0)
 
 - **Artifact ref**: `github.com/evanmschultz/tillsyn@main`
 - **Ingest snapshot**: 3
@@ -29,25 +29,25 @@ Per-slice snapshot of project state, cost, and code-quality deltas. Populated by
 - **Cumulative cost-to-date (lineage)**: $8.2342 across all snapshots to date
   - Summary calls: 4,780 · embedding calls: 4,626 · reused: 114
   - Tokens: 14,210,218 input / 2,553,216 output / 1,898,816 reasoning
-- **Node count**: TBD — first populated count is captured at the `SLICE 0 END — LEDGER UPDATE` run. Format at that point: `total: N, code: A, tests: B, packages: C` with `A + B + C = N - 1`.
-- **Orphan count (baseline)**: TBD — same as node count, first captured at Slice 0 end.
+- **Node count**: TBD — first populated count is captured at the `DROP 0 END — LEDGER UPDATE` run. Format at that point: `total: N, code: A, tests: B, packages: C` with `A + B + C = N - 1`.
+- **Orphan count (baseline)**: TBD — same as node count, first captured at Drop 0 end.
 - **Ingest run IDs (lineage)**:
   - `inspect-update-1776113037713825000-github-com-evanmschultz-tillsyn-main` (snapshot 3, 2026-04-13)
   - Prior snapshots: 1 (commit `b411b48`), 2 (commit `870de3e`).
 
 ---
 
-## Slice 0 — Project Reset + Docs Cleanup
+## Drop 0 — Project Reset + Docs Cleanup
 
-_To be populated by the `SLICE 0 END — LEDGER UPDATE` task once Slice 0 closes._
+_To be populated by the `DROP 0 END — LEDGER UPDATE` task once Drop 0 closes._
 
-Template for every slice entry (append to this file; do not rewrite prior entries):
+Template for every drop entry (append to this file; do not rewrite prior entries):
 
 ```
-## Slice <N> — <Title>
+## Drop <N> — <Title>
 
 - **Closed**: YYYY-MM-DD
-- **Slice plan-item ID**: <uuid>
+- **Drop plan-item ID**: <uuid>
 - **Ingest snapshot**: <snapshot_int>
 - **Commit**: `<sha>` (git describe: `<short>`)
 - **Ingest cost (this run)**: $X.XXXX
@@ -56,7 +56,7 @@ Template for every slice entry (append to this file; do not rewrite prior entrie
 - **Orphan count**: prev → now (found P, cleaned Q, residual R)
 - **Refactors / code-quality deltas**:
   - bullet
-- **Description**: 2–3 sentence summary of what shipped in this slice.
+- **Description**: 2–3 sentence summary of what shipped in this drop.
 - **Commit SHAs**: sha1, sha2, …
 - **Notable plan-item IDs**: uuid1, uuid2, …
 - **Unknowns forwarded**: bullet, or "none".

@@ -8,8 +8,9 @@ All work is tracked in Tillsyn. No exceptions.
 
 - No markdown files for work tracking, coordination, worklogs, or execution state.
 - **Tillsyn = durable truth. Every piece of work gets a Tillsyn plan item before it starts.**
-- **Claude Code built-in `TaskCreate` / `TaskUpdate` / `TaskList` are in-session scratch — use them alongside Tillsyn** when an orchestrator turn spans ≥3 discrete actions (Tillsyn mutations, file edits, commits, etc.). Tillsyn holds the durable *what*; built-in todos hold the procedural *how* for one session. Not a replacement — belt-and-suspenders while Tillsyn behavior is still stabilizing.
-- **When work starts on a plan item, move it to `in_progress` immediately.** No items left in `todo` while being worked on. Same status discipline applies to in-session todos.
+- **Use Tillsyn exclusively for work tracking.** Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they are in-session-only and evaporate on compaction/restart. If a turn needs finer procedural granularity, decompose into child Tillsyn plan items rather than bolting on a parallel in-session tracker.
+- **When work starts on a plan item, move it to `in_progress` immediately.** No items left in `todo` while being worked on.
+- **Read `main/WIKI.md` at session start and after every compaction.** The wiki is the living best-practice snapshot for this project and changes drop-by-drop. CLAUDE.md is auto-loaded; WIKI.md is NOT — you must read it deliberately. On the first turn after cold-start or compaction, Read `WIKI.md` before substantive orchestration.
 
 ### Discussion Mode (Chat-Primary Until TUI Ergonomics Land)
 
@@ -17,22 +18,43 @@ Cross-cutting decisions still park on a Tillsyn plan item (description = converg
 
 ## Cascade Plan
 
-The cascade (state-triggered autonomous agent dispatch) is designed in `CLAUDE_MINIONS_PLAN.md` (lives in this directory — moved from bare-root in Slice 0 so it is git-tracked with the rest of the repo). That plan is the source of truth for cascade architecture, slice ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
+The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory — moved from bare-root in Drop 0 so it is git-tracked with the rest of the repo; renamed from `CLAUDE_MINIONS_PLAN.md` during the 2026-04-16 consolidation pass). That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
+
+## Pre-Consolidation Source Archive
+
+Fold-source MD files from the 2026-04-16 consolidation pass live in `OLD_MDS/`. They are kept on disk (not deleted) so the dev can verify no content was lost before the eventual deletion. Contents:
+
+- `OLD_MDS/HEADLESS_DISCUSSIONS.md` — folded into `PLAN.md` §4.1 / §19.10 / §23 / §24 and drop-4.5 scope.
+- `OLD_MDS/TOS_COMPLIANCE.md` — folded into `PLAN.md` §22 (verbatim quote appendix §22.4.1–22.4.6) and §22.5 engineering-constraint carryover.
+- `OLD_MDS/TOS_DISCUSSIONS.md` — converged rows folded into `PLAN.md` §22; pending Qs threaded into refinement-drop bullets under §19.10.
+- `OLD_MDS/MINIONS_RESEARCH_2026-04-13.md` — folded into `PLAN.md` §20 open questions + §21 source links + risk register.
+- `OLD_MDS/TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md` — folded into `README.md` §Integration Framing For MCP Clients.
+- `OLD_MDS/temp.md` — the pre-apply Consolidation Decisions Ledger that drove this pass (preserved as audit trail).
+
+When looking for pre-consolidation context that seems missing from `PLAN.md` or `README.md`, check `OLD_MDS/` first before assuming drift.
 
 ## Cascade Tree Structure (Template Architecture)
 
-This is the cascade's template architecture by plan-item `kind`. **Slice 3 encodes this tree as a template** and **Slice 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually using whatever generic kinds the fresh project starts with — the structure, blockers, and agent roles below are the contract.
+This is the cascade's template architecture by plan-item `kind` — the **post-Drop-2 target state**. **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually, but the `kind` values written into Tillsyn today are constrained by what Drop 2 Go can read — see "Pre-Drop-2 Creation Rule" below. The Kind Hierarchy / Agent Bindings sections describe the target shape, not the current runtime writes.
+
+### Pre-Drop-2 Creation Rule (Current HEAD)
+
+Until Drop 2 ships the Go kind-collapse + `Task → Drop` rename, **every new plan item under a project is created with `kind='task', scope='task'`**. Do NOT use the other registered kinds (`build-task`, `subtask`, `qa-check`, `plan-task`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, any `*-phase` variant, `decision`, `note`) even though they remain in `kind_catalog` — `main/scripts/drops-rewrite.sql` (dev-run after Drop 2 Go ships) rewrites every non-project kind to `drop`.
+
+**Role on description prose, not metadata (pre-Drop-2):** note role in the description (`Role: builder`, `Role: qa-proof`, `Role: qa-falsification`, `Role: qa-a11y`, `Role: qa-visual`, `Role: design`, `Role: commit`, `Role: planner`). Drop 2 lands `metadata.role` as a first-class field; the SQL hydrates it from each item's pre-collapse `kind`.
+
+**Same-scope nesting is allowed.** A `task` drop may nest under another `task` drop — `task` kind has no parent-scope restriction in `kind_catalog`. Same-scope nesting has live precedent (`subtask@subtask` under `subtask@subtask` in TILLSYN as of 2026-04-16). If the first nested `task@task` create is rejected by the MCP layer, fall back to `kind='subtask', scope='subtask'` for nested layers and flag the rejection.
 
 ### Kind Hierarchy
 
 ```
 project                                 kind: project
-└── slice (infinitely nestable)         kind: slice
+└── drop (infinitely nestable)         kind: drop
       ├── plan-task                     kind: plan-task          ─→ agent: go-planning-agent          (opus)
       │   ├── plan-qa-proof             kind: qa-check           ─→ agent: go-qa-proof-agent          (opus)
       │   └── plan-qa-falsification     kind: qa-check           ─→ agent: go-qa-falsification-agent  (opus)
       │
-      ├── slice (sub-slice)             kind: slice               (same shape, recurses infinitely)
+      ├── drop (sub-drop)             kind: drop               (same shape, recurses infinitely)
       │
       └── task (build-task)             kind: task               ─→ agent: go-builder-agent           (sonnet)
             ├── qa-proof                kind: qa-check           ─→ agent: go-qa-proof-agent          (sonnet)
@@ -41,24 +63,24 @@ project                                 kind: project
 
 ### Required Children (Auto-Create Rules)
 
-- **Every `slice`** auto-creates three children on creation: `plan-task`, `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Slice 3.
+- **Every `drop`** auto-creates three children on creation: `plan-task`, `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Drop 3.
 - **Every `task`** (build-task) auto-creates two children on creation: `qa-proof`, `qa-falsification`.
 - `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan-task` — they fire in parallel after the plan-task completes.
 - `qa-proof` and `qa-falsification` under a build-task are `blocked_by: task` — they fire in parallel after the build-task completes **and** its post-build gates pass (see below).
-- Slices nest infinitely. A planner creates sub-slices when decomposition needs to continue, or build-tasks when the work is granular enough.
+- Drops nest infinitely. A planner creates sub-drops when decomposition needs to continue, or build-tasks when the work is granular enough.
 
 ### Agent Bindings
 
 Pre-cascade: orchestrator spawns these manually via the `Agent` tool using Tillsyn auth credentials in the prompt.
-Post-Slice-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
+Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
 
 | Kind | Agent | Model | Role | Edits Code? |
 |---|---|---|---|---|
-| `plan-task` (slice-level) | `go-planning-agent` | opus | `planner` | No |
+| `plan-task` (drop-level) | `go-planning-agent` | opus | `planner` | No |
 | `qa-check` under `plan-task` | `go-qa-proof-agent` / `go-qa-falsification-agent` | opus | `qa` | No |
 | `task` (build-task) | `go-builder-agent` | sonnet | `builder` | **Yes** |
 | `qa-check` under `task` | `go-qa-proof-agent` / `go-qa-falsification-agent` | sonnet | `qa` | No |
-| commit-agent *(Slice-4+, post-build gate)* | `commit-message-agent` | haiku | `commit` | No |
+| commit-agent *(Drop-4+, post-build gate)* | `commit-message-agent` | haiku | `commit` | No |
 
 ### Post-Build Gates (Deterministic, Between Build-Task And Its QA)
 
@@ -67,23 +89,23 @@ After a build-task reports success, before its `qa-*` children become eligible, 
 1. **`mage ci`** — on fail, the build-task moves to `failed`, gate output posted as a comment.
 2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below).
 3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
-4. **Hylla reingest** — NOT per-task. Slice-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Slice End — Ledger Update Task" below. Agents never call `hylla_ingest`.
+4. **Hylla reingest** — NOT per-task. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop End — Ledger Update Task" below. Agents never call `hylla_ingest`.
 
 Only after all gates pass do the build-task's QA children fire.
 
 ### Blocker Semantics
 
-- **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on parent-blocks-on-failed-child arrives in Slice 1.
-- **`blocked_by`** — the only sibling and cross-slice ordering primitive. Planner sets these at creation time; dispatcher adds runtime blockers when file/package locks conflict (Slice 4+).
+- **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on parent-blocks-on-failed-child arrives in Drop 1.
+- **`blocked_by`** — the only sibling and cross-drop ordering primitive. Planner sets these at creation time; dispatcher adds runtime blockers when file/package locks conflict (Drop 4+).
 - **File- and package-level blocking** — sibling build-tasks sharing a file in `paths` OR a package in `packages` MUST have an explicit `blocked_by` between them. Plan QA falsification attacks missing blockers. Package-level locking exists because a single Go package (e.g. `internal/domain` with ~25 files) shares one compile — editing different files in the same package still breaks the other agent's test run.
 
 ### State-Trigger Dispatch
 
-Moving a plan item to `in_progress` is the dispatch trigger (Slice 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt.
+Moving a plan item to `in_progress` is the dispatch trigger (Drop 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt.
 
 ## Tillsyn Project
 
-The tillsyn project was **reset in Slice 0** — the prior messy project (`a0cfbf87-b470-45f9-aae0-4aa236b56ed9`, `default-go` template) was renamed to `TILLSYN-OLD` and a fresh, template-free project was created. Retiring `TILLSYN-OLD` via delete or archive is a Slice 10 refinement (project lifecycle ops bullet).
+The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf87-b470-45f9-aae0-4aa236b56ed9`, `default-go` template) was renamed to `TILLSYN-OLD` and a fresh, template-free project was created. Retiring `TILLSYN-OLD` via delete or archive is a Drop 10 refinement (project lifecycle ops bullet).
 
 - **Project ID**: `a5e87c34-3456-4663-9f32-df1b46929e30`
 - **Template**: none (fresh project, no template bound)
@@ -94,39 +116,47 @@ The tillsyn project was **reset in Slice 0** — the prior messy project (`a0cfb
 
 - **Artifact ref**: `github.com/evanmschultz/tillsyn@main` — Hylla resolves `@main` to the latest ingest automatically. Do not track snapshot numbers or commit hashes here.
 - **Also stored on the Tillsyn project metadata** under `metadata.hylla_artifact_ref` so planners read it programmatically rather than copy-paste from this file.
-- **Ledger**: `main/LEDGER.md` tracks per-slice cost, node count (total / code / tests / packages), orphan deltas, refactors, and slice descriptions. Populated by the orchestrator during the per-slice `SLICE <N> END — LEDGER UPDATE` task after ingest completes.
-- **Hylla feedback**: `main/HYLLA_FEEDBACK.md` aggregates subagent-reported Hylla ergonomics and search-quality issues. Subagents report misses in their closing comment; the orchestrator rolls them up at slice end before running the slice-end ingest.
+- **Ledger**: `main/LEDGER.md` tracks per-drop cost, node count (total / code / tests / packages), orphan deltas, refactors, and drop descriptions. Populated by the orchestrator during the per-drop `DROP <N> END — LEDGER UPDATE` task after ingest completes.
+- **Hylla feedback**: `main/HYLLA_FEEDBACK.md` aggregates subagent-reported Hylla ergonomics and search-quality issues. Subagents report misses in their closing comment; the orchestrator rolls them up at drop end before running the drop-end ingest.
 
 ### Code Understanding Rules
 
-1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Whenever a Hylla miss forces a fallback, the subagent must record the miss in its closing comment** under a `## Hylla Feedback` heading so the orchestrator can aggregate it into `main/HYLLA_FEEDBACK.md` at slice end.
+1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Whenever a Hylla miss forces a fallback, the subagent must record the miss in its closing comment** under a `## Hylla Feedback` heading so the orchestrator can aggregate it into `main/HYLLA_FEEDBACK.md` at drop end.
 2. **Changed since last ingest**: use `git diff` for files touched after the last Hylla ingest. Hylla is stale for those files until reingest.
 3. **Non-Go code** (markdown, TOML, YAML, magefile, SQL, etc.): use `Read`, `Grep`, `Glob`, `Bash` directly. Hylla doesn't cover non-Go files.
 4. **External semantics**: Context7 + `go doc` + `LSP` for library and language questions the repo can't answer itself.
-5. **`LSP` tool** (gopls-backed, provided by the `gopls-lsp@claude-plugins-official` plugin): symbol search, references, diagnostics, rename safety, definitions for live / uncommitted code. Auto-targets the active checkout (`main/`). Subagents: use `LSP` rather than shelling out to `gopls` or scraping with `grep`.
+5. **`LSP` tool** (gopls-backed, provided by the `gopls-lsp@claude-plugins-official` plugin): symbol search, references, diagnostics, rename safety, definitions for live / uncommitted code. Auto-targets the active checkout (`main/`). Subagents: use `LSP` rather than shelling out to `gopls` or scraping with `grep`/`rg`.
 
 ## Build-QA-Commit Discipline
 
-**CRITICAL: Code is NEVER committed or pushed without QA completing first. Hylla ingest is slice-end only, not per-task.**
+**CRITICAL: Code is NEVER committed or pushed without QA completing first. Hylla ingest is drop-end only, not per-task.**
 
 1. **Build** — builder subagent implements the increment.
 2. **QA Proof** — `go-qa-proof-agent` verifies evidence completeness.
 3. **QA Falsification** — `go-qa-falsification-agent` tries to break the conclusion.
 4. **Fix** — if QA finds issues, spawn another builder to fix, then re-run QA.
-5. **Commit** — only after both QA passes clear: `git add` the specific changed files, commit with conventional-commit format (pre-cascade: orchestrator + dev; post-Slice-4: commit-agent).
+5. **Commit** — only after both QA passes clear: `git add` the specific changed files, commit with conventional-commit format (pre-cascade: orchestrator + dev; post-Drop-4: commit-agent).
 6. **Push** — `git push` so CI runs.
 7. **CI green** — `gh run watch --exit-status` until CI lands green. If CI fails, fix before continuing — no ingest on a red commit.
 8. **Update Tillsyn** — checklist + metadata + lifecycle state. If it's not in Tillsyn, it didn't happen.
-9. **Move on to the next task.** Per-task Hylla reingest does NOT happen. Ingest happens once per slice, at slice end, inside the `SLICE <N> END — LEDGER UPDATE` task — see "Cascade Ledger + Hylla Feedback" and "Slice End — Ledger Update Task" below.
+9. **Move on to the next task.** Per-task Hylla reingest does NOT happen. Ingest happens once per drop, at drop end, inside the `DROP <N> END — LEDGER UPDATE` task — see "Cascade Ledger + Hylla Feedback" and "Drop End — Ledger Update Task" below.
 
 No batched commits. No deferred pushes. No skipped QA. No skipped CI watch. No claiming done in chat without Tillsyn reflecting it.
 
 ## Cascade Ledger + Hylla Feedback
 
-Two per-slice artifacts live in `main/`:
+Per-drop artifact MDs live in `main/`. **All MD writes route through `STEWARD`** (the persistent continuation orchestrator — see `STEWARD_ORCH_PROMPT.md`). Numbered-drop orchestrators (`DROP_N_ORCH`) never edit MDs — they file per-drop content into `description` fields of **level_2 findings drops** under STEWARD's persistent level_1 parents, and STEWARD writes the MDs on `main` post-merge.
 
-- **`main/LEDGER.md`** — per-slice snapshot of project state, cost, and code-quality deltas. Populated by the orchestrator at slice end. Fields per slice: closed date, slice plan-item ID, ingest snapshot, ingest cost + cost-to-date, node counts (total / code / tests / packages), orphan delta, refactors, description, commit SHAs, notable plan-item IDs, unknowns forwarded.
-- **`main/HYLLA_FEEDBACK.md`** — running log of Hylla ergonomics and search-quality feedback from subagents and the orchestrator. Each subagent that falls back from Hylla to `LSP` / `Read` / `Grep` / `Glob` records the miss in its closing comment under a `## Hylla Feedback` heading. The orchestrator aggregates those entries into `HYLLA_FEEDBACK.md` during the slice-end task, before calling ingest.
+STEWARD-owned per-drop MDs:
+
+- **`LEDGER.md`** — per-drop snapshot of project state, cost, and code-quality deltas. Fields per drop: closed date, drop plan-item ID, ingest snapshot, ingest cost + cost-to-date, node counts (total / code / tests / packages), orphan delta, refactors, description, commit SHAs, notable plan-item IDs, unknowns forwarded. Fed by `DROP_N_LEDGER_ENTRY.description`.
+- **`HYLLA_FEEDBACK.md`** — running log of Hylla ergonomics and search-quality feedback from subagents. Fed by `DROP_N_HYLLA_FINDINGS.description`.
+- **`WIKI_CHANGELOG.md`** — per-drop wiki deltas. Fed by `DROP_N_WIKI_CHANGELOG_ENTRY.description`.
+- **`REFINEMENTS.md`** — deferred refinements raised per drop. Fed by `DROP_N_REFINEMENTS_RAISED.description`.
+- **`HYLLA_REFINEMENTS.md`** — Hylla-scoped deferred refinements. Fed by `DROP_N_HYLLA_REFINEMENTS_RAISED.description`.
+- **`WIKI.md`** — living best-practice snapshot; STEWARD curates between drops.
+
+**Flow:** during drop N, drop-orch populates the five level_2 findings-drop descriptions incrementally. At drop end, drop-orch runs ingest, finalizes the descriptions, and closes `DROP <N> END — LEDGER UPDATE` before merge. Post-merge on `main`, STEWARD reads the level_2 descriptions, discusses with dev, writes the corresponding MDs, commits docs-only on `main`, and closes the level_2 drops. The six persistent level_1 parents (`DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS`) never close. See `STEWARD_ORCH_PROMPT.md` §10 + `feedback_steward_owns_md_writes.md` memory.
 
 **Subagent responsibility:** in every closing comment, always include a `## Hylla Feedback` section. If you had no Hylla misses, write `None — Hylla answered everything needed.`. If you did, record each miss with:
 
@@ -137,45 +167,53 @@ Two per-slice artifacts live in `main/`:
 
 Explicit "no miss" is still useful signal. Ergonomic-only gripes (awkward parameters, confusing response shapes, weird IDs) also go here.
 
-## Slice End — Ledger Update Task
+## Drop End — Ledger Update Task
 
-Every slice gets a final task named `SLICE <N> END — LEDGER UPDATE`. Orchestrator-role-gated. `blocked_by` every other task in the slice. Only runs once all siblings are `done`.
+Every drop gets a final drop-orch-owned task named `DROP <N> END — LEDGER UPDATE`. `blocked_by` every other task in the drop. Runs once all siblings are `done`. Closed by drop-orch **before the drop branch merges to `main`**. Drop-orch owns ingest + level_2 findings-drop description finalization; STEWARD owns the MD writes post-merge.
 
-**Orchestrator steps when working this task:**
+**Drop-orch steps (pre-merge, on the drop branch):**
 
 1. Move the task to `in_progress`.
-2. Confirm all sibling tasks in the slice are `done`. Confirm `git status --porcelain` is clean.
-3. Confirm every commit from this slice has landed on the remote branch.
+2. Confirm all sibling tasks in the drop are `done`. Confirm `git status --porcelain` clean.
+3. Confirm every commit from this drop has landed on the remote drop branch.
 4. Run `gh run watch --exit-status` on the latest CI run. Do NOT proceed unless CI is green.
-5. Aggregate `## Hylla Feedback` sections from every subagent closing comment in this slice into `main/HYLLA_FEEDBACK.md` under a new `## Slice <N>` heading.
-6. Call `hylla_ingest` on the remote ref `github.com/evanmschultz/tillsyn@main`. **ALWAYS full enrichment. NEVER `structural_only`. NEVER from a local working copy — always from remote, after push + CI green.**
-7. Poll `hylla_run_get` via `/loop 120` while ingest progresses. When the run reports "nearly done" (enrichment stage entered), kill the loop and `ScheduleWakeup` once for the estimated remaining time.
-8. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta.
-9. Append a new `## Slice <N> — <Title>` entry to `main/LEDGER.md` with the format shown there.
-10. Mark the slice-end task `done`; reference the ledger entry in `completion_notes`.
+5. Call `hylla_ingest` on the remote ref `github.com/evanmschultz/tillsyn@main`. **ALWAYS full enrichment. NEVER `structural_only`. NEVER from a local working copy — always from remote, after push + CI green.**
+6. Poll `hylla_run_get` via `/loop 120` while ingest progresses. When the run reports "nearly done" (enrichment stage entered), kill the loop and `ScheduleWakeup` once for the estimated remaining time.
+7. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta.
+8. **Finalize each of the five level_2 findings-drop descriptions** drop-orch created at drop spin-up — `DROP_N_HYLLA_FINDINGS`, `DROP_N_LEDGER_ENTRY`, `DROP_N_WIKI_CHANGELOG_ENTRY`, `DROP_N_REFINEMENTS_RAISED`, `DROP_N_HYLLA_REFINEMENTS_RAISED` — with drop-in-ready content STEWARD will splice into the MDs post-merge. The `DROP_N_LEDGER_ENTRY.description` must carry a fully-formatted `## Drop <N> — <Title>` block (closed date, plan-item ID, ingest snapshot, cost, node counts, orphan delta, refactors, description, commit SHAs, notable IDs, unknowns forwarded).
+9. Post a `till.handoff` to `@STEWARD` with `next_action_type: post-merge-md-write` naming the five level_2 drops.
+10. Close `DROP <N> END — LEDGER UPDATE` with `metadata.outcome: "success"` and the five level_2 drop IDs in `completion_notes`.
+11. **Do NOT write any MD file.** STEWARD writes all per-drop MDs on `main` post-merge.
+12. Signal the dev the drop branch is ready to merge.
+
+**Post-merge (STEWARD, on `main`):**
+
+STEWARD reads each level_2 findings-drop description, discusses with dev, writes the corresponding MD on `main`, commits docs-only with single-line conventional-commits, pushes, and closes the level_2 drops. STEWARD then works the `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` item inside drop N's tree — discussing next-drop refinements + STEWARD-self refinement with the dev, applying agreed changes, closing the gate. Closing the refinements-gate unblocks drop N's level_1 closure. Full sequence in `STEWARD_ORCH_PROMPT.md` §10.
 
 **Hylla ingest invariants (repeat for emphasis):**
 
 - Always `enrichment_mode=full_enrichment`.
 - Always source from the GitHub remote.
 - Never before `git push` + `gh run watch --exit-status` green.
-- Only the orchestrator calls `hylla_ingest`. Subagents never do.
+- Only the drop-orch calls `hylla_ingest`. Subagents never do. STEWARD never does.
 
 ## Git Management (Pre-Cascade)
 
-Until the cascade dispatcher takes over commits (`CLAUDE_MINIONS_PLAN.md` Slice 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files a plan item declares) is a precondition for creating a plan item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
+Until the cascade dispatcher takes over commits (`PLAN.md` Drop 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files a plan item declares) is a precondition for creating a plan item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
 
 ## Orchestrator-as-Hub Architecture
 
 The parent Claude Code session launched by the dev from this directory is always **the orchestrator**. There is no `.claude/agents/orchestration-agent.md` file — the orchestrator is defined by the invocation context, not by a markdown spec. Every other role (builder, qa, planner, closeout, research) is a subagent spawned via the `Agent` tool.
 
-**CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only. Markdown documentation edits (this file, `CLAUDE_MINIONS_PLAN.md`, agent `.md` files) are orchestrator-scope.
+**CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only.
+
+**Markdown documentation edits route through `STEWARD`.** STEWARD (the persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) is the only orchestrator that edits MD files in this repo. Numbered-drop orchestrators (`DROP_N_ORCH`) never touch MDs — they file per-drop artifact content into level_2 findings-drop descriptions under STEWARD's persistent level_1 parents. STEWARD writes the MDs on `main` post-merge. See "Cascade Ledger + Hylla Feedback" and "Drop End — Ledger Update Task" above.
 
 ### How It Works
 
 1. Orchestrator plans, routes, delegates, and cleans up. Reads code + Hylla for research. Creates Tillsyn plan items. Spawns subagents. Coordinates results.
 2. Subagents are ephemeral — they spawn, read their task, do work, update the task, die.
-3. Task state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Slice 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
+3. Task state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
 4. Subagents do not poll or watch anything. Read task at spawn, execute, update, return.
 5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
 
@@ -203,8 +241,8 @@ Every subagent manages its own Tillsyn plan item state. The orchestrator can't m
 **Plan-item description must include (durable / authored):**
 
 - Hylla artifact ref (`github.com/evanmschultz/tillsyn@main`). Also retrievable via Tillsyn project metadata (`metadata.hylla_artifact_ref`); planners copy it into each child description for convenience.
-- Paths (post-Slice-1, `paths []string`) or affected files (pre-Slice-1, in prose).
-- Packages (post-Slice-1, `packages []string`).
+- Paths (post-Drop-1, `paths []string`) or affected files (pre-Drop-1, in prose).
+- Packages (post-Drop-1, `packages []string`).
 - Acceptance criteria.
 - Mage targets for verification (discover via `mage -l`).
 - Cross-references to sibling tasks, blockers, or upstream plan items.
@@ -218,24 +256,24 @@ Every subagent manages its own Tillsyn plan item state. The orchestrator can't m
 
 ## Task Lifecycle (Current HEAD)
 
-Three terminal-reachable states today: `todo`, `in_progress`, `done`. A fourth state `failed` lands in Slice 1 of the cascade plan. Until then:
+Three terminal-reachable states today: `todo`, `in_progress`, `done`. A fourth state `failed` lands in Drop 1 of the cascade plan. Until then:
 
 - **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `done`.
-- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the task stays in `in_progress` with a failure-flavored outcome; Slice 1 adds the real `failed` transition.
+- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the task stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
 - **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
-- **Supersede** (post-Slice-1): human-only CLI `till task supersede <id> --reason "..."` unsticks `failed → complete`. Before Slice 1 this doesn't exist.
+- **Supersede** (post-Drop-1): human-only CLI `till task supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
 
-No parent can move to terminal-success if any child is in a failure/blocked state — enforcement becomes always-on in Slice 1.
+No parent can move to terminal-success if any child is in a failure/blocked state — enforcement becomes always-on in Drop 1.
 
-## Paths and Packages (Slice-1 Target)
+## Paths and Packages (Drop-1 Target)
 
-Today, builders and planners track affected code loosely in metadata. In Slice 1, `paths []string` and `packages []string` become first-class domain fields on every plan item, set by the planner, readable by builder + QA, and required for the file- and package-level blocking the cascade relies on. Until Slice 1 ships, note affected paths in `completion_notes` — the cascade plan (`CLAUDE_MINIONS_PLAN.md`, Section 5 + Section 17.1) is the contract.
+Today, builders and planners track affected code loosely in metadata. In Drop 1, `paths []string` and `packages []string` become first-class domain fields on every plan item, set by the planner, readable by builder + QA, and required for the file- and package-level blocking the cascade relies on. Until Drop 1 ships, note affected paths in `completion_notes` — the cascade plan (`PLAN.md`, Section 5 + Section 17.1) is the contract.
 
 ## Auth and Leases
 
 - One active auth session per scope level at a time.
 - Orchestrator cleans up all child auth sessions and leases at end of phase/run.
-- Auth auto-revoke on terminal state is a Slice-1 item; until then, the orchestrator manually revokes stale sessions.
+- Auth auto-revoke on terminal state is a Drop-1 item; until then, the orchestrator manually revokes stale sessions.
 - **Always report the auth session ID to the dev** when requesting or claiming auth. The dev needs visibility into active sessions.
 
 ## Coordination Surfaces
@@ -257,7 +295,7 @@ Today, builders and planners track affected code loosely in metadata. In Slice 1
 - **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. May edit markdown docs (this file, plan docs, agent files).
 - **Builder** — subagent. The ONLY role that edits Go code. Reads task, implements, updates, dies.
 - **QA Proof / QA Falsification** — subagents. Ephemeral. Read task, review, update with verdict, die.
-- **Planning** — subagent. Decomposes a slice into tasks with paths/packages/acceptance criteria.
+- **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
 - **Research** — Claude's built-in `Explore` subagent.
 - **Human** — approves auth, reviews results, makes design decisions.
 

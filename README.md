@@ -21,7 +21,7 @@ Current scope:
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
 Local branch/worktree workflow expectations are documented in `AGENTS.md`.
-Agent/client integration framing is documented in `TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md`.
+Agent/client integration framing is consolidated into the `Integration Framing For MCP Clients` section below.
 If repo-wide agent workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the bootstrap/instructions surfaces together so clients stay aligned.
 
 Local dogfood repo layout note:
@@ -82,7 +82,7 @@ Implemented now:
   - project-scoped agent auth is for guarded mutations inside that project;
   - narrower branch/phase/task auth should be used when the runtime can prove that path.
 - Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots so generated workflow contracts round-trip with the work graph instead of being flattened back to legacy defaults.
-- Current template-library enforcement slice is active for generated nodes:
+- Current template-library enforcement drop is active for generated nodes:
   - create-child under a generated parent,
   - update / rename / reparent,
   - move-to-done,
@@ -231,7 +231,7 @@ Current auth note:
     - after restart, agents should recover durable state with `capture_state`, `attention_item(list)`, `handoff(list)`, and thread `comment(list)` reads before resuming watchers.
 - Current remaining dogfood order:
   - first close with one final collaborative dogfood hardening pass,
-  - and only after that slice finishes, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, OS-level notification ergonomics, and richer rule/template composition UX.
+  - and only after that drop finishes, run one explicit cleanup/refinement wave for the production dogfood dataset, notification polish, rendering polish, OS-level notification ergonomics, and richer rule/template composition UX.
 - The lower-level `till auth issue-session` seam still exists as a temporary operator/developer escape hatch, but it is no longer the primary documented flow.
 - Current continuation status: `till.auth_request(operation=claim)` now uses a runtime-local cross-process live wake path for local dogfood runs, so TUI or CLI approve/deny/cancel in one process can wake a waiting requester in another process without app-layer polling; delegated child approvals now support direct child claim while requester cleanup remains separate and requester-bound.
 - Current bounded-delegation status: `till.auth_request(operation=create)` now also supports explicit child delegation through `acting_session_id` and `acting_session_secret`; when used, requester attribution is derived from the acting session, child paths must stay within the acting approved path, and only orchestrators may create sibling child auth for other principals. Non-orchestrators may still request only their own auth directly.
@@ -294,7 +294,7 @@ Template-library operator examples:
   - `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT PUSH AND REINGEST`,
   - `refactor-task` adds parity-in-action and metrics capture expectations on top of the normal QA and commit flow,
   - `dogfood-refactor-task` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
-  - refactor metrics should live in the slice task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
+  - refactor metrics should live in the drop task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
   - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` and shipped from [templates/builtin/default-go.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-go.json).
   - `default-frontend`:
   - a `frontend-project` auto-generates one project-root `PROJECT SETUP` phase,
@@ -305,7 +305,7 @@ Template-library operator examples:
   - `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, `VISUAL QA`, `ACCESSIBILITY CHECK`, and `COMMIT PUSH AND REINGEST`,
   - `refactor-task` adds parity-in-action and metrics capture expectations on top of the normal QA, visual, accessibility, and commit flow,
   - `dogfood-refactor-task` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
-  - refactor metrics should live in the slice task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
+  - refactor metrics should live in the drop task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
   - and the shipped summary plus builtin source are in [TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md) and [templates/builtin/default-frontend.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-frontend.json).
   - no work should happen outside explicit tasks or subtasks, and failing tests, CI, or QA should produce a new explicit follow-up item before repair begins; Tillsyn does not auto-create or force that follow-up item today, so the orchestrator or human must do it explicitly.
   - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete.
@@ -397,7 +397,7 @@ Roadmap-only in the active wave (explicitly deferred):
 - remote/team auth-tenancy expansion and additional security hardening,
 - template-library authoring/approval/binding UX, richer actor-kind-aware template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
 
-After the current active slices close, run one cleanup/refinement wave focused on real dogfood usage:
+After the current active drops close, run one cleanup/refinement wave focused on real dogfood usage:
 - clean/refresh the local dogfood DB and create the canonical `tillsyn` project/task tree that will be used for real collaborative dogfooding.
 - during that dogfood wave, test task sequencing explicitly with `depends_on`, `blocked_by`, and `blocked_reason`, then discuss whether CLI/MCP/TUI should also gain first-class visual reordering semantics in addition to dependency-driven ordering.
 - add intuitive non-JSON TUI/operator surfaces for viewing and editing workflow rules and template policy:
@@ -443,8 +443,8 @@ After the current active slices close, run one cleanup/refinement wave focused o
   - release/runtime onboarding should still work from an embedded or generated approved builtin snapshot so new users do not need a cloned repo,
   - SQLite should remain the installed/runtime source of truth after builtin ensure/import,
   - future remote or marketplace sources should be able to plug into the same normalized install path instead of introducing a separate one-off loader,
-  - and the first refactor in that slice should leave room for a later repo-backed or remote source fetch path without making normal onboarding depend on live network access.
-- open questions for that later slice:
+  - and the first refactor in that drop should leave room for a later repo-backed or remote source fetch path without making normal onboarding depend on live network access.
+- open questions for that later drop:
   - whether builtin template specs should be committed as JSON, TOML, or another review-friendly format,
   - what generation/embed step should convert repo template sources into the shipped builtin snapshot,
   - whether a later remote-repo lookup path should fetch from the canonical Tillsyn repo, a separate registry, or both, and how that should be cached/versioned locally,
@@ -469,6 +469,52 @@ Current post-dogfood consensus note:
 Dangerous limitation note (pre-hardening, design warning):
 - In future policy-controlled override flows, orchestrator calls may receive override-token material.
 - That design currently assumes orchestrator adherence to user policy/guidance; treat overrides as explicit user-approved actions only.
+
+## Integration Framing For MCP Clients
+
+This section exists because the most common framing mistake — describing Tillsyn as "the system of record for planning" or "a passive ledger" — leads to under-using the runtime and produces brittle agent flows. Read this **before** writing skills, subagents, slash commands, hooks, or instruction files that interact with Tillsyn.
+
+**What Tillsyn is not:**
+
+- **Not** "the system of record for planning." Planning is one of many things Tillsyn coordinates; that framing is technically true the way "an airplane is a metal tube" is technically true, and just as useless.
+- **Not** a passive append-only log of what happened. The runtime actively routes work and enforces gates.
+- **Not** interchangeable with a markdown worklog. Worklogs are unstructured notes for a single author. Tillsyn carries typed state, role ownership, blocking relationships, template-generated subtasks, and addressable inboxes that worklogs cannot represent.
+- **Not** a wrapper around `till.get_instructions`. Instructions return *policy context*. They are not a substitute for direct runtime state via `till.attention_item`, `till.handoff`, `till.comment`, `till.plan_item`, `till.kind`, etc.
+
+**What Tillsyn is** — a multi-actor coordination runtime with:
+
+1. A **role model** with distinct semantics per role (`orchestrator`, `builder` / `@dev`, `qa`, `research`, `human`). When you write a skill or subagent, **name the role that owns each step.** "The agent does X" is a smell. QA is two distinct asymmetric passes — `QA PROOF REVIEW` and `QA FALSIFICATION REVIEW` — and the asymmetry is the point; falsification needs fresh context (no parent hindsight bias) and is best run as an isolated subagent.
+2. A **template + child_rules engine** that auto-generates required gates as real blockers. A `build-task` from `default-go` auto-generates QA subtasks owned by `qa`. Treat them as real gates — they block parent completion, they are owned by `qa` not whichever agent is active, and a builder who closes their own QA subtask is bypassing the gate, not satisfying it.
+3. **Three coordination surfaces** with distinct semantics that should not be flattened — `till.comment` (shared append-only thread lane; routed `@`-mentions land in `Comments` inbox, **not** `Action Required`), `till.handoff` (structured next-action lane; open handoffs addressed to the viewer **are** `Action Required`), `till.attention_item` (durable inbox substrate underneath both). A flow that only uses comments loses structured Action Required signal; a flow that only uses handoffs loses the discussion lane; you need all three.
+4. **Scoped auth** with delegated child sessions — global-scoped for template/global admin, project-scoped for in-project mutations, delegated child sessions (via `till.auth_request(operation=create, acting_session_id=..., acting_auth_context_id=...)`) for bounded role handoffs. **Never reuse another agent's auth session** — it conflates audit trails and leaks authority across roles.
+5. **Explicit restart recovery** — after restart, recover in order: `till.capture_state` → `till.attention_item(operation=list, all_scopes=true)` → `till.handoff(operation=list)` → `till.comment(operation=list)` for any thread to resume. Do not reconstruct state from worklogs.
+6. **Real ordering uses `depends_on` / `blocked_by` / `blocked_reason`.** Visual board column position is for humans; inferring ordering from board position is brittle.
+7. **Scoped rules live in concrete, addressable locations** — project `standards_markdown`, template descriptions, child rules, node-contract snapshots, and work-item metadata fields (`objective`, `acceptance criteria`, `definition of done`, `validation plan`). `till.get_instructions` is a *navigation aid* over these, not a replacement for reading the typed fields.
+
+**How Tillsyn relates to semi-formal reasoning and Hylla.** A common adaptation of the arXiv 2603.01896 "Agentic Code Reasoning" certificate extends the paper's shape with two extra lines — **Evidence** (forces grounding in concrete repo/tooling artifacts like Hylla or `git diff` rather than recall) and **Unknowns** (forces uncertainty to be stated explicitly). Tillsyn is what makes the `Unknowns` line load-bearing instead of cosmetic: unknowns route into a comment thread (discussion question), a handoff (blocks a different role's next action), an attention item (persists across restarts), or a template-generated QA subtask (is this actually right?). **`Unknowns: …` with no Tillsyn destination is the failure mode this design exists to prevent.**
+
+**Recommended reading order for new integrators** — do this before writing any skills or subagents:
+
+1. Read this section.
+2. Call `till.get_instructions(focus=topic, topic=agents, mode=explain)` and read everything it returns.
+3. Call `till.get_instructions(focus=topic, topic=workflows, mode=explain)` and read everything it returns.
+4. Call `till.project(operation=list)` to see what projects exist locally.
+5. For one real project, walk the recovery order: `till.capture_state` → `till.attention_item(operation=list, all_scopes=true)` → `till.handoff(operation=list)` → `till.comment(operation=list)` on a live thread.
+6. Read the project-level `standards_markdown` and at least one template's description + child rules.
+7. *Then* design your skills.
+
+**Common anti-patterns to avoid:**
+
+- **Flattening roles to "the agent."** Skills that say "the agent creates a build-task and then the agent does QA on it" miss the entire role model. QA must be a different role than builder; the falsification pass must be a different context than the proof pass.
+- **Treating comments as Action Required.** Routed `@`-mentions in comments belong in a Comments inbox section. Open handoffs belong in Action Required. Merging them produces noise humans learn to ignore.
+- **Hand-rolling QA gates instead of using template `child_rules`.** If the template would have generated QA subtasks, generating ad-hoc ones manually means QA can be silently skipped — the runtime does not know they exist.
+- **Reusing one agent's auth session for another role.** Breaks the audit trail and the role model in a single move.
+- **Reconstructing state from worklogs after a restart.** Tillsyn already has the state. Use the recovery flow.
+- **Calling `till.get_instructions` and assuming it is the source of truth.** It is policy navigation, not state. Read the typed fields directly.
+- **`Unknowns: …` with no Tillsyn destination.** If your skill produces Unknowns and has nowhere to route them, the skill is incomplete.
+- **Treating board column position as ordering.** Use `depends_on` / `blocked_by` for real prerequisite relationships.
+
+This framing was originally captured on 2026-04-11 after a Claude Code session described Tillsyn as "the system of record for planning" — a passive-ledger framing — and was corrected by the operator. The corrected understanding here was verified against direct `till.get_instructions(focus=topic, topic=agents|workflows)` calls and live Tillsyn project state. If this section drifts from the current Tillsyn runtime (new coordination surface, renamed role, changed recovery order), update it in place rather than leaving the drift for the next integrator.
 
 ## Run
 ```bash
