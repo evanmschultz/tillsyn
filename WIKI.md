@@ -81,6 +81,18 @@ A drop is "atomic" when:
 
 If a drop is too large to fit those constraints, **nest further** rather than stretching the drop.
 
+### Level-1 Drop Sizing + Parallelism (Best Practices, Not Hard Rules)
+
+These are adopter best practices for how the orchestrator + dev shape the drop tree. Guidance, not gates — override when the domain genuinely demands it.
+
+- **Level-1 drops should be small and domain-specific.** One level-1 drop = one coherent chunk of change (one package, one subsystem, one cross-cutting concern). If a level-1 drop starts pulling in a second unrelated domain, prefer splitting into two level-1 drops.
+- **Nested drops (level_2 and deeper) bottom out at atomic single-task action items.** One builder subagent (or one orchestrator + dev pairing) finishes the leaf cleanly — see "Atomic Drop Granularity" above.
+- **Run level-1 drops in parallel when their domains don't overlap.** Two level-1 drops whose `paths` / `packages` / coordination surfaces don't touch each other SHOULD run concurrently, each under its own drop orch. If they touch — shared packages, shared runtime surfaces, shared auth flow — serialize with explicit `blocked_by`, coordinate via `till.handoff`, or merge-and-respin.
+- **When parallel level-1 drops complete, the persistent integrating orchestrator finalizes and cleans up.** Each finishes through its own drop-end sequence; post-merge, the persistent orch writes the MDs and runs the refinements-gate. The parallel set converges at a single integration point (in this repo, `STEWARD`; in adopter repos, whatever your equivalent persistent orch is).
+- **Motivating constraint: integrating orchestrator context budget.** The sizing + parallelism rules exist so each level-1 drop — and each concurrent group of them — stays small enough for the integrating orch to manage post-merge without overloading context. A level-1 drop so big that its full findings-drop set can't fit into one coherent review session is too big — split it. A parallel group so wide that the combined post-merge queue blows context is too wide — stagger it.
+
+Treat these as defaults. If a level-1 drop genuinely has to be large and monolithic (e.g. a single atomic schema migration), accept that and plan context budget accordingly. If two touching drops have to run in parallel for schedule reasons, invest heavily in `blocked_by` + handoff discipline.
+
 ### Ordering: Use `blocked_by`, Not `depends_on`
 
 Tillsyn has two primitives for "this comes after that":
@@ -159,13 +171,73 @@ Self-hosted dogfood drops (i.e., drops of the Tillsyn repo itself) skip step 2 �
 
 ## Orchestrator Role Boundaries
 
-- **Orchestrator** (the parent Claude Code session) — plans, routes, delegates, cleans up. **Never edits code** in language-code paths. May edit markdown docs (this wiki, `CLAUDE.md`, `PLAN.md`, agent `.md` files, refinement files).
+- **Orchestrator** (the parent Claude Code session) — plans, routes, delegates, cleans up. **Never edits code** in language-code paths. May edit markdown docs (this wiki, `CLAUDE.md`, `PLAN.md`, agent `.md` files, refinement files) — but in this repo, only the STEWARD orchestrator does so post-merge; numbered-drop orchs never write MDs.
 - **Builder subagent** — the ONLY role that edits language code. Spawned via the `Agent` tool with Tillsyn auth credentials in the prompt.
 - **QA subagents** — gated to `qa` role. Read, verify, verdict, die. Never edit code.
 - **Planner subagent** — decomposes a level-1 drop into atomic nested drops. Never edits code.
-- **Dev / human** — approves auth, reviews results, makes design calls that the orchestrator files as discussion drops.
+- **Dev / human** — approves **orchestrator** auth, reviews results, makes design calls that the orchestrator files as discussion drops. Per the auth-approval cascade below, the dev does **not** approve non-orch subagent auth (planner / QA / builder / research).
 
 External adopters: mirror this split even if you're using a single Claude session end-to-end — keeping "who is allowed to edit code" explicit makes QA gates meaningful instead of ceremonial.
+
+## Auth Approval Cascade
+
+**Dev approves orchestrator auth. Orchestrators approve their own non-orch subagent auth.**
+
+The dev only ever sees orchestrator auth requests in the TUI. Planner / QA / builder / research auth is **provisioned and approved by the orch that spawns the subagent**, never by the dev. This keeps the dev's approval surface bounded to a handful of long-lived orchs (STEWARD plus one per active numbered drop) instead of fanning out to every short-lived subagent inside every drop.
+
+**Approval scope.** An orchestrator may approve a non-orch auth request when **all** of the following hold:
+
+1. The request's `path` resolves to a node inside the orch's lease subtree, **or** to a level_2 cross-subtree addition the orch is allowed to make under one of STEWARD's persistent level_1 parents (see "Drop Orch Cross-Subtree Exception" below).
+2. The request's `principal_role` is **not** `orchestrator`. Orch-spawning-orch is out of scope; orch chains require dev approval at every step.
+3. The orch claims the approval action through its own session tuple — no acting-on-behalf-of for approval.
+
+**Pre-fix vs post-fix state.** The capability to approve subagent auth from an orch session lands in the auth-approval-cascade drop (PLAN §19.1.6), scheduled between Drop 1.5 and Drop 2. Until that drop ships, orch-side approval may fail with a permission error — when it does, the orch surfaces the request_id to the dev in chat for manual TUI approval and files a level_2 task under REFINEMENTS so the auth-approval-cascade drop has a concrete repro to point at. Once §19.1.6 ships, orch-side approval is the canonical path; dev approval becomes the configurable fallback (a later refinement drop adds the configuration).
+
+**Auth handoff to the subagent.** After the orch creates and approves the request, the orch passes `request_id` + `resume_token` + `path` + `principal_id` + `client_id` to the subagent in the spawn prompt — **never** the orch's own session tuple. The subagent runs `till.auth_request(operation=claim)` itself and issues its own scope-appropriate lease.
+
+External adopters: this rule generalizes. Any orchestrator-shaped session that fans out to short-lived sub-sessions should provision + approve those sub-sessions itself — pushing every approval onto the human is the antipattern.
+
+## Drop Orch Cross-Subtree Exception
+
+Drop orchs operate inside their assigned level_1 subtree. The one exception: drop orchs may **add** level_2 task nodes under STEWARD's six persistent level_1 parents — `DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS` — and may nest further task drops under their own additions.
+
+This is how a drop orch routes per-drop content to STEWARD without crossing the no-MD-write rule. Findings, refinement candidates, ledger entries, wiki-changelog entries, Hylla feedback, and ad-hoc discussion topics each become a `kind=task, scope=task` level_2 node under the matching persistent parent, fillable by the drop orch (and its subagents through the same delegation path), readable by STEWARD post-merge. STEWARD then writes the MDs on `main` and closes the level_2 nodes.
+
+**Hard restrictions on the exception:**
+
+- **Adds only.** The drop orch may create new nodes under STEWARD's persistent parents and may edit/extend its own creations. The drop orch may **not** modify or delete the persistent parents themselves, or any node created by STEWARD or another orch.
+- **`kind=task, scope=task`** still applies — the pre-Drop-2 rule has no carve-outs.
+- **No state transitions on STEWARD-owned nodes.** STEWARD owns the close on every level_2 node it consumes; drop orchs leave them in `in_progress` (or `todo`) until STEWARD acts.
+- **Subagents inherit the exception** through their orch-issued auth: a planner / QA agent may file findings into REFINEMENTS / HYLLA_FINDINGS the same way, scoped by the orch's approval grant.
+
+## Response Shape — Section 0 Semi-Formal Reasoning
+
+**Every project adopting Tillsyn as a coordination runtime MUST carry the Section 0 response shape in its project `CLAUDE.md` and in every worktree-checked-out sibling `CLAUDE.md`.** This is non-negotiable for adopters that want the reasoning-accuracy lift the scaffold delivers. The shape is the rollout's adaptation of arxiv 2603.01896 ("Agentic Code Reasoning," Ugare & Chandra, Meta, 4 Mar 2026).
+
+Every substantive response (anything beyond a trivial one-line answer or factual lookup) begins with a `# Section 0 — SEMI-FORMAL REASONING` block, then the normal response body in the `tillsyn-flow` numbered format. Section 0 contains five named passes for orchestrator-facing responses — `## Planner`, `## Builder`, `## QA Proof`, `## QA Falsification`, `## Convergence` — and four passes for subagent responses — `## Proposal`, `## QA Proof`, `## QA Falsification`, `## Convergence`. Each pass uses the 5-field certificate where applicable: **Premises**, **Evidence**, **Trace or cases**, **Conclusion**, **Unknowns**.
+
+### Adopter Requirements (All MUST)
+
+1. **Mirror the canonical spec in your project `CLAUDE.md`.** The canonical text lives in `~/.claude/CLAUDE.md` §"Semi-Formal Reasoning — Section 0 Response Shape." Your project file MUST carry the same rules verbatim so subagents and humans reading your project docs see the same shape. Drift between global and project spec breaks the guarantee.
+2. **Mirror the spec into every worktree `CLAUDE.md` too.** If your repo uses bare-root + worktree layout (e.g. `main/`, `drop/<N>/`), each worktree `CLAUDE.md` MUST carry the same Section 0 block. Worktrees boot orchestrators independently; a worktree with a stale CLAUDE.md silently loses the scaffold for any session launched from it.
+3. **Activate the `tillsyn-flow` output style.** Set `outputStyle: tillsyn-flow` in your `~/.claude/settings.json` (or the project-local equivalent). The output style file (`~/.claude/output-styles/tillsyn-flow.md`) carries the body format rules + Section 0 pre-block spec. It is global — all projects that activate the style inherit the shape.
+4. **Subagent prompts MUST carry the Section 0 directive verbatim.** Subagents do NOT inherit CLAUDE.md or the output style. When your orchestrator delegates substantive work (planning, QA, build with design judgment), include the 4-pass Section 0 directive in the spawn prompt explicitly.
+5. **Section 0 reasoning stays in the orchestrator-facing response ONLY.** Do NOT write Proposal / Planner / Builder / QA / Convergence pass text into Tillsyn `description`, `metadata.*`, `completion_notes`, closing comments, or any other Tillsyn artifact. Tillsyn stores **finalized artifacts**, not process. Finalized closing certificates (specialized to the role) still go in the Tillsyn closing comment — just not the multi-pass Section 0 scaffold.
+
+### Bootstrap Checklist For A New Adopter Project
+
+When standing up Tillsyn in a new project, the first `CLAUDE.md` drop should include:
+
+- The full §"Semi-Formal Reasoning — Section 0 Response Shape" block copied verbatim from `~/.claude/CLAUDE.md`.
+- A local-scope header line saying "Canonical spec lives in `~/.claude/CLAUDE.md`; this file mirrors it" so future drift can be caught by comparing against the canonical source.
+- Confirmation that `~/.claude/settings.json` has `outputStyle: tillsyn-flow` enabled for the launching user.
+- If your project uses worktrees, repeat the CLAUDE.md update in every worktree root.
+
+### Why Adopt It
+
+The paper reports roughly half of the remaining patch-equivalence errors removed by requiring explicit evidence per claim (78.2% → 88.8% on RubberDuckBench, +9-12pp on Defects4J fault localization). The rollout extends the paper's single-writer template with a multi-role self-review loop to hedge against paper §4.3's residual failure mode: *"elaborate but incomplete reasoning chains ... leading to a confident but wrong answer."* A dedicated falsification pass catches the confident-but-wrong class that single-flow reasoning leaves on the table.
+
+The **Unknowns** field is load-bearing for Tillsyn adopters specifically: it gives every uncertainty a durable routing target (comment / handoff / attention item) instead of evaporating into optimistic completion.
 
 ## Drop-End Closeout Checklist
 

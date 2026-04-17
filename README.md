@@ -516,6 +516,66 @@ This section exists because the most common framing mistake — describing Tills
 
 This framing was originally captured on 2026-04-11 after a Claude Code session described Tillsyn as "the system of record for planning" — a passive-ledger framing — and was corrected by the operator. The corrected understanding here was verified against direct `till.get_instructions(focus=topic, topic=agents|workflows)` calls and live Tillsyn project state. If this section drifts from the current Tillsyn runtime (new coordination surface, renamed role, changed recovery order), update it in place rather than leaving the drift for the next integrator.
 
+## Response Shape — Section 0 Semi-Formal Reasoning
+
+Tillsyn's recommended response shape opens every substantive response with a `# Section 0 — SEMI-FORMAL REASONING` block, then renders the user-facing answer in the `tillsyn-flow` numbered body below it. The reasoning-scaffold half of that shape is an adaptation of the certificate described in **arXiv 2603.01896, "Agentic Code Reasoning"** (Ugare & Chandra, Meta, 4 Mar 2026). This section quotes the paper, calls out five specific ways our adaptation diverges from it, and explains why each divergence is the right call for a multi-actor coordination runtime like Tillsyn.
+
+**Best-usage practices for actually writing, reading, and auditing responses in this shape live in [`WIKI.md` §"Response Shape — Section 0 Semi-Formal Reasoning"](WIKI.md#response-shape--section-0-semi-formal-reasoning).** Adopters setting up Tillsyn in a new project should read the wiki section first — it carries the bootstrap checklist, the MUST-requirements, and the worktree-mirror rule. This README section is the stable *justification and diff-from-paper record* that new integrators read once to understand **why** the shape exists.
+
+### The Paper's Shape
+
+The paper equips an agent with a structured reasoning template that renders a *semi-formal certificate* as the agent's final response. Per-task templates share a consistent skeleton — **Definitions** (symbols used) / **Premises** (what must hold) / **Cases** (per-case analysis with execution trace) / **Counterexample** (if the conclusion fails) / **Conclusion** (the claim the certificate supports). Paper Figure 1 shows the certificate rendered in full as the agent's output, not hidden behind a summary. Key finding: on RubberDuckBench patch equivalence, structured certificates lift accuracy from **78.2% baseline to 88.8%** — roughly half the remaining errors removed by forcing explicit per-case reasoning. Similar lifts appear on Defects4J fault localization (+9–12 pp).
+
+The paper also names the residual failure mode this design does *not* solve, §4.3:
+
+> "elaborate but incomplete reasoning chains ... leading to a confident but wrong answer."
+
+That single-writer self-certification gap is the primary motivation for our multi-role extension below.
+
+### Our Adaptation (Summary)
+
+- **Orchestrator-facing responses** (the parent Claude Code session) use five named passes in `# Section 0`: `## Planner`, `## Builder`, `## QA Proof`, `## QA Falsification`, `## Convergence`.
+- **Subagent responses** use four passes: `## Proposal` (merges Planner+Builder because the subagent's specialization already defines the role framing), `## QA Proof`, `## QA Falsification`, `## Convergence`.
+- Each pass uses a 5-field certificate where applicable: **Premises** / **Evidence** / **Trace or cases** / **Conclusion** / **Unknowns**.
+- After Section 0 closes, the response body renders in the `tillsyn-flow` numbered format (`## 1. Section`, `- 1.1 …`, `## TL;DR` with `TN`).
+- Canonical spec lives in `~/.claude/CLAUDE.md` §"Semi-Formal Reasoning — Section 0 Response Shape." Project-level `CLAUDE.md` (and every worktree sibling `CLAUDE.md`) mirrors it verbatim.
+
+### Five Ways We Diverge From The Paper — And Why Each Is Best
+
+**1. Separate Section 0 + body vs paper's unified certificate.**
+- **Paper:** The certificate IS the final output. Downstream consumers (patch-equivalence judges, Defects4J verifiers) read the whole certificate directly.
+- **Ours:** Section 0 is a reasoning pre-block; the user-facing answer renders as a numbered body below it, with stable item IDs (`1.2`, `T2`) the dev can reply to.
+- **Why best for Tillsyn:** Our downstream consumer is a human dev + a coordination runtime, not an automated judge. The dev wants to skim an addressable answer at the top and drill into reasoning only when needed. Keeping the two lanes separate preserves reply-addressability and reduces scan cost on every turn. Tradeoff accepted: slightly more vertical space per response.
+
+**2. General 5-field scaffold vs paper's task-specific templates.**
+- **Paper:** Each benchmark task has its own template — patch equivalence has "program-state cases"; fault localization has localization-specific fields.
+- **Ours:** One scaffold — Premises / Evidence / Trace or cases / Conclusion / Unknowns — for every task: build, QA, planning, architecture decisions, docs changes, research writeups.
+- **Why best for Tillsyn:** Tillsyn's workload is broader than any single benchmark. A single coordination-runtime session mixes planning, implementation, QA, docs, and meta-discussion. Shipping a new template per task class would balloon the rule surface and fragment agent training. Generalizing to one shape gives a single teachable, enforceable scaffold. Tradeoff accepted: loses some of the paper's task-specific rigor (e.g., patch equivalence's mechanical "what if input X triggers early return?" cases) in exchange for universal applicability.
+
+**3. Explicit Evidence field vs paper's evidence-in-cases.**
+- **Paper:** Evidence is woven inline into the per-case trace — "Case 1: if `x=0`, function returns early because of line 42 in `foo()`" — evidence is embedded in the case reasoning.
+- **Ours:** Evidence is a separate first-class field. The writer must cite Hylla node IDs, `git diff` hunks, Context7 docs, MDN links, CanIUse compat tables, `go doc` output, or gopls diagnostics *before* Trace uses them.
+- **Why best for Tillsyn:** This is the direct hedge against paper §4.3's named failure mode. When evidence is inline with cases, unstated background smuggles in — the writer invokes "obviously line 42 does X" without ever surfacing the file read. A separate Evidence field blocks that pattern: if you can't put it in Evidence with a citeable source, you can't rely on it in Trace. In a multi-actor runtime where one agent's confident-but-wrong claim propagates into downstream work, cutting that failure vector matters more than the verbosity cost. Tradeoff accepted: more typing.
+
+**4. Explicit Convergence gate vs paper's implicit terminal Conclusion.**
+- **Paper:** Conclusion is the final field. When you write Conclusion, you're done — single-writer self-certification. No named stop criterion.
+- **Ours:** After all role passes, a dedicated `## Convergence` pass declares three conditions: (a) QA Falsification produced no unmitigated counterexample, (b) QA Proof confirmed evidence completeness, (c) remaining Unknowns are explicit and routed. If any fail → loop back to the earliest failing pass.
+- **Why best for Tillsyn:** This is the structural anchor for the loop-back-on-fail semantics. Without a named gate, QA Proof + QA Falsification are just suggestions — there's no enforcement trigger. Convergence turns the multi-role extension from cosmetic passes into a real gated state machine. A single writer can convince themselves their Conclusion is solid; forcing an explicit gate ("can I name all three conditions as true right now?") catches the cases where one pass quietly failed. Tradeoff accepted: one extra pass of scaffold text.
+- **Where the gate lives at every level:** All 8 subagent definition files at `~/.claude/agents/{go,fe}-{builder,planning,qa-proof,qa-falsification}-agent.md` carry `## Convergence` as the fourth pass of their 4-pass Option C scaffold. Convergence is load-bearing at every level of the nest — orchestrator and subagent both declare it. The Planner+Builder merge (what distinguishes Option C from Option A) is the only structural reduction for subagents; Convergence is never dropped.
+
+**5. Trivial-answer carve-out.**
+- **Paper:** Applies the scaffold to every task in its benchmarks. The benchmarks are non-trivial by construction — patch-equivalence judgments, fault localizations, debugging decisions.
+- **Ours:** Skip BOTH Section 0 AND the numbered body for one-line factual lookups, terse confirmations, yes/no answers. The answer is just the answer.
+- **Why best for Tillsyn:** Real-world sessions mix substantive work with trivial asks — "what's the commit hash?", "is CI green?", "approved". Scaffolding every trivial ask is ceremony tax — the dev can't find the answer inside empty reasoning, and the reasoning is empty because there's nothing to reason about. The paper's workload is 100% substantive by design; ours isn't. Tradeoff accepted: judgment call on where the trivial/substantive boundary is — default to scaffold when ambiguous.
+
+### Why Unknowns Is Load-Bearing For Tillsyn Specifically
+
+The paper's Conclusion field assumes closed-world reasoning — the proof either supports the claim or it doesn't. The **Evidence** and **Unknowns** additions (which our adaptation inherits from a common extension of the paper) turn uncertainty into first-class output. **Tillsyn is what makes the Unknowns line load-bearing instead of cosmetic** — unknowns route into a `till.comment`, a `till.handoff`, a `till.attention_item`, or a template-generated QA subtask. The §"Integration Framing For MCP Clients" paragraph on this topic expands on the anti-pattern: `Unknowns: …` with no Tillsyn destination is the failure mode this whole design exists to prevent. Read that paragraph together with this section.
+
+### Best-Practice Reference
+
+For the adopter-facing writing/auditing guide — the MUST-requirements, the bootstrap checklist, the worktree-mirror rule, and day-to-day discipline for using the shape to its fullest — read **[`WIKI.md` §"Response Shape — Section 0 Semi-Formal Reasoning"](WIKI.md#response-shape--section-0-semi-formal-reasoning)**. The wiki is the living best-practice snapshot updated drop-by-drop; this README section is the stable justification that new integrators read once.
+
 ## Run
 ```bash
 mage run
