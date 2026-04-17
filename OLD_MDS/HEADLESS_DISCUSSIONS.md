@@ -1,8 +1,8 @@
 # HEADLESS DISCUSSIONS
 
-Orchestrator-scope discussion doc. Source of the "Tillsyn-defined agents dispatched via `claude -p`" architecture thread plus any follow-on open questions that arise from it. **Not a Tillsyn plan item** — this is chat-primary discussion substrate until it's ready to be folded into `CLAUDE_MINIONS_PLAN.md` under an explicit refinement slice. Keep description-final-shape / comments-audit-trail discipline here too: the sections below are the converged shape; quote-blocks are direct dev or orchestrator lines.
+Orchestrator-scope discussion doc. Source of the "Tillsyn-defined agents dispatched via `claude -p`" architecture thread plus any follow-on open questions that arise from it. **Not a Tillsyn plan item** — this is chat-primary discussion substrate until it's ready to be folded into `PLAN.md` under an explicit refinement drop. Keep description-final-shape / comments-audit-trail discipline here too: the sections below are the converged shape; quote-blocks are direct dev or orchestrator lines.
 
-Related: `CLAUDE_MINIONS_PLAN.md` §1.4 (Cascade Addressing Vocabulary — already converged), §2 (Hierarchy Refactor), §19.4 (Slice 4 Dispatcher Core — currently specifies `claude --agent <type> --bare -p "..."` for spawn).
+Related: `PLAN.md` §1.4 (Cascade Addressing Vocabulary — already converged), §2 (Hierarchy Refactor), §19.4 (drop 4 Dispatcher Core — currently specifies `claude --agent <type> --bare -p "..."` for spawn).
 
 ---
 
@@ -38,7 +38,7 @@ The orchestrator's in-session `Agent` tool does not take per-call tool restricti
 ### 1.4 Conclusion
 
 - 1.4.1 The orchestrator keeps only the agents it actually uses in-session as files. Cascade specialists that the dispatcher fires headlessly via `claude -p` don't need to live in `~/.claude/agents/` at all — they can be Tillsyn-stored specs injected at launch.
-- 1.4.2 This aligns with §19.4 Slice 4 Dispatcher Core's already-documented spawn command:
+- 1.4.2 This aligns with §19.4 drop 4 Dispatcher Core's already-documented spawn command:
   `claude --agent <type> --bare -p "..." --mcp-config <per-run mcp.json> --strict-mcp-config --permission-mode acceptEdits --max-budget-usd <N> --max-turns <N>`.
   The refinement is: replace `--agent <type>` (which implies a file lookup) with `--append-system-prompt "$(tillsyn read agent-spec ...)"` + `--tools "..."` + `--model <tier>` so the spec comes from Tillsyn.
 
@@ -86,9 +86,9 @@ claude -p "$task_prompt" \
 
 ### 2.5 Migration / Phasing
 
-- 2.5.1 Pre-Slice-4: orchestrator still uses file-based agents via the in-session `Agent` tool (no dispatcher yet).
-- 2.5.2 Slice 4: dispatcher lands; this is where Tillsyn-defined-agent support gets wired. Refine §19.4 to spec `claude -p --append-system-prompt` over `--agent <type>`.
-- 2.5.3 Slice 10 (Refinement Cleanup): second-pass review of `~/.claude/agents/*.md` can then prune anything the orchestrator no longer needs in-session, now that cascade specialists are Tillsyn-defined.
+- 2.5.1 Pre-drop-4: orchestrator still uses file-based agents via the in-session `Agent` tool (no dispatcher yet).
+- 2.5.2 drop 4: dispatcher lands; this is where Tillsyn-defined-agent support gets wired. Refine §19.4 to spec `claude -p --append-system-prompt` over `--agent <type>`.
+- 2.5.3 drop 10 (Refinement Cleanup): second-pass review of `~/.claude/agents/*.md` can then prune anything the orchestrator no longer needs in-session, now that cascade specialists are Tillsyn-defined.
 
 ### 2.6 Open Sub-Questions
 
@@ -102,36 +102,36 @@ claude -p "$task_prompt" \
 
 ### 3.1 Q1 — @-Mention System Preservation
 
-**Dev question (quoted):** *"we aren't fully eliminating the @ mentioning system right? we will still need it for communication between orchestrators update and down and dev ↔ orchestrator communication and dev ↔ in the future and all would go through attention_items. we will need to make sure we don't eliminate the at mention system in our predogfood slices."*
+**Dev question (quoted):** *"we aren't fully eliminating the @ mentioning system right? we will still need it for communication between orchestrators update and down and dev ↔ orchestrator communication and dev ↔ in the future and all would go through attention_items. we will need to make sure we don't eliminate the at mention system in our predogfood drops."*
 
-- 3.1.1 **Status in `CLAUDE_MINIONS_PLAN.md`**: plan covers `attention_item` as the escalation substrate (lines 237, 286, 295, 360, 499, 732, 779, 781, 953, 1013, 1032, 1048, 1075, 1103, 1464 — escalations, auth-related, push-deferred pings, gate failures). **But** there's no explicit `@dev` / `@orchestrator` / `@qa` / `@builder` / `@human` mention-routing design section. The mentions are referenced in global `~/.claude/CLAUDE.md` ("Routed `@`-mentions are `@human`, `@dev`, `@builder`, `@qa`, `@orchestrator`, `@research`") and in the project `main/CLAUDE.md` Coordination Surfaces, but not fleshed out as a first-class design in the plan.
+- 3.1.1 **Status in `PLAN.md`**: plan covers `attention_item` as the escalation substrate (lines 237, 286, 295, 360, 499, 732, 779, 781, 953, 1013, 1032, 1048, 1075, 1103, 1464 — escalations, auth-related, push-deferred pings, gate failures). **But** there's no explicit `@dev` / `@orchestrator` / `@qa` / `@builder` / `@human` mention-routing design section. The mentions are referenced in global `~/.claude/CLAUDE.md` ("Routed `@`-mentions are `@human`, `@dev`, `@builder`, `@qa`, `@orchestrator`, `@research`") and in the project `main/CLAUDE.md` Coordination Surfaces, but not fleshed out as a first-class design in the plan.
 - 3.1.2 **Not being eliminated — confirmed.** Dev-↔-orchestrator, orchestrator-↔-orchestrator, and future inter-project orchestrator communication all require it. Attention items are the inbox substrate; mentions are the routing keys.
 - 3.1.3 **Gap to close**: add a `Mention Routing + Inter-Orchestrator Communication` subsection to the plan's refinement section. Needs design for: (a) mention → attention_item fan-out rules; (b) orchestrator-to-orchestrator signaling when multiple orchestrators run across projects; (c) `@dev` vs. `@human` semantics (dev is one role of human; might be the same addressee today but not forever); (d) whether mentions route via `till.handoff` (structured next-action) or `till.attention_item` (inbox) — they're different surfaces today and the semantics need tightening.
-- 3.1.4 **Pre-dogfood slices must preserve it.** Slice 1 (failed lifecycle) and Slice 4 (dispatcher) must both keep attention_item + handoff + mention routing intact; none of the hierarchy refactor (Slice 2) or template config (Slice 3) removes or replaces them.
-- 3.1.5 **Refinement section target**: new entry under §15 / §17 range, or a dedicated section "Mention Routing + Inter-Orchestrator Communication (design pending)". Target slice: Slice 6 (Escalation) or Slice 7 (Error Handling + Observability) — both already touch attention_item routing, natural place to design this cleanly.
+- 3.1.4 **Pre-dogfood drops must preserve it.** drop 1 (failed lifecycle) and drop 4 (dispatcher) must both keep attention_item + handoff + mention routing intact; none of the hierarchy refactor (drop 2) or template config (drop 3) removes or replaces them.
+- 3.1.5 **Refinement section target**: new entry under §15 / §17 range, or a dedicated section "Mention Routing + Inter-Orchestrator Communication (design pending)". Target drop: drop 6 (Escalation) or drop 7 (Error Handling + Observability) — both already touch attention_item routing, natural place to design this cleanly.
 
 ### 3.2 Q2 — Git Diff View Per Plan Item
 
-**Dev question (quoted):** *"do we have the git diff view for each plan_item in the refinement slice?"*
+**Dev question (quoted):** *"do we have the git diff view for each plan_item in the refinement drop?"*
 
-- 3.2.1 **Current state in plan**: `start_commit` / `end_commit` are Slice 1 first-class fields (lines 1338, 1371 project-field context). Having the two commits means a diff is always derivable — but there is no dedicated "show me the diff for this plan item" surface today.
+- 3.2.1 **Current state in plan**: `start_commit` / `end_commit` are drop 1 first-class fields (lines 1338, 1371 project-field context). Having the two commits means a diff is always derivable — but there is no dedicated "show me the diff for this plan item" surface today.
 - 3.2.2 **What's missing**: a user-facing view that computes `git diff <start_commit>..<end_commit> -- <paths>` for a plan item and renders it. Could be: CLI (`till task diff <id>`), MCP op (`till.plan_item(operation=diff)`), TUI pane, all three.
-- 3.2.3 **Why it matters for refinement slice**: QA falsification + proof agents, dev review, and per-slice ledger entries all benefit from a canonical diff view tied to plan-item identity. Right now QA agents reconstruct this manually from metadata.
-- 3.2.4 **Recommend**: add as a refinement slice entry targeted at Slice 6–7 range (alongside the mention-routing design). Needs: MCP op spec, CLI surface, TUI view, tests. Scope'd small because the data (`start_commit`, `end_commit`, `paths`) is already there post-Slice-1.
-- 3.2.5 **Bonus**: include a `till task diff <id> --vs-live` that shows `<end_commit> .. HEAD` for plan items that shipped earlier in the slice — useful when reviewing drift during an in-flight slice.
+- 3.2.3 **Why it matters for refinement drop**: QA falsification + proof agents, dev review, and per-drop ledger entries all benefit from a canonical diff view tied to plan-item identity. Right now QA agents reconstruct this manually from metadata.
+- 3.2.4 **Recommend**: add as a refinement drop entry targeted at drop 6–7 range (alongside the mention-routing design). Needs: MCP op spec, CLI surface, TUI view, tests. Scope'd small because the data (`start_commit`, `end_commit`, `paths`) is already there post-drop-1.
+- 3.2.5 **Bonus**: include a `till task diff <id> --vs-live` that shows `<end_commit> .. HEAD` for plan items that shipped earlier in the drop — useful when reviewing drift during an in-flight drop.
 
-### 3.3 Q3 — "Slices All The Way Down" Coverage
+### 3.3 Q3 — "drops All The Way Down" Coverage
 
-**Dev question (quoted):** *"look again at the main/CLAUDE_MINIONS_PLAN.md full, does it say to change to only one plan_item type, task turns into slice, so it is slices all the way down, but projects are different? like how a branch can have branches, but no branch is a tree, and a tree isnt a branch. does it talk about levels, slice_sub_n which is the depth, but we create the all levels as ordered lists (which are mutable so id is the real tracker, but we have convenience calls (cli, tui all based on ordinal 0.2.5 eg.)"*
+**Dev question (quoted):** *"look again at the main/PLAN.md full, does it say to change to only one plan_item type, task turns into drop, so it is drops all the way down, but projects are different? like how a branch can have branches, but no branch is a tree, and a tree isnt a branch. does it talk about levels, drop_sub_n which is the depth, but we create the all levels as ordered lists (which are mutable so id is the real tracker, but we have convenience calls (cli, tui all based on ordinal 0.2.5 eg.)"*
 
-- 3.3.1 **Yes — fully covered in `CLAUDE_MINIONS_PLAN.md` §1.4 (Cascade Addressing Vocabulary, lines 66–103).** Converged during Slice 0 closeout. Contains:
-  - "Slices all the way down. The `project` is NOT a slice — it is the root container." (line 72)
-  - `slice_sub_N` zero-indexed depth/position labels (line 73).
+- 3.3.1 **Yes — fully covered in `PLAN.md` §1.4 (Cascade Addressing Vocabulary, lines 66–103).** Converged during drop 0 closeout. Contains:
+  - "drops all the way down. The `project` is NOT a drop — it is the root container." (line 72)
+  - `drop_sub_N` zero-indexed depth/position labels (line 73).
   - Dotted addresses `0.1.5.2` described as read-only shorthand, with project-qualified form `<proj_name>-<dotted>` (lines 76–81).
   - Mutations use UUID only; dotted addresses are unstable under re-parenting (line 82).
-  - Type-slice kinds: `plan-slice`, `build-slice`, `qa-slice`, `closeout-slice`, `refinement-slice`, `human-verify-slice`, `discussion-slice` (lines 84–98).
-- 3.3.2 **`temp.md` coverage** (lines 8–24): same vocabulary converged interactively, later folded into `CLAUDE_MINIONS_PLAN.md` §1.4. Not out of sync.
-- 3.3.3 **What's NOT yet in the plan**: the `task → slice` structural rename (turning the `task` kind into a leaf-slice of kind `build-slice` so it's slices all the way down at the schema level too) is referenced in §19.2 Slice 2 Hierarchy Refactor but not explicitly as "rename `task` to `build-slice` leaf". Current Slice 2 bullets only rename `phase → slice` and `done → complete` + remove `branch`. **Gap**: add a Slice 2 bullet to rename or recategorize the `task` kind so leaf build-tasks are canonically `build-slice` per §1.4. Or leave `task` as a legacy alias and add `build-slice` as the canonical name.
+  - Type-drop kinds: `plan-drop`, `build-drop`, `qa-drop`, `closeout-drop`, `refinement-drop`, `human-verify-drop`, `discussion-drop` (lines 84–98).
+- 3.3.2 **`temp.md` coverage** (lines 8–24): same vocabulary converged interactively, later folded into `PLAN.md` §1.4. Not out of sync.
+- 3.3.3 **What's NOT yet in the plan**: the `task → drop` structural rename (turning the `task` kind into a leaf-drop of kind `build-drop` so it's drops all the way down at the schema level too) is referenced in §19.2 drop 2 Hierarchy Refactor but not explicitly as "rename `task` to `build-drop` leaf". Current drop 2 bullets only rename `phase → drop` and `done → complete` + remove `branch`. **Gap**: add a drop 2 bullet to rename or recategorize the `task` kind so leaf build-tasks are canonically `build-drop` per §1.4. Or leave `task` as a legacy alias and add `build-drop` as the canonical name.
 - 3.3.4 **Ordinal-based convenience lookup (CLI/TUI/MCP)**: not yet in plan. Proposal — `till view <proj>-<dotted>` and `till comment <proj>-<dotted> --body "..."` read operations use the dotted address; mutations require UUID (matches §1.4 line 82). MCP tools: `till.plan_item(operation=resolve, address="0.1.5.2")` returns the UUID; no mutation ops accept dotted addresses. Worth adding to the refinement section as a quality-of-life item.
 
 ---
@@ -142,43 +142,43 @@ claude -p "$task_prompt" \
 
 **Dev quote:** *"last we will add a webfront end. refine the design and take our lessons from that to overhaul the tui design so it is more user friendly."*
 
-- 4.1.1 **Ordering**: web frontend lands LAST (post-Slice 10? likely Slice 12+), after the cascade is self-hosting and stable.
+- 4.1.1 **Ordering**: web frontend lands LAST (post-drop 10? likely drop 12+), after the cascade is self-hosting and stable.
 - 4.1.2 **Method**: design the web frontend from scratch with current-state usage knowledge — what the dev + orchestrators actually do frequently, what the TUI makes awkward.
 - 4.1.3 **Feedback loop**: web frontend design reveals which flows are genuinely user-hostile in the current TUI (not "different", actually *worse*). Use those specific findings to drive a TUI overhaul.
-- 4.1.4 **Plan placement**: add as a new §19.12+ slice "Web Frontend + TUI Overhaul". Needs planning-slice before build-slices.
+- 4.1.4 **Plan placement**: add as a new §19.12+ drop "Web Frontend + TUI Overhaul". Needs planning-drop before build-drops.
 
 ### 4.2 Refactor Flow + Live Tests
 
-**Dev quote (edited):** *"design and setup refactor flow, reqs/ideas: settable stopping points for parity and/or improvement verification through actual interaction in dev version and compare with stable as needed, e2e for all things that could possibly be effected by slice, then when green commit and push and reingest, reinstall stable with new binary. what should we call those live tests and verification stuff?"*
+**Dev quote (edited):** *"design and setup refactor flow, reqs/ideas: settable stopping points for parity and/or improvement verification through actual interaction in dev version and compare with stable as needed, e2e for all things that could possibly be effected by drop, then when green commit and push and reingest, reinstall stable with new binary. what should we call those live tests and verification stuff?"*
 
-- 4.2.1 **Concept**: refactor slices need programmable stopping points where the dev (or a verification agent) exercises the dev binary against the stable binary to confirm parity or measure improvement, scoped to just the surface area the slice touched.
-- 4.2.2 **Naming candidates** (pick one at the refinement slice):
-  - **Slice Impact Probes** — emphasizes scoped-to-slice + probing behavior.
+- 4.2.1 **Concept**: refactor drops need programmable stopping points where the dev (or a verification agent) exercises the dev binary against the stable binary to confirm parity or measure improvement, scoped to just the surface area the drop touched.
+- 4.2.2 **Naming candidates** (pick one at the refinement drop):
+  - **drop Impact Probes** — emphasizes scoped-to-drop + probing behavior.
   - **Parity Checkpoints** — emphasizes dev-vs-stable comparison.
   - **Surface Verification Runs** — emphasizes the scoped e2e surface.
   - **Live Parity Gates** — gate-like, matches the post-build-gate vocabulary already in plan.
-  - **Slice Acceptance Probes** — ties to `completion_contract`.
-- 4.2.3 **Orchestrator recommendation**: "Live Parity Gates" or "Slice Impact Probes" — the first emphasizes they're gates (block slice completion), the second emphasizes they're scoped to the slice's affected surface. Probably combine: **"Slice Impact Gates"** or **"Impact-Scoped Parity Gates"** (mouthful). Leaning **Slice Impact Gates** for brevity.
+  - **drop Acceptance Probes** — ties to `completion_contract`.
+- 4.2.3 **Orchestrator recommendation**: "Live Parity Gates" or "drop Impact Probes" — the first emphasizes they're gates (block drop completion), the second emphasizes they're scoped to the drop's affected surface. Probably combine: **"drop Impact Gates"** or **"Impact-Scoped Parity Gates"** (mouthful). Leaning **drop Impact Gates** for brevity.
 - 4.2.4 **Mechanics sketch**:
-  - Planner agent identifies the blast radius at slice-plan time: paths + packages + downstream callers + TUI views + CLI subcommands affected.
-  - Closeout-slice gains a `slice-impact-gate` child task that runs BEFORE commit + reingest.
-  - Dev (or a human-verify sub-slice if interactive) walks through the affected surface on both dev and stable binaries. Comparison + findings logged.
+  - Planner agent identifies the blast radius at drop-plan time: paths + packages + downstream callers + TUI views + CLI subcommands affected.
+  - Closeout-drop gains a `drop-impact-gate` child task that runs BEFORE commit + reingest.
+  - Dev (or a human-verify sub-drop if interactive) walks through the affected surface on both dev and stable binaries. Comparison + findings logged.
   - On pass: proceed to commit → push → CI → reingest → `mage install` promote.
-  - On fail: back to builder; slice doesn't close.
-- 4.2.5 **Plan placement**: new slice in the refinement region — likely §19.10 Slice 10 (post-initial-dogfood) is the right home, since refactor discipline is exactly what Slice 10 is for.
+  - On fail: back to builder; drop doesn't close.
+- 4.2.5 **Plan placement**: new drop in the refinement region — likely §19.10 drop 10 (post-initial-dogfood) is the right home, since refactor discipline is exactly what drop 10 is for.
 
 ---
 
 ## 5. Parking Lot (Not Addressed This Turn)
 
 - 5.1 Batch-mutation MCP ops for plan items (dev mentioned in Q3 context — *"a refinement thing we will want is batch operations on plan_item nodes"*). Separate refinement item.
-- 5.2 Migrating `TILLSYN-OLD` project (Slice 10 cleanup — already in plan).
+- 5.2 Migrating `TILLSYN-OLD` project (drop 10 cleanup — already in plan).
 - 5.3 Cross-project orchestrator session coordination (plan §19.10 subagent-isolation bullet, line 1462). Related to 3.1.3 inter-orchestrator communication.
 
 ---
 
 ## 6. Status + Next Actions
 
-- 6.1 This doc is the scratch. When ready, the orchestrator folds the converged points into `CLAUDE_MINIONS_PLAN.md` under Slice 4 (dispatcher refinement for headless agent dispatch), Slice 6–7 (mention routing, git-diff view), Slice 10 (refactor flow + Slice Impact Gates, second-pass `~/.claude/agents/` cleanup), and Slice 12+ (web frontend + TUI overhaul).
-- 6.2 Pre-dogfood slices (1–3) must not break: attention_item, handoff, @-mention routing, existing file-based agents in `~/.claude/agents/`.
-- 6.3 No Tillsyn plan item created from this research session — the orchestrator session will create the `UPDATE CLAUDE_MINIONS_PLAN.md — HEADLESS DISPATCH + MENTION ROUTING + REFACTOR FLOW` discussion plan item when it picks this up.
+- 6.1 This doc is the scratch. When ready, the orchestrator folds the converged points into `PLAN.md` under drop 4 (dispatcher refinement for headless agent dispatch), drop 6–7 (mention routing, git-diff view), drop 10 (refactor flow + drop Impact Gates, second-pass `~/.claude/agents/` cleanup), and drop 12+ (web frontend + TUI overhaul).
+- 6.2 Pre-dogfood drops (1–3) must not break: attention_item, handoff, @-mention routing, existing file-based agents in `~/.claude/agents/`.
+- 6.3 No Tillsyn plan item created from this research session — the orchestrator session will create the `UPDATE PLAN.md — HEADLESS DISPATCH + MENTION ROUTING + REFACTOR FLOW` discussion plan item when it picks this up.

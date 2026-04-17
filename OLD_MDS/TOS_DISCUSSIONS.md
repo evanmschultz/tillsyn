@@ -1,8 +1,8 @@
 # TOS COMPLIANCE — Live Discussion Log
 
-**Tracked in Tillsyn:** plan item `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` at project root of `a5e87c34-3456-4663-9f32-df1b46929e30`; will be relabelled `slice` once that kind lands — Slice 2).
+**Tracked in Tillsyn:** plan item `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` at project root of `a5e87c34-3456-4663-9f32-df1b46929e30`; will be relabelled `drop` once that kind lands — Drop 2).
 **Companion analysis:** `TOS_COMPLIANCE.md` (frozen analysis snapshot — §1 Summary, §2 verbatim quotes, §3 in-bounds, §4 gray zones, §5 recommended adjustments, §6 open design questions, §7 decision log).
-**Companion plan:** `CLAUDE_MINIONS_PLAN.md` (cascade design source of truth; §22 will land once Q1–Q5 converge).
+**Companion plan:** `PLAN.md` (cascade design source of truth; §22 will land once Q1–Q5 converge).
 
 ## Purpose Of This File
 
@@ -34,13 +34,13 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 - Does the dispatcher support per-project API-key credentials?
 - How are API keys stored — macOS keychain, env vars passed to the subprocess, per-project config file under `~/.claude/tillsyn-auth/`, or an explicit `till secret` subcommand?
-- Cost observability — does the dispatcher surface per-cascade-run cost back to the dev via a Tillsyn comment on the cascade slice?
+- Cost observability — does the dispatcher surface per-cascade-run cost back to the dev via a Tillsyn comment on the cascade drop?
 - Does the project's `kind` template override the default (OAuth) credential path, or is the credential path a project-level setting?
 
 ### Pre-discussion framing
 
-- Pre-Slice-5 dogfooding uses the dev's existing subscription auth (OAuth inherited from the interactive Claude Code session). API-key path lands as a refinement slice when external users show up.
-- Per dev's stated plan: refinement slice adds API-key support, CLI-app-driven dispatch-approve flow, and notification system — all layered on top of a dogfooded headless baseline.
+- PRE-DROP-5 dogfooding uses the dev's existing subscription auth (OAuth inherited from the interactive Claude Code session). API-key path lands as a refinement drop when external users show up.
+- Per dev's stated plan: refinement drop adds API-key support, CLI-app-driven dispatch-approve flow, and notification system — all layered on top of a dogfooded headless baseline.
 
 ### Open sub-decisions
 
@@ -50,7 +50,7 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 ## Q2 — Non-Anthropic models
 
-**Status:** not yet discussed. Lower priority — can be deferred to post-Slice-5 refinement.
+**Status:** not yet discussed. Lower priority — can be deferred to post-drop-5 refinement.
 
 ### Questions on the table (from `TOS_COMPLIANCE.md` §6.2)
 
@@ -61,22 +61,22 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 ### Pre-discussion framing
 
-- Defer to post-Slice-5 refinement unless a concrete user demand surfaces earlier.
+- Defer to post-Drop-5 refinement unless a concrete user demand surfaces earlier.
 - The template binding should be orthogonal — `kind` → `agent` is one axis, `agent` → `provider+model` is a separate axis. Adding a third `provider` column to the binding table is the likely shape.
 
 ---
 
 ## Q3 — Orchestrator-called subagents vs cascade headless dispatch
 
-**Status:** Converged 2026-04-15 — pure-headless day-one, refinement slices expand. Dev decision + full convergence below.
+**Status:** Converged 2026-04-15 — pure-headless day-one, refinement drops expand. Dev decision + full convergence below.
 
 ### Claude's opening (2026-04-15, captured verbatim from chat)
 
 #### 1. What the current plan actually does
 
-- 1.1 `CLAUDE_MINIONS_PLAN.md` §4.1 and §19.4 describe a **pure headless dispatcher**: state change on a Tillsyn plan item → dispatcher spawns a fresh `claude --bare -p "..." --permission-mode acceptEdits --max-budget-usd N --max-turns N --allowedTools ...` subprocess. The agent reads its task via MCP, executes, mutates the task to a terminal state, and the subprocess exits. No parent conversation context at any point.
+- 1.1 `PLAN.md` §4.1 and §19.4 describe a **pure headless dispatcher**: state change on a Tillsyn plan item → dispatcher spawns a fresh `claude --bare -p "..." --permission-mode acceptEdits --max-budget-usd N --max-turns N --allowedTools ...` subprocess. The agent reads its task via MCP, executes, mutates the task to a terminal state, and the subprocess exits. No parent conversation context at any point.
 - 1.2 The reason given in the plan is parallelism without shared conversation state — N builders + 2N QA + planners can run simultaneously without collision on a single parent session's context window or rate-limit bucket.
-- 1.3 The orchestrator-as-hub rule in `CLAUDE.md` says the parent session plans / routes / delegates and never edits Go code. Today that parent session spawns via the `Agent` tool (orchestrator-called). The cascade plan replaces that spawn path with headless dispatch once Slice 4 lands.
+- 1.3 The orchestrator-as-hub rule in `CLAUDE.md` says the parent session plans / routes / delegates and never edits Go code. Today that parent session spawns via the `Agent` tool (orchestrator-called). The cascade plan replaces that spawn path with headless dispatch once Drop 4 lands.
 
 #### 2. Case for orchestrator-called subagents
 
@@ -102,8 +102,8 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 #### 5. What changes in the plan if we went hybrid
 
-- 5.1 **`CLAUDE_MINIONS_PLAN.md` §4.1 reframes** — dispatch becomes a strategy interface with two implementations (`in_session_subagent` via `Agent` tool, `headless_subprocess` via `claude --bare -p`). §19.4 gains a flag-check.
-- 5.2 **Slice 4 dispatcher gains a mode selector.** Slight scope bump; not a reshape.
+- 5.1 **`PLAN.md` §4.1 reframes** — dispatch becomes a strategy interface with two implementations (`in_session_subagent` via `Agent` tool, `headless_subprocess` via `claude --bare -p`). §19.4 gains a flag-check.
+- 5.2 **Drop 4 dispatcher gains a mode selector.** Slight scope bump; not a reshape.
 - 5.3 **Tier-gating (Q4) inherits from this choice.** Auto-mode only kicks in on orchestrator-called + API-tier. Headless + acceptEdits stays the unattended default regardless of tier.
 - 5.4 **User-facing compliance story (Q5) is cleaner.** "You can run Tillsyn interactively with your existing Claude Code session — or configure it for unattended runs with an API key." Two supported modes, each with its own ToS posture.
 
@@ -111,18 +111,18 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 - 6.1 Do we commit to supporting both models, or do we pick one?
 - 6.2 If hybrid: per-kind binding or per-run mode selector (or both)?
-- 6.3 Does Slice 4's dispatcher land with only one implementation, with the other added in a later slice — or both day one?
-- 6.4 Does the interactive / orchestrator-called path remain the pre-Slice-5 "current workflow" (as `CLAUDE.md` already documents) with headless layering on top in Slice 4+?
+- 6.3 Does Drop 4's dispatcher land with only one implementation, with the other added in a later drop — or both day one?
+- 6.4 Does the interactive / orchestrator-called path remain the pre-Drop-5 "current workflow" (as `CLAUDE.md` already documents) with headless layering on top in Drop 4+?
 
 ### Dev response (2026-04-15, paraphrased — full source in Tillsyn chat)
 
 - Pushes back on hybrid-day-one. Proposes:
-  - Start **pure-headless** in Slice 4+. This is the dogfood target — validate the headless dispatcher pattern end-to-end on the live project.
-  - Expand in **refinement slices** (to be added in `CLAUDE_MINIONS_PLAN.md`) to:
+  - Start **pure-headless** in Drop 4+. This is the dogfood target — validate the headless dispatcher pattern end-to-end on the live project.
+  - Expand in **refinement drops** (to be added in `PLAN.md`) to:
     - Add API-key path (Q1).
     - Add "subs from Claude CLI app with dispatch-approve" — interactive approval loop driven by Claude Code's native notification / approval surface rather than an inline orchestrator-called subagent. This sits between pure-headless and the original hybrid — preserves the parent-session / lead-agent framing but decouples approval from the dispatcher's state loop.
     - Add the notification system discussed earlier.
-  - Dogfood pure-headless all the way through to get the refinement slices.
+  - Dogfood pure-headless all the way through to get the refinement drops.
 - Raises a hard gating concern: "I have a Max $200 plan. Am I at risk of violating ToS if we start pure-headless? Is there literally ANY doubt in your mind? Because I can't risk losing my Claude access!"
 
 ### Where the discussion lands before Claude responds
@@ -133,17 +133,17 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 ### Dev decision (2026-04-15, direct quotes)
 
-> "7.1 yes pure headless the rest goes in refinement slices"
-> "7.2 yes, 4 is good, hard coded, configurability is a refinement slice thing"
+> "7.1 yes pure headless the rest goes in refinement drops"
+> "7.2 yes, 4 is good, hard coded, configurability is a refinement drop thing"
 > "7.3 I think i opted out, tell me how to confirm"
 > "7.4 agreed after I confirm my whole claude account is training opt out"
 > "cool privacy is right."
 
 ### Converged (2026-04-15)
 
-- **Day-one Slice 4 dispatch: pure headless** via `claude --bare -p ...` under the dev's Max $200 subscription. No orchestrator-called subagents in the dispatcher. Pre-Slice-4 orchestrator-called flow (per `CLAUDE.md`) unchanged.
-- **Concurrency soft-cap N = 4 hard-coded** during dogfood period. Configurability deferred to a refinement slice.
-- Refinement slices will layer on, in rough order:
+- **Day-one Drop 4 dispatch: pure headless** via `claude --bare -p ...` under the dev's Max $200 subscription. No orchestrator-called subagents in the dispatcher. PRE-DROP-4 orchestrator-called flow (per `CLAUDE.md`) unchanged.
+- **Concurrency soft-cap N = 4 hard-coded** during dogfood period. Configurability deferred to a refinement drop.
+- Refinement drops will layer on, in rough order:
   - API-key path (Q1).
   - CLI-app dispatch-approve flow (interactive approval surface from Claude Code's own notification path — sits between pure-headless and in-session subagents; preserves the "lead agent coordinates" framing without reshaping the dispatcher's state loop).
   - Notification system.
@@ -155,9 +155,9 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 ### Sub-decisions resolution
 
 - 6.1 **Pure-headless only day-one.** Not hybrid, not orchestrator-called-only.
-- 6.2 **Deferred to refinement.** Per-kind vs per-run selector is a refinement-slice design question, not a Slice 4 decision.
-- 6.3 **Slice 4 scope: headless-only.** No hybrid stub. Keeps Slice 4 tight and aligns with dogfood-then-expand discipline.
-- 6.4 **Pre-Slice-4 unchanged.** Orchestrator-called (current `CLAUDE.md` flow) continues through Slice 3.
+- 6.2 **Deferred to refinement.** Per-kind vs per-run selector is a refinement-drop design question, not a Drop 4 decision.
+- 6.3 **Drop 4 scope: headless-only.** No hybrid stub. Keeps Drop 4 tight and aligns with dogfood-then-expand discipline.
+- 6.4 **PRE-DROP-4 unchanged.** Orchestrator-called (current `CLAUDE.md` flow) continues through Drop 3.
 
 ---
 
@@ -173,8 +173,8 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 ### Pre-discussion framing
 
-- Under the dev's proposed trajectory (pure-headless-first on Max subscription, API-key expansion in refinement), Q4 sits purely in the refinement slices — the Max-subscription dogfood period never uses auto mode.
-- Template-level enforcement (refuse to bind incompatible mode + tier combos) is a natural Slice-3-or-later template-refinement.
+- Under the dev's proposed trajectory (pure-headless-first on Max subscription, API-key expansion in refinement), Q4 sits purely in the refinement drops — the Max-subscription dogfood period never uses auto mode.
+- Template-level enforcement (refuse to bind incompatible mode + tier combos) is a natural Drop-3-or-later template-refinement.
 
 ---
 
@@ -227,9 +227,9 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 ### Caveats Claude will want to lock in alongside a "no risk" verdict
 
-- Record the chosen posture explicitly in `CLAUDE_MINIONS_PLAN.md` §22 (new) so future contributors / users inherit the analysis rather than re-deriving it.
-- Keep training-opt-out explicit in `CLAUDE_MINIONS_PLAN.md` §22 (Consumer plans: verify opt-out on the dev's account settings).
-- During dogfood period, keep concurrency visible and capped — `CLAUDE_MINIONS_PLAN.md` §12.1 ("no cap on concurrent agents") should get a soft cap configurable per-run, even pre-refinement. Not for ToS reasons — for cost + quota hygiene.
+- Record the chosen posture explicitly in `PLAN.md` §22 (new) so future contributors / users inherit the analysis rather than re-deriving it.
+- Keep training-opt-out explicit in `PLAN.md` §22 (Consumer plans: verify opt-out on the dev's account settings).
+- During dogfood period, keep concurrency visible and capped — `PLAN.md` §12.1 ("no cap on concurrent agents") should get a soft cap configurable per-run, even pre-refinement. Not for ToS reasons — for cost + quota hygiene.
 - If Anthropic ever narrows the automation clause or publishes new guidance, revisit immediately. The analysis is against the terms as they stood at `TOS_COMPLIANCE.md` date (2026-04-14).
 
 ### Verdict (2026-04-15)
@@ -239,10 +239,10 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
   - `claude setup-token` is direct evidence: Anthropic explicitly ships a long-lived OAuth token generator "for CI and scripts" that "requires a Claude subscription." If subscription-authenticated scripted access violated the automation clause, this feature could not exist.
   - Multi-agent dispatch is a marketed Claude Code feature ("Spawn multiple Claude Code agents that work on different parts of a task simultaneously. A lead agent coordinates the work, assigns subtasks, and merges results.").
   - Account-action triggers (AUP) — intentional guardrail bypass, scaled abuse, coordinated multi-account evasion, competing-product (Commercial Terms §D.4) — none fire for a dev running Tillsyn on their own single account.
-- Real risks are **operational** — Max weekly Opus quotas + 5-hour session windows — not legal. Already modeled as `blocked` outcomes with retries in `CLAUDE_MINIONS_PLAN.md`.
+- Real risks are **operational** — Max weekly Opus quotas + 5-hour session windows — not legal. Already modeled as `blocked` outcomes with retries in `PLAN.md`.
 - Residual irreducible uncertainty: ToS could change; Anthropic's dispute-reading could differ from this analysis. Neither rises to "literally any doubt" — they are the irreducible uncertainty of any ToS analysis against published-at-a-point-in-time terms.
 - Caveats accepted alongside the verdict:
-  - `CLAUDE_MINIONS_PLAN.md` §22 (new, to land) records the chosen posture explicitly so future contributors inherit the analysis.
+  - `PLAN.md` §22 (new, to land) records the chosen posture explicitly so future contributors inherit the analysis.
   - Concurrency soft-cap N = 4 hard-coded during dogfood (Q3 convergence).
   - Training opt-out verified ON on dev's account.
   - Revisit immediately if Anthropic narrows the automation clause or publishes new guidance.
@@ -261,10 +261,10 @@ Per the "Discuss-in-Comments, Edit-MD-After" memory rule: cross-cutting doc disc
 
 ## Decision log (running mirror of `TOS_COMPLIANCE.md` §7)
 
-- **2026-04-14** — ToS analysis complete; six gray zones identified (§4). Seven recommended adjustments proposed (§5). Five open design questions surfaced (§6). Pending dev discussion before any `CLAUDE_MINIONS_PLAN.md` edits.
-- **2026-04-15** — Tillsyn tracking task created: `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` at project root, project `a5e87c34-3456-4663-9f32-df1b46929e30`). Will be relabelled `slice` once that kind is added to the project's allowed_kinds (Slice 2). Discussion flow: chat-primary; converged points mirrored back into `TOS_COMPLIANCE.md` §7; audit trail on the plan item via `till.comment`; full discussion writeup in `TOS_DISCUSSIONS.md`.
-- **2026-04-15** — Q3 opened. Claude's initial recommendation (hybrid-day-one) met with dev pushback in favor of pure-headless-first + refinement-slice expansion. Convergence gated on Cross-cutting A (pure-headless-on-Max-$200 ToS risk).
+- **2026-04-14** — ToS analysis complete; six gray zones identified (§4). Seven recommended adjustments proposed (§5). Five open design questions surfaced (§6). Pending dev discussion before any `PLAN.md` edits.
+- **2026-04-15** — Tillsyn tracking task created: `3b4052ef-300d-42de-8901-e22cecc9bea0` (kind `task` at project root, project `a5e87c34-3456-4663-9f32-df1b46929e30`). Will be relabelled `drop` once that kind is added to the project's allowed_kinds (Drop 2). Discussion flow: chat-primary; converged points mirrored back into `TOS_COMPLIANCE.md` §7; audit trail on the plan item via `till.comment`; full discussion writeup in `TOS_DISCUSSIONS.md`.
+- **2026-04-15** — Q3 opened. Claude's initial recommendation (hybrid-day-one) met with dev pushback in favor of pure-headless-first + refinement-drop expansion. Convergence gated on Cross-cutting A (pure-headless-on-Max-$200 ToS risk).
 - **2026-04-15** — Cross-cutting A converged: no meaningful ToS-violation risk for pure-headless on Max $200 using documented flags. Evidence: automation-clause carve-out is explicitly populated by `claude setup-token`, `--bare`, `-p`, multi-agent marketing. Training opt-out verified ON on dev's account. Real risks are operational (Max weekly Opus quota / session windows), not legal. Claude's earlier "gray zone" framing in `TOS_COMPLIANCE.md` §4 overstated the legal axis — retracted.
-- **2026-04-15** — Q3 converged: day-one Slice 4 dispatch is pure-headless via `claude --bare -p ...` under dev's Max subscription. Concurrency soft-cap N = 4 hard-coded during dogfood. Pre-Slice-4 orchestrator-called flow unchanged. Refinement slices will layer on: API-key path (Q1), CLI-app dispatch-approve flow, notification system, non-Anthropic providers (Q2), tier-gating (Q4), user-facing compliance story (Q5).
+- **2026-04-15** — Q3 converged: day-one Drop 4 dispatch is pure-headless via `claude --bare -p ...` under dev's Max subscription. Concurrency soft-cap N = 4 hard-coded during dogfood. PRE-DROP-4 orchestrator-called flow unchanged. Refinement drops will layer on: API-key path (Q1), CLI-app dispatch-approve flow, notification system, non-Anthropic providers (Q2), tier-gating (Q4), user-facing compliance story (Q5).
 - **Pending** — Q1, Q2, Q4, Q5 convergence.
-- **Pending** — `CLAUDE_MINIONS_PLAN.md` §22 draft (records chosen posture + refinement-slice order).
+- **Pending** — `PLAN.md` §22 draft (records chosen posture + refinement-drop order).
