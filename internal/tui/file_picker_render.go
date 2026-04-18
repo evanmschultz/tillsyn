@@ -26,6 +26,8 @@ func filePickerTitleFor(mode filePickerMode) string {
 	switch mode {
 	case filePickerModePath:
 		return "Add Paths"
+	case filePickerModeFile:
+		return "Add Files"
 	default:
 		return "File Picker"
 	}
@@ -36,6 +38,8 @@ func filePickerSubtitleFor(mode filePickerMode) string {
 	switch mode {
 	case filePickerModePath:
 		return "tag path refs on the active item (Tags[0] == \"path\")"
+	case filePickerModeFile:
+		return "pick files to associate with this drop (Tags[0] == \"file\"; regular files only)"
 	default:
 		return "pick filesystem entries"
 	}
