@@ -326,4 +326,3 @@ func (m Model) applyDiffLoadedMsg(msg diffLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-

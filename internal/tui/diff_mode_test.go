@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/tui/gitdiff"
 )
