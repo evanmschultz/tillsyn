@@ -1,0 +1,11 @@
+[1m[38;5;231mdiff --git a/foo.txt b/foo.txt
+[0m[1m[38;5;231mindex 83db48f..bf269f4 100644
+[0m[38;5;203m--- a/foo.txt
+[0m[1m[38;5;84m+++ b/foo.txt
+[0m[1m[38;5;231m@@ -1,3 +1,4 @@
+[0m[38;5;231m alpha
+[0m[38;5;203m-beta
+[0m[1m[38;5;84m+beta updated
+[0m[38;5;231m gamma
+[0m[1m[38;5;84m+delta
+[0m
