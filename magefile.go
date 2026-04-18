@@ -123,7 +123,8 @@ func Dev() error {
 }
 
 // Install builds till from the current working tree and drops the binary at
-// $HOME/.tillsyn/till alongside the stable runtime data (config, db, logs).
+// $HOME/.local/bin/till so the stable CLI stays on PATH while runtime data
+// remains under $HOME/.tillsyn.
 //
 // Dev-only dogfood target. Orchestrator and every subagent (builder, QA,
 // research, planning) MUST NOT invoke this — see CLAUDE.md "Build Verification"
@@ -135,7 +136,7 @@ func Install() error {
 	if err != nil {
 		return fmt.Errorf("resolve home: %w", err)
 	}
-	installDir := filepath.Join(home, ".tillsyn")
+	installDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
 		return fmt.Errorf("create install dir %q: %w", installDir, err)
 	}
