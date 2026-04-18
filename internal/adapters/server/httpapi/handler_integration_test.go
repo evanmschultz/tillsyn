@@ -116,14 +116,14 @@ func newApprovedPathAttentionFixture(t *testing.T) approvedPathAttentionFixture 
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	columnID := firstHTTPProjectColumnIDForTest(t, repo, project.ID)
-	branch, phase, task := createHTTPScopedTaskChainForTest(t, service, project.ID, columnID)
-	otherBranch, _, otherTask := createHTTPScopedTaskChainForTest(t, service, project.ID, columnID)
+	branch, phase, actionItem := createHTTPScopedActionItemChainForTest(t, service, project.ID, columnID)
+	otherBranch, _, otherActionItem := createHTTPScopedActionItemChainForTest(t, service, project.ID, columnID)
 	attention, err := service.RaiseAttentionItem(context.Background(), app.RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
 			BranchID:  branch.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		Kind:        domain.AttentionKindRiskNote,
 		Summary:     "Needs review",
@@ -137,8 +137,8 @@ func newApprovedPathAttentionFixture(t *testing.T) approvedPathAttentionFixture 
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
 			BranchID:  otherBranch.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   otherTask.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   otherActionItem.ID,
 		},
 		Kind:        domain.AttentionKindRiskNote,
 		Summary:     "Out of scope",
@@ -176,11 +176,11 @@ func firstHTTPProjectColumnIDForTest(t *testing.T, repo *sqlite.Repository, proj
 	return columns[0].ID
 }
 
-// createHTTPScopedTaskChainForTest creates one branch -> phase -> task chain for HTTP approved-path tests.
-func createHTTPScopedTaskChainForTest(t *testing.T, service *app.Service, projectID, columnID string) (domain.Task, domain.Task, domain.Task) {
+// createHTTPScopedActionItemChainForTest creates one branch -> phase -> actionItem chain for HTTP approved-path tests.
+func createHTTPScopedActionItemChainForTest(t *testing.T, service *app.Service, projectID, columnID string) (domain.ActionItem, domain.ActionItem, domain.ActionItem) {
 	t.Helper()
 
-	branch, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	branch, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		Kind:           domain.WorkKind("branch"),
 		Scope:          domain.KindAppliesToBranch,
@@ -193,9 +193,9 @@ func createHTTPScopedTaskChainForTest(t *testing.T, service *app.Service, projec
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
-	phase, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	phase, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       branch.ID,
 		Kind:           domain.WorkKindPhase,
@@ -209,15 +209,15 @@ func createHTTPScopedTaskChainForTest(t *testing.T, service *app.Service, projec
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(phase) error = %v", err)
+		t.Fatalf("CreateActionItem(phase) error = %v", err)
 	}
-	task, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	actionItem, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       phase.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
-		Title:          "Task",
+		Title:          "ActionItem",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
@@ -225,9 +225,9 @@ func createHTTPScopedTaskChainForTest(t *testing.T, service *app.Service, projec
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(task) error = %v", err)
+		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
 	}
-	return branch, phase, task
+	return branch, phase, actionItem
 }
 
 // issueApprovedPathHTTPTestSession issues one HTTP user session constrained to the requested branch/phase path.

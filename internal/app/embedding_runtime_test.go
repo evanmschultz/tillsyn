@@ -9,8 +9,8 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// seedEmbeddingRuntimeScope stores one minimal project/column/task scope for embeddings runtime tests.
-func seedEmbeddingRuntimeScope(t *testing.T, repo *fakeRepo, now time.Time) (domain.Project, domain.Column, domain.Task) {
+// seedEmbeddingRuntimeScope stores one minimal project/column/actionItem scope for embeddings runtime tests.
+func seedEmbeddingRuntimeScope(t *testing.T, repo *fakeRepo, now time.Time) (domain.Project, domain.Column, domain.ActionItem) {
 	t.Helper()
 
 	project, err := domain.NewProject("p-runtime", "Runtime", "", now)
@@ -21,7 +21,7 @@ func seedEmbeddingRuntimeScope(t *testing.T, repo *fakeRepo, now time.Time) (dom
 	if err != nil {
 		t.Fatalf("NewColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-runtime",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -32,17 +32,17 @@ func seedEmbeddingRuntimeScope(t *testing.T, repo *fakeRepo, now time.Time) (dom
 		Labels:      []string{"embeddings"},
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
 
 	repo.projects[project.ID] = project
 	repo.columns[column.ID] = column
-	repo.tasks[task.ID] = task
-	return project, column, task
+	repo.tasks[actionItem.ID] = actionItem
+	return project, column, actionItem
 }
 
-// TestServiceCreateTaskDoesNotEnqueueEmbeddingsWhenDisabled verifies disabled embeddings do not accumulate pending lifecycle rows.
-func TestServiceCreateTaskDoesNotEnqueueEmbeddingsWhenDisabled(t *testing.T) {
+// TestServiceCreateActionItemDoesNotEnqueueEmbeddingsWhenDisabled verifies disabled embeddings do not accumulate pending lifecycle rows.
+func TestServiceCreateActionItemDoesNotEnqueueEmbeddingsWhenDisabled(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 19, 0, 0, 0, time.UTC)
 	project, column, _ := seedEmbeddingRuntimeScope(t, repo, now)
@@ -58,23 +58,23 @@ func TestServiceCreateTaskDoesNotEnqueueEmbeddingsWhenDisabled(t *testing.T) {
 			ModelSignature: BuildEmbeddingModelSignature("fantasy", "mini", "", 3),
 		},
 	})
-	if _, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Title:     "Disabled queue should stay empty",
 	}); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if len(lifecycle.inputs) != 0 {
 		t.Fatalf("enqueue inputs = %#v, want none when embeddings are disabled", lifecycle.inputs)
 	}
 }
 
-// TestServiceSearchTasksLeavesMissingLifecycleRowsUntracked verifies search does not invent pending status for subjects with no lifecycle row.
-func TestServiceSearchTasksLeavesMissingLifecycleRowsUntracked(t *testing.T) {
+// TestServiceSearchActionItemsLeavesMissingLifecycleRowsUntracked verifies search does not invent pending status for subjects with no lifecycle row.
+func TestServiceSearchActionItemsLeavesMissingLifecycleRowsUntracked(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 19, 5, 0, 0, time.UTC)
-	project, _, task := seedEmbeddingRuntimeScope(t, repo, now)
+	project, _, actionItem := seedEmbeddingRuntimeScope(t, repo, now)
 
 	svc := NewService(repo, func() string { return "t-search" }, func() time.Time { return now }, ServiceConfig{
 		EmbeddingLifecycle: newFakeEmbeddingLifecycleStore(),
@@ -87,19 +87,19 @@ func TestServiceSearchTasksLeavesMissingLifecycleRowsUntracked(t *testing.T) {
 		},
 	})
 
-	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchActionItems(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "ship embeddings",
 		Mode:      SearchModeKeyword,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	if len(result.Matches) != 1 {
 		t.Fatalf("match count = %d, want 1", len(result.Matches))
 	}
-	if result.Matches[0].Task.ID != task.ID {
-		t.Fatalf("match task id = %q, want %q", result.Matches[0].Task.ID, task.ID)
+	if result.Matches[0].ActionItem.ID != actionItem.ID {
+		t.Fatalf("match actionItem id = %q, want %q", result.Matches[0].ActionItem.ID, actionItem.ID)
 	}
 	if result.Matches[0].EmbeddingStatus != "" {
 		t.Fatalf("embedding status = %q, want untracked empty status", result.Matches[0].EmbeddingStatus)
@@ -109,21 +109,21 @@ func TestServiceSearchTasksLeavesMissingLifecycleRowsUntracked(t *testing.T) {
 	}
 }
 
-// TestServiceSearchTasksFallsBackWhenSemanticCandidatesAreNotReady verifies semantic ranking ignores pending lifecycle rows.
-func TestServiceSearchTasksFallsBackWhenSemanticCandidatesAreNotReady(t *testing.T) {
+// TestServiceSearchActionItemsFallsBackWhenSemanticCandidatesAreNotReady verifies semantic ranking ignores pending lifecycle rows.
+func TestServiceSearchActionItemsFallsBackWhenSemanticCandidatesAreNotReady(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 19, 10, 0, 0, time.UTC)
-	project, _, task := seedEmbeddingRuntimeScope(t, repo, now)
+	project, _, actionItem := seedEmbeddingRuntimeScope(t, repo, now)
 	lifecycle := newFakeEmbeddingLifecycleStore()
-	lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeWorkItem, task.ID)] = EmbeddingRecord{
+	lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeWorkItem, actionItem.ID)] = EmbeddingRecord{
 		SubjectType: EmbeddingSubjectTypeWorkItem,
-		SubjectID:   task.ID,
+		SubjectID:   actionItem.ID,
 		ProjectID:   project.ID,
 		Status:      EmbeddingLifecyclePending,
 	}
 	generator := &fakeEmbeddingGenerator{vectors: [][]float32{{0.9, 0.1, 0.2}}}
-	searchIndex := &fakeTaskSearchIndex{
-		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: task.ID, SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: task.ID, Similarity: 0.98}},
+	searchIndex := &fakeActionItemSearchIndex{
+		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: actionItem.ID, SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: actionItem.ID, Similarity: 0.98}},
 	}
 
 	svc := NewService(repo, func() string { return "t-semantic" }, func() time.Time { return now }, ServiceConfig{
@@ -139,13 +139,13 @@ func TestServiceSearchTasksFallsBackWhenSemanticCandidatesAreNotReady(t *testing
 		},
 	})
 
-	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchActionItems(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "ship embeddings",
 		Mode:      SearchModeSemantic,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	if result.EffectiveMode != SearchModeKeyword {
 		t.Fatalf("effective mode = %q, want keyword fallback", result.EffectiveMode)
@@ -164,13 +164,13 @@ func TestServiceSearchTasksFallsBackWhenSemanticCandidatesAreNotReady(t *testing
 	}
 }
 
-// TestServiceSearchTasksFallsBackWithoutLifecycleStore verifies semantic ranking is disabled when lifecycle truth is unavailable.
-func TestServiceSearchTasksFallsBackWithoutLifecycleStore(t *testing.T) {
+// TestServiceSearchActionItemsFallsBackWithoutLifecycleStore verifies semantic ranking is disabled when lifecycle truth is unavailable.
+func TestServiceSearchActionItemsFallsBackWithoutLifecycleStore(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 19, 12, 0, 0, time.UTC)
 	project, _, _ := seedEmbeddingRuntimeScope(t, repo, now)
 	generator := &fakeEmbeddingGenerator{vectors: [][]float32{{0.9, 0.1, 0.2}}}
-	searchIndex := &fakeTaskSearchIndex{
+	searchIndex := &fakeActionItemSearchIndex{
 		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t-runtime", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t-runtime", Similarity: 0.98}},
 	}
 
@@ -186,13 +186,13 @@ func TestServiceSearchTasksFallsBackWithoutLifecycleStore(t *testing.T) {
 		},
 	})
 
-	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchActionItems(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "ship embeddings",
 		Mode:      SearchModeSemantic,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	if result.EffectiveMode != SearchModeKeyword {
 		t.Fatalf("effective mode = %q, want keyword fallback", result.EffectiveMode)
@@ -233,14 +233,14 @@ func TestServiceReindexEmbeddingsDisabledReturnsErrEmbeddingsDisabled(t *testing
 func TestServiceReindexEmbeddingsWaitDoesNotCompleteWhenFailuresRemain(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 19, 20, 0, 0, time.UTC)
-	project, _, task := seedEmbeddingRuntimeScope(t, repo, now)
+	project, _, actionItem := seedEmbeddingRuntimeScope(t, repo, now)
 	lifecycle := newFakeEmbeddingLifecycleStore()
 	lifecycle.summarySequence = []EmbeddingSummary{
 		{SubjectType: EmbeddingSubjectTypeWorkItem, ProjectIDs: []string{project.ID}, PendingCount: 1},
 		{SubjectType: EmbeddingSubjectTypeWorkItem, ProjectIDs: []string{project.ID}, FailedCount: 1},
 	}
 
-	svc := NewService(repo, func() string { return task.ID }, func() time.Time { return now }, ServiceConfig{
+	svc := NewService(repo, func() string { return actionItem.ID }, func() time.Time { return now }, ServiceConfig{
 		EmbeddingLifecycle: lifecycle,
 		EmbeddingRuntime: EmbeddingRuntimeConfig{
 			Enabled:        true,
@@ -299,7 +299,7 @@ func TestEmbeddingWorkerProcessOnceRecoversExpiredClaims(t *testing.T) {
 		repo,
 		lifecycle,
 		&fakeEmbeddingGenerator{vectors: [][]float32{{0.1, 0.2, 0.3}}},
-		&fakeTaskSearchIndex{},
+		&fakeActionItemSearchIndex{},
 		func() time.Time { return now },
 		EmbeddingRuntimeConfig{
 			Enabled:      true,

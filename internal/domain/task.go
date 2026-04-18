@@ -20,8 +20,8 @@ const (
 // validPriorities stores a package-level helper value.
 var validPriorities = []Priority{PriorityLow, PriorityMedium, PriorityHigh}
 
-// Task represents task data used by this package.
-type Task struct {
+// ActionItem represents actionItem data used by this package.
+type ActionItem struct {
 	ID             string
 	ProjectID      string
 	ParentID       string
@@ -35,7 +35,7 @@ type Task struct {
 	Priority       Priority
 	DueAt          *time.Time
 	Labels         []string
-	Metadata       TaskMetadata
+	Metadata       ActionItemMetadata
 	CreatedByActor string
 	CreatedByName  string
 	UpdatedByActor string
@@ -49,8 +49,8 @@ type Task struct {
 	CanceledAt     *time.Time
 }
 
-// TaskInput holds input values for task operations.
-type TaskInput struct {
+// ActionItemInput holds input values for actionItem operations.
+type ActionItemInput struct {
 	ID             string
 	ProjectID      string
 	ParentID       string
@@ -64,7 +64,7 @@ type TaskInput struct {
 	Priority       Priority
 	DueAt          *time.Time
 	Labels         []string
-	Metadata       TaskMetadata
+	Metadata       ActionItemMetadata
 	CreatedByActor string
 	CreatedByName  string
 	UpdatedByActor string
@@ -72,8 +72,8 @@ type TaskInput struct {
 	UpdatedByType  ActorType
 }
 
-// DefaultTaskScope returns the canonical default scope for one work-item kind and parent tuple.
-func DefaultTaskScope(kind WorkKind, parentID string) KindAppliesTo {
+// DefaultActionItemScope returns the canonical default scope for one work-item kind and parent tuple.
+func DefaultActionItemScope(kind WorkKind, parentID string) KindAppliesTo {
 	parentID = strings.TrimSpace(parentID)
 	switch strings.TrimSpace(strings.ToLower(string(kind))) {
 	case "branch":
@@ -84,14 +84,14 @@ func DefaultTaskScope(kind WorkKind, parentID string) KindAppliesTo {
 		return KindAppliesToSubtask
 	default:
 		if parentID == "" {
-			return KindAppliesToTask
+			return KindAppliesToActionItem
 		}
 		return KindAppliesToSubtask
 	}
 }
 
-// NewTask constructs a new value for this package.
-func NewTask(in TaskInput, now time.Time) (Task, error) {
+// NewActionItem constructs a new value for this package.
+func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	in.ID = strings.TrimSpace(in.ID)
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
 	in.ParentID = strings.TrimSpace(in.ParentID)
@@ -100,57 +100,57 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 	in.Description = strings.TrimSpace(in.Description)
 
 	if in.ID == "" {
-		return Task{}, ErrInvalidID
+		return ActionItem{}, ErrInvalidID
 	}
 	if in.ProjectID == "" {
-		return Task{}, ErrInvalidID
+		return ActionItem{}, ErrInvalidID
 	}
 	if in.ParentID != "" && in.ParentID == in.ID {
-		return Task{}, ErrInvalidParentID
+		return ActionItem{}, ErrInvalidParentID
 	}
 	if in.ColumnID == "" {
-		return Task{}, ErrInvalidColumnID
+		return ActionItem{}, ErrInvalidColumnID
 	}
 	if in.Title == "" {
-		return Task{}, ErrInvalidTitle
+		return ActionItem{}, ErrInvalidTitle
 	}
 	if in.Position < 0 {
-		return Task{}, ErrInvalidPosition
+		return ActionItem{}, ErrInvalidPosition
 	}
 
 	if in.Priority == "" {
 		in.Priority = PriorityMedium
 	}
 	if !slices.Contains(validPriorities, in.Priority) {
-		return Task{}, ErrInvalidPriority
+		return ActionItem{}, ErrInvalidPriority
 	}
 	if in.Kind == "" {
-		in.Kind = WorkKindTask
+		in.Kind = WorkKindActionItem
 	}
 	if !isValidWorkKind(in.Kind) {
-		return Task{}, ErrInvalidKind
+		return ActionItem{}, ErrInvalidKind
 	}
 	in.Scope = NormalizeKindAppliesTo(in.Scope)
 	if in.Scope == "" {
-		in.Scope = DefaultTaskScope(in.Kind, in.ParentID)
+		in.Scope = DefaultActionItemScope(in.Kind, in.ParentID)
 	}
 	if !IsValidWorkItemAppliesTo(in.Scope) {
-		return Task{}, ErrInvalidKindAppliesTo
+		return ActionItem{}, ErrInvalidKindAppliesTo
 	}
 	if in.ParentID == "" && in.Scope == KindAppliesToSubtask {
-		return Task{}, ErrInvalidParentID
+		return ActionItem{}, ErrInvalidParentID
 	}
 	if in.LifecycleState == "" {
 		in.LifecycleState = StateTodo
 	}
 	if !isValidLifecycleState(in.LifecycleState) {
-		return Task{}, ErrInvalidLifecycleState
+		return ActionItem{}, ErrInvalidLifecycleState
 	}
 	if in.UpdatedByType == "" {
 		in.UpdatedByType = ActorTypeUser
 	}
 	if !isValidActorType(in.UpdatedByType) {
-		return Task{}, ErrInvalidActorType
+		return ActionItem{}, ErrInvalidActorType
 	}
 	if strings.TrimSpace(in.CreatedByActor) == "" {
 		in.CreatedByActor = "tillsyn-user"
@@ -171,12 +171,12 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 	}
 
 	labels := normalizeLabels(in.Labels)
-	metadata, err := normalizeTaskMetadata(in.Metadata)
+	metadata, err := normalizeActionItemMetadata(in.Metadata)
 	if err != nil {
-		return Task{}, err
+		return ActionItem{}, err
 	}
 
-	return Task{
+	return ActionItem{
 		ID:             in.ID,
 		ProjectID:      in.ProjectID,
 		ParentID:       in.ParentID,
@@ -202,7 +202,7 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 }
 
 // Move moves the requested operation.
-func (t *Task) Move(columnID string, position int, now time.Time) error {
+func (t *ActionItem) Move(columnID string, position int, now time.Time) error {
 	columnID = strings.TrimSpace(columnID)
 	if columnID == "" {
 		return ErrInvalidColumnID
@@ -217,7 +217,7 @@ func (t *Task) Move(columnID string, position int, now time.Time) error {
 }
 
 // UpdateDetails updates state for the requested operation.
-func (t *Task) UpdateDetails(title, description string, priority Priority, dueAt *time.Time, labels []string, now time.Time) error {
+func (t *ActionItem) UpdateDetails(title, description string, priority Priority, dueAt *time.Time, labels []string, now time.Time) error {
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
 	if title == "" {
@@ -235,12 +235,12 @@ func (t *Task) UpdateDetails(title, description string, priority Priority, dueAt
 	return nil
 }
 
-// UpdatePlanningMetadata updates planning-specific metadata for the task.
-func (t *Task) UpdatePlanningMetadata(metadata TaskMetadata, actorID string, actorType ActorType, now time.Time) error {
+// UpdatePlanningMetadata updates planning-specific metadata for the actionItem.
+func (t *ActionItem) UpdatePlanningMetadata(metadata ActionItemMetadata, actorID string, actorType ActorType, now time.Time) error {
 	if !isValidActorType(actorType) {
 		return ErrInvalidActorType
 	}
-	normalized, err := normalizeTaskMetadata(metadata)
+	normalized, err := normalizeActionItemMetadata(metadata)
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func (t *Task) UpdatePlanningMetadata(metadata TaskMetadata, actorID string, act
 }
 
 // SetLifecycleState changes lifecycle state and maintains lifecycle timestamps.
-func (t *Task) SetLifecycleState(state LifecycleState, now time.Time) error {
+func (t *ActionItem) SetLifecycleState(state LifecycleState, now time.Time) error {
 	if !isValidLifecycleState(state) {
 		return ErrInvalidLifecycleState
 	}
@@ -289,8 +289,8 @@ func (t *Task) SetLifecycleState(state LifecycleState, now time.Time) error {
 	return nil
 }
 
-// Reparent changes the parent relationship of a task.
-func (t *Task) Reparent(parentID string, now time.Time) error {
+// Reparent changes the parent relationship of a actionItem.
+func (t *ActionItem) Reparent(parentID string, now time.Time) error {
 	parentID = strings.TrimSpace(parentID)
 	if parentID == t.ID {
 		return ErrInvalidParentID
@@ -301,12 +301,12 @@ func (t *Task) Reparent(parentID string, now time.Time) error {
 }
 
 // StartCriteriaUnmet returns start-criteria items that are not yet satisfied.
-func (t Task) StartCriteriaUnmet() []string {
+func (t ActionItem) StartCriteriaUnmet() []string {
 	return incompleteChecklistItems(t.Metadata.CompletionContract.StartCriteria)
 }
 
 // CompletionCriteriaUnmet returns completion requirements that are not yet satisfied.
-func (t Task) CompletionCriteriaUnmet(children []Task) []string {
+func (t ActionItem) CompletionCriteriaUnmet(children []ActionItem) []string {
 	out := incompleteChecklistItems(t.Metadata.CompletionContract.CompletionCriteria)
 	out = append(out, incompleteChecklistItems(t.Metadata.CompletionContract.CompletionChecklist)...)
 	if t.Metadata.CompletionContract.Policy.RequireChildrenDone {
@@ -323,7 +323,7 @@ func (t Task) CompletionCriteriaUnmet(children []Task) []string {
 }
 
 // Archive archives the requested operation.
-func (t *Task) Archive(now time.Time) {
+func (t *ActionItem) Archive(now time.Time) {
 	ts := now.UTC()
 	t.ArchivedAt = &ts
 	t.LifecycleState = StateArchived
@@ -331,7 +331,7 @@ func (t *Task) Archive(now time.Time) {
 }
 
 // Restore restores the requested operation.
-func (t *Task) Restore(now time.Time) {
+func (t *ActionItem) Restore(now time.Time) {
 	t.ArchivedAt = nil
 	if t.LifecycleState == StateArchived {
 		t.LifecycleState = StateTodo

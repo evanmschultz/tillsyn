@@ -2,9 +2,9 @@
     │ TILLSYN Help                                                                         │
     │ screen: board                                                                        │
     │                                                                                      │
-    │ - h/l or left/right move columns; j/k or up/down move task selection                 │
-    │ - n new task; i task info; e edit task                                               │
-    │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore            │
+    │ - h/l or left/right move columns; j/k or up/down move actionItem selection           │
+    │ - n new actionItem; i actionItem info; e edit actionItem                             │
+    │ - space multi-select; [ / ] move actionItem; d delete; D hard delete; u restore      │
     │ - f/enter focus subtree; F full board; t toggle archived                             │
     │ - / search; p project picker; : command palette; . quick actions                     │
     │ - tab/shift+tab cycle board/project/global panels; left/right wraps panel focus      │

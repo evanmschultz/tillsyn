@@ -51,7 +51,7 @@ func TestServiceSetAndListProjectAllowedKindsValidation(t *testing.T) {
 	}
 	if err := svc.SetProjectAllowedKinds(context.Background(), SetProjectAllowedKindsInput{
 		ProjectID: project.ID,
-		KindIDs:   []domain.KindID{"task", "phase", "task"},
+		KindIDs:   []domain.KindID{"actionItem", "phase", "actionItem"},
 	}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds(valid) error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestServiceSetAndListProjectAllowedKindsValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
 	}
-	want := []domain.KindID{"phase", "task"}
+	want := []domain.KindID{"actionItem", "phase"}
 	if !slices.Equal(kinds, want) {
 		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", kinds, want)
 	}
@@ -77,14 +77,14 @@ func TestServiceListKindDefinitionsAndUpsert(t *testing.T) {
 	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "zeta",
 		DisplayName: "Zeta",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 	}); err != nil {
 		t.Fatalf("UpsertKindDefinition(create) error = %v", err)
 	}
 	updated, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "zeta",
 		DisplayName: "Alpha",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 	})
 	if err != nil {
 		t.Fatalf("UpsertKindDefinition(update) error = %v", err)
@@ -214,23 +214,23 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 	}
 	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
 		ProjectID: project.ID,
-		ScopeType: domain.CapabilityScopeTask,
-		ScopeID:   "missing-task",
+		ScopeType: domain.CapabilityScopeActionItem,
+		ScopeID:   "missing-actionItem",
 	}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("RevokeAllCapabilityLeases(unknown task scope) error = %v, want ErrNotFound", err)
+		t.Fatalf("RevokeAllCapabilityLeases(unknown actionItem scope) error = %v, want ErrNotFound", err)
 	}
-	// Guard against project-scoped root rows being treated as task-scoped tuples.
-	repo.tasks["project-root-item"] = domain.Task{
+	// Guard against project-scoped root rows being treated as actionItem-scoped tuples.
+	repo.tasks["project-root-item"] = domain.ActionItem{
 		ID:        "project-root-item",
 		ProjectID: project.ID,
 		Scope:     domain.KindAppliesToProject,
 	}
 	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
 		ProjectID: project.ID,
-		ScopeType: domain.CapabilityScopeTask,
+		ScopeType: domain.CapabilityScopeActionItem,
 		ScopeID:   "project-root-item",
 	}); !errors.Is(err, domain.ErrInvalidCapabilityScope) {
-		t.Fatalf("RevokeAllCapabilityLeases(project root as task scope) error = %v, want ErrInvalidCapabilityScope", err)
+		t.Fatalf("RevokeAllCapabilityLeases(project root as actionItem scope) error = %v, want ErrInvalidCapabilityScope", err)
 	}
 	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
 		ProjectID: project.ID,
@@ -362,7 +362,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		t.Fatalf("enforceMutationGuard(expired) error = %v, want ErrMutationLeaseExpired", err)
 	}
 
-	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("branch"),
@@ -371,7 +371,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 	branchLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
@@ -404,8 +404,8 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	}
 }
 
-// TestCreateTaskAppliesKindTemplateActions verifies checklist merge and child auto-create behavior.
-func TestCreateTaskAppliesKindTemplateActions(t *testing.T) {
+// TestCreateActionItemAppliesKindTemplateActions verifies checklist merge and child auto-create behavior.
+func TestCreateActionItemAppliesKindTemplateActions(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
@@ -417,7 +417,7 @@ func TestCreateTaskAppliesKindTemplateActions(t *testing.T) {
 	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "refactor",
 		DisplayName: "Refactor",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 		Template: domain.KindTemplate{
 			CompletionChecklist: []domain.ChecklistItem{
 				{ID: "ck-run-tests", Text: "run package tests", Done: false},
@@ -444,43 +444,43 @@ func TestCreateTaskAppliesKindTemplateActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	parent, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
-		Title:       "Parent Task",
+		Title:       "Parent ActionItem",
 		Description: "Template parent",
 		Kind:        domain.WorkKind("refactor"),
-		Scope:       domain.KindAppliesToTask,
+		Scope:       domain.KindAppliesToActionItem,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(refactor) error = %v", err)
+		t.Fatalf("CreateActionItem(refactor) error = %v", err)
 	}
-	storedParent, err := repo.GetTask(context.Background(), parent.ID)
+	storedParent, err := repo.GetActionItem(context.Background(), parent.ID)
 	if err != nil {
-		t.Fatalf("GetTask(parent) error = %v", err)
+		t.Fatalf("GetActionItem(parent) error = %v", err)
 	}
 	if len(storedParent.Metadata.CompletionContract.CompletionChecklist) != 1 {
 		t.Fatalf("parent checklist len = %d, want 1", len(storedParent.Metadata.CompletionContract.CompletionChecklist))
 	}
 
-	tasks, err := svc.ListTasks(context.Background(), project.ID, true)
+	tasks, err := svc.ListActionItems(context.Background(), project.ID, true)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	foundChild := false
-	for _, task := range tasks {
-		if task.ParentID == parent.ID && task.Title == "Template Child" {
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == parent.ID && actionItem.Title == "Template Child" {
 			foundChild = true
-			if task.Kind != domain.WorkKindSubtask {
-				t.Fatalf("child kind = %q, want subtask", task.Kind)
+			if actionItem.Kind != domain.WorkKindSubtask {
+				t.Fatalf("child kind = %q, want subtask", actionItem.Kind)
 			}
-			if task.Scope != domain.KindAppliesToSubtask {
-				t.Fatalf("child scope = %q, want subtask", task.Scope)
+			if actionItem.Scope != domain.KindAppliesToSubtask {
+				t.Fatalf("child scope = %q, want subtask", actionItem.Scope)
 			}
 		}
 	}
 	if !foundChild {
-		t.Fatal("expected template-created child task")
+		t.Fatal("expected template-created child actionItem")
 	}
 }
 
@@ -541,20 +541,20 @@ func TestCreateProjectAppliesKindTemplateDefaultsAndChildren(t *testing.T) {
 	if len(columns) == 0 {
 		t.Fatal("expected template root column creation")
 	}
-	tasks, err := svc.ListTasks(context.Background(), project.ID, false)
+	tasks, err := svc.ListActionItems(context.Background(), project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("expected one template-created root task, got %d", len(tasks))
+		t.Fatalf("expected one template-created root actionItem, got %d", len(tasks))
 	}
 	if tasks[0].Kind != domain.WorkKind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
-		t.Fatalf("unexpected root task kind/scope %#v", tasks[0])
+		t.Fatalf("unexpected root actionItem kind/scope %#v", tasks[0])
 	}
 }
 
-// TestCreateTaskCascadesChildKindTemplateDefaults verifies child auto-create goes back through create-time defaults.
-func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
+// TestCreateActionItemCascadesChildKindTemplateDefaults verifies child auto-create goes back through create-time defaults.
+func TestCreateActionItemCascadesChildKindTemplateDefaults(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 11, 30, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
@@ -567,7 +567,7 @@ func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
 		DisplayName: "QA Check",
 		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToSubtask},
 		Template: domain.KindTemplate{
-			TaskMetadataDefaults: &domain.TaskMetadata{
+			ActionItemMetadataDefaults: &domain.ActionItemMetadata{
 				AcceptanceCriteria: "qa verifies the change",
 				CompletionContract: domain.CompletionContract{
 					CompletionChecklist: []domain.ChecklistItem{{ID: "qa-green", Text: "qa evidence attached"}},
@@ -580,9 +580,9 @@ func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
 	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "implementation",
 		DisplayName: "Implementation",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 		Template: domain.KindTemplate{
-			TaskMetadataDefaults: &domain.TaskMetadata{
+			ActionItemMetadataDefaults: &domain.ActionItemMetadata{
 				ValidationPlan: "run package tests before handoff",
 				CompletionContract: domain.CompletionContract{
 					Policy: domain.CompletionPolicy{RequireChildrenDone: true},
@@ -607,19 +607,19 @@ func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	parent, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Title:     "Implement auth flow",
 		Kind:      "implementation",
-		Scope:     domain.KindAppliesToTask,
+		Scope:     domain.KindAppliesToActionItem,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(implementation) error = %v", err)
+		t.Fatalf("CreateActionItem(implementation) error = %v", err)
 	}
-	storedParent, err := repo.GetTask(context.Background(), parent.ID)
+	storedParent, err := repo.GetActionItem(context.Background(), parent.ID)
 	if err != nil {
-		t.Fatalf("GetTask(parent) error = %v", err)
+		t.Fatalf("GetActionItem(parent) error = %v", err)
 	}
 	if storedParent.Metadata.ValidationPlan != "run package tests before handoff" {
 		t.Fatalf("ValidationPlan = %q, want template default", storedParent.Metadata.ValidationPlan)
@@ -628,11 +628,11 @@ func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
 		t.Fatal("expected require_children_done default on parent")
 	}
 
-	tasks, err := svc.ListTasks(context.Background(), project.ID, false)
+	tasks, err := svc.ListActionItems(context.Background(), project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
-	var child *domain.Task
+	var child *domain.ActionItem
 	for i := range tasks {
 		if tasks[i].ParentID == parent.ID {
 			child = &tasks[i]
@@ -640,7 +640,7 @@ func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
 		}
 	}
 	if child == nil {
-		t.Fatal("expected auto-created child task")
+		t.Fatal("expected auto-created child actionItem")
 	}
 	if child.Kind != domain.WorkKind("qa-check") {
 		t.Fatalf("child kind = %q, want qa-check", child.Kind)
@@ -653,8 +653,8 @@ func TestCreateTaskCascadesChildKindTemplateDefaults(t *testing.T) {
 	}
 }
 
-// TestCreateTaskRejectsExternalSystemBypass verifies public callers cannot fake the internal template path.
-func TestCreateTaskRejectsExternalSystemBypass(t *testing.T) {
+// TestCreateActionItemRejectsExternalSystemBypass verifies public callers cannot fake the internal template path.
+func TestCreateActionItemRejectsExternalSystemBypass(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{
@@ -670,18 +670,18 @@ func TestCreateTaskRejectsExternalSystemBypass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	if _, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:     project.ID,
 		ColumnID:      column.ID,
 		Title:         "Illicit system create",
 		UpdatedByType: domain.ActorTypeSystem,
 	}); !errors.Is(err, domain.ErrMutationLeaseRequired) {
-		t.Fatalf("CreateTask(system without internal marker) error = %v, want ErrMutationLeaseRequired", err)
+		t.Fatalf("CreateActionItem(system without internal marker) error = %v, want ErrMutationLeaseRequired", err)
 	}
 }
 
-// TestCreateTaskRejectsRecursiveTemplateBeforePersistence verifies recursive templates fail closed.
-func TestCreateTaskRejectsRecursiveTemplateBeforePersistence(t *testing.T) {
+// TestCreateActionItemRejectsRecursiveTemplateBeforePersistence verifies recursive templates fail closed.
+func TestCreateActionItemRejectsRecursiveTemplateBeforePersistence(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 12, 10, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
@@ -692,7 +692,7 @@ func TestCreateTaskRejectsRecursiveTemplateBeforePersistence(t *testing.T) {
 	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "loop",
 		DisplayName: "Loop",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask},
 		Template: domain.KindTemplate{
 			AutoCreateChildren: []domain.KindTemplateChildSpec{{
 				Title:     "Loop Child",
@@ -712,18 +712,18 @@ func TestCreateTaskRejectsRecursiveTemplateBeforePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	if _, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Title:     "Root",
 		Kind:      "loop",
-		Scope:     domain.KindAppliesToTask,
+		Scope:     domain.KindAppliesToActionItem,
 	}); !errors.Is(err, domain.ErrInvalidKindTemplate) {
-		t.Fatalf("CreateTask(loop) error = %v, want ErrInvalidKindTemplate", err)
+		t.Fatalf("CreateActionItem(loop) error = %v, want ErrInvalidKindTemplate", err)
 	}
-	tasks, err := svc.ListTasks(context.Background(), project.ID, true)
+	tasks, err := svc.ListActionItems(context.Background(), project.ID, true)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 0 {
 		t.Fatalf("expected no persisted tasks on recursive template failure, got %d", len(tasks))
@@ -744,7 +744,7 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("branch"),
@@ -753,19 +753,19 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Title:     "Task A",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Title:     "ActionItem A",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(task) error = %v", err)
+		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
 	}
 
 	parent, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
@@ -835,8 +835,8 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	}
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:        project.ID,
-		ScopeType:        domain.CapabilityScopeTask,
-		ScopeID:          task.ID,
+		ScopeType:        domain.CapabilityScopeActionItem,
+		ScopeID:          actionItem.ID,
 		Role:             domain.CapabilityRoleResearch,
 		AgentName:        "research-child",
 		AgentInstanceID:  "research-child",
@@ -847,8 +847,8 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:        project.ID,
-		ScopeType:        domain.CapabilityScopeTask,
-		ScopeID:          task.ID,
+		ScopeType:        domain.CapabilityScopeActionItem,
+		ScopeID:          actionItem.ID,
 		Role:             domain.CapabilityRoleOrchestrator,
 		AgentName:        "child-orch",
 		AgentInstanceID:  "child-orch",
@@ -870,8 +870,8 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	}
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:        project.ID,
-		ScopeType:        domain.CapabilityScopeTask,
-		ScopeID:          task.ID,
+		ScopeType:        domain.CapabilityScopeActionItem,
+		ScopeID:          actionItem.ID,
 		Role:             domain.CapabilityRoleQA,
 		AgentName:        "qa-child",
 		AgentInstanceID:  "qa-child",
@@ -908,14 +908,14 @@ func TestQALeaseActionPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Title:     "Task A",
+		Title:     "ActionItem A",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	qaLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
@@ -934,30 +934,30 @@ func TestQALeaseActionPolicy(t *testing.T) {
 	})
 	if _, err := svc.CreateComment(qaCtx, CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		BodyMarkdown: "qa note",
 		ActorID:      "qa-1",
 		ActorType:    domain.ActorTypeAgent,
 	}); err != nil {
 		t.Fatalf("CreateComment(qa) error = %v", err)
 	}
-	if _, err := svc.UpdateTask(qaCtx, UpdateTaskInput{
-		TaskID:      task.ID,
-		Title:       "Task A QA",
-		Description: "qa-edited",
-		Priority:    domain.PriorityMedium,
-		UpdatedBy:   "qa-1",
-		UpdatedType: domain.ActorTypeAgent,
+	if _, err := svc.UpdateActionItem(qaCtx, UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        "ActionItem A QA",
+		Description:  "qa-edited",
+		Priority:     domain.PriorityMedium,
+		UpdatedBy:    "qa-1",
+		UpdatedType:  domain.ActorTypeAgent,
 	}); err != nil {
-		t.Fatalf("UpdateTask(qa) error = %v", err)
+		t.Fatalf("UpdateActionItem(qa) error = %v", err)
 	}
 }
 
 // TestKindCapabilityHelpers verifies deterministic helper behavior used by service methods.
 func TestKindCapabilityHelpers(t *testing.T) {
-	normalized := normalizeKindIDList([]domain.KindID{"Task", "phase", "task", "  ", "Phase"})
-	wantIDs := []domain.KindID{"phase", "task"}
+	normalized := normalizeKindIDList([]domain.KindID{"ActionItem", "phase", "actionItem", "  ", "Phase"})
+	wantIDs := []domain.KindID{"actionItem", "phase"}
 	if !slices.Equal(normalized, wantIDs) {
 		t.Fatalf("normalizeKindIDList() = %#v, want %#v", normalized, wantIDs)
 	}
@@ -979,12 +979,12 @@ func TestKindCapabilityHelpers(t *testing.T) {
 		t.Fatalf("mergeChecklistItems() len = %d, want 2", len(merged))
 	}
 
-	if _, err := normalizeTaskMetadataFromKindPayload(json.RawMessage(`{`)); !errors.Is(err, domain.ErrInvalidKindPayload) {
-		t.Fatalf("normalizeTaskMetadataFromKindPayload(invalid) error = %v, want ErrInvalidKindPayload", err)
+	if _, err := normalizeActionItemMetadataFromKindPayload(json.RawMessage(`{`)); !errors.Is(err, domain.ErrInvalidKindPayload) {
+		t.Fatalf("normalizeActionItemMetadataFromKindPayload(invalid) error = %v, want ErrInvalidKindPayload", err)
 	}
-	meta, err := normalizeTaskMetadataFromKindPayload(json.RawMessage(`{"key":"value"}`))
+	meta, err := normalizeActionItemMetadataFromKindPayload(json.RawMessage(`{"key":"value"}`))
 	if err != nil {
-		t.Fatalf("normalizeTaskMetadataFromKindPayload(valid) error = %v", err)
+		t.Fatalf("normalizeActionItemMetadataFromKindPayload(valid) error = %v", err)
 	}
 	if string(meta.KindPayload) != `{"key":"value"}` {
 		t.Fatalf("KindPayload = %s, want {\"key\":\"value\"}", string(meta.KindPayload))

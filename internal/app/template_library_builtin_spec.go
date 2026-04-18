@@ -23,14 +23,14 @@ type builtinTemplateLibraryDocument struct {
 
 // builtinNodeTemplateDocument stores one repo-authored node template payload.
 type builtinNodeTemplateDocument struct {
-	ID                      string                     `json:"id"`
-	ScopeLevel              domain.KindAppliesTo       `json:"scope_level"`
-	NodeKindID              domain.KindID              `json:"node_kind_id"`
-	DisplayName             string                     `json:"display_name"`
-	DescriptionMarkdown     string                     `json:"description_markdown"`
-	ProjectMetadataDefaults *domain.ProjectMetadata    `json:"project_metadata_defaults"`
-	TaskMetadataDefaults    *domain.TaskMetadata       `json:"task_metadata_defaults"`
-	ChildRules              []builtinChildRuleDocument `json:"child_rules"`
+	ID                         string                     `json:"id"`
+	ScopeLevel                 domain.KindAppliesTo       `json:"scope_level"`
+	NodeKindID                 domain.KindID              `json:"node_kind_id"`
+	DisplayName                string                     `json:"display_name"`
+	DescriptionMarkdown        string                     `json:"description_markdown"`
+	ProjectMetadataDefaults    *domain.ProjectMetadata    `json:"project_metadata_defaults"`
+	ActionItemMetadataDefaults *domain.ActionItemMetadata `json:"task_metadata_defaults"`
+	ChildRules                 []builtinChildRuleDocument `json:"child_rules"`
 }
 
 // builtinChildRuleDocument stores one repo-authored child rule payload.
@@ -97,14 +97,14 @@ func builtinTemplateLibraryInputFromDocument(doc builtinTemplateLibraryDocument,
 			})
 		}
 		nodeTemplates = append(nodeTemplates, UpsertNodeTemplateInput{
-			ID:                      nodeTemplate.ID,
-			ScopeLevel:              nodeTemplate.ScopeLevel,
-			NodeKindID:              nodeTemplate.NodeKindID,
-			DisplayName:             nodeTemplate.DisplayName,
-			DescriptionMarkdown:     nodeTemplate.DescriptionMarkdown,
-			ProjectMetadataDefaults: cloneProjectMetadata(nodeTemplate.ProjectMetadataDefaults),
-			TaskMetadataDefaults:    cloneTaskMetadata(nodeTemplate.TaskMetadataDefaults),
-			ChildRules:              childRules,
+			ID:                         nodeTemplate.ID,
+			ScopeLevel:                 nodeTemplate.ScopeLevel,
+			NodeKindID:                 nodeTemplate.NodeKindID,
+			DisplayName:                nodeTemplate.DisplayName,
+			DescriptionMarkdown:        nodeTemplate.DescriptionMarkdown,
+			ProjectMetadataDefaults:    cloneProjectMetadata(nodeTemplate.ProjectMetadataDefaults),
+			ActionItemMetadataDefaults: cloneActionItemMetadata(nodeTemplate.ActionItemMetadataDefaults),
+			ChildRules:                 childRules,
 		})
 	}
 
@@ -140,8 +140,8 @@ func cloneProjectMetadata(meta *domain.ProjectMetadata) *domain.ProjectMetadata 
 	return &cloned
 }
 
-// cloneTaskMetadata deep-copies optional task metadata defaults loaded from builtin template documents.
-func cloneTaskMetadata(meta *domain.TaskMetadata) *domain.TaskMetadata {
+// cloneActionItemMetadata deep-copies optional actionItem metadata defaults loaded from builtin template documents.
+func cloneActionItemMetadata(meta *domain.ActionItemMetadata) *domain.ActionItemMetadata {
 	if meta == nil {
 		return nil
 	}

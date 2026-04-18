@@ -106,9 +106,9 @@ registry.
 `),
 		Example: []string{
 			"  till kind list",
-			"  till kind upsert --id research-task --display-name \"Research Task\" --applies-to task",
+			"  till kind upsert --id research-actionItem --display-name \"Research ActionItem\" --applies-to actionItem",
 			"  till kind allowlist list --project-id PROJECT_ID",
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id research-task",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id actionItem --kind-id research-actionItem",
 		},
 	},
 	"till kind list": {
@@ -118,7 +118,7 @@ List the kind registry used to classify projects and work nodes.
 Use this to inspect which kind ids exist, what scopes they apply to, and which
 definitions are available before binding templates or tightening allowlists.
 
-Discover valid kind ids here before template work, project creation, or task creation.
+Discover valid kind ids here before template work, project creation, or actionItem creation.
 `),
 		Example: []string{
 			"  till kind list",
@@ -138,8 +138,8 @@ not be used for new work.
 `),
 		Example: []string{
 			"  till kind upsert --id go-service --display-name \"Go Service\" --applies-to project",
-			"  till kind upsert --id build-task --display-name \"Build Task\" \\",
-			"    --applies-to task --allowed-parent-scopes project \\",
+			"  till kind upsert --id build-actionItem --display-name \"Build ActionItem\" \\",
+			"    --applies-to actionItem --allowed-parent-scopes project \\",
 			"    --allowed-parent-scopes phase",
 			"  till kind upsert --id qa-check --display-name \"QA Check\" \\",
 			"    --applies-to subtask --payload-schema-json '{\"type\":\"object\"}'",
@@ -156,7 +156,7 @@ top of the template-defined workflow.
 `),
 		Example: []string{
 			"  till kind allowlist list --project-id PROJECT_ID",
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id qa-check",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id actionItem --kind-id qa-check",
 		},
 	},
 	"till kind allowlist list": {
@@ -183,8 +183,8 @@ when you need to keep a project limited to template-defined node kinds or
 deliberately opt specific generic kinds back in.
 `),
 		Example: []string{
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id task --kind-id subtask",
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id actionItem --kind-id subtask",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-actionItem --kind-id qa-check",
 		},
 	},
 	"till template": {
@@ -296,7 +296,7 @@ Use this after reviewing drift so the dev can explicitly adopt changed child
 rule contracts for existing generated nodes.
 `),
 		Example: []string{
-			"  till template project approve-migrations --project-id PROJECT_ID --task-id TASK_ID",
+			"  till template project approve-migrations --project-id PROJECT_ID --actionItem-id TASK_ID",
 			"  till template project approve-migrations --project-id PROJECT_ID --all",
 		},
 	},
@@ -343,7 +343,7 @@ lease or investigating stale orchestration state.
 `),
 		Example: []string{
 			"  till lease list --project-id PROJECT_ID",
-			"  till lease list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
+			"  till lease list --project-id PROJECT_ID --scope-type actionItem --scope-id TASK_ID",
 			"  till lease list --project-id PROJECT_ID --include-revoked",
 		},
 	},
@@ -352,11 +352,11 @@ lease or investigating stale orchestration state.
 Issue one scoped capability lease for an agent instance.
 
 Use this when an orchestrator or operator needs to assign execution authority
-for a project, branch, phase, task, or subtask scope.
+for a project, branch, phase, actionItem, or subtask scope.
 `),
 		Example: []string{
 			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
-			"  till lease issue --project-id PROJECT_ID --scope-type task \\",
+			"  till lease issue --project-id PROJECT_ID --scope-type actionItem \\",
 			"    --scope-id TASK_ID --agent-name AGENT_NAME --role qa \\",
 			"    --requested-ttl 30m",
 			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME \\",
@@ -427,7 +427,7 @@ explicit summary, target scope, next action, or missing-evidence checklist.
 		Example: []string{
 			"  till handoff create --project-id PROJECT_ID \\",
 			"    --summary \"Builder blocked on QA\"",
-			"  till handoff create --project-id PROJECT_ID --scope-type task \\",
+			"  till handoff create --project-id PROJECT_ID --scope-type actionItem \\",
 			"    --scope-id TASK_ID --source-role builder --target-role qa \\",
 			"    --next-action \"re-run verification\"",
 			"  till handoff create --project-id PROJECT_ID \\",
@@ -455,7 +455,7 @@ status when reviewing collaboration state.
 `),
 		Example: []string{
 			"  till handoff list --project-id PROJECT_ID",
-			"  till handoff list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
+			"  till handoff list --project-id PROJECT_ID --scope-type actionItem --scope-id TASK_ID",
 			"  till handoff list --project-id PROJECT_ID --status open \\",
 			"    --status accepted --limit 20",
 		},
@@ -478,7 +478,7 @@ summary, or record a final resolution note.
 		Long: strings.TrimSpace(`
 Export the runtime store as one snapshot JSON payload.
 
-Use this for migration, backup, debugging, or inspection of project, task,
+Use this for migration, backup, debugging, or inspection of project, actionItem,
 template, and auth-related state in one portable artifact.
 `),
 		Example: []string{

@@ -25,7 +25,7 @@ func (m Model) renderThreadModeView() tea.View {
 	hintStyle := lipgloss.NewStyle().Foreground(muted)
 	sectionTitleStyle := threadSectionStyle(accent)
 	title, subtitle := m.threadSurfaceHeader()
-	boxWidth := taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
+	boxWidth := actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
 	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, title, subtitle, "")
 
 	sidebarWidth := clamp(max(28, metrics.contentWidth/3), 28, 44)
@@ -56,7 +56,7 @@ func (m Model) renderThreadModeView() tea.View {
 
 // renderThreadDescriptionPanel renders the top description/details pane for thread mode.
 func (m Model) renderThreadDescriptionPanel(accent, muted, dim color.Color, sectionTitleStyle, hintStyle lipgloss.Style, width, height int) string {
-	title := "Task Details"
+	title := "ActionItem Details"
 	if m.threadTarget.TargetType == domain.CommentTargetTypeProject {
 		title = "Project Details"
 	}
@@ -142,16 +142,16 @@ func (m Model) threadSurfaceHeader() (string, string) {
 		}
 		return title, fmt.Sprintf("project: %s • comments: %d", projectName, len(m.threadComments))
 	default:
-		taskID := strings.TrimSpace(m.threadTarget.TargetID)
-		if task, ok := m.taskByID(taskID); ok {
-			return taskInfoNodeLabel(task) + " Thread", fmt.Sprintf(
+		actionItemID := strings.TrimSpace(m.threadTarget.TargetID)
+		if actionItem, ok := m.actionItemByID(actionItemID); ok {
+			return actionItemInfoNodeLabel(actionItem) + " Thread", fmt.Sprintf(
 				"kind: %s • state: %s • complete: %s",
-				string(task.Kind),
-				lifecycleStateLabel(m.lifecycleStateForTask(task)),
-				completionLabel(m.lifecycleStateForTask(task) == domain.StateDone),
+				string(actionItem.Kind),
+				lifecycleStateLabel(m.lifecycleStateForActionItem(actionItem)),
+				completionLabel(m.lifecycleStateForActionItem(actionItem) == domain.StateDone),
 			)
 		}
-		return "Task Thread", fmt.Sprintf("task: %s • comments: %d", truncate(taskID, 36), len(m.threadComments))
+		return "ActionItem Thread", fmt.Sprintf("actionItem: %s • comments: %d", truncate(actionItemID, 36), len(m.threadComments))
 	}
 }
 
@@ -358,46 +358,46 @@ func (m Model) startProjectThread(backMode inputMode) (tea.Model, tea.Cmd) {
 
 // startSelectedWorkItemThread opens thread mode for the currently selected board item.
 func (m Model) startSelectedWorkItemThread(backMode inputMode) (tea.Model, tea.Cmd) {
-	task, ok := m.selectedTaskInCurrentColumn()
+	actionItem, ok := m.selectedActionItemInCurrentColumn()
 	if !ok {
-		m.status = "no task selected"
+		m.status = "no actionItem selected"
 		return m, nil
 	}
-	return m.startTaskThread(task, backMode)
+	return m.startActionItemThread(actionItem, backMode)
 }
 
-// startTaskThread opens thread mode for a specific work item.
-func (m Model) startTaskThread(task domain.Task, backMode inputMode) (tea.Model, tea.Cmd) {
-	return m.startTaskThreadWithPanel(task, backMode, threadPanelDetails)
+// startActionItemThread opens thread mode for a specific work item.
+func (m Model) startActionItemThread(actionItem domain.ActionItem, backMode inputMode) (tea.Model, tea.Cmd) {
+	return m.startActionItemThreadWithPanel(actionItem, backMode, threadPanelDetails)
 }
 
-// startTaskThreadWithPanel opens thread mode for a specific work item and focuses one initial panel.
-func (m Model) startTaskThreadWithPanel(task domain.Task, backMode inputMode, panel int) (tea.Model, tea.Cmd) {
-	targetType, ok := commentTargetTypeForTask(task)
+// startActionItemThreadWithPanel opens thread mode for a specific work item and focuses one initial panel.
+func (m Model) startActionItemThreadWithPanel(actionItem domain.ActionItem, backMode inputMode, panel int) (tea.Model, tea.Cmd) {
+	targetType, ok := commentTargetTypeForActionItem(actionItem)
 	if !ok {
 		m.status = "unsupported work-item kind for comments"
 		return m, nil
 	}
 	target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
-		ProjectID:  task.ProjectID,
+		ProjectID:  actionItem.ProjectID,
 		TargetType: targetType,
-		TargetID:   task.ID,
+		TargetID:   actionItem.ID,
 	})
 	if err != nil {
 		m.status = "work-item thread target invalid: " + err.Error()
 		return m, nil
 	}
-	title := strings.TrimSpace(task.Title)
+	title := strings.TrimSpace(actionItem.Title)
 	if title == "" {
-		title = task.ID
+		title = actionItem.ID
 	}
-	title = fmt.Sprintf("%s: %s", task.Kind, title)
-	return m.startThread(backMode, target, title, task.Description, panel)
+	title = fmt.Sprintf("%s: %s", actionItem.Kind, title)
+	return m.startThread(backMode, target, title, actionItem.Description, panel)
 }
 
 // startThread initializes thread-mode state and kicks off comment loading.
 func (m Model) startThread(backMode inputMode, target domain.CommentTarget, title, description string, panel int) (tea.Model, tea.Cmd) {
-	if backMode != modeTaskInfo && backMode != modeEditTask && backMode != modeEditProject {
+	if backMode != modeActionItemInfo && backMode != modeEditActionItem && backMode != modeEditProject {
 		backMode = modeNone
 	}
 	m.mode = modeThread
@@ -423,7 +423,7 @@ func (m Model) startThread(backMode inputMode, target domain.CommentTarget, titl
 	return m, m.loadThreadCommentsCmd(target)
 }
 
-// threadDescriptionForTarget resolves the thread description body, falling back to the backing project/task details when needed.
+// threadDescriptionForTarget resolves the thread description body, falling back to the backing project/actionItem details when needed.
 func (m Model) threadDescriptionForTarget(target domain.CommentTarget, description string) string {
 	if details := strings.TrimSpace(description); details != "" {
 		return details
@@ -440,18 +440,18 @@ func (m Model) threadDescriptionForTarget(target domain.CommentTarget, descripti
 		}
 		return ""
 	}
-	taskID := strings.TrimSpace(target.TargetID)
-	if taskID == "" {
+	actionItemID := strings.TrimSpace(target.TargetID)
+	if actionItemID == "" {
 		return ""
 	}
-	task, ok := m.taskByID(taskID)
+	actionItem, ok := m.actionItemByID(actionItemID)
 	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(task.Description)
+	return strings.TrimSpace(actionItem.Description)
 }
 
-// startThreadEditFlow transitions thread read mode into the matching project/task edit flow.
+// startThreadEditFlow transitions thread read mode into the matching project/actionItem edit flow.
 func (m Model) startThreadEditFlow() (tea.Model, tea.Cmd) {
 	target := m.threadTarget
 	switch target.TargetType {
@@ -473,17 +473,17 @@ func (m Model) startThreadEditFlow() (tea.Model, tea.Cmd) {
 		m.status = "thread project not found"
 		return m, nil
 	default:
-		taskID := strings.TrimSpace(target.TargetID)
-		if taskID == "" {
+		actionItemID := strings.TrimSpace(target.TargetID)
+		if actionItemID == "" {
 			m.status = "thread work item target unavailable"
 			return m, nil
 		}
-		task, ok := m.taskByID(taskID)
+		actionItem, ok := m.actionItemByID(actionItemID)
 		if !ok {
 			m.status = "thread work item not found"
 			return m, nil
 		}
-		return m, m.startTaskForm(&task)
+		return m, m.startActionItemForm(&actionItem)
 	}
 }
 
@@ -573,22 +573,22 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 			}
 			return actionMsg{status: "thread details updated", reload: true}
 		default:
-			taskID := strings.TrimSpace(target.TargetID)
-			if taskID == "" {
-				return actionMsg{err: fmt.Errorf("thread details update: task target unavailable")}
+			actionItemID := strings.TrimSpace(target.TargetID)
+			if actionItemID == "" {
+				return actionMsg{err: fmt.Errorf("thread details update: actionItem target unavailable")}
 			}
-			task, ok := m.taskByID(taskID)
+			actionItem, ok := m.actionItemByID(actionItemID)
 			if !ok {
-				return actionMsg{err: fmt.Errorf("thread details update: task %q not found", taskID)}
+				return actionMsg{err: fmt.Errorf("thread details update: actionItem %q not found", actionItemID)}
 			}
-			metadata := task.Metadata
-			_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
-				TaskID:        task.ID,
-				Title:         task.Title,
+			metadata := actionItem.Metadata
+			_, err := m.svc.UpdateActionItem(context.Background(), app.UpdateActionItemInput{
+				ActionItemID:  actionItem.ID,
+				Title:         actionItem.Title,
 				Description:   description,
-				Priority:      task.Priority,
-				DueAt:         task.DueAt,
-				Labels:        append([]string(nil), task.Labels...),
+				Priority:      actionItem.Priority,
+				DueAt:         actionItem.DueAt,
+				Labels:        append([]string(nil), actionItem.Labels...),
 				Metadata:      &metadata,
 				UpdatedBy:     actorID,
 				UpdatedByName: actorName,
@@ -662,17 +662,17 @@ func (m Model) commentOwnerLabel(comment domain.Comment) string {
 	return fmt.Sprintf("%s (%s)", owner, actorID)
 }
 
-// commentSummaryText returns the normalized summary text used in thread and task-info read views.
+// commentSummaryText returns the normalized summary text used in thread and actionItem-info read views.
 func commentSummaryText(comment domain.Comment) string {
 	return domain.NormalizeCommentSummary(comment.Summary, comment.BodyMarkdown)
 }
 
-// commentTargetTypeForTask maps one work item into comment target types with scope-aware overrides.
-func commentTargetTypeForTask(task domain.Task) (domain.CommentTargetType, bool) {
-	if task.Scope == domain.KindAppliesToBranch {
+// commentTargetTypeForActionItem maps one work item into comment target types with scope-aware overrides.
+func commentTargetTypeForActionItem(actionItem domain.ActionItem) (domain.CommentTargetType, bool) {
+	if actionItem.Scope == domain.KindAppliesToBranch {
 		return domain.CommentTargetTypeBranch, true
 	}
-	return commentTargetTypeForWorkKind(task.Kind)
+	return commentTargetTypeForWorkKind(actionItem.Kind)
 }
 
 // commentTargetTypeForWorkKind maps work-item kinds into comment target types.
@@ -680,8 +680,8 @@ func commentTargetTypeForWorkKind(kind domain.WorkKind) (domain.CommentTargetTyp
 	switch kind {
 	case domain.WorkKind(domain.KindAppliesToBranch):
 		return domain.CommentTargetTypeBranch, true
-	case domain.WorkKindTask:
-		return domain.CommentTargetTypeTask, true
+	case domain.WorkKindActionItem:
+		return domain.CommentTargetTypeActionItem, true
 	case domain.WorkKindSubtask:
 		return domain.CommentTargetTypeSubtask, true
 	case domain.WorkKindPhase:

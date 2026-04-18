@@ -17,16 +17,16 @@ type AuthScopeContext struct {
 	PhaseIDs  []string
 }
 
-// GetTask returns one work-item row by id.
-func (s *Service) GetTask(ctx context.Context, taskID string) (domain.Task, error) {
+// GetActionItem returns one work-item row by id.
+func (s *Service) GetActionItem(ctx context.Context, actionItemID string) (domain.ActionItem, error) {
 	if s == nil || s.repo == nil {
-		return domain.Task{}, fmt.Errorf("service is not configured")
+		return domain.ActionItem{}, fmt.Errorf("service is not configured")
 	}
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return domain.Task{}, domain.ErrInvalidID
+	actionItemID = strings.TrimSpace(actionItemID)
+	if actionItemID == "" {
+		return domain.ActionItem{}, domain.ErrInvalidID
 	}
-	return s.repo.GetTask(ctx, taskID)
+	return s.repo.GetActionItem(ctx, actionItemID)
 }
 
 // GetAttentionItem returns one attention item by id.
@@ -71,15 +71,15 @@ func (s *Service) ResolveAuthScopeContext(ctx context.Context, in domain.LevelTu
 		}, nil
 	}
 
-	task, err := s.repo.GetTask(ctx, level.ScopeID)
+	actionItem, err := s.repo.GetActionItem(ctx, level.ScopeID)
 	if err != nil {
 		return AuthScopeContext{}, err
 	}
-	if strings.TrimSpace(task.ProjectID) != level.ProjectID {
+	if strings.TrimSpace(actionItem.ProjectID) != level.ProjectID {
 		return AuthScopeContext{}, ErrNotFound
 	}
 
-	actualScopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+	actualScopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
 	if actualScopeType == "" {
 		return AuthScopeContext{}, domain.ErrInvalidScopeType
 	}
@@ -87,26 +87,26 @@ func (s *Service) ResolveAuthScopeContext(ctx context.Context, in domain.LevelTu
 		return AuthScopeContext{}, domain.ErrInvalidScopeType
 	}
 
-	lineage, err := s.taskLineage(ctx, task)
+	lineage, err := s.actionItemLineage(ctx, actionItem)
 	if err != nil {
 		return AuthScopeContext{}, err
 	}
-	contextScope, err := authScopeContextFromTaskLineage(level.ProjectID, actualScopeType, task.ID, lineage)
+	contextScope, err := authScopeContextFromActionItemLineage(level.ProjectID, actualScopeType, actionItem.ID, lineage)
 	if err != nil {
 		return AuthScopeContext{}, err
 	}
 	return contextScope, nil
 }
 
-// taskLineage returns the root-to-leaf lineage for one task-scoped hierarchy node.
-func (s *Service) taskLineage(ctx context.Context, task domain.Task) ([]domain.Task, error) {
-	projectID := strings.TrimSpace(task.ProjectID)
+// actionItemLineage returns the root-to-leaf lineage for one actionItem-scoped hierarchy node.
+func (s *Service) actionItemLineage(ctx context.Context, actionItem domain.ActionItem) ([]domain.ActionItem, error) {
+	projectID := strings.TrimSpace(actionItem.ProjectID)
 	if projectID == "" {
 		return nil, domain.ErrInvalidID
 	}
 
-	reversed := make([]domain.Task, 0, 8)
-	current := task
+	reversed := make([]domain.ActionItem, 0, 8)
+	current := actionItem
 	for {
 		reversed = append(reversed, current)
 
@@ -114,7 +114,7 @@ func (s *Service) taskLineage(ctx context.Context, task domain.Task) ([]domain.T
 		if parentID == "" {
 			break
 		}
-		parent, err := s.repo.GetTask(ctx, parentID)
+		parent, err := s.repo.GetActionItem(ctx, parentID)
 		if err != nil {
 			return nil, err
 		}
@@ -124,15 +124,15 @@ func (s *Service) taskLineage(ctx context.Context, task domain.Task) ([]domain.T
 		current = parent
 	}
 
-	lineage := make([]domain.Task, 0, len(reversed))
+	lineage := make([]domain.ActionItem, 0, len(reversed))
 	for idx := len(reversed) - 1; idx >= 0; idx-- {
 		lineage = append(lineage, reversed[idx])
 	}
 	return lineage, nil
 }
 
-// authScopeContextFromTaskLineage converts one validated task lineage into auth-path context.
-func authScopeContextFromTaskLineage(projectID string, scopeType domain.ScopeLevel, scopeID string, lineage []domain.Task) (AuthScopeContext, error) {
+// authScopeContextFromActionItemLineage converts one validated actionItem lineage into auth-path context.
+func authScopeContextFromActionItemLineage(projectID string, scopeType domain.ScopeLevel, scopeID string, lineage []domain.ActionItem) (AuthScopeContext, error) {
 	projectID = strings.TrimSpace(projectID)
 	scopeType = domain.NormalizeScopeLevel(scopeType)
 	scopeID = strings.TrimSpace(scopeID)
@@ -161,7 +161,7 @@ func authScopeContextFromTaskLineage(projectID string, scopeType domain.ScopeLev
 	}
 
 	// The auth path model only narrows below project once a branch root exists.
-	if out.BranchID == "" && (scopeType == domain.ScopeLevelPhase || scopeType == domain.ScopeLevelTask || scopeType == domain.ScopeLevelSubtask) {
+	if out.BranchID == "" && (scopeType == domain.ScopeLevelPhase || scopeType == domain.ScopeLevelActionItem || scopeType == domain.ScopeLevelSubtask) {
 		out.ScopeType = domain.ScopeLevelProject
 		out.ScopeID = projectID
 		out.PhaseIDs = nil

@@ -11,7 +11,7 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	comment, err := NewComment(CommentInput{
 		ID:           "comment-1",
 		ProjectID:    " project-1 ",
-		TargetType:   CommentTargetType(" TASK "),
+		TargetType:   CommentTargetType(" ACTIONITEM "),
 		TargetID:     " item-1 ",
 		BodyMarkdown: " **done** ",
 	}, now)
@@ -21,8 +21,8 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	if comment.ProjectID != "project-1" {
 		t.Fatalf("expected trimmed project id, got %q", comment.ProjectID)
 	}
-	if comment.TargetType != CommentTargetTypeTask {
-		t.Fatalf("expected normalized task target type, got %q", comment.TargetType)
+	if comment.TargetType != CommentTargetTypeActionItem {
+		t.Fatalf("expected normalized actionItem target type, got %q", comment.TargetType)
 	}
 	if comment.TargetID != "item-1" {
 		t.Fatalf("expected trimmed target id, got %q", comment.TargetID)
@@ -53,7 +53,7 @@ func TestNewCommentUsesProvidedSummary(t *testing.T) {
 	comment, err := NewComment(CommentInput{
 		ID:           "comment-1",
 		ProjectID:    "project-1",
-		TargetType:   CommentTargetTypeTask,
+		TargetType:   CommentTargetTypeActionItem,
 		TargetID:     "item-1",
 		Summary:      "  Explicit summary  ",
 		BodyMarkdown: "\n\n# Heading\nbody detail",
@@ -72,7 +72,7 @@ func TestNewCommentDerivesSummaryFromFirstNonEmptyBodyLine(t *testing.T) {
 	comment, err := NewComment(CommentInput{
 		ID:           "comment-1",
 		ProjectID:    "project-1",
-		TargetType:   CommentTargetTypeTask,
+		TargetType:   CommentTargetTypeActionItem,
 		TargetID:     "item-1",
 		BodyMarkdown: "\n\n  ## Heading \n\nMore details",
 	}, now)
@@ -90,7 +90,7 @@ func TestNewCommentDefaultsActorNameFromActorID(t *testing.T) {
 	comment, err := NewComment(CommentInput{
 		ID:           "comment-1",
 		ProjectID:    "project-1",
-		TargetType:   CommentTargetTypeTask,
+		TargetType:   CommentTargetTypeActionItem,
 		TargetID:     "item-1",
 		BodyMarkdown: "done",
 		ActorID:      "agent-7",
@@ -172,7 +172,7 @@ func TestNewCommentValidation(t *testing.T) {
 			input: CommentInput{
 				ID:           "c1",
 				ProjectID:    "p1",
-				TargetType:   CommentTargetTypeTask,
+				TargetType:   CommentTargetTypeActionItem,
 				TargetID:     "t1",
 				BodyMarkdown: "body",
 				ActorType:    ActorType("robot"),

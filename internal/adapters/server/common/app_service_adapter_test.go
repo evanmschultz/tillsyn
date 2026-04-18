@@ -81,10 +81,10 @@ func TestComputeCaptureSummaryHashSortsAttentionItems(t *testing.T) {
 	base := app.CaptureStateSummary{
 		Level: domain.LevelTuple{
 			ProjectID: "p1",
-			ScopeType: domain.ScopeLevelTask,
+			ScopeType: domain.ScopeLevelActionItem,
 			ScopeID:   "t1",
 		},
-		GoalOverview: "scope=task:t1 project=p1 view=summary",
+		GoalOverview: "scope=actionItem:t1 project=p1 view=summary",
 		AttentionOverview: app.CaptureStateAttentionOverview{
 			UnresolvedCount: 2,
 		},
@@ -100,7 +100,7 @@ func TestComputeCaptureSummaryHashSortsAttentionItems(t *testing.T) {
 		FollowUpPointers: app.CaptureStateFollowUpPointers{
 			ListAttentionItems:      "list_attention_items(project_id=\"p1\",scope_id=\"t1\")",
 			ListProjectChangeEvents: "list_project_change_events(project_id=\"p1\")",
-			ListChildTasks:          "list_child_tasks(project_id=\"p1\",parent_id=\"t1\")",
+			ListChildActionItems:    "list_child_tasks(project_id=\"p1\",parent_id=\"t1\")",
 		},
 	}
 	first := base
@@ -141,8 +141,8 @@ func TestNormalizeCommonHelpers(t *testing.T) {
 		t.Fatalf("normalizeScopeTuple(branch) = %q %q %q, want p1 branch b1", projectID, scopeType, scopeID)
 	}
 
-	if _, _, _, err := normalizeScopeTuple("p1", ScopeTypeTask, ""); err == nil {
-		t.Fatal("normalizeScopeTuple(task) expected error for missing scope_id")
+	if _, _, _, err := normalizeScopeTuple("p1", ScopeTypeActionItem, ""); err == nil {
+		t.Fatal("normalizeScopeTuple(actionItem) expected error for missing scope_id")
 	}
 
 	if state, err := normalizeAttentionStateFilter("acknowledged"); err != nil || state != AttentionStateAcknowledged {

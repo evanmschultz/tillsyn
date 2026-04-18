@@ -12,14 +12,14 @@ import (
 
 // fakeCaptureReadModel provides deterministic capture-state read data for tests.
 type fakeCaptureReadModel struct {
-	projects        []domain.Project
-	columns         []domain.Column
-	tasks           []domain.Task
-	comments        []domain.Comment
-	listProjectsErr error
-	listColumnsErr  error
-	listTasksErr    error
-	listCommentsErr error
+	projects           []domain.Project
+	columns            []domain.Column
+	tasks              []domain.ActionItem
+	comments           []domain.Comment
+	listProjectsErr    error
+	listColumnsErr     error
+	listActionItemsErr error
+	listCommentsErr    error
 }
 
 // ListProjects returns configured projects or one injected error.
@@ -38,12 +38,12 @@ func (f fakeCaptureReadModel) ListColumns(_ context.Context, _ string, _ bool) (
 	return append([]domain.Column(nil), f.columns...), nil
 }
 
-// ListTasks returns configured tasks or one injected error.
-func (f fakeCaptureReadModel) ListTasks(_ context.Context, _ string, _ bool) ([]domain.Task, error) {
-	if f.listTasksErr != nil {
-		return nil, f.listTasksErr
+// ListActionItems returns configured tasks or one injected error.
+func (f fakeCaptureReadModel) ListActionItems(_ context.Context, _ string, _ bool) ([]domain.ActionItem, error) {
+	if f.listActionItemsErr != nil {
+		return nil, f.listActionItemsErr
 	}
-	return append([]domain.Task(nil), f.tasks...), nil
+	return append([]domain.ActionItem(nil), f.tasks...), nil
 }
 
 // ListCommentsByTarget returns configured comments or one injected error.
@@ -92,7 +92,7 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 		{ID: "c2", ProjectID: project.ID, Name: "Done", Position: 1},
 		{ID: "c1", ProjectID: project.ID, Name: "To Do", Position: 0},
 	}
-	tasks := []domain.Task{
+	tasks := []domain.ActionItem{
 		{
 			ID:             "t-archived",
 			ProjectID:      project.ID,
@@ -117,7 +117,7 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 			Position:       0,
 			Title:          "Parent",
 			LifecycleState: domain.StateTodo,
-			Metadata: domain.TaskMetadata{
+			Metadata: domain.ActionItemMetadata{
 				BlockedReason: "waiting on child",
 				CompletionContract: domain.CompletionContract{
 					CompletionCriteria: []domain.ChecklistItem{
@@ -192,10 +192,10 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 	if len(capture.AttentionOverview.Items) != 2 || capture.AttentionOverview.Items[0].ID != "att-1" {
 		t.Fatalf("AttentionOverview.Items = %#v, want sorted attention rows", capture.AttentionOverview.Items)
 	}
-	if capture.WorkOverview.TotalTasks != 6 || capture.WorkOverview.TodoTasks != 2 || capture.WorkOverview.InProgressTasks != 1 || capture.WorkOverview.DoneTasks != 1 || capture.WorkOverview.FailedTasks != 1 || capture.WorkOverview.ArchivedTasks != 1 {
+	if capture.WorkOverview.TotalActionItems != 6 || capture.WorkOverview.TodoActionItems != 2 || capture.WorkOverview.InProgressActionItems != 1 || capture.WorkOverview.DoneActionItems != 1 || capture.WorkOverview.FailedActionItems != 1 || capture.WorkOverview.ArchivedActionItems != 1 {
 		t.Fatalf("WorkOverview counts = %#v, want todo=2 progress=1 done=1 failed=1 archived=1", capture.WorkOverview)
 	}
-	if capture.WorkOverview.TasksWithOpenBlockers != 1 || capture.WorkOverview.IncompleteCompletionCriteria != 1 {
+	if capture.WorkOverview.ActionItemsWithOpenBlockers != 1 || capture.WorkOverview.IncompleteCompletionCriteria != 1 {
 		t.Fatalf("WorkOverview blockers = %#v, want one blocker and one incomplete completion criterion", capture.WorkOverview)
 	}
 	if capture.CommentOverview.RecentCount != 2 || capture.CommentOverview.ImportantCount != 1 {
@@ -253,8 +253,8 @@ func TestCaptureStateServiceErrorAndHelperPaths(t *testing.T) {
 		if SupportedScopeTypes()[0] != ScopeTypeProject {
 			t.Fatalf("SupportedScopeTypes() exposed backing slice: %#v", SupportedScopeTypes())
 		}
-		if targetType, ok := commentTargetTypeFromScope(ScopeTypeTask); !ok || targetType != domain.CommentTargetTypeTask {
-			t.Fatalf("commentTargetTypeFromScope(task) = %q, %t, want task true", targetType, ok)
+		if targetType, ok := commentTargetTypeFromScope(ScopeTypeActionItem); !ok || targetType != domain.CommentTargetTypeActionItem {
+			t.Fatalf("commentTargetTypeFromScope(actionItem) = %q, %t, want actionItem true", targetType, ok)
 		}
 		if _, ok := commentTargetTypeFromScope("weird"); ok {
 			t.Fatal("commentTargetTypeFromScope(weird) = true, want false")
@@ -265,7 +265,7 @@ func TestCaptureStateServiceErrorAndHelperPaths(t *testing.T) {
 		if canonicalLifecycleState("doing") != domain.StateProgress {
 			t.Fatalf("canonicalLifecycleState(doing) = %q, want progress", canonicalLifecycleState("doing"))
 		}
-		if got := buildWarningsOverview(WorkOverview{TasksWithOpenBlockers: 1}, AttentionOverview{RequiresUserAction: 1}); len(got.Warnings) != 2 {
+		if got := buildWarningsOverview(WorkOverview{ActionItemsWithOpenBlockers: 1}, AttentionOverview{RequiresUserAction: 1}); len(got.Warnings) != 2 {
 			t.Fatalf("buildWarningsOverview() = %#v, want two warnings", got)
 		}
 	})

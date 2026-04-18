@@ -172,8 +172,8 @@ func writeProjectTemplateMigrationApprovalResultDetail(stdout io.Writer, result 
 	rows := make([][]string, 0, len(result.Approvals))
 	for _, approval := range result.Approvals {
 		rows = append(rows, []string{
-			firstNonEmptyTrimmed(approval.Title, approval.TaskID, "-"),
-			firstNonEmptyTrimmed(approval.TaskID, "-"),
+			firstNonEmptyTrimmed(approval.Title, approval.ActionItemID, "-"),
+			firstNonEmptyTrimmed(approval.ActionItemID, "-"),
 			firstNonEmptyTrimmed(renderAuthStringList(approval.ChangeKinds), "-"),
 			firstNonEmptyTrimmed(compactText(approval.NewTitle), "-"),
 		})
@@ -275,8 +275,8 @@ func writeProjectTemplateMigrationCandidateTable(printer *laslig.Printer, candid
 	rows := make([][]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		rows = append(rows, []string{
-			firstNonEmptyTrimmed(candidate.Title, candidate.TaskID),
-			firstNonEmptyTrimmed(candidate.TaskID, "-"),
+			firstNonEmptyTrimmed(candidate.Title, candidate.ActionItemID),
+			firstNonEmptyTrimmed(candidate.ActionItemID, "-"),
 			firstNonEmptyTrimmed(string(candidate.Status), "-"),
 			firstNonEmptyTrimmed(renderAuthStringList(candidate.ChangeKinds), "-"),
 			firstNonEmptyTrimmed(compactText(candidate.Reason), "-"),

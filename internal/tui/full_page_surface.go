@@ -83,7 +83,7 @@ func (m Model) appHeaderBlock(statusStyle lipgloss.Style, innerWidth int) string
 	return strings.Join([]string{row, rule}, "\n")
 }
 
-// appHeaderPathText renders the shared path label when a project/task path is available.
+// appHeaderPathText renders the shared path label when a project/actionItem path is available.
 func (m Model) appHeaderPathText(maxWidth int) string {
 	projectName := ""
 	if project, ok := m.currentProject(); ok {
@@ -119,7 +119,7 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 
 	boxChrome := fullPageSurfaceBoxChrome(accent, muted, boxWidth, title, subtitle, status)
 
-	bodyHeight := taskInfoBodyViewportMinHeight
+	bodyHeight := actionItemInfoBodyViewportMinHeight
 	if m.height > 0 {
 		availableBodyHeight := m.height -
 			lipgloss.Height(headerBlock) -
@@ -134,7 +134,7 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 		}
 		bodyHeight = availableBodyHeight
 	}
-	bodyHeight = clamp(bodyHeight, 1, taskInfoBodyViewportMaxHeight)
+	bodyHeight = clamp(bodyHeight, 1, actionItemInfoBodyViewportMaxHeight)
 
 	return fullPageSurfaceMetrics{
 		innerWidth:   innerWidth,
@@ -153,7 +153,7 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 func (m Model) shouldHideSurfaceStatus(status string) bool {
 	status = strings.TrimSpace(strings.ToLower(status))
 	switch status {
-	case "", "ready", "task info", "parent task info", "edit task", "new task", "edit project", "new project", "thread loaded":
+	case "", "ready", "actionItem info", "parent actionItem info", "edit actionItem", "new actionItem", "edit project", "new project", "thread loaded":
 		return true
 	}
 	if strings.HasPrefix(status, "text selection mode ") {

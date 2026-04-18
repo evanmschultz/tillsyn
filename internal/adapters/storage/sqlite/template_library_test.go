@@ -45,11 +45,11 @@ func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
 		Status:      domain.TemplateLibraryStatusApproved,
 		NodeTemplates: []domain.NodeTemplateInput{
 			{
-				ID:         "task-template",
-				ScopeLevel: domain.KindAppliesToTask,
-				NodeKindID: "task",
-				TaskMetadataDefaults: &domain.TaskMetadata{
-					ValidationPlan: "Run task validation",
+				ID:         "actionItem-template",
+				ScopeLevel: domain.KindAppliesToActionItem,
+				NodeKindID: "actionItem",
+				ActionItemMetadataDefaults: &domain.ActionItemMetadata{
+					ValidationPlan: "Run actionItem validation",
 				},
 				ChildRules: []domain.TemplateChildRuleInput{
 					{
@@ -85,8 +85,8 @@ func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
 	if len(loadedLibrary.NodeTemplates[0].ChildRules) != 1 {
 		t.Fatalf("len(loadedLibrary.NodeTemplates[0].ChildRules) = %d, want 1", len(loadedLibrary.NodeTemplates[0].ChildRules))
 	}
-	if loadedLibrary.NodeTemplates[0].TaskMetadataDefaults == nil || loadedLibrary.NodeTemplates[0].TaskMetadataDefaults.ValidationPlan != "Run task validation" {
-		t.Fatalf("loaded task metadata defaults = %#v, want validation plan", loadedLibrary.NodeTemplates[0].TaskMetadataDefaults)
+	if loadedLibrary.NodeTemplates[0].ActionItemMetadataDefaults == nil || loadedLibrary.NodeTemplates[0].ActionItemMetadataDefaults.ValidationPlan != "Run actionItem validation" {
+		t.Fatalf("loaded actionItem metadata defaults = %#v, want validation plan", loadedLibrary.NodeTemplates[0].ActionItemMetadataDefaults)
 	}
 	libraries, err := repo.ListTemplateLibraries(ctx, domain.TemplateLibraryFilter{
 		Scope:     domain.TemplateLibraryScopeProject,
@@ -130,8 +130,8 @@ func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
 		t.Fatalf("UpsertProjectTemplateBinding() restore error = %v", err)
 	}
 
-	task, err := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -139,16 +139,16 @@ func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
 		Priority:  domain.PriorityHigh,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
-		NodeID:                    task.ID,
+		NodeID:                    actionItem.ID,
 		ProjectID:                 project.ID,
 		SourceLibraryID:           library.ID,
-		SourceNodeTemplateID:      "task-template",
+		SourceNodeTemplateID:      "actionItem-template",
 		SourceChildRuleID:         "qa-check",
 		CreatedByActorID:          "tillsyn-system-template",
 		CreatedByActorType:        domain.ActorTypeSystem,
@@ -164,7 +164,7 @@ func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
 	if err := repo.CreateNodeContractSnapshot(ctx, snapshot); err != nil {
 		t.Fatalf("CreateNodeContractSnapshot() error = %v", err)
 	}
-	loadedSnapshot, err := repo.GetNodeContractSnapshot(ctx, task.ID)
+	loadedSnapshot, err := repo.GetNodeContractSnapshot(ctx, actionItem.ID)
 	if err != nil {
 		t.Fatalf("GetNodeContractSnapshot() error = %v", err)
 	}

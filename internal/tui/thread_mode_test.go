@@ -40,35 +40,35 @@ func TestCommentTargetTypeForWorkKindSupportsHierarchyKinds(t *testing.T) {
 	}
 }
 
-// TestCommentTargetTypeForTaskUsesScopeOverrides verifies scope-aware branch mapping.
-func TestCommentTargetTypeForTaskUsesScopeOverrides(t *testing.T) {
+// TestCommentTargetTypeForActionItemUsesScopeOverrides verifies scope-aware branch mapping.
+func TestCommentTargetTypeForActionItemUsesScopeOverrides(t *testing.T) {
 	tests := []struct {
-		name   string
-		task   domain.Task
-		want   domain.CommentTargetType
-		wantOK bool
+		name       string
+		actionItem domain.ActionItem
+		want       domain.CommentTargetType
+		wantOK     bool
 	}{
 		{
-			name:   "branch scope on task kind",
-			task:   domain.Task{Kind: domain.WorkKindTask, Scope: domain.KindAppliesToBranch},
-			want:   domain.CommentTargetTypeBranch,
-			wantOK: true,
+			name:       "branch scope on actionItem kind",
+			actionItem: domain.ActionItem{Kind: domain.WorkKindActionItem, Scope: domain.KindAppliesToBranch},
+			want:       domain.CommentTargetTypeBranch,
+			wantOK:     true,
 		},
 		{
-			name:   "phase remains phase",
-			task:   domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
-			want:   domain.CommentTargetTypePhase,
-			wantOK: true,
+			name:       "phase remains phase",
+			actionItem: domain.ActionItem{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
+			want:       domain.CommentTargetTypePhase,
+			wantOK:     true,
 		},
 	}
 
 	for _, tc := range tests {
-		got, ok := commentTargetTypeForTask(tc.task)
+		got, ok := commentTargetTypeForActionItem(tc.actionItem)
 		if ok != tc.wantOK {
-			t.Fatalf("%s: commentTargetTypeForTask() ok = %t, want %t", tc.name, ok, tc.wantOK)
+			t.Fatalf("%s: commentTargetTypeForActionItem() ok = %t, want %t", tc.name, ok, tc.wantOK)
 		}
 		if got != tc.want {
-			t.Fatalf("%s: commentTargetTypeForTask() = %q, want %q", tc.name, got, tc.want)
+			t.Fatalf("%s: commentTargetTypeForActionItem() = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

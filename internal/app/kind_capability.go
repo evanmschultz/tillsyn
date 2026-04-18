@@ -391,25 +391,25 @@ func (s *Service) validateCapabilityScopeTuple(ctx context.Context, projectID st
 		if scopeID == "" {
 			return "", domain.ErrInvalidCapabilityScope
 		}
-		task, err := s.repo.GetTask(ctx, scopeID)
+		actionItem, err := s.repo.GetActionItem(ctx, scopeID)
 		if err != nil {
 			return "", err
 		}
-		if task.ProjectID != projectID {
+		if actionItem.ProjectID != projectID {
 			return "", ErrNotFound
 		}
-		if taskScopeType := capabilityScopeTypeForTask(task); taskScopeType != scopeType {
+		if actionItemScopeType := capabilityScopeTypeForActionItem(actionItem); actionItemScopeType != scopeType {
 			return "", domain.ErrInvalidCapabilityScope
 		}
 		return scopeID, nil
 	}
 }
 
-// capabilityScopeTypeForTask maps one task scope into a capability-scope value.
-func capabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
-	switch task.Scope {
+// capabilityScopeTypeForActionItem maps one actionItem scope into a capability-scope value.
+func capabilityScopeTypeForActionItem(actionItem domain.ActionItem) domain.CapabilityScopeType {
+	switch actionItem.Scope {
 	case domain.KindAppliesToProject:
-		// Legacy/manual rows can carry project scope and must never be coerced to task scope.
+		// Legacy/manual rows can carry project scope and must never be coerced to actionItem scope.
 		return domain.CapabilityScopeProject
 	case domain.KindAppliesToBranch:
 		return domain.CapabilityScopeBranch
@@ -418,7 +418,7 @@ func capabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
 	case domain.KindAppliesToSubtask:
 		return domain.CapabilityScopeSubtask
 	default:
-		return domain.CapabilityScopeTask
+		return domain.CapabilityScopeActionItem
 	}
 }
 
@@ -631,16 +631,16 @@ func (s *Service) validateProjectKind(ctx context.Context, projectID string, kin
 	return nil
 }
 
-// resolveTaskKindDefinition resolves one work-item kind definition and scope constraints.
-func (s *Service) resolveTaskKindDefinition(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task) (domain.KindDefinition, error) {
+// resolveActionItemKindDefinition resolves one work-item kind definition and scope constraints.
+func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem) (domain.KindDefinition, error) {
 	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
 		return domain.KindDefinition{}, err
 	}
 	kindID = domain.NormalizeKindID(kindID)
 	if kindID == "" {
-		kindID = domain.KindID(domain.WorkKindTask)
+		kindID = domain.KindID(domain.WorkKindActionItem)
 	}
-	scope = normalizeTaskScopeForKind(kindID, scope, parent)
+	scope = normalizeActionItemScopeForKind(kindID, scope, parent)
 	if !domain.IsValidWorkItemAppliesTo(scope) {
 		return domain.KindDefinition{}, domain.ErrInvalidKindAppliesTo
 	}
@@ -670,9 +670,9 @@ func (s *Service) resolveTaskKindDefinition(ctx context.Context, projectID strin
 	return kind, nil
 }
 
-// validateTaskKind validates project allowlist, applies_to rules, parent constraints, and schema payload.
-func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task, payload json.RawMessage) (domain.KindDefinition, error) {
-	kind, err := s.resolveTaskKindDefinition(ctx, projectID, kindID, scope, parent)
+// validateActionItemKind validates project allowlist, applies_to rules, parent constraints, and schema payload.
+func (s *Service) validateActionItemKind(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem, payload json.RawMessage) (domain.KindDefinition, error) {
+	kind, err := s.resolveActionItemKindDefinition(ctx, projectID, kindID, scope, parent)
 	if err != nil {
 		return domain.KindDefinition{}, err
 	}
@@ -682,8 +682,8 @@ func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID
 	return kind, nil
 }
 
-// normalizeTaskScopeForKind infers the canonical stored scope for one work-item kind.
-func normalizeTaskScopeForKind(kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task) domain.KindAppliesTo {
+// normalizeActionItemScopeForKind infers the canonical stored scope for one work-item kind.
+func normalizeActionItemScopeForKind(kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem) domain.KindAppliesTo {
 	scope = domain.NormalizeKindAppliesTo(scope)
 	if scope != "" {
 		return scope
@@ -700,7 +700,7 @@ func normalizeTaskScopeForKind(kindID domain.KindID, scope domain.KindAppliesTo,
 		if parent != nil {
 			return domain.KindAppliesToSubtask
 		}
-		return domain.KindAppliesToTask
+		return domain.KindAppliesToActionItem
 	}
 }
 
@@ -744,7 +744,7 @@ func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context, projectKind 
 	if len(kindIDs) == 0 {
 		kindIDs = []domain.KindID{
 			domain.DefaultProjectKind,
-			domain.KindID(domain.WorkKindTask),
+			domain.KindID(domain.WorkKindActionItem),
 			domain.KindID(domain.WorkKindSubtask),
 			domain.KindID(domain.WorkKindPhase),
 			domain.KindID(domain.WorkKindDecision),
@@ -864,20 +864,20 @@ func normalizeKindIDList(in []domain.KindID) []domain.KindID {
 func defaultKindDefinitionInputs() []domain.KindDefinitionInput {
 	return []domain.KindDefinitionInput{
 		{ID: domain.DefaultProjectKind, DisplayName: "Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{ID: domain.KindID(domain.WorkKindTask), DisplayName: "Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: domain.KindID(domain.WorkKindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{ID: domain.KindID(domain.WorkKindActionItem), DisplayName: "ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: domain.KindID(domain.WorkKindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
 		{ID: domain.KindID(domain.WorkKindPhase), DisplayName: "Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
 		{ID: domain.KindID("branch"), DisplayName: "Branch", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.WorkKindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{ID: domain.KindID(domain.WorkKindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{ID: domain.KindID(domain.WorkKindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{ID: domain.KindID(domain.WorkKindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
 	}
 }
 
-// mergeTaskMetadataWithKindTemplate applies task-template defaults for one kind at create time.
-func mergeTaskMetadataWithKindTemplate(base domain.TaskMetadata, kind domain.KindDefinition) (domain.TaskMetadata, error) {
-	merged, err := domain.MergeTaskMetadata(base, kind.Template.TaskMetadataDefaults)
+// mergeActionItemMetadataWithKindTemplate applies actionItem-template defaults for one kind at create time.
+func mergeActionItemMetadataWithKindTemplate(base domain.ActionItemMetadata, kind domain.KindDefinition) (domain.ActionItemMetadata, error) {
+	merged, err := domain.MergeActionItemMetadata(base, kind.Template.ActionItemMetadataDefaults)
 	if err != nil {
-		return domain.TaskMetadata{}, err
+		return domain.ActionItemMetadata{}, err
 	}
 	if len(kind.Template.CompletionChecklist) == 0 {
 		return merged, nil
@@ -886,14 +886,14 @@ func mergeTaskMetadataWithKindTemplate(base domain.TaskMetadata, kind domain.Kin
 		CompletionChecklist: kind.Template.CompletionChecklist,
 	})
 	if err != nil {
-		return domain.TaskMetadata{}, err
+		return domain.ActionItemMetadata{}, err
 	}
 	merged.CompletionContract = contract
 	return merged, nil
 }
 
-// applyKindTemplateSystemActions auto-creates child work for one newly created task.
-func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent domain.Task, kind domain.KindDefinition, depth int) error {
+// applyKindTemplateSystemActions auto-creates child work for one newly created actionItem.
+func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent domain.ActionItem, kind domain.KindDefinition, depth int) error {
 	if len(kind.Template.AutoCreateChildren) == 0 {
 		return nil
 	}
@@ -906,11 +906,11 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 		if childScope == "" {
 			childScope = domain.KindAppliesToSubtask
 		}
-		childMetadata, buildErr := normalizeTaskMetadataFromKindPayload(childSpec.MetadataPayload)
+		childMetadata, buildErr := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
 		if buildErr != nil {
 			return buildErr
 		}
-		if _, childErr := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
+		if _, childErr := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      parent.ProjectID,
 			ParentID:       parent.ID,
 			Kind:           domain.WorkKind(childSpec.Kind),
@@ -945,13 +945,13 @@ func (s *Service) applyProjectKindTemplateSystemActions(ctx context.Context, pro
 	for _, childSpec := range kind.Template.AutoCreateChildren {
 		childScope := childSpec.AppliesTo
 		if childScope == "" {
-			childScope = domain.KindAppliesToTask
+			childScope = domain.KindAppliesToActionItem
 		}
-		childMetadata, buildErr := normalizeTaskMetadataFromKindPayload(childSpec.MetadataPayload)
+		childMetadata, buildErr := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
 		if buildErr != nil {
 			return buildErr
 		}
-		if _, childErr := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
+		if _, childErr := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      project.ID,
 			Kind:           domain.WorkKind(childSpec.Kind),
 			Scope:          childScope,
@@ -974,7 +974,7 @@ func (s *Service) applyProjectKindTemplateSystemActions(ctx context.Context, pro
 }
 
 // validateKindTemplateExpansion preflights nested template children before persistence.
-func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.Task, defaultChildScope domain.KindAppliesTo, depth int) error {
+func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.ActionItem, defaultChildScope domain.KindAppliesTo, depth int) error {
 	if depth > maxKindTemplateApplyDepth {
 		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidKindTemplate)
 	}
@@ -983,22 +983,22 @@ func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID s
 		if childScope == "" {
 			childScope = defaultChildScope
 		}
-		childMetadata, err := normalizeTaskMetadataFromKindPayload(childSpec.MetadataPayload)
+		childMetadata, err := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
 		if err != nil {
 			return err
 		}
-		childKind, err := s.resolveTaskKindDefinition(ctx, projectID, childSpec.Kind, childScope, parent)
+		childKind, err := s.resolveActionItemKindDefinition(ctx, projectID, childSpec.Kind, childScope, parent)
 		if err != nil {
 			return err
 		}
-		mergedMetadata, err := mergeTaskMetadataWithKindTemplate(childMetadata, childKind)
+		mergedMetadata, err := mergeActionItemMetadataWithKindTemplate(childMetadata, childKind)
 		if err != nil {
 			return err
 		}
 		if err := s.validateKindPayload(childKind, mergedMetadata.KindPayload); err != nil {
 			return err
 		}
-		childParent := &domain.Task{
+		childParent := &domain.ActionItem{
 			ProjectID: projectID,
 			Scope:     childScope,
 		}
@@ -1036,28 +1036,28 @@ func (s *Service) ensureTemplateRootColumn(ctx context.Context, projectID string
 	return columns[0].ID, nil
 }
 
-// nextTaskPosition calculates the next append position for a project column.
-func (s *Service) nextTaskPosition(ctx context.Context, projectID, columnID string) (int, error) {
-	tasks, err := s.repo.ListTasks(ctx, projectID, true)
+// nextActionItemPosition calculates the next append position for a project column.
+func (s *Service) nextActionItemPosition(ctx context.Context, projectID, columnID string) (int, error) {
+	tasks, err := s.repo.ListActionItems(ctx, projectID, true)
 	if err != nil {
 		return 0, err
 	}
 	position := 0
-	for _, task := range tasks {
-		if task.ColumnID == columnID && task.Position >= position {
-			position = task.Position + 1
+	for _, actionItem := range tasks {
+		if actionItem.ColumnID == columnID && actionItem.Position >= position {
+			position = actionItem.Position + 1
 		}
 	}
 	return position, nil
 }
 
-// normalizeTaskMetadataFromKindPayload constructs metadata for template children.
-func normalizeTaskMetadataFromKindPayload(payload json.RawMessage) (domain.TaskMetadata, error) {
+// normalizeActionItemMetadataFromKindPayload constructs metadata for template children.
+func normalizeActionItemMetadataFromKindPayload(payload json.RawMessage) (domain.ActionItemMetadata, error) {
 	payload = bytes.TrimSpace(payload)
 	if len(payload) > 0 && !json.Valid(payload) {
-		return domain.TaskMetadata{}, domain.ErrInvalidKindPayload
+		return domain.ActionItemMetadata{}, domain.ErrInvalidKindPayload
 	}
-	return domain.TaskMetadata{KindPayload: payload}, nil
+	return domain.ActionItemMetadata{KindPayload: payload}, nil
 }
 
 // mergeChecklistItems appends checklist rows not already present by ID.

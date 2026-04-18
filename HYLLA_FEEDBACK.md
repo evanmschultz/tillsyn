@@ -28,10 +28,10 @@ Every entry is terse and concrete.
 - **Suggestion**: <one-liner for what Hylla could do better>
 ```
 
-Subagents who had no Hylla misses on their task still emit a `## Hylla Feedback` section in their closing comment with `None — Hylla answered everything needed.`. Explicit "no miss" is useful signal.
+Subagents who had no Hylla misses on their actionItem still emit a `## Hylla Feedback` section in their closing comment with `None — Hylla answered everything needed.`. Explicit "no miss" is useful signal.
 
 ---
 
 ## drop 0 — Project Reset + Docs Cleanup
 
-_To be populated by the `drop 0 END — LEDGER UPDATE` task once drop 0 closes._
+_To be populated by the `drop 0 END — LEDGER UPDATE` actionItem once drop 0 closes._

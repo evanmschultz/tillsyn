@@ -60,12 +60,12 @@ func (s *CaptureStateService) CaptureState(ctx context.Context, in CaptureStateR
 	if err != nil {
 		return CaptureState{}, fmt.Errorf("list columns: %w", err)
 	}
-	tasks, err := s.read.ListTasks(ctx, project.ID, true)
+	tasks, err := s.read.ListActionItems(ctx, project.ID, true)
 	if err != nil {
 		return CaptureState{}, fmt.Errorf("list tasks: %w", err)
 	}
 	sortColumns(columns)
-	sortTasks(tasks)
+	sortActionItems(tasks)
 
 	attentionOverview, err := s.buildAttentionOverview(ctx, req)
 	if err != nil {
@@ -163,7 +163,7 @@ func normalizeCaptureStateRequest(in CaptureStateRequest) (CaptureStateRequest, 
 		return CaptureStateRequest{}, fmt.Errorf("project_id is required: %w", ErrInvalidCaptureStateRequest)
 	}
 
-	scopeType := strings.ToLower(strings.TrimSpace(in.ScopeType))
+	scopeType := canonicalScopeType(in.ScopeType)
 	if scopeType == "" {
 		scopeType = ScopeTypeProject
 	}
@@ -224,9 +224,9 @@ func sortColumns(columns []domain.Column) {
 	})
 }
 
-// sortTasks keeps task ordering deterministic for capture_state responses and hashing.
-func sortTasks(tasks []domain.Task) {
-	slices.SortFunc(tasks, func(a, b domain.Task) int {
+// sortActionItems keeps actionItem ordering deterministic for capture_state responses and hashing.
+func sortActionItems(tasks []domain.ActionItem) {
+	slices.SortFunc(tasks, func(a, b domain.ActionItem) int {
 		if a.Position != b.Position {
 			if a.Position < b.Position {
 				return -1
@@ -237,43 +237,43 @@ func sortTasks(tasks []domain.Task) {
 	})
 }
 
-// buildWorkOverview summarizes task-state counters and completion blockers.
-func buildWorkOverview(tasks []domain.Task) WorkOverview {
+// buildWorkOverview summarizes actionItem-state counters and completion blockers.
+func buildWorkOverview(tasks []domain.ActionItem) WorkOverview {
 	overview := WorkOverview{
-		TotalTasks: len(tasks),
+		TotalActionItems: len(tasks),
 	}
-	childrenByParent := make(map[string][]domain.Task, len(tasks))
-	for _, task := range tasks {
-		parentID := strings.TrimSpace(task.ParentID)
+	childrenByParent := make(map[string][]domain.ActionItem, len(tasks))
+	for _, actionItem := range tasks {
+		parentID := strings.TrimSpace(actionItem.ParentID)
 		if parentID == "" {
 			continue
 		}
-		childrenByParent[parentID] = append(childrenByParent[parentID], task)
+		childrenByParent[parentID] = append(childrenByParent[parentID], actionItem)
 	}
 
-	for _, task := range tasks {
-		switch canonicalLifecycleState(task.LifecycleState) {
+	for _, actionItem := range tasks {
+		switch canonicalLifecycleState(actionItem.LifecycleState) {
 		case domain.StateTodo:
-			overview.TodoTasks++
+			overview.TodoActionItems++
 		case domain.StateProgress:
-			overview.InProgressTasks++
+			overview.InProgressActionItems++
 		case domain.StateDone:
-			overview.DoneTasks++
+			overview.DoneActionItems++
 		case domain.StateFailed:
-			overview.FailedTasks++
+			overview.FailedActionItems++
 		case domain.StateArchived:
-			overview.ArchivedTasks++
+			overview.ArchivedActionItems++
 		default:
-			overview.TodoTasks++
+			overview.TodoActionItems++
 		}
 
-		if task.ArchivedAt != nil {
+		if actionItem.ArchivedAt != nil {
 			continue
 		}
-		if strings.TrimSpace(task.Metadata.BlockedReason) != "" || len(task.Metadata.BlockedBy) > 0 {
-			overview.TasksWithOpenBlockers++
+		if strings.TrimSpace(actionItem.Metadata.BlockedReason) != "" || len(actionItem.Metadata.BlockedBy) > 0 {
+			overview.ActionItemsWithOpenBlockers++
 		}
-		if len(task.CompletionCriteriaUnmet(childrenByParent[task.ID])) > 0 {
+		if len(actionItem.CompletionCriteriaUnmet(childrenByParent[actionItem.ID])) > 0 {
 			overview.IncompleteCompletionCriteria++
 		}
 	}
@@ -284,8 +284,8 @@ func buildWorkOverview(tasks []domain.Task) WorkOverview {
 // buildWarningsOverview synthesizes warning text from work and attention rollups.
 func buildWarningsOverview(work WorkOverview, attention AttentionOverview) WarningsOverview {
 	warnings := make([]string, 0, 2)
-	if work.TasksWithOpenBlockers > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d work items report open blockers", work.TasksWithOpenBlockers))
+	if work.ActionItemsWithOpenBlockers > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d work items report open blockers", work.ActionItemsWithOpenBlockers))
 	}
 	if attention.RequiresUserAction > 0 {
 		warnings = append(warnings, fmt.Sprintf("%d attention items require user action", attention.RequiresUserAction))
@@ -344,17 +344,17 @@ func compareAttentionItems(a, b AttentionItem) int {
 }
 
 // computeStateHash returns a deterministic summary hash for capture_state responses.
-func computeStateHash(project domain.Project, columns []domain.Column, tasks []domain.Task, attention AttentionOverview) (string, error) {
+func computeStateHash(project domain.Project, columns []domain.Column, tasks []domain.ActionItem, attention AttentionOverview) (string, error) {
 	payload := struct {
-		Project            domain.Project  `json:"project"`
-		Columns            []domain.Column `json:"columns"`
-		Tasks              []domain.Task   `json:"tasks"`
-		AttentionOpenCount int             `json:"attention_open_count"`
-		AttentionRequires  int             `json:"attention_requires_user_action"`
+		Project            domain.Project      `json:"project"`
+		Columns            []domain.Column     `json:"columns"`
+		ActionItems        []domain.ActionItem `json:"tasks"`
+		AttentionOpenCount int                 `json:"attention_open_count"`
+		AttentionRequires  int                 `json:"attention_requires_user_action"`
 	}{
 		Project:            project,
 		Columns:            columns,
-		Tasks:              tasks,
+		ActionItems:        tasks,
 		AttentionOpenCount: attention.OpenCount,
 		AttentionRequires:  attention.RequiresUserAction,
 	}

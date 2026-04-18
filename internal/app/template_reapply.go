@@ -15,7 +15,7 @@ import (
 // ApproveProjectTemplateMigrationsInput stores one explicit migration-approval request for existing generated nodes.
 type ApproveProjectTemplateMigrationsInput struct {
 	ProjectID      string
-	TaskIDs        []string
+	ActionItemIDs  []string
 	ApproveAll     bool
 	ApprovedBy     string
 	ApprovedByName string
@@ -73,12 +73,12 @@ func (s *Service) GetProjectTemplateReapplyPreview(ctx context.Context, projectI
 		return preview.ChildRuleChanges[i].NodeTemplateID < preview.ChildRuleChanges[j].NodeTemplateID
 	})
 
-	tasks, err := s.repo.ListTasks(ctx, projectID, false)
+	tasks, err := s.repo.ListActionItems(ctx, projectID, false)
 	if err != nil {
 		return domain.ProjectTemplateReapplyPreview{}, err
 	}
-	for _, task := range tasks {
-		snapshot, ok, snapshotErr := s.nodeContractSnapshotForTask(ctx, task.ID)
+	for _, actionItem := range tasks {
+		snapshot, ok, snapshotErr := s.nodeContractSnapshotForActionItem(ctx, actionItem.ID)
 		if snapshotErr != nil {
 			return domain.ProjectTemplateReapplyPreview{}, snapshotErr
 		}
@@ -95,18 +95,18 @@ func (s *Service) GetProjectTemplateReapplyPreview(ctx context.Context, projectI
 			continue
 		}
 		candidate := domain.ProjectTemplateMigrationCandidate{
-			TaskID:               task.ID,
-			ParentID:             strings.TrimSpace(task.ParentID),
-			Title:                strings.TrimSpace(task.Title),
-			Scope:                task.Scope,
-			Kind:                 task.Kind,
-			LifecycleState:       task.LifecycleState,
+			ActionItemID:         actionItem.ID,
+			ParentID:             strings.TrimSpace(actionItem.ParentID),
+			Title:                strings.TrimSpace(actionItem.Title),
+			Scope:                actionItem.Scope,
+			Kind:                 actionItem.Kind,
+			LifecycleState:       actionItem.LifecycleState,
 			SourceNodeTemplateID: snapshot.SourceNodeTemplateID,
 			SourceChildRuleID:    snapshot.SourceChildRuleID,
 			ChangeKinds:          append([]string(nil), change.ChangeKinds...),
 			Status:               domain.ProjectTemplateReapplyCandidateIneligible,
 		}
-		if reason := templateMigrationIneligibleReason(task, snapshot, previousNodeTemplate, previousRule); reason != "" {
+		if reason := templateMigrationIneligibleReason(actionItem, snapshot, previousNodeTemplate, previousRule); reason != "" {
 			candidate.Reason = reason
 			preview.IneligibleMigrationCount++
 		} else {
@@ -118,7 +118,7 @@ func (s *Service) GetProjectTemplateReapplyPreview(ctx context.Context, projectI
 	sort.SliceStable(preview.MigrationCandidates, func(i, j int) bool {
 		if preview.MigrationCandidates[i].Status == preview.MigrationCandidates[j].Status {
 			if preview.MigrationCandidates[i].Title == preview.MigrationCandidates[j].Title {
-				return preview.MigrationCandidates[i].TaskID < preview.MigrationCandidates[j].TaskID
+				return preview.MigrationCandidates[i].ActionItemID < preview.MigrationCandidates[j].ActionItemID
 			}
 			return preview.MigrationCandidates[i].Title < preview.MigrationCandidates[j].Title
 		}
@@ -135,8 +135,8 @@ func (s *Service) ApproveProjectTemplateMigrations(ctx context.Context, in Appro
 	if projectID == "" {
 		return domain.ProjectTemplateMigrationApprovalResult{}, domain.ErrInvalidID
 	}
-	if in.ApproveAll && len(in.TaskIDs) > 0 {
-		return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("%w: task_ids and approve_all cannot be combined", domain.ErrInvalidTemplateBinding)
+	if in.ApproveAll && len(in.ActionItemIDs) > 0 {
+		return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("%w: action_item_ids and approve_all cannot be combined", domain.ErrInvalidTemplateBinding)
 	}
 	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.ApprovedBy, in.ApprovedByName, in.ApprovedByType)
 	preview, err := s.GetProjectTemplateReapplyPreview(ctx, projectID)
@@ -146,7 +146,7 @@ func (s *Service) ApproveProjectTemplateMigrations(ctx context.Context, in Appro
 	if preview.DriftStatus != domain.ProjectTemplateBindingDriftUpdateAvailable {
 		return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("%w: project %q has no update-available template drift", domain.ErrInvalidTemplateBinding, projectID)
 	}
-	selected, err := selectTemplateMigrationCandidates(preview, in.TaskIDs, in.ApproveAll)
+	selected, err := selectTemplateMigrationCandidates(preview, in.ActionItemIDs, in.ApproveAll)
 	if err != nil {
 		return domain.ProjectTemplateMigrationApprovalResult{}, err
 	}
@@ -167,45 +167,45 @@ func (s *Service) ApproveProjectTemplateMigrations(ctx context.Context, in Appro
 	}
 	actorType := currentMutationActorType(ctx, in.ApprovedByType)
 	for _, candidate := range selected {
-		task, err := s.repo.GetTask(ctx, candidate.TaskID)
+		actionItem, err := s.repo.GetActionItem(ctx, candidate.ActionItemID)
 		if err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
-		guardScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
+		guardScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 		if err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, actorType, guardScopes, domain.CapabilityActionEditNode); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, actorType, guardScopes, domain.CapabilityActionEditNode); err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
-		if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
+		if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
-		snapshot, ok, err := s.nodeContractSnapshotForTask(ctx, task.ID)
+		snapshot, ok, err := s.nodeContractSnapshotForActionItem(ctx, actionItem.ID)
 		if err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
 		if !ok {
-			return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("%w: node contract snapshot missing for task %q", domain.ErrInvalidTemplateBinding, task.ID)
+			return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("%w: node contract snapshot missing for actionItem %q", domain.ErrInvalidTemplateBinding, actionItem.ID)
 		}
 		latestRule, _, ok := findTemplateChildRule(latest, snapshot.SourceNodeTemplateID, snapshot.SourceChildRuleID)
 		if !ok {
 			return domain.ProjectTemplateMigrationApprovalResult{}, fmt.Errorf("%w: latest library %q no longer contains child rule %q", domain.ErrInvalidTemplateBinding, latest.ID, snapshot.SourceChildRuleID)
 		}
 		if hasResolvedActor && strings.TrimSpace(resolvedActor.ActorID) != "" {
-			task.UpdatedByActor = resolvedActor.ActorID
-			task.UpdatedByName = firstNonEmptyTrimmed(resolvedActor.ActorName, resolvedActor.ActorID)
-			task.UpdatedByType = actorType
+			actionItem.UpdatedByActor = resolvedActor.ActorID
+			actionItem.UpdatedByName = firstNonEmptyTrimmed(resolvedActor.ActorName, resolvedActor.ActorID)
+			actionItem.UpdatedByType = actorType
 		} else if approvedBy := strings.TrimSpace(in.ApprovedBy); approvedBy != "" {
-			task.UpdatedByActor = approvedBy
-			task.UpdatedByName = firstNonEmptyTrimmed(in.ApprovedByName, approvedBy)
-			task.UpdatedByType = actorType
+			actionItem.UpdatedByActor = approvedBy
+			actionItem.UpdatedByName = firstNonEmptyTrimmed(in.ApprovedByName, approvedBy)
+			actionItem.UpdatedByType = actorType
 		}
-		applyMutationActorToTask(ctx, &task)
-		if err := task.UpdateDetails(latestRule.TitleTemplate, latestRule.DescriptionTemplate, task.Priority, task.DueAt, task.Labels, s.clock()); err != nil {
+		applyMutationActorToActionItem(ctx, &actionItem)
+		if err := actionItem.UpdateDetails(latestRule.TitleTemplate, latestRule.DescriptionTemplate, actionItem.Priority, actionItem.DueAt, actionItem.Labels, s.clock()); err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
-		if err := s.repo.UpdateTask(ctx, task); err != nil {
+		if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
 		updatedSnapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
@@ -229,22 +229,22 @@ func (s *Service) ApproveProjectTemplateMigrations(ctx context.Context, in Appro
 		if err := s.repo.UpdateNodeContractSnapshot(ctx, updatedSnapshot); err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
-		if _, err := s.enqueueTaskEmbedding(ctx, task, false, "template_migration_approved"); err != nil {
+		if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "template_migration_approved"); err != nil {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
 		if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
-			ProjectID:  task.ProjectID,
-			TargetType: snapshotCommentTargetTypeForTask(task),
-			TargetID:   task.ID,
+			ProjectID:  actionItem.ProjectID,
+			TargetType: snapshotCommentTargetTypeForActionItem(actionItem),
+			TargetID:   actionItem.ID,
 		}, false, "template_migration_approved"); err != nil && !errors.Is(err, ErrNotFound) {
 			return domain.ProjectTemplateMigrationApprovalResult{}, err
 		}
 		result.Approvals = append(result.Approvals, domain.ProjectTemplateMigrationApproval{
-			TaskID:      task.ID,
-			Title:       firstNonEmptyTrimmed(candidate.Title, task.Title, task.ID),
-			ChangeKinds: append([]string(nil), candidate.ChangeKinds...),
-			NewTitle:    latestRule.TitleTemplate,
-			NewBody:     latestRule.DescriptionTemplate,
+			ActionItemID: actionItem.ID,
+			Title:        firstNonEmptyTrimmed(candidate.Title, actionItem.Title, actionItem.ID),
+			ChangeKinds:  append([]string(nil), candidate.ChangeKinds...),
+			NewTitle:     latestRule.TitleTemplate,
+			NewBody:      latestRule.DescriptionTemplate,
 		})
 	}
 	result.AppliedCount = len(result.Approvals)
@@ -391,18 +391,18 @@ func projectTemplateRuleKey(nodeTemplateID string, childRuleID string) string {
 	return domain.NormalizeTemplateLibraryID(nodeTemplateID) + "::" + domain.NormalizeTemplateLibraryID(childRuleID)
 }
 
-func templateMigrationIneligibleReason(task domain.Task, snapshot domain.NodeContractSnapshot, previousNodeTemplate domain.NodeTemplate, previousRule domain.TemplateChildRule) string {
-	if strings.TrimSpace(task.CreatedByActor) != templateSystemActorID {
-		return "task was not created by the template system"
+func templateMigrationIneligibleReason(actionItem domain.ActionItem, snapshot domain.NodeContractSnapshot, previousNodeTemplate domain.NodeTemplate, previousRule domain.TemplateChildRule) string {
+	if strings.TrimSpace(actionItem.CreatedByActor) != templateSystemActorID {
+		return "actionItem was not created by the template system"
 	}
-	if strings.TrimSpace(task.UpdatedByActor) != templateSystemActorID {
-		return "task has been updated since generation"
+	if strings.TrimSpace(actionItem.UpdatedByActor) != templateSystemActorID {
+		return "actionItem has been updated since generation"
 	}
-	if strings.TrimSpace(task.Title) != strings.TrimSpace(previousRule.TitleTemplate) {
-		return "task title no longer matches generated template content"
+	if strings.TrimSpace(actionItem.Title) != strings.TrimSpace(previousRule.TitleTemplate) {
+		return "actionItem title no longer matches generated template content"
 	}
-	if strings.TrimSpace(task.Description) != strings.TrimSpace(previousRule.DescriptionTemplate) {
-		return "task description no longer matches generated template content"
+	if strings.TrimSpace(actionItem.Description) != strings.TrimSpace(previousRule.DescriptionTemplate) {
+		return "actionItem description no longer matches generated template content"
 	}
 	if snapshot.SourceNodeTemplateID != previousNodeTemplate.ID || snapshot.SourceChildRuleID != previousRule.ID {
 		return "stored node contract no longer matches the bound template revision"
@@ -428,21 +428,21 @@ func templateMigrationIneligibleReason(task domain.Task, snapshot domain.NodeCon
 	return ""
 }
 
-func selectTemplateMigrationCandidates(preview domain.ProjectTemplateReapplyPreview, taskIDs []string, approveAll bool) ([]domain.ProjectTemplateMigrationCandidate, error) {
+func selectTemplateMigrationCandidates(preview domain.ProjectTemplateReapplyPreview, actionItemIDs []string, approveAll bool) ([]domain.ProjectTemplateMigrationCandidate, error) {
 	eligibleByID := make(map[string]domain.ProjectTemplateMigrationCandidate, len(preview.MigrationCandidates))
 	ineligibleByID := make(map[string]string, len(preview.MigrationCandidates))
 	eligibleOrdered := make([]domain.ProjectTemplateMigrationCandidate, 0, len(preview.MigrationCandidates))
 	for _, candidate := range preview.MigrationCandidates {
-		taskID := strings.TrimSpace(candidate.TaskID)
-		if taskID == "" {
+		actionItemID := strings.TrimSpace(candidate.ActionItemID)
+		if actionItemID == "" {
 			continue
 		}
 		if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
-			eligibleByID[taskID] = candidate
+			eligibleByID[actionItemID] = candidate
 			eligibleOrdered = append(eligibleOrdered, candidate)
 			continue
 		}
-		ineligibleByID[taskID] = strings.TrimSpace(candidate.Reason)
+		ineligibleByID[actionItemID] = strings.TrimSpace(candidate.Reason)
 	}
 	if approveAll {
 		if len(eligibleOrdered) == 0 {
@@ -450,20 +450,20 @@ func selectTemplateMigrationCandidates(preview domain.ProjectTemplateReapplyPrev
 		}
 		return eligibleOrdered, nil
 	}
-	selectedIDs := uniqueTrimmedStrings(taskIDs)
+	selectedIDs := uniqueTrimmedStrings(actionItemIDs)
 	if len(selectedIDs) == 0 {
-		return nil, fmt.Errorf("%w: task_ids or approve_all is required", domain.ErrInvalidTemplateBinding)
+		return nil, fmt.Errorf("%w: action_item_ids or approve_all is required", domain.ErrInvalidTemplateBinding)
 	}
 	selected := make([]domain.ProjectTemplateMigrationCandidate, 0, len(selectedIDs))
-	for _, taskID := range selectedIDs {
-		if candidate, ok := eligibleByID[taskID]; ok {
+	for _, actionItemID := range selectedIDs {
+		if candidate, ok := eligibleByID[actionItemID]; ok {
 			selected = append(selected, candidate)
 			continue
 		}
-		if reason := strings.TrimSpace(ineligibleByID[taskID]); reason != "" {
-			return nil, fmt.Errorf("%w: task %q is not eligible for migration: %s", domain.ErrInvalidTemplateBinding, taskID, reason)
+		if reason := strings.TrimSpace(ineligibleByID[actionItemID]); reason != "" {
+			return nil, fmt.Errorf("%w: actionItem %q is not eligible for migration: %s", domain.ErrInvalidTemplateBinding, actionItemID, reason)
 		}
-		return nil, fmt.Errorf("%w: task %q is not a current migration candidate", domain.ErrInvalidTemplateBinding, taskID)
+		return nil, fmt.Errorf("%w: actionItem %q is not a current migration candidate", domain.ErrInvalidTemplateBinding, actionItemID)
 	}
 	return selected, nil
 }

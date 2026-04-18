@@ -7,7 +7,7 @@
  │                                                     │ │                                    │ 
  │  To Do (1)                                          │ │ Project Notifications              │ 
  │                                                     │ │                                    │ 
- │  │  Golden board task                               │ │ Action Required                    │ 
+ │  │  Golden board actionItem                         │ │ Action Required                    │ 
  │     [medium|#alpha,#beta]                           │ │ none                               │ 
  │                                                     │ │                                    │ 
  │                                                     │ │ Warnings                           │ 
@@ -25,4 +25,4 @@
  │                                                     │ │ no coordination or notification…   │ 
  │                                                     │ │                                    │ 
  ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────╯ 
- n new task • i task info • e edit • tab panels • / search • : commands • q quit • ? help
+ n new actionItem • i actionItem info • e edit • tab panels • / search • : commands • q quit …

@@ -329,7 +329,7 @@ func normalizeScopeTuple(projectID, scopeType, scopeID string) (string, string, 
 		return "", "", "", fmt.Errorf("project_id is required: %w", ErrInvalidCaptureStateRequest)
 	}
 
-	scopeType = strings.ToLower(strings.TrimSpace(scopeType))
+	scopeType = canonicalScopeType(scopeType)
 	if scopeType == "" {
 		scopeType = ScopeTypeProject
 	}
@@ -393,22 +393,22 @@ func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStat
 		})
 	}
 
-	todoTasks := summary.WorkOverview.ActiveItems - summary.WorkOverview.InProgressItems - summary.WorkOverview.DoneItems - summary.WorkOverview.FailedItems
-	if todoTasks < 0 {
-		todoTasks = 0
+	todoActionItems := summary.WorkOverview.ActiveItems - summary.WorkOverview.InProgressItems - summary.WorkOverview.DoneItems - summary.WorkOverview.FailedItems
+	if todoActionItems < 0 {
+		todoActionItems = 0
 	}
-	archivedTasks := summary.WorkOverview.TotalItems - summary.WorkOverview.ActiveItems
-	if archivedTasks < 0 {
-		archivedTasks = 0
+	archivedActionItems := summary.WorkOverview.TotalItems - summary.WorkOverview.ActiveItems
+	if archivedActionItems < 0 {
+		archivedActionItems = 0
 	}
 	workOverview := WorkOverview{
-		TotalTasks:                   summary.WorkOverview.TotalItems,
-		TodoTasks:                    todoTasks,
-		InProgressTasks:              summary.WorkOverview.InProgressItems,
-		DoneTasks:                    summary.WorkOverview.DoneItems,
-		FailedTasks:                  summary.WorkOverview.FailedItems,
-		ArchivedTasks:                archivedTasks,
-		TasksWithOpenBlockers:        summary.WorkOverview.BlockedItems,
+		TotalActionItems:             summary.WorkOverview.TotalItems,
+		TodoActionItems:              todoActionItems,
+		InProgressActionItems:        summary.WorkOverview.InProgressItems,
+		DoneActionItems:              summary.WorkOverview.DoneItems,
+		FailedActionItems:            summary.WorkOverview.FailedItems,
+		ArchivedActionItems:          archivedActionItems,
+		ActionItemsWithOpenBlockers:  summary.WorkOverview.BlockedItems,
 		IncompleteCompletionCriteria: summary.WorkOverview.OpenChildItems,
 	}
 
@@ -509,7 +509,7 @@ func buildResumeHintsFromFollowUps(in app.CaptureStateFollowUpPointers) []Resume
 			Note: pointer,
 		})
 	}
-	if pointer := strings.TrimSpace(in.ListChildTasks); pointer != "" {
+	if pointer := strings.TrimSpace(in.ListChildActionItems); pointer != "" {
 		hints = append(hints, ResumeHint{
 			Rel:  "till.action_item",
 			Note: pointer,

@@ -79,15 +79,15 @@ type TemplateLibrary struct {
 
 // NodeTemplate stores one node-template rule for one scope level and node kind.
 type NodeTemplate struct {
-	ID                      string              `json:"id"`
-	LibraryID               string              `json:"library_id"`
-	ScopeLevel              KindAppliesTo       `json:"scope_level"`
-	NodeKindID              KindID              `json:"node_kind_id"`
-	DisplayName             string              `json:"display_name"`
-	DescriptionMarkdown     string              `json:"description_markdown,omitempty"`
-	ProjectMetadataDefaults *ProjectMetadata    `json:"project_metadata_defaults,omitempty"`
-	TaskMetadataDefaults    *TaskMetadata       `json:"task_metadata_defaults,omitempty"`
-	ChildRules              []TemplateChildRule `json:"child_rules"`
+	ID                         string              `json:"id"`
+	LibraryID                  string              `json:"library_id"`
+	ScopeLevel                 KindAppliesTo       `json:"scope_level"`
+	NodeKindID                 KindID              `json:"node_kind_id"`
+	DisplayName                string              `json:"display_name"`
+	DescriptionMarkdown        string              `json:"description_markdown,omitempty"`
+	ProjectMetadataDefaults    *ProjectMetadata    `json:"project_metadata_defaults,omitempty"`
+	ActionItemMetadataDefaults *ActionItemMetadata `json:"task_metadata_defaults,omitempty"`
+	ChildRules                 []TemplateChildRule `json:"child_rules"`
 }
 
 // TemplateChildRule stores one auto-generated child rule under one node template.
@@ -177,14 +177,14 @@ type TemplateLibraryInput struct {
 
 // NodeTemplateInput stores write-time values for constructing one node template.
 type NodeTemplateInput struct {
-	ID                      string
-	ScopeLevel              KindAppliesTo
-	NodeKindID              KindID
-	DisplayName             string
-	DescriptionMarkdown     string
-	ProjectMetadataDefaults *ProjectMetadata
-	TaskMetadataDefaults    *TaskMetadata
-	ChildRules              []TemplateChildRuleInput
+	ID                         string
+	ScopeLevel                 KindAppliesTo
+	NodeKindID                 KindID
+	DisplayName                string
+	DescriptionMarkdown        string
+	ProjectMetadataDefaults    *ProjectMetadata
+	ActionItemMetadataDefaults *ActionItemMetadata
+	ChildRules                 []TemplateChildRuleInput
 }
 
 // TemplateChildRuleInput stores write-time values for constructing one child rule.
@@ -254,9 +254,49 @@ var validTemplateActorKinds = []TemplateActorKind{
 	TemplateActorKindResearch,
 }
 
-// NormalizeTemplateLibraryID canonicalizes template-library and nested template identifiers.
+// NormalizeTemplateLibraryID canonicalizes template-library and nested
+// template identifiers. The input is trimmed and lowercased, then any
+// "actionitem" token (whole-word matched against `-` or `_` boundaries)
+// is rewritten to the canonical "actionItem" camelCase spelling so
+// identifiers like "builder-actionItem" survive the round-trip intact.
 func NormalizeTemplateLibraryID(id string) string {
-	return strings.TrimSpace(strings.ToLower(id))
+	lowered := strings.TrimSpace(strings.ToLower(id))
+	if lowered == "" {
+		return ""
+	}
+	return canonicalizeActionItemToken(lowered)
+}
+
+// canonicalizeActionItemToken rewrites the lowercase "actionitem" token
+// back to the canonical "actionItem" camelCase form, preserving all
+// other segments of the identifier untouched. Token boundaries are
+// start-of-string, end-of-string, `-`, and `_`.
+func canonicalizeActionItemToken(lowered string) string {
+	const (
+		token     = "actionitem"
+		canonical = "actionItem"
+	)
+	if !strings.Contains(lowered, token) {
+		return lowered
+	}
+	var b strings.Builder
+	b.Grow(len(lowered))
+	i := 0
+	for i < len(lowered) {
+		if i+len(token) <= len(lowered) && lowered[i:i+len(token)] == token {
+			leftOK := i == 0 || lowered[i-1] == '-' || lowered[i-1] == '_'
+			rightIdx := i + len(token)
+			rightOK := rightIdx == len(lowered) || lowered[rightIdx] == '-' || lowered[rightIdx] == '_'
+			if leftOK && rightOK {
+				b.WriteString(canonical)
+				i += len(token)
+				continue
+			}
+		}
+		b.WriteByte(lowered[i])
+		i++
+	}
+	return b.String()
 }
 
 // ReferencedKindIDs returns the sorted unique kind ids referenced by one library.
@@ -549,12 +589,12 @@ func newNodeTemplate(libraryID string, in NodeTemplateInput) (NodeTemplate, erro
 		}
 		out.ProjectMetadataDefaults = &normalized
 	}
-	if in.TaskMetadataDefaults != nil {
-		normalized, err := normalizeTaskMetadata(*in.TaskMetadataDefaults)
+	if in.ActionItemMetadataDefaults != nil {
+		normalized, err := normalizeActionItemMetadata(*in.ActionItemMetadataDefaults)
 		if err != nil {
 			return NodeTemplate{}, err
 		}
-		out.TaskMetadataDefaults = &normalized
+		out.ActionItemMetadataDefaults = &normalized
 	}
 	seenRules := map[string]struct{}{}
 	for _, childRuleIn := range in.ChildRules {
@@ -671,9 +711,9 @@ func cloneNodeTemplates(in []NodeTemplate) []NodeTemplate {
 			projectDefaults := *nodeTemplate.ProjectMetadataDefaults
 			copied.ProjectMetadataDefaults = &projectDefaults
 		}
-		if nodeTemplate.TaskMetadataDefaults != nil {
-			taskDefaults := *nodeTemplate.TaskMetadataDefaults
-			copied.TaskMetadataDefaults = &taskDefaults
+		if nodeTemplate.ActionItemMetadataDefaults != nil {
+			actionItemDefaults := *nodeTemplate.ActionItemMetadataDefaults
+			copied.ActionItemMetadataDefaults = &actionItemDefaults
 		}
 		if len(nodeTemplate.ChildRules) > 0 {
 			copied.ChildRules = make([]TemplateChildRule, 0, len(nodeTemplate.ChildRules))
@@ -723,8 +763,8 @@ func cloneProjectMetadata(in *ProjectMetadata) *ProjectMetadata {
 	return &cloned
 }
 
-// cloneTaskMetadata copies one optional task metadata value.
-func cloneTaskMetadata(in *TaskMetadata) *TaskMetadata {
+// cloneActionItemMetadata copies one optional actionItem metadata value.
+func cloneActionItemMetadata(in *ActionItemMetadata) *ActionItemMetadata {
 	if in == nil {
 		return nil
 	}

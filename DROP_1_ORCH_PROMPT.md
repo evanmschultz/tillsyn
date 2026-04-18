@@ -44,12 +44,12 @@ You are **one of two** concurrent project-scoped orchestrators. The other is `ST
 
 Drop 1 is the first real cascade-tree drop with domain-fields + always-on enforcement. Core deliverables (refer to the plan doc for current, authoritative scope):
 
-1. **AUTH HOOK — PROJECT-SPECIFIC CACHE PATHS + COMPACTION RESILIENCE + CLEANUP** (first task). Dev's direct quote: *"it needs to store the file somewhere project specific and the file name should be the orchestrators name so ~/.claude/tillsyn-auth/project/orch-name and we need express clean up for that! the worst issue is that it isn't working..."*. The existing hook at `~/.claude/hooks/post_tooluse_tillsyn_cache.sh` caches flat with mixed keys; Drop 1 moves to `~/.claude/tillsyn-auth/<project-id>/<principal_id>.json` layout, adds TTL-sweep + archive-on-revoke cleanup, and fixes the post-compaction observed bug where the pre-claim continuation cached but the post-claim session_secret was lost. DISCUSSIONS child for the design convergence is seeded by STEWARD; you implement.
+1. **AUTH HOOK — PROJECT-SPECIFIC CACHE PATHS + COMPACTION RESILIENCE + CLEANUP** (first actionItem). Dev's direct quote: *"it needs to store the file somewhere project specific and the file name should be the orchestrators name so ~/.claude/tillsyn-auth/project/orch-name and we need express clean up for that! the worst issue is that it isn't working..."*. The existing hook at `~/.claude/hooks/post_tooluse_tillsyn_cache.sh` caches flat with mixed keys; Drop 1 moves to `~/.claude/tillsyn-auth/<project-id>/<principal_id>.json` layout, adds TTL-sweep + archive-on-revoke cleanup, and fixes the post-compaction observed bug where the pre-claim continuation cached but the post-claim session_secret was lost. DISCUSSIONS child for the design convergence is seeded by STEWARD; you implement.
 2. **`paths []string` + `packages []string` first-class domain fields** on every action item (planner-set, builder + QA readable, required for file + package-level blocking). Adds Tillsyn domain struct fields, storage migration, API surface, TUI display.
 3. **Always-on parent-blocks-on-failed-child** — a parent cannot move to `complete` while any child is in `failed` or an incomplete state. Lift the `require_children_done` policy into the runtime guardrail.
-4. **`failed` as a real terminal state** — today it's represented in metadata. Add the state transition, role-gated move rules, and human-only supersede CLI `till task supersede <id>`.
+4. **`failed` as a real terminal state** — today it's represented in metadata. Add the state transition, role-gated move rules, and human-only supersede CLI `till actionItem supersede <id>`.
 5. **Auth auto-revoke on terminal state** — when a action item moves to `done` or `failed`, auto-revoke the subagent auth session + lease associated with it. Today this is manual orchestrator cleanup.
-6. **`till.action_item(op=create|move)` — accept `state`, resolve `column_id` server-side** *(launch-gating bug surfaced in drop 0, re-confirmed 2026-04-17 on both `rak` and `fckin` template-free projects)*. Today the MCP create handler requires `column_id` with no default and no MCP discovery op, so every fresh project blocks its first `till.action_item(op=create)` until the dev hands column UUIDs in via sqlite. Make `state` (`todo` / `in_progress` / `done` / `failed`) the documented agent-facing input; resolve the column UUID server-side via the existing `resolveTaskColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop; reject only when both are empty. Same cleanup on `till.action_item(op=move)`. Do NOT add a column-listing MCP op — the goal is invisibility, not exposure. Add a golden test: orchestrator with no column knowledge creates a action item purely by `state`.
+6. **`till.action_item(op=create|move)` — accept `state`, resolve `column_id` server-side** *(launch-gating bug surfaced in drop 0, re-confirmed 2026-04-17 on both `rak` and `fckin` template-free projects)*. Today the MCP create handler requires `column_id` with no default and no MCP discovery op, so every fresh project blocks its first `till.action_item(op=create)` until the dev hands column UUIDs in via sqlite. Make `state` (`todo` / `in_progress` / `done` / `failed`) the documented agent-facing input; resolve the column UUID server-side via the existing `resolveActionItemColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop; reject only when both are empty. Same cleanup on `till.action_item(op=move)`. Do NOT add a column-listing MCP op — the goal is invisibility, not exposure. Add a golden test: orchestrator with no column knowledge creates a action item purely by `state`.
 
 Refer to `PLAN.md` § Drop 1 for the full contract. If the plan text drifts from this prompt, the plan text wins.
 
@@ -57,12 +57,12 @@ Refer to `PLAN.md` § Drop 1 for the full contract. If the plan text drifts from
 
 CLAUDE.md § "Build-QA-Commit Discipline" is authoritative. Summary:
 
-1. **Plan** — spawn `go-planning-agent` to decompose Drop 1 into build-tasks with `paths []` / `packages []` / acceptance criteria / mage targets. Planning task gets its own qa-proof + qa-falsification (opus model tier for plan-level QA).
-2. **Build** — spawn `go-builder-agent` per build-task. Builder moves to `in_progress` at start, reads task description via `till.auth_request claim`, implements, commits evidence to `implementation_notes_agent` + `completion_notes`, moves to `done` at end. Closes with a `## Hylla Feedback` section.
+1. **Plan** — spawn `go-planning-agent` to decompose Drop 1 into build-tasks with `paths []` / `packages []` / acceptance criteria / mage targets. Planning actionItem gets its own qa-proof + qa-falsification (opus model tier for plan-level QA).
+2. **Build** — spawn `go-builder-agent` per build-actionItem. Builder moves to `in_progress` at start, reads actionItem description via `till.auth_request claim`, implements, commits evidence to `implementation_notes_agent` + `completion_notes`, moves to `done` at end. Closes with a `## Hylla Feedback` section.
 3. **QA Proof + QA Falsification** — parallel spawn of `go-qa-proof-agent` + `go-qa-falsification-agent`. Each moves its own qa-check subtask to `in_progress` at start, `done` on pass, or leaves `in_progress` + posts findings on fail.
 4. **Fix-loop on QA failure** — respawn builder on the same action item, re-run QA.
 5. **Commit** — only after both QA pass. `git add <paths>` (never `git add .`), conventional-commit single-line message, push, `gh run watch --exit-status` until CI lands green.
-6. **Ingest is drop-end only** — in the `DROP 1 END — LEDGER UPDATE` task. Full enrichment. From remote. After push + CI green.
+6. **Ingest is drop-end only** — in the `DROP 1 END — LEDGER UPDATE` actionItem. Full enrichment. From remote. After push + CI green.
 
 ## 6. Coordination Surfaces
 
@@ -79,7 +79,7 @@ All canonical rules live in `main/CLAUDE.md`. Key excerpts:
 - **Update Tillsyn BEFORE spawning agents** — move items to `in_progress`, include auth credentials in the spawn prompt.
 - **Orchestrator never builds.** Go code goes through `go-builder-agent` only.
 - **Orchestrator commits directly pre-cascade** — you run `git add/commit/push/gh run watch` yourself after builder returns + QA passes. Don't punt to dev.
-- **Never skip QA** — both passes run for every build-task. No batched commits. No deferred pushes.
+- **Never skip QA** — both passes run for every build-actionItem. No batched commits. No deferred pushes.
 - **`mage` not raw `go`** — every build/test gate through a mage target. Never `go test` / `go build` / `go vet`.
 - **Single-line conventional commits** — `type(scope): message`, lowercase except proper nouns / acronyms, no trailers, no period.
 - **Titles FULL UPPERCASE** — every action item title.
@@ -109,17 +109,17 @@ For subagents, request child auth sessions with the appropriate role (`builder` 
 
 Per CLAUDE.md § "Agent State Management", every spawn prompt carries ONLY spawn-ephemeral fields; everything durable goes in the action-item description. Spawn prompt MUST include:
 
-- `task_id` (Tillsyn action item the agent owns).
+- `action_item_id` (Tillsyn action item the agent owns).
 - Auth tuple: `session_id`, `session_secret`, `auth_context_id`, `agent_instance_id`, `lease_token`.
 - Project working directory: `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` (absolute).
 - Move-state directive: "Move to `in_progress` immediately when you start. On done: update metadata, move to terminal state. On findings: leave `in_progress`, report, return."
-- Pointer: "Everything else is in your task description — follow it."
+- Pointer: "Everything else is in your actionItem description — follow it."
 
 Action-item description MUST carry: Hylla artifact ref, paths, packages, acceptance criteria, mage targets, cross-references.
 
 ## 10. Drop Spin-Up + Drop End — STEWARD-Scope Item Creation + Populate-And-Close
 
-Per CLAUDE.md § "Drop End — Ledger Update Task" and memory `feedback_steward_owns_md_writes.md`, adjusted for the new role-separation model.
+Per CLAUDE.md § "Drop End — Ledger Update ActionItem" and memory `feedback_steward_owns_md_writes.md`, adjusted for the new role-separation model.
 
 ### 10.1 Drop Spin-Up — Create The 6 STEWARD-Scope Items
 
@@ -135,7 +135,7 @@ When you spin up Drop 1 in Tillsyn (before any build/QA work), create these six 
 | `DROP_1_REFINEMENTS_RAISED` | `REFINEMENTS` persistent drop | Placeholder; drop-orch appends as items surface during the drop. |
 | `DROP_1_HYLLA_REFINEMENTS_RAISED` | `HYLLA_REFINEMENTS` persistent drop | Placeholder; may remain empty if no Hylla refinements surface. |
 
-Each created with `kind='task', scope='task'` (per `feedback_use_tasks_until_drop_kind_lands.md`), `metadata.owner = STEWARD`, `metadata.drop_number = 1`.
+Each created with `kind='actionItem', scope='actionItem'` (per `feedback_use_tasks_until_drop_kind_lands.md`), `metadata.owner = STEWARD`, `metadata.drop_number = 1`.
 
 **One refinements-gate item inside Drop 1's tree:**
 
@@ -156,9 +156,9 @@ As Drop 1 progresses:
 
 ### 10.3 Drop End — Run Ingest, Finalize Descriptions, Close `DROP 1 END` Before Merge
 
-Work the `DROP 1 END — LEDGER UPDATE` task (drop-orch-owned, `blocked_by` every other Drop 1 task) after all siblings are `done`.
+Work the `DROP 1 END — LEDGER UPDATE` actionItem (drop-orch-owned, `blocked_by` every other Drop 1 actionItem) after all siblings are `done`.
 
-1. Move the task to `in_progress`. Confirm every sibling `done`, `git status --porcelain` clean, every Drop 1 commit pushed to the drop branch, `gh run watch --exit-status` green.
+1. Move the actionItem to `in_progress`. Confirm every sibling `done`, `git status --porcelain` clean, every Drop 1 commit pushed to the drop branch, `gh run watch --exit-status` green.
 2. Run `hylla_ingest` — full enrichment, remote ref `github.com/evanmschultz/tillsyn@main`, after push + CI green. Poll `hylla_run_get` via `/loop 120` during enrichment; `ScheduleWakeup` once for the estimated remainder when it enters final enrichment stage.
 3. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta.
 4. **Finalize each of the 5 level_2 findings-drop descriptions** with the end-state content. Required structure (drop-in format so STEWARD can splice directly into MDs):
@@ -190,7 +190,7 @@ Drop 1.5 (TUI refactor) runs concurrently with Drop 1. `DROP_1.5_ORCH` is a seco
 - **Shared-package pinch point:** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) touches `internal/tui` for display of the new fields. Drop 1.5 refactors the entire `internal/tui` package. CLAUDE.md's package-level blocking rule applies across drops — a single Go package shares one compile.
 - **Your action-items that touch `internal/tui` MUST declare `packages: ["internal/tui"]`** in the planner's decomposition so the conflict is visible to both orchestrators.
 - **DROP_1.5_ORCH's §4.1 audit-first gate is read-only** — it runs concurrently with every Drop 1 builder with zero conflict. No coordination needed during Drop 1.5's audit + architecture-QA phase.
-- **When your `internal/tui`-display build-task closes (done + merged), post a `till.handoff` addressed to `@DROP_1.5_ORCH`** with `next_action_type: unblock`, referencing the action-item ID and the merge commit SHA. Body: one sentence confirming `internal/tui` is now free for refactor dispatch.
+- **When your `internal/tui`-display build-actionItem closes (done + merged), post a `till.handoff` addressed to `@DROP_1.5_ORCH`** with `next_action_type: unblock`, referencing the action-item ID and the merge commit SHA. Body: one sentence confirming `internal/tui` is now free for refactor dispatch.
 - **If DROP_1.5_ORCH requests a freeze window** on `internal/tui` for a specific planning step (e.g. its architecture QA needs a stable snapshot), coordinate through a DISCUSSIONS child under STEWARD. Do not block your own work unilaterally.
 - **STEWARD arbitrates** if the handoff timing slips. Surface cross-drop conflicts to STEWARD via a DISCUSSIONS child comment with `@STEWARD` mention.
 
@@ -202,7 +202,7 @@ Per CLAUDE.md § "Recovery After Session Restart":
 2. `till.attention_item(operation=list, all_scopes=true)`.
 3. Check all `in_progress` Drop 1 tasks for staleness (subagents that died mid-work).
 4. Revoke orphaned auth sessions / leases.
-5. Resume from current task state.
+5. Resume from current actionItem state.
 
 ## 13. Pending Refinement
 

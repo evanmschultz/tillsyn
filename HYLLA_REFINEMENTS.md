@@ -33,7 +33,7 @@ Drop 0 continuation after compaction. Dev flagged a `glamour` theme update + com
 - **Imports facet.** Index third-party imports as a first-class facet so queries by package name (`glamour`, `bubbletea`, `lipgloss`, `cobra`) return files that import it.
 - **Qualified-ident tokenization.** Ensure `glamour.NewTermRenderer`, `glamour.WithAutoStyle`, etc. are indexed as individual tokens so keyword search against `content` finds them.
 - **Dependency reverse lookup.** New tool or mode: `hylla_imports_find` — "files that import X." Complements the imports facet.
-- **Behavior-vs-data-carrier ranking bias.** Rank files whose primary symbols are funcs / methods above files whose primary symbols are structs / interfaces when the query is action-shaped (`"render markdown"`, `"parse config"`, `"dispatch task"`).
+- **Behavior-vs-data-carrier ranking bias.** Rank files whose primary symbols are funcs / methods above files whose primary symbols are structs / interfaces when the query is action-shaped (`"render markdown"`, `"parse config"`, `"dispatch actionItem"`).
 - **Schema cleanup.** Unify `field` (vector) vs `fields` (keyword) — or at minimum, error messages that name the parameter (`"field 'fields' must be one of summary|content|docstring"`) and the tool path.
 - **Summary contract.** LLM summaries should include, minimum: (a) third-party imports actually used, (b) one-sentence behavior statement. Improves recall on library-name and concept queries.
 - **Local-overlay dirty mode.** Hylla is always one drop behind (ingest lags push). A local-overlay mode that reads uncommitted / untracked files and merges them into search results would cut the "Hylla is stale for my current diff" friction.

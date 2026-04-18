@@ -6,28 +6,28 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-func TestAuthScopeContextFromTaskLineageProjectDirectPhaseCollapsesToProject(t *testing.T) {
+func TestAuthScopeContextFromActionItemLineageProjectDirectPhaseCollapsesToProject(t *testing.T) {
 	t.Parallel()
 
 	projectID := "p1"
-	phase := domain.Task{
+	phase := domain.ActionItem{
 		ID:        "phase-1",
 		ProjectID: projectID,
 		Scope:     "phase",
 	}
-	task := domain.Task{
-		ID:        "task-1",
+	actionItem := domain.ActionItem{
+		ID:        "actionItem-1",
 		ProjectID: projectID,
 		ParentID:  phase.ID,
-		Scope:     "task",
+		Scope:     "actionItem",
 	}
 
 	t.Run("phase scope", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := authScopeContextFromTaskLineage(projectID, domain.ScopeLevelPhase, phase.ID, []domain.Task{phase})
+		got, err := authScopeContextFromActionItemLineage(projectID, domain.ScopeLevelPhase, phase.ID, []domain.ActionItem{phase})
 		if err != nil {
-			t.Fatalf("authScopeContextFromTaskLineage() error = %v", err)
+			t.Fatalf("authScopeContextFromActionItemLineage() error = %v", err)
 		}
 		if got.ScopeType != domain.ScopeLevelProject {
 			t.Fatalf("scope_type = %q, want %q", got.ScopeType, domain.ScopeLevelProject)
@@ -40,12 +40,12 @@ func TestAuthScopeContextFromTaskLineageProjectDirectPhaseCollapsesToProject(t *
 		}
 	})
 
-	t.Run("task scope", func(t *testing.T) {
+	t.Run("actionItem scope", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := authScopeContextFromTaskLineage(projectID, domain.ScopeLevelTask, task.ID, []domain.Task{phase, task})
+		got, err := authScopeContextFromActionItemLineage(projectID, domain.ScopeLevelActionItem, actionItem.ID, []domain.ActionItem{phase, actionItem})
 		if err != nil {
-			t.Fatalf("authScopeContextFromTaskLineage() error = %v", err)
+			t.Fatalf("authScopeContextFromActionItemLineage() error = %v", err)
 		}
 		if got.ScopeType != domain.ScopeLevelProject {
 			t.Fatalf("scope_type = %q, want %q", got.ScopeType, domain.ScopeLevelProject)

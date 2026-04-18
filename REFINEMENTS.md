@@ -121,7 +121,7 @@ Post-Drop-3 template overhaul or a dedicated addressing drop. Not Drop 1.
 Orchestrator + cascade agents frequently perform many small action-item mutations in sequence (create N drops, update M descriptions, move K items to `in_progress`). Every call is a separate MCP round-trip.
 
 ### Observation
-Post-Drop-4 the cascade dispatcher will be doing hundreds of these per cascade run. One-at-a-time MCP round-trips will become a real latency and rate-limit problem. Pre-cascade, the orchestrator already feels the friction (e.g. creating refinement drops, creating build-task + qa-proof + qa-falsification trios).
+Post-Drop-4 the cascade dispatcher will be doing hundreds of these per cascade run. One-at-a-time MCP round-trips will become a real latency and rate-limit problem. Pre-cascade, the orchestrator already feels the friction (e.g. creating refinement drops, creating build-actionItem + qa-proof + qa-falsification trios).
 
 ### Proposed fix
 Batch operations on `till.action_item`:

@@ -433,7 +433,7 @@ func registerProjectTools(
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithString("template_library_id", mcp.Description("Template library identifier. Used by operation=create or bind_template. Confirm with the dev whether this library should govern the project workflow and whether generic kinds should remain allowed before mutating the binding.")),
-			mcp.WithArray("task_ids", mcp.Description("Optional task ids for operation=approve_template_migrations"), mcp.WithStringItems()),
+			mcp.WithArray("action_item_ids", mcp.Description("Optional actionItem ids for operation=approve_template_migrations"), mcp.WithStringItems()),
 			mcp.WithBoolean("approve_all", mcp.Description("Approve every eligible migration candidate for operation=approve_template_migrations")),
 			mcp.WithArray("kind_ids", mcp.Description("Allowed kind id list for operation=set_allowed_kinds. Use this to keep the project template-limited or to intentionally opt specific generic kinds in after discussing that policy with the dev."), mcp.WithStringItems()),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
@@ -455,7 +455,7 @@ func registerProjectTools(
 				Description       string                 `json:"description"`
 				Kind              string                 `json:"kind"`
 				TemplateLibraryID string                 `json:"template_library_id"`
-				TaskIDs           []string               `json:"task_ids"`
+				ActionItemIDs     []string               `json:"action_item_ids"`
 				ApproveAll        bool                   `json:"approve_all"`
 				KindIDs           []string               `json:"kind_ids"`
 				Metadata          domain.ProjectMetadata `json:"metadata"`
@@ -695,10 +695,10 @@ func registerProjectTools(
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				result, err := templates.ApproveProjectTemplateMigrations(ctx, common.ApproveProjectTemplateMigrationsRequest{
-					ProjectID:  projectID,
-					TaskIDs:    append([]string(nil), args.TaskIDs...),
-					ApproveAll: args.ApproveAll,
-					Actor:      actor,
+					ProjectID:     projectID,
+					ActionItemIDs: append([]string(nil), args.ActionItemIDs...),
+					ApproveAll:    args.ApproveAll,
+					Actor:         actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -992,10 +992,10 @@ func registerProjectTools(
 	}
 }
 
-// registerTaskTools registers task reads plus the reduced action-item mutation family.
-func registerTaskTools(
+// registerActionItemTools registers actionItem reads plus the reduced action-item mutation family.
+func registerActionItemTools(
 	srv *mcpserver.MCPServer,
-	tasks common.TaskService,
+	tasks common.ActionItemService,
 	search common.SearchService,
 	embeddings common.EmbeddingsService,
 	authContexts *mcpAuthContextStore,
@@ -1005,40 +1005,40 @@ func registerTaskTools(
 		handleActionItemOperation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
-				Operation       string               `json:"operation"`
-				ProjectID       string               `json:"project_id"`
-				ParentID        string               `json:"parent_id"`
-				Kind            string               `json:"kind"`
-				Scope           string               `json:"scope"`
-				ColumnID        string               `json:"column_id"`
-				Title           string               `json:"title"`
-				Description     string               `json:"description"`
-				Priority        string               `json:"priority"`
-				DueAt           string               `json:"due_at"`
-				Labels          []string             `json:"labels"`
-				Metadata        *domain.TaskMetadata `json:"metadata"`
-				TaskID          string               `json:"task_id"`
-				ToColumnID      string               `json:"to_column_id"`
-				Position        *int                 `json:"position"`
-				State           string               `json:"state"`
-				IncludeArchived bool                 `json:"include_archived"`
-				Query           string               `json:"query"`
-				CrossProject    bool                 `json:"cross_project"`
-				States          []string             `json:"states"`
-				Levels          []string             `json:"levels"`
-				Kinds           []string             `json:"kinds"`
-				LabelsAny       []string             `json:"labels_any"`
-				LabelsAll       []string             `json:"labels_all"`
-				SearchMode      string               `json:"search_mode"`
-				Sort            string               `json:"sort"`
-				Limit           *int                 `json:"limit"`
-				Offset          *int                 `json:"offset"`
-				Mode            string               `json:"mode"`
-				SessionID       string               `json:"session_id"`
-				SessionSecret   string               `json:"session_secret"`
-				AgentInstanceID string               `json:"agent_instance_id"`
-				LeaseToken      string               `json:"lease_token"`
-				OverrideToken   string               `json:"override_token"`
+				Operation       string                     `json:"operation"`
+				ProjectID       string                     `json:"project_id"`
+				ParentID        string                     `json:"parent_id"`
+				Kind            string                     `json:"kind"`
+				Scope           string                     `json:"scope"`
+				ColumnID        string                     `json:"column_id"`
+				Title           string                     `json:"title"`
+				Description     string                     `json:"description"`
+				Priority        string                     `json:"priority"`
+				DueAt           string                     `json:"due_at"`
+				Labels          []string                   `json:"labels"`
+				Metadata        *domain.ActionItemMetadata `json:"metadata"`
+				ActionItemID    string                     `json:"action_item_id"`
+				ToColumnID      string                     `json:"to_column_id"`
+				Position        *int                       `json:"position"`
+				State           string                     `json:"state"`
+				IncludeArchived bool                       `json:"include_archived"`
+				Query           string                     `json:"query"`
+				CrossProject    bool                       `json:"cross_project"`
+				States          []string                   `json:"states"`
+				Levels          []string                   `json:"levels"`
+				Kinds           []string                   `json:"kinds"`
+				LabelsAny       []string                   `json:"labels_any"`
+				LabelsAll       []string                   `json:"labels_all"`
+				SearchMode      string                     `json:"search_mode"`
+				Sort            string                     `json:"sort"`
+				Limit           *int                       `json:"limit"`
+				Offset          *int                       `json:"offset"`
+				Mode            string                     `json:"mode"`
+				SessionID       string                     `json:"session_id"`
+				SessionSecret   string                     `json:"session_secret"`
+				AgentInstanceID string                     `json:"agent_instance_id"`
+				LeaseToken      string                     `json:"lease_token"`
+				OverrideToken   string                     `json:"override_token"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -1050,15 +1050,15 @@ func registerTaskTools(
 
 			switch operation {
 			case "get":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
-				task, err := tasks.GetTask(ctx, taskID)
+				actionItem, err := tasks.GetActionItem(ctx, actionItemID)
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s get result: %w", toolLabel, err)
 				}
@@ -1071,7 +1071,7 @@ func registerTaskTools(
 				includeArchived := args.IncludeArchived
 				parentID := strings.TrimSpace(args.ParentID)
 				if parentID != "" {
-					rows, err := tasks.ListChildTasks(ctx, projectID, parentID, includeArchived)
+					rows, err := tasks.ListChildActionItems(ctx, projectID, parentID, includeArchived)
 					if err != nil {
 						return toolResultFromError(err), nil
 					}
@@ -1081,7 +1081,7 @@ func registerTaskTools(
 					}
 					return result, nil
 				}
-				rows, err := tasks.ListTasks(ctx, projectID, includeArchived)
+				rows, err := tasks.ListActionItems(ctx, projectID, includeArchived)
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
@@ -1098,7 +1098,7 @@ func registerTaskTools(
 				if searchMode == "" {
 					searchMode = strings.TrimSpace(req.GetString("mode", ""))
 				}
-				searchReq := common.SearchTasksRequest{
+				searchReq := common.SearchActionItemsRequest{
 					ProjectID:       strings.TrimSpace(args.ProjectID),
 					Query:           strings.TrimSpace(args.Query),
 					CrossProject:    args.CrossProject,
@@ -1117,7 +1117,7 @@ func registerTaskTools(
 				if args.Offset != nil {
 					searchReq.Offset = *args.Offset
 				}
-				resultPayload, err := search.SearchTasks(ctx, searchReq)
+				resultPayload, err := search.SearchActionItems(ctx, searchReq)
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
@@ -1148,7 +1148,7 @@ func registerTaskTools(
 					},
 					"create_task",
 					"project:"+projectID,
-					"task",
+					"actionItem",
 					"new",
 					map[string]string{
 						"project_id": projectID,
@@ -1168,11 +1168,11 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				var metadata domain.TaskMetadata
+				var metadata domain.ActionItemMetadata
 				if args.Metadata != nil {
 					metadata = *args.Metadata
 				}
-				task, err := tasks.CreateTask(ctx, common.CreateTaskRequest{
+				actionItem, err := tasks.CreateActionItem(ctx, common.CreateActionItemRequest{
 					ProjectID:   args.ProjectID,
 					ParentID:    args.ParentID,
 					Kind:        args.Kind,
@@ -1189,15 +1189,15 @@ func registerTaskTools(
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s create result: %w", toolLabel, err)
 				}
 				return result, nil
 			case "update":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
 				title := strings.TrimSpace(args.Title)
 				if title == "" {
@@ -1212,9 +1212,9 @@ func registerTaskTools(
 					},
 					"update_task",
 					"tillsyn",
-					"task",
-					taskID,
-					map[string]string{"task_id": taskID},
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1227,28 +1227,28 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				task, err := tasks.UpdateTask(ctx, common.UpdateTaskRequest{
-					TaskID:      args.TaskID,
-					Title:       args.Title,
-					Description: args.Description,
-					Priority:    args.Priority,
-					DueAt:       args.DueAt,
-					Labels:      append([]string(nil), args.Labels...),
-					Metadata:    args.Metadata,
-					Actor:       actor,
+				actionItem, err := tasks.UpdateActionItem(ctx, common.UpdateActionItemRequest{
+					ActionItemID: args.ActionItemID,
+					Title:        args.Title,
+					Description:  args.Description,
+					Priority:     args.Priority,
+					DueAt:        args.DueAt,
+					Labels:       append([]string(nil), args.Labels...),
+					Metadata:     args.Metadata,
+					Actor:        actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s update result: %w", toolLabel, err)
 				}
 				return result, nil
 			case "move":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
 				toColumnID := strings.TrimSpace(args.ToColumnID)
 				if toColumnID == "" {
@@ -1266,9 +1266,9 @@ func registerTaskTools(
 					},
 					"move_task",
 					"tillsyn",
-					"task",
-					taskID,
-					map[string]string{"task_id": taskID, "to_column_id": toColumnID},
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID, "to_column_id": toColumnID},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1281,24 +1281,24 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				task, err := tasks.MoveTask(ctx, common.MoveTaskRequest{
-					TaskID:     taskID,
-					ToColumnID: toColumnID,
-					Position:   *args.Position,
-					Actor:      actor,
+				actionItem, err := tasks.MoveActionItem(ctx, common.MoveActionItemRequest{
+					ActionItemID: actionItemID,
+					ToColumnID:   toColumnID,
+					Position:     *args.Position,
+					Actor:        actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s move result: %w", toolLabel, err)
 				}
 				return result, nil
 			case "move_state":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
 				state := strings.TrimSpace(args.State)
 				if state == "" {
@@ -1313,9 +1313,9 @@ func registerTaskTools(
 					},
 					"move_task_state",
 					"tillsyn",
-					"task",
-					taskID,
-					map[string]string{"task_id": taskID, "state": state},
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID, "state": state},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1328,23 +1328,23 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				task, err := tasks.MoveTaskState(ctx, common.MoveTaskStateRequest{
-					TaskID: taskID,
-					State:  state,
-					Actor:  actor,
+				actionItem, err := tasks.MoveActionItemState(ctx, common.MoveActionItemStateRequest{
+					ActionItemID: actionItemID,
+					State:        state,
+					Actor:        actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s move_state result: %w", toolLabel, err)
 				}
 				return result, nil
 			case "delete":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
 					ctx,
@@ -1355,9 +1355,9 @@ func registerTaskTools(
 					},
 					"delete_task",
 					"tillsyn",
-					"task",
-					taskID,
-					map[string]string{"task_id": taskID, "mode": strings.TrimSpace(args.Mode)},
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID, "mode": strings.TrimSpace(args.Mode)},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1370,26 +1370,26 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				if err := tasks.DeleteTask(ctx, common.DeleteTaskRequest{
-					TaskID: taskID,
-					Mode:   args.Mode,
-					Actor:  actor,
+				if err := tasks.DeleteActionItem(ctx, common.DeleteActionItemRequest{
+					ActionItemID: actionItemID,
+					Mode:         args.Mode,
+					Actor:        actor,
 				}); err != nil {
 					return toolResultFromError(err), nil
 				}
 				result, err := mcp.NewToolResultJSON(map[string]any{
-					"deleted": true,
-					"task_id": taskID,
-					"mode":    args.Mode,
+					"deleted":        true,
+					"action_item_id": actionItemID,
+					"mode":           args.Mode,
 				})
 				if err != nil {
 					return nil, fmt.Errorf("encode %s delete result: %w", toolLabel, err)
 				}
 				return result, nil
 			case "restore":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
 					ctx,
@@ -1400,9 +1400,9 @@ func registerTaskTools(
 					},
 					"restore_task",
 					"tillsyn",
-					"task",
-					taskID,
-					map[string]string{"task_id": taskID},
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1415,22 +1415,22 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				task, err := tasks.RestoreTask(ctx, common.RestoreTaskRequest{
-					TaskID: taskID,
-					Actor:  actor,
+				actionItem, err := tasks.RestoreActionItem(ctx, common.RestoreActionItemRequest{
+					ActionItemID: actionItemID,
+					Actor:        actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s restore result: %w", toolLabel, err)
 				}
 				return result, nil
 			case "reparent":
-				taskID := strings.TrimSpace(args.TaskID)
-				if taskID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "task_id" not found`), nil
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
 					ctx,
@@ -1441,9 +1441,9 @@ func registerTaskTools(
 					},
 					"reparent_task",
 					"tillsyn",
-					"task",
-					taskID,
-					map[string]string{"task_id": taskID, "parent_id": strings.TrimSpace(args.ParentID)},
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID, "parent_id": strings.TrimSpace(args.ParentID)},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1456,15 +1456,15 @@ func registerTaskTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				task, err := tasks.ReparentTask(ctx, common.ReparentTaskRequest{
-					TaskID:   taskID,
-					ParentID: args.ParentID,
-					Actor:    actor,
+				actionItem, err := tasks.ReparentActionItem(ctx, common.ReparentActionItemRequest{
+					ActionItemID: actionItemID,
+					ParentID:     args.ParentID,
+					Actor:        actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				result, err := mcp.NewToolResultJSON(task)
+				result, err := mcp.NewToolResultJSON(actionItem)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s reparent result: %w", toolLabel, err)
 				}
@@ -1477,10 +1477,10 @@ func registerTaskTools(
 		srv.AddTool(
 			mcp.NewTool(
 				"till.action_item",
-				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."+mcpGuardedMutationToolSuffix),
+				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|actionItem|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."+mcpGuardedMutationToolSuffix),
 				mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
 				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create and optional for operation=search")),
-				mcp.WithString("task_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
+				mcp.WithString("action_item_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
 				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
 				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
@@ -1488,7 +1488,7 @@ func registerTaskTools(
 				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
 				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
-				mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
@@ -1535,18 +1535,18 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.create_task",
-					mcp.WithDescription("Create one task/work-item (legacy alias for till.action_item operation=create)."),
+					mcp.WithDescription("Create one actionItem/work-item (legacy alias for till.action_item operation=create)."),
 					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 					mcp.WithString("column_id", mcp.Required(), mcp.Description("Column identifier")),
-					mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-					mcp.WithString("parent_id", mcp.Description("Optional parent task id")),
+					mcp.WithString("title", mcp.Required(), mcp.Description("ActionItem title")),
+					mcp.WithString("parent_id", mcp.Description("Optional parent actionItem id")),
 					mcp.WithString("kind", mcp.Description("Kind identifier")),
-					mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
-					mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
+					mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text")),
 					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
-					mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
+					mcp.WithObject("metadata", mcp.Description("Optional actionItem metadata object")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
@@ -1561,14 +1561,14 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.update_task",
-					mcp.WithDescription("Update one task/work-item (legacy alias for till.action_item operation=update)."),
-					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
-					mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-					mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
+					mcp.WithDescription("Update one actionItem/work-item (legacy alias for till.action_item operation=update)."),
+					mcp.WithString("action_item_id", mcp.Required(), mcp.Description("ActionItem identifier")),
+					mcp.WithString("title", mcp.Required(), mcp.Description("ActionItem title")),
+					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text")),
 					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
-					mcp.WithObject("metadata", mcp.Description("Optional task metadata object")),
+					mcp.WithObject("metadata", mcp.Description("Optional actionItem metadata object")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
@@ -1583,8 +1583,8 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.move_task",
-					mcp.WithDescription("Move one task/work-item to another column/position (legacy alias for till.action_item operation=move)."),
-					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithDescription("Move one actionItem/work-item to another column/position (legacy alias for till.action_item operation=move)."),
+					mcp.WithString("action_item_id", mcp.Required(), mcp.Description("ActionItem identifier")),
 					mcp.WithString("to_column_id", mcp.Required(), mcp.Description("Destination column identifier")),
 					mcp.WithNumber("position", mcp.Required(), mcp.Description("Destination position")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
@@ -1601,8 +1601,8 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.delete_task",
-					mcp.WithDescription("Delete one task/work-item (archive or hard; legacy alias for till.action_item operation=delete)."),
-					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithDescription("Delete one actionItem/work-item (archive or hard; legacy alias for till.action_item operation=delete)."),
+					mcp.WithString("action_item_id", mcp.Required(), mcp.Description("ActionItem identifier")),
 					mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -1618,8 +1618,8 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.restore_task",
-					mcp.WithDescription("Restore one archived task/work-item (legacy alias for till.action_item operation=restore)."),
-					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithDescription("Restore one archived actionItem/work-item (legacy alias for till.action_item operation=restore)."),
+					mcp.WithString("action_item_id", mcp.Required(), mcp.Description("ActionItem identifier")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
 					mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
@@ -1634,8 +1634,8 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.reparent_task",
-					mcp.WithDescription("Change parent relationship for one task/work-item (legacy alias for till.action_item operation=reparent)."),
-					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+					mcp.WithDescription("Change parent relationship for one actionItem/work-item (legacy alias for till.action_item operation=reparent)."),
+					mcp.WithString("action_item_id", mcp.Required(), mcp.Description("ActionItem identifier")),
 					mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -1652,7 +1652,7 @@ func registerTaskTools(
 					"till.list_child_tasks",
 					mcp.WithDescription("List child tasks for a parent scope (legacy alias for till.action_item operation=list with parent_id)."),
 					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-					mcp.WithString("parent_id", mcp.Required(), mcp.Description("Parent task identifier")),
+					mcp.WithString("parent_id", mcp.Required(), mcp.Description("Parent actionItem identifier")),
 					mcp.WithBoolean("include_archived", mcp.Description("Include archived child rows")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1662,7 +1662,7 @@ func registerTaskTools(
 			srv.AddTool(
 				mcp.NewTool(
 					"till.search_task_matches",
-					mcp.WithDescription("Search task/work-item matches by query, mode, sort, filters, and scope (legacy alias for till.action_item operation=search)."),
+					mcp.WithDescription("Search actionItem/work-item matches by query, mode, sort, filters, and scope (legacy alias for till.action_item operation=search)."),
 					mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project queries")),
 					mcp.WithString("query", mcp.Description("Search query")),
 					mcp.WithBoolean("cross_project", mcp.Description("Search across all projects")),
@@ -2343,7 +2343,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithDescription("List or mutate capability lease lifecycle state. Use operation=list|issue|heartbeat|renew|revoke|revoke_all."+mcpCapabilityLeaseToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Capability lease operation"), mcp.Enum("list", "issue", "heartbeat", "renew", "revoke", "revoke_all")),
 			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|issue|revoke_all")),
-			mcp.WithString("scope_type", mcp.Description("project|branch|phase|task|subtask. Optional for operation=list; required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("project|branch|phase|actionItem|subtask. Optional for operation=list; required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and for project scope; otherwise used by operation=issue|revoke_all")),
 			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases when operation=list")),
 			mcp.WithString("role", mcp.Description("orchestrator|builder|qa|research. Required for operation=issue"), mcp.Enum("orchestrator", "builder", "qa", "research")),
@@ -2403,7 +2403,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 			"till.issue_capability_lease",
 			mcp.WithDescription("Issue one capability lease."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("role", mcp.Required(), mcp.Description("orchestrator|builder|qa|research"), mcp.Enum("orchestrator", "builder", "qa", "research")),
 			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session. Issuing a lease under a user session does not convert that user session into an authenticated agent session for later guarded mutations.")),
@@ -2488,7 +2488,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 			"till.revoke_all_capability_leases",
 			mcp.WithDescription("Revoke all capability leases for one project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("reason", mcp.Description("Optional revocation reason")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
@@ -2517,7 +2517,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs. During active runs, operation=list can wait for the next thread update, and after client shutdown/restart you should rerun capture_state plus comment/attention reads to recover thread state."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Comment operation"), mcp.Enum("create", "list")),
 			mcp.WithString("project_id", mcp.Description("Project identifier")),
-			mcp.WithString("target_type", mcp.Description("project|branch|phase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "task", "subtask", "decision", "note")),
+			mcp.WithString("target_type", mcp.Description("project|branch|phase|actionItem|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "actionItem", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Description("Target identifier")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next thread change after capturing the current thread state, for example 30s. Use this while actively watching a thread; without a new change before timeout it returns the current comments, and after restart you should rerun operation=list to recover current thread state.")),
 			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich thread summary; use @human, @dev, @builder, @qa, @orchestrator, or @research when routing comment inbox mentions")),

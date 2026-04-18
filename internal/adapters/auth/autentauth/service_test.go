@@ -75,7 +75,7 @@ func TestServiceSharedDBAuthorizeAllow(t *testing.T) {
 		SessionSecret: issued.Secret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestServiceAuthorizeInvalidSecretReturnsDecision(t *testing.T) {
 		SessionSecret: "wrong-secret",
 		Action:        "update_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "t1",
 	})
 	if err != nil {
@@ -286,7 +286,7 @@ func TestServiceAuthorizeRevokedSessionReturnsDecision(t *testing.T) {
 		SessionSecret: issued.Secret,
 		Action:        "update_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "t1",
 	})
 	if err != nil {
@@ -320,7 +320,7 @@ func TestServiceAuthorizeSessionRequired(t *testing.T) {
 	result, err := auth.Authorize(context.Background(), AuthorizationRequest{
 		Action:       "create_task",
 		Namespace:    "project:p1",
-		ResourceType: "task",
+		ResourceType: "actionItem",
 		ResourceID:   "new",
 	})
 	if err != nil {
@@ -372,7 +372,7 @@ func TestServiceAuthorizeExpiredSessionReturnsDecision(t *testing.T) {
 		SessionSecret: issued.Secret,
 		Action:        "update_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "t1",
 	})
 	if err != nil {
@@ -400,7 +400,7 @@ func TestServiceAuthorizeDenyRuleReturnsDecision(t *testing.T) {
 		t.Fatalf("NewSharedDB() error = %v", err)
 	}
 	denyRule, err := autentdomain.ValidateAndNormalizeRule(autentdomain.Rule{
-		ID:     "deny-create-task",
+		ID:     "deny-create-actionItem",
 		Effect: autentdomain.EffectDeny,
 		Actions: []autentdomain.StringPattern{
 			{Operator: autentdomain.MatchExact, Value: "create_task"},
@@ -408,7 +408,7 @@ func TestServiceAuthorizeDenyRuleReturnsDecision(t *testing.T) {
 		Resources: []autentdomain.ResourcePattern{
 			{
 				Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
-				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "actionItem"},
 				ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
 			},
 		},
@@ -434,7 +434,7 @@ func TestServiceAuthorizeDenyRuleReturnsDecision(t *testing.T) {
 		SessionSecret: issued.Secret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if err != nil {
@@ -462,7 +462,7 @@ func TestServiceAuthorizeGrantRequiredReturnsDecision(t *testing.T) {
 		t.Fatalf("NewSharedDB() error = %v", err)
 	}
 	grantRule, err := autentdomain.ValidateAndNormalizeRule(autentdomain.Rule{
-		ID:     "grant-create-task",
+		ID:     "grant-create-actionItem",
 		Effect: autentdomain.EffectAllow,
 		Actions: []autentdomain.StringPattern{
 			{Operator: autentdomain.MatchExact, Value: "create_task"},
@@ -470,7 +470,7 @@ func TestServiceAuthorizeGrantRequiredReturnsDecision(t *testing.T) {
 		Resources: []autentdomain.ResourcePattern{
 			{
 				Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
-				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "actionItem"},
 				ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
 			},
 		},
@@ -497,7 +497,7 @@ func TestServiceAuthorizeGrantRequiredReturnsDecision(t *testing.T) {
 		SessionSecret: issued.Secret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if err != nil {
@@ -590,14 +590,14 @@ func TestAuthorizeApprovedPathAllowsGlobalScope(t *testing.T) {
 	}
 }
 
-// TestAuthContextPathBuildsTaskScopePath verifies task/subtask contexts must carry lineage to satisfy narrowed approvals.
-func TestAuthContextPathBuildsTaskScopePath(t *testing.T) {
+// TestAuthContextPathBuildsActionItemScopePath verifies actionItem/subtask contexts must carry lineage to satisfy narrowed approvals.
+func TestAuthContextPathBuildsActionItemScopePath(t *testing.T) {
 	t.Parallel()
 
 	path, err := authContextPath(map[string]string{
 		"project_id": "p1",
-		"scope_type": string(domain.ScopeLevelTask),
-		"scope_id":   "task-1",
+		"scope_type": string(domain.ScopeLevelActionItem),
+		"scope_id":   "actionItem-1",
 		"branch_id":  "b1",
 		"phase_path": "ph-a/ph-b",
 	})
@@ -750,7 +750,7 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 		SessionSecret: approved.SessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 		Context: map[string]string{
 			"project_id": "p1",
@@ -775,7 +775,7 @@ func TestServiceAuthRequestLifecycleWithScopedApproval(t *testing.T) {
 		SessionSecret: approved.SessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 		Context: map[string]string{
 			"project_id": "p1",
@@ -1185,8 +1185,8 @@ func TestServiceAuthRequestHelpers(t *testing.T) {
 
 	ctxPath, err := authContextPath(map[string]string{
 		"project_id": "p1",
-		"scope_type": string(domain.ScopeLevelTask),
-		"scope_id":   "task-1",
+		"scope_type": string(domain.ScopeLevelActionItem),
+		"scope_id":   "actionItem-1",
 		"branch_id":  "b1",
 		"phase_path": "ph-a/ph-b",
 	})

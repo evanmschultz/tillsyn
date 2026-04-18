@@ -52,7 +52,7 @@ Drop 1.5 refactors `internal/tui` into small reusable components conforming to C
 
 **No `go-builder-agent` spawns until every step below closes.**
 
-1. **Full audit of `internal/tui` — architect the post-Drop-1 shape, not the current one.** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) adds new display fields to `internal/tui` during the same window your audit runs. Read Drop 1's TUI-display action-item (ID surfaces once DROP_1_ORCH's planning lands) via Hylla / Tillsyn to understand the imminent field additions, then architect with those fields already present. Auditing the pre-Drop-1 snapshot will architect around a moving target and churn the refactor. Spawn `go-planning-agent` (opus) to read every file in `internal/tui` via Hylla first, `Read` / `LSP` for anything Hylla misses. Audit deliverables (all in the plan-task's description at close):
+1. **Full audit of `internal/tui` — architect the post-Drop-1 shape, not the current one.** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) adds new display fields to `internal/tui` during the same window your audit runs. Read Drop 1's TUI-display action-item (ID surfaces once DROP_1_ORCH's planning lands) via Hylla / Tillsyn to understand the imminent field additions, then architect with those fields already present. Auditing the pre-Drop-1 snapshot will architect around a moving target and churn the refactor. Spawn `go-planning-agent` (opus) to read every file in `internal/tui` via Hylla first, `Read` / `LSP` for anything Hylla misses. Audit deliverables (all in the plan-actionItem's description at close):
    - Inventory: every file, its declared types, its current responsibilities, its LOC, its fan-in (refs) and fan-out (imports).
    - Elm-architecture conformance per file: does the file declare a Model / Update / View triple, and are they colocated correctly? Where are update cases dispatching into huge switch blocks that should split into sub-components?
    - Coupling map: which components reach into which others' internals? Which props / msgs are passed deep? Which Cmds are emitted from where?
@@ -67,25 +67,25 @@ Drop 1.5 refactors `internal/tui` into small reusable components conforming to C
    - React-style reusability claims: which components are declared reusable and what their prop/Msg contract is.
    - DRY-without-harmful-coupling story: what's pulled into shared, what's deliberately kept duplicated to avoid premature abstraction.
    - Switch-case minimal-render story: where Model state prunes View; concrete examples.
-   - Migration order: which files move first, what blocks what, dependency-safe ordering. Each migration step becomes a Drop 1.5 build-task with `paths[]` / `packages[]` declared for file + package locking.
+   - Migration order: which files move first, what blocks what, dependency-safe ordering. Each migration step becomes a Drop 1.5 build-actionItem with `paths[]` / `packages[]` declared for file + package locking.
    - Test strategy: which tests + golden fixtures get added / updated / ported per migration step.
    - Non-goals: what's explicitly out of scope (e.g. adding new TUI features, replacing Bubble Tea, changing runtime behavior).
-3. **Architecture semi-formal QA.** Spawn `go-qa-proof-agent` (opus) **and** `go-qa-falsification-agent` (opus) in parallel, each as a qa-check under the architecture plan-task. Both must pass.
+3. **Architecture semi-formal QA.** Spawn `go-qa-proof-agent` (opus) **and** `go-qa-falsification-agent` (opus) in parallel, each as a qa-check under the architecture plan-actionItem. Both must pass.
    - Proof agent verifies: audit evidence grounds every claim, Elm-architecture conformance is correctly identified, migration ordering respects file/package locks, tests + goldens cover the surface, Hylla + LSP evidence is cited for every symbol.
    - Falsification agent attacks: hidden coupling the proposal missed, render paths that only look dead, shared-component extraction that will regress call sites, migration orderings that will fight the type checker mid-sequence, YAGNI pressure (reusability claims without two-real-callers evidence), Bubble Tea semantics the proposal assumes incorrectly (check Context7 for `charmbracelet/bubbletea` + `charmbracelet/bubbles` + `charmbracelet/lipgloss` v2 semantics).
-4. **Dev-agreement in chat.** After both QA passes clear, surface the full proposal in chat — open decisions, tradeoffs, any QA findings the dev should adjudicate. Use the `tillsyn-flow` numbered-addressable output style so the dev can point at `1.2`, `2.3`, `T4`. Park the converged architecture shape on the architecture plan-task's `description`; post an audit-trail comment with direct dev quotes on any corrections.
-5. **Fill out Drop 1.5 in Tillsyn.** Only after dev-agreement, spawn `go-planning-agent` (opus) one final time to decompose the agreed architecture into concrete build-tasks in Drop 1.5's tree. Each build-task MUST carry: `paths[]` (post-Drop-1 first-class), `packages[]`, acceptance criteria, mage targets, cross-references, `blocked_by` for every file/package conflict. Plan QA falsification attacks missing blockers.
-6. **Only then dispatch builders.** Section §5 build-QA-commit discipline kicks in per build-task.
+4. **Dev-agreement in chat.** After both QA passes clear, surface the full proposal in chat — open decisions, tradeoffs, any QA findings the dev should adjudicate. Use the `tillsyn-flow` numbered-addressable output style so the dev can point at `1.2`, `2.3`, `T4`. Park the converged architecture shape on the architecture plan-actionItem's `description`; post an audit-trail comment with direct dev quotes on any corrections.
+5. **Fill out Drop 1.5 in Tillsyn.** Only after dev-agreement, spawn `go-planning-agent` (opus) one final time to decompose the agreed architecture into concrete build-tasks in Drop 1.5's tree. Each build-actionItem MUST carry: `paths[]` (post-Drop-1 first-class), `packages[]`, acceptance criteria, mage targets, cross-references, `blocked_by` for every file/package conflict. Plan QA falsification attacks missing blockers.
+6. **Only then dispatch builders.** Section §5 build-QA-commit discipline kicks in per build-actionItem.
 
 ### 4.2 Refactoring Doctrine (Builder + Planner Contract)
 
-Every Drop 1.5 build-task description MUST restate these doctrines so the builder reads them inline:
+Every Drop 1.5 build-actionItem description MUST restate these doctrines so the builder reads them inline:
 
 - **React-style reusable components, Elm-architecture conformant.** A "component" is a Go package or subpackage under `internal/tui/` with a Model / Update / View triple, a Msg type, optional Cmd emitters, and a parent-wiring contract. Reusability is claimed only when **two or more real callers** would use the component today — not when a future one might.
 - **Charm Elm architecture — Bubble Tea v2, Bubbles v2, Lip Gloss v2.** Model is pure data. Update returns `(Model, Cmd)`. View takes Model and returns a `string`. No side effects in View. No mutation in Model outside Update. Use Context7 (`charmbracelet/bubbletea`, `charmbracelet/bubbles`, `charmbracelet/lipgloss`) to resolve ambiguity on framework contracts.
 - **DRY without harmful coupling.** Shared code lives behind an interface or a narrow type contract. If factoring out a helper drags four packages into each other's internals, leave the duplication and note it in `REFINEMENTS`.
 - **Switch-case minimal-render discipline.** The Model should carry explicit state that the View switches on. Render only what the current state demands. Do not render hidden tabs, collapsed panels, or empty-state placeholders the Model already knows are absent.
-- **Small files, focused responsibilities.** Default target is files under ~300 LOC. If a file needs to be larger, justify it in the plan-task description and call it out in falsification QA.
+- **Small files, focused responsibilities.** Default target is files under ~300 LOC. If a file needs to be larger, justify it in the plan-actionItem description and call it out in falsification QA.
 - **No behavior change.** Drop 1.5 refactors; it does not add TUI features or change runtime behavior. Any observed behavior change is a QA falsification finding, not a feature.
 
 Refer to `PLAN.md` § Drop 1.5 for the full contract. If the plan text drifts from this prompt, the plan text wins.
@@ -95,11 +95,11 @@ Refer to `PLAN.md` § Drop 1.5 for the full contract. If the plan text drifts fr
 CLAUDE.md § "Build-QA-Commit Discipline" is authoritative. Summary for Drop 1.5:
 
 1. **Audit + Architecture + QA + Dev-Agreement + Plan Fill-Out** — §4.1, mandatory before any builder spawn.
-2. **Build** — spawn `go-builder-agent` per build-task in the migration order the agreed architecture defines. Builder moves to `in_progress` at start, reads task description via `till.auth_request claim`, implements the migration step, updates `implementation_notes_agent` + `completion_notes`, moves to `done` at end. Closes with a `## Hylla Feedback` section.
-3. **QA Proof + QA Falsification** — parallel spawn of `go-qa-proof-agent` + `go-qa-falsification-agent` per build-task. Falsification specifically attacks: behavior drift vs. pre-refactor (tea-driven tests + goldens must match), hidden coupling the migration introduced, Elm-architecture violations, render paths that now do more or less than before.
+2. **Build** — spawn `go-builder-agent` per build-actionItem in the migration order the agreed architecture defines. Builder moves to `in_progress` at start, reads actionItem description via `till.auth_request claim`, implements the migration step, updates `implementation_notes_agent` + `completion_notes`, moves to `done` at end. Closes with a `## Hylla Feedback` section.
+3. **QA Proof + QA Falsification** — parallel spawn of `go-qa-proof-agent` + `go-qa-falsification-agent` per build-actionItem. Falsification specifically attacks: behavior drift vs. pre-refactor (tea-driven tests + goldens must match), hidden coupling the migration introduced, Elm-architecture violations, render paths that now do more or less than before.
 4. **Fix-loop on QA failure** — respawn builder on the same action item, re-run QA.
 5. **Commit** — only after both QA pass. `git add <paths>` (never `git add .`), conventional-commit single-line message (`refactor(tui): ...` for most Drop 1.5 commits), push, `gh run watch --exit-status` until CI lands green.
-6. **Ingest is drop-end only** — in the `DROP 1.5 END — LEDGER UPDATE` task. Full enrichment. From remote. After push + CI green.
+6. **Ingest is drop-end only** — in the `DROP 1.5 END — LEDGER UPDATE` actionItem. Full enrichment. From remote. After push + CI green.
 
 ## 6. Coordination Surfaces
 
@@ -116,7 +116,7 @@ All canonical rules live in `main/CLAUDE.md`. Key excerpts that bite hardest on 
 - **Update Tillsyn BEFORE spawning agents** — move items to `in_progress`, include auth credentials in the spawn prompt.
 - **Orchestrator never builds.** Go code goes through `go-builder-agent` only.
 - **Orchestrator commits directly pre-cascade** — you run `git add/commit/push/gh run watch` yourself after builder returns + QA passes. Don't punt to dev.
-- **Never skip QA** — both passes run for every build-task. No batched commits. No deferred pushes.
+- **Never skip QA** — both passes run for every build-actionItem. No batched commits. No deferred pushes.
 - **`mage` not raw `go`** — every build/test gate through a mage target. Never `go test` / `go build` / `go vet`.
 - **For TUI changes**: update tea-driven tests + golden fixtures per migration step. `mage test-golden` / `mage test-golden-update` are your friends.
 - **Single-line conventional commits** — `type(scope): message`, lowercase except proper nouns / acronyms, no trailers, no period. Most Drop 1.5 commits are `refactor(tui): ...`.
@@ -148,17 +148,17 @@ For subagents, request child auth sessions with the appropriate role (`builder` 
 
 Per CLAUDE.md § "Agent State Management", every spawn prompt carries ONLY spawn-ephemeral fields; everything durable goes in the action-item description. Spawn prompt MUST include:
 
-- `task_id` (Tillsyn action item the agent owns).
+- `action_item_id` (Tillsyn action item the agent owns).
 - Auth tuple: `session_id`, `session_secret`, `auth_context_id`, `agent_instance_id`, `lease_token`.
 - Project working directory: `/Users/evanschultz/Documents/Code/hylla/tillsyn/main` (absolute).
 - Move-state directive: "Move to `in_progress` immediately when you start. On done: update metadata, move to terminal state. On findings: leave `in_progress`, report, return."
-- Pointer: "Everything else is in your task description — follow it."
+- Pointer: "Everything else is in your actionItem description — follow it."
 
 Action-item description MUST carry: Hylla artifact ref, paths, packages, acceptance criteria, mage targets, cross-references, **and for Drop 1.5 builder tasks the §4.2 refactoring doctrine restated inline** so the builder reads it at claim time.
 
 ## 10. Drop Spin-Up + Drop End — STEWARD-Scope Item Creation + Populate-And-Close
 
-Per CLAUDE.md § "Drop End — Ledger Update Task" and memory `feedback_steward_owns_md_writes.md`.
+Per CLAUDE.md § "Drop End — Ledger Update ActionItem" and memory `feedback_steward_owns_md_writes.md`.
 
 ### 10.1 Drop Spin-Up — Create The 6 STEWARD-Scope Items
 
@@ -174,7 +174,7 @@ When you spin up Drop 1.5 in Tillsyn (before audit, before any build/QA work), c
 | `DROP_1.5_REFINEMENTS_RAISED` | `REFINEMENTS` persistent drop | Placeholder; drop-orch appends as items surface during the drop. |
 | `DROP_1.5_HYLLA_REFINEMENTS_RAISED` | `HYLLA_REFINEMENTS` persistent drop | Placeholder; may remain empty if no Hylla refinements surface. |
 
-Each created with `kind='task', scope='task'` (per `feedback_use_tasks_until_drop_kind_lands.md`), `metadata.owner = STEWARD`, `metadata.drop_number = 1.5`.
+Each created with `kind='actionItem', scope='actionItem'` (per `feedback_use_tasks_until_drop_kind_lands.md`), `metadata.owner = STEWARD`, `metadata.drop_number = 1.5`.
 
 **One refinements-gate item inside Drop 1.5's tree:**
 
@@ -195,14 +195,14 @@ As Drop 1.5 progresses:
 
 ### 10.3 Drop End — Run Ingest, Finalize Descriptions, Close `DROP 1.5 END` Before Merge
 
-Work the `DROP 1.5 END — LEDGER UPDATE` task (drop-orch-owned, `blocked_by` every other Drop 1.5 task) after all siblings are `done`.
+Work the `DROP 1.5 END — LEDGER UPDATE` actionItem (drop-orch-owned, `blocked_by` every other Drop 1.5 actionItem) after all siblings are `done`.
 
-1. Move the task to `in_progress`. Confirm every sibling `done`, `git status --porcelain` clean, every Drop 1.5 commit pushed to the drop branch, `gh run watch --exit-status` green.
+1. Move the actionItem to `in_progress`. Confirm every sibling `done`, `git status --porcelain` clean, every Drop 1.5 commit pushed to the drop branch, `gh run watch --exit-status` green.
 2. Run `hylla_ingest` — full enrichment, remote ref `github.com/evanmschultz/tillsyn@main`, after push + CI green. Poll `hylla_run_get` via `/loop 120` during enrichment; `ScheduleWakeup` once for the estimated remainder when it enters final enrichment stage.
 3. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta. Expect a significant node-count shift — Drop 1.5 adds many small TUI files and retires large ones.
 4. **Finalize each of the 5 level_2 findings-drop descriptions** with the end-state content. Required structure (drop-in format so STEWARD can splice directly into MDs):
    - `DROP_1.5_HYLLA_FINDINGS.description` → the aggregated subagent `## Hylla Feedback` roll-up, ready as a `## Drop 1.5` section for `main/HYLLA_FEEDBACK.md`.
-   - `DROP_1.5_LEDGER_ENTRY.description` → drop title, closed date, drop action-item ID, ingest snapshot, cost (this run + lineage-to-date), node counts, orphan delta, refactors (list every file split / merge / delete / rename), description (1–3 sentences on the new TUI shape), commit SHAs, notable action-item IDs (especially the architecture plan-task), unknowns forwarded. Formatted as a drop-in `## Drop 1.5 — <Title>` block for `main/LEDGER.md`.
+   - `DROP_1.5_LEDGER_ENTRY.description` → drop title, closed date, drop action-item ID, ingest snapshot, cost (this run + lineage-to-date), node counts, orphan delta, refactors (list every file split / merge / delete / rename), description (1–3 sentences on the new TUI shape), commit SHAs, notable action-item IDs (especially the architecture plan-actionItem), unknowns forwarded. Formatted as a drop-in `## Drop 1.5 — <Title>` block for `main/LEDGER.md`.
    - `DROP_1.5_WIKI_CHANGELOG_ENTRY.description` → one-line-per-change entries describing what shifted in `main/WIKI.md` (likely: new TUI-authoring best-practice page, updated project-structure section), or `None — Drop 1.5 introduced no best-practice changes.`.
    - `DROP_1.5_REFINEMENTS_RAISED.description` → final-state refinements backlog, each with one-line title + one-sentence rationale + target refinement drop.
    - `DROP_1.5_HYLLA_REFINEMENTS_RAISED.description` → same shape, Hylla-specific.
@@ -217,7 +217,7 @@ Work the `DROP 1.5 END — LEDGER UPDATE` task (drop-orch-owned, `blocked_by` ev
 - STEWARD owns the 6 persistent level_1 STEWARD drops (`DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS`), every MD write in `main/`, and every state transition on STEWARD-scope items.
 - **Per-drop artifact routing** — you populate `description` on the 5 level_2 findings drops you created at spin-up (§10.1). STEWARD reads those descriptions post-merge on `main` and writes the MDs. You do NOT edit `main/HYLLA_FEEDBACK.md`, `main/LEDGER.md`, `main/WIKI_CHANGELOG.md`, `main/REFINEMENTS.md`, `main/HYLLA_REFINEMENTS.md` — ever. You do NOT post drop-end findings as comments on `DROP 1.5 END — LEDGER UPDATE` — all content lives in level_2 drop descriptions.
 - **STEWARD-owned items protection** — you can create and edit `description`/`details`/`metadata` on every STEWARD-scope item, but you cannot change `state`. That includes the 5 level_2 findings drops, the `DROP_1.5_REFINEMENTS_GATE_BEFORE_DROP_2` refinements-gate item, and anything else under the 6 persistent level_1 parents.
-- **Architecture-proposal as a cross-cutting topic** — the §4.1 audit-first gate surfaces a new TUI component architecture that subsequent drops will lean on. File a DISCUSSIONS child under STEWARD's DISCUSSIONS parent (or comment on an existing one) naming the architecture plan-task ID so STEWARD can read the converged architecture at drop end and consider it for `WIKI.md` updates.
+- **Architecture-proposal as a cross-cutting topic** — the §4.1 audit-first gate surfaces a new TUI component architecture that subsequent drops will lean on. File a DISCUSSIONS child under STEWARD's DISCUSSIONS parent (or comment on an existing one) naming the architecture plan-actionItem ID so STEWARD can read the converged architecture at drop end and consider it for `WIKI.md` updates.
 - **STEWARD-to-you handoffs** — when STEWARD converges a cross-cutting decision that requires Go code changes inside Drop 1.5's TUI refactor scope, you receive a handoff and add the work as a Drop 1.5 action item in your tree.
 - **Refinements-gate blocks Drop 1.5 closure** — the `DROP_1.5_REFINEMENTS_GATE_BEFORE_DROP_2` item you create at spin-up is STEWARD-owned state. It must close (by STEWARD) before Drop 1.5's level_1 can close. Do not attempt to close it yourself.
 
@@ -227,7 +227,7 @@ Drop 1 (first cascade-tree drop — `paths[]` / `packages[]`, `failed` state, pa
 
 - **Shared-package pinch point:** Drop 1 scope item #2 (`paths[]` / `packages[]` first-class) touches `internal/tui` for display of the new fields. You refactor the entire `internal/tui` package. CLAUDE.md's package-level blocking rule applies across drops — a single Go package shares one compile.
 - **Your §4.1 audit-first gate is read-only** — it runs concurrently with every Drop 1 builder with zero conflict. No coordination needed during audit / architecture / architecture-QA / dev-agreement / plan-fill-out.
-- **Your refactor build-tasks MUST NOT transition to `in_progress` until Drop 1's `internal/tui`-display build-task is `done` + merged** and DROP_1_ORCH posts a `till.handoff` addressed to `@DROP_1.5_ORCH` with `next_action_type: unblock`. Watch for that handoff via `till.handoff(operation=list)` before dispatching refactor builders.
+- **Your refactor build-tasks MUST NOT transition to `in_progress` until Drop 1's `internal/tui`-display build-actionItem is `done` + merged** and DROP_1_ORCH posts a `till.handoff` addressed to `@DROP_1.5_ORCH` with `next_action_type: unblock`. Watch for that handoff via `till.handoff(operation=list)` before dispatching refactor builders.
 - **If your architecture QA needs a stable `internal/tui` snapshot** for a specific planning moment (e.g. a Bubble Tea runtime-behavior verification), file a DISCUSSIONS child with `@DROP_1_ORCH` + `@STEWARD` mentions requesting a freeze window; wait for STEWARD's arbitrated decision.
 - **Your refactor action-items MUST declare `packages: ["internal/tui"]`** in the planner's decomposition so the conflict is visible to both orchestrators and the planner QA-falsification agent can attack missing blockers.
 - **STEWARD arbitrates** if the handoff timing slips. Surface cross-drop conflicts to STEWARD via a DISCUSSIONS child comment with `@STEWARD` mention.
@@ -239,9 +239,9 @@ Per CLAUDE.md § "Recovery After Session Restart":
 1. `till.capture_state` to re-anchor project + scope.
 2. `till.attention_item(operation=list, all_scopes=true)`.
 3. Check all `in_progress` Drop 1.5 tasks for staleness (subagents that died mid-work).
-4. **Special check for Drop 1.5**: if the §4.1 audit-first gate was mid-flight (audit task or architecture task or architecture-QA task in `in_progress`), do NOT dispatch any builder on return. Resume from the audit-first gate step that was in-flight.
+4. **Special check for Drop 1.5**: if the §4.1 audit-first gate was mid-flight (audit actionItem or architecture actionItem or architecture-QAn actionItem in `in_progress`), do NOT dispatch any builder on return. Resume from the audit-first gate step that was in-flight.
 5. Revoke orphaned auth sessions / leases.
-6. Resume from current task state.
+6. Resume from current actionItem state.
 
 ## 13. Pending Refinement
 

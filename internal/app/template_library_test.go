@@ -11,8 +11,8 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// TestCreateTaskUsesBoundTemplateLibrary verifies bound node templates override legacy kind templates and persist node contracts.
-func TestCreateTaskUsesBoundTemplateLibrary(t *testing.T) {
+// TestCreateActionItemUsesBoundTemplateLibrary verifies bound node templates override legacy kind templates and persist node contracts.
+func TestCreateActionItemUsesBoundTemplateLibrary(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 17, 0, 0, 0, time.UTC)
@@ -41,10 +41,10 @@ func TestCreateTaskUsesBoundTemplateLibrary(t *testing.T) {
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{
 			{
-				ID:         "task-template",
-				ScopeLevel: domain.KindAppliesToTask,
-				NodeKindID: domain.KindID(domain.WorkKindTask),
-				TaskMetadataDefaults: &domain.TaskMetadata{
+				ID:         "actionItem-template",
+				ScopeLevel: domain.KindAppliesToActionItem,
+				NodeKindID: domain.KindID(domain.WorkKindActionItem),
+				ActionItemMetadataDefaults: &domain.ActionItemMetadata{
 					ValidationPlan: "Run template validation",
 				},
 				ChildRules: []UpsertTemplateChildRuleInput{
@@ -54,7 +54,7 @@ func TestCreateTaskUsesBoundTemplateLibrary(t *testing.T) {
 						ChildScopeLevel:         domain.KindAppliesToSubtask,
 						ChildKindID:             domain.KindID(domain.WorkKindSubtask),
 						TitleTemplate:           "QA review",
-						DescriptionTemplate:     "Verify the parent task output",
+						DescriptionTemplate:     "Verify the parent actionItem output",
 						ResponsibleActorKind:    domain.TemplateActorKindQA,
 						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
@@ -77,16 +77,16 @@ func TestCreateTaskUsesBoundTemplateLibrary(t *testing.T) {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
 
-	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Build feature",
 		Priority:  domain.PriorityHigh,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if parent.Metadata.ValidationPlan != "Run template validation" {
 		t.Fatalf("parent.Metadata.ValidationPlan = %q, want template default", parent.Metadata.ValidationPlan)
@@ -95,7 +95,7 @@ func TestCreateTaskUsesBoundTemplateLibrary(t *testing.T) {
 	if len(repo.tasks) != 2 {
 		t.Fatalf("len(repo.tasks) = %d, want parent plus generated child", len(repo.tasks))
 	}
-	var generated domain.Task
+	var generated domain.ActionItem
 	for _, candidate := range repo.tasks {
 		if candidate.ID == parent.ID {
 			continue
@@ -221,22 +221,22 @@ func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
 	if got, want := allowedKinds, []domain.KindID{"branch", "go-service"}; !slices.Equal(got, want) {
 		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
 	}
-	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	tasks, err := svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("len(tasks) = %d, want 1 generated root task", len(tasks))
+		t.Fatalf("len(tasks) = %d, want 1 generated root actionItem", len(tasks))
 	}
 	if tasks[0].Title != "Main Branch" {
 		t.Fatalf("tasks[0].Title = %q, want Main Branch", tasks[0].Title)
 	}
 	if tasks[0].Kind != domain.WorkKind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
-		t.Fatalf("unexpected generated root task %#v", tasks[0])
+		t.Fatalf("unexpected generated root actionItem %#v", tasks[0])
 	}
 	snapshot, ok := repo.nodeContracts[tasks[0].ID]
 	if !ok {
-		t.Fatalf("repo.nodeContracts missing generated root task %q", tasks[0].ID)
+		t.Fatalf("repo.nodeContracts missing generated root actionItem %q", tasks[0].ID)
 	}
 	if snapshot.SourceLibraryID != library.ID {
 		t.Fatalf("snapshot.SourceLibraryID = %q, want %q", snapshot.SourceLibraryID, library.ID)
@@ -279,8 +279,8 @@ func TestBindProjectTemplateLibraryRefreshesDefaultAllowlist(t *testing.T) {
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "build-child",
 				Position:                1,
-				ChildScopeLevel:         domain.KindAppliesToTask,
-				ChildKindID:             domain.KindID("task"),
+				ChildScopeLevel:         domain.KindAppliesToActionItem,
+				ChildKindID:             domain.KindID("actionItem"),
 				TitleTemplate:           "Build child",
 				ResponsibleActorKind:    domain.TemplateActorKindBuilder,
 				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
@@ -304,7 +304,7 @@ func TestBindProjectTemplateLibraryRefreshesDefaultAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjectAllowedKinds(bound) error = %v", err)
 	}
-	if got, want := allowedKinds, []domain.KindID{"phase", "project", "task"}; !slices.Equal(got, want) {
+	if got, want := allowedKinds, []domain.KindID{"actionItem", "phase", "project"}; !slices.Equal(got, want) {
 		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
 	}
 }
@@ -338,9 +338,9 @@ func TestBindProjectTemplateLibraryPreservesCustomizedAllowlist(t *testing.T) {
 		ApprovedByActorName: "Operator",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID("task"),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID("actionItem"),
 		}},
 	})
 	if err != nil {
@@ -385,12 +385,12 @@ func TestGetBuiltinTemplateLibraryStatusMissing(t *testing.T) {
 	if got, want := len(status.MissingKindIDs), 13; got != want {
 		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
 	}
-	for _, want := range []domain.KindID{"branch", "task", "subtask", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"branch", "actionItem", "subtask", "go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-actionItem", "refactor-actionItem", "dogfood-refactor-actionItem", "qa-check", "commit-and-reingest"} {
 		if !slices.Contains(status.RequiredKindIDs, want) {
 			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
 		}
 	}
-	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"go-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-actionItem", "refactor-actionItem", "dogfood-refactor-actionItem", "qa-check", "commit-and-reingest"} {
 		if !slices.Contains(status.MissingKindIDs, want) {
 			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
 		}
@@ -443,11 +443,11 @@ func TestDefaultGoBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) {
 	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-phase").ChildRules); !slices.Equal(got, []string{"CONFIRM LOCAL USED VERSION UPDATED", "DEV VERSION VALIDATION PLAN", "HYLLA-FIRST REFACTOR BASELINE", "PHASE METRICS ROLLUP", "PHASE PUSH AND REINGEST CONFIRMATION", "REFACTOR METRICS BASELINE AND REPORT PATH", "REFACTOR SUBPHASE AND SLICE TREE"}) {
 		t.Fatalf("dogfood-refactor-phase child titles = %#v", got)
 	}
-	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-task").ChildRules); !slices.Equal(got, []string{"COMMIT PUSH AND REINGEST", "METRICS CAPTURE AND REPORT", "PARITY VALIDATION IN ACTION", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}) {
-		t.Fatalf("refactor-task child titles = %#v", got)
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-actionItem").ChildRules); !slices.Equal(got, []string{"COMMIT PUSH AND REINGEST", "METRICS CAPTURE AND REPORT", "PARITY VALIDATION IN ACTION", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}) {
+		t.Fatalf("refactor-actionItem child titles = %#v", got)
 	}
-	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-task").ChildRules); !slices.Equal(got, []string{"COMMIT PUSH AND REINGEST", "CONFIRM LOCAL USED VERSION UPDATED", "METRICS CAPTURE AND REPORT", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "TEST AGAINST DEV VERSION"}) {
-		t.Fatalf("dogfood-refactor-task child titles = %#v", got)
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-actionItem").ChildRules); !slices.Equal(got, []string{"COMMIT PUSH AND REINGEST", "CONFIRM LOCAL USED VERSION UPDATED", "METRICS CAPTURE AND REPORT", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "TEST AGAINST DEV VERSION"}) {
+		t.Fatalf("dogfood-refactor-actionItem child titles = %#v", got)
 	}
 }
 
@@ -472,12 +472,12 @@ func TestGetBuiltinTemplateLibraryStatusMissingDefaultFrontend(t *testing.T) {
 	if got, want := len(status.MissingKindIDs), 16; got != want {
 		t.Fatalf("len(status.MissingKindIDs) = %d, want %d", got, want)
 	}
-	for _, want := range []domain.KindID{"branch", "task", "subtask", "frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"branch", "actionItem", "subtask", "frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-actionItem", "refactor-actionItem", "dogfood-refactor-actionItem", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
 		if !slices.Contains(status.RequiredKindIDs, want) {
 			t.Fatalf("status.RequiredKindIDs missing %q: %#v", want, status.RequiredKindIDs)
 		}
 	}
-	for _, want := range []domain.KindID{"frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-task", "refactor-task", "dogfood-refactor-task", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
+	for _, want := range []domain.KindID{"frontend-project", "project-setup-phase", "plan-phase", "build-phase", "closeout-phase", "branch-cleanup-phase", "refactor-phase", "dogfood-refactor-phase", "build-actionItem", "refactor-actionItem", "dogfood-refactor-actionItem", "qa-check", "visual-qa", "a11y-check", "design-review", "commit-and-reingest"} {
 		if !slices.Contains(status.MissingKindIDs, want) {
 			t.Fatalf("status.MissingKindIDs missing %q: %#v", want, status.MissingKindIDs)
 		}
@@ -509,29 +509,29 @@ func TestDefaultFrontendBuiltinTemplateLibrarySpecLoadsRepoSource(t *testing.T) 
 	if got := spec.NodeTemplates[0].ChildRules[0].TitleTemplate; got != "PROJECT SETUP" {
 		t.Fatalf("project root child title = %q, want PROJECT SETUP", got)
 	}
-	var buildTaskTemplate UpsertNodeTemplateInput
+	var buildActionItemTemplate UpsertNodeTemplateInput
 	for _, nodeTemplate := range spec.NodeTemplates {
-		if nodeTemplate.NodeKindID == "build-task" {
-			buildTaskTemplate = nodeTemplate
+		if nodeTemplate.NodeKindID == "build-actionItem" {
+			buildActionItemTemplate = nodeTemplate
 			break
 		}
 	}
-	if buildTaskTemplate.ID == "" {
-		t.Fatal("expected build-task node template in default-frontend builtin")
+	if buildActionItemTemplate.ID == "" {
+		t.Fatal("expected build-actionItem node template in default-frontend builtin")
 	}
-	gotChildTitles := make([]string, 0, len(buildTaskTemplate.ChildRules))
-	for _, childRule := range buildTaskTemplate.ChildRules {
+	gotChildTitles := make([]string, 0, len(buildActionItemTemplate.ChildRules))
+	for _, childRule := range buildActionItemTemplate.ChildRules {
 		gotChildTitles = append(gotChildTitles, childRule.TitleTemplate)
 	}
 	slices.Sort(gotChildTitles)
 	if want := []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(gotChildTitles, want) {
-		t.Fatalf("build-task child titles = %#v, want %#v", gotChildTitles, want)
+		t.Fatalf("build-actionItem child titles = %#v, want %#v", gotChildTitles, want)
 	}
-	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-task").ChildRules); !slices.Equal(got, []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "METRICS CAPTURE AND REPORT", "PARITY VALIDATION IN ACTION", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}) {
-		t.Fatalf("refactor-task child titles = %#v", got)
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "refactor-actionItem").ChildRules); !slices.Equal(got, []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "METRICS CAPTURE AND REPORT", "PARITY VALIDATION IN ACTION", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}) {
+		t.Fatalf("refactor-actionItem child titles = %#v", got)
 	}
-	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-task").ChildRules); !slices.Equal(got, []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "CONFIRM LOCAL USED VERSION UPDATED", "METRICS CAPTURE AND REPORT", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "TEST AGAINST DEV VERSION", "VISUAL QA"}) {
-		t.Fatalf("dogfood-refactor-task child titles = %#v", got)
+	if got := childRuleTitles(findNodeTemplateByKind(t, spec.NodeTemplates, "dogfood-refactor-actionItem").ChildRules); !slices.Equal(got, []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "CONFIRM LOCAL USED VERSION UPDATED", "METRICS CAPTURE AND REPORT", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "TEST AGAINST DEV VERSION", "VISUAL QA"}) {
+		t.Fatalf("dogfood-refactor-actionItem child titles = %#v", got)
 	}
 }
 
@@ -697,20 +697,20 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 
-	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	tasks, err := svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(project roots) error = %v", err)
+		t.Fatalf("ListActionItems(project roots) error = %v", err)
 	}
-	rootTasks := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if strings.TrimSpace(task.ParentID) == "" {
-			rootTasks = append(rootTasks, task)
+	rootActionItems := make([]domain.ActionItem, 0)
+	for _, actionItem := range tasks {
+		if strings.TrimSpace(actionItem.ParentID) == "" {
+			rootActionItems = append(rootActionItems, actionItem)
 		}
 	}
-	if got, want := len(rootTasks), 1; got != want {
-		t.Fatalf("len(rootTasks) = %d, want %d", got, want)
+	if got, want := len(rootActionItems), 1; got != want {
+		t.Fatalf("len(rootActionItems) = %d, want %d", got, want)
 	}
-	projectSetup := rootTasks[0]
+	projectSetup := rootActionItems[0]
 	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("project setup root = %#v, want PROJECT SETUP/project-setup-phase/phase", projectSetup)
 	}
@@ -730,7 +730,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		t.Fatal("expected template root column for branch lane creation")
 	}
 
-	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
 		Kind:      domain.WorkKind("branch"),
@@ -738,25 +738,25 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		Title:     "MAIN DOGFOOD LANE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(branch children) error = %v", err)
+		t.Fatalf("ListActionItems(branch children) error = %v", err)
 	}
-	branchChildren := make([]domain.Task, 0)
+	branchChildren := make([]domain.ActionItem, 0)
 	branchPhaseKinds := map[string]domain.WorkKind{}
-	for _, task := range tasks {
-		if task.ParentID != branch.ID {
+	for _, actionItem := range tasks {
+		if actionItem.ParentID != branch.ID {
 			continue
 		}
-		branchChildren = append(branchChildren, task)
-		branchPhaseKinds[task.Title] = task.Kind
+		branchChildren = append(branchChildren, actionItem)
+		branchPhaseKinds[actionItem.Title] = actionItem.Kind
 	}
 	gotBranchTitles := make([]string, 0, len(branchChildren))
-	for _, task := range branchChildren {
-		gotBranchTitles = append(gotBranchTitles, task.Title)
+	for _, actionItem := range branchChildren {
+		gotBranchTitles = append(gotBranchTitles, actionItem.Title)
 	}
 	slices.Sort(gotBranchTitles)
 	wantBranchTitles := []string{"BRANCH CLEANUP", "BUILD", "CLOSEOUT", "PLAN"}
@@ -770,10 +770,10 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		t.Fatalf("branch phase kinds = %#v, want plan/build/closeout/branch-cleanup phase kinds", branchPhaseKinds)
 	}
 
-	var buildPhase domain.Task
-	for _, task := range branchChildren {
-		if task.Title == "BUILD" {
-			buildPhase = task
+	var buildPhase domain.ActionItem
+	for _, actionItem := range branchChildren {
+		if actionItem.Title == "BUILD" {
+			buildPhase = actionItem
 			break
 		}
 	}
@@ -784,45 +784,45 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		t.Fatalf("build phase child titles = %#v, want %#v", got, want)
 	}
 
-	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	buildActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
 		ColumnID:  buildPhase.ColumnID,
-		Kind:      domain.WorkKind("build-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("build-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "IMPLEMENT TEMPLATE UPDATE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(build-task) error = %v", err)
+		t.Fatalf("CreateActionItem(build-actionItem) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(build-task children) error = %v", err)
+		t.Fatalf("ListActionItems(build-actionItem children) error = %v", err)
 	}
-	buildTaskChildren := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if task.ParentID == buildTask.ID {
-			buildTaskChildren = append(buildTaskChildren, task)
+	buildActionItemChildren := make([]domain.ActionItem, 0)
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == buildActionItem.ID {
+			buildActionItemChildren = append(buildActionItemChildren, actionItem)
 		}
 	}
-	gotQATitles := make([]string, 0, len(buildTaskChildren))
-	for _, task := range buildTaskChildren {
-		gotQATitles = append(gotQATitles, task.Title)
+	gotQATitles := make([]string, 0, len(buildActionItemChildren))
+	for _, actionItem := range buildActionItemChildren {
+		gotQATitles = append(gotQATitles, actionItem.Title)
 	}
 	slices.Sort(gotQATitles)
 	if want := []string{"COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(gotQATitles, want) {
-		t.Fatalf("build-task child titles = %#v, want %#v", gotQATitles, want)
+		t.Fatalf("build-actionItem child titles = %#v, want %#v", gotQATitles, want)
 	}
-	for _, task := range buildTaskChildren {
-		snapshot, ok := repo.nodeContracts[task.ID]
+	for _, actionItem := range buildActionItemChildren {
+		snapshot, ok := repo.nodeContracts[actionItem.ID]
 		if !ok {
-			t.Fatalf("repo.nodeContracts missing generated QA child %q", task.ID)
+			t.Fatalf("repo.nodeContracts missing generated QA child %q", actionItem.ID)
 		}
 		if !snapshot.RequiredForParentDone {
-			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
+			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", actionItem.Title)
 		}
-		if task.Title == "COMMIT PUSH AND REINGEST" {
+		if actionItem.Title == "COMMIT PUSH AND REINGEST" {
 			if snapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 				t.Fatalf("commit-and-reingest responsible actor = %q, want builder", snapshot.ResponsibleActorKind)
 			}
@@ -838,10 +838,10 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 			t.Fatalf("snapshot.ResponsibleActorKind = %q, want qa", snapshot.ResponsibleActorKind)
 		}
 		if !slices.Contains(snapshot.EditableByActorKinds, domain.TemplateActorKindQA) {
-			t.Fatalf("snapshot.EditableByActorKinds for %q = %#v, want qa", task.Title, snapshot.EditableByActorKinds)
+			t.Fatalf("snapshot.EditableByActorKinds for %q = %#v, want qa", actionItem.Title, snapshot.EditableByActorKinds)
 		}
 		if !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindHuman) || !slices.Contains(snapshot.CompletableByActorKinds, domain.TemplateActorKindQA) {
-			t.Fatalf("snapshot.CompletableByActorKinds for %q = %#v, want qa+human", task.Title, snapshot.CompletableByActorKinds)
+			t.Fatalf("snapshot.CompletableByActorKinds for %q = %#v, want qa+human", actionItem.Title, snapshot.CompletableByActorKinds)
 		}
 	}
 }
@@ -873,20 +873,20 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 
-	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	tasks, err := svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(project roots) error = %v", err)
+		t.Fatalf("ListActionItems(project roots) error = %v", err)
 	}
-	rootTasks := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if strings.TrimSpace(task.ParentID) == "" {
-			rootTasks = append(rootTasks, task)
+	rootActionItems := make([]domain.ActionItem, 0)
+	for _, actionItem := range tasks {
+		if strings.TrimSpace(actionItem.ParentID) == "" {
+			rootActionItems = append(rootActionItems, actionItem)
 		}
 	}
-	if got, want := len(rootTasks), 1; got != want {
-		t.Fatalf("len(rootTasks) = %d, want %d", got, want)
+	if got, want := len(rootActionItems), 1; got != want {
+		t.Fatalf("len(rootActionItems) = %d, want %d", got, want)
 	}
-	projectSetup := rootTasks[0]
+	projectSetup := rootActionItems[0]
 	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("project setup root = %#v, want PROJECT SETUP/project-setup-phase/phase", projectSetup)
 	}
@@ -899,7 +899,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		t.Fatal("expected template root column for branch lane creation")
 	}
 
-	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
 		Kind:      domain.WorkKind("branch"),
@@ -907,24 +907,24 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		Title:     "FRONTEND LANE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(branch children) error = %v", err)
+		t.Fatalf("ListActionItems(branch children) error = %v", err)
 	}
-	branchChildren := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if task.ParentID == branch.ID {
-			branchChildren = append(branchChildren, task)
+	branchChildren := make([]domain.ActionItem, 0)
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == branch.ID {
+			branchChildren = append(branchChildren, actionItem)
 		}
 	}
 	if got, want := childTitles(tasks, branch.ID), []string{"BRANCH CLEANUP", "BUILD", "CLOSEOUT", "PLAN"}; !slices.Equal(got, want) {
 		t.Fatalf("branch child titles = %#v, want %#v", got, want)
 	}
 
-	planPhase := findTaskByTitle(t, branchChildren, "PLAN")
+	planPhase := findActionItemByTitle(t, branchChildren, "PLAN")
 	if got, want := childTitles(tasks, planPhase.ID), []string{
 		"BRANCH SETUP",
 		"BUILD TASK TREE",
@@ -939,11 +939,11 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		t.Fatalf("plan child titles = %#v, want %#v", got, want)
 	}
 
-	buildPhase := findTaskByTitle(t, branchChildren, "BUILD")
+	buildPhase := findActionItemByTitle(t, branchChildren, "BUILD")
 	if got, want := childTitles(tasks, buildPhase.ID), []string{"PHASE PUSH AND REINGEST CONFIRMATION"}; !slices.Equal(got, want) {
 		t.Fatalf("build phase child titles = %#v, want %#v", got, want)
 	}
-	closeoutPhase := findTaskByTitle(t, branchChildren, "CLOSEOUT")
+	closeoutPhase := findActionItemByTitle(t, branchChildren, "CLOSEOUT")
 	if got, want := childTitles(tasks, closeoutPhase.ID), []string{
 		"DEV REVIEW",
 		"HYLLA REFRESHED AND CURRENT TO GIT",
@@ -957,7 +957,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 	}; !slices.Equal(got, want) {
 		t.Fatalf("closeout child titles = %#v, want %#v", got, want)
 	}
-	cleanupPhase := findTaskByTitle(t, branchChildren, "BRANCH CLEANUP")
+	cleanupPhase := findActionItemByTitle(t, branchChildren, "BRANCH CLEANUP")
 	if got, want := childTitles(tasks, cleanupPhase.ID), []string{
 		"CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
 		"PHASE PUSH AND REINGEST CONFIRMATION",
@@ -966,56 +966,56 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 	}; !slices.Equal(got, want) {
 		t.Fatalf("cleanup child titles = %#v, want %#v", got, want)
 	}
-	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	buildActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
 		ColumnID:  buildPhase.ColumnID,
-		Kind:      domain.WorkKind("build-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("build-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "IMPLEMENT FRONTEND UPDATE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(build-task) error = %v", err)
+		t.Fatalf("CreateActionItem(build-actionItem) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(build-task children) error = %v", err)
+		t.Fatalf("ListActionItems(build-actionItem children) error = %v", err)
 	}
-	buildTaskChildren := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if task.ParentID == buildTask.ID {
-			buildTaskChildren = append(buildTaskChildren, task)
+	buildActionItemChildren := make([]domain.ActionItem, 0)
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == buildActionItem.ID {
+			buildActionItemChildren = append(buildActionItemChildren, actionItem)
 		}
 	}
-	if want := []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(childTitles(tasks, buildTask.ID), want) {
-		t.Fatalf("build-task child titles = %#v, want %#v", childTitles(tasks, buildTask.ID), want)
+	if want := []string{"ACCESSIBILITY CHECK", "COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW", "VISUAL QA"}; !slices.Equal(childTitles(tasks, buildActionItem.ID), want) {
+		t.Fatalf("build-actionItem child titles = %#v, want %#v", childTitles(tasks, buildActionItem.ID), want)
 	}
-	for _, task := range buildTaskChildren {
-		snapshot, ok := repo.nodeContracts[task.ID]
+	for _, actionItem := range buildActionItemChildren {
+		snapshot, ok := repo.nodeContracts[actionItem.ID]
 		if !ok {
-			t.Fatalf("repo.nodeContracts missing generated child %q", task.ID)
+			t.Fatalf("repo.nodeContracts missing generated child %q", actionItem.ID)
 		}
 		if !snapshot.RequiredForParentDone {
-			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", task.Title)
+			t.Fatalf("snapshot.RequiredForParentDone for %q = false, want true", actionItem.Title)
 		}
-		switch task.Title {
+		switch actionItem.Title {
 		case "COMMIT PUSH AND REINGEST":
 			if snapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 				t.Fatalf("commit-and-reingest responsible actor = %q, want builder", snapshot.ResponsibleActorKind)
 			}
 		case "VISUAL QA", "ACCESSIBILITY CHECK", "QA PROOF REVIEW", "QA FALSIFICATION REVIEW":
 			if snapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
-				t.Fatalf("%s responsible actor = %q, want qa", task.Title, snapshot.ResponsibleActorKind)
+				t.Fatalf("%s responsible actor = %q, want qa", actionItem.Title, snapshot.ResponsibleActorKind)
 			}
 		default:
-			t.Fatalf("unexpected build-task child %q", task.Title)
+			t.Fatalf("unexpected build-actionItem child %q", actionItem.Title)
 		}
 	}
 }
 
 // TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds verifies the shipped default-go runtime
-// generates refactor and dogfood-refactor phase/task children with the expected role contracts.
+// generates refactor and dogfood-refactor phase/actionItem children with the expected role contracts.
 func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
@@ -1050,7 +1050,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	if err != nil {
 		t.Fatalf("ListColumns() error = %v", err)
 	}
-	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
 		Kind:      domain.WorkKind("branch"),
@@ -1058,10 +1058,10 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		Title:     "REFACTOR LANE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
-	refactorPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+	refactorPhase, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
@@ -1070,9 +1070,9 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		Title:     "REFACTOR PHASE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(refactor-phase) error = %v", err)
+		t.Fatalf("CreateActionItem(refactor-phase) error = %v", err)
 	}
-	dogfoodPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+	dogfoodPhase, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
@@ -1081,12 +1081,12 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		Title:     "DOGFOOD REFACTOR PHASE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(dogfood-refactor-phase) error = %v", err)
+		t.Fatalf("CreateActionItem(dogfood-refactor-phase) error = %v", err)
 	}
 
-	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	tasks, err := svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(phase children) error = %v", err)
+		t.Fatalf("ListActionItems(phase children) error = %v", err)
 	}
 	if got, want := childTitles(tasks, refactorPhase.ID), []string{
 		"HYLLA-FIRST REFACTOR BASELINE",
@@ -1110,7 +1110,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		t.Fatalf("dogfood-refactor-phase child titles = %#v, want %#v", got, want)
 	}
 
-	refactorPhasePush := findChildTaskByTitle(t, tasks, refactorPhase.ID, "PHASE PUSH AND REINGEST CONFIRMATION")
+	refactorPhasePush := findChildActionItemByTitle(t, tasks, refactorPhase.ID, "PHASE PUSH AND REINGEST CONFIRMATION")
 	refactorPhasePushSnapshot := mustNodeContractSnapshot(t, repo, refactorPhasePush.ID)
 	if refactorPhasePushSnapshot.ResponsibleActorKind != domain.TemplateActorKindOrchestrator {
 		t.Fatalf("refactor phase push responsible actor = %q, want orchestrator", refactorPhasePushSnapshot.ResponsibleActorKind)
@@ -1118,7 +1118,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	if !slices.Contains(refactorPhasePushSnapshot.EditableByActorKinds, domain.TemplateActorKindBuilder) || !slices.Contains(refactorPhasePushSnapshot.EditableByActorKinds, domain.TemplateActorKindResearch) {
 		t.Fatalf("refactor phase push editable actors = %#v, want builder+research+orchestrator", refactorPhasePushSnapshot.EditableByActorKinds)
 	}
-	dogfoodPhaseLocal := findChildTaskByTitle(t, tasks, dogfoodPhase.ID, "CONFIRM LOCAL USED VERSION UPDATED")
+	dogfoodPhaseLocal := findChildActionItemByTitle(t, tasks, dogfoodPhase.ID, "CONFIRM LOCAL USED VERSION UPDATED")
 	dogfoodPhaseLocalSnapshot := mustNodeContractSnapshot(t, repo, dogfoodPhaseLocal.ID)
 	if dogfoodPhaseLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
 		t.Fatalf("dogfood phase local-version responsible actor = %q, want human", dogfoodPhaseLocalSnapshot.ResponsibleActorKind)
@@ -1127,43 +1127,43 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		t.Fatalf("dogfood phase local-version completable actors = %#v, want human only", dogfoodPhaseLocalSnapshot.CompletableByActorKinds)
 	}
 
-	refactorTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	refactorActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  refactorPhase.ID,
 		ColumnID:  refactorPhase.ColumnID,
-		Kind:      domain.WorkKind("refactor-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("refactor-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "DECOUPLE FLOW",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(refactor-task) error = %v", err)
+		t.Fatalf("CreateActionItem(refactor-actionItem) error = %v", err)
 	}
-	dogfoodTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	dogfoodActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  dogfoodPhase.ID,
 		ColumnID:  dogfoodPhase.ColumnID,
-		Kind:      domain.WorkKind("dogfood-refactor-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("dogfood-refactor-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "DOGFOOD DECOUPLE FLOW",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(dogfood-refactor-task) error = %v", err)
+		t.Fatalf("CreateActionItem(dogfood-refactor-actionItem) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(task children) error = %v", err)
+		t.Fatalf("ListActionItems(actionItem children) error = %v", err)
 	}
-	if got, want := childTitles(tasks, refactorTask.ID), []string{
+	if got, want := childTitles(tasks, refactorActionItem.ID), []string{
 		"COMMIT PUSH AND REINGEST",
 		"METRICS CAPTURE AND REPORT",
 		"PARITY VALIDATION IN ACTION",
 		"QA FALSIFICATION REVIEW",
 		"QA PROOF REVIEW",
 	}; !slices.Equal(got, want) {
-		t.Fatalf("refactor-task child titles = %#v, want %#v", got, want)
+		t.Fatalf("refactor-actionItem child titles = %#v, want %#v", got, want)
 	}
-	if got, want := childTitles(tasks, dogfoodTask.ID), []string{
+	if got, want := childTitles(tasks, dogfoodActionItem.ID), []string{
 		"COMMIT PUSH AND REINGEST",
 		"CONFIRM LOCAL USED VERSION UPDATED",
 		"METRICS CAPTURE AND REPORT",
@@ -1171,10 +1171,10 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		"QA PROOF REVIEW",
 		"TEST AGAINST DEV VERSION",
 	}; !slices.Equal(got, want) {
-		t.Fatalf("dogfood-refactor-task child titles = %#v, want %#v", got, want)
+		t.Fatalf("dogfood-refactor-actionItem child titles = %#v, want %#v", got, want)
 	}
 
-	refactorCommit := findChildTaskByTitle(t, tasks, refactorTask.ID, "COMMIT PUSH AND REINGEST")
+	refactorCommit := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "COMMIT PUSH AND REINGEST")
 	refactorCommitSnapshot := mustNodeContractSnapshot(t, repo, refactorCommit.ID)
 	if refactorCommitSnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 		t.Fatalf("refactor commit responsible actor = %q, want builder", refactorCommitSnapshot.ResponsibleActorKind)
@@ -1182,40 +1182,40 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	if !slices.Contains(refactorCommitSnapshot.CompletableByActorKinds, domain.TemplateActorKindBuilder) || !slices.Contains(refactorCommitSnapshot.CompletableByActorKinds, domain.TemplateActorKindHuman) {
 		t.Fatalf("refactor commit completable actors = %#v, want builder+human", refactorCommitSnapshot.CompletableByActorKinds)
 	}
-	refactorQA := findChildTaskByTitle(t, tasks, refactorTask.ID, "QA PROOF REVIEW")
+	refactorQA := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "QA PROOF REVIEW")
 	refactorQASnapshot := mustNodeContractSnapshot(t, repo, refactorQA.ID)
 	if refactorQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA || refactorQA.Kind != domain.WorkKind("qa-check") {
 		t.Fatalf("refactor QA child = %#v snapshot=%#v, want qa-check owned by qa", refactorQA, refactorQASnapshot)
 	}
-	parityValidation := findChildTaskByTitle(t, tasks, refactorTask.ID, "PARITY VALIDATION IN ACTION")
+	parityValidation := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "PARITY VALIDATION IN ACTION")
 	paritySnapshot := mustNodeContractSnapshot(t, repo, parityValidation.ID)
 	if paritySnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder || parityValidation.Kind != domain.WorkKind("subtask") {
 		t.Fatalf("parity validation child = %#v snapshot=%#v, want subtask owned by builder", parityValidation, paritySnapshot)
 	}
-	refactorMetrics := findChildTaskByTitle(t, tasks, refactorTask.ID, "METRICS CAPTURE AND REPORT")
+	refactorMetrics := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "METRICS CAPTURE AND REPORT")
 	if !strings.Contains(refactorMetrics.Description, "does not auto-verify every metric field or rollup total today") {
 		t.Fatalf("refactor metrics description missing caveat: %q", refactorMetrics.Description)
 	}
-	refactorPhaseRollup := findChildTaskByTitle(t, tasks, refactorPhase.ID, "PHASE METRICS ROLLUP")
+	refactorPhaseRollup := findChildActionItemByTitle(t, tasks, refactorPhase.ID, "PHASE METRICS ROLLUP")
 	if !strings.Contains(refactorPhaseRollup.Description, "does not auto-verify every field or rollup total today") {
 		t.Fatalf("refactor phase rollup description missing caveat: %q", refactorPhaseRollup.Description)
 	}
-	dogfoodLocalTask := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "CONFIRM LOCAL USED VERSION UPDATED")
-	dogfoodLocalTaskSnapshot := mustNodeContractSnapshot(t, repo, dogfoodLocalTask.ID)
-	if dogfoodLocalTaskSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman || dogfoodLocalTask.Kind != domain.WorkKind("subtask") {
-		t.Fatalf("dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", dogfoodLocalTask, dogfoodLocalTaskSnapshot)
+	dogfoodLocalActionItem := findChildActionItemByTitle(t, tasks, dogfoodActionItem.ID, "CONFIRM LOCAL USED VERSION UPDATED")
+	dogfoodLocalActionItemSnapshot := mustNodeContractSnapshot(t, repo, dogfoodLocalActionItem.ID)
+	if dogfoodLocalActionItemSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman || dogfoodLocalActionItem.Kind != domain.WorkKind("subtask") {
+		t.Fatalf("dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", dogfoodLocalActionItem, dogfoodLocalActionItemSnapshot)
 	}
-	if !slices.Equal(dogfoodLocalTaskSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
-		t.Fatalf("dogfood local-version completable actors = %#v, want human only", dogfoodLocalTaskSnapshot.CompletableByActorKinds)
+	if !slices.Equal(dogfoodLocalActionItemSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
+		t.Fatalf("dogfood local-version completable actors = %#v, want human only", dogfoodLocalActionItemSnapshot.CompletableByActorKinds)
 	}
-	dogfoodMetrics := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "METRICS CAPTURE AND REPORT")
+	dogfoodMetrics := findChildActionItemByTitle(t, tasks, dogfoodActionItem.ID, "METRICS CAPTURE AND REPORT")
 	if !strings.Contains(dogfoodMetrics.Description, "does not auto-verify every metric field or rollup total today") {
 		t.Fatalf("dogfood metrics description missing caveat: %q", dogfoodMetrics.Description)
 	}
 }
 
 // TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds verifies the shipped default-frontend runtime
-// generates refactor and dogfood-refactor phase/task children with the expected role contracts.
+// generates refactor and dogfood-refactor phase/actionItem children with the expected role contracts.
 func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
@@ -1250,7 +1250,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	if err != nil {
 		t.Fatalf("ListColumns() error = %v", err)
 	}
-	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
 		Kind:      domain.WorkKind("branch"),
@@ -1258,10 +1258,10 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		Title:     "FRONTEND REFACTOR LANE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
-	refactorPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+	refactorPhase, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
@@ -1270,9 +1270,9 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		Title:     "FRONTEND REFACTOR PHASE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(refactor-phase) error = %v", err)
+		t.Fatalf("CreateActionItem(refactor-phase) error = %v", err)
 	}
-	dogfoodPhase, err := svc.CreateTask(ctx, CreateTaskInput{
+	dogfoodPhase, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
@@ -1281,12 +1281,12 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		Title:     "FRONTEND DOGFOOD REFACTOR PHASE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(dogfood-refactor-phase) error = %v", err)
+		t.Fatalf("CreateActionItem(dogfood-refactor-phase) error = %v", err)
 	}
 
-	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	tasks, err := svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(phase children) error = %v", err)
+		t.Fatalf("ListActionItems(phase children) error = %v", err)
 	}
 	if got, want := childTitles(tasks, refactorPhase.ID), []string{
 		"HYLLA-FIRST REFACTOR BASELINE",
@@ -1310,34 +1310,34 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		t.Fatalf("frontend dogfood-refactor-phase child titles = %#v, want %#v", got, want)
 	}
 
-	refactorTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	refactorActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  refactorPhase.ID,
 		ColumnID:  refactorPhase.ColumnID,
-		Kind:      domain.WorkKind("refactor-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("refactor-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "REDUCE UI COUPLING",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(refactor-task) error = %v", err)
+		t.Fatalf("CreateActionItem(refactor-actionItem) error = %v", err)
 	}
-	dogfoodTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	dogfoodActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  dogfoodPhase.ID,
 		ColumnID:  dogfoodPhase.ColumnID,
-		Kind:      domain.WorkKind("dogfood-refactor-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("dogfood-refactor-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "DOGFOOD REDUCE UI COUPLING",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(dogfood-refactor-task) error = %v", err)
+		t.Fatalf("CreateActionItem(dogfood-refactor-actionItem) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(task children) error = %v", err)
+		t.Fatalf("ListActionItems(actionItem children) error = %v", err)
 	}
-	if got, want := childTitles(tasks, refactorTask.ID), []string{
+	if got, want := childTitles(tasks, refactorActionItem.ID), []string{
 		"ACCESSIBILITY CHECK",
 		"COMMIT PUSH AND REINGEST",
 		"METRICS CAPTURE AND REPORT",
@@ -1346,9 +1346,9 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		"QA PROOF REVIEW",
 		"VISUAL QA",
 	}; !slices.Equal(got, want) {
-		t.Fatalf("frontend refactor-task child titles = %#v, want %#v", got, want)
+		t.Fatalf("frontend refactor-actionItem child titles = %#v, want %#v", got, want)
 	}
-	if got, want := childTitles(tasks, dogfoodTask.ID), []string{
+	if got, want := childTitles(tasks, dogfoodActionItem.ID), []string{
 		"ACCESSIBILITY CHECK",
 		"COMMIT PUSH AND REINGEST",
 		"CONFIRM LOCAL USED VERSION UPDATED",
@@ -1358,33 +1358,33 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		"TEST AGAINST DEV VERSION",
 		"VISUAL QA",
 	}; !slices.Equal(got, want) {
-		t.Fatalf("frontend dogfood-refactor-task child titles = %#v, want %#v", got, want)
+		t.Fatalf("frontend dogfood-refactor-actionItem child titles = %#v, want %#v", got, want)
 	}
 
-	visualQA := findChildTaskByTitle(t, tasks, refactorTask.ID, "VISUAL QA")
+	visualQA := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "VISUAL QA")
 	visualQASnapshot := mustNodeContractSnapshot(t, repo, visualQA.ID)
 	if visualQA.Kind != domain.WorkKind("visual-qa") || visualQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
 		t.Fatalf("visual QA child = %#v snapshot=%#v, want visual-qa owned by qa", visualQA, visualQASnapshot)
 	}
-	a11yCheck := findChildTaskByTitle(t, tasks, refactorTask.ID, "ACCESSIBILITY CHECK")
+	a11yCheck := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "ACCESSIBILITY CHECK")
 	a11ySnapshot := mustNodeContractSnapshot(t, repo, a11yCheck.ID)
 	if a11yCheck.Kind != domain.WorkKind("a11y-check") || a11ySnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
 		t.Fatalf("a11y child = %#v snapshot=%#v, want a11y-check owned by qa", a11yCheck, a11ySnapshot)
 	}
-	frontendCommit := findChildTaskByTitle(t, tasks, refactorTask.ID, "COMMIT PUSH AND REINGEST")
+	frontendCommit := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "COMMIT PUSH AND REINGEST")
 	frontendCommitSnapshot := mustNodeContractSnapshot(t, repo, frontendCommit.ID)
 	if frontendCommitSnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder {
 		t.Fatalf("frontend commit responsible actor = %q, want builder", frontendCommitSnapshot.ResponsibleActorKind)
 	}
-	frontendRefactorMetrics := findChildTaskByTitle(t, tasks, refactorTask.ID, "METRICS CAPTURE AND REPORT")
+	frontendRefactorMetrics := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "METRICS CAPTURE AND REPORT")
 	if !strings.Contains(frontendRefactorMetrics.Description, "does not auto-verify every metric field or rollup total today") {
 		t.Fatalf("frontend refactor metrics description missing caveat: %q", frontendRefactorMetrics.Description)
 	}
-	frontendPhaseRollup := findChildTaskByTitle(t, tasks, refactorPhase.ID, "PHASE METRICS ROLLUP")
+	frontendPhaseRollup := findChildActionItemByTitle(t, tasks, refactorPhase.ID, "PHASE METRICS ROLLUP")
 	if !strings.Contains(frontendPhaseRollup.Description, "does not auto-verify every field or rollup total today") {
 		t.Fatalf("frontend phase rollup description missing caveat: %q", frontendPhaseRollup.Description)
 	}
-	frontendDogfoodLocal := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "CONFIRM LOCAL USED VERSION UPDATED")
+	frontendDogfoodLocal := findChildActionItemByTitle(t, tasks, dogfoodActionItem.ID, "CONFIRM LOCAL USED VERSION UPDATED")
 	frontendDogfoodLocalSnapshot := mustNodeContractSnapshot(t, repo, frontendDogfoodLocal.ID)
 	if frontendDogfoodLocal.Kind != domain.WorkKind("subtask") || frontendDogfoodLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
 		t.Fatalf("frontend dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", frontendDogfoodLocal, frontendDogfoodLocalSnapshot)
@@ -1392,14 +1392,14 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	if !slices.Equal(frontendDogfoodLocalSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
 		t.Fatalf("frontend dogfood local-version completable actors = %#v, want human only", frontendDogfoodLocalSnapshot.CompletableByActorKinds)
 	}
-	frontendDogfoodMetrics := findChildTaskByTitle(t, tasks, dogfoodTask.ID, "METRICS CAPTURE AND REPORT")
+	frontendDogfoodMetrics := findChildActionItemByTitle(t, tasks, dogfoodActionItem.ID, "METRICS CAPTURE AND REPORT")
 	if !strings.Contains(frontendDogfoodMetrics.Description, "does not auto-verify every metric field or rollup total today") {
 		t.Fatalf("frontend dogfood metrics description missing caveat: %q", frontendDogfoodMetrics.Description)
 	}
 }
 
 // TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow verifies the shipped builtin
-// generates project setup, branch lifecycle phases, and build-task QA work end to end.
+// generates project setup, branch lifecycle phases, and build-actionItem QA work end to end.
 func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
@@ -1434,11 +1434,11 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		t.Fatalf("binding.LibraryID = %q, want default-go", binding.LibraryID)
 	}
 
-	tasks, err := svc.ListTasks(ctx, project.ID, false)
+	tasks, err := svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(project) error = %v", err)
+		t.Fatalf("ListActionItems(project) error = %v", err)
 	}
-	projectSetup := findTaskByTitle(t, tasks, "PROJECT SETUP")
+	projectSetup := findActionItemByTitle(t, tasks, "PROJECT SETUP")
 	if projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("project setup kind/scope = %q/%q, want project-setup-phase/phase", projectSetup.Kind, projectSetup.Scope)
 	}
@@ -1464,7 +1464,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		t.Fatal("expected a root column for template-generated work")
 	}
 
-	branch, err := svc.CreateTask(ctx, CreateTaskInput{
+	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
 		Kind:      domain.WorkKind("branch"),
@@ -1472,17 +1472,17 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		Title:     "MAIN WORKTREE LANE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(branch lifecycle) error = %v", err)
+		t.Fatalf("ListActionItems(branch lifecycle) error = %v", err)
 	}
 	if got, want := childTitles(tasks, branch.ID), []string{"BRANCH CLEANUP", "BUILD", "CLOSEOUT", "PLAN"}; !slices.Equal(got, want) {
 		t.Fatalf("branch child titles = %#v, want %#v", got, want)
 	}
-	planPhase := findChildTaskByTitle(t, tasks, branch.ID, "PLAN")
+	planPhase := findChildActionItemByTitle(t, tasks, branch.ID, "PLAN")
 	if got, want := childTitles(tasks, planPhase.ID), []string{
 		"BRANCH AND WORKTREE SETUP",
 		"BUILD TASK TREE",
@@ -1495,11 +1495,11 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	}; !slices.Equal(got, want) {
 		t.Fatalf("plan child titles = %#v, want %#v", got, want)
 	}
-	buildPhase := findChildTaskByTitle(t, tasks, branch.ID, "BUILD")
+	buildPhase := findChildActionItemByTitle(t, tasks, branch.ID, "BUILD")
 	if got, want := childTitles(tasks, buildPhase.ID), []string{"PHASE PUSH AND REINGEST CONFIRMATION"}; !slices.Equal(got, want) {
 		t.Fatalf("build phase child titles = %#v, want %#v", got, want)
 	}
-	closeoutPhase := findChildTaskByTitle(t, tasks, branch.ID, "CLOSEOUT")
+	closeoutPhase := findChildActionItemByTitle(t, tasks, branch.ID, "CLOSEOUT")
 	if got, want := childTitles(tasks, closeoutPhase.ID), []string{
 		"DEV REVIEW",
 		"HYLLA REFRESHED AND CURRENT TO GIT",
@@ -1513,7 +1513,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	}; !slices.Equal(got, want) {
 		t.Fatalf("closeout child titles = %#v, want %#v", got, want)
 	}
-	cleanupPhase := findChildTaskByTitle(t, tasks, branch.ID, "BRANCH CLEANUP")
+	cleanupPhase := findChildActionItemByTitle(t, tasks, branch.ID, "BRANCH CLEANUP")
 	if got, want := childTitles(tasks, cleanupPhase.ID), []string{
 		"CONFIRM CLOSEOUT TRUTHFULLY COMPLETE",
 		"CONFIRM STALE MCP SERVER GONE",
@@ -1525,24 +1525,24 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	}; !slices.Equal(got, want) {
 		t.Fatalf("cleanup child titles = %#v, want %#v", got, want)
 	}
-	buildTask, err := svc.CreateTask(ctx, CreateTaskInput{
+	buildActionItem, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("build-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("build-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "IMPLEMENT SHIPPED DEFAULT-GO TEMPLATE",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(build-task) error = %v", err)
+		t.Fatalf("CreateActionItem(build-actionItem) error = %v", err)
 	}
 
-	tasks, err = svc.ListTasks(ctx, project.ID, false)
+	tasks, err = svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(build task) error = %v", err)
+		t.Fatalf("ListActionItems(build actionItem) error = %v", err)
 	}
-	if got, want := childTitles(tasks, buildTask.ID), []string{"COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(got, want) {
-		t.Fatalf("build-task QA child titles = %#v, want %#v", got, want)
+	if got, want := childTitles(tasks, buildActionItem.ID), []string{"COMMIT PUSH AND REINGEST", "QA FALSIFICATION REVIEW", "QA PROOF REVIEW"}; !slices.Equal(got, want) {
+		t.Fatalf("build-actionItem QA child titles = %#v, want %#v", got, want)
 	}
 }
 
@@ -1607,9 +1607,9 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -1635,26 +1635,26 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 	}); err != nil {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
-	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	var generated domain.Task
-	for _, task := range repo.tasks {
-		if task.ParentID == parent.ID {
-			generated = task
+	var generated domain.ActionItem
+	for _, actionItem := range repo.tasks {
+		if actionItem.ParentID == parent.ID {
+			generated = actionItem
 			break
 		}
 	}
 	if generated.ID == "" {
-		t.Fatal("expected generated QA child task")
+		t.Fatal("expected generated QA child actionItem")
 	}
 	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
 		ID:                  "go-defaults",
@@ -1668,9 +1668,9 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -1707,7 +1707,7 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 	if got := preview.IneligibleMigrationCount; got != 0 {
 		t.Fatalf("preview.IneligibleMigrationCount = %d, want 0", got)
 	}
-	if len(preview.MigrationCandidates) != 1 || preview.MigrationCandidates[0].TaskID != generated.ID {
+	if len(preview.MigrationCandidates) != 1 || preview.MigrationCandidates[0].ActionItemID != generated.ID {
 		t.Fatalf("preview.MigrationCandidates = %#v, want generated child %q", preview.MigrationCandidates, generated.ID)
 	}
 	if preview.MigrationCandidates[0].Status != domain.ProjectTemplateReapplyCandidateEligible {
@@ -1715,7 +1715,7 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 	}
 }
 
-// TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes verifies explicit migration approval rewrites the task and stored node contract.
+// TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes verifies explicit migration approval rewrites the actionItem and stored node contract.
 func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
@@ -1742,9 +1742,9 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -1770,26 +1770,26 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 	}); err != nil {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
-	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	var generated domain.Task
-	for _, task := range repo.tasks {
-		if task.ParentID == parent.ID {
-			generated = task
+	var generated domain.ActionItem
+	for _, actionItem := range repo.tasks {
+		if actionItem.ParentID == parent.ID {
+			generated = actionItem
 			break
 		}
 	}
 	if generated.ID == "" {
-		t.Fatal("expected generated QA child task")
+		t.Fatal("expected generated QA child actionItem")
 	}
 	originalSnapshot := repo.nodeContracts[generated.ID]
 	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
@@ -1804,9 +1804,9 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -1826,7 +1826,7 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 
 	result, err := svc.ApproveProjectTemplateMigrations(ctx, ApproveProjectTemplateMigrationsInput{
 		ProjectID:      project.ID,
-		TaskIDs:        []string{generated.ID},
+		ActionItemIDs:  []string{generated.ID},
 		ApprovedBy:     "dev-2",
 		ApprovedByName: "Dev Two",
 		ApprovedByType: domain.ActorTypeUser,
@@ -1837,15 +1837,15 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 	if result.AppliedCount != 1 || len(result.Approvals) != 1 {
 		t.Fatalf("ApproveProjectTemplateMigrations() = %#v, want one applied migration", result)
 	}
-	updatedTask := repo.tasks[generated.ID]
-	if updatedTask.Title != "QA PROOF REVIEW UPDATE" {
-		t.Fatalf("updated task title = %q, want QA PROOF REVIEW UPDATE", updatedTask.Title)
+	updatedActionItem := repo.tasks[generated.ID]
+	if updatedActionItem.Title != "QA PROOF REVIEW UPDATE" {
+		t.Fatalf("updated actionItem title = %q, want QA PROOF REVIEW UPDATE", updatedActionItem.Title)
 	}
-	if updatedTask.Description != "Verify the latest contract" {
-		t.Fatalf("updated task description = %q, want latest contract", updatedTask.Description)
+	if updatedActionItem.Description != "Verify the latest contract" {
+		t.Fatalf("updated actionItem description = %q, want latest contract", updatedActionItem.Description)
 	}
-	if updatedTask.UpdatedByActor != "dev-2" {
-		t.Fatalf("updated task actor = %q, want dev-2", updatedTask.UpdatedByActor)
+	if updatedActionItem.UpdatedByActor != "dev-2" {
+		t.Fatalf("updated actionItem actor = %q, want dev-2", updatedActionItem.UpdatedByActor)
 	}
 	updatedSnapshot := repo.nodeContracts[generated.ID]
 	if !slices.Equal(updatedSnapshot.EditableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindOrchestrator, domain.TemplateActorKindQA}) {
@@ -1890,9 +1890,9 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -1918,29 +1918,29 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 	}); err != nil {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
-	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	var generated domain.Task
-	for _, task := range repo.tasks {
-		if task.ParentID == parent.ID {
-			generated = task
+	var generated domain.ActionItem
+	for _, actionItem := range repo.tasks {
+		if actionItem.ParentID == parent.ID {
+			generated = actionItem
 			break
 		}
 	}
 	if generated.ID == "" {
-		t.Fatal("expected generated QA child task")
+		t.Fatal("expected generated QA child actionItem")
 	}
-	if _, err := svc.UpdateTask(ctx, UpdateTaskInput{
-		TaskID:        generated.ID,
+	if _, err := svc.UpdateActionItem(ctx, UpdateActionItemInput{
+		ActionItemID:  generated.ID,
 		Title:         generated.Title,
 		Description:   generated.Description,
 		Priority:      generated.Priority,
@@ -1951,7 +1951,7 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 		UpdatedByName: "Dev Two",
 		UpdatedType:   domain.ActorTypeUser,
 	}); err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
 	if _, err := svc.UpsertTemplateLibrary(ctx, UpsertTemplateLibraryInput{
 		ID:                  "go-defaults",
@@ -1965,9 +1965,9 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -2018,9 +2018,9 @@ func seedBuiltinTemplateKinds(t *testing.T, ctx context.Context, svc *Service) {
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "refactor-phase", DisplayName: "Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "dogfood-refactor-phase", DisplayName: "Dogfood Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
-		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "refactor-task", DisplayName: "Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "dogfood-refactor-task", DisplayName: "Dogfood Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "build-actionItem", DisplayName: "Build ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "refactor-actionItem", DisplayName: "Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "dogfood-refactor-actionItem", DisplayName: "Dogfood Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
@@ -2042,13 +2042,13 @@ func seedDefaultFrontendBuiltinTemplateKinds(t *testing.T, ctx context.Context, 
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "refactor-phase", DisplayName: "Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "dogfood-refactor-phase", DisplayName: "Dogfood Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
-		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "refactor-task", DisplayName: "Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "dogfood-refactor-task", DisplayName: "Dogfood Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "build-actionItem", DisplayName: "Build ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "refactor-actionItem", DisplayName: "Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "dogfood-refactor-actionItem", DisplayName: "Dogfood Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "visual-qa", DisplayName: "Visual QA", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "a11y-check", DisplayName: "Accessibility Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
-		{ID: "design-review", DisplayName: "Design Review", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "design-review", DisplayName: "Design Review", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
 		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
 		if _, err := svc.UpsertKindDefinition(ctx, spec); err != nil {
@@ -2057,14 +2057,14 @@ func seedDefaultFrontendBuiltinTemplateKinds(t *testing.T, ctx context.Context, 
 	}
 }
 
-// childTitles returns stable sorted child titles for one parent task id.
-func childTitles(tasks []domain.Task, parentID string) []string {
+// childTitles returns stable sorted child titles for one parent actionItem id.
+func childTitles(tasks []domain.ActionItem, parentID string) []string {
 	out := make([]string, 0)
-	for _, task := range tasks {
-		if task.ParentID != parentID {
+	for _, actionItem := range tasks {
+		if actionItem.ParentID != parentID {
 			continue
 		}
-		out = append(out, task.Title)
+		out = append(out, actionItem.Title)
 	}
 	slices.Sort(out)
 	return out
@@ -2099,28 +2099,28 @@ func mustNodeContractSnapshot(t *testing.T, repo *fakeRepo, nodeID string) domai
 	return snapshot
 }
 
-// findTaskByTitle returns one task with the requested title or fails the test.
-func findTaskByTitle(t *testing.T, tasks []domain.Task, title string) domain.Task {
+// findActionItemByTitle returns one actionItem with the requested title or fails the test.
+func findActionItemByTitle(t *testing.T, tasks []domain.ActionItem, title string) domain.ActionItem {
 	t.Helper()
-	for _, task := range tasks {
-		if task.Title == title {
-			return task
+	for _, actionItem := range tasks {
+		if actionItem.Title == title {
+			return actionItem
 		}
 	}
-	t.Fatalf("missing task with title %q", title)
-	return domain.Task{}
+	t.Fatalf("missing actionItem with title %q", title)
+	return domain.ActionItem{}
 }
 
-// findChildTaskByTitle returns one child task with the requested title or fails the test.
-func findChildTaskByTitle(t *testing.T, tasks []domain.Task, parentID, title string) domain.Task {
+// findChildActionItemByTitle returns one child actionItem with the requested title or fails the test.
+func findChildActionItemByTitle(t *testing.T, tasks []domain.ActionItem, parentID, title string) domain.ActionItem {
 	t.Helper()
-	for _, task := range tasks {
-		if task.ParentID == parentID && task.Title == title {
-			return task
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == parentID && actionItem.Title == title {
+			return actionItem
 		}
 	}
-	t.Fatalf("missing child task %q under parent %q", title, parentID)
-	return domain.Task{}
+	t.Fatalf("missing child actionItem %q under parent %q", title, parentID)
+	return domain.ActionItem{}
 }
 
 // TestUnbindProjectTemplateLibrary verifies project bindings can be removed cleanly for TUI edit flows.
@@ -2169,8 +2169,8 @@ func TestUnbindProjectTemplateLibrary(t *testing.T) {
 	}
 }
 
-// TestCreateTaskFallsBackToLegacyKindTemplate verifies legacy kind-template child generation still works when no binding exists.
-func TestCreateTaskFallsBackToLegacyKindTemplate(t *testing.T) {
+// TestCreateActionItemFallsBackToLegacyKindTemplate verifies legacy kind-template child generation still works when no binding exists.
+func TestCreateActionItemFallsBackToLegacyKindTemplate(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 29, 17, 0, 0, 0, time.UTC)
@@ -2181,9 +2181,9 @@ func TestCreateTaskFallsBackToLegacyKindTemplate(t *testing.T) {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	if _, err := svc.UpsertKindDefinition(ctx, CreateKindDefinitionInput{
-		ID:          "build-task",
-		DisplayName: "Build Task",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		ID:          "build-actionItem",
+		DisplayName: "Build ActionItem",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 		Template: domain.KindTemplate{
 			AutoCreateChildren: []domain.KindTemplateChildSpec{
 				{
@@ -2201,7 +2201,7 @@ func TestCreateTaskFallsBackToLegacyKindTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
 	}
-	allowedKinds = append(allowedKinds, domain.KindID("build-task"))
+	allowedKinds = append(allowedKinds, domain.KindID("build-actionItem"))
 	if err := svc.SetProjectAllowedKinds(ctx, SetProjectAllowedKindsInput{
 		ProjectID: project.ID,
 		KindIDs:   allowedKinds,
@@ -2213,16 +2213,16 @@ func TestCreateTaskFallsBackToLegacyKindTemplate(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
-	parent, err := svc.CreateTask(ctx, CreateTaskInput{
+	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("build-task"),
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKind("build-actionItem"),
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement feature",
 		Priority:  domain.PriorityHigh,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if len(repo.tasks) != 2 {
 		t.Fatalf("len(repo.tasks) = %d, want parent plus generated child", len(repo.tasks))

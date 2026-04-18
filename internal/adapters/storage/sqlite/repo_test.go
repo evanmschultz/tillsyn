@@ -76,8 +76,8 @@ func TestOpenAppliesSQLiteConnectionPragmasToFileBackedDB(t *testing.T) {
 	}
 }
 
-// TestRepository_ProjectColumnTaskLifecycle verifies behavior for the covered scenario.
-func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
+// TestRepository_ProjectColumnActionItemLifecycle verifies behavior for the covered scenario.
+func TestRepository_ProjectColumnActionItemLifecycle(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "tillsyn.db")
 	repo, err := Open(dbPath)
@@ -114,65 +114,65 @@ func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	}
 
 	due := now.Add(24 * time.Hour)
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Title:       "Task title",
-		Description: "Task details",
+		Title:       "ActionItem title",
+		Description: "ActionItem details",
 		Priority:    domain.PriorityHigh,
 		DueAt:       &due,
 		Labels:      []string{"a", "b"},
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
-	tasks, err := repo.ListTasks(ctx, project.ID, false)
+	tasks, err := repo.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(tasks))
+		t.Fatalf("expected 1 actionItem, got %d", len(tasks))
 	}
 	if len(tasks[0].Labels) != 2 {
 		t.Fatalf("unexpected labels %#v", tasks[0].Labels)
 	}
 
-	task.Archive(now.Add(1 * time.Hour))
-	if err := repo.UpdateTask(ctx, task); err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+	actionItem.Archive(now.Add(1 * time.Hour))
+	if err := repo.UpdateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
-	activeTasks, err := repo.ListTasks(ctx, project.ID, false)
+	activeActionItems, err := repo.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks(active) error = %v", err)
+		t.Fatalf("ListActionItems(active) error = %v", err)
 	}
-	if len(activeTasks) != 0 {
-		t.Fatalf("expected 0 active tasks, got %d", len(activeTasks))
+	if len(activeActionItems) != 0 {
+		t.Fatalf("expected 0 active tasks, got %d", len(activeActionItems))
 	}
 
-	allTasks, err := repo.ListTasks(ctx, project.ID, true)
+	allActionItems, err := repo.ListActionItems(ctx, project.ID, true)
 	if err != nil {
-		t.Fatalf("ListTasks(all) error = %v", err)
+		t.Fatalf("ListActionItems(all) error = %v", err)
 	}
-	if len(allTasks) != 1 || allTasks[0].ArchivedAt == nil {
-		t.Fatalf("expected archived task in full list, got %#v", allTasks)
+	if len(allActionItems) != 1 || allActionItems[0].ArchivedAt == nil {
+		t.Fatalf("expected archived actionItem in full list, got %#v", allActionItems)
 	}
 
-	if err := repo.DeleteTask(ctx, task.ID); err != nil {
-		t.Fatalf("DeleteTask() error = %v", err)
+	if err := repo.DeleteActionItem(ctx, actionItem.ID); err != nil {
+		t.Fatalf("DeleteActionItem() error = %v", err)
 	}
-	if _, err := repo.GetTask(ctx, task.ID); err != app.ErrNotFound {
+	if _, err := repo.GetActionItem(ctx, actionItem.ID); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound, got %v", err)
 	}
 }
 
-// TestRepository_TaskEmbeddingsRoundTrip verifies embedding upsert/search/delete behavior.
-func TestRepository_TaskEmbeddingsRoundTrip(t *testing.T) {
+// TestRepository_ActionItemEmbeddingsRoundTrip verifies embedding upsert/search/delete behavior.
+func TestRepository_ActionItemEmbeddingsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {
@@ -200,28 +200,28 @@ func TestRepository_TaskEmbeddingsRoundTrip(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task with embedding",
+		Title:     "ActionItem with embedding",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	if err := repo.UpsertEmbeddingDocument(ctx, app.EmbeddingDocument{
 		SubjectType:      app.EmbeddingSubjectTypeWorkItem,
-		SubjectID:        task.ID,
+		SubjectID:        actionItem.ID,
 		ProjectID:        project.ID,
 		SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
-		SearchTargetID:   task.ID,
-		Content:          "task embedding content",
+		SearchTargetID:   actionItem.ID,
+		Content:          "actionItem embedding content",
 		ContentHash:      "hash123",
 		Vector:           []float32{0.1, 0.2, 0.3},
 		UpdatedAt:        now,
@@ -241,11 +241,11 @@ func TestRepository_TaskEmbeddingsRoundTrip(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 embedding match, got %d", len(rows))
 	}
-	if rows[0].SearchTargetID != task.ID {
-		t.Fatalf("expected task id %q, got %q", task.ID, rows[0].SearchTargetID)
+	if rows[0].SearchTargetID != actionItem.ID {
+		t.Fatalf("expected actionItem id %q, got %q", actionItem.ID, rows[0].SearchTargetID)
 	}
 
-	if err := repo.DeleteEmbeddingDocument(ctx, app.EmbeddingSubjectTypeWorkItem, task.ID); err != nil {
+	if err := repo.DeleteEmbeddingDocument(ctx, app.EmbeddingSubjectTypeWorkItem, actionItem.ID); err != nil {
 		t.Fatalf("DeleteEmbeddingDocument() error = %v", err)
 	}
 	rows, err = repo.SearchEmbeddingDocuments(ctx, app.EmbeddingSearchInput{
@@ -291,33 +291,33 @@ func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task with embedding",
+		Title:     "ActionItem with embedding",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 	rows := []app.EmbeddingDocument{
 		{
 			SubjectType:      app.EmbeddingSubjectTypeWorkItem,
-			SubjectID:        task.ID,
+			SubjectID:        actionItem.ID,
 			ProjectID:        project.ID,
 			SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
-			SearchTargetID:   task.ID,
+			SearchTargetID:   actionItem.ID,
 			Content:          "work item content",
 			ContentHash:      "hash-work-item",
 			Vector:           []float32{0.1, 0.2, 0.3},
@@ -328,7 +328,7 @@ func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T
 			SubjectID:        threadSubjectID,
 			ProjectID:        project.ID,
 			SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
-			SearchTargetID:   task.ID,
+			SearchTargetID:   actionItem.ID,
 			Content:          "thread context content",
 			ContentHash:      "hash-thread-context",
 			Vector:           []float32{0.2, 0.1, 0.3},
@@ -432,33 +432,33 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-comment-targets",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task target",
+		Title:     "ActionItem target",
 		Priority:  domain.PriorityLow,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
-	taskComment, err := domain.NewComment(domain.CommentInput{
-		ID:           "c-task",
+	actionItemComment, err := domain.NewComment(domain.CommentInput{
+		ID:           "c-actionItem",
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
-		BodyMarkdown: "task comment",
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
+		BodyMarkdown: "actionItem comment",
 		ActorID:      "user-1",
 		ActorName:    "User One",
 		ActorType:    domain.ActorTypeUser,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewComment(task) error = %v", err)
+		t.Fatalf("NewComment(actionItem) error = %v", err)
 	}
 	projectComment, err := domain.NewComment(domain.CommentInput{
 		ID:           "c-project",
@@ -473,8 +473,8 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewComment(project) error = %v", err)
 	}
-	if err := repo.CreateComment(ctx, taskComment); err != nil {
-		t.Fatalf("CreateComment(task) error = %v", err)
+	if err := repo.CreateComment(ctx, actionItemComment); err != nil {
+		t.Fatalf("CreateComment(actionItem) error = %v", err)
 	}
 	if err := repo.CreateComment(ctx, projectComment); err != nil {
 		t.Fatalf("CreateComment(project) error = %v", err)
@@ -488,8 +488,8 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 		t.Fatalf("expected 2 comment targets, got %d", len(targets))
 	}
 	want := map[domain.CommentTargetType]string{
-		domain.CommentTargetTypeTask:    task.ID,
-		domain.CommentTargetTypeProject: project.ID,
+		domain.CommentTargetTypeActionItem: actionItem.ID,
+		domain.CommentTargetTypeProject:    project.ID,
 	}
 	for _, target := range targets {
 		if want[target.TargetType] != target.TargetID {
@@ -498,8 +498,8 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 	}
 }
 
-// TestRepository_TaskEmbeddingMethodsReturnVecUnavailable verifies vector methods return a stable error when sqlite-vec is unavailable.
-func TestRepository_TaskEmbeddingMethodsReturnVecUnavailable(t *testing.T) {
+// TestRepository_ActionItemEmbeddingMethodsReturnVecUnavailable verifies vector methods return a stable error when sqlite-vec is unavailable.
+func TestRepository_ActionItemEmbeddingMethodsReturnVecUnavailable(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {
@@ -518,7 +518,7 @@ func TestRepository_TaskEmbeddingMethodsReturnVecUnavailable(t *testing.T) {
 		ProjectID:        "p1",
 		SearchTargetType: app.EmbeddingSearchTargetTypeWorkItem,
 		SearchTargetID:   "t1",
-		Content:          "task embedding content",
+		Content:          "actionItem embedding content",
 		ContentHash:      "hash123",
 		Vector:           []float32{0.1, 0.2, 0.3},
 		UpdatedAt:        time.Date(2026, 3, 3, 14, 0, 0, 0, time.UTC),
@@ -561,7 +561,7 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	comment2, err := domain.NewComment(domain.CommentInput{
 		ID:           "c2",
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
+		TargetType:   domain.CommentTargetTypeActionItem,
 		TargetID:     "t1",
 		BodyMarkdown: "second",
 		ActorID:      "agent-1",
@@ -574,7 +574,7 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	comment1, err := domain.NewComment(domain.CommentInput{
 		ID:           "c1",
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
+		TargetType:   domain.CommentTargetTypeActionItem,
 		TargetID:     "t1",
 		BodyMarkdown: "\n\nfirst line\nadditional details",
 		ActorID:      "user-1",
@@ -615,25 +615,25 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 		t.Fatalf("expected persisted comment summary %q, got %q", "first line", commentSummary)
 	}
 
-	taskComments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
+	actionItemComments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
+		TargetType: domain.CommentTargetTypeActionItem,
 		TargetID:   "t1",
 	})
 	if err != nil {
-		t.Fatalf("ListCommentsByTarget(task) error = %v", err)
+		t.Fatalf("ListCommentsByTarget(actionItem) error = %v", err)
 	}
-	if len(taskComments) != 2 {
-		t.Fatalf("expected 2 task comments, got %d", len(taskComments))
+	if len(actionItemComments) != 2 {
+		t.Fatalf("expected 2 actionItem comments, got %d", len(actionItemComments))
 	}
-	if taskComments[0].ID != "c1" || taskComments[1].ID != "c2" {
-		t.Fatalf("expected deterministic created_at/id ordering, got %#v", taskComments)
+	if actionItemComments[0].ID != "c1" || actionItemComments[1].ID != "c2" {
+		t.Fatalf("expected deterministic created_at/id ordering, got %#v", actionItemComments)
 	}
-	if taskComments[1].ActorType != domain.ActorTypeAgent {
-		t.Fatalf("expected normalized actor type agent, got %q", taskComments[1].ActorType)
+	if actionItemComments[1].ActorType != domain.ActorTypeAgent {
+		t.Fatalf("expected normalized actor type agent, got %q", actionItemComments[1].ActorType)
 	}
-	if taskComments[1].ActorID != "agent-1" || taskComments[1].ActorName != "Agent One" {
-		t.Fatalf("expected actor tuple to persist, got %#v", taskComments[1])
+	if actionItemComments[1].ActorID != "agent-1" || actionItemComments[1].ActorName != "Agent One" {
+		t.Fatalf("expected actor tuple to persist, got %#v", actionItemComments[1])
 	}
 
 	comments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
@@ -681,14 +681,14 @@ func TestRepository_ServiceCreateCommentPersistsContextActorName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(baseCtx, app.CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(baseCtx, app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	ctx := app.WithMutationActor(baseCtx, app.MutationActor{
@@ -698,8 +698,8 @@ func TestRepository_ServiceCreateCommentPersistsContextActorName(t *testing.T) {
 	})
 	comment, err := svc.CreateComment(ctx, app.CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		BodyMarkdown: "hello",
 		ActorID:      "user-1",
 	})
@@ -711,8 +711,8 @@ func TestRepository_ServiceCreateCommentPersistsContextActorName(t *testing.T) {
 	}
 	comments, err := repo.ListCommentsByTarget(baseCtx, domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByTarget() error = %v", err)
@@ -739,10 +739,10 @@ func TestRepository_NotFoundCases(t *testing.T) {
 	if _, err := repo.GetProject(ctx, "missing"); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound for project, got %v", err)
 	}
-	if _, err := repo.GetTask(ctx, "missing"); err != app.ErrNotFound {
-		t.Fatalf("expected app.ErrNotFound for task, got %v", err)
+	if _, err := repo.GetActionItem(ctx, "missing"); err != app.ErrNotFound {
+		t.Fatalf("expected app.ErrNotFound for actionItem, got %v", err)
 	}
-	if err := repo.DeleteTask(ctx, "missing"); err != app.ErrNotFound {
+	if err := repo.DeleteActionItem(ctx, "missing"); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound for delete, got %v", err)
 	}
 	if err := repo.DeleteProject(ctx, "missing"); err != app.ErrNotFound {
@@ -900,16 +900,16 @@ func TestRepository_DeleteProjectCascades(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	if err := repo.DeleteProject(ctx, project.ID); err != nil {
@@ -918,8 +918,8 @@ func TestRepository_DeleteProjectCascades(t *testing.T) {
 	if _, err := repo.GetProject(ctx, project.ID); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound for project, got %v", err)
 	}
-	if _, err := repo.GetTask(ctx, task.ID); err != app.ErrNotFound {
-		t.Fatalf("expected app.ErrNotFound for task cascade, got %v", err)
+	if _, err := repo.GetActionItem(ctx, actionItem.ID); err != app.ErrNotFound {
+		t.Fatalf("expected app.ErrNotFound for actionItem cascade, got %v", err)
 	}
 }
 
@@ -971,8 +971,8 @@ func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
 	}
 }
 
-// TestRepository_MigratesLegacyTasksTable verifies behavior for the covered scenario.
-func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
+// TestRepository_MigratesLegacyActionItemsTable verifies behavior for the covered scenario.
+func TestRepository_MigratesLegacyActionItemsTable(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "legacy-tasks.db")
 	db, err := sql.Open(driverName, dbPath)
@@ -1030,7 +1030,7 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 		`INSERT INTO columns_v1(id, project_id, name, wip_limit, position, created_at, updated_at, archived_at)
 		 VALUES ('c1', 'p1', 'To Do', 0, 0, '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
 		`INSERT INTO tasks(id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at)
-		 VALUES ('t1', 'p1', 'c1', 0, 'Legacy task', 'desc', 'medium', NULL, '["legacy"]', '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
+		 VALUES ('t1', 'p1', 'c1', 0, 'Legacy actionItem', 'desc', 'medium', NULL, '["legacy"]', '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("seed legacy rows error = %v", err)
@@ -1039,7 +1039,7 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 
 	repo, err := Open(dbPath)
 	if err != nil {
-		t.Fatalf("Open() on legacy task db error = %v", err)
+		t.Fatalf("Open() on legacy actionItem db error = %v", err)
 	}
 	t.Cleanup(func() {
 		_ = repo.Close()
@@ -1078,20 +1078,20 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	}
 
 	var workItemCount int
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_items WHERE id = 't1'`).Scan(&workItemCount); err != nil {
-		t.Fatalf("count work_items error = %v", err)
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM action_items WHERE id = 't1'`).Scan(&workItemCount); err != nil {
+		t.Fatalf("count action_items error = %v", err)
 	}
 	if workItemCount != 1 {
-		t.Fatalf("expected migrated work_items row count 1, got %d", workItemCount)
+		t.Fatalf("expected migrated action_items row count 1, got %d", workItemCount)
 	}
-	loaded, err := repo.GetTask(ctx, "t1")
+	loaded, err := repo.GetActionItem(ctx, "t1")
 	if err != nil {
-		t.Fatalf("GetTask() migrated row error = %v", err)
+		t.Fatalf("GetActionItem() migrated row error = %v", err)
 	}
-	if loaded.Title != "Legacy task" || loaded.ProjectID != "p1" {
-		t.Fatalf("unexpected migrated task %#v", loaded)
+	if loaded.Title != "Legacy actionItem" || loaded.ProjectID != "p1" {
+		t.Fatalf("unexpected migrated actionItem %#v", loaded)
 	}
-	if loaded.Kind != domain.WorkKindTask || loaded.LifecycleState != domain.StateTodo {
+	if loaded.Kind != domain.WorkKindActionItem || loaded.LifecycleState != domain.StateTodo {
 		t.Fatalf("expected default kind/state migration values, got kind=%q state=%q", loaded.Kind, loaded.LifecycleState)
 	}
 
@@ -1458,16 +1458,16 @@ func TestRepositoryUpdateNotFound(t *testing.T) {
 		t.Fatalf("expected app.ErrNotFound for UpdateColumn, got %v", err)
 	}
 
-	tk, _ := domain.NewTask(domain.TaskInput{
-		ID:        "missing-task",
+	tk, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "missing-actionItem",
 		ProjectID: "missing",
 		ColumnID:  "missing-col",
 		Position:  0,
 		Title:     "x",
 		Priority:  domain.PriorityLow,
 	}, now)
-	if err := repo.UpdateTask(context.Background(), tk); err != app.ErrNotFound {
-		t.Fatalf("expected app.ErrNotFound for UpdateTask, got %v", err)
+	if err := repo.UpdateActionItem(context.Background(), tk); err != app.ErrNotFound {
+		t.Fatalf("expected app.ErrNotFound for UpdateActionItem, got %v", err)
 	}
 }
 
@@ -1496,7 +1496,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		t.Fatalf("CreateColumn(done) error = %v", err)
 	}
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       todo.ID,
@@ -1509,48 +1509,48 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		UpdatedByName:  "Evan Schultz",
 		UpdatedByType:  domain.ActorTypeUser,
 	}, now)
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
-	if err := task.UpdateDetails("Track me v2", task.Description, task.Priority, task.DueAt, task.Labels, now.Add(time.Minute)); err != nil {
+	if err := actionItem.UpdateDetails("Track me v2", actionItem.Description, actionItem.Priority, actionItem.DueAt, actionItem.Labels, now.Add(time.Minute)); err != nil {
 		t.Fatalf("UpdateDetails() error = %v", err)
 	}
-	task.UpdatedByActor = "agent-1"
-	task.UpdatedByName = "Planner Bot"
-	task.UpdatedByType = domain.ActorTypeAgent
-	if err := repo.UpdateTask(ctx, task); err != nil {
-		t.Fatalf("UpdateTask(update) error = %v", err)
+	actionItem.UpdatedByActor = "agent-1"
+	actionItem.UpdatedByName = "Planner Bot"
+	actionItem.UpdatedByType = domain.ActorTypeAgent
+	if err := repo.UpdateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("UpdateActionItem(update) error = %v", err)
 	}
 
-	if err := task.Move(done.ID, 1, now.Add(2*time.Minute)); err != nil {
+	if err := actionItem.Move(done.ID, 1, now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("Move() error = %v", err)
 	}
-	task.UpdatedByActor = "user-2"
-	task.UpdatedByName = "Evan Schultz"
-	task.UpdatedByType = domain.ActorTypeUser
-	if err := repo.UpdateTask(ctx, task); err != nil {
-		t.Fatalf("UpdateTask(move) error = %v", err)
+	actionItem.UpdatedByActor = "user-2"
+	actionItem.UpdatedByName = "Evan Schultz"
+	actionItem.UpdatedByType = domain.ActorTypeUser
+	if err := repo.UpdateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("UpdateActionItem(move) error = %v", err)
 	}
 
-	task.Archive(now.Add(3 * time.Minute))
-	task.UpdatedByActor = "user-3"
-	task.UpdatedByName = "Evan Schultz"
-	task.UpdatedByType = domain.ActorTypeUser
-	if err := repo.UpdateTask(ctx, task); err != nil {
-		t.Fatalf("UpdateTask(archive) error = %v", err)
+	actionItem.Archive(now.Add(3 * time.Minute))
+	actionItem.UpdatedByActor = "user-3"
+	actionItem.UpdatedByName = "Evan Schultz"
+	actionItem.UpdatedByType = domain.ActorTypeUser
+	if err := repo.UpdateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("UpdateActionItem(archive) error = %v", err)
 	}
 
-	task.Restore(now.Add(4 * time.Minute))
-	task.UpdatedByActor = "user-4"
-	task.UpdatedByName = "Evan Schultz"
-	task.UpdatedByType = domain.ActorTypeUser
-	if err := repo.UpdateTask(ctx, task); err != nil {
-		t.Fatalf("UpdateTask(restore) error = %v", err)
+	actionItem.Restore(now.Add(4 * time.Minute))
+	actionItem.UpdatedByActor = "user-4"
+	actionItem.UpdatedByName = "Evan Schultz"
+	actionItem.UpdatedByType = domain.ActorTypeUser
+	if err := repo.UpdateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("UpdateActionItem(restore) error = %v", err)
 	}
 
-	if err := repo.DeleteTask(ctx, task.ID); err != nil {
-		t.Fatalf("DeleteTask() error = %v", err)
+	if err := repo.DeleteActionItem(ctx, actionItem.ID); err != nil {
+		t.Fatalf("DeleteActionItem() error = %v", err)
 	}
 
 	events, err := repo.ListProjectChangeEvents(ctx, project.ID, 10)
@@ -1589,8 +1589,8 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 	}
 }
 
-// TestRepository_TaskLifecyclePreservesMutationActorName verifies task change events keep request actor_name attribution.
-func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
+// TestRepository_ActionItemLifecyclePreservesMutationActorName verifies actionItem change events keep request actor_name attribution.
+func TestRepository_ActionItemLifecyclePreservesMutationActorName(t *testing.T) {
 	cases := []struct {
 		name  string
 		actor app.MutationActor
@@ -1642,7 +1642,7 @@ func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
 			if err := repo.CreateColumn(baseCtx, todo); err != nil {
 				t.Fatalf("CreateColumn() error = %v", err)
 			}
-			task, _ := domain.NewTask(domain.TaskInput{
+			actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 				ID:        "t1",
 				ProjectID: project.ID,
 				ColumnID:  todo.ID,
@@ -1650,18 +1650,18 @@ func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
 				Title:     "Ownership",
 				Priority:  domain.PriorityLow,
 			}, now)
-			if err := repo.CreateTask(ctx, task); err != nil {
-				t.Fatalf("CreateTask() error = %v", err)
+			if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+				t.Fatalf("CreateActionItem() error = %v", err)
 			}
 
-			if err := task.UpdateDetails("Ownership v2", task.Description, task.Priority, task.DueAt, task.Labels, now.Add(time.Minute)); err != nil {
+			if err := actionItem.UpdateDetails("Ownership v2", actionItem.Description, actionItem.Priority, actionItem.DueAt, actionItem.Labels, now.Add(time.Minute)); err != nil {
 				t.Fatalf("UpdateDetails() error = %v", err)
 			}
-			if err := repo.UpdateTask(ctx, task); err != nil {
-				t.Fatalf("UpdateTask() error = %v", err)
+			if err := repo.UpdateActionItem(ctx, actionItem); err != nil {
+				t.Fatalf("UpdateActionItem() error = %v", err)
 			}
-			if err := repo.DeleteTask(ctx, task.ID); err != nil {
-				t.Fatalf("DeleteTask() error = %v", err)
+			if err := repo.DeleteActionItem(ctx, actionItem.ID); err != nil {
+				t.Fatalf("DeleteActionItem() error = %v", err)
 			}
 
 			events, err := repo.ListProjectChangeEvents(baseCtx, project.ID, 3)
@@ -1686,8 +1686,8 @@ func TestRepository_TaskLifecyclePreservesMutationActorName(t *testing.T) {
 	}
 }
 
-// TestRepository_ServiceCreateTaskPersistsHumanActorName verifies service-provided display names reach persisted change events.
-func TestRepository_ServiceCreateTaskPersistsHumanActorName(t *testing.T) {
+// TestRepository_ServiceCreateActionItemPersistsHumanActorName verifies service-provided display names reach persisted change events.
+func TestRepository_ServiceCreateActionItemPersistsHumanActorName(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {
@@ -1722,7 +1722,7 @@ func TestRepository_ServiceCreateTaskPersistsHumanActorName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	created, err := svc.CreateTask(ctx, app.CreateTaskInput{
+	created, err := svc.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
 		Title:          "Ownership",
@@ -1732,7 +1732,7 @@ func TestRepository_ServiceCreateTaskPersistsHumanActorName(t *testing.T) {
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	events, err := repo.ListProjectChangeEvents(ctx, project.ID, 1)
 	if err != nil {
@@ -1747,12 +1747,12 @@ func TestRepository_ServiceCreateTaskPersistsHumanActorName(t *testing.T) {
 	if events[0].ActorID != "user-1" || events[0].ActorName != "Evan Schultz" {
 		t.Fatalf("expected human attribution user-1/Evan Schultz, got %q/%q", events[0].ActorID, events[0].ActorName)
 	}
-	loaded, err := repo.GetTask(ctx, created.ID)
+	loaded, err := repo.GetActionItem(ctx, created.ID)
 	if err != nil {
-		t.Fatalf("GetTask() error = %v", err)
+		t.Fatalf("GetActionItem() error = %v", err)
 	}
 	if loaded.CreatedByName != "Evan Schultz" || loaded.UpdatedByName != "Evan Schultz" {
-		t.Fatalf("expected persisted task names Evan Schultz/Evan Schultz, got %q/%q", loaded.CreatedByName, loaded.UpdatedByName)
+		t.Fatalf("expected persisted actionItem names Evan Schultz/Evan Schultz, got %q/%q", loaded.CreatedByName, loaded.UpdatedByName)
 	}
 }
 
@@ -1776,7 +1776,7 @@ func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
 		ID:                "refactor",
 		DisplayName:       "Refactor",
-		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
 	}, now)
 	if err != nil {
@@ -2008,7 +2008,7 @@ func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 	risk, err := domain.NewAttentionItem(domain.AttentionItemInput{
 		ID:                 "attn-risk",
 		ProjectID:          project.ID,
-		ScopeType:          domain.ScopeLevelTask,
+		ScopeType:          domain.ScopeLevelActionItem,
 		ScopeID:            "t1",
 		Kind:               domain.AttentionKindRiskNote,
 		Summary:            "Track rollout risk",
@@ -2022,7 +2022,7 @@ func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 	blocker, err := domain.NewAttentionItem(domain.AttentionItemInput{
 		ID:                 "attn-blocker",
 		ProjectID:          project.ID,
-		ScopeType:          domain.ScopeLevelTask,
+		ScopeType:          domain.ScopeLevelActionItem,
 		ScopeID:            "t1",
 		Kind:               domain.AttentionKindBlocker,
 		Summary:            "Need approval to proceed",
@@ -2043,7 +2043,7 @@ func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 
 	unresolved, err := repo.ListAttentionItems(ctx, domain.AttentionListFilter{
 		ProjectID:      project.ID,
-		ScopeType:      domain.ScopeLevelTask,
+		ScopeType:      domain.ScopeLevelActionItem,
 		ScopeID:        "t1",
 		UnresolvedOnly: true,
 	})
@@ -2060,7 +2060,7 @@ func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 	requiresUserAction := true
 	userActionOnly, err := repo.ListAttentionItems(ctx, domain.AttentionListFilter{
 		ProjectID:          project.ID,
-		ScopeType:          domain.ScopeLevelTask,
+		ScopeType:          domain.ScopeLevelActionItem,
 		ScopeID:            "t1",
 		UnresolvedOnly:     true,
 		RequiresUserAction: &requiresUserAction,
@@ -2082,7 +2082,7 @@ func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 
 	unresolved, err = repo.ListAttentionItems(ctx, domain.AttentionListFilter{
 		ProjectID:      project.ID,
-		ScopeType:      domain.ScopeLevelTask,
+		ScopeType:      domain.ScopeLevelActionItem,
 		ScopeID:        "t1",
 		UnresolvedOnly: true,
 	})
@@ -2114,8 +2114,8 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 	base := domain.AttentionItem{
 		ID:                 "attn-valid",
 		ProjectID:          project.ID,
-		ScopeType:          domain.ScopeLevelTask,
-		ScopeID:            "task-1",
+		ScopeType:          domain.ScopeLevelActionItem,
+		ScopeID:            "actionItem-1",
 		State:              domain.AttentionStateOpen,
 		Kind:               domain.AttentionKindRiskNote,
 		Summary:            "summary",
@@ -2169,8 +2169,8 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 			{
 				name: "missing project id",
 				filter: domain.AttentionListFilter{
-					ScopeType: domain.ScopeLevelTask,
-					ScopeID:   "task-1",
+					ScopeType: domain.ScopeLevelActionItem,
+					ScopeID:   "actionItem-1",
 				},
 				want: domain.ErrInvalidID,
 			},
@@ -2178,7 +2178,7 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 				name: "scope id without scope type",
 				filter: domain.AttentionListFilter{
 					ProjectID: project.ID,
-					ScopeID:   "task-1",
+					ScopeID:   "actionItem-1",
 				},
 				want: domain.ErrInvalidScopeType,
 			},
@@ -2186,8 +2186,8 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 				name: "invalid state",
 				filter: domain.AttentionListFilter{
 					ProjectID: project.ID,
-					ScopeType: domain.ScopeLevelTask,
-					ScopeID:   "task-1",
+					ScopeType: domain.ScopeLevelActionItem,
+					ScopeID:   "actionItem-1",
 					States:    []domain.AttentionState{"bad-state"},
 				},
 				want: domain.ErrInvalidAttentionState,
@@ -2196,8 +2196,8 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 				name: "invalid kind",
 				filter: domain.AttentionListFilter{
 					ProjectID: project.ID,
-					ScopeType: domain.ScopeLevelTask,
-					ScopeID:   "task-1",
+					ScopeType: domain.ScopeLevelActionItem,
+					ScopeID:   "actionItem-1",
 					Kinds:     []domain.AttentionKind{"bad-kind"},
 				},
 				want: domain.ErrInvalidAttentionKind,
@@ -2247,8 +2247,8 @@ func TestRepository_AttentionItemProjectWideRoleFilterAndUpsert(t *testing.T) {
 	mention, err := domain.NewAttentionItem(domain.AttentionItemInput{
 		ID:                 "attn-mention",
 		ProjectID:          project.ID,
-		ScopeType:          domain.ScopeLevelTask,
-		ScopeID:            "task-1",
+		ScopeType:          domain.ScopeLevelActionItem,
+		ScopeID:            "actionItem-1",
 		Kind:               domain.AttentionKindMention,
 		Summary:            "mention for qa",
 		BodyMarkdown:       "Please review.",
@@ -2353,8 +2353,8 @@ func TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport(t *testing.T) {
 	}
 }
 
-// TestRepository_PersistsProjectKindAndTaskScope verifies new kind/scope columns round-trip.
-func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
+// TestRepository_PersistsProjectKindAndActionItemScope verifies new kind/scope columns round-trip.
+func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {
@@ -2384,7 +2384,7 @@ func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-scope",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2395,23 +2395,23 @@ func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(ctx, actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	loadedTask, err := repo.GetTask(ctx, task.ID)
+	loadedActionItem, err := repo.GetActionItem(ctx, actionItem.ID)
 	if err != nil {
-		t.Fatalf("GetTask() error = %v", err)
+		t.Fatalf("GetActionItem() error = %v", err)
 	}
-	if loadedTask.Scope != domain.KindAppliesToPhase {
-		t.Fatalf("expected persisted task scope phase, got %q", loadedTask.Scope)
+	if loadedActionItem.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedActionItem.Scope)
 	}
 
-	nestedPhaseTask, err := domain.NewTask(domain.TaskInput{
+	nestedPhaseActionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-nested-phase",
 		ProjectID: project.ID,
-		ParentID:  task.ID,
+		ParentID:  actionItem.ID,
 		ColumnID:  column.ID,
 		Scope:     domain.KindAppliesToPhase,
 		Kind:      domain.WorkKindPhase,
@@ -2420,17 +2420,17 @@ func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask(nested phase) error = %v", err)
+		t.Fatalf("NewActionItem(nested phase) error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, nestedPhaseTask); err != nil {
-		t.Fatalf("CreateTask(nested phase) error = %v", err)
+	if err := repo.CreateActionItem(ctx, nestedPhaseActionItem); err != nil {
+		t.Fatalf("CreateActionItem(nested phase) error = %v", err)
 	}
-	loadedNestedPhaseTask, err := repo.GetTask(ctx, nestedPhaseTask.ID)
+	loadedNestedPhaseActionItem, err := repo.GetActionItem(ctx, nestedPhaseActionItem.ID)
 	if err != nil {
-		t.Fatalf("GetTask(nested phase) error = %v", err)
+		t.Fatalf("GetActionItem(nested phase) error = %v", err)
 	}
-	if loadedNestedPhaseTask.Scope != domain.KindAppliesToPhase {
-		t.Fatalf("expected persisted task scope phase, got %q", loadedNestedPhaseTask.Scope)
+	if loadedNestedPhaseActionItem.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedNestedPhaseActionItem.Scope)
 	}
 }
 

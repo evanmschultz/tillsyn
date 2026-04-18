@@ -443,8 +443,8 @@ func mapEmbeddingJobRecord(row EmbeddingJobRecord) app.EmbeddingRecord {
 // storageEmbeddingSubjectType maps one app-facing subject family onto the sqlite lifecycle subject family.
 func storageEmbeddingSubjectType(subjectType app.EmbeddingSubjectType) string {
 	switch strings.TrimSpace(strings.ToLower(string(subjectType))) {
-	case "work_item":
-		return "work_item"
+	case "work_item", "actionitem":
+		return "actionItem"
 	case "thread_context":
 		return "thread_context"
 	case "project_document":
@@ -457,7 +457,7 @@ func storageEmbeddingSubjectType(subjectType app.EmbeddingSubjectType) string {
 // appEmbeddingSubjectType maps one sqlite lifecycle subject family onto the app-facing type.
 func appEmbeddingSubjectType(subjectType string) app.EmbeddingSubjectType {
 	switch strings.TrimSpace(strings.ToLower(subjectType)) {
-	case "task", "work_item":
+	case "actionitem", "work_item":
 		return app.EmbeddingSubjectTypeWorkItem
 	case "thread_context":
 		return app.EmbeddingSubjectTypeThreadContext

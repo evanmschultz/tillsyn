@@ -32,7 +32,7 @@ func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
 		Title:          "Investigate failure",
@@ -42,14 +42,14 @@ func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 		CreatedByActor: "user-1",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	created, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		Kind:               domain.AttentionKindBlocker,
 		Summary:            "Need user decision",
@@ -67,8 +67,8 @@ func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 	unresolved, err := svc.ListAttentionItems(context.Background(), ListAttentionItemsInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		UnresolvedOnly: true,
 	})
@@ -160,7 +160,7 @@ func TestServiceListAttentionItemsWaitsForLiveChange(t *testing.T) {
 // TestRaiseAttentionItemValidatesScopeEntityConsistency verifies scope_type/scope_id tuple validation.
 func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 	repo := newFakeRepo()
-	ids := []string{"p1", "c1", "t1", "attn-project", "attn-task"}
+	ids := []string{"p1", "c1", "t1", "attn-project", "attn-actionItem"}
 	nextID := 0
 	now := time.Date(2026, 2, 24, 12, 30, 0, 0, time.UTC)
 	svc := NewService(repo, func() string {
@@ -179,7 +179,7 @@ func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
 		Title:          "Validate attention scope tuple",
@@ -189,13 +189,13 @@ func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 		CreatedByActor: "user-1",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	_, err = svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
+			ScopeType: domain.ScopeLevelActionItem,
 			ScopeID:   project.ID,
 		},
 		Kind:               domain.AttentionKindBlocker,
@@ -205,7 +205,7 @@ func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 		CreatedType:        domain.ActorTypeUser,
 	})
 	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected ErrNotFound for mismatched task tuple, got %v", err)
+		t.Fatalf("expected ErrNotFound for mismatched actionItem tuple, got %v", err)
 	}
 
 	projectScoped, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
@@ -227,28 +227,28 @@ func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 		t.Fatalf("unexpected project-scoped attention tuple %#v", projectScoped)
 	}
 
-	taskScoped, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
+	actionItemScoped, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		Kind:               domain.AttentionKindBlocker,
-		Summary:            "Task-scoped attention",
+		Summary:            "ActionItem-scoped attention",
 		RequiresUserAction: true,
 		CreatedBy:          "user-1",
 		CreatedType:        domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("RaiseAttentionItem(task) error = %v", err)
+		t.Fatalf("RaiseAttentionItem(actionItem) error = %v", err)
 	}
-	if taskScoped.ScopeType != domain.ScopeLevelTask || taskScoped.ScopeID != task.ID {
-		t.Fatalf("unexpected task-scoped attention tuple %#v", taskScoped)
+	if actionItemScoped.ScopeType != domain.ScopeLevelActionItem || actionItemScoped.ScopeID != actionItem.ID {
+		t.Fatalf("unexpected actionItem-scoped attention tuple %#v", actionItemScoped)
 	}
 }
 
-// TestMoveTaskBlocksDoneWhenBlockingAttentionUnresolved verifies completion transition guard behavior.
-func TestMoveTaskBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
+// TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved verifies completion transition guard behavior.
+func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
@@ -260,23 +260,23 @@ func TestMoveTaskBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
-		Scope:          domain.KindAppliesToTask,
+		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       progress.ID,
 		Position:       0,
 		Title:          "Ship release",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	attention, err := domain.NewAttentionItem(domain.AttentionItemInput{
 		ID:                 "attn-1",
 		ProjectID:          project.ID,
-		ScopeType:          domain.ScopeLevelTask,
-		ScopeID:            task.ID,
+		ScopeType:          domain.ScopeLevelActionItem,
+		ScopeID:            actionItem.ID,
 		Kind:               domain.AttentionKindRiskNote,
 		Summary:            "User must approve rollback plan",
 		RequiresUserAction: true,
@@ -286,7 +286,7 @@ func TestMoveTaskBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	}
 	repo.attentionItems[attention.ID] = attention
 
-	_, err = svc.MoveTask(context.Background(), task.ID, done.ID, 0)
+	_, err = svc.MoveActionItem(context.Background(), actionItem.ID, done.ID, 0)
 	if !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
@@ -317,20 +317,20 @@ func TestCaptureStateSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Title:     "Focus task",
+		Title:     "Focus actionItem",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if _, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		Kind:               domain.AttentionKindBlocker,
 		Summary:            "Need sign-off",
@@ -342,15 +342,15 @@ func TestCaptureStateSummary(t *testing.T) {
 	captured, err := svc.CaptureState(context.Background(), CaptureStateInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		View: CaptureStateViewSummary,
 	})
 	if err != nil {
 		t.Fatalf("CaptureState() error = %v", err)
 	}
-	if captured.Level.ScopeType != domain.ScopeLevelTask || captured.Level.ScopeID != task.ID {
+	if captured.Level.ScopeType != domain.ScopeLevelActionItem || captured.Level.ScopeID != actionItem.ID {
 		t.Fatalf("unexpected level tuple %#v", captured.Level)
 	}
 	if captured.AttentionOverview.UnresolvedCount != 1 || captured.AttentionOverview.BlockingCount != 1 {
@@ -371,7 +371,7 @@ func TestBuildCaptureStateWorkOverviewCountsFailedItems(t *testing.T) {
 		ScopeType: domain.ScopeLevelProject,
 		ScopeID:   "p1",
 	}
-	tasks := []domain.Task{
+	tasks := []domain.ActionItem{
 		{ID: "t1", ProjectID: "p1", LifecycleState: domain.StateTodo},
 		{ID: "t2", ProjectID: "p1", LifecycleState: domain.StateProgress},
 		{ID: "t3", ProjectID: "p1", LifecycleState: domain.StateDone},

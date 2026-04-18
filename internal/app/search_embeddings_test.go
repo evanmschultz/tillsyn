@@ -11,8 +11,8 @@ import (
 func TestThreadContextSubjectIDRoundTrip(t *testing.T) {
 	target := domain.CommentTarget{
 		ProjectID:  "project-a",
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   "task-42",
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   "actionItem-42",
 	}
 	subjectID := BuildThreadContextSubjectID(target)
 	if subjectID == "" {
@@ -43,14 +43,14 @@ func TestEmbeddingSearchTargetForCommentTarget(t *testing.T) {
 
 	workItemType, workItemID, err := EmbeddingSearchTargetForCommentTarget(domain.CommentTarget{
 		ProjectID:  "project-a",
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   "task-42",
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   "actionItem-42",
 	})
 	if err != nil {
-		t.Fatalf("EmbeddingSearchTargetForCommentTarget(task) error = %v", err)
+		t.Fatalf("EmbeddingSearchTargetForCommentTarget(actionItem) error = %v", err)
 	}
-	if workItemType != EmbeddingSearchTargetTypeWorkItem || workItemID != "task-42" {
-		t.Fatalf("work-item target = (%q, %q), want (work_item, task-42)", workItemType, workItemID)
+	if workItemType != EmbeddingSearchTargetTypeWorkItem || workItemID != "actionItem-42" {
+		t.Fatalf("work-item target = (%q, %q), want (work_item, actionItem-42)", workItemType, workItemID)
 	}
 }
 

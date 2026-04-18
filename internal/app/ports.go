@@ -35,11 +35,11 @@ type Repository interface {
 	UpdateColumn(context.Context, domain.Column) error
 	ListColumns(context.Context, string, bool) ([]domain.Column, error)
 
-	CreateTask(context.Context, domain.Task) error
-	UpdateTask(context.Context, domain.Task) error
-	GetTask(context.Context, string) (domain.Task, error)
-	ListTasks(context.Context, string, bool) ([]domain.Task, error)
-	DeleteTask(context.Context, string) error
+	CreateActionItem(context.Context, domain.ActionItem) error
+	UpdateActionItem(context.Context, domain.ActionItem) error
+	GetActionItem(context.Context, string) (domain.ActionItem, error)
+	ListActionItems(context.Context, string, bool) ([]domain.ActionItem, error)
+	DeleteActionItem(context.Context, string) error
 	CreateComment(context.Context, domain.Comment) error
 	ListCommentsByTarget(context.Context, domain.CommentTarget) ([]domain.Comment, error)
 	ListCommentTargets(context.Context, string) ([]domain.CommentTarget, error)

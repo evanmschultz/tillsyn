@@ -10,7 +10,7 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// templateContractFixture stores common project/task state for node-contract enforcement tests.
+// templateContractFixture stores common project/actionItem state for node-contract enforcement tests.
 type templateContractFixture struct {
 	repo     *fakeRepo
 	svc      *Service
@@ -51,24 +51,24 @@ func newTemplateContractFixture(t *testing.T) templateContractFixture {
 	}
 }
 
-// storeTask persists one task directly into the fake repository for a focused service test.
-func (f templateContractFixture) storeTask(t *testing.T, in domain.TaskInput) domain.Task {
+// storeActionItem persists one actionItem directly into the fake repository for a focused service test.
+func (f templateContractFixture) storeActionItem(t *testing.T, in domain.ActionItemInput) domain.ActionItem {
 	t.Helper()
 
-	task, err := domain.NewTask(in, f.now)
+	actionItem, err := domain.NewActionItem(in, f.now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	f.repo.tasks[task.ID] = task
-	return task
+	f.repo.tasks[actionItem.ID] = actionItem
+	return actionItem
 }
 
-// storeNodeContract persists one generated-node contract snapshot for the provided task.
-func (f templateContractFixture) storeNodeContract(t *testing.T, task domain.Task, in domain.NodeContractSnapshotInput) {
+// storeNodeContract persists one generated-node contract snapshot for the provided actionItem.
+func (f templateContractFixture) storeNodeContract(t *testing.T, actionItem domain.ActionItem, in domain.NodeContractSnapshotInput) {
 	t.Helper()
 
-	in.NodeID = task.ID
-	in.ProjectID = task.ProjectID
+	in.NodeID = actionItem.ID
+	in.ProjectID = actionItem.ProjectID
 	if strings.TrimSpace(in.SourceLibraryID) == "" {
 		in.SourceLibraryID = "lib-1"
 	}
@@ -82,7 +82,7 @@ func (f templateContractFixture) storeNodeContract(t *testing.T, task domain.Tas
 	if err != nil {
 		t.Fatalf("NewNodeContractSnapshot() error = %v", err)
 	}
-	f.repo.nodeContracts[task.ID] = snapshot
+	f.repo.nodeContracts[actionItem.ID] = snapshot
 }
 
 // leaseContext issues one capability lease and returns the matching mutation context for tests.
@@ -113,11 +113,11 @@ func (f templateContractFixture) leaseContext(t *testing.T, scopeType domain.Cap
 	})
 }
 
-// TestUpdateTaskBlocksGeneratedNodeEditForWrongActorKind verifies generated-node edit permissions fail closed for the wrong actor kind.
-func TestUpdateTaskBlocksGeneratedNodeEditForWrongActorKind(t *testing.T) {
+// TestUpdateActionItemBlocksGeneratedNodeEditForWrongActorKind verifies generated-node edit permissions fail closed for the wrong actor kind.
+func TestUpdateActionItemBlocksGeneratedNodeEditForWrongActorKind(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	task := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-qa",
+	actionItem := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-qa",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -125,30 +125,30 @@ func TestUpdateTaskBlocksGeneratedNodeEditForWrongActorKind(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateProgress,
 	})
-	fixture.storeNodeContract(t, task, domain.NodeContractSnapshotInput{
+	fixture.storeNodeContract(t, actionItem, domain.NodeContractSnapshotInput{
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
 	})
 
-	ctx := fixture.leaseContext(t, domain.CapabilityScopeTask, task.ID, domain.CapabilityRoleBuilder, "builder-1")
-	_, err := fixture.svc.UpdateTask(ctx, UpdateTaskInput{
-		TaskID:      task.ID,
-		Title:       task.Title,
-		Description: "builder edit",
-		UpdatedBy:   "builder-1",
-		UpdatedType: domain.ActorTypeAgent,
+	ctx := fixture.leaseContext(t, domain.CapabilityScopeActionItem, actionItem.ID, domain.CapabilityRoleBuilder, "builder-1")
+	_, err := fixture.svc.UpdateActionItem(ctx, UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        actionItem.Title,
+		Description:  "builder edit",
+		UpdatedBy:    "builder-1",
+		UpdatedType:  domain.ActorTypeAgent,
 	})
 	if !errors.Is(err, domain.ErrNodeContractForbidden) {
-		t.Fatalf("UpdateTask() error = %v, want ErrNodeContractForbidden", err)
+		t.Fatalf("UpdateActionItem() error = %v, want ErrNodeContractForbidden", err)
 	}
 }
 
-// TestUpdateTaskAllowsHumanEditForGeneratedNode verifies human edits remain allowed even when the generated-node contract is role-restricted.
-func TestUpdateTaskAllowsHumanEditForGeneratedNode(t *testing.T) {
+// TestUpdateActionItemAllowsHumanEditForGeneratedNode verifies human edits remain allowed even when the generated-node contract is role-restricted.
+func TestUpdateActionItemAllowsHumanEditForGeneratedNode(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	task := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-qa",
+	actionItem := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-qa",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -156,32 +156,32 @@ func TestUpdateTaskAllowsHumanEditForGeneratedNode(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateProgress,
 	})
-	fixture.storeNodeContract(t, task, domain.NodeContractSnapshotInput{
+	fixture.storeNodeContract(t, actionItem, domain.NodeContractSnapshotInput{
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
 	})
 
-	updated, err := fixture.svc.UpdateTask(context.Background(), UpdateTaskInput{
-		TaskID:      task.ID,
-		Title:       task.Title,
-		Description: "human edit",
-		UpdatedBy:   "user-1",
-		UpdatedType: domain.ActorTypeUser,
+	updated, err := fixture.svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        actionItem.Title,
+		Description:  "human edit",
+		UpdatedBy:    "user-1",
+		UpdatedType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
 	if updated.Description != "human edit" {
 		t.Fatalf("updated.Description = %q, want human edit", updated.Description)
 	}
 }
 
-// TestMoveTaskBlocksGeneratedNodeCompletionForWrongActorKind verifies generated-node completion is limited to the contract completer kinds.
-func TestMoveTaskBlocksGeneratedNodeCompletionForWrongActorKind(t *testing.T) {
+// TestMoveActionItemBlocksGeneratedNodeCompletionForWrongActorKind verifies generated-node completion is limited to the contract completer kinds.
+func TestMoveActionItemBlocksGeneratedNodeCompletionForWrongActorKind(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	task := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-qa",
+	actionItem := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-qa",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -189,24 +189,24 @@ func TestMoveTaskBlocksGeneratedNodeCompletionForWrongActorKind(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateProgress,
 	})
-	fixture.storeNodeContract(t, task, domain.NodeContractSnapshotInput{
+	fixture.storeNodeContract(t, actionItem, domain.NodeContractSnapshotInput{
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
 	})
 
-	ctx := fixture.leaseContext(t, domain.CapabilityScopeTask, task.ID, domain.CapabilityRoleBuilder, "builder-1")
-	_, err := fixture.svc.MoveTask(ctx, task.ID, fixture.done.ID, 0)
+	ctx := fixture.leaseContext(t, domain.CapabilityScopeActionItem, actionItem.ID, domain.CapabilityRoleBuilder, "builder-1")
+	_, err := fixture.svc.MoveActionItem(ctx, actionItem.ID, fixture.done.ID, 0)
 	if !errors.Is(err, domain.ErrNodeContractForbidden) {
-		t.Fatalf("MoveTask() error = %v, want ErrNodeContractForbidden", err)
+		t.Fatalf("MoveActionItem() error = %v, want ErrNodeContractForbidden", err)
 	}
 }
 
-// TestCreateTaskBlocksChildCreationUnderGeneratedNodeForWrongActorKind verifies create-child cannot bypass generated-node edit ownership.
-func TestCreateTaskBlocksChildCreationUnderGeneratedNodeForWrongActorKind(t *testing.T) {
+// TestCreateActionItemBlocksChildCreationUnderGeneratedNodeForWrongActorKind verifies create-child cannot bypass generated-node edit ownership.
+func TestCreateActionItemBlocksChildCreationUnderGeneratedNodeForWrongActorKind(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	parent := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-qa",
+	parent := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-qa",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -220,8 +220,8 @@ func TestCreateTaskBlocksChildCreationUnderGeneratedNodeForWrongActorKind(t *tes
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
 	})
 
-	ctx := fixture.leaseContext(t, domain.CapabilityScopeTask, parent.ID, domain.CapabilityRoleBuilder, "builder-1")
-	_, err := fixture.svc.CreateTask(ctx, CreateTaskInput{
+	ctx := fixture.leaseContext(t, domain.CapabilityScopeActionItem, parent.ID, domain.CapabilityRoleBuilder, "builder-1")
+	_, err := fixture.svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID:      fixture.project.ID,
 		ParentID:       parent.ID,
 		ColumnID:       fixture.progress.ID,
@@ -232,15 +232,15 @@ func TestCreateTaskBlocksChildCreationUnderGeneratedNodeForWrongActorKind(t *tes
 		UpdatedByType:  domain.ActorTypeAgent,
 	})
 	if !errors.Is(err, domain.ErrNodeContractForbidden) {
-		t.Fatalf("CreateTask() error = %v, want ErrNodeContractForbidden", err)
+		t.Fatalf("CreateActionItem() error = %v, want ErrNodeContractForbidden", err)
 	}
 }
 
-// TestMoveTaskAllowsOrchestratorOverrideWhenContractPermits verifies the stored orchestrator override flag is honored.
-func TestMoveTaskAllowsOrchestratorOverrideWhenContractPermits(t *testing.T) {
+// TestMoveActionItemAllowsOrchestratorOverrideWhenContractPermits verifies the stored orchestrator override flag is honored.
+func TestMoveActionItemAllowsOrchestratorOverrideWhenContractPermits(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	task := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-qa",
+	actionItem := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-qa",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -248,28 +248,28 @@ func TestMoveTaskAllowsOrchestratorOverrideWhenContractPermits(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateProgress,
 	})
-	fixture.storeNodeContract(t, task, domain.NodeContractSnapshotInput{
+	fixture.storeNodeContract(t, actionItem, domain.NodeContractSnapshotInput{
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
 		OrchestratorMayComplete: true,
 	})
 
-	ctx := fixture.leaseContext(t, domain.CapabilityScopeTask, task.ID, domain.CapabilityRoleOrchestrator, "orch-1")
-	moved, err := fixture.svc.MoveTask(ctx, task.ID, fixture.done.ID, 0)
+	ctx := fixture.leaseContext(t, domain.CapabilityScopeActionItem, actionItem.ID, domain.CapabilityRoleOrchestrator, "orch-1")
+	moved, err := fixture.svc.MoveActionItem(ctx, actionItem.ID, fixture.done.ID, 0)
 	if err != nil {
-		t.Fatalf("MoveTask() error = %v", err)
+		t.Fatalf("MoveActionItem() error = %v", err)
 	}
 	if moved.LifecycleState != domain.StateDone {
 		t.Fatalf("moved.LifecycleState = %q, want done", moved.LifecycleState)
 	}
 }
 
-// TestMoveTaskAllowsDoneWithOptionalIncompleteChild verifies optional incomplete children no longer block done by default.
-func TestMoveTaskAllowsDoneWithOptionalIncompleteChild(t *testing.T) {
+// TestMoveActionItemAllowsDoneWithOptionalIncompleteChild verifies optional incomplete children no longer block done by default.
+func TestMoveActionItemAllowsDoneWithOptionalIncompleteChild(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	parent := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-parent",
+	parent := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-parent",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -277,8 +277,8 @@ func TestMoveTaskAllowsDoneWithOptionalIncompleteChild(t *testing.T) {
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
 	})
-	child := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-child",
+	child := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-child",
 		ProjectID:      fixture.project.ID,
 		ParentID:       parent.ID,
 		ColumnID:       fixture.progress.ID,
@@ -293,20 +293,20 @@ func TestMoveTaskAllowsDoneWithOptionalIncompleteChild(t *testing.T) {
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
 	})
 
-	moved, err := fixture.svc.MoveTask(context.Background(), parent.ID, fixture.done.ID, 0)
+	moved, err := fixture.svc.MoveActionItem(context.Background(), parent.ID, fixture.done.ID, 0)
 	if err != nil {
-		t.Fatalf("MoveTask() error = %v", err)
+		t.Fatalf("MoveActionItem() error = %v", err)
 	}
 	if moved.LifecycleState != domain.StateDone {
 		t.Fatalf("moved.LifecycleState = %q, want done", moved.LifecycleState)
 	}
 }
 
-// TestMoveTaskBlocksDoneWhenRequiredParentContractChildOpen verifies required direct-child blockers stop parent completion.
-func TestMoveTaskBlocksDoneWhenRequiredParentContractChildOpen(t *testing.T) {
+// TestMoveActionItemBlocksDoneWhenRequiredParentContractChildOpen verifies required direct-child blockers stop parent completion.
+func TestMoveActionItemBlocksDoneWhenRequiredParentContractChildOpen(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	parent := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-parent",
+	parent := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-parent",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       0,
@@ -314,8 +314,8 @@ func TestMoveTaskBlocksDoneWhenRequiredParentContractChildOpen(t *testing.T) {
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
 	})
-	child := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-child",
+	child := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-child",
 		ProjectID:      fixture.project.ID,
 		ParentID:       parent.ID,
 		ColumnID:       fixture.progress.ID,
@@ -331,19 +331,19 @@ func TestMoveTaskBlocksDoneWhenRequiredParentContractChildOpen(t *testing.T) {
 		RequiredForParentDone:   true,
 	})
 
-	_, err := fixture.svc.MoveTask(context.Background(), parent.ID, fixture.done.ID, 0)
+	_, err := fixture.svc.MoveActionItem(context.Background(), parent.ID, fixture.done.ID, 0)
 	if !errors.Is(err, domain.ErrTransitionBlocked) {
-		t.Fatalf("MoveTask() error = %v, want ErrTransitionBlocked", err)
+		t.Fatalf("MoveActionItem() error = %v, want ErrTransitionBlocked", err)
 	}
 	if !strings.Contains(err.Error(), "parent blocker") {
-		t.Fatalf("MoveTask() error = %v, want parent blocker detail", err)
+		t.Fatalf("MoveActionItem() error = %v, want parent blocker detail", err)
 	}
 }
 
-// TestMoveTaskBlocksDoneWhenRequiredContainingContractDescendantOpen verifies containing-scope blockers stop ancestor completion.
-func TestMoveTaskBlocksDoneWhenRequiredContainingContractDescendantOpen(t *testing.T) {
+// TestMoveActionItemBlocksDoneWhenRequiredContainingContractDescendantOpen verifies containing-scope blockers stop ancestor completion.
+func TestMoveActionItemBlocksDoneWhenRequiredContainingContractDescendantOpen(t *testing.T) {
 	fixture := newTemplateContractFixture(t)
-	phase := fixture.storeTask(t, domain.TaskInput{
+	phase := fixture.storeActionItem(t, domain.ActionItemInput{
 		ID:             "phase-1",
 		ProjectID:      fixture.project.ID,
 		ColumnID:       fixture.progress.ID,
@@ -354,22 +354,22 @@ func TestMoveTaskBlocksDoneWhenRequiredContainingContractDescendantOpen(t *testi
 		Kind:           domain.WorkKindPhase,
 		LifecycleState: domain.StateProgress,
 	})
-	task := fixture.storeTask(t, domain.TaskInput{
-		ID:             "task-1",
+	actionItem := fixture.storeActionItem(t, domain.ActionItemInput{
+		ID:             "actionItem-1",
 		ProjectID:      fixture.project.ID,
 		ParentID:       phase.ID,
 		ColumnID:       fixture.done.ID,
 		Position:       1,
-		Title:          "Build task",
+		Title:          "Build actionItem",
 		Priority:       domain.PriorityMedium,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateDone,
 	})
-	descendant := fixture.storeTask(t, domain.TaskInput{
+	descendant := fixture.storeActionItem(t, domain.ActionItemInput{
 		ID:             "subtask-qa",
 		ProjectID:      fixture.project.ID,
-		ParentID:       task.ID,
+		ParentID:       actionItem.ID,
 		ColumnID:       fixture.progress.ID,
 		Position:       2,
 		Title:          "Phase QA",
@@ -385,11 +385,11 @@ func TestMoveTaskBlocksDoneWhenRequiredContainingContractDescendantOpen(t *testi
 		RequiredForContainingDone: true,
 	})
 
-	_, err := fixture.svc.MoveTask(context.Background(), phase.ID, fixture.done.ID, 0)
+	_, err := fixture.svc.MoveActionItem(context.Background(), phase.ID, fixture.done.ID, 0)
 	if !errors.Is(err, domain.ErrTransitionBlocked) {
-		t.Fatalf("MoveTask() error = %v, want ErrTransitionBlocked", err)
+		t.Fatalf("MoveActionItem() error = %v, want ErrTransitionBlocked", err)
 	}
 	if !strings.Contains(err.Error(), "containing scope blocker") {
-		t.Fatalf("MoveTask() error = %v, want containing scope blocker detail", err)
+		t.Fatalf("MoveActionItem() error = %v, want containing scope blocker detail", err)
 	}
 }

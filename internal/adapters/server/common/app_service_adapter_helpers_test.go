@@ -143,7 +143,7 @@ func TestNormalizeAttentionListRequest(t *testing.T) {
 	_, err = normalizeAttentionListRequest(ListAttentionItemsRequest{
 		ProjectID: "p1",
 		AllScopes: true,
-		ScopeType: ScopeTypeTask,
+		ScopeType: ScopeTypeActionItem,
 		ScopeID:   "t1",
 	})
 	if !errors.Is(err, ErrUnsupportedScope) {
@@ -164,16 +164,16 @@ func TestBuildScopePathFromLevel(t *testing.T) {
 		t.Fatalf("buildScopePathFromLevel(project) = %#v, want project fallback name", projectOnly)
 	}
 
-	taskScope := buildScopePathFromLevel(domain.LevelTuple{
+	actionItemScope := buildScopePathFromLevel(domain.LevelTuple{
 		ProjectID: "p1",
-		ScopeType: domain.ScopeLevelTask,
+		ScopeType: domain.ScopeLevelActionItem,
 		ScopeID:   "t1",
 	}, "Inbox")
-	if len(taskScope) != 2 {
-		t.Fatalf("buildScopePathFromLevel(task) len = %d, want 2", len(taskScope))
+	if len(actionItemScope) != 2 {
+		t.Fatalf("buildScopePathFromLevel(actionItem) len = %d, want 2", len(actionItemScope))
 	}
-	if taskScope[1].ScopeType != string(domain.ScopeLevelTask) || taskScope[1].ScopeID != "t1" {
-		t.Fatalf("buildScopePathFromLevel(task) tail = %#v, want task t1", taskScope[1])
+	if actionItemScope[1].ScopeType != string(domain.ScopeLevelActionItem) || actionItemScope[1].ScopeID != "t1" {
+		t.Fatalf("buildScopePathFromLevel(actionItem) tail = %#v, want actionItem t1", actionItemScope[1])
 	}
 }
 
@@ -184,7 +184,7 @@ func TestBuildResumeHintsFromFollowUps(t *testing.T) {
 	hints := buildResumeHintsFromFollowUps(app.CaptureStateFollowUpPointers{
 		ListAttentionItems:      "till.attention_item(operation=list,project_id=\"p1\")",
 		ListProjectChangeEvents: "till.project(operation=list_change_events,project_id=\"p1\")",
-		ListChildTasks:          "till.action_item(operation=list,project_id=\"p1\",parent_id=\"t1\")",
+		ListChildActionItems:    "till.action_item(operation=list,project_id=\"p1\",parent_id=\"t1\")",
 	})
 	if len(hints) != 3 {
 		t.Fatalf("buildResumeHintsFromFollowUps() len = %d, want 3", len(hints))

@@ -61,7 +61,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 	registerInstructionsTool(mcpSrv, instructionsExplainServices{
 		bootstrap: pickBootstrapGuideReader(captureState, attention),
 		projects:  pickProjectService(captureState, attention),
-		tasks:     pickTaskService(captureState, attention),
+		tasks:     pickActionItemService(captureState, attention),
 		kinds:     pickKindCatalogService(captureState, attention),
 		templates: pickTemplateLibraryService(captureState, attention),
 	})
@@ -74,9 +74,9 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		authContexts,
 		cfg.ExposeLegacyProjectTools,
 	)
-	registerTaskTools(
+	registerActionItemTools(
 		mcpSrv,
-		pickTaskService(captureState, attention),
+		pickActionItemService(captureState, attention),
 		pickSearchService(captureState, attention),
 		pickEmbeddingsService(captureState, attention),
 		authContexts,
@@ -943,12 +943,12 @@ func pickProjectService(captureState common.CaptureStateReader, attention common
 	return nil
 }
 
-// pickTaskService resolves one task-service provider from available services.
-func pickTaskService(captureState common.CaptureStateReader, attention common.AttentionService) common.TaskService {
-	if svc, ok := captureState.(common.TaskService); ok {
+// pickActionItemService resolves one actionItem-service provider from available services.
+func pickActionItemService(captureState common.CaptureStateReader, attention common.AttentionService) common.ActionItemService {
+	if svc, ok := captureState.(common.ActionItemService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.TaskService); ok {
+	if svc, ok := attention.(common.ActionItemService); ok {
 		return svc
 	}
 	return nil

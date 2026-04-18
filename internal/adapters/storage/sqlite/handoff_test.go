@@ -131,15 +131,15 @@ func TestRepositoryHandoffRoundTrip(t *testing.T) {
 		ScopeType:       domain.ScopeLevelPhase,
 		ScopeID:         "phase-1",
 		TargetBranchID:  "branch-qa",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   "task-qa",
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   "actionItem-qa",
 		SourceRole:      "builder",
 		TargetRole:      "qa",
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         "Implement the durable handoff substrate",
 		NextAction:      "Wait for QA verification",
 		MissingEvidence: []string{"package-level tests", "manual QA"},
-		RelatedRefs:     []string{"task-123"},
+		RelatedRefs:     []string{"actionItem-123"},
 		CreatedByActor:  "orch-1",
 		CreatedByType:   domain.ActorTypeAgent,
 		CreatedAt:       now,
@@ -287,8 +287,8 @@ func TestRepositoryHandoffValidationErrors(t *testing.T) {
 	base := domain.Handoff{
 		ID:             "h-valid",
 		ProjectID:      project.ID,
-		ScopeType:      domain.ScopeLevelTask,
-		ScopeID:        "task-1",
+		ScopeType:      domain.ScopeLevelActionItem,
+		ScopeID:        "actionItem-1",
 		SourceRole:     "builder",
 		TargetRole:     "qa",
 		Status:         domain.HandoffStatusBlocked,
@@ -339,7 +339,7 @@ func TestRepositoryHandoffValidationErrors(t *testing.T) {
 	t.Run("create malformed target tuple", func(t *testing.T) {
 		handoff := base
 		handoff.ID = "h-bad-target"
-		handoff.TargetScopeType = domain.ScopeLevelTask
+		handoff.TargetScopeType = domain.ScopeLevelActionItem
 		handoff.TargetScopeID = ""
 		if err := repo.CreateHandoff(ctx, handoff); !errors.Is(err, domain.ErrInvalidScopeID) {
 			t.Fatalf("CreateHandoff() error = %v, want %v", err, domain.ErrInvalidScopeID)
@@ -396,8 +396,8 @@ func TestRepositoryHandoffValidationErrors(t *testing.T) {
 		handoff := base
 		handoff.ID = "h-role-normalized"
 		handoff.SourceRole = "Builder"
-		handoff.TargetScopeType = domain.ScopeLevelTask
-		handoff.TargetScopeID = "task-target"
+		handoff.TargetScopeType = domain.ScopeLevelActionItem
+		handoff.TargetScopeID = "actionItem-target"
 		handoff.TargetRole = "QA"
 		if err := repo.CreateHandoff(ctx, handoff); err != nil {
 			t.Fatalf("CreateHandoff() error = %v", err)

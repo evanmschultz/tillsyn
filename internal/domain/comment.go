@@ -11,20 +11,20 @@ type CommentTargetType string
 
 // Comment target type values.
 const (
-	CommentTargetTypeProject  CommentTargetType = "project"
-	CommentTargetTypeBranch   CommentTargetType = CommentTargetType(KindAppliesToBranch)
-	CommentTargetTypeTask     CommentTargetType = CommentTargetType(WorkKindTask)
-	CommentTargetTypeSubtask  CommentTargetType = CommentTargetType(WorkKindSubtask)
-	CommentTargetTypePhase    CommentTargetType = CommentTargetType(WorkKindPhase)
-	CommentTargetTypeDecision CommentTargetType = CommentTargetType(WorkKindDecision)
-	CommentTargetTypeNote     CommentTargetType = CommentTargetType(WorkKindNote)
+	CommentTargetTypeProject    CommentTargetType = "project"
+	CommentTargetTypeBranch     CommentTargetType = CommentTargetType(KindAppliesToBranch)
+	CommentTargetTypeActionItem CommentTargetType = CommentTargetType(WorkKindActionItem)
+	CommentTargetTypeSubtask    CommentTargetType = CommentTargetType(WorkKindSubtask)
+	CommentTargetTypePhase      CommentTargetType = CommentTargetType(WorkKindPhase)
+	CommentTargetTypeDecision   CommentTargetType = CommentTargetType(WorkKindDecision)
+	CommentTargetTypeNote       CommentTargetType = CommentTargetType(WorkKindNote)
 )
 
 // validCommentTargetTypes stores supported target-type values.
 var validCommentTargetTypes = []CommentTargetType{
 	CommentTargetTypeProject,
 	CommentTargetTypeBranch,
-	CommentTargetTypeTask,
+	CommentTargetTypeActionItem,
 	CommentTargetTypeSubtask,
 	CommentTargetTypePhase,
 	CommentTargetTypeDecision,
@@ -144,8 +144,20 @@ func NormalizeCommentTarget(target CommentTarget) (CommentTarget, error) {
 }
 
 // NormalizeCommentTargetType canonicalizes target types to their stored form.
+// Inputs are matched case-insensitively against the supported set and
+// returned in their canonical camelCase form (e.g. "actionItem"); unknown
+// values are returned lowercased so callers can still detect invalid inputs.
 func NormalizeCommentTargetType(targetType CommentTargetType) CommentTargetType {
-	return CommentTargetType(strings.TrimSpace(strings.ToLower(string(targetType))))
+	lowered := strings.TrimSpace(strings.ToLower(string(targetType)))
+	if lowered == "" {
+		return ""
+	}
+	for _, candidate := range validCommentTargetTypes {
+		if strings.ToLower(string(candidate)) == lowered {
+			return candidate
+		}
+	}
+	return CommentTargetType(lowered)
 }
 
 // IsValidCommentTargetType reports whether the target type is supported.

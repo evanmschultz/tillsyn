@@ -19,8 +19,8 @@ const ScopeTypeBranch = "branch"
 // ScopeTypePhase identifies phase-level scope for capture and attention operations.
 const ScopeTypePhase = "phase"
 
-// ScopeTypeTask identifies task-level scope for capture and attention operations.
-const ScopeTypeTask = "task"
+// ScopeTypeActionItem identifies actionItem-level scope for capture and attention operations.
+const ScopeTypeActionItem = "actionItem"
 
 // ScopeTypeSubtask identifies subtask-level scope for capture and attention operations.
 const ScopeTypeSubtask = "subtask"
@@ -30,7 +30,7 @@ var supportedScopeTypes = []string{
 	ScopeTypeProject,
 	ScopeTypeBranch,
 	ScopeTypePhase,
-	ScopeTypeTask,
+	ScopeTypeActionItem,
 	ScopeTypeSubtask,
 }
 
@@ -39,18 +39,33 @@ func SupportedScopeTypes() []string {
 	return append([]string(nil), supportedScopeTypes...)
 }
 
+// canonicalScopeType trims and case-folds one transport scope_type value, returning the canonical
+// mixed-case form when recognized so callers can rely on a stable identifier for downstream lookups.
+func canonicalScopeType(scopeType string) string {
+	lowered := strings.ToLower(strings.TrimSpace(scopeType))
+	if lowered == "" {
+		return ""
+	}
+	for _, candidate := range supportedScopeTypes {
+		if strings.ToLower(candidate) == lowered {
+			return candidate
+		}
+	}
+	return lowered
+}
+
 // commentTargetTypeFromScope maps transport scope_type values to comment target types.
 func commentTargetTypeFromScope(scopeType string) (domain.CommentTargetType, bool) {
 	switch strings.ToLower(strings.TrimSpace(scopeType)) {
-	case ScopeTypeProject:
+	case strings.ToLower(ScopeTypeProject):
 		return domain.CommentTargetTypeProject, true
-	case ScopeTypeBranch:
+	case strings.ToLower(ScopeTypeBranch):
 		return domain.CommentTargetTypeBranch, true
-	case ScopeTypePhase:
+	case strings.ToLower(ScopeTypePhase):
 		return domain.CommentTargetTypePhase, true
-	case ScopeTypeTask:
-		return domain.CommentTargetTypeTask, true
-	case ScopeTypeSubtask:
+	case strings.ToLower(ScopeTypeActionItem):
+		return domain.CommentTargetTypeActionItem, true
+	case strings.ToLower(ScopeTypeSubtask):
 		return domain.CommentTargetTypeSubtask, true
 	default:
 		return "", false
@@ -126,13 +141,13 @@ type AttentionOverview struct {
 
 // WorkOverview summarizes work-state counts for the scoped view.
 type WorkOverview struct {
-	TotalTasks                   int `json:"total_tasks"`
-	TodoTasks                    int `json:"todo_tasks"`
-	InProgressTasks              int `json:"in_progress_tasks"`
-	DoneTasks                    int `json:"done_tasks"`
-	FailedTasks                  int `json:"failed_tasks"`
-	ArchivedTasks                int `json:"archived_tasks"`
-	TasksWithOpenBlockers        int `json:"tasks_with_open_blockers"`
+	TotalActionItems             int `json:"total_tasks"`
+	TodoActionItems              int `json:"todo_tasks"`
+	InProgressActionItems        int `json:"in_progress_tasks"`
+	DoneActionItems              int `json:"done_tasks"`
+	FailedActionItems            int `json:"failed_tasks"`
+	ArchivedActionItems          int `json:"archived_tasks"`
+	ActionItemsWithOpenBlockers  int `json:"tasks_with_open_blockers"`
 	IncompleteCompletionCriteria int `json:"incomplete_completion_criteria"`
 }
 
@@ -178,7 +193,7 @@ type CaptureStateReader interface {
 type CaptureStateReadModel interface {
 	ListProjects(context.Context, bool) ([]domain.Project, error)
 	ListColumns(context.Context, string, bool) ([]domain.Column, error)
-	ListTasks(context.Context, string, bool) ([]domain.Task, error)
+	ListActionItems(context.Context, string, bool) ([]domain.ActionItem, error)
 }
 
 // ListAttentionItemsRequest captures list query filters for attention records.

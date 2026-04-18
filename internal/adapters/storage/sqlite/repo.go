@@ -170,8 +170,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			parent_id TEXT NOT NULL DEFAULT '',
-			kind TEXT NOT NULL DEFAULT 'task',
-			scope TEXT NOT NULL DEFAULT 'task',
+			kind TEXT NOT NULL DEFAULT 'actionItem',
+			scope TEXT NOT NULL DEFAULT 'actionItem',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -195,12 +195,12 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
 		);`,
-		`CREATE TABLE IF NOT EXISTS work_items (
+		`CREATE TABLE IF NOT EXISTS action_items (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			parent_id TEXT NOT NULL DEFAULT '',
-			kind TEXT NOT NULL DEFAULT 'task',
-			scope TEXT NOT NULL DEFAULT 'task',
+			kind TEXT NOT NULL DEFAULT 'actionItem',
+			scope TEXT NOT NULL DEFAULT 'actionItem',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -224,18 +224,18 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
 		);`,
-		`CREATE TABLE IF NOT EXISTS task_embeddings (
-			task_id TEXT PRIMARY KEY,
+		`CREATE TABLE IF NOT EXISTS action_item_embeddings (
+			action_item_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			content_hash TEXT NOT NULL,
 			content TEXT NOT NULL DEFAULT '',
 			embedding BLOB NOT NULL,
 			updated_at TEXT NOT NULL,
-			FOREIGN KEY(task_id) REFERENCES work_items(id) ON DELETE CASCADE,
+			FOREIGN KEY(action_item_id) REFERENCES action_items(id) ON DELETE CASCADE,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
-		`CREATE INDEX IF NOT EXISTS idx_task_embeddings_project ON task_embeddings(project_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_task_embeddings_updated_at ON task_embeddings(updated_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_action_item_embeddings_project ON action_item_embeddings(project_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_action_item_embeddings_updated_at ON action_item_embeddings(updated_at);`,
 		`CREATE TABLE IF NOT EXISTS embedding_documents (
 			subject_type TEXT NOT NULL,
 			subject_id TEXT NOT NULL,
@@ -436,7 +436,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			required_for_parent_done INTEGER NOT NULL DEFAULT 0,
 			required_for_containing_done INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
-			FOREIGN KEY(node_id) REFERENCES work_items(id) ON DELETE CASCADE,
+			FOREIGN KEY(node_id) REFERENCES action_items(id) ON DELETE CASCADE,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_node_contract_snapshots_project ON node_contract_snapshots(project_id, created_at, node_id);`,
@@ -556,8 +556,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
-		`CREATE INDEX IF NOT EXISTS idx_work_items_project_column_position ON work_items(project_id, column_id, position);`,
-		`CREATE INDEX IF NOT EXISTS idx_work_items_project_parent ON work_items(project_id, parent_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_action_items_project_column_position ON action_items(project_id, column_id, position);`,
+		`CREATE INDEX IF NOT EXISTS idx_action_items_project_parent ON action_items(project_id, parent_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_change_events_project_created_at ON change_events(project_id, created_at DESC, id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_project_target_created_at ON comments(project_id, target_type, target_id, created_at ASC, id ASC);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_project_created_at ON comments(project_id, created_at DESC, id DESC);`,
@@ -588,10 +588,10 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add projects.kind: %w", err)
 	}
-	taskAlterStatements := []string{
+	actionItemAlterStatements := []string{
 		`ALTER TABLE tasks ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'`,
-		`ALTER TABLE tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'task'`,
+		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'actionItem'`,
+		`ALTER TABLE tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'actionItem'`,
 		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
@@ -603,29 +603,29 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`ALTER TABLE tasks ADD COLUMN completed_at TEXT`,
 		`ALTER TABLE tasks ADD COLUMN canceled_at TEXT`,
 	}
-	for _, stmt := range taskAlterStatements {
+	for _, stmt := range actionItemAlterStatements {
 		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
 			return fmt.Errorf("migrate sqlite tasks: %w", err)
 		}
 	}
 	workItemAlterStatements := []string{
-		`ALTER TABLE work_items ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE work_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'`,
-		`ALTER TABLE work_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'task'`,
-		`ALTER TABLE work_items ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
-		`ALTER TABLE work_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
-		`ALTER TABLE work_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE work_items ADD COLUMN created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE work_items ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE work_items ADD COLUMN updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE work_items ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
-		`ALTER TABLE work_items ADD COLUMN started_at TEXT`,
-		`ALTER TABLE work_items ADD COLUMN completed_at TEXT`,
-		`ALTER TABLE work_items ADD COLUMN canceled_at TEXT`,
+		`ALTER TABLE action_items ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE action_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'actionItem'`,
+		`ALTER TABLE action_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'actionItem'`,
+		`ALTER TABLE action_items ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
+		`ALTER TABLE action_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE action_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE action_items ADD COLUMN created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE action_items ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE action_items ADD COLUMN updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
+		`ALTER TABLE action_items ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
+		`ALTER TABLE action_items ADD COLUMN started_at TEXT`,
+		`ALTER TABLE action_items ADD COLUMN completed_at TEXT`,
+		`ALTER TABLE action_items ADD COLUMN canceled_at TEXT`,
 	}
 	for _, stmt := range workItemAlterStatements {
 		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("migrate sqlite work_items: %w", err)
+			return fmt.Errorf("migrate sqlite action_items: %w", err)
 		}
 	}
 	if err := r.migrateCommentsOwnershipTuple(ctx); err != nil {
@@ -650,7 +650,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.migrateTemplateLifecycle(ctx); err != nil {
 		return err
 	}
-	if err := r.migrateTaskActorNames(ctx); err != nil {
+	if err := r.migrateActionItemActorNames(ctx); err != nil {
 		return err
 	}
 	if err := r.migratePhaseScopeContract(ctx); err != nil {
@@ -663,9 +663,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := r.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(project_id, parent_id)`); err != nil {
-		return fmt.Errorf("migrate sqlite task parent index: %w", err)
+		return fmt.Errorf("migrate sqlite actionItem parent index: %w", err)
 	}
-	if err := r.bridgeLegacyTasksToWorkItems(ctx); err != nil {
+	if err := r.bridgeLegacyActionItemsToWorkItems(ctx); err != nil {
 		return err
 	}
 	if err := r.seedDefaultKindCatalog(ctx); err != nil {
@@ -686,14 +686,14 @@ func (r *Repository) migrate(ctx context.Context) error {
 	return nil
 }
 
-// migrateLegacyEmbeddingDocuments copies legacy task-only vectors into the generic document table.
+// migrateLegacyEmbeddingDocuments copies legacy actionItem-only vectors into the generic document table.
 func (r *Repository) migrateLegacyEmbeddingDocuments(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO embedding_documents (
 			subject_type, subject_id, project_id, search_target_type, search_target_id, content_hash, content, embedding, updated_at
 		)
-		SELECT ?, task_id, project_id, ?, task_id, content_hash, content, embedding, updated_at
-		FROM task_embeddings
+		SELECT ?, action_item_id, project_id, ?, action_item_id, content_hash, content, embedding, updated_at
+		FROM action_item_embeddings
 	`, string(app.EmbeddingSubjectTypeWorkItem), string(app.EmbeddingSearchTargetTypeWorkItem)); err != nil {
 		return fmt.Errorf("migrate sqlite legacy embedding documents: %w", err)
 	}
@@ -701,7 +701,7 @@ func (r *Repository) migrateLegacyEmbeddingDocuments(ctx context.Context) error 
 		UPDATE embedding_jobs
 		SET subject_type = ?
 		WHERE subject_type = ?
-	`, string(app.EmbeddingSubjectTypeWorkItem), "task"); err != nil {
+	`, string(app.EmbeddingSubjectTypeWorkItem), "actionItem"); err != nil {
 		return fmt.Errorf("migrate sqlite embedding job subject types: %w", err)
 	}
 	return nil
@@ -715,7 +715,7 @@ func (r *Repository) migratePhaseScopeContract(ctx context.Context) error {
 		args []any
 	}{
 		{name: "tasks.scope", sql: `UPDATE tasks SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
-		{name: "work_items.scope", sql: `UPDATE work_items SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
+		{name: "action_items.scope", sql: `UPDATE action_items SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
 		{name: "comments.target_type", sql: `UPDATE comments SET target_type = ? WHERE target_type = ?`, args: []any{string(domain.CommentTargetTypePhase), "subphase"}},
 		{name: "capability_leases.scope_type", sql: `UPDATE capability_leases SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.CapabilityScopePhase), "subphase"}},
 		{name: "attention_items.scope_type", sql: `UPDATE attention_items SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.ScopeLevelPhase), "subphase"}},
@@ -726,10 +726,10 @@ func (r *Repository) migratePhaseScopeContract(ctx context.Context) error {
 			return fmt.Errorf("migrate phase scope contract %s: %w", stmt.name, err)
 		}
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE work_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToTask)); err != nil {
-		return fmt.Errorf("migrate phase scope contract work_items project phase scope: %w", err)
+	if _, err := r.db.ExecContext(ctx, `UPDATE action_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToActionItem)); err != nil {
+		return fmt.Errorf("migrate phase scope contract action_items project phase scope: %w", err)
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToTask)); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToActionItem)); err != nil {
 		return fmt.Errorf("migrate phase scope contract tasks project phase scope: %w", err)
 	}
 
@@ -968,16 +968,16 @@ func (r *Repository) migrateChangeEventsActorName(ctx context.Context) error {
 	return nil
 }
 
-// migrateTaskActorNames adds and backfills readable task actor-name columns on both task tables.
-func (r *Repository) migrateTaskActorNames(ctx context.Context) error {
+// migrateActionItemActorNames adds and backfills readable actionItem actor-name columns on both actionItem tables.
+func (r *Repository) migrateActionItemActorNames(ctx context.Context) error {
 	statements := []struct {
 		name string
 		sql  string
 	}{
 		{name: "tasks.created_by_name", sql: `UPDATE tasks SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
 		{name: "tasks.updated_by_name", sql: `UPDATE tasks SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
-		{name: "work_items.created_by_name", sql: `UPDATE work_items SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
-		{name: "work_items.updated_by_name", sql: `UPDATE work_items SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
+		{name: "action_items.created_by_name", sql: `UPDATE action_items SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
+		{name: "action_items.updated_by_name", sql: `UPDATE action_items SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
 	}
 	for _, stmt := range statements {
 		if _, err := r.db.ExecContext(ctx, stmt.sql); err != nil {
@@ -1181,11 +1181,11 @@ func (r *Repository) tableHasColumn(ctx context.Context, tableName, columnName s
 	return false, nil
 }
 
-// bridgeLegacyTasksToWorkItems copies legacy task rows into canonical work_items rows.
-func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
+// bridgeLegacyActionItemsToWorkItems copies legacy actionItem rows into canonical action_items rows.
+func (r *Repository) bridgeLegacyActionItemsToWorkItems(ctx context.Context) error {
 	// Keep migration idempotent and non-destructive so existing tasks databases remain readable.
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO work_items(
+		INSERT INTO action_items(
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
@@ -1218,12 +1218,12 @@ func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
 		FROM tasks t
 		WHERE NOT EXISTS (
 			SELECT 1
-			FROM work_items wi
+			FROM action_items wi
 			WHERE wi.id = t.id
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("bridge legacy tasks to work_items: %w", err)
+		return fmt.Errorf("bridge legacy tasks to action_items: %w", err)
 	}
 	return nil
 }
@@ -1239,12 +1239,12 @@ func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
 	}
 	records := []seedRecord{
 		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{id: domain.KindID(domain.WorkKindTask), displayName: "Task", description: "Built-in task kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{id: domain.KindID(domain.WorkKindActionItem), displayName: "ActionItem", description: "Built-in actionItem kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
 		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
 		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
 	}
 
 	now := time.Now().UTC()
@@ -1731,7 +1731,7 @@ func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.T
 		if err != nil {
 			return err
 		}
-		taskDefaultsJSON, err := marshalTemplateTaskMetadata(nodeTemplate.TaskMetadataDefaults)
+		actionItemDefaultsJSON, err := marshalTemplateActionItemMetadata(nodeTemplate.ActionItemMetadataDefaults)
 		if err != nil {
 			return err
 		}
@@ -1749,7 +1749,7 @@ func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.T
 			strings.TrimSpace(nodeTemplate.DisplayName),
 			strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
 			projectDefaultsJSON,
-			taskDefaultsJSON,
+			actionItemDefaultsJSON,
 		)
 		if err != nil {
 			return err
@@ -2127,8 +2127,8 @@ func (r *Repository) ListColumns(ctx context.Context, projectID string, includeA
 	return out, rows.Err()
 }
 
-// CreateTask creates task.
-func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
+// CreateActionItem creates actionItem.
+func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) error {
 	labelsJSON, err := json.Marshal(t.Labels)
 	if err != nil {
 		return err
@@ -2140,7 +2140,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultTaskScope(t.Kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2154,7 +2154,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	}()
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO work_items(
+		INSERT INTO action_items(
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
@@ -2191,7 +2191,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	}
 
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.CreatedByActor, t.CreatedByName, t.UpdatedByType, t.UpdatedByActor, t.UpdatedByName)
-	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
+	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
 		Operation:  domain.ChangeOperationCreate,
@@ -2215,8 +2215,8 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	return err
 }
 
-// UpdateTask updates state for the requested operation.
-func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
+// UpdateActionItem updates state for the requested operation.
+func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) error {
 	labelsJSON, err := json.Marshal(t.Labels)
 	if err != nil {
 		return err
@@ -2228,7 +2228,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultTaskScope(t.Kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2241,13 +2241,13 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 		}
 	}()
 
-	prev, err := getTaskByID(ctx, tx, t.ID)
+	prev, err := getActionItemByID(ctx, tx, t.ID)
 	if err != nil {
 		return err
 	}
 
 	res, err := tx.ExecContext(ctx, `
-		UPDATE work_items
+		UPDATE action_items
 		SET parent_id = ?, kind = ?, scope = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
 		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_name = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
@@ -2281,12 +2281,12 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 		return err
 	}
 
-	op, metadata := classifyTaskTransition(prev, t)
+	op, metadata := classifyActionItemTransition(prev, t)
 	metadata["title"] = t.Title
 	metadata["item_kind"] = string(t.Kind)
 	metadata["item_scope"] = string(scope)
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.UpdatedByActor, t.UpdatedByName, t.UpdatedByType, prev.UpdatedByActor, prev.UpdatedByName)
-	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
+	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
 		Operation:  op,
@@ -2304,18 +2304,18 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	return err
 }
 
-// GetTask returns task.
-func (r *Repository) GetTask(ctx context.Context, id string) (domain.Task, error) {
-	return getTaskByID(ctx, r.db, id)
+// GetActionItem returns actionItem.
+func (r *Repository) GetActionItem(ctx context.Context, id string) (domain.ActionItem, error) {
+	return getActionItemByID(ctx, r.db, id)
 }
 
-// ListTasks lists tasks.
-func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
+// ListActionItems lists tasks.
+func (r *Repository) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
-		FROM work_items
+		FROM action_items
 		WHERE project_id = ?
 	`
 	if !includeArchived {
@@ -2329,19 +2329,19 @@ func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArc
 	}
 	defer rows.Close()
 
-	out := []domain.Task{}
+	out := []domain.ActionItem{}
 	for rows.Next() {
-		task, err := scanTask(rows)
+		actionItem, err := scanActionItem(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, task)
+		out = append(out, actionItem)
 	}
 	return out, rows.Err()
 }
 
-// DeleteTask deletes task.
-func (r *Repository) DeleteTask(ctx context.Context, id string) error {
+// DeleteActionItem deletes actionItem.
+func (r *Repository) DeleteActionItem(ctx context.Context, id string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -2352,33 +2352,33 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 		}
 	}()
 
-	task, err := getTaskByID(ctx, tx, id)
+	actionItem, err := getActionItemByID(ctx, tx, id)
 	if err != nil {
 		return err
 	}
 
-	res, err := tx.ExecContext(ctx, `DELETE FROM work_items WHERE id = ?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM action_items WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
 	if err := translateNoRows(res); err != nil {
 		return err
 	}
-	actorID, actorName, actorType := resolveChangeEventActor(ctx, task.UpdatedByActor, task.UpdatedByName, task.UpdatedByType, task.CreatedByActor, task.CreatedByName)
+	actorID, actorName, actorType := resolveChangeEventActor(ctx, actionItem.UpdatedByActor, actionItem.UpdatedByName, actionItem.UpdatedByType, actionItem.CreatedByActor, actionItem.CreatedByName)
 
-	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
-		ProjectID:  task.ProjectID,
-		WorkItemID: task.ID,
+	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
+		ProjectID:  actionItem.ProjectID,
+		WorkItemID: actionItem.ID,
 		Operation:  domain.ChangeOperationDelete,
 		ActorID:    actorID,
 		ActorName:  actorName,
 		ActorType:  actorType,
 		Metadata: map[string]string{
-			"column_id":  task.ColumnID,
-			"position":   strconv.Itoa(task.Position),
-			"title":      task.Title,
-			"item_kind":  string(task.Kind),
-			"item_scope": string(task.Scope),
+			"column_id":  actionItem.ColumnID,
+			"position":   strconv.Itoa(actionItem.Position),
+			"title":      actionItem.Title,
+			"item_kind":  string(actionItem.Kind),
+			"item_scope": string(actionItem.Scope),
 		},
 		OccurredAt: time.Now().UTC(),
 	})
@@ -3360,16 +3360,16 @@ type queryRowser interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-// getTaskByID returns a task using the canonical work_items table.
-func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, error) {
+// getActionItemByID returns a actionItem using the canonical action_items table.
+func getActionItemByID(ctx context.Context, q queryRower, id string) (domain.ActionItem, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
 			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
-		FROM work_items
+		FROM action_items
 		WHERE id = ?
 	`, id)
-	return scanTask(row)
+	return scanActionItem(row)
 }
 
 // getAttentionItemByID returns one attention item using the canonical attention_items table.
@@ -3390,8 +3390,8 @@ type execerContext interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
-// insertTaskChangeEvent inserts a change-event ledger record.
-func insertTaskChangeEvent(ctx context.Context, execer execerContext, event domain.ChangeEvent) error {
+// insertActionItemChangeEvent inserts a change-event ledger record.
+func insertActionItemChangeEvent(ctx context.Context, execer execerContext, event domain.ChangeEvent) error {
 	metadataJSON, err := json.Marshal(event.Metadata)
 	if err != nil {
 		return fmt.Errorf("encode change event metadata: %w", err)
@@ -3417,7 +3417,7 @@ func insertTaskChangeEvent(ctx context.Context, execer execerContext, event doma
 	return nil
 }
 
-// resolveChangeEventActor merges task-level attribution with any context identity metadata.
+// resolveChangeEventActor merges actionItem-level attribution with any context identity metadata.
 func resolveChangeEventActor(ctx context.Context, actorID, actorName string, actorType domain.ActorType, fallbacks ...string) (string, string, domain.ActorType) {
 	actorID = chooseActorID(append([]string{actorID}, fallbacks...)...)
 	actorName = chooseActorName(actorID, actorName)
@@ -3430,8 +3430,8 @@ func resolveChangeEventActor(ctx context.Context, actorID, actorName string, act
 	return actorID, actorName, actorType
 }
 
-// classifyTaskTransition derives the best operation category and metadata for a task update.
-func classifyTaskTransition(prev, next domain.Task) (domain.ChangeOperation, map[string]string) {
+// classifyActionItemTransition derives the best operation category and metadata for a actionItem update.
+func classifyActionItemTransition(prev, next domain.ActionItem) (domain.ChangeOperation, map[string]string) {
 	if prev.ArchivedAt == nil && next.ArchivedAt != nil {
 		return domain.ChangeOperationArchive, map[string]string{
 			"from_state": string(prev.LifecycleState),
@@ -3452,7 +3452,7 @@ func classifyTaskTransition(prev, next domain.Task) (domain.ChangeOperation, map
 			"to_position":    strconv.Itoa(next.Position),
 		}
 	}
-	fields := changedTaskFields(prev, next)
+	fields := changedActionItemFields(prev, next)
 	metadata := map[string]string{}
 	if len(fields) > 0 {
 		metadata["changed_fields"] = strings.Join(fields, ",")
@@ -3460,8 +3460,8 @@ func classifyTaskTransition(prev, next domain.Task) (domain.ChangeOperation, map
 	return domain.ChangeOperationUpdate, metadata
 }
 
-// changedTaskFields identifies a deterministic set of meaningful changes for metadata.
-func changedTaskFields(prev, next domain.Task) []string {
+// changedActionItemFields identifies a deterministic set of meaningful changes for metadata.
+func changedActionItemFields(prev, next domain.ActionItem) []string {
 	changed := make([]string, 0)
 	if prev.ParentID != next.ParentID {
 		changed = append(changed, "parent_id")
@@ -3532,8 +3532,8 @@ func equalNullableTimes(a, b *time.Time) bool {
 	return a.UTC().Equal(b.UTC())
 }
 
-// equalMetadata compares normalized JSON representations of task metadata.
-func equalMetadata(a, b domain.TaskMetadata) bool {
+// equalMetadata compares normalized JSON representations of actionItem metadata.
+func equalMetadata(a, b domain.ActionItemMetadata) bool {
 	aJSON, aErr := json.Marshal(a)
 	bJSON, bErr := json.Marshal(b)
 	if aErr != nil || bErr != nil {
@@ -3639,14 +3639,14 @@ func marshalTemplateProjectMetadata(defaults *domain.ProjectMetadata) (string, e
 	return string(raw), nil
 }
 
-// marshalTemplateTaskMetadata encodes optional task-metadata defaults for template storage.
-func marshalTemplateTaskMetadata(defaults *domain.TaskMetadata) (string, error) {
+// marshalTemplateActionItemMetadata encodes optional actionItem-metadata defaults for template storage.
+func marshalTemplateActionItemMetadata(defaults *domain.ActionItemMetadata) (string, error) {
 	if defaults == nil {
 		return "", nil
 	}
 	raw, err := json.Marshal(defaults)
 	if err != nil {
-		return "", fmt.Errorf("encode template task metadata defaults: %w", err)
+		return "", fmt.Errorf("encode template actionItem metadata defaults: %w", err)
 	}
 	return string(raw), nil
 }
@@ -3722,9 +3722,9 @@ func nodeTemplateInputsFromDomain(in []domain.NodeTemplate) []domain.NodeTemplat
 			projectDefaults := *nodeTemplate.ProjectMetadataDefaults
 			input.ProjectMetadataDefaults = &projectDefaults
 		}
-		if nodeTemplate.TaskMetadataDefaults != nil {
-			taskDefaults := *nodeTemplate.TaskMetadataDefaults
-			input.TaskMetadataDefaults = &taskDefaults
+		if nodeTemplate.ActionItemMetadataDefaults != nil {
+			actionItemDefaults := *nodeTemplate.ActionItemMetadataDefaults
+			input.ActionItemMetadataDefaults = &actionItemDefaults
 		}
 		if len(nodeTemplate.ChildRules) > 0 {
 			input.ChildRules = make([]domain.TemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
@@ -3802,11 +3802,11 @@ func loadTemplateNodeTemplates(ctx context.Context, q queryRowser, libraryID str
 	out := make([]domain.NodeTemplate, 0)
 	for rows.Next() {
 		var (
-			nodeTemplate       domain.NodeTemplate
-			scopeLevelRaw      string
-			nodeKindIDRaw      string
-			projectDefaultsRaw string
-			taskDefaultsRaw    string
+			nodeTemplate          domain.NodeTemplate
+			scopeLevelRaw         string
+			nodeKindIDRaw         string
+			projectDefaultsRaw    string
+			actionItemDefaultsRaw string
 		)
 		if err := rows.Scan(
 			&nodeTemplate.ID,
@@ -3815,7 +3815,7 @@ func loadTemplateNodeTemplates(ctx context.Context, q queryRowser, libraryID str
 			&nodeTemplate.DisplayName,
 			&nodeTemplate.DescriptionMarkdown,
 			&projectDefaultsRaw,
-			&taskDefaultsRaw,
+			&actionItemDefaultsRaw,
 		); err != nil {
 			return nil, err
 		}
@@ -3829,12 +3829,12 @@ func loadTemplateNodeTemplates(ctx context.Context, q queryRowser, libraryID str
 			}
 			nodeTemplate.ProjectMetadataDefaults = &projectDefaults
 		}
-		if strings.TrimSpace(taskDefaultsRaw) != "" {
-			var taskDefaults domain.TaskMetadata
-			if err := json.Unmarshal([]byte(taskDefaultsRaw), &taskDefaults); err != nil {
+		if strings.TrimSpace(actionItemDefaultsRaw) != "" {
+			var actionItemDefaults domain.ActionItemMetadata
+			if err := json.Unmarshal([]byte(actionItemDefaultsRaw), &actionItemDefaults); err != nil {
 				return nil, fmt.Errorf("decode template task_metadata_defaults_json: %w", err)
 			}
-			nodeTemplate.TaskMetadataDefaults = &taskDefaults
+			nodeTemplate.ActionItemMetadataDefaults = &actionItemDefaults
 		}
 		out = append(out, nodeTemplate)
 	}
@@ -4003,10 +4003,10 @@ func scanProject(s scanner) (domain.Project, error) {
 	return p, nil
 }
 
-// scanTask handles scan task.
-func scanTask(s scanner) (domain.Task, error) {
+// scanActionItem handles scan actionItem.
+func scanActionItem(s scanner) (domain.ActionItem, error) {
 	var (
-		t            domain.Task
+		t            domain.ActionItem
 		dueRaw       sql.NullString
 		labelsRaw    string
 		metadataRaw  string
@@ -4050,9 +4050,9 @@ func scanTask(s scanner) (domain.Task, error) {
 		&canceledRaw,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Task{}, app.ErrNotFound
+			return domain.ActionItem{}, app.ErrNotFound
 		}
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	t.Priority = domain.Priority(priority)
 	t.Kind = domain.WorkKind(kind)
@@ -4070,17 +4070,17 @@ func scanTask(s scanner) (domain.Task, error) {
 		metadataRaw = "{}"
 	}
 	if err := json.Unmarshal([]byte(metadataRaw), &t.Metadata); err != nil {
-		return domain.Task{}, fmt.Errorf("decode metadata_json: %w", err)
+		return domain.ActionItem{}, fmt.Errorf("decode metadata_json: %w", err)
 	}
 	if err := json.Unmarshal([]byte(labelsRaw), &t.Labels); err != nil {
-		return domain.Task{}, fmt.Errorf("decode labels_json: %w", err)
+		return domain.ActionItem{}, fmt.Errorf("decode labels_json: %w", err)
 	}
 	if strings.TrimSpace(string(t.Kind)) == "" {
-		t.Kind = domain.WorkKindTask
+		t.Kind = domain.WorkKindActionItem
 	}
 	if t.Scope == "" {
 		if strings.TrimSpace(t.ParentID) == "" {
-			t.Scope = domain.KindAppliesToTask
+			t.Scope = domain.KindAppliesToActionItem
 		} else {
 			t.Scope = domain.KindAppliesToSubtask
 		}

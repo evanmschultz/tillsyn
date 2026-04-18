@@ -118,14 +118,14 @@ func newApprovedPathHandoffFixture(t *testing.T) approvedPathHandoffFixture {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	columnID := firstMCPProjectColumnIDForTest(t, repo, project.ID)
-	branch, phase, task := createMCPScopedTaskChainForTest(t, service, project.ID, columnID)
-	otherBranch, _, otherTask := createMCPScopedTaskChainForTest(t, service, project.ID, columnID)
+	branch, phase, actionItem := createMCPScopedActionItemChainForTest(t, service, project.ID, columnID)
+	otherBranch, _, otherActionItem := createMCPScopedActionItemChainForTest(t, service, project.ID, columnID)
 	handoff, err := service.CreateHandoff(context.Background(), app.CreateHandoffInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
 			BranchID:  branch.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   task.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItem.ID,
 		},
 		SourceRole:  "builder",
 		TargetRole:  "qa",
@@ -141,8 +141,8 @@ func newApprovedPathHandoffFixture(t *testing.T) approvedPathHandoffFixture {
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
 			BranchID:  otherBranch.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   otherTask.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   otherActionItem.ID,
 		},
 		SourceRole:  "builder",
 		TargetRole:  "qa",
@@ -186,11 +186,11 @@ func firstMCPProjectColumnIDForTest(t *testing.T, repo *sqlite.Repository, proje
 	return columns[0].ID
 }
 
-// createMCPScopedTaskChainForTest creates one branch -> phase -> task chain for MCP auth-context tests.
-func createMCPScopedTaskChainForTest(t *testing.T, service *app.Service, projectID, columnID string) (domain.Task, domain.Task, domain.Task) {
+// createMCPScopedActionItemChainForTest creates one branch -> phase -> actionItem chain for MCP auth-context tests.
+func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, projectID, columnID string) (domain.ActionItem, domain.ActionItem, domain.ActionItem) {
 	t.Helper()
 
-	branch, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	branch, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		Kind:           domain.WorkKind("branch"),
 		Scope:          domain.KindAppliesToBranch,
@@ -203,9 +203,9 @@ func createMCPScopedTaskChainForTest(t *testing.T, service *app.Service, project
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
-	phase, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	phase, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       branch.ID,
 		Kind:           domain.WorkKindPhase,
@@ -219,15 +219,15 @@ func createMCPScopedTaskChainForTest(t *testing.T, service *app.Service, project
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(phase) error = %v", err)
+		t.Fatalf("CreateActionItem(phase) error = %v", err)
 	}
-	task, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	actionItem, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       phase.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
-		Title:          "Task",
+		Title:          "ActionItem",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
@@ -235,9 +235,9 @@ func createMCPScopedTaskChainForTest(t *testing.T, service *app.Service, project
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(task) error = %v", err)
+		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
 	}
-	return branch, phase, task
+	return branch, phase, actionItem
 }
 
 // issueApprovedPathMCPTestSession issues one MCP user session constrained to the requested branch/phase path.

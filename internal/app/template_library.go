@@ -40,14 +40,14 @@ type UpsertTemplateLibraryInput struct {
 
 // UpsertNodeTemplateInput stores write-time values for one node template nested under a library.
 type UpsertNodeTemplateInput struct {
-	ID                      string
-	ScopeLevel              domain.KindAppliesTo
-	NodeKindID              domain.KindID
-	DisplayName             string
-	DescriptionMarkdown     string
-	ProjectMetadataDefaults *domain.ProjectMetadata
-	TaskMetadataDefaults    *domain.TaskMetadata
-	ChildRules              []UpsertTemplateChildRuleInput
+	ID                         string
+	ScopeLevel                 domain.KindAppliesTo
+	NodeKindID                 domain.KindID
+	DisplayName                string
+	DescriptionMarkdown        string
+	ProjectMetadataDefaults    *domain.ProjectMetadata
+	ActionItemMetadataDefaults *domain.ActionItemMetadata
+	ChildRules                 []UpsertTemplateChildRuleInput
 }
 
 // UpsertTemplateChildRuleInput stores write-time values for one nested child rule.
@@ -176,14 +176,14 @@ func (s *Service) UpsertTemplateLibrary(ctx context.Context, in UpsertTemplateLi
 			})
 		}
 		nodeTemplates = append(nodeTemplates, domain.NodeTemplateInput{
-			ID:                      nodeTemplateID,
-			ScopeLevel:              nodeTemplateIn.ScopeLevel,
-			NodeKindID:              nodeTemplateIn.NodeKindID,
-			DisplayName:             nodeTemplateIn.DisplayName,
-			DescriptionMarkdown:     nodeTemplateIn.DescriptionMarkdown,
-			ProjectMetadataDefaults: nodeTemplateIn.ProjectMetadataDefaults,
-			TaskMetadataDefaults:    nodeTemplateIn.TaskMetadataDefaults,
-			ChildRules:              childRules,
+			ID:                         nodeTemplateID,
+			ScopeLevel:                 nodeTemplateIn.ScopeLevel,
+			NodeKindID:                 nodeTemplateIn.NodeKindID,
+			DisplayName:                nodeTemplateIn.DisplayName,
+			DescriptionMarkdown:        nodeTemplateIn.DescriptionMarkdown,
+			ProjectMetadataDefaults:    nodeTemplateIn.ProjectMetadataDefaults,
+			ActionItemMetadataDefaults: nodeTemplateIn.ActionItemMetadataDefaults,
+			ChildRules:                 childRules,
 		})
 	}
 
@@ -480,12 +480,12 @@ func librarySnapshotForBinding(ctx context.Context, repo Repository, binding dom
 	return &library, nil
 }
 
-// mergeTaskMetadataWithNodeTemplate applies task defaults from one node template at create time.
-func mergeTaskMetadataWithNodeTemplate(base domain.TaskMetadata, nodeTemplate domain.NodeTemplate) (domain.TaskMetadata, error) {
-	if nodeTemplate.TaskMetadataDefaults == nil {
-		return domain.MergeTaskMetadata(base, nil)
+// mergeActionItemMetadataWithNodeTemplate applies actionItem defaults from one node template at create time.
+func mergeActionItemMetadataWithNodeTemplate(base domain.ActionItemMetadata, nodeTemplate domain.NodeTemplate) (domain.ActionItemMetadata, error) {
+	if nodeTemplate.ActionItemMetadataDefaults == nil {
+		return domain.MergeActionItemMetadata(base, nil)
 	}
-	return domain.MergeTaskMetadata(base, nodeTemplate.TaskMetadataDefaults)
+	return domain.MergeActionItemMetadata(base, nodeTemplate.ActionItemMetadataDefaults)
 }
 
 // mergeProjectMetadataWithNodeTemplate applies project defaults from one node template at create time.
@@ -497,12 +497,12 @@ func mergeProjectMetadataWithNodeTemplate(base domain.ProjectMetadata, nodeTempl
 }
 
 // applyTemplateChildRules creates generated child nodes and stores their node-contract snapshots.
-func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.Task, library domain.TemplateLibrary, nodeTemplate domain.NodeTemplate, depth int) error {
+func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.ActionItem, library domain.TemplateLibrary, nodeTemplate domain.NodeTemplate, depth int) error {
 	if len(nodeTemplate.ChildRules) == 0 {
 		return nil
 	}
 	for _, childRule := range nodeTemplate.ChildRules {
-		child, err := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
+		child, err := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      parent.ProjectID,
 			ParentID:       parent.ID,
 			Kind:           domain.WorkKind(childRule.ChildKindID),
@@ -555,7 +555,7 @@ func (s *Service) applyProjectTemplateChildRules(ctx context.Context, project do
 		return err
 	}
 	for _, childRule := range nodeTemplate.ChildRules {
-		child, err := s.createTaskWithTemplates(withInternalTemplateMutation(ctx), CreateTaskInput{
+		child, err := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      project.ID,
 			Kind:           domain.WorkKind(childRule.ChildKindID),
 			Scope:          childRule.ChildScopeLevel,
@@ -598,16 +598,16 @@ func (s *Service) applyProjectTemplateChildRules(ctx context.Context, project do
 }
 
 // validateTemplateChildRulesWithLibrary preflights nested child rules against one explicit library.
-func (s *Service) validateTemplateChildRulesWithLibrary(ctx context.Context, projectID string, library domain.TemplateLibrary, childRules []domain.TemplateChildRule, parent *domain.Task, depth int) error {
+func (s *Service) validateTemplateChildRulesWithLibrary(ctx context.Context, projectID string, library domain.TemplateLibrary, childRules []domain.TemplateChildRule, parent *domain.ActionItem, depth int) error {
 	if depth > maxKindTemplateApplyDepth {
 		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidTemplateLibrary)
 	}
 	for _, childRule := range childRules {
-		childKind, err := s.resolveTaskKindDefinition(ctx, projectID, childRule.ChildKindID, childRule.ChildScopeLevel, parent)
+		childKind, err := s.resolveActionItemKindDefinition(ctx, projectID, childRule.ChildKindID, childRule.ChildScopeLevel, parent)
 		if err != nil {
 			return err
 		}
-		childParent := &domain.Task{
+		childParent := &domain.ActionItem{
 			ProjectID: projectID,
 			Scope:     childRule.ChildScopeLevel,
 		}
@@ -625,16 +625,16 @@ func (s *Service) validateTemplateChildRulesWithLibrary(ctx context.Context, pro
 }
 
 // validateTemplateChildRules preflights nested bound child rules before persistence.
-func (s *Service) validateTemplateChildRules(ctx context.Context, projectID string, childRules []domain.TemplateChildRule, parent *domain.Task, depth int) error {
+func (s *Service) validateTemplateChildRules(ctx context.Context, projectID string, childRules []domain.TemplateChildRule, parent *domain.ActionItem, depth int) error {
 	if depth > maxKindTemplateApplyDepth {
 		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidTemplateLibrary)
 	}
 	for _, childRule := range childRules {
-		childKind, err := s.resolveTaskKindDefinition(ctx, projectID, childRule.ChildKindID, childRule.ChildScopeLevel, parent)
+		childKind, err := s.resolveActionItemKindDefinition(ctx, projectID, childRule.ChildKindID, childRule.ChildScopeLevel, parent)
 		if err != nil {
 			return err
 		}
-		childParent := &domain.Task{
+		childParent := &domain.ActionItem{
 			ProjectID: projectID,
 			Scope:     childRule.ChildScopeLevel,
 		}
