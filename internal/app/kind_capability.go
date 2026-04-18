@@ -422,7 +422,9 @@ func capabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
 	}
 }
 
-// ensureOrchestratorOverlapPolicy enforces project policy for overlapping orchestrator leases.
+// ensureOrchestratorOverlapPolicy enforces project policy for overlapping orchestrator leases
+// held by a DIFFERENT agent identity. Same-identity overlap continues to block unless the
+// project override policy is satisfied.
 func (s *Service) ensureOrchestratorOverlapPolicy(ctx context.Context, project domain.Project, next domain.CapabilityLease, overrideToken string) error {
 	leases, err := s.repo.ListCapabilityLeasesByScope(ctx, next.ProjectID, next.ScopeType, next.ScopeID)
 	if err != nil {
@@ -437,6 +439,11 @@ func (s *Service) ensureOrchestratorOverlapPolicy(ctx context.Context, project d
 			continue
 		}
 		if !existing.IsActive(now) {
+			continue
+		}
+		sameIdentity := strings.TrimSpace(existing.AgentName) != "" &&
+			strings.TrimSpace(existing.AgentName) == strings.TrimSpace(next.AgentName)
+		if !sameIdentity {
 			continue
 		}
 

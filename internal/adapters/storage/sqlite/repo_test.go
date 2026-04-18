@@ -1865,6 +1865,129 @@ func TestRepository_CapabilityLeaseRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRepository_CapabilityLeaseDistinctOrchestratorIdentitiesAtProjectScope exercises the
+// distinct-identity orchestrator overlap fix end-to-end through a real SQLite-backed Service.
+// It proves the app-layer sameIdentity branch in ensureOrchestratorOverlapPolicy cooperates with
+// the SQLite capability_leases schema (no UNIQUE on (project_id, scope_type, scope_id, role))
+// so two different orchestrator identities can hold concurrent project-scope leases and
+// revoke-one-leaves-the-other behaves correctly at the persistence boundary. Complements the
+// app-package fake-repo coverage for acceptance 2.1 and 2.3 from the DROP_1 multi-orch-auth
+// hotfix worklog §7.2.2.
+func TestRepository_CapabilityLeaseDistinctOrchestratorIdentitiesAtProjectScope(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
+	ids := []string{"p-multi-orch", "lease-token-steward", "lease-token-drop-1"}
+	idx := 0
+	svc := app.NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return now
+	}, app.ServiceConfig{})
+
+	project, err := svc.CreateProject(ctx, "Multi-Orch Project", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	leaseSteward, err := svc.IssueCapabilityLease(ctx, app.IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-steward",
+		AgentInstanceID: "orch-steward-inst",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-steward) error = %v", err)
+	}
+	if leaseSteward.LeaseToken == "" || leaseSteward.InstanceID == "" {
+		t.Fatalf("IssueCapabilityLease(orch-steward) returned empty token/instance: %#v", leaseSteward)
+	}
+
+	leaseDrop1, err := svc.IssueCapabilityLease(ctx, app.IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-drop-1",
+		AgentInstanceID: "orch-drop-1-inst",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-drop-1) error = %v", err)
+	}
+	if leaseDrop1.LeaseToken == "" || leaseDrop1.InstanceID == "" {
+		t.Fatalf("IssueCapabilityLease(orch-drop-1) returned empty token/instance: %#v", leaseDrop1)
+	}
+	if leaseDrop1.LeaseToken == leaseSteward.LeaseToken {
+		t.Fatalf("distinct orchestrator leases collided on LeaseToken: %q", leaseDrop1.LeaseToken)
+	}
+
+	active, err := svc.ListCapabilityLeases(ctx, app.ListCapabilityLeasesInput{
+		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeProject,
+	})
+	if err != nil {
+		t.Fatalf("ListCapabilityLeases() error = %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("expected 2 active orchestrator leases at project scope, got %d: %#v", len(active), active)
+	}
+	names := map[string]bool{}
+	for _, lease := range active {
+		if lease.RevokedAt != nil {
+			t.Fatalf("active lease %q unexpectedly has RevokedAt set: %#v", lease.AgentName, lease)
+		}
+		names[lease.AgentName] = true
+	}
+	if !names["orch-steward"] || !names["orch-drop-1"] {
+		t.Fatalf("expected both orch-steward and orch-drop-1 present, got %#v", names)
+	}
+
+	if _, err := svc.RevokeCapabilityLease(ctx, app.RevokeCapabilityLeaseInput{
+		AgentInstanceID: leaseSteward.InstanceID,
+		Reason:          "done",
+	}); err != nil {
+		t.Fatalf("RevokeCapabilityLease(orch-steward) error = %v", err)
+	}
+
+	remaining, err := svc.ListCapabilityLeases(ctx, app.ListCapabilityLeasesInput{
+		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeProject,
+	})
+	if err != nil {
+		t.Fatalf("ListCapabilityLeases(after revoke) error = %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("expected exactly 1 active lease after revoke, got %d: %#v", len(remaining), remaining)
+	}
+	survivor := remaining[0]
+	if survivor.AgentName != "orch-drop-1" {
+		t.Fatalf("expected surviving active lease to be orch-drop-1, got %q", survivor.AgentName)
+	}
+	if survivor.RevokedAt != nil {
+		t.Fatalf("surviving lease unexpectedly has RevokedAt set: %#v", survivor)
+	}
+	if !survivor.ExpiresAt.After(now) {
+		t.Fatalf("surviving lease ExpiresAt %v is not after now %v", survivor.ExpiresAt, now)
+	}
+
+	revokedRow, err := repo.GetCapabilityLease(ctx, leaseSteward.InstanceID)
+	if err != nil {
+		t.Fatalf("GetCapabilityLease(orch-steward after revoke) error = %v", err)
+	}
+	if revokedRow.RevokedAt == nil {
+		t.Fatalf("expected revoked lease to persist RevokedAt in SQLite, got %#v", revokedRow)
+	}
+}
+
 // TestRepository_AttentionItemRoundTrip verifies scoped attention persistence, ordering, and resolution.
 func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 	ctx := context.Background()

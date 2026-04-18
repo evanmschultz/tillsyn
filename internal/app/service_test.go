@@ -3589,7 +3589,11 @@ func TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes(t *testing.T) {
 	}
 }
 
-// TestIssueCapabilityLeaseOverlapPolicy verifies orchestrator overlap behavior and override token handling.
+// TestIssueCapabilityLeaseOverlapPolicy verifies same-identity orchestrator overlap
+// behavior and override token handling. All four sub-cases use the same AgentName so
+// the overlap gate at kind_capability.go:ensureOrchestratorOverlapPolicy is exercised
+// on the same-identity lane (distinct AgentInstanceIDs keep the short-circuit at the
+// top of the loop from suppressing the check).
 func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "lease-a", "lease-token-a", "lease-b", "lease-token-b", "lease-c", "lease-token-c", "lease-d", "lease-token-d"}
@@ -3620,8 +3624,8 @@ func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
-		AgentName:       "orch-a",
-		AgentInstanceID: "orch-a",
+		AgentName:       "orch-alpha",
+		AgentInstanceID: "orch-alpha-1",
 	}); err != nil {
 		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
 	}
@@ -3630,8 +3634,8 @@ func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
-		AgentName:       "orch-b",
-		AgentInstanceID: "orch-b",
+		AgentName:       "orch-alpha",
+		AgentInstanceID: "orch-alpha-2",
 	}); err != domain.ErrOverrideTokenRequired {
 		t.Fatalf("expected ErrOverrideTokenRequired, got %v", err)
 	}
@@ -3640,8 +3644,8 @@ func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
-		AgentName:       "orch-c",
-		AgentInstanceID: "orch-c",
+		AgentName:       "orch-alpha",
+		AgentInstanceID: "orch-alpha-3",
 		OverrideToken:   "wrong",
 	}); err != domain.ErrOverrideTokenInvalid {
 		t.Fatalf("expected ErrOverrideTokenInvalid, got %v", err)
@@ -3651,11 +3655,454 @@ func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
-		AgentName:       "orch-d",
-		AgentInstanceID: "orch-d",
+		AgentName:       "orch-alpha",
+		AgentInstanceID: "orch-alpha-4",
 		OverrideToken:   "override-123",
 	}); err != nil {
 		t.Fatalf("IssueCapabilityLease(override) error = %v", err)
+	}
+}
+
+// TestIssueCapabilityLeaseAllowsDistinctOrchestratorIdentities verifies two orchestrator
+// leases with different AgentName values coexist at the same scope without an override
+// token. Cements acceptance 2.1 of the multi-orch unblock.
+func TestIssueCapabilityLeaseAllowsDistinctOrchestratorIdentities(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Distinct Identities", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-a) error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-b",
+		AgentInstanceID: "orch-b-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-b) error = %v", err)
+	}
+
+	leases, err := svc.ListCapabilityLeases(context.Background(), ListCapabilityLeasesInput{
+		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeProject,
+	})
+	if err != nil {
+		t.Fatalf("ListCapabilityLeases() error = %v", err)
+	}
+	if len(leases) != 2 {
+		t.Fatalf("ListCapabilityLeases() len = %d, want 2", len(leases))
+	}
+	names := map[string]bool{}
+	for _, lease := range leases {
+		names[lease.AgentName] = true
+	}
+	if !names["orch-a"] || !names["orch-b"] {
+		t.Fatalf("ListCapabilityLeases() AgentNames = %v, want both orch-a and orch-b", names)
+	}
+}
+
+// TestIssueCapabilityLeaseRejectsSameIdentityReclaim verifies a second orchestrator lease
+// issued by the same AgentName at the same scope is rejected with an override-token error
+// when the project allows override-with-token, exercising the same-identity lane of
+// ensureOrchestratorOverlapPolicy. Cements acceptance 2.2.
+func TestIssueCapabilityLeaseRejectsSameIdentityReclaim(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name: "Same Identity Reclaim",
+		Metadata: domain.ProjectMetadata{
+			CapabilityPolicy: domain.ProjectCapabilityPolicy{
+				AllowOrchestratorOverride: true,
+				OrchestratorOverrideToken: "override-xyz",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst-1",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst-2",
+	}); err != domain.ErrOverrideTokenRequired {
+		t.Fatalf("IssueCapabilityLease(same-identity reclaim) error = %v, want ErrOverrideTokenRequired", err)
+	}
+}
+
+// TestIssueCapabilityLeaseRevokeOneIdentityLeavesOthers verifies revoking one orchestrator
+// identity's lease does not revoke or invalidate a peer orchestrator identity's lease at
+// the same scope. Cements acceptance 2.3.
+func TestIssueCapabilityLeaseRevokeOneIdentityLeavesOthers(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Revoke One", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	leaseA, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-a) error = %v", err)
+	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-b",
+		AgentInstanceID: "orch-b-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-b) error = %v", err)
+	}
+
+	if _, err := svc.RevokeCapabilityLease(context.Background(), RevokeCapabilityLeaseInput{
+		AgentInstanceID: leaseA.InstanceID,
+		Reason:          "done",
+	}); err != nil {
+		t.Fatalf("RevokeCapabilityLease(orch-a) error = %v", err)
+	}
+
+	active, err := svc.ListCapabilityLeases(context.Background(), ListCapabilityLeasesInput{
+		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeProject,
+	})
+	if err != nil {
+		t.Fatalf("ListCapabilityLeases(active) error = %v", err)
+	}
+	if len(active) != 1 || active[0].AgentName != "orch-b" {
+		t.Fatalf("ListCapabilityLeases(active) = %#v, want only orch-b active", active)
+	}
+	if active[0].RevokedAt != nil {
+		t.Fatalf("surviving lease was revoked: %#v", active[0])
+	}
+}
+
+// TestIssueCapabilityLeaseOverlapDifferentIdentitiesNoTokenRequired verifies the override
+// policy is never consulted when the two orchestrator leases carry different AgentName
+// values, even on a project that does not opt into override. Belt-and-suspenders cement of
+// acceptance 2.1 against the policy-less default.
+func TestIssueCapabilityLeaseOverlapDifferentIdentitiesNoTokenRequired(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	// No CapabilityPolicy overrides set — AllowOrchestratorOverride defaults false.
+	project, err := svc.CreateProject(context.Background(), "No Override Policy", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-a) error = %v", err)
+	}
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-b",
+		AgentInstanceID: "orch-b-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-b, no override policy) error = %v, want nil", err)
+	}
+}
+
+// TestIssueCapabilityLeaseSameInstanceIDRetry verifies the AgentInstanceID short-circuit at
+// the top of ensureOrchestratorOverlapPolicy's loop: a retry that reuses the same
+// AgentInstanceID does not hit the identity check. Under the fake repo's idempotent
+// CreateCapabilityLease, the second issue overwrites the first without error.
+func TestIssueCapabilityLeaseSameInstanceIDRetry(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Same Instance Retry", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	first, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
+	}
+
+	second, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(same-instance retry) error = %v, want nil via InstanceID short-circuit", err)
+	}
+	if second.InstanceID != first.InstanceID {
+		t.Fatalf("second.InstanceID = %q, want %q", second.InstanceID, first.InstanceID)
+	}
+	if second.LeaseToken == first.LeaseToken {
+		t.Fatalf("second.LeaseToken should rotate on retry; both were %q", second.LeaseToken)
+	}
+
+	leases, err := svc.ListCapabilityLeases(context.Background(), ListCapabilityLeasesInput{
+		ProjectID:      project.ID,
+		ScopeType:      domain.CapabilityScopeProject,
+		IncludeRevoked: true,
+	})
+	if err != nil {
+		t.Fatalf("ListCapabilityLeases() error = %v", err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("ListCapabilityLeases() len = %d, want 1 after same-instance retry on fake repo", len(leases))
+	}
+}
+
+// TestIssueCapabilityLeaseSameIdentityAfterExpiry verifies that once an existing same-identity
+// orchestrator lease has passed its ExpiresAt deadline, the !existing.IsActive(now)
+// short-circuit at kind_capability.go:439 lets the same identity reissue without override token.
+func TestIssueCapabilityLeaseSameIdentityAfterExpiry(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	clockNow := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return clockNow
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "After Expiry", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst-1",
+		RequestedTTL:    5 * time.Minute,
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
+	}
+
+	// Advance the clock past the first lease's ExpiresAt.
+	clockNow = clockNow.Add(10 * time.Minute)
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst-2",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(after expiry) error = %v, want nil via !IsActive short-circuit", err)
+	}
+}
+
+// TestIssueCapabilityLeaseSameIdentityAfterRevoke verifies that once an existing same-identity
+// orchestrator lease is explicitly revoked, the same identity can reissue without override
+// token (revoked leases are not IsActive).
+func TestIssueCapabilityLeaseSameIdentityAfterRevoke(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-token-a", "lease-token-b"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "After Revoke", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	first, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst-1",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
+	}
+
+	if _, err := svc.RevokeCapabilityLease(context.Background(), RevokeCapabilityLeaseInput{
+		AgentInstanceID: first.InstanceID,
+		Reason:          "rotate",
+	}); err != nil {
+		t.Fatalf("RevokeCapabilityLease() error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst-2",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(after revoke) error = %v, want nil via !IsActive short-circuit", err)
+	}
+}
+
+// TestIssueCapabilityLeaseDistinctIdentitiesBranchScope proves the multi-identity allowance
+// is scope-type-agnostic: two distinct orchestrator identities holding branch-scope leases
+// on the same branch row coexist without override token.
+func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{
+		"p1", "c1", "branch-1",
+		"lease-token-a", "lease-token-b",
+	}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Branch Scope", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeID:         branch.ID,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-a, branch) error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeID:         branch.ID,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-b",
+		AgentInstanceID: "orch-b-inst",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(orch-b, branch) error = %v", err)
+	}
+
+	leases, err := svc.ListCapabilityLeases(context.Background(), ListCapabilityLeasesInput{
+		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeBranch,
+		ScopeID:   branch.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListCapabilityLeases(branch) error = %v", err)
+	}
+	if len(leases) != 2 {
+		t.Fatalf("ListCapabilityLeases(branch) len = %d, want 2", len(leases))
 	}
 }
 
