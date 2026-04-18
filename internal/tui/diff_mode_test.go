@@ -39,14 +39,16 @@ func (stubHighlighter) Highlight(patch string) (string, error) {
 // Tests configure result + err directly; teatest paths do not touch a real
 // repo. Keeps diff-mode unit tests deterministic and fast.
 type fakeDiffer struct {
-	result gitdiff.DiffResult
-	err    error
-	calls  int
+	result    gitdiff.DiffResult
+	err       error
+	calls     int
+	lastPaths []string
 }
 
-// Diff echoes the canned response and records a call.
-func (f *fakeDiffer) Diff(_ context.Context, _, _ string, _ []string) (gitdiff.DiffResult, error) {
+// Diff echoes the canned response and records a call along with the paths it received.
+func (f *fakeDiffer) Diff(_ context.Context, _, _ string, paths []string) (gitdiff.DiffResult, error) {
 	f.calls++
+	f.lastPaths = append([]string(nil), paths...)
 	return f.result, f.err
 }
 
@@ -333,5 +335,350 @@ func TestDiffMode_Teatest_E2E(t *testing.T) {
 	}
 	if got := svc.tasks[p.ID][0]; got.Title != task.Title || got.ID != task.ID {
 		t.Fatalf("task mutated by diff round-trip: %+v vs %+v", got, task)
+	}
+}
+
+// newDiffTestTask builds a domain.Task with the given ResourceRefs for diff-mode unit tests.
+//
+// The helper keeps test bodies concise by pre-filling all required Task fields
+// with stable values; callers only need to supply the ResourceRefs that drive
+// resolveDiffPaths behaviour under test.
+func newDiffTestTask(t *testing.T, refs []domain.ResourceRef) domain.Task {
+	t.Helper()
+	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
+	p, err := domain.NewProject("p1", "Inbox", "", now)
+	if err != nil {
+		t.Fatalf("NewProject: %v", err)
+	}
+	col, err := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn: %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "t-diff-test",
+		ProjectID: p.ID,
+		ColumnID:  col.ID,
+		Position:  0,
+		Title:     "diff test task",
+		Priority:  domain.PriorityLow,
+		Metadata: domain.TaskMetadata{
+			ResourceRefs: refs,
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask: %v", err)
+	}
+	return task
+}
+
+// refWith is a compact ResourceRef constructor for unit tests.
+func refWith(location string, tags ...string) domain.ResourceRef {
+	return domain.ResourceRef{
+		Location: location,
+		Tags:     tags,
+	}
+}
+
+// TestResolveDiffPaths_EmptyResourceRefs asserts that a nil item and a task with
+// no ResourceRefs both produce an empty slice so Differ.Diff falls back to
+// whole-repo behaviour.
+func TestResolveDiffPaths_EmptyResourceRefs(t *testing.T) {
+	// nil item guard
+	if got := resolveDiffPaths(nil); len(got) != 0 {
+		t.Fatalf("nil item: expected empty slice, got %v", got)
+	}
+	// task with zero ResourceRefs
+	task := newDiffTestTask(t, nil)
+	if got := resolveDiffPaths(&task); len(got) != 0 {
+		t.Fatalf("empty refs: expected empty slice, got %v", got)
+	}
+}
+
+// TestResolveDiffPaths_PathTagsOnly asserts that "path"-tagged Locations are
+// returned unchanged (no trailing slash added).
+func TestResolveDiffPaths_PathTagsOnly(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("internal/tui", "path"),
+		refWith("internal/domain", "path"),
+	})
+	got := resolveDiffPaths(&task)
+	want := []string{"internal/tui", "internal/domain"}
+	if len(got) != len(want) {
+		t.Fatalf("path tags: want %v, got %v", want, got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("path tags [%d]: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestResolveDiffPaths_FileTagsOnly asserts that "file"-tagged Locations are
+// returned unchanged (same behaviour as "path").
+func TestResolveDiffPaths_FileTagsOnly(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("cmd/till/main.go", "file"),
+		refWith("magefile.go", "file"),
+	})
+	got := resolveDiffPaths(&task)
+	want := []string{"cmd/till/main.go", "magefile.go"}
+	if len(got) != len(want) {
+		t.Fatalf("file tags: want %v, got %v", want, got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("file tags [%d]: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestResolveDiffPaths_PackageTagsOnly asserts that "package"-tagged Locations
+// receive a trailing slash (normalised — no double slash when already present).
+func TestResolveDiffPaths_PackageTagsOnly(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("internal/domain", "package"),
+		refWith("internal/tui/", "package"), // already has trailing slash
+	})
+	got := resolveDiffPaths(&task)
+	want := []string{"internal/domain/", "internal/tui/"}
+	if len(got) != len(want) {
+		t.Fatalf("package tags: want %v, got %v", want, got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("package tags [%d]: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestResolveDiffPaths_MixedTags asserts that path/file/package refs are merged
+// in iteration order with each tagged appropriately.
+func TestResolveDiffPaths_MixedTags(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("cmd/till/main.go", "file"),
+		refWith("internal/app", "path"),
+		refWith("internal/domain", "package"),
+	})
+	got := resolveDiffPaths(&task)
+	want := []string{"cmd/till/main.go", "internal/app", "internal/domain/"}
+	if len(got) != len(want) {
+		t.Fatalf("mixed tags: want %v, got %v", want, got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("mixed tags [%d]: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestResolveDiffPaths_Dedup asserts that duplicate Locations within the same
+// tag class are deduplicated, keeping the first occurrence.
+func TestResolveDiffPaths_Dedup(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("internal/tui", "path"),
+		refWith("internal/tui", "path"), // duplicate
+		refWith("internal/domain", "path"),
+	})
+	got := resolveDiffPaths(&task)
+	want := []string{"internal/tui", "internal/domain"}
+	if len(got) != len(want) {
+		t.Fatalf("dedup: want %v, got %v", want, got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("dedup [%d]: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestResolveDiffPaths_PackageWinsOverPath asserts that when the same Location
+// appears as both a "path" ref and a "package" ref, the trailing-slash (package)
+// form wins regardless of which appears first.
+func TestResolveDiffPaths_PackageWinsOverPath(t *testing.T) {
+	// path ref first, then package ref for the same Location
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("internal/tui", "path"),    // arrives first — bare form
+		refWith("internal/tui", "package"), // upgrades to trailing-slash form
+	})
+	got := resolveDiffPaths(&task)
+	if len(got) != 1 {
+		t.Fatalf("package-wins: expected exactly 1 result, got %v", got)
+	}
+	if got[0] != "internal/tui/" {
+		t.Fatalf("package-wins: expected %q, got %q", "internal/tui/", got[0])
+	}
+}
+
+// TestResolveDiffPaths_PackageFirstThenPath asserts that when the same Location
+// appears as a "package" ref first and then as a "path" ref, the trailing-slash
+// (package) form wins — the path ref cannot downgrade the already-slashed entry.
+// This is the reverse-order complement of TestResolveDiffPaths_PackageWinsOverPath.
+func TestResolveDiffPaths_PackageFirstThenPath(t *testing.T) {
+	// package ref first, then path ref for the same Location
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("internal/tui", "package"), // arrives first — sets trailing-slash form
+		refWith("internal/tui", "path"),    // must not downgrade to bare form
+	})
+	got := resolveDiffPaths(&task)
+	if len(got) != 1 {
+		t.Fatalf("package-first: expected exactly 1 result, got %v", got)
+	}
+	if got[0] != "internal/tui/" {
+		t.Fatalf("package-first: expected %q, got %q", "internal/tui/", got[0])
+	}
+}
+
+// TestResolveDiffPaths_UnknownTagSkipped asserts that a ResourceRef whose first
+// tag is outside {"path","file","package"} is silently skipped without error.
+func TestResolveDiffPaths_UnknownTagSkipped(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		refWith("https://example.com/spec", "url"),
+		refWith("internal/tui", "path"),
+	})
+	got := resolveDiffPaths(&task)
+	if len(got) != 1 || got[0] != "internal/tui" {
+		t.Fatalf("unknown tag: expected [internal/tui], got %v", got)
+	}
+}
+
+// TestResolveDiffPaths_EmptyTagsSkipped asserts that a ResourceRef with an empty
+// Tags slice is silently skipped (no panic, no output).
+func TestResolveDiffPaths_EmptyTagsSkipped(t *testing.T) {
+	task := newDiffTestTask(t, []domain.ResourceRef{
+		{Location: "internal/domain"},   // no Tags field
+		refWith("internal/tui", "path"), // has tag
+	})
+	got := resolveDiffPaths(&task)
+	if len(got) != 1 || got[0] != "internal/tui" {
+		t.Fatalf("empty tags: expected [internal/tui], got %v", got)
+	}
+}
+
+// TestDiffMode_SetItem_PassesResolvedPaths asserts that SetItem wires the
+// resolved path list into the next Differ.Diff invocation via enterDiffMode.
+func TestDiffMode_SetItem_PassesResolvedPaths(t *testing.T) {
+	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "resource task",
+		Priority:  domain.PriorityLow,
+		Metadata: domain.TaskMetadata{
+			ResourceRefs: []domain.ResourceRef{
+				refWith("internal/tui", "path"),
+				refWith("internal/domain", "package"),
+			},
+		},
+	}, now)
+
+	fd := &fakeDiffer{result: gitdiff.DiffResult{Patch: samplePatchForDiffMode, Divergence: gitdiff.DivergenceAncestor}}
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc, WithDiffMode(fd, stubHighlighter{})))
+
+	// Enter diff mode — this should call SetItem with the selected board task.
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if m.mode != modeDiff {
+		t.Fatalf("expected modeDiff, got %v", m.mode)
+	}
+
+	// The fake differ must have been called exactly once.
+	if fd.calls != 1 {
+		t.Fatalf("expected 1 Diff call, got %d", fd.calls)
+	}
+
+	// The paths it received must match resolveDiffPaths(task).
+	want := resolveDiffPaths(&task)
+	if len(fd.lastPaths) != len(want) {
+		t.Fatalf("path count mismatch: want %v, got %v", want, fd.lastPaths)
+	}
+	for i, w := range want {
+		if fd.lastPaths[i] != w {
+			t.Fatalf("path[%d]: want %q, got %q", i, w, fd.lastPaths[i])
+		}
+	}
+}
+
+// TestDiffMode_RecomputesOnItemChange asserts that entering diff mode after the
+// active task's ResourceRefs have changed results in a fresh Differ call with the
+// updated path list (i.e. paths are not cached across enterDiffMode sessions).
+func TestDiffMode_RecomputesOnItemChange(t *testing.T) {
+	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "recompute task",
+		Priority:  domain.PriorityLow,
+		Metadata: domain.TaskMetadata{
+			ResourceRefs: []domain.ResourceRef{
+				refWith("internal/app", "path"),
+			},
+		},
+	}, now)
+
+	fd := &fakeDiffer{result: gitdiff.DiffResult{Patch: samplePatchForDiffMode, Divergence: gitdiff.DivergenceAncestor}}
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc, WithDiffMode(fd, stubHighlighter{})))
+
+	// First diff entry — uses task's initial ResourceRefs.
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if m.mode != modeDiff {
+		t.Fatalf("expected modeDiff on first entry, got %v", m.mode)
+	}
+	if fd.calls != 1 {
+		t.Fatalf("expected 1 Diff call after first entry, got %d", fd.calls)
+	}
+	firstPaths := append([]string(nil), fd.lastPaths...)
+
+	// Exit diff mode.
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected modeNone after esc, got %v", m.mode)
+	}
+
+	// Mutate the task's ResourceRefs in the fake service to simulate an update
+	// (e.g. after P3-A/B writes new entries). We set new refs directly through
+	// SetItem on the diff struct to replicate what enterDiffMode would see if
+	// the in-memory task had changed. We achieve this by updating the task in
+	// svc and reloading the model.
+	updatedTask := task
+	updatedTask.Metadata.ResourceRefs = []domain.ResourceRef{
+		refWith("internal/domain", "package"),
+		refWith("cmd/till", "path"),
+	}
+	svc.tasks[p.ID] = []domain.Task{updatedTask}
+	m2 := loadReadyModel(t, NewModel(svc, WithDiffMode(fd, stubHighlighter{})))
+
+	// Second diff entry — uses updated ResourceRefs.
+	m2 = applyMsg(t, m2, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if m2.mode != modeDiff {
+		t.Fatalf("expected modeDiff on second entry, got %v", m2.mode)
+	}
+	if fd.calls != 2 {
+		t.Fatalf("expected 2 Diff calls total, got %d", fd.calls)
+	}
+
+	// The second paths must differ from the first.
+	secondPaths := fd.lastPaths
+	if strings.Join(firstPaths, ",") == strings.Join(secondPaths, ",") {
+		t.Fatalf("expected different paths on second entry:\nfirst=%v\nsecond=%v", firstPaths, secondPaths)
+	}
+
+	// The second paths must match resolveDiffPaths of the updated task.
+	want := resolveDiffPaths(&updatedTask)
+	if len(secondPaths) != len(want) {
+		t.Fatalf("second paths count mismatch: want %v, got %v", want, secondPaths)
+	}
+	for i, w := range want {
+		if secondPaths[i] != w {
+			t.Fatalf("second path[%d]: want %q, got %q", i, w, secondPaths[i])
+		}
 	}
 }

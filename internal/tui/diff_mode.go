@@ -16,6 +16,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/tui/gitdiff"
 )
 
@@ -49,6 +50,109 @@ type diffMode struct {
 
 	width  int
 	height int
+
+	// activeItem is the plan-item whose ResourceRefs were last used to resolve
+	// the diff path list. SetItem writes it on each enterDiffMode call so path
+	// resolution is always fresh and never cached across sessions.
+	activeItem *domain.Task
+}
+
+// SetItem records the active plan-item and feeds its ResourceRefs into the next
+// Differ.Diff invocation. Callers (enterDiffMode) must call SetItem before
+// issuing diffModeCmd so the resolved path list reflects the current board
+// selection. Passing nil is safe — resolveDiffPaths returns an empty slice,
+// causing Differ.Diff to fall back to whole-repo behaviour.
+func (d *diffMode) SetItem(item *domain.Task) {
+	if d == nil {
+		return
+	}
+	d.activeItem = item
+}
+
+// resolvePaths returns the path list derived from the most-recently set active
+// plan-item's ResourceRefs. It delegates to the pure resolveDiffPaths function
+// so the stored activeItem field is the single source of truth for path
+// resolution, making SetItem load-bearing.
+func (d *diffMode) resolvePaths() []string {
+	if d == nil {
+		return nil
+	}
+	return resolveDiffPaths(d.activeItem)
+}
+
+// resolveDiffPaths derives the path list for git diff from the active plan-item's
+// ResourceRefs. It is a pure function (no receiver) so it can be called from
+// tests without constructing a full diffMode.
+//
+// Partition rules (Tags[0] governs):
+//   - "path" or "file" → append Location unchanged.
+//   - "package"        → append Location with a trailing "/" (not doubled).
+//   - zero Tags        → skip.
+//   - any other tag    → skip silently.
+//
+// Deduplication preserves first-occurrence order. If the same Location appears
+// as both a path/file ref and a package ref the trailing-slash (package) form
+// wins — it is replaced in-place at the position the first occurrence occupied,
+// so ordering is stable.
+//
+// An empty result (nil item / nil refs / all-skipped) signals Differ.Diff to
+// run whole-repo (conventional git diff behaviour).
+func resolveDiffPaths(item *domain.Task) []string {
+	if item == nil {
+		return nil
+	}
+	refs := item.Metadata.ResourceRefs
+	if len(refs) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(refs))
+	// seenIdx maps the bare location (without trailing slash) to its current
+	// index in out. This lets package refs upgrade an earlier path/file entry
+	// in-place without altering position.
+	seenIdx := make(map[string]int, len(refs))
+
+	for _, ref := range refs {
+		if len(ref.Tags) == 0 {
+			continue
+		}
+		tag := ref.Tags[0]
+		loc := ref.Location
+
+		switch tag {
+		case "path", "file":
+			bare := strings.TrimSuffix(loc, "/")
+			if idx, exists := seenIdx[bare]; exists {
+				// Already present. If the existing entry is already the
+				// trailing-slash (package) form, a path/file ref cannot
+				// downgrade it — skip.
+				if strings.HasSuffix(out[idx], "/") {
+					continue
+				}
+				// Existing entry is the bare form; a path/file ref is the
+				// same — skip duplicate.
+				continue
+			}
+			seenIdx[bare] = len(out)
+			out = append(out, bare)
+
+		case "package":
+			bare := strings.TrimSuffix(loc, "/")
+			slashed := bare + "/"
+			if idx, exists := seenIdx[bare]; exists {
+				// Upgrade bare path/file entry to trailing-slash form in-place.
+				out[idx] = slashed
+			} else {
+				seenIdx[bare] = len(out)
+				out = append(out, slashed)
+			}
+
+		default:
+			// Unknown tag — skip silently.
+		}
+	}
+
+	return out
 }
 
 // newDiffMode constructs a diffMode with Differ + Highlighter injected. Both
@@ -269,6 +373,10 @@ func truncateSHA(sha string) string {
 // enterDiffMode transitions from the board (or any other read surface) into
 // diff mode, capturing the prior mode so esc can restore it and kicking off
 // the Differ call on the async tea.Cmd queue.
+//
+// The active board task (if any) is passed to SetItem before diffModeCmd fires so
+// the path list reflects the current plan-item's ResourceRefs. When no task is
+// selected the Differ falls back to whole-repo behaviour (empty path list).
 func (m Model) enterDiffMode() (tea.Model, tea.Cmd) {
 	if m.diff == nil {
 		m.status = "diff mode unavailable"
@@ -278,7 +386,15 @@ func (m Model) enterDiffMode() (tea.Model, tea.Cmd) {
 	m.diffBackMode = prior
 	m.mode = modeDiff
 	m.status = "loading diff..."
-	return m, diffModeCmd(m.diff.differ, diffModeStartRev(), diffModeEndRev(), nil)
+	// Resolve the active task's ResourceRefs fresh on each entry so path lists
+	// are never cached across sessions (P4-T4 acceptance criterion).
+	var activeTask *domain.Task
+	if task, ok := m.selectedTaskInCurrentColumn(); ok {
+		activeTask = &task
+	}
+	m.diff.SetItem(activeTask)
+	paths := m.diff.resolvePaths()
+	return m, diffModeCmd(m.diff.differ, diffModeStartRev(), diffModeEndRev(), paths)
 }
 
 // exitDiffMode restores the prior mode captured on entry and clears the cached
