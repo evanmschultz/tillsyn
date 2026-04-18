@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
+	"github.com/charmbracelet/log"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
@@ -16,16 +17,22 @@ import (
 // Variants share one core (this file) but differ in accept semantics:
 //   - filePickerModeNone: picker is idle / closed.
 //   - filePickerModePath: selected entries materialize as Tags[0]=="path"
-//     ResourceRefs on the active plan-item's Metadata.ResourceRefs.
+//     ResourceRefs on the active plan-item's Metadata.ResourceRefs; files and
+//     directories are both valid.
+//   - filePickerModeFile: selected entries materialize as Tags[0]=="file"
+//     ResourceRefs; ONLY regular files that pass os.Stat + FileInfo.Mode().
+//     IsRegular() land (PLAN §17.1 `exist` rule). Directories and missing
+//     paths are dropped silently.
 //
-// Future variants (file-picker, url-ref-picker, etc.) extend this enum; the
-// core remains unchanged.
+// Future variants (url-ref-picker, etc.) extend this enum; the core remains
+// unchanged.
 type filePickerMode int
 
 // filePickerMode values.
 const (
 	filePickerModeNone filePickerMode = iota
 	filePickerModePath
+	filePickerModeFile
 )
 
 // filePickerEntry describes one filesystem row rendered by the picker.
@@ -306,6 +313,45 @@ func appendPathResourceRefs(meta domain.ActionItemMetadata, root string, entries
 		}
 		ref := buildResourceRef(root, entry.Path, entry.IsDir)
 		ref.Tags = []string{"path"}
+		next, _ := appendResourceRefIfMissing(refs, ref)
+		refs = next
+	}
+	out.ResourceRefs = refs
+	return out
+}
+
+// appendFileResourceRefs is the file-picker accept handler (PLAN §17.1 `exist`
+// rule). It mirrors appendPathResourceRefs but enforces two extra invariants:
+//
+//  1. Every entry is gated through os.Stat + FileInfo.Mode().IsRegular() — only
+//     regular files become ResourceRefs. Directories, symlinks to directories,
+//     devices, sockets, missing paths, and unreadable paths are dropped
+//     silently (the drop is logged at Debug so dev-mode traces can surface it).
+//  2. Each surviving entry is tagged with Tags[0]=="file" and its
+//     ResourceType is always ResourceTypeLocalFile (dir semantics do not apply).
+//
+// Pure function — operates on the TaskMetadata value the caller hands in.
+// Callers drive the actual domain.UpdateTask call separately.
+func appendFileResourceRefs(meta domain.TaskMetadata, root string, entries []filePickerEntry) domain.TaskMetadata {
+	out := meta
+	refs := append([]domain.ResourceRef(nil), meta.ResourceRefs...)
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Path) == "" || entry.Name == ".." {
+			continue
+		}
+		info, err := os.Stat(entry.Path)
+		if err != nil {
+			log.Debug("file-picker: dropping entry that failed os.Stat", "path", entry.Path, "error", err)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			log.Debug("file-picker: dropping non-regular entry", "path", entry.Path, "mode", info.Mode().String())
+			continue
+		}
+		// Force file semantics: buildResourceRef with isDir=false so ResourceType
+		// is always ResourceTypeLocalFile, even if the caller passed IsDir=true.
+		ref := buildResourceRef(root, entry.Path, false)
+		ref.Tags = []string{"file"}
 		next, _ := appendResourceRefIfMissing(refs, ref)
 		refs = next
 	}
