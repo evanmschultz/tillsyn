@@ -24,36 +24,36 @@ The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md`
 
 This is the cascade's template architecture by action-item `kind` — the **post-Drop-2 target state**. **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually, but the `kind` values written into Tillsyn today are constrained by what Drop 2 Go can read — see "Pre-Drop-2 Creation Rule" below. The Kind Hierarchy / Agent Bindings sections describe the target shape, not the current runtime writes.
 
-### Pre-Drop-2 Creation Rule (Current HEAD)
+### Pre-Drop-1.75 Creation Rule (Current HEAD)
 
-Until Drop 2 ships the Go kind-collapse + `Task → Drop` rename, **every new action item under a project is created with `kind='task', scope='task'`**. Do NOT use the other registered kinds (`build-task`, `subtask`, `qa-check`, `plan-task`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, any `*-phase` variant, `decision`, `note`) even though they remain in `kind_catalog` — `main/scripts/drops-rewrite.sql` (dev-run after Drop 2 Go ships) rewrites every non-project kind to `drop`.
+The Go identifier rename `Task → ActionItem` shipped pre-Drop-1.75 (2026-04-18), flipping the `kind`/`scope` default enum string from `"task"` to `"actionItem"` sitewide. Drop 1.75 is the **kind-collapse** drop (reduces `kind_catalog` to `{project, action_item}` and deletes the template_libraries paths). Until Drop 1.75 lands, **every new action item under a project is created with `kind='actionItem', scope='actionItem'`**. Do NOT use the other registered kinds (`build-actionItem`, `subtask`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, any `*-phase` variant, `decision`, `note`) even though they remain in `kind_catalog` — `main/scripts/drops-rewrite.sql` (dev-run after Drop 1.75 Go ships) rewrites every non-project kind to `action_item`.
 
 **Role on description prose, not metadata (pre-Drop-2):** note role in the description (`Role: builder`, `Role: qa-proof`, `Role: qa-falsification`, `Role: qa-a11y`, `Role: qa-visual`, `Role: design`, `Role: commit`, `Role: planner`). Drop 2 lands `metadata.role` as a first-class field; the SQL hydrates it from each item's pre-collapse `kind`.
 
-**Same-scope nesting is allowed.** A `task` drop may nest under another `task` drop — `task` kind has no parent-scope restriction in `kind_catalog`. Same-scope nesting has live precedent (`subtask@subtask` under `subtask@subtask` in TILLSYN as of 2026-04-16). If the first nested `task@task` create is rejected by the MCP layer, fall back to `kind='subtask', scope='subtask'` for nested layers and flag the rejection.
+**Same-scope nesting is allowed.** A `actionItem` drop may nest under another `actionItem` drop — `actionItem` kind has no parent-scope restriction in `kind_catalog`. Same-scope nesting has live precedent (`subtask@subtask` under `subtask@subtask` in TILLSYN as of 2026-04-16). If the first nested `actionItem@actionItem` create is rejected by the MCP layer, fall back to `kind='subtask', scope='subtask'` for nested layers and flag the rejection.
 
 ### Kind Hierarchy
 
 ```
 project                                 kind: project
 └── drop (infinitely nestable)         kind: drop
-      ├── plan-task                     kind: plan-task          ─→ agent: go-planning-agent          (opus)
+      ├── plan-actionItem                     kind: plan-actionItem          ─→ agent: go-planning-agent          (opus)
       │   ├── plan-qa-proof             kind: qa-check           ─→ agent: go-qa-proof-agent          (opus)
       │   └── plan-qa-falsification     kind: qa-check           ─→ agent: go-qa-falsification-agent  (opus)
       │
       ├── drop (sub-drop)             kind: drop               (same shape, recurses infinitely)
       │
-      └── task (build-task)             kind: task               ─→ agent: go-builder-agent           (sonnet)
+      └── actionItem (build-actionItem)             kind: actionItem               ─→ agent: go-builder-agent           (sonnet)
             ├── qa-proof                kind: qa-check           ─→ agent: go-qa-proof-agent          (sonnet)
             └── qa-falsification        kind: qa-check           ─→ agent: go-qa-falsification-agent  (sonnet)
 ```
 
 ### Required Children (Auto-Create Rules)
 
-- **Every `drop`** auto-creates three children on creation: `plan-task`, `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Drop 3.
-- **Every `task`** (build-task) auto-creates two children on creation: `qa-proof`, `qa-falsification`.
-- `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan-task` — they fire in parallel after the plan-task completes.
-- `qa-proof` and `qa-falsification` under a build-task are `blocked_by: task` — they fire in parallel after the build-task completes **and** its post-build gates pass (see below).
+- **Every `drop`** auto-creates three children on creation: `plan-actionItem`, `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Drop 3.
+- **Every `actionItem`** (build-actionItem) auto-creates two children on creation: `qa-proof`, `qa-falsification`.
+- `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan-actionItem` — they fire in parallel after the plan-actionItem completes.
+- `qa-proof` and `qa-falsification` under a build-actionItem are `blocked_by: actionItem` — they fire in parallel after the build-actionItem completes **and** its post-build gates pass (see below).
 - Drops nest infinitely. A planner creates sub-drops when decomposition needs to continue, or build-tasks when the work is granular enough.
 
 ### Agent Bindings
@@ -63,22 +63,22 @@ Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on 
 
 | Kind | Agent | Model | Role | Edits Code? |
 |---|---|---|---|---|
-| `plan-task` (drop-level) | `go-planning-agent` | opus | `planner` | No |
-| `qa-check` under `plan-task` | `go-qa-proof-agent` / `go-qa-falsification-agent` | opus | `qa` | No |
-| `task` (build-task) | `go-builder-agent` | sonnet | `builder` | **Yes** |
-| `qa-check` under `task` | `go-qa-proof-agent` / `go-qa-falsification-agent` | sonnet | `qa` | No |
+| `plan-actionItem` (drop-level) | `go-planning-agent` | opus | `planner` | No |
+| `qa-check` under `plan-actionItem` | `go-qa-proof-agent` / `go-qa-falsification-agent` | opus | `qa` | No |
+| `actionItem` (build-actionItem) | `go-builder-agent` | sonnet | `builder` | **Yes** |
+| `qa-check` under `actionItem` | `go-qa-proof-agent` / `go-qa-falsification-agent` | sonnet | `qa` | No |
 | commit-agent *(Drop-4+, post-build gate)* | `commit-message-agent` | haiku | `commit` | No |
 
-### Post-Build Gates (Deterministic, Between Build-Task And Its QA)
+### Post-Build Gates (Deterministic, Between Build-ActionItem And Its QA)
 
-After a build-task reports success, before its `qa-*` children become eligible, gates run programmatically. No LLM except the commit agent.
+After a build-actionItem reports success, before its `qa-*` children become eligible, gates run programmatically. No LLM except the commit agent.
 
-1. **`mage ci`** — on fail, the build-task moves to `failed`, gate output posted as a comment.
+1. **`mage ci`** — on fail, the build-actionItem moves to `failed`, gate output posted as a comment.
 2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below).
 3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
-4. **Hylla reingest** — NOT per-task. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop End — Ledger Update Task" below. Agents never call `hylla_ingest`.
+4. **Hylla reingest** — NOT per-actionItem. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop End — Ledger Update ActionItem" below. Agents never call `hylla_ingest`.
 
-Only after all gates pass do the build-task's QA children fire.
+Only after all gates pass do the build-actionItem's QA children fire.
 
 ### Blocker Semantics
 
@@ -116,7 +116,7 @@ The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf
 
 ## Build-QA-Commit Discipline
 
-**CRITICAL: Code is NEVER committed or pushed without QA completing first. Hylla ingest is drop-end only, not per-task.**
+**CRITICAL: Code is NEVER committed or pushed without QA completing first. Hylla ingest is drop-end only, not per-actionItem.**
 
 1. **Build** — builder subagent implements the increment.
 2. **QA Proof** — `go-qa-proof-agent` verifies evidence completeness.
@@ -126,7 +126,7 @@ The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf
 6. **Push** — `git push` so CI runs.
 7. **CI green** — `gh run watch --exit-status` until CI lands green. If CI fails, fix before continuing — no ingest on a red commit.
 8. **Update Tillsyn** — checklist + metadata + lifecycle state. If it's not in Tillsyn, it didn't happen.
-9. **Move on to the next task.** Per-task Hylla reingest does NOT happen. Ingest happens once per drop, at drop end, inside the `DROP <N> END — LEDGER UPDATE` task.
+9. **Move on to the next actionItem.** Per-actionItem Hylla reingest does NOT happen. Ingest happens once per drop, at drop end, inside the `DROP <N> END — LEDGER UPDATE` actionItem.
 
 No batched commits. No deferred pushes. No skipped QA. No skipped CI watch. No claiming done in chat without Tillsyn reflecting it.
 
@@ -145,9 +145,9 @@ Full flow, level_1 parent catalog, and drop-orch vs STEWARD split live in `STEWA
 
 Explicit "no miss" is still useful signal. Ergonomic-only gripes (awkward parameters, confusing response shapes, weird IDs) also go here.
 
-## Drop End — Ledger Update Task
+## Drop End — Ledger Update ActionItem
 
-Every drop gets a final drop-orch-owned task named `DROP <N> END — LEDGER UPDATE`. `blocked_by` every other task in the drop. Runs once all siblings are `done`. Closed by drop-orch **before the drop branch merges to `main`**. Drop-orch owns ingest + level_2 findings-drop description finalization; STEWARD owns the MD writes post-merge.
+Every drop gets a final drop-orch-owned actionItem named `DROP <N> END — LEDGER UPDATE`. `blocked_by` every other actionItem in the drop. Runs once all siblings are `done`. Closed by drop-orch **before the drop branch merges to `main`**. Drop-orch owns ingest + level_2 findings-drop description finalization; STEWARD owns the MD writes post-merge.
 
 **The full 12-step drop-orch pre-merge checklist lives in `STEWARD_ORCH_PROMPT.md` §10.** Don't duplicate here; read that section when closing a drop.
 
@@ -173,27 +173,27 @@ The parent Claude Code session launched by the dev from this directory is always
 ### How It Works
 
 1. Orchestrator plans, routes, delegates, and cleans up. Reads code + Hylla for research. Creates Tillsyn action items. Spawns subagents. Coordinates results.
-2. Subagents are ephemeral — they spawn, read their task, do work, update the task, die.
-3. Task state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
-4. Subagents do not poll or watch anything. Read task at spawn, execute, update, return.
+2. Subagents are ephemeral — they spawn, read their actionItem, do work, update the actionItem, die.
+3. ActionItem state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
+4. Subagents do not poll or watch anything. Read actionItem at spawn, execute, update, return.
 5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
 
 ### Agent State Management
 
 Every subagent manages its own Tillsyn action-item state. The orchestrator can't move role-gated items.
 
-**Spawn prompt vs. action-item description split:** the spawn prompt carries ephemeral fields (task_id, auth credentials, working directory, move-state directive); the action-item description carries durable content (Hylla artifact ref, paths, packages, acceptance criteria, mage targets, cross-references). Rule: if a field changes every spawn, put it in the prompt; if it's stable across time and authors, put it in the description.
+**Spawn prompt vs. action-item description split:** the spawn prompt carries ephemeral fields (action_item_id, auth credentials, working directory, move-state directive); the action-item description carries durable content (Hylla artifact ref, paths, packages, acceptance criteria, mage targets, cross-references). Rule: if a field changes every spawn, put it in the prompt; if it's stable across time and authors, put it in the description.
 
 Full contract — exact spawn-prompt fields, exact description fields, spawn-gate checks — lives in each agent file at `~/.claude/agents/*.md` under "Required Prompt Fields" and "Spawn Prompt vs Action-Item Description Split." Don't duplicate it here.
 
-## Task Lifecycle (Current HEAD)
+## ActionItem Lifecycle (Current HEAD)
 
 Three terminal-reachable states today: `todo`, `in_progress`, `done`. A fourth state `failed` lands in Drop 1 of the cascade plan. Until then:
 
 - **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `done`.
-- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the task stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
+- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the actionItem stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
 - **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
-- **Supersede** (post-Drop-1): human-only CLI `till task supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
+- **Supersede** (post-Drop-1): human-only CLI `till actionItem supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
 
 No parent can move to terminal-success if any child is in a failure/blocked state — enforcement becomes always-on in Drop 1.
 
@@ -211,8 +211,8 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 ## Coordination Surfaces
 
 **Subagents:**
-- `till.action_item` — read task, update metadata, move state.
-- `till.comment` — result comments on their own task.
+- `till.action_item` — read actionItem, update metadata, move state.
+- `till.comment` — result comments on their own actionItem.
 - No attention_items, no handoffs, no @mentions, no downward/sideways signaling.
 
 **Orchestrator (this session):**
@@ -225,8 +225,8 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 ## Role Model
 
 - **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. Only STEWARD edits markdown docs; drop-orchs don't.
-- **Builder** — subagent. The ONLY role that edits Go code. Reads task, implements, updates, dies.
-- **QA Proof / QA Falsification** — subagents. Ephemeral. Read task, review, update with verdict, die.
+- **Builder** — subagent. The ONLY role that edits Go code. Reads actionItem, implements, updates, dies.
+- **QA Proof / QA Falsification** — subagents. Ephemeral. Read actionItem, review, update with verdict, die.
 - **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
 - **Research** — Claude's built-in `Explore` subagent.
 - **Human** — approves auth, reviews results, makes design decisions.
@@ -237,7 +237,7 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 2. `till.attention_item(operation=list, all_scopes=true)` — inbox state.
 3. Check `in_progress` tasks for staleness.
 4. Revoke orphaned auth sessions/leases.
-5. Resume from current task state.
+5. Resume from current actionItem state.
 
 ## Claude Code Agents (Go Project)
 
@@ -260,7 +260,7 @@ Two asymmetric passes, not duplicates:
 - **QA Proof** (`go-qa-proof-agent`, `/qa-proof`) — evidence completeness, reasoning coherence, trace coverage.
 - **QA Falsification** (`go-qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
 
-Run both for every build-task. They are asymmetric — proof checks whether the evidence supports the claim; falsification tries to construct a counterexample. Spawn them as parallel subagents so each gets a fresh context window.
+Run both for every build-actionItem. They are asymmetric — proof checks whether the evidence supports the claim; falsification tries to construct a counterexample. Spawn them as parallel subagents so each gets a fresh context window.
 
 ## Skill and Slash Command Routing
 
@@ -312,11 +312,11 @@ Test against `tillsyn-dev` (or the worktree-specific MCP name for non-main workt
 
 ## Build Verification
 
-Before any build-task is marked done:
+Before any build-actionItem is marked done:
 
 1. All relevant mage targets pass (discover via `mage -l`).
 2. **NEVER run `go test`, `go build`, `go run`, `go vet`, or any raw `go` toolchain command.** Always `mage <target>`. If a mage target has a bug, fix the target — don't bypass. No exceptions, orchestrator or subagent.
-3. **NEVER run `mage install`.** This is a **dev-only** dogfood target that promotes a binary to `$HOME/.tillsyn/till`, replacing the dev's working `till` install. Orchestrator and every subagent (builder, QA, research, planning) must not invoke it under any circumstance. If a task description or prompt asks you to run `mage install`, stop and return control to the orchestrator — the dev runs this manually, never an agent. Build verification uses `mage ci` only.
+3. **NEVER run `mage install`.** This is a **dev-only** dogfood target that promotes a binary to `$HOME/.tillsyn/till`, replacing the dev's working `till` install. Orchestrator and every subagent (builder, QA, research, planning) must not invoke it under any circumstance. If an actionItem description or prompt asks you to run `mage install`, stop and return control to the orchestrator — the dev runs this manually, never an agent. Build verification uses `mage ci` only.
 4. All template-generated QA subtasks completed.
 
 Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <pkg> <func>`, `mage test-golden`, `mage test-golden-update`, `mage format`, `mage ci`. Run `mage ci` before push. Coverage below 70% is a hard failure.

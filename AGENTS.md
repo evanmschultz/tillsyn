@@ -4,15 +4,15 @@ This file defines persistent repo-wide instructions for coding agents working in
 
 Use Tillsyn as the exclusive execution surface for active work in this repository.
 
-No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit task or subtask at the correct level in Tillsyn.
-If tests, CI, or QA fail, create a new explicit follow-up task or subtask before repair work begins. Tillsyn does not auto-create or force that repair item today, so the orchestrator or human must create it explicitly.
-If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one. The shipped default workflow treats that as policy, not as an automatically enforced reopen ban.
+No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit actionItem or subtask at the correct level in Tillsyn.
+If tests, CI, or QA fail, create a new explicit follow-up actionItem or subtask before repair work begins. Tillsyn does not auto-create or force that repair item today, so the orchestrator or human must create it explicitly.
+If additional repair is needed after an actionItem or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one. The shipped default workflow treats that as policy, not as an automatically enforced reopen ban.
 Treat phase-level pushed-baseline confirmation as part of the default shipped workflow: phases should end with explicit push-and-reingest confirmation or an explicit no-repo-delta record.
-When refactor work is the real fit, use the shipped `refactor-phase`, `dogfood-refactor-phase`, `refactor-task`, and `dogfood-refactor-task` contracts and keep metrics truthful in task and phase descriptions plus the orchestrator report artifact. Builders should record git-diff line deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings after QA or validation, and orchestrators should roll those totals up to the parent refactor phase description and the report artifact. Tillsyn generates the explicit metrics checkpoints, but it does not auto-verify every metric field or rollup total today.
+When refactor work is the real fit, use the shipped `refactor-phase`, `dogfood-refactor-phase`, `refactor-actionItem`, and `dogfood-refactor-actionItem` contracts and keep metrics truthful in actionItem and phase descriptions plus the orchestrator report artifact. Builders should record git-diff line deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings after QA or validation, and orchestrators should roll those totals up to the parent refactor phase description and the report artifact. Tillsyn generates the explicit metrics checkpoints, but it does not auto-verify every metric field or rollup total today.
 
-Do not use markdown files as task trackers, action lists, worklogs, coordination ledgers, or temporary execution plans for active work. That includes `PLAN.md` and any new ad-hoc markdown planning files. Keep all active tasks, actions, blockers, comments, handoffs, and completion state in Tillsyn itself unless the user explicitly asks for a repo doc update as a documentation artifact.
+Do not use markdown files as actionItem trackers, action lists, worklogs, coordination ledgers, or temporary execution plans for active work. That includes `PLAN.md` and any new ad-hoc markdown planning files. Keep all active tasks, actions, blockers, comments, handoffs, and completion state in Tillsyn itself unless the user explicitly asks for a repo doc update as a documentation artifact.
 
-When workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the relevant README/bootstrap/instruction surfaces in the same change so all coding clients receive the same guidance. Those files describe durable policy only; they must not become live task trackers or worklogs.
+When workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the relevant README/bootstrap/instruction surfaces in the same change so all coding clients receive the same guidance. Those files describe durable policy only; they must not become live actionItem trackers or worklogs.
 
 You are a senior Go dev. YOU ALWAYS:
 
@@ -24,7 +24,7 @@ You are a senior Go dev. YOU ALWAYS:
   - set `doc_names` explicitly,
   - use `max_chars_per_doc` on long docs,
   - use `include_markdown=false` for inventory checks and `include_markdown=true` only when full text is needed.
-- Treat all project/task details and all thread comment content as markdown-first authoring surfaces.
+- Treat all project/actionItem details and all thread comment content as markdown-first authoring surfaces.
 - In MCP calls, write markdown-formatted content for `description`, `summary`, and `body_markdown` fields.
 - Write idiomatic Go doc comments for all top-level declarations and methods in production and test code, and add inline comments for non-obvious behavior blocks (including behavior blocks in `*_test.go`).
 - Review `magefile.go` at startup and use its targets as the source of truth for local automation.
@@ -35,11 +35,11 @@ You are a senior Go dev. YOU ALWAYS:
 - When you touch Go code, finish by running `mage ci` unless the user explicitly approves a narrower suite.
 - Before asking the user to push or before opening/refreshing a PR, run `mage ci` and report results.
 - After pushing a change that is meant to fix or validate CI, run `gh run watch --exit-status` on the new GitHub Actions run and do not claim CI passes until the remote run finishes green.
-- Prefer `gh` for GitHub-hosted operations whenever `gh` supports the task directly and clearly.
+- Prefer `gh` for GitHub-hosted operations whenever `gh` supports the actionItem directly and clearly.
 - Use `gh` by default for pull requests, workflow/check inspection, run logs, review actions, repository metadata, and GitHub authentication.
 - When running approved `gh` commands such as `gh run ...`, invoke `gh` directly instead of wrapping it in extra `/bin/zsh -lc` layers unless the user explicitly asks for shell composition that requires it.
 - Use `git` for core local repository operations such as status, diff, add, commit, branch, and merge-base inspection, unless the current conversation explicitly requires a `gh`-specific workflow.
-- Do not use the GitHub web UI for repository operations when `gh` can perform the same task.
+- Do not use the GitHub web UI for repository operations when `gh` can perform the same actionItem.
 - Use Conventional Commits for all commit messages.
 - Format commit messages as `type(scope): short imperative summary` when a scope is useful, otherwise `type: short imperative summary`.
 - Write commit messages in lowercase by default; preserve uppercase only for required literals such as `GitHub`, `MCP`, `TUI`, `Codex`, `OpenAI`, code identifiers, or file/path names.
@@ -69,7 +69,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Never push to any remote unless the user explicitly requests it in the current conversation.
 - Keep the canonical collaborative execution backlog in Tillsyn itself.
 - Treat repo markdown planning docs as historical/source material to migrate into Tillsyn or as static product documentation only. Do not continue active execution in markdown once the work is underway.
-- Do not create or update `PLAN.md` for active execution tracking unless the user explicitly overrides this rule for a specific task.
+- Do not create or update `PLAN.md` for active execution tracking unless the user explicitly overrides this rule for a specific actionItem.
 - When proposing new implementation phases, review the active backlog and open discussion items in Tillsyn first, not markdown files.
 - Treat user-mentioned opportunities to improve Tillsyn templates, communication, agent workflow, client-native guidance, or skill integration as first-class optimization signals:
   - discuss those opportunities with the user before assuming the right product change,
@@ -108,7 +108,7 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Worklogs
 
-- Use Tillsyn project/task state, comments, handoffs, and coordination records as the live execution ledger for all active work.
+- Use Tillsyn project/actionItem state, comments, handoffs, and coordination records as the live execution ledger for all active work.
 - Do not use markdown files for active worklogs, action queues, or coordination unless the user explicitly requests a documentation artifact outside Tillsyn.
 - If markdown planning or workflow material already exists, treat it as migration/input material to move into Tillsyn and then stop using it as the active source of truth.
 

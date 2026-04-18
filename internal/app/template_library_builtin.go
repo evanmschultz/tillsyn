@@ -214,14 +214,14 @@ func builtinTemplateNodeInputs(nodeTemplates []UpsertNodeTemplateInput) []domain
 			})
 		}
 		out = append(out, domain.NodeTemplateInput{
-			ID:                      nodeTemplate.ID,
-			ScopeLevel:              nodeTemplate.ScopeLevel,
-			NodeKindID:              nodeTemplate.NodeKindID,
-			DisplayName:             nodeTemplate.DisplayName,
-			DescriptionMarkdown:     nodeTemplate.DescriptionMarkdown,
-			ProjectMetadataDefaults: nodeTemplate.ProjectMetadataDefaults,
-			TaskMetadataDefaults:    nodeTemplate.TaskMetadataDefaults,
-			ChildRules:              childRules,
+			ID:                         nodeTemplate.ID,
+			ScopeLevel:                 nodeTemplate.ScopeLevel,
+			NodeKindID:                 nodeTemplate.NodeKindID,
+			DisplayName:                nodeTemplate.DisplayName,
+			DescriptionMarkdown:        nodeTemplate.DescriptionMarkdown,
+			ProjectMetadataDefaults:    nodeTemplate.ProjectMetadataDefaults,
+			ActionItemMetadataDefaults: nodeTemplate.ActionItemMetadataDefaults,
+			ChildRules:                 childRules,
 		})
 	}
 	return out

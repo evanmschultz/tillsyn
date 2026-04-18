@@ -21,22 +21,22 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 
 	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-1")
-	taskReady := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-ready", 0, now, domain.TaskMetadata{
+	actionItemReady := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-ready", 0, now, domain.ActionItemMetadata{
 		Objective:          "Ship a safe embeddings lifecycle",
 		AcceptanceCriteria: "Storage records lifecycle transitions",
 		ValidationPlan:     "Run sqlite tests",
 		RiskNotes:          "Keep vector rows separate from lifecycle state",
 	}, []string{"lifecycle", "embeddings"})
-	taskStale := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-stale", 1, now, domain.TaskMetadata{
+	actionItemStale := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-stale", 1, now, domain.ActionItemMetadata{
 		Objective:      "Reindex stale work",
 		BlockedReason:  "Needs operator review",
 		ValidationPlan: "Confirm stale transition",
 	}, []string{"stale"})
 
-	readyHash := hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(taskReady))
+	readyHash := hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItemReady))
 	readyRecord, changed, err := repo.UpsertEmbeddingJob(ctx, EmbeddingJobUpsertInput{
-		SubjectType:   "task",
-		SubjectID:     taskReady.ID,
+		SubjectType:   "actionItem",
+		SubjectID:     actionItemReady.ID,
 		ProjectID:     project.ID,
 		DesiredHash:   readyHash,
 		ModelProvider: "fantasy",
@@ -59,8 +59,8 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 	}
 
 	idempotentRecord, changed, err := repo.UpsertEmbeddingJob(ctx, EmbeddingJobUpsertInput{
-		SubjectType:   "task",
-		SubjectID:     taskReady.ID,
+		SubjectType:   "actionItem",
+		SubjectID:     actionItemReady.ID,
 		ProjectID:     project.ID,
 		DesiredHash:   readyHash,
 		ModelProvider: "fantasy",
@@ -75,14 +75,14 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 	if changed {
 		t.Fatalf("expected identical upsert to be idempotent")
 	}
-	if idempotentRecord.SubjectID != taskReady.ID {
+	if idempotentRecord.SubjectID != actionItemReady.ID {
 		t.Fatalf("unexpected subject id %q", idempotentRecord.SubjectID)
 	}
 
 	claimNow := time.Now().UTC().Add(1 * time.Second)
 	claimed, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-a",
 		ClaimTTL:    15 * time.Minute,
 	}, claimNow)
@@ -103,8 +103,8 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 	}
 
 	heartbeat, changed, err := repo.HeartbeatEmbeddingJob(ctx, EmbeddingJobHeartbeatInput{
-		SubjectType: "task",
-		SubjectID:   taskReady.ID,
+		SubjectType: "actionItem",
+		SubjectID:   actionItemReady.ID,
 		WorkerID:    "worker-a",
 		ClaimTTL:    20 * time.Minute,
 	}, claimNow.Add(2*time.Minute))
@@ -122,8 +122,8 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 	}
 
 	completed, changed, err := repo.CompleteEmbeddingJob(ctx, EmbeddingJobCompleteInput{
-		SubjectType:          "task",
-		SubjectID:            taskReady.ID,
+		SubjectType:          "actionItem",
+		SubjectID:            actionItemReady.ID,
 		WorkerID:             "worker-a",
 		ProcessedContentHash: readyHash,
 		ProcessedModelSig:    "fantasy/mini/3",
@@ -144,10 +144,10 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 		t.Fatalf("attempt_count = %d, want 1", completed.AttemptCount)
 	}
 
-	staleHash := hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(taskStale))
+	staleHash := hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItemStale))
 	staleUpsert, changed, err := repo.UpsertEmbeddingJob(ctx, EmbeddingJobUpsertInput{
-		SubjectType:   "task",
-		SubjectID:     taskStale.ID,
+		SubjectType:   "actionItem",
+		SubjectID:     actionItemStale.ID,
 		ProjectID:     project.ID,
 		DesiredHash:   staleHash,
 		ModelProvider: "fantasy",
@@ -160,7 +160,7 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 		t.Fatalf("UpsertEmbeddingJob(stale) error = %v", err)
 	}
 	if !changed {
-		t.Fatalf("expected stale task upsert to create a row")
+		t.Fatalf("expected stale actionItem upsert to create a row")
 	}
 	if staleUpsert.Status != EmbeddingJobStatusPending {
 		t.Fatalf("status = %s, want pending", staleUpsert.Status)
@@ -168,7 +168,7 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 
 	staleClaim, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-b",
 		ClaimTTL:    15 * time.Minute,
 	}, time.Now().UTC().Add(1*time.Second))
@@ -179,7 +179,7 @@ func TestRepositoryEmbeddingJobLifecycleTransitions(t *testing.T) {
 		t.Fatalf("expected stale row to be claimable")
 	}
 	staled, changed, err := repo.CompleteEmbeddingJob(ctx, EmbeddingJobCompleteInput{
-		SubjectType:          "task",
+		SubjectType:          "actionItem",
 		SubjectID:            staleClaim.SubjectID,
 		WorkerID:             "worker-b",
 		ProcessedContentHash: "mismatched-hash",
@@ -230,19 +230,19 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 
 	now := time.Date(2026, 3, 29, 13, 0, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-2")
-	taskBackfillA := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-backfill-a", 0, now, domain.TaskMetadata{
+	actionItemBackfillA := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-backfill-a", 0, now, domain.ActionItemMetadata{
 		Objective:          "Backfill the queue",
-		AcceptanceCriteria: "Lifecycle rows exist for each task",
+		AcceptanceCriteria: "Lifecycle rows exist for each actionItem",
 		ValidationPlan:     "Run backfill and inspect summary",
 	}, []string{"queue", "backfill"})
-	_ = mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-backfill-b", 1, now, domain.TaskMetadata{
+	_ = mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-backfill-b", 1, now, domain.ActionItemMetadata{
 		Objective:      "Retry failed embeddings",
 		RiskNotes:      "Retry budgets must be bounded",
 		BlockedReason:  "Awaiting provider response",
 		ValidationPlan: "Claim, fail, and recover",
 	}, []string{"retry"})
 
-	count, err := repo.BackfillTaskEmbeddingJobs(ctx, EmbeddingTaskBackfillInput{
+	count, err := repo.BackfillActionItemEmbeddingJobs(ctx, EmbeddingActionItemBackfillInput{
 		ProjectID:       project.ID,
 		IncludeArchived: false,
 		ModelProvider:   "fantasy",
@@ -252,14 +252,14 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 		MaxAttempts:     4,
 	})
 	if err != nil {
-		t.Fatalf("BackfillTaskEmbeddingJobs() error = %v", err)
+		t.Fatalf("BackfillActionItemEmbeddingJobs() error = %v", err)
 	}
 	if count != 2 {
 		t.Fatalf("backfill count = %d, want 2", count)
 	}
 
-	backfillHash := hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(taskBackfillA))
-	backfillRow, err := repo.GetEmbeddingJob(ctx, "task", taskBackfillA.ID)
+	backfillHash := hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItemBackfillA))
+	backfillRow, err := repo.GetEmbeddingJob(ctx, "actionItem", actionItemBackfillA.ID)
 	if err != nil {
 		t.Fatalf("GetEmbeddingJob() error = %v", err)
 	}
@@ -267,14 +267,14 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 		t.Fatalf("desired hash = %q, want %q", backfillRow.DesiredContentHash, backfillHash)
 	}
 
-	summary, err := repo.SummarizeEmbeddingJobs(ctx, EmbeddingJobListFilter{ProjectID: project.ID, SubjectType: "task"})
+	summary, err := repo.SummarizeEmbeddingJobs(ctx, EmbeddingJobListFilter{ProjectID: project.ID, SubjectType: "actionItem"})
 	if err != nil {
 		t.Fatalf("SummarizeEmbeddingJobs() error = %v", err)
 	}
 	if summary.Pending != 2 || summary.Total != 2 {
 		t.Fatalf("summary = %#v, want total 2 pending 2", summary)
 	}
-	secondBackfillCount, err := repo.BackfillTaskEmbeddingJobs(ctx, EmbeddingTaskBackfillInput{
+	secondBackfillCount, err := repo.BackfillActionItemEmbeddingJobs(ctx, EmbeddingActionItemBackfillInput{
 		ProjectID:       project.ID,
 		IncludeArchived: false,
 		ModelProvider:   "fantasy",
@@ -284,7 +284,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 		MaxAttempts:     4,
 	})
 	if err != nil {
-		t.Fatalf("BackfillTaskEmbeddingJobs(idempotent) error = %v", err)
+		t.Fatalf("BackfillActionItemEmbeddingJobs(idempotent) error = %v", err)
 	}
 	if secondBackfillCount != 0 {
 		t.Fatalf("idempotent backfill count = %d, want 0", secondBackfillCount)
@@ -292,7 +292,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 
 	list, err := repo.ListEmbeddingJobs(ctx, EmbeddingJobListFilter{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		Statuses:    []EmbeddingJobStatus{EmbeddingJobStatusPending},
 		Limit:       10,
 	})
@@ -305,7 +305,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 
 	claimed, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-retry",
 		ClaimTTL:    30 * time.Second,
 	}, time.Now().UTC().Add(1*time.Second))
@@ -317,7 +317,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 	}
 	failStart := time.Now()
 	failed, changed, err := repo.FailEmbeddingJob(ctx, EmbeddingJobFailInput{
-		SubjectType:  "task",
+		SubjectType:  "actionItem",
 		SubjectID:    claimed.SubjectID,
 		WorkerID:     "worker-retry",
 		ErrorCode:    "provider_unavailable",
@@ -347,12 +347,12 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 
 	secondClaim, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-retry",
 		ClaimTTL:    30 * time.Second,
 	}, time.Now().UTC().Add(1*time.Second))
 	if err != nil {
-		t.Fatalf("ClaimNextEmbeddingJob(second task) error = %v", err)
+		t.Fatalf("ClaimNextEmbeddingJob(second actionItem) error = %v", err)
 	}
 	if !found {
 		t.Fatalf("expected second pending row to be claimable")
@@ -361,7 +361,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 		t.Fatalf("expected second claim to target a different row")
 	}
 	secondTerminal, changed, err := repo.FailEmbeddingJob(ctx, EmbeddingJobFailInput{
-		SubjectType:  "task",
+		SubjectType:  "actionItem",
 		SubjectID:    secondClaim.SubjectID,
 		WorkerID:     "worker-retry",
 		ErrorCode:    "provider_unavailable",
@@ -371,10 +371,10 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 		MaxAttempts:  4,
 	})
 	if err != nil {
-		t.Fatalf("FailEmbeddingJob(second task) error = %v", err)
+		t.Fatalf("FailEmbeddingJob(second actionItem) error = %v", err)
 	}
 	if !changed {
-		t.Fatalf("expected second task terminal failure to update the row")
+		t.Fatalf("expected second actionItem terminal failure to update the row")
 	}
 	if secondTerminal.Status != EmbeddingJobStatusFailed {
 		t.Fatalf("status = %s, want failed", secondTerminal.Status)
@@ -382,7 +382,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 
 	if _, found, err = repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-retry",
 		ClaimTTL:    30 * time.Second,
 	}, time.Now().UTC().Add(5*time.Second)); err != nil {
@@ -393,7 +393,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 
 	retryClaim, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-retry",
 		ClaimTTL:    30 * time.Second,
 	}, time.Now().UTC().Add(11*time.Second))
@@ -404,7 +404,7 @@ func TestRepositoryEmbeddingJobBackfillRetryRecoveryAndStaleMarking(t *testing.T
 		t.Fatalf("expected retry to become claimable after backoff")
 	}
 	terminal, changed, err := repo.FailEmbeddingJob(ctx, EmbeddingJobFailInput{
-		SubjectType:  "task",
+		SubjectType:  "actionItem",
 		SubjectID:    retryClaim.SubjectID,
 		WorkerID:     "worker-retry",
 		ErrorCode:    "provider_unavailable",
@@ -436,17 +436,17 @@ func TestRepositoryEmbeddingJobManualStaleMarking(t *testing.T) {
 
 	now := time.Date(2026, 3, 29, 14, 0, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-3")
-	task := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-manual-stale", 0, now, domain.TaskMetadata{
+	actionItem := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-manual-stale", 0, now, domain.ActionItemMetadata{
 		Objective:          "Let operators mark stale rows",
 		AcceptanceCriteria: "Manual stale marks clear the vector row",
 		ValidationPlan:     "Mark stale and inspect status",
 	}, []string{"manual"})
 
 	if _, changed, err := repo.UpsertEmbeddingJob(ctx, EmbeddingJobUpsertInput{
-		SubjectType:   "task",
-		SubjectID:     task.ID,
+		SubjectType:   "actionItem",
+		SubjectID:     actionItem.ID,
 		ProjectID:     project.ID,
-		DesiredHash:   hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(task)),
+		DesiredHash:   hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItem)),
 		ModelProvider: "fantasy",
 		ModelName:     "mini",
 		ModelSig:      "fantasy/mini/3",
@@ -459,8 +459,8 @@ func TestRepositoryEmbeddingJobManualStaleMarking(t *testing.T) {
 	}
 
 	marked, changed, err := repo.MarkEmbeddingJobStale(ctx, EmbeddingJobStaleInput{
-		SubjectType: "task",
-		SubjectID:   task.ID,
+		SubjectType: "actionItem",
+		SubjectID:   actionItem.ID,
 		Reason:      "operator requested reindex",
 		PurgeVector: true,
 	})
@@ -490,16 +490,16 @@ func TestRepositoryEmbeddingJobStartupRecovery(t *testing.T) {
 
 	now := time.Date(2026, 3, 29, 15, 0, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-4")
-	task := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-recovery", 0, now, domain.TaskMetadata{
+	actionItem := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-recovery", 0, now, domain.ActionItemMetadata{
 		Objective:      "Recover stuck claims",
 		ValidationPlan: "Expire the claim and recover it",
 	}, []string{"recovery"})
 
 	if _, changed, err := repo.UpsertEmbeddingJob(ctx, EmbeddingJobUpsertInput{
-		SubjectType:   "task",
-		SubjectID:     task.ID,
+		SubjectType:   "actionItem",
+		SubjectID:     actionItem.ID,
 		ProjectID:     project.ID,
-		DesiredHash:   hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(task)),
+		DesiredHash:   hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItem)),
 		ModelProvider: "fantasy",
 		ModelName:     "mini",
 		ModelSig:      "fantasy/mini/3",
@@ -513,7 +513,7 @@ func TestRepositoryEmbeddingJobStartupRecovery(t *testing.T) {
 
 	claimed, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
 		ProjectID:   project.ID,
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		WorkerID:    "worker-recovery",
 		ClaimTTL:    1 * time.Millisecond,
 	}, time.Now().UTC().Add(1*time.Second))
@@ -534,7 +534,7 @@ func TestRepositoryEmbeddingJobStartupRecovery(t *testing.T) {
 	if len(recovered) != 1 {
 		t.Fatalf("recovered = %d, want 1", len(recovered))
 	}
-	recoveredRow, err := repo.GetEmbeddingJob(ctx, "task", task.ID)
+	recoveredRow, err := repo.GetEmbeddingJob(ctx, "actionItem", actionItem.ID)
 	if err != nil {
 		t.Fatalf("GetEmbeddingJob() error = %v", err)
 	}
@@ -558,23 +558,23 @@ func TestRepositoryEmbeddingJobMixedSubjectFamilies(t *testing.T) {
 
 	now := time.Date(2026, 3, 29, 16, 0, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-mixed")
-	task := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-mixed", 0, now, domain.TaskMetadata{
+	actionItem := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-mixed", 0, now, domain.ActionItemMetadata{
 		Objective:      "Keep lifecycle state mixed but stable",
 		ValidationPlan: "Exercise all subject families",
 	}, []string{"mixed"})
 
 	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 
 	seedRows := []EmbeddingJobUpsertInput{
 		{
-			SubjectType:   "task",
-			SubjectID:     task.ID,
+			SubjectType:   "actionItem",
+			SubjectID:     actionItem.ID,
 			ProjectID:     project.ID,
-			DesiredHash:   hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(task)),
+			DesiredHash:   hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItem)),
 			ModelProvider: "fantasy",
 			ModelName:     "mini",
 			ModelSig:      "fantasy/mini/3",
@@ -681,25 +681,25 @@ func mustSeedEmbeddingScope(t *testing.T, repo *Repository, now time.Time, proje
 	return project, column
 }
 
-func mustSeedEmbeddingTask(t *testing.T, repo *Repository, projectID, columnID, taskID string, position int, now time.Time, meta domain.TaskMetadata, labels []string) domain.Task {
+func mustSeedEmbeddingActionItem(t *testing.T, repo *Repository, projectID, columnID, actionItemID string, position int, now time.Time, meta domain.ActionItemMetadata, labels []string) domain.ActionItem {
 	t.Helper()
 
-	task, err := domain.NewTask(domain.TaskInput{
-		ID:          taskID,
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:          actionItemID,
 		ProjectID:   projectID,
 		ColumnID:    columnID,
 		Position:    position,
-		Title:       "Task " + taskID,
-		Description: "Description for " + taskID,
+		Title:       "ActionItem " + actionItemID,
+		Description: "Description for " + actionItemID,
 		Priority:    domain.PriorityMedium,
 		Labels:      labels,
 		Metadata:    meta,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(context.Background(), task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(context.Background(), actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	return task
+	return actionItem
 }

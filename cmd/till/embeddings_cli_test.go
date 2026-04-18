@@ -55,7 +55,7 @@ func TestBuildEmbeddingRuntimeConfigParsesDurations(t *testing.T) {
 
 // TestRunEmbeddingsStatusRendersSummaryAndRows verifies the status command prints lifecycle counts and rows.
 func TestRunEmbeddingsStatusRendersSummaryAndRows(t *testing.T) {
-	svc, projectID, _, createdTaskID := newEmbeddingsCLIServiceForTest(t)
+	svc, projectID, _, createdActionItemID := newEmbeddingsCLIServiceForTest(t)
 	if _, err := svc.UpdateProject(context.Background(), app.UpdateProjectInput{
 		ProjectID:     projectID,
 		Name:          "Inbox",
@@ -68,8 +68,8 @@ func TestRunEmbeddingsStatusRendersSummaryAndRows(t *testing.T) {
 	}
 	if _, err := svc.CreateComment(context.Background(), app.CreateCommentInput{
 		ProjectID:    projectID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     createdTaskID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     createdActionItemID,
 		Summary:      "Thread context note",
 		BodyMarkdown: "Thread context note",
 		ActorID:      "tillsyn-user",
@@ -99,7 +99,7 @@ func TestRunEmbeddingsStatusRendersSummaryAndRows(t *testing.T) {
 		"work_item",
 		"pending 3",
 		projectID,
-		createdTaskID,
+		createdActionItemID,
 		"Healthy means ready > 0",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -112,8 +112,8 @@ func TestRunEmbeddingsStatusRendersSummaryAndRows(t *testing.T) {
 func TestRunEmbeddingsReindexRendersQueuedWork(t *testing.T) {
 	svc, projectID, repo, _ := newEmbeddingsCLIServiceForTest(t)
 	now := time.Date(2026, 3, 29, 18, 30, 0, 0, time.UTC)
-	task, err := domain.NewTask(domain.TaskInput{
-		ID:             "task-reindex",
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:             "actionItem-reindex",
 		ProjectID:      projectID,
 		ColumnID:       "c1",
 		Position:       1,
@@ -125,10 +125,10 @@ func TestRunEmbeddingsReindexRendersQueuedWork(t *testing.T) {
 		UpdatedByName:  "tillsyn-user",
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(context.Background(), task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(context.Background(), actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	var out strings.Builder
@@ -223,7 +223,7 @@ func newEmbeddingsCLIServiceForTest(t *testing.T) (*app.Service, string, *sqlite
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
-	svc := app.NewService(repo, func() string { return "task-created" }, func() time.Time { return now }, app.ServiceConfig{
+	svc := app.NewService(repo, func() string { return "actionItem-created" }, func() time.Time { return now }, app.ServiceConfig{
 		EmbeddingRuntime: app.EmbeddingRuntimeConfig{
 			Enabled:        true,
 			Provider:       "deterministic",
@@ -233,13 +233,13 @@ func newEmbeddingsCLIServiceForTest(t *testing.T) (*app.Service, string, *sqlite
 			MaxAttempts:    5,
 		},
 	})
-	created, err := svc.CreateTask(context.Background(), app.CreateTaskInput{
+	created, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Title:     "Ship operational embeddings",
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	return svc, project.ID, repo, created.ID
 }

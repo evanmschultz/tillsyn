@@ -18,9 +18,9 @@ func TestNewTemplateLibraryNormalizesNestedRules(t *testing.T) {
 		Status:      TemplateLibraryStatusApproved,
 		NodeTemplates: []NodeTemplateInput{
 			{
-				ID:         " builder-task ",
-				ScopeLevel: KindAppliesToTask,
-				NodeKindID: "task",
+				ID:         " builder-actionItem ",
+				ScopeLevel: KindAppliesToActionItem,
+				NodeKindID: "actionItem",
 				ChildRules: []TemplateChildRuleInput{
 					{
 						ID:                   " qa-check ",
@@ -50,7 +50,7 @@ func TestNewTemplateLibraryNormalizesNestedRules(t *testing.T) {
 		t.Fatalf("len(library.NodeTemplates) = %d, want 1", len(library.NodeTemplates))
 	}
 	nodeTemplate := library.NodeTemplates[0]
-	if nodeTemplate.ID != "builder-task" {
+	if nodeTemplate.ID != "builder-actionItem" {
 		t.Fatalf("nodeTemplate.ID = %q, want normalized value", nodeTemplate.ID)
 	}
 	if len(nodeTemplate.ChildRules) != 1 {
@@ -78,8 +78,8 @@ func TestNewTemplateLibraryRejectsDuplicateScopeKind(t *testing.T) {
 		Name:      "Example Library",
 		Status:    TemplateLibraryStatusDraft,
 		NodeTemplates: []NodeTemplateInput{
-			{ID: "task-a", ScopeLevel: KindAppliesToTask, NodeKindID: "task"},
-			{ID: "task-b", ScopeLevel: KindAppliesToTask, NodeKindID: "task"},
+			{ID: "actionItem-a", ScopeLevel: KindAppliesToActionItem, NodeKindID: "actionItem"},
+			{ID: "actionItem-b", ScopeLevel: KindAppliesToActionItem, NodeKindID: "actionItem"},
 		},
 	}, now)
 	if !errors.Is(err, ErrInvalidTemplateLibrary) {
@@ -94,7 +94,7 @@ func TestNewNodeContractSnapshotDefaultsActorKinds(t *testing.T) {
 		NodeID:               "node-1",
 		ProjectID:            "project-1",
 		SourceLibraryID:      "library-1",
-		SourceNodeTemplateID: "task-template",
+		SourceNodeTemplateID: "actionItem-template",
 		SourceChildRuleID:    "qa-check",
 		ResponsibleActorKind: TemplateActorKindBuilder,
 	}, now)

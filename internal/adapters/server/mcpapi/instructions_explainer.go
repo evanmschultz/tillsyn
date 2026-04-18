@@ -15,7 +15,7 @@ import (
 type instructionsExplainServices struct {
 	bootstrap common.BootstrapGuideReader
 	projects  common.ProjectService
-	tasks     common.TaskService
+	tasks     common.ActionItemService
 	kinds     common.KindCatalogService
 	templates common.TemplateLibraryService
 }
@@ -111,7 +111,7 @@ func explainTopicInstructions(ctx context.Context, services instructionsExplainS
 func explainBootstrapTopic(guide common.BootstrapGuide) instructionsExplainResult {
 	scopedRules := []string{
 		"Bootstrap is for empty-instance and first-project setup; after work already exists, prefer till.capture_state plus scoped coordination reads instead of re-running bootstrap.",
-		"Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself; do not create markdown task trackers, worklogs, or temporary execution plans for the run.",
+		"Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself; do not create markdown actionItem trackers, worklogs, or temporary execution plans for the run.",
 		"Do not use another agent's or user's session, session secret, or auth_context_id during bootstrap or later workflow steps.",
 		"Claim or validate your own narrow approved session, then clean up child auth sessions, stale leases, and leftover coordination rows truthfully after the run.",
 		"When stable and dev runtimes both exist, confirm which runtime root or DB you are talking to before interpreting missing templates, kinds, or drift state.",
@@ -493,34 +493,34 @@ func explainKindInstructions(ctx context.Context, services instructionsExplainSe
 	}, nil
 }
 
-// explainNodeInstructions resolves one branch|phase|task|subtask explanation from node lineage and stored contract state.
+// explainNodeInstructions resolves one branch|phase|actionItem|subtask explanation from node lineage and stored contract state.
 func explainNodeInstructions(ctx context.Context, services instructionsExplainServices, req instructionsExplainRequest) (instructionsExplainResult, error) {
 	nodeID := strings.TrimSpace(req.NodeID)
 	if nodeID == "" {
 		return instructionsExplainResult{}, fmt.Errorf(`invalid_request: focus "node" requires node_id`)
 	}
 	if services.tasks == nil {
-		return instructionsExplainResult{}, fmt.Errorf("not found: task service is unavailable for node explanation")
+		return instructionsExplainResult{}, fmt.Errorf("not found: actionItem service is unavailable for node explanation")
 	}
-	task, err := services.tasks.GetTask(ctx, nodeID)
+	actionItem, err := services.tasks.GetActionItem(ctx, nodeID)
 	if err != nil {
 		return instructionsExplainResult{}, fmt.Errorf("get node %q: %w", nodeID, err)
 	}
-	project, err := findProjectByID(ctx, services.projects, strings.TrimSpace(task.ProjectID))
+	project, err := findProjectByID(ctx, services.projects, strings.TrimSpace(actionItem.ProjectID))
 	if err != nil {
 		return instructionsExplainResult{}, err
 	}
-	lineageTasks, err := loadTaskLineage(ctx, services.tasks, task)
+	lineageActionItems, err := loadActionItemLineage(ctx, services.tasks, actionItem)
 	if err != nil {
 		return instructionsExplainResult{}, err
 	}
-	lineage := summarizeTaskLineage(lineageTasks)
+	lineage := summarizeActionItemLineage(lineageActionItems)
 
-	kind, kindFound, err := tryFindKindByID(ctx, services.kinds, domain.KindID(task.Kind))
+	kind, kindFound, err := tryFindKindByID(ctx, services.kinds, domain.KindID(actionItem.Kind))
 	if err != nil {
 		return instructionsExplainResult{}, err
 	}
-	binding, bindingFound, err := loadProjectBinding(ctx, services.templates, task.ProjectID)
+	binding, bindingFound, err := loadProjectBinding(ctx, services.templates, actionItem.ProjectID)
 	if err != nil {
 		return instructionsExplainResult{}, err
 	}
@@ -543,20 +543,20 @@ func explainNodeInstructions(ctx context.Context, services instructionsExplainSe
 		}
 	}
 
-	rules := collectNodeScopedRules(project, task)
-	workflow := collectNodeWorkflowContract(task, kind, kindFound, snapshot, snapshotFound, binding, bindingFound)
-	expectations := collectNodeAgentExpectations(task, snapshot, snapshotFound)
-	why := collectNodeWhyItApplies(project, task, kind, kindFound, snapshot, snapshotFound, library, libraryFound)
-	evidence := collectNodeEvidence(project, task, snapshot, snapshotFound, req.IncludeEvidence)
-	gaps := collectNodeGaps(project, task, snapshot, snapshotFound, kindFound, bindingFound)
+	rules := collectNodeScopedRules(project, actionItem)
+	workflow := collectNodeWorkflowContract(actionItem, kind, kindFound, snapshot, snapshotFound, binding, bindingFound)
+	expectations := collectNodeAgentExpectations(actionItem, snapshot, snapshotFound)
+	why := collectNodeWhyItApplies(project, actionItem, kind, kindFound, snapshot, snapshotFound, library, libraryFound)
+	evidence := collectNodeEvidence(project, actionItem, snapshot, snapshotFound, req.IncludeEvidence)
+	gaps := collectNodeGaps(project, actionItem, snapshot, snapshotFound, kindFound, bindingFound)
 
 	resolved := instructionsToolResolvedScope{
 		ProjectID:         project.ID,
 		TemplateLibraryID: firstNonEmptyString(strings.TrimSpace(snapshot.SourceLibraryID), binding.LibraryID),
-		KindID:            strings.TrimSpace(string(task.Kind)),
-		NodeID:            task.ID,
-		NodeScopeType:     strings.TrimSpace(string(task.Scope)),
-		NodeTitle:         strings.TrimSpace(task.Title),
+		KindID:            strings.TrimSpace(string(actionItem.Kind)),
+		NodeID:            actionItem.ID,
+		NodeScopeType:     strings.TrimSpace(string(actionItem.Scope)),
+		NodeTitle:         strings.TrimSpace(actionItem.Title),
 		Lineage:           lineage,
 	}
 	if kindFound {
@@ -564,11 +564,11 @@ func explainNodeInstructions(ctx context.Context, services instructionsExplainSe
 	}
 
 	return instructionsExplainResult{
-		Summary:       fmt.Sprintf("%s %q is explainable from node lineage, project standards, and any stored template contract.", strings.Title(string(task.Scope)), task.Title),
+		Summary:       fmt.Sprintf("%s %q is explainable from node lineage, project standards, and any stored template contract.", strings.Title(string(actionItem.Scope)), actionItem.Title),
 		ResolvedScope: resolved,
 		Explanation: instructionsToolExplanation{
-			Title:             strings.TrimSpace(task.Title),
-			Overview:          fmt.Sprintf("%s %q belongs to project %q%s.", strings.Title(string(task.Scope)), task.Title, project.Name, nodeContractOverviewSuffix(snapshot, snapshotFound)),
+			Title:             strings.TrimSpace(actionItem.Title),
+			Overview:          fmt.Sprintf("%s %q belongs to project %q%s.", strings.Title(string(actionItem.Scope)), actionItem.Title, project.Name, nodeContractOverviewSuffix(snapshot, snapshotFound)),
 			WhyItApplies:      why,
 			ScopedRules:       rules,
 			WorkflowContract:  workflow,
@@ -755,12 +755,12 @@ func loadTemplateLibraryForExplanation(ctx context.Context, service common.Templ
 	return library, nil
 }
 
-// loadTaskLineage loads the root-to-leaf lineage for one node using repeated GetTask reads.
-func loadTaskLineage(ctx context.Context, service common.TaskService, leaf domain.Task) ([]domain.Task, error) {
+// loadActionItemLineage loads the root-to-leaf lineage for one node using repeated GetActionItem reads.
+func loadActionItemLineage(ctx context.Context, service common.ActionItemService, leaf domain.ActionItem) ([]domain.ActionItem, error) {
 	if service == nil {
-		return nil, fmt.Errorf("not found: task service is unavailable")
+		return nil, fmt.Errorf("not found: actionItem service is unavailable")
 	}
-	reversed := make([]domain.Task, 0, 8)
+	reversed := make([]domain.ActionItem, 0, 8)
 	current := leaf
 	seen := map[string]struct{}{}
 	for {
@@ -769,7 +769,7 @@ func loadTaskLineage(ctx context.Context, service common.TaskService, leaf domai
 			break
 		}
 		if _, ok := seen[currentID]; ok {
-			return nil, fmt.Errorf("invalid task lineage: cycle at %q", currentID)
+			return nil, fmt.Errorf("invalid actionItem lineage: cycle at %q", currentID)
 		}
 		seen[currentID] = struct{}{}
 		reversed = append(reversed, current)
@@ -777,72 +777,72 @@ func loadTaskLineage(ctx context.Context, service common.TaskService, leaf domai
 		if parentID == "" {
 			break
 		}
-		parent, err := service.GetTask(ctx, parentID)
+		parent, err := service.GetActionItem(ctx, parentID)
 		if err != nil {
-			return nil, fmt.Errorf("get parent task %q: %w", parentID, err)
+			return nil, fmt.Errorf("get parent actionItem %q: %w", parentID, err)
 		}
 		current = parent
 	}
-	lineage := make([]domain.Task, 0, len(reversed))
+	lineage := make([]domain.ActionItem, 0, len(reversed))
 	for idx := len(reversed) - 1; idx >= 0; idx-- {
 		lineage = append(lineage, reversed[idx])
 	}
 	return lineage, nil
 }
 
-// summarizeTaskLineage converts one task lineage into readable scope markers.
-func summarizeTaskLineage(lineage []domain.Task) []string {
+// summarizeActionItemLineage converts one actionItem lineage into readable scope markers.
+func summarizeActionItemLineage(lineage []domain.ActionItem) []string {
 	out := make([]string, 0, len(lineage))
-	for _, task := range lineage {
-		label := fmt.Sprintf("%s:%s", task.Scope, strings.TrimSpace(task.Title))
+	for _, actionItem := range lineage {
+		label := fmt.Sprintf("%s:%s", actionItem.Scope, strings.TrimSpace(actionItem.Title))
 		out = append(out, label)
 	}
 	return out
 }
 
 // collectNodeScopedRules lifts scoped rule sources from project and node metadata.
-func collectNodeScopedRules(project domain.Project, task domain.Task) []string {
+func collectNodeScopedRules(project domain.Project, actionItem domain.ActionItem) []string {
 	rules := make([]string, 0, 12)
 	if standards := strings.TrimSpace(project.Metadata.StandardsMarkdown); standards != "" {
 		rules = append(rules, "Project standards_markdown applies to this node and should be treated as local execution policy.")
 	}
-	if desc := strings.TrimSpace(task.Description); desc != "" {
-		rules = append(rules, "The node description contains scoped workflow or implementation context for this exact branch, phase, task, or subtask.")
+	if desc := strings.TrimSpace(actionItem.Description); desc != "" {
+		rules = append(rules, "The node description contains scoped workflow or implementation context for this exact branch, phase, actionItem, or subtask.")
 	}
-	if objective := strings.TrimSpace(task.Metadata.Objective); objective != "" {
+	if objective := strings.TrimSpace(actionItem.Metadata.Objective); objective != "" {
 		rules = append(rules, "Objective: "+objective)
 	}
-	if notes := strings.TrimSpace(task.Metadata.ImplementationNotesAgent); notes != "" {
+	if notes := strings.TrimSpace(actionItem.Metadata.ImplementationNotesAgent); notes != "" {
 		rules = append(rules, "Agent notes: "+notes)
 	}
-	if acceptance := strings.TrimSpace(task.Metadata.AcceptanceCriteria); acceptance != "" {
+	if acceptance := strings.TrimSpace(actionItem.Metadata.AcceptanceCriteria); acceptance != "" {
 		rules = append(rules, "Acceptance criteria: "+acceptance)
 	}
-	if dod := strings.TrimSpace(task.Metadata.DefinitionOfDone); dod != "" {
+	if dod := strings.TrimSpace(actionItem.Metadata.DefinitionOfDone); dod != "" {
 		rules = append(rules, "Definition of done: "+dod)
 	}
-	if validation := strings.TrimSpace(task.Metadata.ValidationPlan); validation != "" {
+	if validation := strings.TrimSpace(actionItem.Metadata.ValidationPlan); validation != "" {
 		rules = append(rules, "Validation plan: "+validation)
 	}
-	if len(task.Metadata.DependsOn) > 0 {
-		rules = append(rules, fmt.Sprintf("Depends on: %s. Treat these as prerequisites before starting or closing this node.", strings.Join(task.Metadata.DependsOn, ", ")))
+	if len(actionItem.Metadata.DependsOn) > 0 {
+		rules = append(rules, fmt.Sprintf("Depends on: %s. Treat these as prerequisites before starting or closing this node.", strings.Join(actionItem.Metadata.DependsOn, ", ")))
 	}
-	if len(task.Metadata.BlockedBy) > 0 {
-		rules = append(rules, fmt.Sprintf("Blocked by: %s. This node should remain blocked until those dependencies are resolved.", strings.Join(task.Metadata.BlockedBy, ", ")))
+	if len(actionItem.Metadata.BlockedBy) > 0 {
+		rules = append(rules, fmt.Sprintf("Blocked by: %s. This node should remain blocked until those dependencies are resolved.", strings.Join(actionItem.Metadata.BlockedBy, ", ")))
 	}
-	if blockedReason := strings.TrimSpace(task.Metadata.BlockedReason); blockedReason != "" {
+	if blockedReason := strings.TrimSpace(actionItem.Metadata.BlockedReason); blockedReason != "" {
 		rules = append(rules, "Blocked reason: "+blockedReason)
 	}
-	if len(task.Metadata.CommandSnippets) > 0 {
-		rules = append(rules, fmt.Sprintf("Command snippets are attached to this node: %s.", strings.Join(task.Metadata.CommandSnippets, ", ")))
+	if len(actionItem.Metadata.CommandSnippets) > 0 {
+		rules = append(rules, fmt.Sprintf("Command snippets are attached to this node: %s.", strings.Join(actionItem.Metadata.CommandSnippets, ", ")))
 	}
 	return rules
 }
 
 // collectNodeWorkflowContract lifts kind/template contract facts that affect how one node should move.
-func collectNodeWorkflowContract(task domain.Task, kind domain.KindDefinition, kindFound bool, snapshot domain.NodeContractSnapshot, snapshotFound bool, binding domain.ProjectTemplateBinding, bindingFound bool) []string {
+func collectNodeWorkflowContract(actionItem domain.ActionItem, kind domain.KindDefinition, kindFound bool, snapshot domain.NodeContractSnapshot, snapshotFound bool, binding domain.ProjectTemplateBinding, bindingFound bool) []string {
 	contract := make([]string, 0, 10)
-	contract = append(contract, fmt.Sprintf("Node scope is %q and kind is %q.", task.Scope, task.Kind))
+	contract = append(contract, fmt.Sprintf("Node scope is %q and kind is %q.", actionItem.Scope, actionItem.Kind))
 	if kindFound {
 		contract = append(contract, fmt.Sprintf("Catalog kind %q applies to: %s.", kind.ID, joinKindScopes(kind.AppliesTo)))
 	}
@@ -858,8 +858,8 @@ func collectNodeWorkflowContract(task domain.Task, kind domain.KindDefinition, k
 			fmt.Sprintf("Required for containing done: %t.", snapshot.RequiredForContainingDone),
 		)
 	}
-	if len(task.Metadata.DependsOn) > 0 || len(task.Metadata.BlockedBy) > 0 {
-		contract = append(contract, "Task-level sequencing is currently expressed through depends_on, blocked_by, and blocked_reason rather than visual board order alone.")
+	if len(actionItem.Metadata.DependsOn) > 0 || len(actionItem.Metadata.BlockedBy) > 0 {
+		contract = append(contract, "ActionItem-level sequencing is currently expressed through depends_on, blocked_by, and blocked_reason rather than visual board order alone.")
 	}
 	if !snapshotFound {
 		contract = append(contract, "No stored node-contract snapshot exists for this node, so only project, kind, and node-local metadata rules apply.")
@@ -868,7 +868,7 @@ func collectNodeWorkflowContract(task domain.Task, kind domain.KindDefinition, k
 }
 
 // collectNodeAgentExpectations summarizes role expectations for one node.
-func collectNodeAgentExpectations(task domain.Task, snapshot domain.NodeContractSnapshot, snapshotFound bool) []string {
+func collectNodeAgentExpectations(actionItem domain.ActionItem, snapshot domain.NodeContractSnapshot, snapshotFound bool) []string {
 	expectations := []string{
 		"Use till.comment for shared status and evidence on this node.",
 		"Use till.handoff when the next action belongs to another actor or role.",
@@ -876,13 +876,13 @@ func collectNodeAgentExpectations(task domain.Task, snapshot domain.NodeContract
 	if snapshotFound {
 		expectations = append(expectations, fmt.Sprintf("The primary responsible actor for this node is %s.", snapshot.ResponsibleActorKind))
 	} else {
-		expectations = append(expectations, fmt.Sprintf("This %s node has no stored generated contract, so rely on project policy plus the node's own metadata.", task.Scope))
+		expectations = append(expectations, fmt.Sprintf("This %s node has no stored generated contract, so rely on project policy plus the node's own metadata.", actionItem.Scope))
 	}
 	return expectations
 }
 
 // collectNodeWhyItApplies explains why the returned rules apply to one node.
-func collectNodeWhyItApplies(project domain.Project, task domain.Task, kind domain.KindDefinition, kindFound bool, snapshot domain.NodeContractSnapshot, snapshotFound bool, library domain.TemplateLibrary, libraryFound bool) []string {
+func collectNodeWhyItApplies(project domain.Project, actionItem domain.ActionItem, kind domain.KindDefinition, kindFound bool, snapshot domain.NodeContractSnapshot, snapshotFound bool, library domain.TemplateLibrary, libraryFound bool) []string {
 	why := []string{
 		fmt.Sprintf("This node belongs to project %q, so project-scoped standards and allowed kinds apply.", project.Name),
 	}
@@ -903,7 +903,7 @@ func collectNodeWhyItApplies(project domain.Project, task domain.Task, kind doma
 }
 
 // collectNodeEvidence returns concrete policy evidence for one node explanation.
-func collectNodeEvidence(project domain.Project, task domain.Task, snapshot domain.NodeContractSnapshot, snapshotFound bool, include bool) []instructionsToolEvidence {
+func collectNodeEvidence(project domain.Project, actionItem domain.ActionItem, snapshot domain.NodeContractSnapshot, snapshotFound bool, include bool) []instructionsToolEvidence {
 	if !include {
 		return nil
 	}
@@ -928,16 +928,16 @@ func collectNodeEvidence(project domain.Project, task domain.Task, snapshot doma
 			Markdown: markdown,
 		})
 	}
-	appendMarkdownEvidence("node_description", task.ID, "Node description", task.Description)
-	appendMarkdownEvidence("node_objective", task.ID, "Node objective", task.Metadata.Objective)
-	appendMarkdownEvidence("node_agent_notes", task.ID, "Node implementation notes for agents", task.Metadata.ImplementationNotesAgent)
-	appendMarkdownEvidence("node_acceptance_criteria", task.ID, "Node acceptance criteria", task.Metadata.AcceptanceCriteria)
-	appendMarkdownEvidence("node_definition_of_done", task.ID, "Node definition of done", task.Metadata.DefinitionOfDone)
-	appendMarkdownEvidence("node_validation_plan", task.ID, "Node validation plan", task.Metadata.ValidationPlan)
+	appendMarkdownEvidence("node_description", actionItem.ID, "Node description", actionItem.Description)
+	appendMarkdownEvidence("node_objective", actionItem.ID, "Node objective", actionItem.Metadata.Objective)
+	appendMarkdownEvidence("node_agent_notes", actionItem.ID, "Node implementation notes for agents", actionItem.Metadata.ImplementationNotesAgent)
+	appendMarkdownEvidence("node_acceptance_criteria", actionItem.ID, "Node acceptance criteria", actionItem.Metadata.AcceptanceCriteria)
+	appendMarkdownEvidence("node_definition_of_done", actionItem.ID, "Node definition of done", actionItem.Metadata.DefinitionOfDone)
+	appendMarkdownEvidence("node_validation_plan", actionItem.ID, "Node validation plan", actionItem.Metadata.ValidationPlan)
 	if snapshotFound {
 		evidence = append(evidence, instructionsToolEvidence{
 			Kind:    "node_contract_snapshot",
-			ID:      task.ID,
+			ID:      actionItem.ID,
 			Summary: fmt.Sprintf("Generated contract from library %s, template %s, child rule %s", snapshot.SourceLibraryID, snapshot.SourceNodeTemplateID, snapshot.SourceChildRuleID),
 		})
 	}
@@ -945,16 +945,16 @@ func collectNodeEvidence(project domain.Project, task domain.Task, snapshot doma
 }
 
 // collectNodeGaps reports which rule sources are missing for one node explanation.
-func collectNodeGaps(project domain.Project, task domain.Task, snapshot domain.NodeContractSnapshot, snapshotFound bool, kindFound bool, bindingFound bool) []string {
+func collectNodeGaps(project domain.Project, actionItem domain.ActionItem, snapshot domain.NodeContractSnapshot, snapshotFound bool, kindFound bool, bindingFound bool) []string {
 	gaps := make([]string, 0, 6)
 	if strings.TrimSpace(project.Metadata.StandardsMarkdown) == "" {
 		gaps = append(gaps, "Project standards_markdown is empty, so project-local execution rules are not explicit yet.")
 	}
-	if strings.TrimSpace(task.Metadata.Objective) == "" &&
-		strings.TrimSpace(task.Metadata.AcceptanceCriteria) == "" &&
-		strings.TrimSpace(task.Metadata.DefinitionOfDone) == "" &&
-		strings.TrimSpace(task.Metadata.ValidationPlan) == "" {
-		gaps = append(gaps, "This node has little or no scoped task metadata yet, so only generic workflow guidance is available.")
+	if strings.TrimSpace(actionItem.Metadata.Objective) == "" &&
+		strings.TrimSpace(actionItem.Metadata.AcceptanceCriteria) == "" &&
+		strings.TrimSpace(actionItem.Metadata.DefinitionOfDone) == "" &&
+		strings.TrimSpace(actionItem.Metadata.ValidationPlan) == "" {
+		gaps = append(gaps, "This node has little or no scoped actionItem metadata yet, so only generic workflow guidance is available.")
 	}
 	if !snapshotFound {
 		gaps = append(gaps, "This node has no stored generated contract snapshot.")

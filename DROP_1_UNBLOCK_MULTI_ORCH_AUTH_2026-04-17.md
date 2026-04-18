@@ -58,7 +58,7 @@ Consequence: Drop 1 cannot begin because the drop requires both orchestrators ac
 - 4.3.6 **NEW** `TestIssueCapabilityLeaseSameInstanceIDRetry` — same `AgentName="orch-a"` AND same `AgentInstanceID="inst-a"` retry. Exercises the `existing.InstanceID == next.InstanceID` short-circuit at `kind_capability.go:433` which runs BEFORE the new identity check. Assert behavior is whatever the existing short-circuit already produces today (fake repo silently overwrites, SQLite PK errors — builder confirms actual repo behavior and asserts accordingly). Flag divergence between fake-repo and sqlite behavior as an unknown if it surfaces. Closes falsification coverage gap 3.1.
 - 4.3.7 **NEW** `TestIssueCapabilityLeaseSameIdentityAfterExpiry` — one orch `AgentName="orch-a"` issues a project-scope lease with short TTL. Advance clock past `ExpiresAt`. Same identity re-issues. Succeeds (via `!existing.IsActive(now)` short-circuit at `kind_capability.go:439`). Closes falsification coverage gap 3.2.
 - 4.3.8 **NEW** `TestIssueCapabilityLeaseSameIdentityAfterRevoke` — one orch `AgentName="orch-a"` issues a project-scope lease successfully. Explicitly `RevokeCapabilityLease` on that lease's instance_id. Same identity re-issues without override token. Succeeds (via same line-439 short-circuit, since revoked leases are not `IsActive`). Closes falsification coverage gap 3.3.
-- 4.3.9 **NEW** `TestIssueCapabilityLeaseDistinctIdentitiesBranchScope` — repeat §4.3.1 but at `CapabilityScope: CapabilityScopeBranch` (or `CapabilityScopeTask`; builder picks whichever matches existing test fixtures). Proves the fix is scope-type-agnostic, not project-scope-only by accident of the test data. Closes falsification coverage gap 3.4.
+- 4.3.9 **NEW** `TestIssueCapabilityLeaseDistinctIdentitiesBranchScope` — repeat §4.3.1 but at `CapabilityScope: CapabilityScopeBranch` (or `CapabilityScopeActionItem`; builder picks whichever matches existing test fixtures). Proves the fix is scope-type-agnostic, not project-scope-only by accident of the test data. Closes falsification coverage gap 3.4.
 
 ### 4.4 Verification Target
 
@@ -141,7 +141,7 @@ Proof pass CONFIRMED evidence completeness. Falsification pass produced no unmit
 
 ### 6.3 Test Functions Added
 
-All eight are top-level `func Test...(t *testing.T)` functions in `main/internal/app/service_test.go`, appended after the rewritten `TestIssueCapabilityLeaseOverlapPolicy` (before `TestCreateTaskMutationGuardRequiredForAgent`).
+All eight are top-level `func Test...(t *testing.T)` functions in `main/internal/app/service_test.go`, appended after the rewritten `TestIssueCapabilityLeaseOverlapPolicy` (before `TestCreateActionItemMutationGuardRequiredForAgent`).
 
 | Test | Asserts |
 |---|---|
@@ -152,7 +152,7 @@ All eight are top-level `func Test...(t *testing.T)` functions in `main/internal
 | `TestIssueCapabilityLeaseSameInstanceIDRetry` (§4.3.6) | Same `AgentName` and same `AgentInstanceID` retry succeeds via the `existing.InstanceID == next.InstanceID` short-circuit at line 433 (runs before the new identity check). Second call returns the retry's own fresh `LeaseToken`; fake repo's idempotent `CreateCapabilityLease` ends at exactly one row. Closes falsification gap 3.1. |
 | `TestIssueCapabilityLeaseSameIdentityAfterExpiry` (§4.3.7) | Same `AgentName="orch-a"` re-issues after the clock advances past the first lease's `ExpiresAt` (5 min TTL, 10 min advance). Succeeds via the `!existing.IsActive(now)` short-circuit at line 439. Closes falsification gap 3.2. |
 | `TestIssueCapabilityLeaseSameIdentityAfterRevoke` (§4.3.8) | Same `AgentName="orch-a"` re-issues after `RevokeCapabilityLease` on the first instance. Succeeds via the same line-439 short-circuit (revoked lease is not `IsActive`). Closes falsification gap 3.3. |
-| `TestIssueCapabilityLeaseDistinctIdentitiesBranchScope` (§4.3.9) | Same shape as §4.3.1 but with `ScopeType: CapabilityScopeBranch` and a synthesized branch row via `CreateTask(Scope: KindAppliesToBranch)`. Two distinct identities coexist on a branch-scope lease without override token. `ListCapabilityLeases(branch, scopeID=branch.ID)` returns both. Proves scope-type-agnostic. Closes falsification gap 3.4. |
+| `TestIssueCapabilityLeaseDistinctIdentitiesBranchScope` (§4.3.9) | Same shape as §4.3.1 but with `ScopeType: CapabilityScopeBranch` and a synthesized branch row via `CreateActionItem(Scope: KindAppliesToBranch)`. Two distinct identities coexist on a branch-scope lease without override token. `ListCapabilityLeases(branch, scopeID=branch.ID)` returns both. Proves scope-type-agnostic. Closes falsification gap 3.4. |
 
 ### 6.4 Verification Output
 
@@ -244,7 +244,7 @@ Four stages, all green. Verified on current working tree.
 
 ### 6b.5 Unknowns / Hylla Feedback
 
-**Unknowns:** None blocking. One notable (ACCEPTED, out-of-scope): the hotfix-invariant from §6.5 that `existing.InstanceID == next.InstanceID` short-circuits at `kind_capability.go:433` before the SQLite adapter sees a PK collision on `capability_leases.instance_id` is NOT exercised by this integration test — it is fake-repo-covered only at `service_test.go:3900+`. Adding the same coverage at the SQLite boundary was out-of-scope for this gap-closing task; file under Drop 1 test-coverage if desired.
+**Unknowns:** None blocking. One notable (ACCEPTED, out-of-scope): the hotfix-invariant from §6.5 that `existing.InstanceID == next.InstanceID` short-circuits at `kind_capability.go:433` before the SQLite adapter sees a PK collision on `capability_leases.instance_id` is NOT exercised by this integration test — it is fake-repo-covered only at `service_test.go:3900+`. Adding the same coverage at the SQLite boundary was out-of-scope for this gap-closing actionItem; file under Drop 1 test-coverage if desired.
 
 **Hylla Feedback:** None — Hylla answered everything needed. This work used `Grep` + `Read` against committed files because the question was "what is the existing helper pattern for service-layer SQLite tests and the existing capability-lease test in this package?" — a scope-bounded pattern-match best served by keyword search, not semantic retrieval. No Hylla query was attempted, so no miss was logged. Consistent with §6a.
 

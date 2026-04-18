@@ -24,10 +24,10 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Confirm.Restore {
 		t.Fatalf("expected restore confirm disabled by default, got %#v", cfg.Confirm)
 	}
-	if !cfg.TaskFields.ShowPriority || !cfg.TaskFields.ShowDueDate || !cfg.TaskFields.ShowLabels {
+	if !cfg.ActionItemFields.ShowPriority || !cfg.ActionItemFields.ShowDueDate || !cfg.ActionItemFields.ShowLabels {
 		t.Fatal("expected priority/due_date/labels enabled by default")
 	}
-	if cfg.TaskFields.ShowDescription {
+	if cfg.ActionItemFields.ShowDescription {
 		t.Fatal("expected description disabled by default")
 	}
 	if got := cfg.UI.DueSoonWindows; len(got) != 2 || got[0] != "24h" || got[1] != "1h" {
@@ -127,10 +127,10 @@ show_due_summary = false
 	if cfg.Delete.DefaultMode != DeleteModeHard {
 		t.Fatalf("unexpected delete mode %q", cfg.Delete.DefaultMode)
 	}
-	if cfg.TaskFields.ShowDueDate {
+	if cfg.ActionItemFields.ShowDueDate {
 		t.Fatal("expected due_date hidden from config override")
 	}
-	if !cfg.TaskFields.ShowDescription {
+	if !cfg.ActionItemFields.ShowDescription {
 		t.Fatal("expected description visible from config override")
 	}
 	if cfg.Confirm.Archive {

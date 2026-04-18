@@ -19,8 +19,8 @@ type authScopeFixture struct {
 	auth         *autentauth.Service
 	projectID    string
 	approvedPath string
-	taskA        domain.Task
-	taskB        domain.Task
+	actionItemA  domain.ActionItem
+	actionItemB  domain.ActionItem
 	handoffA     domain.Handoff
 	handoffB     domain.Handoff
 	attentionA   domain.AttentionItem
@@ -72,7 +72,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	}
 	columnID := columns[0].ID
 
-	branchA := mustCreateTaskForTest(t, svc, app.CreateTaskInput{
+	branchA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		Kind:           domain.WorkKind("branch"),
 		Scope:          domain.KindAppliesToBranch,
@@ -84,7 +84,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
 	})
-	phaseA := mustCreateTaskForTest(t, svc, app.CreateTaskInput{
+	phaseA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       branchA.ID,
 		Kind:           domain.WorkKindPhase,
@@ -97,20 +97,20 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
 	})
-	taskA := mustCreateTaskForTest(t, svc, app.CreateTaskInput{
+	actionItemA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       phaseA.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
-		Title:          "Task A",
+		Title:          "ActionItem A",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
 	})
-	branchB := mustCreateTaskForTest(t, svc, app.CreateTaskInput{
+	branchB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		Kind:           domain.WorkKind("branch"),
 		Scope:          domain.KindAppliesToBranch,
@@ -122,13 +122,13 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
 	})
-	taskB := mustCreateTaskForTest(t, svc, app.CreateTaskInput{
+	actionItemB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       branchB.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
-		Title:          "Task B",
+		Title:          "ActionItem B",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
@@ -139,35 +139,35 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	handoffA, err := svc.CreateHandoff(context.Background(), app.CreateHandoffInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   taskA.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItemA.ID,
 		},
 		Summary:     "handoff a",
 		CreatedBy:   "user-1",
 		CreatedType: domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateHandoff(task A) error = %v", err)
+		t.Fatalf("CreateHandoff(actionItem A) error = %v", err)
 	}
 	handoffB, err := svc.CreateHandoff(context.Background(), app.CreateHandoffInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   taskB.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItemB.ID,
 		},
 		Summary:     "handoff b",
 		CreatedBy:   "user-1",
 		CreatedType: domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateHandoff(task B) error = %v", err)
+		t.Fatalf("CreateHandoff(actionItem B) error = %v", err)
 	}
 
 	attentionA, err := svc.RaiseAttentionItem(context.Background(), app.RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   taskA.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItemA.ID,
 		},
 		Kind:        domain.AttentionKindRiskNote,
 		Summary:     "attention a",
@@ -175,13 +175,13 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		CreatedType: domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("RaiseAttentionItem(task A) error = %v", err)
+		t.Fatalf("RaiseAttentionItem(actionItem A) error = %v", err)
 	}
 	attentionB, err := svc.RaiseAttentionItem(context.Background(), app.RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
-			ScopeType: domain.ScopeLevelTask,
-			ScopeID:   taskB.ID,
+			ScopeType: domain.ScopeLevelActionItem,
+			ScopeID:   actionItemB.ID,
 		},
 		Kind:        domain.AttentionKindRiskNote,
 		Summary:     "attention b",
@@ -189,28 +189,28 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		CreatedType: domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("RaiseAttentionItem(task B) error = %v", err)
+		t.Fatalf("RaiseAttentionItem(actionItem B) error = %v", err)
 	}
 
 	leaseA, err := svc.IssueCapabilityLease(context.Background(), app.IssueCapabilityLeaseInput{
 		ProjectID: project.ID,
-		ScopeType: domain.CapabilityScopeTask,
-		ScopeID:   taskA.ID,
+		ScopeType: domain.CapabilityScopeActionItem,
+		ScopeID:   actionItemA.ID,
 		Role:      domain.CapabilityRoleBuilder,
 		AgentName: "Builder A",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(task A) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(actionItem A) error = %v", err)
 	}
 	leaseB, err := svc.IssueCapabilityLease(context.Background(), app.IssueCapabilityLeaseInput{
 		ProjectID: project.ID,
-		ScopeType: domain.CapabilityScopeTask,
-		ScopeID:   taskB.ID,
+		ScopeType: domain.CapabilityScopeActionItem,
+		ScopeID:   actionItemB.ID,
 		Role:      domain.CapabilityRoleBuilder,
 		AgentName: "Builder B",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(task B) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(actionItem B) error = %v", err)
 	}
 
 	return authScopeFixture{
@@ -218,8 +218,8 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		auth:         auth,
 		projectID:    project.ID,
 		approvedPath: "project/" + project.ID + "/branch/" + branchA.ID + "/phase/" + phaseA.ID,
-		taskA:        taskA,
-		taskB:        taskB,
+		actionItemA:  actionItemA,
+		actionItemB:  actionItemB,
 		handoffA:     handoffA,
 		handoffB:     handoffB,
 		attentionA:   attentionA,
@@ -229,15 +229,15 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	}
 }
 
-// mustCreateTaskForTest creates one fixture work item or fails the test.
-func mustCreateTaskForTest(t *testing.T, svc *app.Service, in app.CreateTaskInput) domain.Task {
+// mustCreateActionItemForTest creates one fixture work item or fails the test.
+func mustCreateActionItemForTest(t *testing.T, svc *app.Service, in app.CreateActionItemInput) domain.ActionItem {
 	t.Helper()
 
-	task, err := svc.CreateTask(context.Background(), in)
+	actionItem, err := svc.CreateActionItem(context.Background(), in)
 	if err != nil {
-		t.Fatalf("CreateTask(%q) error = %v", in.Title, err)
+		t.Fatalf("CreateActionItem(%q) error = %v", in.Title, err)
 	}
-	return task
+	return actionItem
 }
 
 // mustIssueApprovedPathSessionForTest issues one deterministic session carrying approved-path metadata.
@@ -275,79 +275,79 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 		wantErr error
 	}{
 		{
-			name: "update task in scope",
+			name: "update actionItem in scope",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "update_task",
 				Namespace:     "tillsyn",
-				ResourceType:  "task",
-				ResourceID:    fixture.taskA.ID,
-				Context:       map[string]string{"task_id": fixture.taskA.ID},
+				ResourceType:  "actionItem",
+				ResourceID:    fixture.actionItemA.ID,
+				Context:       map[string]string{"action_item_id": fixture.actionItemA.ID},
 			},
 		},
 		{
-			name: "update task out of scope",
+			name: "update actionItem out of scope",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "update_task",
 				Namespace:     "tillsyn",
-				ResourceType:  "task",
-				ResourceID:    fixture.taskB.ID,
-				Context:       map[string]string{"task_id": fixture.taskB.ID},
+				ResourceType:  "actionItem",
+				ResourceID:    fixture.actionItemB.ID,
+				Context:       map[string]string{"action_item_id": fixture.actionItemB.ID},
 			},
 			wantErr: ErrAuthorizationDenied,
 		},
 		{
-			name: "move task in scope",
+			name: "move actionItem in scope",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "move_task",
 				Namespace:     "tillsyn",
-				ResourceType:  "task",
-				ResourceID:    fixture.taskA.ID,
-				Context:       map[string]string{"task_id": fixture.taskA.ID},
+				ResourceType:  "actionItem",
+				ResourceID:    fixture.actionItemA.ID,
+				Context:       map[string]string{"action_item_id": fixture.actionItemA.ID},
 			},
 		},
 		{
-			name: "delete task out of scope",
+			name: "delete actionItem out of scope",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "delete_task",
 				Namespace:     "tillsyn",
-				ResourceType:  "task",
-				ResourceID:    fixture.taskB.ID,
-				Context:       map[string]string{"task_id": fixture.taskB.ID},
+				ResourceType:  "actionItem",
+				ResourceID:    fixture.actionItemB.ID,
+				Context:       map[string]string{"action_item_id": fixture.actionItemB.ID},
 			},
 			wantErr: ErrAuthorizationDenied,
 		},
 		{
-			name: "restore task in scope",
+			name: "restore actionItem in scope",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "restore_task",
 				Namespace:     "tillsyn",
-				ResourceType:  "task",
-				ResourceID:    fixture.taskA.ID,
-				Context:       map[string]string{"task_id": fixture.taskA.ID},
+				ResourceType:  "actionItem",
+				ResourceID:    fixture.actionItemA.ID,
+				Context:       map[string]string{"action_item_id": fixture.actionItemA.ID},
 			},
 		},
 		{
-			name: "reparent task out of scope",
+			name: "reparent actionItem out of scope",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "reparent_task",
 				Namespace:     "tillsyn",
-				ResourceType:  "task",
-				ResourceID:    fixture.taskB.ID,
+				ResourceType:  "actionItem",
+				ResourceID:    fixture.actionItemB.ID,
 				Context: map[string]string{
-					"task_id":   fixture.taskB.ID,
-					"parent_id": fixture.taskB.ID,
+					"action_item_id": fixture.actionItemB.ID,
+					"parent_id":      fixture.actionItemB.ID,
 				},
 			},
 			wantErr: ErrAuthorizationDenied,
@@ -486,32 +486,32 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 		wantErr error
 	}{
 		{
-			name: "create task under in-scope parent",
+			name: "create actionItem under in-scope parent",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "create_task",
 				Namespace:     "project:" + fixture.projectID,
-				ResourceType:  "task",
+				ResourceType:  "actionItem",
 				ResourceID:    "new",
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"parent_id":  fixture.taskA.ID,
+					"parent_id":  fixture.actionItemA.ID,
 				},
 			},
 		},
 		{
-			name: "create task under out-of-scope parent",
+			name: "create actionItem under out-of-scope parent",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
 				Action:        "create_task",
 				Namespace:     "project:" + fixture.projectID,
-				ResourceType:  "task",
+				ResourceType:  "actionItem",
 				ResourceID:    "new",
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"parent_id":  fixture.taskB.ID,
+					"parent_id":  fixture.actionItemB.ID,
 				},
 			},
 			wantErr: ErrAuthorizationDenied,
@@ -524,10 +524,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "create_comment",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "comment",
-				ResourceID:    fixture.taskA.ID,
+				ResourceID:    fixture.actionItemA.ID,
 				Context: map[string]string{
 					"project_id":  fixture.projectID,
-					"target_type": "task",
+					"target_type": "actionItem",
 				},
 			},
 		},
@@ -539,10 +539,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "create_comment",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "comment",
-				ResourceID:    fixture.taskB.ID,
+				ResourceID:    fixture.actionItemB.ID,
 				Context: map[string]string{
 					"project_id":  fixture.projectID,
-					"target_type": "task",
+					"target_type": "actionItem",
 				},
 			},
 			wantErr: ErrAuthorizationDenied,
@@ -555,10 +555,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "create_handoff",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "handoff",
-				ResourceID:    fixture.taskA.ID,
+				ResourceID:    fixture.actionItemA.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 		},
@@ -570,10 +570,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "create_handoff",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "handoff",
-				ResourceID:    fixture.taskB.ID,
+				ResourceID:    fixture.actionItemB.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 			wantErr: ErrAuthorizationDenied,
@@ -586,10 +586,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "raise_attention_item",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "attention_item",
-				ResourceID:    fixture.taskA.ID,
+				ResourceID:    fixture.actionItemA.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 		},
@@ -601,10 +601,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "raise_attention_item",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "attention_item",
-				ResourceID:    fixture.taskB.ID,
+				ResourceID:    fixture.actionItemB.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 			wantErr: ErrAuthorizationDenied,
@@ -617,10 +617,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "issue_capability_lease",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "capability_lease",
-				ResourceID:    fixture.taskA.ID,
+				ResourceID:    fixture.actionItemA.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 		},
@@ -632,10 +632,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				Action:        "issue_capability_lease",
 				Namespace:     "project:" + fixture.projectID,
 				ResourceType:  "capability_lease",
-				ResourceID:    fixture.taskB.ID,
+				ResourceID:    fixture.actionItemB.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 			wantErr: ErrAuthorizationDenied,
@@ -731,10 +731,10 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit(t *testing.T)
 				Action:       "issue_capability_lease",
 				Namespace:    "project:" + fixture.projectID,
 				ResourceType: "capability_lease",
-				ResourceID:   fixture.taskA.ID,
+				ResourceID:   fixture.actionItemA.ID,
 				Context: map[string]string{
 					"project_id": fixture.projectID,
-					"scope_type": "task",
+					"scope_type": "actionItem",
 				},
 			},
 			wantErr: ErrAuthorizationDenied,

@@ -20,11 +20,11 @@ type KindAppliesTo string
 
 // KindAppliesTo values.
 const (
-	KindAppliesToProject KindAppliesTo = "project"
-	KindAppliesToBranch  KindAppliesTo = "branch"
-	KindAppliesToPhase   KindAppliesTo = "phase"
-	KindAppliesToTask    KindAppliesTo = "task"
-	KindAppliesToSubtask KindAppliesTo = "subtask"
+	KindAppliesToProject    KindAppliesTo = "project"
+	KindAppliesToBranch     KindAppliesTo = "branch"
+	KindAppliesToPhase      KindAppliesTo = "phase"
+	KindAppliesToActionItem KindAppliesTo = "actionItem"
+	KindAppliesToSubtask    KindAppliesTo = "subtask"
 )
 
 // validKindAppliesTo stores all supported applies_to values.
@@ -32,7 +32,7 @@ var validKindAppliesTo = []KindAppliesTo{
 	KindAppliesToProject,
 	KindAppliesToBranch,
 	KindAppliesToPhase,
-	KindAppliesToTask,
+	KindAppliesToActionItem,
 	KindAppliesToSubtask,
 }
 
@@ -40,7 +40,7 @@ var validKindAppliesTo = []KindAppliesTo{
 var validWorkItemAppliesTo = []KindAppliesTo{
 	KindAppliesToBranch,
 	KindAppliesToPhase,
-	KindAppliesToTask,
+	KindAppliesToActionItem,
 	KindAppliesToSubtask,
 }
 
@@ -56,10 +56,10 @@ type KindTemplateChildSpec struct {
 
 // KindTemplate stores template-driven system actions and default metadata for a kind definition.
 type KindTemplate struct {
-	AutoCreateChildren      []KindTemplateChildSpec `json:"auto_create_children"`
-	CompletionChecklist     []ChecklistItem         `json:"completion_checklist"`
-	ProjectMetadataDefaults *ProjectMetadata        `json:"project_metadata_defaults,omitempty"`
-	TaskMetadataDefaults    *TaskMetadata           `json:"task_metadata_defaults,omitempty"`
+	AutoCreateChildren         []KindTemplateChildSpec `json:"auto_create_children"`
+	CompletionChecklist        []ChecklistItem         `json:"completion_checklist"`
+	ProjectMetadataDefaults    *ProjectMetadata        `json:"project_metadata_defaults,omitempty"`
+	ActionItemMetadataDefaults *ActionItemMetadata     `json:"task_metadata_defaults,omitempty"`
 }
 
 // KindDefinition stores one reusable kind definition.
@@ -164,13 +164,33 @@ func (k KindDefinition) AllowsParentScope(scope KindAppliesTo) bool {
 }
 
 // NormalizeKindID canonicalizes kind identifiers for storage/lookup.
+// The input is trimmed and lowercased, then any "actionitem" token
+// (whole-word matched against `-` or `_` boundaries) is rewritten to
+// the canonical "actionItem" camelCase spelling so kind ids like
+// "actionItem" or "build-actionItem" survive the round-trip intact.
 func NormalizeKindID(id KindID) KindID {
-	return KindID(strings.TrimSpace(strings.ToLower(string(id))))
+	trimmed := strings.TrimSpace(string(id))
+	if trimmed == "" {
+		return ""
+	}
+	return KindID(canonicalizeActionItemToken(strings.ToLower(trimmed)))
 }
 
-// NormalizeKindAppliesTo canonicalizes applies_to values.
+// NormalizeKindAppliesTo canonicalizes applies_to values. Inputs are matched
+// case-insensitively against the supported set and returned in their
+// canonical camelCase form (e.g. "actionItem"); unknown values are returned
+// lowercased so callers can still detect invalid inputs.
 func NormalizeKindAppliesTo(scope KindAppliesTo) KindAppliesTo {
-	return KindAppliesTo(strings.TrimSpace(strings.ToLower(string(scope))))
+	lowered := strings.TrimSpace(strings.ToLower(string(scope)))
+	if lowered == "" {
+		return ""
+	}
+	for _, candidate := range validKindAppliesTo {
+		if strings.ToLower(string(candidate)) == lowered {
+			return candidate
+		}
+	}
+	return KindAppliesTo(lowered)
 }
 
 // IsValidKindAppliesTo reports whether a value is supported for catalog definitions.
@@ -269,19 +289,19 @@ func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
 		}
 		projectDefaults = &normalized
 	}
-	var taskDefaults *TaskMetadata
-	if in.TaskMetadataDefaults != nil {
-		normalized, err := normalizeTaskMetadata(*in.TaskMetadataDefaults)
+	var actionItemDefaults *ActionItemMetadata
+	if in.ActionItemMetadataDefaults != nil {
+		normalized, err := normalizeActionItemMetadata(*in.ActionItemMetadataDefaults)
 		if err != nil {
-			return KindTemplate{}, fmt.Errorf("%w: task metadata defaults: %v", ErrInvalidKindTemplate, err)
+			return KindTemplate{}, fmt.Errorf("%w: actionItem metadata defaults: %v", ErrInvalidKindTemplate, err)
 		}
-		taskDefaults = &normalized
+		actionItemDefaults = &normalized
 	}
 
 	return KindTemplate{
-		AutoCreateChildren:      children,
-		CompletionChecklist:     checklist,
-		ProjectMetadataDefaults: projectDefaults,
-		TaskMetadataDefaults:    taskDefaults,
+		AutoCreateChildren:         children,
+		CompletionChecklist:        checklist,
+		ProjectMetadataDefaults:    projectDefaults,
+		ActionItemMetadataDefaults: actionItemDefaults,
 	}, nil
 }

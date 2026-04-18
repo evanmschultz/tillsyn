@@ -154,7 +154,7 @@ func TestBuildInstructionsToolResponseExplainKind(t *testing.T) {
 
 	resp, err := buildInstructionsToolResponse(context.Background(), newInstructionsTestServices(), instructionsToolRequest{
 		Focus:                  "kind",
-		KindID:                 "task",
+		KindID:                 "actionItem",
 		ProjectID:              "p1",
 		TemplateLibraryID:      "go-defaults",
 		IncludeEvidence:        true,
@@ -182,7 +182,7 @@ func TestBuildInstructionsToolResponseExplainNode(t *testing.T) {
 
 	resp, err := buildInstructionsToolResponse(context.Background(), newInstructionsTestServices(), instructionsToolRequest{
 		Focus:                  "node",
-		NodeID:                 "task-1",
+		NodeID:                 "actionItem-1",
 		IncludeEvidence:        true,
 		IncludeMarkdown:        false,
 		IncludeRecommendations: false,
@@ -193,8 +193,8 @@ func TestBuildInstructionsToolResponseExplainNode(t *testing.T) {
 	if resp.Explanation == nil {
 		t.Fatal("Explanation nil, want node explanation")
 	}
-	if got := resp.ResolvedScope.NodeID; got != "task-1" {
-		t.Fatalf("ResolvedScope.NodeID = %q, want task-1", got)
+	if got := resp.ResolvedScope.NodeID; got != "actionItem-1" {
+		t.Fatalf("ResolvedScope.NodeID = %q, want actionItem-1", got)
 	}
 	scopedRules := strings.ToLower(strings.Join(resp.Explanation.ScopedRules, " | "))
 	if !strings.Contains(scopedRules, "validation plan") {
@@ -213,7 +213,7 @@ func TestBuildInstructionsToolResponseExplainNode(t *testing.T) {
 func TestNormalizeInstructionsToolModeAndFocus(t *testing.T) {
 	t.Parallel()
 
-	mode, focus, err := normalizeInstructionsToolModeAndFocus(instructionsToolRequest{NodeID: "task-1"})
+	mode, focus, err := normalizeInstructionsToolModeAndFocus(instructionsToolRequest{NodeID: "actionItem-1"})
 	if err != nil {
 		t.Fatalf("normalizeInstructionsToolModeAndFocus(node) error = %v", err)
 	}

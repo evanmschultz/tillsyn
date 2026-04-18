@@ -27,8 +27,8 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo.columns[c1.ID] = c1
 	repo.columns[c2.ID] = c2
 
-	t1, _ := domain.NewTask(domain.TaskInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "Task A", Priority: domain.PriorityLow}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "Task B", Priority: domain.PriorityHigh}, now)
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow}, now)
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh}, now)
 	t2.Archive(now.Add(2 * time.Minute))
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
@@ -36,7 +36,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
 		ID:          "refactor",
 		DisplayName: "Refactor",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 	}, now)
 	if err != nil {
 		t.Fatalf("NewKindDefinition() error = %v", err)
@@ -55,10 +55,10 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 		ApprovedByActorName: "Tester",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []domain.NodeTemplateInput{{
-			ID:          "task-template",
-			ScopeLevel:  domain.KindAppliesToTask,
+			ID:          "actionItem-template",
+			ScopeLevel:  domain.KindAppliesToActionItem,
 			NodeKindID:  kind.ID,
-			DisplayName: "Refactor Task",
+			DisplayName: "Refactor ActionItem",
 		}},
 	}, now)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 		NodeID:                  t1.ID,
 		ProjectID:               p1.ID,
 		SourceLibraryID:         templateLibrary.ID,
-		SourceNodeTemplateID:    "task-template",
+		SourceNodeTemplateID:    "actionItem-template",
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
@@ -112,7 +112,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 		LeaseToken: "token-1",
 		AgentName:  "orchestrator",
 		ProjectID:  p1.ID,
-		ScopeType:  domain.CapabilityScopeTask,
+		ScopeType:  domain.CapabilityScopeActionItem,
 		ScopeID:    t1.ID,
 		Role:       domain.CapabilityRoleOrchestrator,
 		ExpiresAt:  now.Add(2 * time.Hour),
@@ -124,7 +124,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	handoff, err := domain.NewHandoff(domain.HandoffInput{
 		ID:              "handoff-1",
 		ProjectID:       p1.ID,
-		ScopeType:       domain.ScopeLevelTask,
+		ScopeType:       domain.ScopeLevelActionItem,
 		ScopeID:         t1.ID,
 		SourceRole:      "builder",
 		TargetRole:      "qa",
@@ -142,7 +142,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	archivedHandoff, err := domain.NewHandoff(domain.HandoffInput{
 		ID:             "handoff-2",
 		ProjectID:      p2.ID,
-		ScopeType:      domain.ScopeLevelTask,
+		ScopeType:      domain.ScopeLevelActionItem,
 		ScopeID:        t2.ID,
 		SourceRole:     "builder",
 		TargetRole:     "qa",
@@ -171,8 +171,8 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapActive.Columns) != 1 || snapActive.Columns[0].ID != c1.ID {
 		t.Fatalf("unexpected active columns %#v", snapActive.Columns)
 	}
-	if len(snapActive.Tasks) != 1 || snapActive.Tasks[0].ID != t1.ID {
-		t.Fatalf("unexpected active tasks %#v", snapActive.Tasks)
+	if len(snapActive.ActionItems) != 1 || snapActive.ActionItems[0].ID != t1.ID {
+		t.Fatalf("unexpected active tasks %#v", snapActive.ActionItems)
 	}
 	if len(snapActive.Handoffs) != 1 || snapActive.Handoffs[0].ID != handoff.ID {
 		t.Fatalf("expected only active-scope handoff in active snapshot, got %#v", snapActive.Handoffs)
@@ -182,8 +182,8 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportSnapshot(all) error = %v", err)
 	}
-	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.Tasks) != 2 {
-		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.Tasks))
+	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.ActionItems) != 2 {
+		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.ActionItems))
 	}
 	if len(snapAll.KindDefinitions) != 1 {
 		t.Fatalf("expected kind definition closure in snapshot, got %#v", snapAll.KindDefinitions)
@@ -234,11 +234,11 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 
 	existingProject, _ := domain.NewProject("p1", "Old Name", "", now)
 	existingCol, _ := domain.NewColumn("c1", existingProject.ID, "Old Col", 0, 0, now)
-	existingTask, _ := domain.NewTask(domain.TaskInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old Task", Priority: domain.PriorityLow}, now)
+	existingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow}, now)
 
 	repo.projects[existingProject.ID] = existingProject
 	repo.columns[existingCol.ID] = existingCol
-	repo.tasks[existingTask.ID] = existingTask
+	repo.tasks[existingActionItem.ID] = existingActionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
 	due := now.Add(48 * time.Hour)
@@ -252,16 +252,16 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 			{ID: "c1", ProjectID: "p1", Name: "Doing", Position: 1, WIPLimit: 2, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, WIPLimit: 0, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
-		Tasks: []SnapshotTask{
-			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated Task", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
-			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+		ActionItems: []SnapshotActionItem{
+			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated ActionItem", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, Kind: domain.WorkKindPhase, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
 		KindDefinitions: []SnapshotKindDefinition{
 			{
 				ID:          "refactor",
 				DisplayName: "Refactor",
-				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 				CreatedAt:   now,
 				UpdatedAt:   now.Add(time.Minute),
 			},
@@ -283,10 +283,10 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 					ApprovedByActorName: "Importer",
 					ApprovedByActorType: domain.ActorTypeUser,
 					NodeTemplates: []domain.NodeTemplateInput{{
-						ID:          "task-template",
-						ScopeLevel:  domain.KindAppliesToTask,
+						ID:          "actionItem-template",
+						ScopeLevel:  domain.KindAppliesToActionItem,
 						NodeKindID:  domain.KindID("refactor"),
-						DisplayName: "Refactor Task",
+						DisplayName: "Refactor ActionItem",
 					}},
 				}, now)
 				if err != nil {
@@ -316,7 +316,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 					NodeID:                  "t1",
 					ProjectID:               "p1",
 					SourceLibraryID:         "global-defaults",
-					SourceNodeTemplateID:    "task-template",
+					SourceNodeTemplateID:    "actionItem-template",
 					ResponsibleActorKind:    domain.TemplateActorKindQA,
 					EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
 					CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
@@ -348,7 +348,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 				LeaseToken:  "token-1",
 				AgentName:   "orchestrator",
 				ProjectID:   "p1",
-				ScopeType:   domain.CapabilityScopeTask,
+				ScopeType:   domain.CapabilityScopeActionItem,
 				ScopeID:     "t1",
 				Role:        domain.CapabilityRoleOrchestrator,
 				IssuedAt:    now,
@@ -360,7 +360,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 			{
 				ID:             "handoff-1",
 				ProjectID:      "p1",
-				ScopeType:      domain.ScopeLevelTask,
+				ScopeType:      domain.ScopeLevelActionItem,
 				ScopeID:        "t1",
 				SourceRole:     "builder",
 				TargetRole:     "qa",
@@ -396,14 +396,14 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	if _, ok := repo.columns["c2"]; !ok {
 		t.Fatal("expected new column c2")
 	}
-	if got := repo.tasks["t1"]; got.Title != "Updated Task" || got.Priority != domain.PriorityHigh {
-		t.Fatalf("unexpected updated task %#v", got)
+	if got := repo.tasks["t1"]; got.Title != "Updated ActionItem" || got.Priority != domain.PriorityHigh {
+		t.Fatalf("unexpected updated actionItem %#v", got)
 	}
 	if _, ok := repo.tasks["t2"]; !ok {
-		t.Fatal("expected new task t2")
+		t.Fatal("expected new actionItem t2")
 	}
 	if got := repo.tasks["phase-1"]; got.Kind != domain.WorkKindPhase || got.Scope != domain.KindAppliesToPhase {
-		t.Fatalf("expected imported phase task to default to phase scope, got %#v", got)
+		t.Fatalf("expected imported phase actionItem to default to phase scope, got %#v", got)
 	}
 	if _, ok := repo.kindDefs[domain.KindID("refactor")]; !ok {
 		t.Fatal("expected imported kind definition refactor")
@@ -468,8 +468,8 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		Columns: []SnapshotColumn{
 			{ID: "c1", ProjectID: "p1", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
 		},
-		Tasks: []SnapshotTask{
-			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+		ActionItems: []SnapshotActionItem{
+			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 			{ID: "p1", ProjectID: "p1", ParentID: "t1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c1", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 		},
 	}
@@ -485,7 +485,7 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		Columns: []SnapshotColumn{
 			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
 		},
-		Tasks: []SnapshotTask{
+		ActionItems: []SnapshotActionItem{
 			{ID: "branch-1", ProjectID: "p2", Kind: domain.WorkKind("branch"), Scope: domain.KindAppliesToBranch, ColumnID: "c2", Position: 0, Title: "Branch", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 			{ID: "phase-1", ProjectID: "p2", ParentID: "branch-1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 			{ID: "phase-2", ProjectID: "p2", ParentID: "phase-1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 2, Title: "Nested Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
@@ -503,15 +503,15 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		Columns: []SnapshotColumn{
 			{ID: "c3", ProjectID: "p3", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
 		},
-		Tasks: []SnapshotTask{
-			{ID: "t3", ProjectID: "p3", ColumnID: "c3", Position: 0, Title: "Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+		ActionItems: []SnapshotActionItem{
+			{ID: "t3", ProjectID: "p3", ColumnID: "c3", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 		},
 		Handoffs: []SnapshotHandoff{
 			{
 				ID:             "handoff-missing",
 				ProjectID:      "p3",
-				ScopeType:      domain.ScopeLevelTask,
-				ScopeID:        "missing-task",
+				ScopeType:      domain.ScopeLevelActionItem,
+				ScopeID:        "missing-actionItem",
 				SourceRole:     "builder",
 				TargetRole:     "qa",
 				Status:         domain.HandoffStatusWaiting,
@@ -537,8 +537,8 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		Columns: []SnapshotColumn{
 			{ID: "c4", ProjectID: "p4", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
 		},
-		Tasks: []SnapshotTask{
-			{ID: "t4", ProjectID: "p4", ColumnID: "c4", Position: 0, Title: "Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+		ActionItems: []SnapshotActionItem{
+			{ID: "t4", ProjectID: "p4", ColumnID: "c4", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 		},
 		TemplateLibraries: []domain.TemplateLibrary{
 			{
@@ -551,7 +551,7 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 				NodeTemplates: []domain.NodeTemplate{{
 					ID:          "broken-template",
 					LibraryID:   "broken-library",
-					ScopeLevel:  domain.KindAppliesToTask,
+					ScopeLevel:  domain.KindAppliesToActionItem,
 					NodeKindID:  domain.KindID("missing-kind"),
 					DisplayName: "Broken Template",
 				}},
@@ -591,8 +591,8 @@ func TestSnapshotValidateAcceptsFailedState(t *testing.T) {
 		Version:  SnapshotVersion,
 		Projects: []SnapshotProject{{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now}},
 		Columns:  []SnapshotColumn{{ID: "c1", ProjectID: "p1", Name: "Failed", Position: 3, CreatedAt: now, UpdatedAt: now}},
-		Tasks: []SnapshotTask{
-			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "Failed task", Priority: domain.PriorityMedium, LifecycleState: domain.StateFailed, CreatedAt: now, UpdatedAt: now},
+		ActionItems: []SnapshotActionItem{
+			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "Failed actionItem", Priority: domain.PriorityMedium, LifecycleState: domain.StateFailed, CreatedAt: now, UpdatedAt: now},
 		},
 	}
 	if err := snap.Validate(); err != nil {
@@ -607,7 +607,7 @@ func TestSnapshotValidateRejectsInvalidState(t *testing.T) {
 		Version:  SnapshotVersion,
 		Projects: []SnapshotProject{{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now}},
 		Columns:  []SnapshotColumn{{ID: "c1", ProjectID: "p1", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now}},
-		Tasks: []SnapshotTask{
+		ActionItems: []SnapshotActionItem{
 			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "Bad state", Priority: domain.PriorityMedium, LifecycleState: "invalid", CreatedAt: now, UpdatedAt: now},
 		},
 	}

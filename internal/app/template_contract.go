@@ -29,9 +29,9 @@ func currentMutationActorType(ctx context.Context, explicit domain.ActorType) do
 	return domain.ActorTypeUser
 }
 
-// ensureTaskEditableByNodeContract blocks non-human edits that violate a stored generated-node contract.
-func (s *Service) ensureTaskEditableByNodeContract(ctx context.Context, task domain.Task) error {
-	snapshot, ok, err := s.nodeContractSnapshotForTask(ctx, task.ID)
+// ensureActionItemEditableByNodeContract blocks non-human edits that violate a stored generated-node contract.
+func (s *Service) ensureActionItemEditableByNodeContract(ctx context.Context, actionItem domain.ActionItem) error {
+	snapshot, ok, err := s.nodeContractSnapshotForActionItem(ctx, actionItem.ID)
 	if err != nil || !ok {
 		return err
 	}
@@ -45,12 +45,12 @@ func (s *Service) ensureTaskEditableByNodeContract(ctx context.Context, task dom
 	if slices.Contains(snapshot.EditableByActorKinds, actor.Kind) {
 		return nil
 	}
-	return fmt.Errorf("%w: %q is editable by %s", domain.ErrNodeContractForbidden, taskDisplayLabel(task), nodeContractActorKindsSummary(snapshot.EditableByActorKinds, true, false))
+	return fmt.Errorf("%w: %q is editable by %s", domain.ErrNodeContractForbidden, actionItemDisplayLabel(actionItem), nodeContractActorKindsSummary(snapshot.EditableByActorKinds, true, false))
 }
 
-// ensureTaskCompletableByNodeContract blocks non-human completion when the stored generated-node contract forbids it.
-func (s *Service) ensureTaskCompletableByNodeContract(ctx context.Context, task domain.Task) error {
-	snapshot, ok, err := s.nodeContractSnapshotForTask(ctx, task.ID)
+// ensureActionItemCompletableByNodeContract blocks non-human completion when the stored generated-node contract forbids it.
+func (s *Service) ensureActionItemCompletableByNodeContract(ctx context.Context, actionItem domain.ActionItem) error {
+	snapshot, ok, err := s.nodeContractSnapshotForActionItem(ctx, actionItem.ID)
 	if err != nil || !ok {
 		return err
 	}
@@ -67,13 +67,13 @@ func (s *Service) ensureTaskCompletableByNodeContract(ctx context.Context, task 
 	if slices.Contains(snapshot.CompletableByActorKinds, actor.Kind) {
 		return nil
 	}
-	return fmt.Errorf("%w: %q is completable by %s", domain.ErrNodeContractForbidden, taskDisplayLabel(task), nodeContractActorKindsSummary(snapshot.CompletableByActorKinds, true, snapshot.OrchestratorMayComplete))
+	return fmt.Errorf("%w: %q is completable by %s", domain.ErrNodeContractForbidden, actionItemDisplayLabel(actionItem), nodeContractActorKindsSummary(snapshot.CompletableByActorKinds, true, snapshot.OrchestratorMayComplete))
 }
 
-// ensureTaskCompletionBlockersClear enforces parent and containing-scope blockers from stored node contracts.
-func (s *Service) ensureTaskCompletionBlockersClear(ctx context.Context, task domain.Task, projectTasks []domain.Task) error {
-	children, descendants := taskChildrenAndDescendants(task.ID, projectTasks)
-	activeChildren := make([]domain.Task, 0, len(children))
+// ensureActionItemCompletionBlockersClear enforces parent and containing-scope blockers from stored node contracts.
+func (s *Service) ensureActionItemCompletionBlockersClear(ctx context.Context, actionItem domain.ActionItem, projectActionItems []domain.ActionItem) error {
+	children, descendants := actionItemChildrenAndDescendants(actionItem.ID, projectActionItems)
+	activeChildren := make([]domain.ActionItem, 0, len(children))
 	blockers := make([]string, 0)
 	seen := map[string]struct{}{}
 
@@ -94,7 +94,7 @@ func (s *Service) ensureTaskCompletionBlockersClear(ctx context.Context, task do
 			continue
 		}
 		activeChildren = append(activeChildren, child)
-		snapshot, ok, err := s.nodeContractSnapshotForTask(ctx, child.ID)
+		snapshot, ok, err := s.nodeContractSnapshotForActionItem(ctx, child.ID)
 		if err != nil {
 			return err
 		}
@@ -106,7 +106,7 @@ func (s *Service) ensureTaskCompletionBlockersClear(ctx context.Context, task do
 		if descendant.ArchivedAt != nil {
 			continue
 		}
-		snapshot, ok, err := s.nodeContractSnapshotForTask(ctx, descendant.ID)
+		snapshot, ok, err := s.nodeContractSnapshotForActionItem(ctx, descendant.ID)
 		if err != nil {
 			return err
 		}
@@ -118,15 +118,15 @@ func (s *Service) ensureTaskCompletionBlockersClear(ctx context.Context, task do
 		sort.Strings(blockers)
 		return fmt.Errorf("%w: %s", domain.ErrTransitionBlocked, strings.Join(blockers, "; "))
 	}
-	if unmet := task.CompletionCriteriaUnmet(activeChildren); len(unmet) > 0 {
+	if unmet := actionItem.CompletionCriteriaUnmet(activeChildren); len(unmet) > 0 {
 		return fmt.Errorf("%w: completion criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
 	}
 	return nil
 }
 
-// nodeContractSnapshotForTask loads one generated-node contract snapshot when present.
-func (s *Service) nodeContractSnapshotForTask(ctx context.Context, taskID string) (domain.NodeContractSnapshot, bool, error) {
-	snapshot, err := s.repo.GetNodeContractSnapshot(ctx, strings.TrimSpace(taskID))
+// nodeContractSnapshotForActionItem loads one generated-node contract snapshot when present.
+func (s *Service) nodeContractSnapshotForActionItem(ctx context.Context, actionItemID string) (domain.NodeContractSnapshot, bool, error) {
+	snapshot, err := s.repo.GetNodeContractSnapshot(ctx, strings.TrimSpace(actionItemID))
 	if err == nil {
 		return snapshot, true, nil
 	}
@@ -180,21 +180,21 @@ func (s *Service) resolveTemplateContractActor(ctx context.Context) (templateCon
 	return templateContractActor{IsHuman: true, Kind: domain.TemplateActorKindHuman}, nil
 }
 
-// taskChildrenAndDescendants returns direct children plus the full descendant tree in stable traversal order.
-func taskChildrenAndDescendants(rootID string, tasks []domain.Task) ([]domain.Task, []domain.Task) {
+// actionItemChildrenAndDescendants returns direct children plus the full descendant tree in stable traversal order.
+func actionItemChildrenAndDescendants(rootID string, tasks []domain.ActionItem) ([]domain.ActionItem, []domain.ActionItem) {
 	rootID = strings.TrimSpace(rootID)
-	byParent := make(map[string][]domain.Task)
-	for _, task := range tasks {
-		parentID := strings.TrimSpace(task.ParentID)
+	byParent := make(map[string][]domain.ActionItem)
+	for _, actionItem := range tasks {
+		parentID := strings.TrimSpace(actionItem.ParentID)
 		if parentID == "" {
 			continue
 		}
-		byParent[parentID] = append(byParent[parentID], task)
+		byParent[parentID] = append(byParent[parentID], actionItem)
 	}
 
-	children := append([]domain.Task(nil), byParent[rootID]...)
-	descendants := make([]domain.Task, 0, len(children))
-	queue := append([]domain.Task(nil), children...)
+	children := append([]domain.ActionItem(nil), byParent[rootID]...)
+	descendants := make([]domain.ActionItem, 0, len(children))
+	queue := append([]domain.ActionItem(nil), children...)
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -205,8 +205,8 @@ func taskChildrenAndDescendants(rootID string, tasks []domain.Task) ([]domain.Ta
 }
 
 // formatNodeContractBlocker renders one contract-driven completion blocker with the role requirements.
-func formatNodeContractBlocker(task domain.Task, snapshot domain.NodeContractSnapshot, scopeLabel string) string {
-	return fmt.Sprintf("%s blocker %q is not done (responsible actor kind: %s; completable by: %s)", scopeLabel, taskDisplayLabel(task), snapshot.ResponsibleActorKind, nodeContractActorKindsSummary(snapshot.CompletableByActorKinds, true, snapshot.OrchestratorMayComplete))
+func formatNodeContractBlocker(actionItem domain.ActionItem, snapshot domain.NodeContractSnapshot, scopeLabel string) string {
+	return fmt.Sprintf("%s blocker %q is not done (responsible actor kind: %s; completable by: %s)", scopeLabel, actionItemDisplayLabel(actionItem), snapshot.ResponsibleActorKind, nodeContractActorKindsSummary(snapshot.CompletableByActorKinds, true, snapshot.OrchestratorMayComplete))
 }
 
 // nodeContractActorKindsSummary returns a stable human-readable summary of one actor-kind allowlist.
@@ -239,10 +239,10 @@ func nodeContractActorKindsSummary(kinds []domain.TemplateActorKind, includeHuma
 	return strings.Join(out, ", ")
 }
 
-// taskDisplayLabel returns the best available stable display label for one task in error messages.
-func taskDisplayLabel(task domain.Task) string {
-	if title := strings.TrimSpace(task.Title); title != "" {
+// actionItemDisplayLabel returns the best available stable display label for one actionItem in error messages.
+func actionItemDisplayLabel(actionItem domain.ActionItem) string {
+	if title := strings.TrimSpace(actionItem.Title); title != "" {
 		return title
 	}
-	return strings.TrimSpace(task.ID)
+	return strings.TrimSpace(actionItem.ID)
 }

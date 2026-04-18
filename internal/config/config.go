@@ -27,20 +27,20 @@ const (
 
 // Config holds package configuration.
 type Config struct {
-	Database     DatabaseConfig    `toml:"database"`
-	Delete       DeleteConfig      `toml:"delete"`
-	Confirm      ConfirmConfig     `toml:"confirm"`
-	TaskFields   TaskFieldsConfig  `toml:"task_fields"`
-	Board        BoardConfig       `toml:"board"`
-	Search       SearchConfig      `toml:"search"`
-	Embeddings   EmbeddingsConfig  `toml:"embeddings"`
-	Identity     IdentityConfig    `toml:"identity"`
-	Paths        PathsConfig       `toml:"paths"`
-	UI           UIConfig          `toml:"ui"`
-	Logging      LoggingConfig     `toml:"logging"`
-	ProjectRoots map[string]string `toml:"project_roots"`
-	Labels       LabelConfig       `toml:"labels"`
-	Keys         KeyConfig         `toml:"keys"`
+	Database         DatabaseConfig         `toml:"database"`
+	Delete           DeleteConfig           `toml:"delete"`
+	Confirm          ConfirmConfig          `toml:"confirm"`
+	ActionItemFields ActionItemFieldsConfig `toml:"task_fields"`
+	Board            BoardConfig            `toml:"board"`
+	Search           SearchConfig           `toml:"search"`
+	Embeddings       EmbeddingsConfig       `toml:"embeddings"`
+	Identity         IdentityConfig         `toml:"identity"`
+	Paths            PathsConfig            `toml:"paths"`
+	UI               UIConfig               `toml:"ui"`
+	Logging          LoggingConfig          `toml:"logging"`
+	ProjectRoots     map[string]string      `toml:"project_roots"`
+	Labels           LabelConfig            `toml:"labels"`
+	Keys             KeyConfig              `toml:"keys"`
 }
 
 // DatabaseConfig holds configuration for database.
@@ -61,8 +61,8 @@ type ConfirmConfig struct {
 	Restore    bool `toml:"restore"`
 }
 
-// TaskFieldsConfig holds configuration for task fields.
-type TaskFieldsConfig struct {
+// ActionItemFieldsConfig holds configuration for actionItem fields.
+type ActionItemFieldsConfig struct {
 	ShowPriority    bool `toml:"show_priority"`
 	ShowDueDate     bool `toml:"show_due_date"`
 	ShowLabels      bool `toml:"show_labels"`
@@ -176,7 +176,7 @@ func Default(dbPath string) Config {
 			HardDelete: true,
 			Restore:    false,
 		},
-		TaskFields: TaskFieldsConfig{
+		ActionItemFields: ActionItemFieldsConfig{
 			ShowPriority:    true,
 			ShowDueDate:     true,
 			ShowLabels:      true,

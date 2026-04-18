@@ -3,7 +3,7 @@
 Per-drop snapshot of project state, cost, and code-quality deltas. Populated by the orchestrator at two moments:
 
 - Once, at project start: **Starting Baseline** below.
-- Per-drop, at drop-end: a new `## Drop <N> — <Title>` section appended by the `DROP <N> END — LEDGER UPDATE` task.
+- Per-drop, at drop-end: a new `## Drop <N> — <Title>` section appended by the `DROP <N> END — LEDGER UPDATE` actionItem.
 
 **Hylla ingest invariants (every drop-end ingest):**
 
@@ -39,7 +39,7 @@ Per-drop snapshot of project state, cost, and code-quality deltas. Populated by 
 
 ## Drop 0 — Project Reset + Docs Cleanup
 
-_To be populated by the `DROP 0 END — LEDGER UPDATE` task once Drop 0 closes._
+_To be populated by the `DROP 0 END — LEDGER UPDATE` actionItem once Drop 0 closes._
 
 Template for every drop entry (append to this file; do not rewrite prior entries):
 

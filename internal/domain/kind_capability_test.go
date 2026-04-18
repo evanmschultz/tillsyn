@@ -12,14 +12,14 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 		ID:                  " Refactor ",
 		DisplayName:         " Refactor Work ",
 		DescriptionMarkdown: " refactor tasks ",
-		AppliesTo:           []KindAppliesTo{KindAppliesToTask, KindAppliesToTask, KindAppliesToSubtask},
+		AppliesTo:           []KindAppliesTo{KindAppliesToActionItem, KindAppliesToActionItem, KindAppliesToSubtask},
 		AllowedParentScopes: []KindAppliesTo{KindAppliesToPhase},
 		PayloadSchemaJSON:   `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
 		Template: KindTemplate{
 			CompletionChecklist: []ChecklistItem{{ID: "c1", Text: "run tests", Done: false}},
 			AutoCreateChildren: []KindTemplateChildSpec{{
 				Title:     "scan packages",
-				Kind:      "task",
+				Kind:      "actionItem",
 				AppliesTo: KindAppliesToSubtask,
 			}},
 			ProjectMetadataDefaults: &ProjectMetadata{
@@ -27,7 +27,7 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 				Tags:     []string{"Alpha", "alpha"},
 				Homepage: " https://example.com ",
 			},
-			TaskMetadataDefaults: &TaskMetadata{
+			ActionItemMetadataDefaults: &ActionItemMetadata{
 				Objective:       "  default objective  ",
 				CommandSnippets: []string{"make test", "make test"},
 				CompletionContract: CompletionContract{
@@ -43,8 +43,8 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 	if kind.ID != KindID("refactor") {
 		t.Fatalf("expected normalized id refactor, got %q", kind.ID)
 	}
-	if !kind.AppliesToScope(KindAppliesToTask) {
-		t.Fatal("expected applies_to task")
+	if !kind.AppliesToScope(KindAppliesToActionItem) {
+		t.Fatal("expected applies_to actionItem")
 	}
 	if !kind.AllowsParentScope(KindAppliesToPhase) {
 		t.Fatal("expected allowed parent scope phase")
@@ -61,17 +61,17 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 	if len(kind.Template.ProjectMetadataDefaults.Tags) != 1 || kind.Template.ProjectMetadataDefaults.Tags[0] != "alpha" {
 		t.Fatalf("unexpected project default tags %#v", kind.Template.ProjectMetadataDefaults.Tags)
 	}
-	if kind.Template.TaskMetadataDefaults == nil {
-		t.Fatal("expected normalized task metadata defaults")
+	if kind.Template.ActionItemMetadataDefaults == nil {
+		t.Fatal("expected normalized actionItem metadata defaults")
 	}
-	if kind.Template.TaskMetadataDefaults.Objective != "default objective" {
-		t.Fatalf("unexpected task default objective %q", kind.Template.TaskMetadataDefaults.Objective)
+	if kind.Template.ActionItemMetadataDefaults.Objective != "default objective" {
+		t.Fatalf("unexpected actionItem default objective %q", kind.Template.ActionItemMetadataDefaults.Objective)
 	}
-	if len(kind.Template.TaskMetadataDefaults.CommandSnippets) != 1 || kind.Template.TaskMetadataDefaults.CommandSnippets[0] != "make test" {
-		t.Fatalf("unexpected task default command snippets %#v", kind.Template.TaskMetadataDefaults.CommandSnippets)
+	if len(kind.Template.ActionItemMetadataDefaults.CommandSnippets) != 1 || kind.Template.ActionItemMetadataDefaults.CommandSnippets[0] != "make test" {
+		t.Fatalf("unexpected actionItem default command snippets %#v", kind.Template.ActionItemMetadataDefaults.CommandSnippets)
 	}
-	if !kind.Template.TaskMetadataDefaults.CompletionContract.Policy.RequireChildrenDone {
-		t.Fatal("expected normalized task default completion policy")
+	if !kind.Template.ActionItemMetadataDefaults.CompletionContract.Policy.RequireChildrenDone {
+		t.Fatal("expected normalized actionItem default completion policy")
 	}
 	if !kind.CreatedAt.Equal(now.UTC()) || !kind.UpdatedAt.Equal(now.UTC()) {
 		t.Fatalf("expected UTC timestamps, got created=%s updated=%s", kind.CreatedAt, kind.UpdatedAt)
@@ -81,13 +81,13 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 // TestNewKindDefinitionRejectsInvalidValues verifies validation errors for malformed entries.
 func TestNewKindDefinitionRejectsInvalidValues(t *testing.T) {
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	if _, err := NewKindDefinition(KindDefinitionInput{ID: "", AppliesTo: []KindAppliesTo{KindAppliesToTask}}, now); err != ErrInvalidKindID {
+	if _, err := NewKindDefinition(KindDefinitionInput{ID: "", AppliesTo: []KindAppliesTo{KindAppliesToActionItem}}, now); err != ErrInvalidKindID {
 		t.Fatalf("expected ErrInvalidKindID, got %v", err)
 	}
 	if _, err := NewKindDefinition(KindDefinitionInput{ID: "x", AppliesTo: []KindAppliesTo{KindAppliesTo("bad")}}, now); err == nil {
 		t.Fatal("expected invalid applies_to error")
 	}
-	if _, err := NewKindDefinition(KindDefinitionInput{ID: "x", AppliesTo: []KindAppliesTo{KindAppliesToTask}, PayloadSchemaJSON: "{"}, now); err != ErrInvalidKindPayloadSchema {
+	if _, err := NewKindDefinition(KindDefinitionInput{ID: "x", AppliesTo: []KindAppliesTo{KindAppliesToActionItem}, PayloadSchemaJSON: "{"}, now); err != ErrInvalidKindPayloadSchema {
 		t.Fatalf("expected ErrInvalidKindPayloadSchema, got %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestCapabilityLeaseLifecycle(t *testing.T) {
 	if lease.ScopeID != "p1" {
 		t.Fatalf("expected project scope id to normalize to p1, got %q", lease.ScopeID)
 	}
-	if !lease.MatchesScope(CapabilityScopeTask, "any") {
+	if !lease.MatchesScope(CapabilityScopeActionItem, "any") {
 		t.Fatal("expected project-scope lease to match descendant scope")
 	}
 	if !lease.MatchesIdentity("orch-1", "token-1") {

@@ -59,8 +59,8 @@ type UpdateProjectRequest struct {
 	Actor       ActorLeaseTuple
 }
 
-// CreateTaskRequest stores transport input for task creation.
-type CreateTaskRequest struct {
+// CreateActionItemRequest stores transport input for actionItem creation.
+type CreateActionItemRequest struct {
 	ProjectID   string
 	ParentID    string
 	Kind        string
@@ -71,59 +71,59 @@ type CreateTaskRequest struct {
 	Priority    string
 	DueAt       string
 	Labels      []string
-	Metadata    domain.TaskMetadata
+	Metadata    domain.ActionItemMetadata
 	Actor       ActorLeaseTuple
 }
 
-// UpdateTaskRequest stores transport input for task updates.
-type UpdateTaskRequest struct {
-	TaskID      string
-	Title       string
-	Description string
-	Priority    string
-	DueAt       string
-	Labels      []string
-	Metadata    *domain.TaskMetadata
-	Actor       ActorLeaseTuple
+// UpdateActionItemRequest stores transport input for actionItem updates.
+type UpdateActionItemRequest struct {
+	ActionItemID string
+	Title        string
+	Description  string
+	Priority     string
+	DueAt        string
+	Labels       []string
+	Metadata     *domain.ActionItemMetadata
+	Actor        ActorLeaseTuple
 }
 
-// MoveTaskRequest stores transport input for task move operations.
-type MoveTaskRequest struct {
-	TaskID     string
-	ToColumnID string
-	Position   int
-	Actor      ActorLeaseTuple
+// MoveActionItemRequest stores transport input for actionItem move operations.
+type MoveActionItemRequest struct {
+	ActionItemID string
+	ToColumnID   string
+	Position     int
+	Actor        ActorLeaseTuple
 }
 
-// MoveTaskStateRequest stores transport input for workflow-state transitions.
-type MoveTaskStateRequest struct {
-	TaskID string
-	State  string
-	Actor  ActorLeaseTuple
+// MoveActionItemStateRequest stores transport input for workflow-state transitions.
+type MoveActionItemStateRequest struct {
+	ActionItemID string
+	State        string
+	Actor        ActorLeaseTuple
 }
 
-// DeleteTaskRequest stores transport input for task delete operations.
-type DeleteTaskRequest struct {
-	TaskID string
-	Mode   string
-	Actor  ActorLeaseTuple
+// DeleteActionItemRequest stores transport input for actionItem delete operations.
+type DeleteActionItemRequest struct {
+	ActionItemID string
+	Mode         string
+	Actor        ActorLeaseTuple
 }
 
-// RestoreTaskRequest stores transport input for restore operations.
-type RestoreTaskRequest struct {
-	TaskID string
-	Actor  ActorLeaseTuple
+// RestoreActionItemRequest stores transport input for restore operations.
+type RestoreActionItemRequest struct {
+	ActionItemID string
+	Actor        ActorLeaseTuple
 }
 
-// ReparentTaskRequest stores transport input for parent-link updates.
-type ReparentTaskRequest struct {
-	TaskID   string
-	ParentID string
-	Actor    ActorLeaseTuple
+// ReparentActionItemRequest stores transport input for parent-link updates.
+type ReparentActionItemRequest struct {
+	ActionItemID string
+	ParentID     string
+	Actor        ActorLeaseTuple
 }
 
-// SearchTasksRequest stores transport input for search queries.
-type SearchTasksRequest struct {
+// SearchActionItemsRequest stores transport input for search queries.
+type SearchActionItemsRequest struct {
 	ProjectID       string
 	Query           string
 	CrossProject    bool
@@ -139,30 +139,30 @@ type SearchTasksRequest struct {
 	Offset          int
 }
 
-// SearchTaskMatch stores one transport-facing search match row.
-type SearchTaskMatch struct {
-	Project                   domain.Project `json:"project"`
-	Task                      domain.Task    `json:"task"`
-	StateID                   string         `json:"state_id"`
-	EmbeddingSubjectType      string         `json:"embedding_subject_type,omitempty"`
-	EmbeddingSubjectID        string         `json:"embedding_subject_id,omitempty"`
-	EmbeddingStatus           string         `json:"embedding_status,omitempty"`
-	EmbeddingUpdatedAt        *time.Time     `json:"embedding_updated_at,omitempty"`
-	EmbeddingStaleReason      string         `json:"embedding_stale_reason,omitempty"`
-	EmbeddingLastErrorSummary string         `json:"embedding_last_error_summary,omitempty"`
-	SemanticScore             float64        `json:"semantic_score,omitempty"`
-	UsedSemantic              bool           `json:"used_semantic,omitempty"`
+// SearchActionItemMatch stores one transport-facing search match row.
+type SearchActionItemMatch struct {
+	Project                   domain.Project    `json:"project"`
+	ActionItem                domain.ActionItem `json:"actionItem"`
+	StateID                   string            `json:"state_id"`
+	EmbeddingSubjectType      string            `json:"embedding_subject_type,omitempty"`
+	EmbeddingSubjectID        string            `json:"embedding_subject_id,omitempty"`
+	EmbeddingStatus           string            `json:"embedding_status,omitempty"`
+	EmbeddingUpdatedAt        *time.Time        `json:"embedding_updated_at,omitempty"`
+	EmbeddingStaleReason      string            `json:"embedding_stale_reason,omitempty"`
+	EmbeddingLastErrorSummary string            `json:"embedding_last_error_summary,omitempty"`
+	SemanticScore             float64           `json:"semantic_score,omitempty"`
+	UsedSemantic              bool              `json:"used_semantic,omitempty"`
 }
 
-// SearchTasksResult stores search rows plus execution metadata.
-type SearchTasksResult struct {
-	Matches                []SearchTaskMatch `json:"matches"`
-	RequestedMode          string            `json:"requested_mode,omitempty"`
-	EffectiveMode          string            `json:"effective_mode,omitempty"`
-	FallbackReason         string            `json:"fallback_reason,omitempty"`
-	SemanticAvailable      bool              `json:"semantic_available"`
-	SemanticCandidateCount int               `json:"semantic_candidate_count"`
-	EmbeddingSummary       EmbeddingSummary  `json:"embedding_summary"`
+// SearchActionItemsResult stores search rows plus execution metadata.
+type SearchActionItemsResult struct {
+	Matches                []SearchActionItemMatch `json:"matches"`
+	RequestedMode          string                  `json:"requested_mode,omitempty"`
+	EffectiveMode          string                  `json:"effective_mode,omitempty"`
+	FallbackReason         string                  `json:"fallback_reason,omitempty"`
+	SemanticAvailable      bool                    `json:"semantic_available"`
+	SemanticCandidateCount int                     `json:"semantic_candidate_count"`
+	EmbeddingSummary       EmbeddingSummary        `json:"embedding_summary"`
 }
 
 // EmbeddingSummary stores aggregate lifecycle counts for transport surfaces.
@@ -276,14 +276,14 @@ type UpsertTemplateChildRuleRequest struct {
 
 // UpsertNodeTemplateRequest stores transport input for one nested node template.
 type UpsertNodeTemplateRequest struct {
-	ID                      string                           `json:"id,omitempty"`
-	ScopeLevel              domain.KindAppliesTo             `json:"scope_level"`
-	NodeKindID              domain.KindID                    `json:"node_kind_id"`
-	DisplayName             string                           `json:"display_name"`
-	DescriptionMarkdown     string                           `json:"description_markdown,omitempty"`
-	ProjectMetadataDefaults *domain.ProjectMetadata          `json:"project_metadata_defaults,omitempty"`
-	TaskMetadataDefaults    *domain.TaskMetadata             `json:"task_metadata_defaults,omitempty"`
-	ChildRules              []UpsertTemplateChildRuleRequest `json:"child_rules,omitempty"`
+	ID                         string                           `json:"id,omitempty"`
+	ScopeLevel                 domain.KindAppliesTo             `json:"scope_level"`
+	NodeKindID                 domain.KindID                    `json:"node_kind_id"`
+	DisplayName                string                           `json:"display_name"`
+	DescriptionMarkdown        string                           `json:"description_markdown,omitempty"`
+	ProjectMetadataDefaults    *domain.ProjectMetadata          `json:"project_metadata_defaults,omitempty"`
+	ActionItemMetadataDefaults *domain.ActionItemMetadata       `json:"task_metadata_defaults,omitempty"`
+	ChildRules                 []UpsertTemplateChildRuleRequest `json:"child_rules,omitempty"`
 }
 
 // UpsertTemplateLibraryRequest stores transport input for one template-library upsert.
@@ -314,10 +314,10 @@ type BindProjectTemplateLibraryRequest struct {
 
 // ApproveProjectTemplateMigrationsRequest stores transport input for one explicit existing-node migration approval request.
 type ApproveProjectTemplateMigrationsRequest struct {
-	ProjectID  string   `json:"project_id"`
-	TaskIDs    []string `json:"task_ids,omitempty"`
-	ApproveAll bool     `json:"approve_all,omitempty"`
-	Actor      ActorLeaseTuple
+	ProjectID     string   `json:"project_id"`
+	ActionItemIDs []string `json:"action_item_ids,omitempty"`
+	ApproveAll    bool     `json:"approve_all,omitempty"`
+	Actor         ActorLeaseTuple
 }
 
 // IssueCapabilityLeaseRequest stores transport input for lease issuance.
@@ -617,23 +617,23 @@ type ProjectService interface {
 	UpdateProject(context.Context, UpdateProjectRequest) (domain.Project, error)
 }
 
-// TaskService exposes task list/mutation operations.
-type TaskService interface {
-	GetTask(context.Context, string) (domain.Task, error)
-	ListTasks(context.Context, string, bool) ([]domain.Task, error)
-	CreateTask(context.Context, CreateTaskRequest) (domain.Task, error)
-	UpdateTask(context.Context, UpdateTaskRequest) (domain.Task, error)
-	MoveTask(context.Context, MoveTaskRequest) (domain.Task, error)
-	MoveTaskState(context.Context, MoveTaskStateRequest) (domain.Task, error)
-	DeleteTask(context.Context, DeleteTaskRequest) error
-	RestoreTask(context.Context, RestoreTaskRequest) (domain.Task, error)
-	ReparentTask(context.Context, ReparentTaskRequest) (domain.Task, error)
-	ListChildTasks(context.Context, string, string, bool) ([]domain.Task, error)
+// ActionItemService exposes actionItem list/mutation operations.
+type ActionItemService interface {
+	GetActionItem(context.Context, string) (domain.ActionItem, error)
+	ListActionItems(context.Context, string, bool) ([]domain.ActionItem, error)
+	CreateActionItem(context.Context, CreateActionItemRequest) (domain.ActionItem, error)
+	UpdateActionItem(context.Context, UpdateActionItemRequest) (domain.ActionItem, error)
+	MoveActionItem(context.Context, MoveActionItemRequest) (domain.ActionItem, error)
+	MoveActionItemState(context.Context, MoveActionItemStateRequest) (domain.ActionItem, error)
+	DeleteActionItem(context.Context, DeleteActionItemRequest) error
+	RestoreActionItem(context.Context, RestoreActionItemRequest) (domain.ActionItem, error)
+	ReparentActionItem(context.Context, ReparentActionItemRequest) (domain.ActionItem, error)
+	ListChildActionItems(context.Context, string, string, bool) ([]domain.ActionItem, error)
 }
 
-// SearchService exposes cross-project and project-scoped task search.
+// SearchService exposes cross-project and project-scoped actionItem search.
 type SearchService interface {
-	SearchTasks(context.Context, SearchTasksRequest) (SearchTasksResult, error)
+	SearchActionItems(context.Context, SearchActionItemsRequest) (SearchActionItemsResult, error)
 }
 
 // EmbeddingsService exposes operator-facing lifecycle inventory and reindex actions.

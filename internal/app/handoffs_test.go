@@ -23,14 +23,14 @@ func TestServiceHandoffLifecycle(t *testing.T) {
 	handoff, err := svc.CreateHandoff(context.Background(), CreateHandoffInput{
 		Level:           domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
 		SourceRole:      "orchestrator",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   "task-1",
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   "actionItem-1",
 		TargetRole:      "builder",
 		Status:          domain.HandoffStatusReady,
 		Summary:         "Queue the builder lane",
 		NextAction:      "Builder picks up implementation",
 		MissingEvidence: []string{"code changes"},
-		RelatedRefs:     []string{"task-1"},
+		RelatedRefs:     []string{"actionItem-1"},
 		CreatedBy:       "user-1",
 		CreatedType:     domain.ActorTypeUser,
 	})
@@ -93,8 +93,8 @@ func TestServiceHandoffLifecycleSyncsInboxAttention(t *testing.T) {
 	handoff, err := svc.CreateHandoff(context.Background(), CreateHandoffInput{
 		Level:           domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
 		SourceRole:      "orchestrator",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   "task-1",
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   "actionItem-1",
 		TargetRole:      "dev",
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         "Builder should take the next pass",
@@ -116,8 +116,8 @@ func TestServiceHandoffLifecycleSyncsInboxAttention(t *testing.T) {
 	if mirrored.State != domain.AttentionStateOpen || !mirrored.RequiresUserAction {
 		t.Fatalf("expected open routed handoff attention, got %#v", mirrored)
 	}
-	if mirrored.ScopeType != domain.ScopeLevelTask || mirrored.ScopeID != "task-1" {
-		t.Fatalf("expected target task scope for mirrored handoff, got %#v", mirrored)
+	if mirrored.ScopeType != domain.ScopeLevelActionItem || mirrored.ScopeID != "actionItem-1" {
+		t.Fatalf("expected target actionItem scope for mirrored handoff, got %#v", mirrored)
 	}
 
 	svc.clock = func() time.Time { return now.Add(5 * time.Minute) }
@@ -259,7 +259,7 @@ func TestServiceCreateHandoffRequiresValidScope(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo, func() string { return "handoff-1" }, time.Now, ServiceConfig{})
 	if _, err := svc.CreateHandoff(context.Background(), CreateHandoffInput{
-		Level:       domain.LevelTupleInput{ProjectID: "project-1", ScopeType: domain.ScopeLevelTask},
+		Level:       domain.LevelTupleInput{ProjectID: "project-1", ScopeType: domain.ScopeLevelActionItem},
 		SourceRole:  "builder",
 		TargetRole:  "qa",
 		Summary:     "bad scope",
@@ -281,7 +281,7 @@ func TestServiceListHandoffsRequiresExistingScope(t *testing.T) {
 
 	svc := NewService(repo, func() string { return "handoff-1" }, func() time.Time { return now }, ServiceConfig{})
 	_, err = svc.ListHandoffs(context.Background(), ListHandoffsInput{
-		Level: domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelTask, ScopeID: "missing-task"},
+		Level: domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelActionItem, ScopeID: "missing-actionItem"},
 	})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ListHandoffs() error = %v, want %v", err, ErrNotFound)
@@ -302,13 +302,13 @@ func TestServiceUpdateHandoffClearsOptionalFields(t *testing.T) {
 	handoff, err := svc.CreateHandoff(context.Background(), CreateHandoffInput{
 		Level:           domain.LevelTupleInput{ProjectID: project.ID, ScopeType: domain.ScopeLevelProject},
 		SourceRole:      "orchestrator",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   "task-1",
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   "actionItem-1",
 		TargetRole:      "builder",
 		Summary:         "Initial handoff",
 		NextAction:      "Do the work",
 		MissingEvidence: []string{"tests"},
-		RelatedRefs:     []string{"task-1"},
+		RelatedRefs:     []string{"actionItem-1"},
 		CreatedBy:       "user-1",
 		CreatedType:     domain.ActorTypeUser,
 	})
@@ -330,7 +330,7 @@ func TestServiceUpdateHandoffClearsOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateHandoff() error = %v", err)
 	}
-	if updated.TargetScopeID != "task-1" || updated.TargetScopeType != domain.ScopeLevelTask || updated.TargetRole != "builder" {
+	if updated.TargetScopeID != "actionItem-1" || updated.TargetScopeType != domain.ScopeLevelActionItem || updated.TargetRole != "builder" {
 		t.Fatalf("expected status-only update to preserve target fields, got %#v", updated)
 	}
 	if updated.NextAction != "" {

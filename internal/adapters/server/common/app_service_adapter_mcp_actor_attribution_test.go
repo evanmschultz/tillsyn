@@ -12,8 +12,8 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// newActorAttributionAdapterFixture builds one adapter fixture with seeded project/task rows.
-func newActorAttributionAdapterFixture(t *testing.T) (*AppServiceAdapter, *app.Service, domain.Project, domain.Task) {
+// newActorAttributionAdapterFixture builds one adapter fixture with seeded project/actionItem rows.
+func newActorAttributionAdapterFixture(t *testing.T) (*AppServiceAdapter, *app.Service, domain.Project, domain.ActionItem) {
 	t.Helper()
 
 	repo, err := sqlite.OpenInMemory()
@@ -51,43 +51,43 @@ func newActorAttributionAdapterFixture(t *testing.T) (*AppServiceAdapter, *app.S
 		t.Fatal("expected auto-created project columns")
 	}
 
-	task, err := service.CreateTask(context.Background(), app.CreateTaskInput{
+	actionItem, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columns[0].ID,
-		Title:          "Seed Task",
+		Title:          "Seed ActionItem",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "seed-user",
 		UpdatedByActor: "seed-user",
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
-	return adapter, service, project, task
+	return adapter, service, project, actionItem
 }
 
-// TestAppServiceAdapterRestoreTaskAllowsUserAttributionWithoutGuardTuple verifies user+name restore attribution without lease tuple.
-func TestAppServiceAdapterRestoreTaskAllowsUserAttributionWithoutGuardTuple(t *testing.T) {
-	adapter, service, _, task := newActorAttributionAdapterFixture(t)
-	if err := service.DeleteTask(context.Background(), task.ID, app.DeleteModeArchive); err != nil {
-		t.Fatalf("DeleteTask(archive) error = %v", err)
+// TestAppServiceAdapterRestoreActionItemAllowsUserAttributionWithoutGuardTuple verifies user+name restore attribution without lease tuple.
+func TestAppServiceAdapterRestoreActionItemAllowsUserAttributionWithoutGuardTuple(t *testing.T) {
+	adapter, service, _, actionItem := newActorAttributionAdapterFixture(t)
+	if err := service.DeleteActionItem(context.Background(), actionItem.ID, app.DeleteModeArchive); err != nil {
+		t.Fatalf("DeleteActionItem(archive) error = %v", err)
 	}
 
-	restored, err := adapter.RestoreTask(context.Background(), RestoreTaskRequest{
-		TaskID: task.ID,
+	restored, err := adapter.RestoreActionItem(context.Background(), RestoreActionItemRequest{
+		ActionItemID: actionItem.ID,
 		Actor: ActorLeaseTuple{
 			ActorType: string(domain.ActorTypeUser),
 			AgentName: "EVAN",
 		},
 	})
 	if err != nil {
-		t.Fatalf("RestoreTask() error = %v", err)
+		t.Fatalf("RestoreActionItem() error = %v", err)
 	}
 	if restored.ArchivedAt != nil {
-		t.Fatal("expected restored task to clear archived_at")
+		t.Fatal("expected restored actionItem to clear archived_at")
 	}
 	if restored.UpdatedByActor != "EVAN" {
 		t.Fatalf("restored updated_by_actor = %q, want EVAN", restored.UpdatedByActor)
@@ -97,25 +97,25 @@ func TestAppServiceAdapterRestoreTaskAllowsUserAttributionWithoutGuardTuple(t *t
 	}
 }
 
-// TestAppServiceAdapterUpdateTaskRejectsAgentWithoutGuardTuple verifies agent mutations require a lease tuple.
-func TestAppServiceAdapterUpdateTaskRejectsNonUserWithoutGuardTuple(t *testing.T) {
-	adapter, _, _, task := newActorAttributionAdapterFixture(t)
-	_, err := adapter.UpdateTask(context.Background(), UpdateTaskRequest{
-		TaskID: task.ID,
-		Title:  "Agent Update",
+// TestAppServiceAdapterUpdateActionItemRejectsAgentWithoutGuardTuple verifies agent mutations require a lease tuple.
+func TestAppServiceAdapterUpdateActionItemRejectsNonUserWithoutGuardTuple(t *testing.T) {
+	adapter, _, _, actionItem := newActorAttributionAdapterFixture(t)
+	_, err := adapter.UpdateActionItem(context.Background(), UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Title:        "Agent Update",
 		Actor: ActorLeaseTuple{
 			ActorType: string(domain.ActorTypeAgent),
 			AgentName: "agent-1",
 		},
 	})
 	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
-		t.Fatalf("UpdateTask() error = %v, want ErrInvalidCaptureStateRequest", err)
+		t.Fatalf("UpdateActionItem() error = %v, want ErrInvalidCaptureStateRequest", err)
 	}
 }
 
-// TestAppServiceAdapterUpdateTaskAllowsGuardedNonUserAttribution verifies guarded non-user mutations apply agent attribution.
-func TestAppServiceAdapterUpdateTaskAllowsGuardedNonUserAttribution(t *testing.T) {
-	adapter, service, project, task := newActorAttributionAdapterFixture(t)
+// TestAppServiceAdapterUpdateActionItemAllowsGuardedNonUserAttribution verifies guarded non-user mutations apply agent attribution.
+func TestAppServiceAdapterUpdateActionItemAllowsGuardedNonUserAttribution(t *testing.T) {
+	adapter, service, project, actionItem := newActorAttributionAdapterFixture(t)
 	lease, err := service.IssueCapabilityLease(context.Background(), app.IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
@@ -127,9 +127,9 @@ func TestAppServiceAdapterUpdateTaskAllowsGuardedNonUserAttribution(t *testing.T
 		t.Fatalf("IssueCapabilityLease() error = %v", err)
 	}
 
-	updated, err := adapter.UpdateTask(context.Background(), UpdateTaskRequest{
-		TaskID: task.ID,
-		Title:  "Guarded Agent Update",
+	updated, err := adapter.UpdateActionItem(context.Background(), UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Title:        "Guarded Agent Update",
 		Actor: ActorLeaseTuple{
 			ActorType:       string(domain.ActorTypeAgent),
 			AgentName:       "agent-1",
@@ -138,7 +138,7 @@ func TestAppServiceAdapterUpdateTaskAllowsGuardedNonUserAttribution(t *testing.T
 		},
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask(guarded) error = %v", err)
+		t.Fatalf("UpdateActionItem(guarded) error = %v", err)
 	}
 	if updated.UpdatedByActor != "agent-1" {
 		t.Fatalf("updated updated_by_actor = %q, want agent-1", updated.UpdatedByActor)

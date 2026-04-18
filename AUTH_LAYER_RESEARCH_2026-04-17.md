@@ -12,11 +12,11 @@ Research deliverable investigating two connected auth-layer bugs surfaced by the
 
 Two distinct but mutually reinforcing defects.
 
-**Bug A — Drop-collapse parity gap**: The auth path grammar at `internal/domain/auth_request.go:ParseAuthRequestPath` (lines 138–186) hardcodes the pair vocabulary `project | branch | phase`; `task`, `subtask`, and `drop` are rejected by the `switch segment` default case. Pre-Drop-2, every level_1 Tillsyn drop is created with `kind='task', scope='task'`, so its path must be written as `project/<id>/branch/<drop-id>` to fit the grammar — the grammar leaks a pre-existing vocabulary out of sync with the cascade plan's drop model.
+**Bug A — Drop-collapse parity gap**: The auth path grammar at `internal/domain/auth_request.go:ParseAuthRequestPath` (lines 138–186) hardcodes the pair vocabulary `project | branch | phase`; `actionItem`, `subtask`, and `drop` are rejected by the `switch segment` default case. Pre-Drop-2, every level_1 Tillsyn drop is created with `kind='actionItem', scope='actionItem'`, so its path must be written as `project/<id>/branch/<drop-id>` to fit the grammar — the grammar leaks a pre-existing vocabulary out of sync with the cascade plan's drop model.
 
-The lease side is subtler. `CapabilityScopeType` (`internal/domain/capability.go:61–73`) does enumerate all five values (`project|branch|phase|task|subtask`) and `IsValidCapabilityScopeType` accepts all of them. But the app-layer gate `Service.validateCapabilityScopeTuple` at `internal/app/kind_capability.go:377` resolves the concrete task row from `repo.GetTask(scopeID)` and derives the **canonical** capability scope for that task from `task.Scope` via `capabilityScopeTypeForTask` (same file, 409–423). Pre-Drop-2 the drop's `task.Scope == KindAppliesToTask`, so the canonical scope is `task`. A request for `scope_type: branch` on a task-scoped row fails the `if taskScopeType != scopeType` check at line 401 with `ErrInvalidCapabilityScope`. That is the "invalid scope type" runtime error the memory documented for branch/phase/subtask on task rows — it is not a schema rejection, it is a **canonical-scope mismatch between the path vocabulary and the task's stored scope**.
+The lease side is subtler. `CapabilityScopeType` (`internal/domain/capability.go:61–73`) does enumerate all five values (`project|branch|phase|actionItem|subtask`) and `IsValidCapabilityScopeType` accepts all of them. But the app-layer gate `Service.validateCapabilityScopeTuple` at `internal/app/kind_capability.go:377` resolves the concrete actionItem row from `repo.GetActionItem(scopeID)` and derives the **canonical** capability scope for that actionItem from `actionItem.Scope` via `capabilityScopeTypeForActionItem` (same file, 409–423). Pre-Drop-2 the drop's `actionItem.Scope == KindAppliesToActionItem`, so the canonical scope is `actionItem`. A request for `scope_type: branch` on an actionItem-scoped row fails the `if actionItemScopeType != scopeType` check at line 401 with `ErrInvalidCapabilityScope`. That is the "invalid scope type" runtime error the memory documented for branch/phase/subtask on actionItem rows — it is not a schema rejection, it is a **canonical-scope mismatch between the path vocabulary and the actionItem's stored scope**.
 
-Net runtime behavior observed by DROP_1.5_ORCH: session created at `project/<id>/branch/<drop-id>` (forced by the grammar), lease then rejects `scope_type: branch` (canonical-scope mismatch) AND `scope_type: task` lease auth-denies against a branch-scoped session (the approved path normalizes to `ScopeLevelBranch` per `AuthRequestPath.Normalize` lines 210–274, while the lease wants `ScopeLevelTask` — `CapabilityLease.MatchesScope` at `internal/domain/capability.go:347–361` accepts any scope only when `l.ScopeType == CapabilityScopeProject`, so the mismatch survives lease matching). Drop-scoped auth is therefore non-operational end-to-end pre-Drop-2. Project-scope is the only lane that currently works.
+Net runtime behavior observed by DROP_1.5_ORCH: session created at `project/<id>/branch/<drop-id>` (forced by the grammar), lease then rejects `scope_type: branch` (canonical-scope mismatch) AND `scope_type: actionItem` lease auth-denies against a branch-scoped session (the approved path normalizes to `ScopeLevelBranch` per `AuthRequestPath.Normalize` lines 210–274, while the lease wants `ScopeLevelActionItem` — `CapabilityLease.MatchesScope` at `internal/domain/capability.go:347–361` accepts any scope only when `l.ScopeType == CapabilityScopeProject`, so the mismatch survives lease matching). Drop-scoped auth is therefore non-operational end-to-end pre-Drop-2. Project-scope is the only lane that currently works.
 
 **Bug B — Orch-approves-subagent regression**: Not a code regression in the strict sense. The MCP surface `till.auth_request` tool (`internal/adapters/server/mcpapi/handler.go:101–107`) enumerates operations `create | list | get | claim | cancel | list_sessions | validate_session | check_session_governance | revoke_session`. There is **no `approve` operation on the MCP tool at all**. The only approve path today is the CLI (`cmd/till/main.go:1702–1717`, `till auth request approve`) and the TUI, both of which are dev-human-driven. The app-layer `Service.ApproveAuthRequest` (`internal/app/auth_requests.go:270–300`) and the autent-adapter `Service.ApproveAuthRequest` (`internal/adapters/auth/autentauth/service.go:422–472`) both take a `ResolvedBy` string input with **no caller-identity capability gate** — meaning the restriction is not "orchestrator-lacks-capability," it is "no MCP surface to call approve through." An orchestrator with `CapabilityActionApproveAuthWithinBounds` (granted by default in `DefaultCapabilityActions`, `internal/domain/capability.go:221–280`) has nowhere to spend that capability programmatically.
 
@@ -44,7 +44,7 @@ for idx := 2; idx < len(parts); idx += 2 {
 }
 ```
 
-Only four kinds exist in the domain vocabulary: `AuthRequestPathKindGlobal`, `AuthRequestPathKindProjects`, `AuthRequestPathKindProject`, and implicit-leaf levels (`branch`, `phase`) that still normalize into one of those kinds. There is no `AuthRequestPathKind` for `task`, `drop`, or `subtask`; the grammar has no way to parse them; the kind constants at lines 47–49 confirm this:
+Only four kinds exist in the domain vocabulary: `AuthRequestPathKindGlobal`, `AuthRequestPathKindProjects`, `AuthRequestPathKindProject`, and implicit-leaf levels (`branch`, `phase`) that still normalize into one of those kinds. There is no `AuthRequestPathKind` for `actionItem`, `drop`, or `subtask`; the grammar has no way to parse them; the kind constants at lines 47–49 confirm this:
 
 ```go
 AuthRequestPathKindGlobal   AuthRequestPathKind = "global"
@@ -60,7 +60,7 @@ AuthRequestPathKindProject  AuthRequestPathKind = "project"
 - else `BranchID != ""` → `ScopeType = ScopeLevelBranch`
 - else → `ScopeType = ScopeLevelProject`
 
-So even though `ScopeLevel` has five values (`project | branch | phase | task | subtask` at `internal/domain/level.go:13–18`), the path parser can only produce three of them: `project`, `branch`, `phase`. `ScopeLevelTask` and `ScopeLevelSubtask` are never produced by `ParseAuthRequestPath`.
+So even though `ScopeLevel` has five values (`project | branch | phase | actionItem | subtask` at `internal/domain/level.go:13–18`), the path parser can only produce three of them: `project`, `branch`, `phase`. `ScopeLevelActionItem` and `ScopeLevelSubtask` are never produced by `ParseAuthRequestPath`.
 
 ### 2.3 NewAuthRequest Role Check (same file, lines 371–405)
 
@@ -74,7 +74,7 @@ All paths under `project/...` are `Kind == AuthRequestPathKindProject` (includin
 
 ### 2.4 Empirical DROP_1.5 path `project/<id>/branch/<drop-id>`
 
-The pre-Drop-2 memory `feedback_auth_path_branch_quirk.md` records that `/task/<id>` and `/drop/<id>` are rejected; only `/branch/<drop-id>` is accepted. That is a literal consequence of §2.1. The `<drop-id>` here is a pre-Drop-2 level_1 drop, which is a `task` row in the DB — the grammar forces the task id to live in a `branch/...` slot regardless of what it really is.
+The pre-Drop-2 memory `feedback_auth_path_branch_quirk.md` records that `/actionItem/<id>` and `/drop/<id>` are rejected; only `/branch/<drop-id>` is accepted. That is a literal consequence of §2.1. The `<drop-id>` here is a pre-Drop-2 level_1 drop, which is a `actionItem` row in the DB — the grammar forces the actionItem id to live in a `branch/...` slot regardless of what it really is.
 
 ---
 
@@ -89,14 +89,14 @@ const (
     CapabilityScopeProject CapabilityScopeType = "project"
     CapabilityScopeBranch  CapabilityScopeType = "branch"
     CapabilityScopePhase   CapabilityScopeType = "phase"
-    CapabilityScopeTask    CapabilityScopeType = "task"
+    CapabilityScopeActionItem    CapabilityScopeType = "actionItem"
     CapabilityScopeSubtask CapabilityScopeType = "subtask"
 )
 ```
 
 `IsValidCapabilityScopeType` is a simple set membership check against `validCapabilityScopes`, which holds all five. `domain.NewCapabilityLease` (lines 125–179) validates `scope_type` against that set and accepts any of the five.
 
-### 3.2 App-Layer Canonical-Scope Gate — Collapses to Task Row Scope
+### 3.2 App-Layer Canonical-Scope Gate — Collapses to ActionItem Row Scope
 
 `internal/app/kind_capability.go:377–406`:
 
@@ -106,9 +106,9 @@ func (s *Service) validateCapabilityScopeTuple(ctx, projectID, scopeType, scopeI
     case domain.CapabilityScopeProject:
         … project happy path
     default:
-        task, err := s.repo.GetTask(ctx, scopeID)
+        actionItem, err := s.repo.GetActionItem(ctx, scopeID)
         …
-        if taskScopeType := capabilityScopeTypeForTask(task); taskScopeType != scopeType {
+        if actionItemScopeType := capabilityScopeTypeForActionItem(actionItem); actionItemScopeType != scopeType {
             return "", domain.ErrInvalidCapabilityScope          // ← the "invalid scope type" runtime error
         }
         return scopeID, nil
@@ -116,17 +116,17 @@ func (s *Service) validateCapabilityScopeTuple(ctx, projectID, scopeType, scopeI
 }
 ```
 
-`capabilityScopeTypeForTask` (lines 409–423) maps `task.Scope` (a `KindAppliesTo` value) to the canonical capability scope:
+`capabilityScopeTypeForActionItem` (lines 409–423) maps `actionItem.Scope` (a `KindAppliesTo` value) to the canonical capability scope:
 
 ```go
 case domain.KindAppliesToProject:  return domain.CapabilityScopeProject
 case domain.KindAppliesToBranch:   return domain.CapabilityScopeBranch
 case domain.KindAppliesToPhase:    return domain.CapabilityScopePhase
 case domain.KindAppliesToSubtask:  return domain.CapabilityScopeSubtask
-default:                           return domain.CapabilityScopeTask
+default:                           return domain.CapabilityScopeActionItem
 ```
 
-Pre-Drop-2 every drop is created with `scope=task` (`KindAppliesToTask`), so `capabilityScopeTypeForTask` returns `CapabilityScopeTask` for every drop row. A caller requesting `scope_type: branch` with a drop id passes §3.1 schema validation but fails §3.2 canonical-scope validation with `ErrInvalidCapabilityScope`.
+Pre-Drop-2 every drop is created with `scope=actionItem` (`KindAppliesToActionItem`), so `capabilityScopeTypeForActionItem` returns `CapabilityScopeActionItem` for every drop row. A caller requesting `scope_type: branch` with a drop id passes §3.1 schema validation but fails §3.2 canonical-scope validation with `ErrInvalidCapabilityScope`.
 
 ### 3.3 MCP Adapter Passes Through
 
@@ -144,7 +144,7 @@ The MCP layer does no pre-validation of `scope_type` — it hands the raw string
 
 ### 3.4 Session-to-Lease Scope Match — The Second Rejection
 
-Even with `scope_type: task` (passing §3.2 for a drop row), the lease must be authorized against the session's approved path. `CapabilityLease.MatchesScope` at `internal/domain/capability.go:347–361`:
+Even with `scope_type: actionItem` (passing §3.2 for a drop row), the lease must be authorized against the session's approved path. `CapabilityLease.MatchesScope` at `internal/domain/capability.go:347–361`:
 
 ```go
 if l.ScopeType == CapabilityScopeProject {
@@ -155,14 +155,14 @@ if l.ScopeType != scopeType {
 }
 ```
 
-The session approved path normalizes to `ScopeLevelBranch` (forced by grammar §2), which maps to `CapabilityScopeBranch` via `ScopeLevel.ToCapabilityScopeType` in `internal/domain/level.go`. A `task`-scope lease issue against that session fails the scope match. This is the second rejection stacking on top of §3.2 — both originate in the grammar/scope vocabulary collision.
+The session approved path normalizes to `ScopeLevelBranch` (forced by grammar §2), which maps to `CapabilityScopeBranch` via `ScopeLevel.ToCapabilityScopeType` in `internal/domain/level.go`. A `actionItem`-scope lease issue against that session fails the scope match. This is the second rejection stacking on top of §3.2 — both originate in the grammar/scope vocabulary collision.
 
 ### 3.5 Net Runtime Behavior for a Pre-Drop-2 Drop
 
 | `path` used on create  | `scope_type` used on issue  | Outcome                                               |
 |------------------------|------------------------------|-------------------------------------------------------|
-| `project/<id>/branch/<drop-id>` | `branch`                   | FAIL canonical-scope check (task row maps to task)   |
-| `project/<id>/branch/<drop-id>` | `task`                     | PASS canonical-scope; FAIL session-path match        |
+| `project/<id>/branch/<drop-id>` | `branch`                   | FAIL canonical-scope check (actionItem row maps to actionItem)   |
+| `project/<id>/branch/<drop-id>` | `actionItem`                     | PASS canonical-scope; FAIL session-path match        |
 | `project/<id>/branch/<drop-id>` | `phase`                    | FAIL canonical-scope                                  |
 | `project/<id>/branch/<drop-id>` | `subtask`                  | FAIL canonical-scope                                  |
 | `project/<id>/branch/<drop-id>` | `project`                  | FAIL canonical-scope (scopeID != projectID at line 383) |
@@ -254,18 +254,18 @@ No commit in this history ever wired an MCP-callable or orchestrator-capability-
 
 Four orthogonal options to address the two bugs. A and B are Bug A (grammar parity); C and D are Bug B (orch approve).
 
-### 5.1 Option A — Extend Grammar to Include `task` and `subtask`
+### 5.1 Option A — Extend Grammar to Include `actionItem` and `subtask`
 
 **Scope**: grammar + normalize + app validator.
 
-- Add `AuthRequestPathKindTask`, `AuthRequestPathKindSubtask` or extend the segment switch in `ParseAuthRequestPath` to accept `task` and `subtask` segments.
-- Add `ScopeLevelTask` and `ScopeLevelSubtask` production in `Normalize` (the constants already exist at `internal/domain/level.go`).
-- Update `authRequestPathWithin` to compare task/subtask chains.
-- Update `validateCapabilityScopeTuple` to stop rejecting when the session's normalized scope matches the task's canonical scope.
+- Add `AuthRequestPathKindActionItem`, `AuthRequestPathKindSubtask` or extend the segment switch in `ParseAuthRequestPath` to accept `actionItem` and `subtask` segments.
+- Add `ScopeLevelActionItem` and `ScopeLevelSubtask` production in `Normalize` (the constants already exist at `internal/domain/level.go`).
+- Update `authRequestPathWithin` to compare actionItem/subtask chains.
+- Update `validateCapabilityScopeTuple` to stop rejecting when the session's normalized scope matches the actionItem's canonical scope.
 
 **Pros**: narrow, domain-local fix that makes the grammar symmetrical with `ScopeLevel` / `CapabilityScopeType`. Does not change the Tillsyn data model. Makes the auth layer honest about what scopes exist.
 
-**Cons**: leaves two vocabularies in place (`branch/phase/task/subtask` path segments AND a canonical scope-tree). Drop 2 collapses every non-project kind to `drop` and puts role on `metadata.role` — the grammar will need another pass shortly to support `/drop/<id>` uniformly. Risk of double churn.
+**Cons**: leaves two vocabularies in place (`branch/phase/actionItem/subtask` path segments AND a canonical scope-tree). Drop 2 collapses every non-project kind to `drop` and puts role on `metadata.role` — the grammar will need another pass shortly to support `/drop/<id>` uniformly. Risk of double churn.
 
 ### 5.2 Option B — Wait for Drop 2, Collapse Grammar to `drop`
 
@@ -319,10 +319,10 @@ Against `main/PLAN.md` §19.1.6 (drop 1.6 — Auth Approval Cascade):
 | "MCP-layer test coverage."                                                                      | Option C high coverage; Option D mostly existing CREATE coverage. |
 | "Prompt updates (STEWARD / drop-orch prompts)."                                                | Independent — same for both.         |
 
-Against §19.2 (Drop 2 — kind collapse + task/drop rename):
+Against §19.2 (Drop 2 — kind collapse + actionItem/drop rename):
 
 - Option B is effectively Drop 2 carrying an auth-grammar change rider. §19.2 already intends to collapse kinds; expanding that to include grammar collapse is a natural extension.
-- Option A conflicts with §19.2 — shipping `task`/`subtask` grammar now just to rewrite them to `drop` later is churn.
+- Option A conflicts with §19.2 — shipping `actionItem`/`subtask` grammar now just to rewrite them to `drop` later is churn.
 
 Against `main/WIKI.md` "Auth Approval Cascade":
 
@@ -345,7 +345,7 @@ Against `main/WIKI.md` "Auth Approval Cascade":
 ## 8. Unknowns
 
 - **Q1**: Does the TUI auth-request review surface explicit `actor.capability.approve_auth_within_bounds` decisions today, or does it present the row to the dev unconditionally? If the dev-only gate is in the TUI (not in the service), then Option C must also add a "hide this from dev" predicate so STEWARD-approved requests do not still ask the dev. Not yet verified — requires reading `internal/tui/auth_request_*.go`. Routed to this MD.
-- **Q2**: Does `authSessionWithinApprovedPath` (at `internal/adapters/server/common/app_service_adapter_mcp.go:476–547`) cover the subtree-containment semantics PLAN §19.1.6 expects, or does it need a drop-tree variant that walks Tillsyn parent chains? The current implementation compares `ProjectID`, `BranchID`, and `PhaseIDs` directly — it does not traverse Tillsyn's parent_id graph. A drop orch whose approved path is `project/<id>/branch/<drop-1-id>` cannot validate that a leaf `task` under a nested sub-drop is "within" the outer drop via this function alone. Drop 2's grammar collapse will make this worse before it makes it better.
+- **Q2**: Does `authSessionWithinApprovedPath` (at `internal/adapters/server/common/app_service_adapter_mcp.go:476–547`) cover the subtree-containment semantics PLAN §19.1.6 expects, or does it need a drop-tree variant that walks Tillsyn parent chains? The current implementation compares `ProjectID`, `BranchID`, and `PhaseIDs` directly — it does not traverse Tillsyn's parent_id graph. A drop orch whose approved path is `project/<id>/branch/<drop-1-id>` cannot validate that a leaf `actionItem` under a nested sub-drop is "within" the outer drop via this function alone. Drop 2's grammar collapse will make this worse before it makes it better.
 - **Q3**: The dev's "used to work" intuition — did an earlier commit actually have MCP-callable approve before the bounded-delegation refactor, and did it get removed during `d502ea6`? Not found in git log. Confidence is "no such commit exists in current main history" but pre-main / squashed history could hide it. Acceptable unknown for this deliverable.
 - **Q4**: For Option C, does the `override_token` path on `till_capability_lease` (for equal-scope orch overlap in STEWARD bootstrap) need a parallel `override_token` on approve for STEWARD cross-subtree exceptions? Or should cross-subtree exceptions be encoded as a separate capability action (e.g. `ApproveAuthAnyProjectSubtree`)? Design decision, not a research finding.
 - **Q5**: Does Option B (grammar collapse) need a data migration for already-persisted auth requests whose `path` field is a raw string? `auth_requests.path` is stored as text; old rows would still contain `project/<id>/branch/<id>` paths that a new parser might reject. Needs a migration plan before Drop 2 ships.

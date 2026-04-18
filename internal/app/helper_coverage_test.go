@@ -18,16 +18,16 @@ func TestMutationScopeHelpersNormalizeAndDeduplicate(t *testing.T) {
 	}
 
 	var scopes []mutationScopeCandidate
-	scopes = appendMutationScopeCandidate(scopes, mutationScopeCandidate{ScopeType: domain.CapabilityScopeTask, ScopeID: " task-1 "})
-	scopes = appendMutationScopeCandidate(scopes, mutationScopeCandidate{ScopeType: domain.CapabilityScopeTask, ScopeID: "task-1"})
+	scopes = appendMutationScopeCandidate(scopes, mutationScopeCandidate{ScopeType: domain.CapabilityScopeActionItem, ScopeID: " actionItem-1 "})
+	scopes = appendMutationScopeCandidate(scopes, mutationScopeCandidate{ScopeType: domain.CapabilityScopeActionItem, ScopeID: "actionItem-1"})
 	scopes = appendMutationScopeCandidate(scopes, mutationScopeCandidate{ScopeType: domain.CapabilityScopeType(""), ScopeID: "ignored"})
 	scopes = appendMutationScopeCandidate(scopes, mutationScopeCandidate{ScopeType: domain.CapabilityScopeProject, ScopeID: ""})
 
 	if len(scopes) != 1 {
 		t.Fatalf("scope count = %d, want 1", len(scopes))
 	}
-	if scopes[0].ScopeType != domain.CapabilityScopeTask || scopes[0].ScopeID != "task-1" {
-		t.Fatalf("normalized scope = %#v, want task/task-1", scopes[0])
+	if scopes[0].ScopeType != domain.CapabilityScopeActionItem || scopes[0].ScopeID != "actionItem-1" {
+		t.Fatalf("normalized scope = %#v, want actionItem/actionItem-1", scopes[0])
 	}
 }
 
@@ -46,15 +46,15 @@ func TestTemplateContractHelperFormatting(t *testing.T) {
 		t.Fatalf("actor kind summary = %q", summary)
 	}
 
-	if got := taskDisplayLabel(domain.Task{Title: "  ", ID: "task-123"}); got != "task-123" {
-		t.Fatalf("taskDisplayLabel(empty title) = %q, want task-123", got)
+	if got := actionItemDisplayLabel(domain.ActionItem{Title: "  ", ID: "actionItem-123"}); got != "actionItem-123" {
+		t.Fatalf("actionItemDisplayLabel(empty title) = %q, want actionItem-123", got)
 	}
-	if got := taskDisplayLabel(domain.Task{Title: "QA PROOF REVIEW", ID: "task-123"}); got != "QA PROOF REVIEW" {
-		t.Fatalf("taskDisplayLabel(title) = %q, want QA PROOF REVIEW", got)
+	if got := actionItemDisplayLabel(domain.ActionItem{Title: "QA PROOF REVIEW", ID: "actionItem-123"}); got != "QA PROOF REVIEW" {
+		t.Fatalf("actionItemDisplayLabel(title) = %q, want QA PROOF REVIEW", got)
 	}
 
 	blocker := formatNodeContractBlocker(
-		domain.Task{Title: "QA PROOF REVIEW", ID: "task-123"},
+		domain.ActionItem{Title: "QA PROOF REVIEW", ID: "actionItem-123"},
 		domain.NodeContractSnapshot{
 			ResponsibleActorKind:    domain.TemplateActorKindQA,
 			CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},

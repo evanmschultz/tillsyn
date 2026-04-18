@@ -26,10 +26,10 @@ import (
 type fakeService struct {
 	projects                []domain.Project
 	columns                 map[string][]domain.Column
-	tasks                   map[string][]domain.Task
-	lastSearchFilter        app.SearchTasksFilter
-	lastCreateTask          app.CreateTaskInput
-	createTaskCalls         int
+	tasks                   map[string][]domain.ActionItem
+	lastSearchFilter        app.SearchActionItemsFilter
+	lastCreateActionItem    app.CreateActionItemInput
+	createActionItemCalls   int
 	comments                map[string][]domain.Comment
 	lastCreateComment       app.CreateCommentInput
 	authRequests            map[string]domain.AuthRequest
@@ -78,19 +78,19 @@ type fakeService struct {
 }
 
 // newFakeService constructs fake service.
-func newFakeService(projects []domain.Project, columns []domain.Column, tasks []domain.Task) *fakeService {
+func newFakeService(projects []domain.Project, columns []domain.Column, tasks []domain.ActionItem) *fakeService {
 	colByProject := map[string][]domain.Column{}
 	for _, c := range columns {
 		colByProject[c.ProjectID] = append(colByProject[c.ProjectID], c)
 	}
-	taskByProject := map[string][]domain.Task{}
+	actionItemByProject := map[string][]domain.ActionItem{}
 	for _, t := range tasks {
-		taskByProject[t.ProjectID] = append(taskByProject[t.ProjectID], t)
+		actionItemByProject[t.ProjectID] = append(actionItemByProject[t.ProjectID], t)
 	}
 	return &fakeService{
 		projects:                projects,
 		columns:                 colByProject,
-		tasks:                   taskByProject,
+		tasks:                   actionItemByProject,
 		kindDefinitions:         []domain.KindDefinition{mustNewKindDefinitionForTest(domain.DefaultProjectKind, "Project", []domain.KindAppliesTo{domain.KindAppliesToProject})},
 		comments:                map[string][]domain.Comment{},
 		authRequests:            map[string]domain.AuthRequest{},
@@ -205,18 +205,18 @@ func (f *fakeService) ListColumns(_ context.Context, projectID string, includeAr
 	return out, nil
 }
 
-// ListTasks lists tasks.
-func (f *fakeService) ListTasks(_ context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
+// ListActionItems lists tasks.
+func (f *fakeService) ListActionItems(_ context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	tasks := f.tasks[projectID]
-	out := make([]domain.Task, 0, len(tasks))
-	for _, task := range tasks {
-		if !includeArchived && task.ArchivedAt != nil {
+	out := make([]domain.ActionItem, 0, len(tasks))
+	for _, actionItem := range tasks {
+		if !includeArchived && actionItem.ArchivedAt != nil {
 			continue
 		}
-		out = append(out, task)
+		out = append(out, actionItem)
 	}
 	return out, nil
 }
@@ -260,12 +260,12 @@ func (f *fakeService) ApproveProjectTemplateMigrations(_ context.Context, in app
 	if in.ApproveAll {
 		for _, candidate := range preview.MigrationCandidates {
 			if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
-				selected[strings.TrimSpace(candidate.TaskID)] = struct{}{}
+				selected[strings.TrimSpace(candidate.ActionItemID)] = struct{}{}
 			}
 		}
 	} else {
-		for _, taskID := range in.TaskIDs {
-			selected[strings.TrimSpace(taskID)] = struct{}{}
+		for _, actionItemID := range in.ActionItemIDs {
+			selected[strings.TrimSpace(actionItemID)] = struct{}{}
 		}
 	}
 	approvals := make([]domain.ProjectTemplateMigrationApproval, 0, len(selected))
@@ -273,14 +273,14 @@ func (f *fakeService) ApproveProjectTemplateMigrations(_ context.Context, in app
 	remainingEligible := 0
 	remainingIneligible := 0
 	for _, candidate := range preview.MigrationCandidates {
-		taskID := strings.TrimSpace(candidate.TaskID)
+		actionItemID := strings.TrimSpace(candidate.ActionItemID)
 		if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
-			if _, ok := selected[taskID]; ok {
+			if _, ok := selected[actionItemID]; ok {
 				approvals = append(approvals, domain.ProjectTemplateMigrationApproval{
-					TaskID:      taskID,
-					Title:       candidate.Title,
-					ChangeKinds: append([]string(nil), candidate.ChangeKinds...),
-					NewTitle:    candidate.Title + " REVIEW",
+					ActionItemID: actionItemID,
+					Title:        candidate.Title,
+					ChangeKinds:  append([]string(nil), candidate.ChangeKinds...),
+					NewTitle:     candidate.Title + " REVIEW",
 				})
 				continue
 			}
@@ -362,21 +362,21 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 	}
 	tasks := f.tasks[projectID]
 	out := make([]domain.AttentionItem, 0, len(tasks))
-	for idx, task := range tasks {
-		blockedBy := uniqueTrimmed(task.Metadata.BlockedBy)
-		dependsOn := uniqueTrimmed(task.Metadata.DependsOn)
-		if len(blockedBy) == 0 && len(dependsOn) == 0 && strings.TrimSpace(task.Metadata.BlockedReason) == "" {
+	for idx, actionItem := range tasks {
+		blockedBy := uniqueTrimmed(actionItem.Metadata.BlockedBy)
+		dependsOn := uniqueTrimmed(actionItem.Metadata.DependsOn)
+		if len(blockedBy) == 0 && len(dependsOn) == 0 && strings.TrimSpace(actionItem.Metadata.BlockedReason) == "" {
 			continue
 		}
-		summary := strings.TrimSpace(task.Metadata.BlockedReason)
+		summary := strings.TrimSpace(actionItem.Metadata.BlockedReason)
 		if summary == "" {
-			summary = fmt.Sprintf("blocked task %s", task.Title)
+			summary = fmt.Sprintf("blocked actionItem %s", actionItem.Title)
 		}
 		out = append(out, domain.AttentionItem{
-			ID:                 fmt.Sprintf("att-%s-%d", task.ID, idx),
+			ID:                 fmt.Sprintf("att-%s-%d", actionItem.ID, idx),
 			ProjectID:          projectID,
-			ScopeType:          domain.ScopeLevelTask,
-			ScopeID:            task.ID,
+			ScopeType:          domain.ScopeLevelActionItem,
+			ScopeID:            actionItem.ID,
 			State:              domain.AttentionStateOpen,
 			Kind:               domain.AttentionKindBlocker,
 			Summary:            summary,
@@ -737,17 +737,17 @@ func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID st
 		TotalItems: len(tasks),
 	}
 	stateByID := map[string]domain.LifecycleState{}
-	for _, task := range tasks {
-		stateByID[task.ID] = task.LifecycleState
+	for _, actionItem := range tasks {
+		stateByID[actionItem.ID] = actionItem.LifecycleState
 	}
-	for _, task := range tasks {
-		dependsOn := uniqueTrimmed(task.Metadata.DependsOn)
-		blockedBy := uniqueTrimmed(task.Metadata.BlockedBy)
+	for _, actionItem := range tasks {
+		dependsOn := uniqueTrimmed(actionItem.Metadata.DependsOn)
+		blockedBy := uniqueTrimmed(actionItem.Metadata.BlockedBy)
 		if len(dependsOn) > 0 {
 			rollup.ItemsWithDependencies++
 			rollup.DependencyEdges += len(dependsOn)
 		}
-		if len(blockedBy) > 0 || strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+		if len(blockedBy) > 0 || strings.TrimSpace(actionItem.Metadata.BlockedReason) != "" {
 			rollup.BlockedItems++
 		}
 		rollup.BlockedByEdges += len(blockedBy)
@@ -761,8 +761,8 @@ func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID st
 	return rollup, nil
 }
 
-// SearchTaskMatches handles search task matches.
-func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksFilter) ([]app.TaskMatch, error) {
+// SearchActionItemMatches handles search actionItem matches.
+func (f *fakeService) SearchActionItemMatches(ctx context.Context, in app.SearchActionItemsFilter) ([]app.ActionItemMatch, error) {
 	f.lastSearchFilter = in
 	f.lastSearchFilter.States = append([]string(nil), in.States...)
 	f.lastSearchFilter.Levels = append([]string(nil), in.Levels...)
@@ -779,7 +779,7 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 		stateSet[state] = struct{}{}
 	}
 	allowAllStates := len(stateSet) == 0
-	out := make([]app.TaskMatch, 0)
+	out := make([]app.ActionItemMatch, 0)
 
 	projectIDs := make([]string, 0)
 	if in.CrossProject {
@@ -798,11 +798,11 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 		if !ok {
 			continue
 		}
-		for _, task := range f.tasks[projectID] {
+		for _, actionItem := range f.tasks[projectID] {
 			stateID := "todo"
 			columnName := ""
 			for _, c := range f.columns[projectID] {
-				if c.ID == task.ColumnID {
+				if c.ID == actionItem.ColumnID {
 					columnName = strings.ToLower(strings.ReplaceAll(c.Name, " ", "-"))
 					break
 				}
@@ -817,7 +817,7 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 					stateID = columnName
 				}
 			}
-			if task.ArchivedAt != nil {
+			if actionItem.ArchivedAt != nil {
 				if !in.IncludeArchived {
 					continue
 				}
@@ -829,9 +829,9 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 				}
 			}
 			if query != "" {
-				matched := strings.Contains(strings.ToLower(task.Title), query) || strings.Contains(strings.ToLower(task.Description), query)
+				matched := strings.Contains(strings.ToLower(actionItem.Title), query) || strings.Contains(strings.ToLower(actionItem.Description), query)
 				if !matched {
-					for _, label := range task.Labels {
+					for _, label := range actionItem.Labels {
 						if strings.Contains(strings.ToLower(label), query) {
 							matched = true
 							break
@@ -842,21 +842,21 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 					continue
 				}
 			}
-			out = append(out, app.TaskMatch{
-				Project: project,
-				Task:    task,
-				StateID: stateID,
+			out = append(out, app.ActionItemMatch{
+				Project:    project,
+				ActionItem: actionItem,
+				StateID:    stateID,
 			})
 		}
 	}
 	return out, nil
 }
 
-// SearchTasks handles search task matches plus execution metadata.
-func (f *fakeService) SearchTasks(ctx context.Context, in app.SearchTasksFilter) (app.SearchTaskMatchesResult, error) {
-	matches, err := f.SearchTaskMatches(ctx, in)
+// SearchActionItems handles search actionItem matches plus execution metadata.
+func (f *fakeService) SearchActionItems(ctx context.Context, in app.SearchActionItemsFilter) (app.SearchActionItemMatchesResult, error) {
+	matches, err := f.SearchActionItemMatches(ctx, in)
 	if err != nil {
-		return app.SearchTaskMatchesResult{}, err
+		return app.SearchActionItemMatchesResult{}, err
 	}
 	requestedMode := in.Mode
 	if f.searchRequestedMode != "" {
@@ -870,7 +870,7 @@ func (f *fakeService) SearchTasks(ctx context.Context, in app.SearchTasksFilter)
 	if summary.SubjectType == "" {
 		summary.SubjectType = app.EmbeddingSubjectTypeWorkItem
 	}
-	return app.SearchTaskMatchesResult{
+	return app.SearchActionItemMatchesResult{
 		Matches:          matches,
 		RequestedMode:    requestedMode,
 		EffectiveMode:    effectiveMode,
@@ -962,7 +962,7 @@ func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.Create
 		f.columns[project.ID] = []domain.Column{c1, c2, c3}
 	}
 	if _, ok := f.tasks[project.ID]; !ok {
-		f.tasks[project.ID] = []domain.Task{}
+		f.tasks[project.ID] = []domain.ActionItem{}
 	}
 	if libraryID := domain.NormalizeTemplateLibraryID(in.TemplateLibraryID); libraryID != "" {
 		f.projectBindings[project.ID] = domain.ProjectTemplateBinding{
@@ -1056,17 +1056,17 @@ func (f *fakeService) DeleteProject(_ context.Context, projectID string) error {
 	return nil
 }
 
-// CreateTask creates task.
-func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (domain.Task, error) {
-	f.lastCreateTask = in
-	f.createTaskCalls++
+// CreateActionItem creates actionItem.
+func (f *fakeService) CreateActionItem(_ context.Context, in app.CreateActionItemInput) (domain.ActionItem, error) {
+	f.lastCreateActionItem = in
+	f.createActionItemCalls++
 	pos := 0
 	for _, t := range f.tasks[in.ProjectID] {
 		if t.ColumnID == in.ColumnID && t.Position >= pos {
 			pos = t.Position + 1
 		}
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-new",
 		ProjectID:   in.ProjectID,
 		ParentID:    in.ParentID,
@@ -1082,17 +1082,17 @@ func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (dom
 		Metadata:    in.Metadata,
 	}, time.Now().UTC())
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	f.tasks[in.ProjectID] = append(f.tasks[in.ProjectID], task)
-	return task, nil
+	f.tasks[in.ProjectID] = append(f.tasks[in.ProjectID], actionItem)
+	return actionItem, nil
 }
 
-// UpdateTask updates state for the requested operation.
-func (f *fakeService) UpdateTask(_ context.Context, in app.UpdateTaskInput) (domain.Task, error) {
+// UpdateActionItem updates state for the requested operation.
+func (f *fakeService) UpdateActionItem(_ context.Context, in app.UpdateActionItemInput) (domain.ActionItem, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
-			if f.tasks[projectID][idx].ID != in.TaskID {
+			if f.tasks[projectID][idx].ID != in.ActionItemID {
 				continue
 			}
 			f.tasks[projectID][idx].Title = strings.TrimSpace(in.Title)
@@ -1106,14 +1106,14 @@ func (f *fakeService) UpdateTask(_ context.Context, in app.UpdateTaskInput) (dom
 			return f.tasks[projectID][idx], nil
 		}
 	}
-	return domain.Task{}, app.ErrNotFound
+	return domain.ActionItem{}, app.ErrNotFound
 }
 
-// MoveTask moves task.
-func (f *fakeService) MoveTask(_ context.Context, taskID, toColumnID string, position int) (domain.Task, error) {
+// MoveActionItem moves actionItem.
+func (f *fakeService) MoveActionItem(_ context.Context, actionItemID, toColumnID string, position int) (domain.ActionItem, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
-			if f.tasks[projectID][idx].ID == taskID {
+			if f.tasks[projectID][idx].ID == actionItemID {
 				f.tasks[projectID][idx].ColumnID = toColumnID
 				f.tasks[projectID][idx].Position = position
 				for _, column := range f.columns[projectID] {
@@ -1138,15 +1138,15 @@ func (f *fakeService) MoveTask(_ context.Context, taskID, toColumnID string, pos
 			}
 		}
 	}
-	return domain.Task{}, app.ErrNotFound
+	return domain.ActionItem{}, app.ErrNotFound
 }
 
-// DeleteTask deletes task.
-func (f *fakeService) DeleteTask(_ context.Context, taskID string, mode app.DeleteMode) error {
+// DeleteActionItem deletes actionItem.
+func (f *fakeService) DeleteActionItem(_ context.Context, actionItemID string, mode app.DeleteMode) error {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
-			task := f.tasks[projectID][idx]
-			if task.ID != taskID {
+			actionItem := f.tasks[projectID][idx]
+			if actionItem.ID != actionItemID {
 				continue
 			}
 			switch mode {
@@ -1165,30 +1165,30 @@ func (f *fakeService) DeleteTask(_ context.Context, taskID string, mode app.Dele
 	return app.ErrNotFound
 }
 
-// RestoreTask restores task.
-func (f *fakeService) RestoreTask(_ context.Context, taskID string) (domain.Task, error) {
+// RestoreActionItem restores actionItem.
+func (f *fakeService) RestoreActionItem(_ context.Context, actionItemID string) (domain.ActionItem, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
-			if f.tasks[projectID][idx].ID == taskID {
+			if f.tasks[projectID][idx].ID == actionItemID {
 				f.tasks[projectID][idx].ArchivedAt = nil
 				return f.tasks[projectID][idx], nil
 			}
 		}
 	}
-	return domain.Task{}, app.ErrNotFound
+	return domain.ActionItem{}, app.ErrNotFound
 }
 
-// RenameTask renames task.
-func (f *fakeService) RenameTask(_ context.Context, taskID, title string) (domain.Task, error) {
+// RenameActionItem renames actionItem.
+func (f *fakeService) RenameActionItem(_ context.Context, actionItemID, title string) (domain.ActionItem, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
-			if f.tasks[projectID][idx].ID == taskID {
+			if f.tasks[projectID][idx].ID == actionItemID {
 				f.tasks[projectID][idx].Title = strings.TrimSpace(title)
 				return f.tasks[projectID][idx], nil
 			}
 		}
 	}
-	return domain.Task{}, app.ErrNotFound
+	return domain.ActionItem{}, app.ErrNotFound
 }
 
 // projectByID returns project by id.
@@ -1201,16 +1201,16 @@ func (f *fakeService) projectByID(projectID string) (domain.Project, bool) {
 	return domain.Project{}, false
 }
 
-// taskByID returns task by id.
-func (f *fakeService) taskByID(taskID string) (domain.Task, bool) {
+// actionItemByID returns actionItem by id.
+func (f *fakeService) actionItemByID(actionItemID string) (domain.ActionItem, bool) {
 	for projectID := range f.tasks {
-		for _, task := range f.tasks[projectID] {
-			if task.ID == taskID {
-				return task, true
+		for _, actionItem := range f.tasks[projectID] {
+			if actionItem.ID == actionItemID {
+				return actionItem, true
 			}
 		}
 	}
-	return domain.Task{}, false
+	return domain.ActionItem{}, false
 }
 
 // commentThreadKey builds a deterministic key for one comment target.
@@ -1224,7 +1224,7 @@ func TestModelLoadAndNavigation(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -1233,10 +1233,10 @@ func TestModelLoadAndNavigation(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(
 		svc,
-		WithTaskFieldConfig(TaskFieldConfig{
+		WithActionItemFieldConfig(ActionItemFieldConfig{
 			ShowPriority:    true,
 			ShowDueDate:     true,
 			ShowLabels:      true,
@@ -1263,7 +1263,7 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
-	existing, _ := domain.NewTask(domain.TaskInput{
+	existing, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -1272,10 +1272,10 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{existing})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.ActionItem{existing})
 	m := loadReadyModel(t, NewModel(
 		svc,
-		WithTaskFieldConfig(TaskFieldConfig{
+		WithActionItemFieldConfig(ActionItemFieldConfig{
 			ShowPriority:    true,
 			ShowDueDate:     true,
 			ShowLabels:      true,
@@ -1293,9 +1293,9 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune(']'))
-	moved, ok := svc.taskByID("t-new")
+	moved, ok := svc.actionItemByID("t-new")
 	if !ok || moved.ColumnID != c2.ID {
-		t.Fatalf("expected created task to move to column %q, got %#v ok=%t", c2.ID, moved, ok)
+		t.Fatalf("expected created actionItem to move to column %q, got %#v ok=%t", c2.ID, moved, ok)
 	}
 
 	m = applyMsg(t, m, keyRune('d'))
@@ -1304,14 +1304,14 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 	m.confirmChoice = 0
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	archived, ok := svc.taskByID("t-new")
+	archived, ok := svc.actionItemByID("t-new")
 	if !ok || archived.ArchivedAt == nil {
-		t.Fatalf("expected selected task archived, got %#v ok=%t", archived, ok)
+		t.Fatalf("expected selected actionItem archived, got %#v ok=%t", archived, ok)
 	}
 	m = applyMsg(t, m, keyRune('u'))
-	restored, ok := svc.taskByID("t-new")
+	restored, ok := svc.actionItemByID("t-new")
 	if !ok || restored.ArchivedAt != nil {
-		t.Fatalf("expected selected task restored, got %#v ok=%t", restored, ok)
+		t.Fatalf("expected selected actionItem restored, got %#v ok=%t", restored, ok)
 	}
 
 	m = applyMsg(t, m, keyRune('D'))
@@ -1320,41 +1320,41 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 	m = applyMsg(t, m, keyRune('y'))
 	if len(svc.tasks[p.ID]) != 1 {
-		t.Fatalf("expected hard delete to remove task, got %d tasks", len(svc.tasks[p.ID]))
+		t.Fatalf("expected hard delete to remove actionItem, got %d tasks", len(svc.tasks[p.ID]))
 	}
 }
 
-// TestModelCreateTaskFocusesNewTask verifies that create-task reload focuses the created row.
-func TestModelCreateTaskFocusesNewTask(t *testing.T) {
+// TestModelCreateActionItemFocusesNewActionItem verifies that create-actionItem reload focuses the created row.
+func TestModelCreateActionItemFocusesNewActionItem(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	existing, _ := domain.NewTask(domain.TaskInput{
+	existing, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Existing task",
+		Title:     "Existing actionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{existing})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('n'))
-	for _, r := range []rune("New focus task") {
+	for _, r := range []rune("New focus actionItem") {
 		m = applyMsg(t, m, keyRune(r))
 	}
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	m = applyImmediateCmd(t, mustModelValue(t, updated), cmd)
 
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t-new" {
-		t.Fatalf("expected focus on created task t-new, got %#v ok=%t", task, ok)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != "t-new" {
+		t.Fatalf("expected focus on created actionItem t-new, got %#v ok=%t", actionItem, ok)
 	}
-	if m.selectedTask != 1 {
-		t.Fatalf("expected selectedTask index to move to new row, got %d", m.selectedTask)
+	if m.selectedActionItem != 1 {
+		t.Fatalf("expected selectedActionItem index to move to new row, got %d", m.selectedActionItem)
 	}
-	if svc.createTaskCalls != 1 {
-		t.Fatalf("expected create task to be submitted once, got %d", svc.createTaskCalls)
+	if svc.createActionItemCalls != 1 {
+		t.Fatalf("expected create actionItem to be submitted once, got %d", svc.createActionItemCalls)
 	}
 }
 
@@ -1365,24 +1365,24 @@ func TestModelProjectSwitchAndSearch(t *testing.T) {
 	p2, _ := domain.NewProject("p2", "B", "", now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Alpha task",
+		Title:     "Alpha actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
 		Position:  0,
-		Title:     "Beta task",
+		Title:     "Beta actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.ActionItem{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('p'))
@@ -1416,15 +1416,15 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	p2, _ := domain.NewProject("p2", "Client", "", now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Local task",
+		Title:     "Local actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
@@ -1433,7 +1433,7 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.ActionItem{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, keyRune('/'))
 	m.searchCrossProject = true
@@ -1447,7 +1447,7 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	if m.mode != modeSearchResults {
 		t.Fatalf("expected search results mode, got %v", m.mode)
 	}
-	if len(m.searchMatches) == 0 || m.searchMatches[0].Task.ID != "t2" {
+	if len(m.searchMatches) == 0 || m.searchMatches[0].ActionItem.ID != "t2" {
 		t.Fatalf("expected cross-project match for t2, got %#v", m.searchMatches)
 	}
 	levels := canonicalSearchLevels(m.searchLevels)
@@ -1485,18 +1485,18 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	if m.selectedProject != 1 {
 		t.Fatalf("expected jump to second project, got %d", m.selectedProject)
 	}
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode after search jump, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode after search jump, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.taskInfoTaskID); got != "t2" {
-		t.Fatalf("taskInfoTaskID = %q, want t2", got)
+	if got := strings.TrimSpace(m.actionItemInfoActionItemID); got != "t2" {
+		t.Fatalf("actionItemInfoActionItemID = %q, want t2", got)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
 		t.Fatalf("expected escape to return to board mode, got %v", m.mode)
 	}
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t2" {
-		t.Fatalf("expected selected task t2 after closing info, got %#v ok=%t", task, ok)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != "t2" {
+		t.Fatalf("expected selected actionItem t2 after closing info, got %#v ok=%t", actionItem, ok)
 	}
 }
 
@@ -1505,8 +1505,8 @@ func TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-search-loading", "Search Loading", "", now)
 	column, _ := domain.NewColumn("c-search-loading", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-search-loading",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-search-loading",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -1514,7 +1514,7 @@ func TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m = applyMsg(t, m, keyRune('/'))
 	for _, r := range "rollout" {
 		m = applyMsg(t, m, keyRune(r))
@@ -1545,28 +1545,28 @@ func TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup(t *testing.T) {
 	if m.searchLoading {
 		t.Fatal("expected loading state cleared after search completion")
 	}
-	if len(m.searchMatches) != 1 || m.searchMatches[0].Task.ID != task.ID {
-		t.Fatalf("expected search result for %q, got %#v", task.ID, m.searchMatches)
+	if len(m.searchMatches) != 1 || m.searchMatches[0].ActionItem.ID != actionItem.ID {
+		t.Fatalf("expected search result for %q, got %#v", actionItem.ID, m.searchMatches)
 	}
 }
 
-// TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext verifies project-scoped semantic matches open the node and keep subtree focus on close.
-func TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext(t *testing.T) {
+// TestModelProjectSearchResultsEnterOpensActionItemInfoAndPreservesBoardContext verifies project-scoped semantic matches open the node and keep subtree focus on close.
+func TestModelProjectSearchResultsEnterOpensActionItemInfoAndPreservesBoardContext(t *testing.T) {
 	now := time.Date(2026, 3, 29, 23, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-search-focus", "Search Focus", "", now)
 	column, _ := domain.NewColumn("c-search-focus", project.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "branch-rollout",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Roll out hybrid task search",
+		Title:     "Roll out hybrid actionItem search",
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
-		ID:          "task-pagerduty",
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:          "actionItem-pagerduty",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		ParentID:    parent.ID,
@@ -1576,7 +1576,7 @@ func TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext(t *
 		Priority:    domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{parent, child})
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, keyRune('/'))
 	for _, r := range "pagerduty" {
@@ -1586,7 +1586,7 @@ func TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext(t *
 	if m.mode != modeSearchResults {
 		t.Fatalf("expected project search to open results mode, got %v", m.mode)
 	}
-	if len(m.searchMatches) == 0 || m.searchMatches[0].Task.ID != child.ID {
+	if len(m.searchMatches) == 0 || m.searchMatches[0].ActionItem.ID != child.ID {
 		t.Fatalf("expected first project-scoped match %q, got %#v", child.ID, m.searchMatches)
 	}
 
@@ -1606,25 +1606,25 @@ func TestModelProjectSearchResultsEnterOpensTaskInfoAndPreservesBoardContext(t *
 	}
 
 	m = applyCmd(t, m, cmd)
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode after opening project-scoped match, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode after opening project-scoped match, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.taskInfoTaskID); got != child.ID {
-		t.Fatalf("taskInfoTaskID = %q, want %q", got, child.ID)
+	if got := strings.TrimSpace(m.actionItemInfoActionItemID); got != child.ID {
+		t.Fatalf("actionItemInfoActionItemID = %q, want %q", got, child.ID)
 	}
-	if got := strings.TrimSpace(m.projectionRootTaskID); got != parent.ID {
-		t.Fatalf("projectionRootTaskID = %q, want %q", got, parent.ID)
+	if got := strings.TrimSpace(m.projectionRootActionItemID); got != parent.ID {
+		t.Fatalf("projectionRootActionItemID = %q, want %q", got, parent.ID)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
 		t.Fatalf("expected escape to return to board mode, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.projectionRootTaskID); got != parent.ID {
-		t.Fatalf("projectionRootTaskID after close = %q, want %q", got, parent.ID)
+	if got := strings.TrimSpace(m.projectionRootActionItemID); got != parent.ID {
+		t.Fatalf("projectionRootActionItemID after close = %q, want %q", got, parent.ID)
 	}
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != child.ID {
-		t.Fatalf("expected child task selected after closing info, got %#v ok=%t", task, ok)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != child.ID {
+		t.Fatalf("expected child actionItem selected after closing info, got %#v ok=%t", actionItem, ok)
 	}
 }
 
@@ -1633,8 +1633,8 @@ func TestModelSearchCancelIgnoresLateResults(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-search-cancel", "Search Cancel", "", now)
 	column, _ := domain.NewColumn("c-search-cancel", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-search-cancel",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-search-cancel",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -1642,7 +1642,7 @@ func TestModelSearchCancelIgnoresLateResults(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m = applyMsg(t, m, keyRune('/'))
 	for _, r := range "cancel" {
 		m = applyMsg(t, m, keyRune(r))
@@ -1672,15 +1672,15 @@ func TestSearchModalAllowsChoosingExecutionMode(t *testing.T) {
 	now := time.Date(2026, 3, 30, 0, 5, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-search-mode", "Search Mode", "", now)
 	column, _ := domain.NewColumn("c-search-mode", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-search-mode",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Mode-aware search task",
+		Title:     "Mode-aware search actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('/'))
@@ -1714,15 +1714,15 @@ func TestBoardStatusTextSuppressesTransientStatuses(t *testing.T) {
 		"loading thread...",
 		"due picker cancelled",
 		"text selection mode enabled",
-		"edit task",
+		"edit actionItem",
 	} {
 		m.status = status
 		if got := m.boardStatusText(); got != "" {
 			t.Fatalf("status %q should be suppressed, got %q", status, got)
 		}
 	}
-	m.status = "task updated"
-	if got := m.boardStatusText(); got != "task updated" {
+	m.status = "actionItem updated"
+	if got := m.boardStatusText(); got != "actionItem updated" {
 		t.Fatalf("expected meaningful status to remain visible, got %q", got)
 	}
 }
@@ -1732,15 +1732,15 @@ func TestModelAddAndEditProject(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	existing, _ := domain.NewTask(domain.TaskInput{
+	existing, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-existing",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Existing task",
+		Title:     "Existing actionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{existing})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('N'))
@@ -1764,7 +1764,7 @@ func TestModelAddAndEditProject(t *testing.T) {
 		t.Fatalf("expected created project selected, got %q", selected.ID)
 	}
 	if len(m.tasks) != 0 {
-		t.Fatalf("expected fresh project task list, got %#v", m.tasks)
+		t.Fatalf("expected fresh project actionItem list, got %#v", m.tasks)
 	}
 	for _, column := range m.columns {
 		if column.ProjectID != selected.ID {
@@ -1789,15 +1789,15 @@ func TestModelEditProjectRootPathTypingPreservesPrintableKeys(t *testing.T) {
 	now := time.Date(2026, 3, 14, 0, 5, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune('M'))
 	if m.mode != modeEditProject {
@@ -1828,15 +1828,15 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune(':'))
@@ -1877,8 +1877,8 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 		t.Fatalf("expected quick actions mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected quick action enter to open task info, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected quick action enter to open actionItem info, got %v", m.mode)
 	}
 
 	m.mode = modeNone
@@ -1897,18 +1897,18 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "# Project Overview\n\n- keep momentum", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "requires global follow-up",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 
 	existing, err := domain.NewComment(domain.CommentInput{
 		ID:           "cm-existing",
@@ -1995,12 +1995,12 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 	}
 }
 
-// TestModelThreadModeFromTaskInfoAndBack verifies task-info thread shortcut and back navigation.
-func TestModelThreadModeFromTaskInfoAndBack(t *testing.T) {
+// TestModelThreadModeFromActionItemInfoAndBack verifies actionItem-info thread shortcut and back navigation.
+func TestModelThreadModeFromActionItemInfoAndBack(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-phase",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -2009,24 +2009,24 @@ func TestModelThreadModeFromTaskInfoAndBack(t *testing.T) {
 		Title:     "Phase 1",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{phase})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{phase})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, keyRune('c'))
 	if m.mode != modeThread {
-		t.Fatalf("expected task-info shortcut to open thread mode, got %v", m.mode)
+		t.Fatalf("expected actionItem-info shortcut to open thread mode, got %v", m.mode)
 	}
 	if m.threadTarget.TargetType != domain.CommentTargetTypePhase {
 		t.Fatalf("expected phase target type mapping, got %#v", m.threadTarget)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected esc to return to task info from thread mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected esc to return to actionItem info from thread mode, got %v", m.mode)
 	}
 }
 
@@ -2035,15 +2035,15 @@ func TestModelThreadTabAndShiftTabMoveInOppositeDirections(t *testing.T) {
 	now := time.Date(2026, 3, 13, 19, 35, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('c'))
@@ -2075,15 +2075,15 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(
 		svc,
 		WithIdentityConfig(IdentityConfig{
@@ -2102,7 +2102,7 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	m.threadInput.SetValue("fallback check")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
-	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeActionItem, actionItem.ID)
 	comments := svc.comments[itemKey]
 	if len(comments) != 1 {
 		t.Fatalf("expected one posted comment, got %#v", comments)
@@ -2123,15 +2123,15 @@ func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 15, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	updated, cmd := m.executeCommandPalette("thread-item")
@@ -2156,7 +2156,7 @@ func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
 	m.threadInput.SetValue("explicit composer")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
-	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeActionItem, actionItem.ID)
 	comments := svc.comments[itemKey]
 	if len(comments) != 1 {
 		t.Fatalf("expected one posted comment, got %#v", comments)
@@ -2168,15 +2168,15 @@ func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 20, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	updated, cmd := m.executeCommandPalette("thread-item")
@@ -2187,7 +2187,7 @@ func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 	m = applyMsg(t, m, keyRune('x'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
-	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeActionItem, actionItem.ID)
 	comments := svc.comments[itemKey]
 	if len(comments) != 1 {
 		t.Fatalf("expected one posted comment, got %#v", comments)
@@ -2197,21 +2197,21 @@ func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 	}
 }
 
-// TestModelThreadReadModeEditShortcutStartsTaskEditForm verifies read-mode details-first flow before task edit.
-func TestModelThreadReadModeEditShortcutStartsTaskEditForm(t *testing.T) {
+// TestModelThreadReadModeEditShortcutStartsActionItemEditForm verifies read-mode details-first flow before actionItem edit.
+func TestModelThreadReadModeEditShortcutStartsActionItemEditForm(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 22, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "## Details\n\n- read me",
 		Priority:    domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	updated, cmd := m.executeCommandPalette("thread-item")
@@ -2221,13 +2221,13 @@ func TestModelThreadReadModeEditShortcutStartsTaskEditForm(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode from thread details panel, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode from thread details panel, got %v", m.mode)
 	}
-	if strings.TrimSpace(m.editingTaskID) != task.ID {
-		t.Fatalf("expected editing task id %q, got %q", task.ID, m.editingTaskID)
+	if strings.TrimSpace(m.editingActionItemID) != actionItem.ID {
+		t.Fatalf("expected editing actionItem id %q, got %q", actionItem.ID, m.editingActionItemID)
 	}
-	if got := strings.TrimSpace(m.formInputs[taskFieldDescription].Value()); !strings.Contains(got, "Details") {
+	if got := strings.TrimSpace(m.formInputs[actionItemFieldDescription].Value()); !strings.Contains(got, "Details") {
 		t.Fatalf("expected edit form description prefilled from thread target, got %q", got)
 	}
 }
@@ -2257,21 +2257,21 @@ func TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm(t *testing.
 	}
 }
 
-// TestModelThreadDetailsPanelEnterStartsTaskEdit verifies enter on the focused details panel opens task edit.
-func TestModelThreadDetailsPanelEnterStartsTaskEdit(t *testing.T) {
+// TestModelThreadDetailsPanelEnterStartsActionItemEdit verifies enter on the focused details panel opens actionItem edit.
+func TestModelThreadDetailsPanelEnterStartsActionItemEdit(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "initial description",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	updated, cmd := m.executeCommandPalette("thread-item")
@@ -2281,11 +2281,11 @@ func TestModelThreadDetailsPanelEnterStartsTaskEdit(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode from thread details panel, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode from thread details panel, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.editingTaskID); got != task.ID {
-		t.Fatalf("expected editing task id %q, got %q", task.ID, got)
+	if got := strings.TrimSpace(m.editingActionItemID); got != actionItem.ID {
+		t.Fatalf("expected editing actionItem id %q, got %q", actionItem.ID, got)
 	}
 }
 
@@ -2316,27 +2316,27 @@ func TestModelThreadDescriptionFallsBackToTargetDetails(t *testing.T) {
 	}
 }
 
-// TestModelTaskInfoShowsCommentPreview verifies task info renders recent markdown comments without requiring thread mode.
-func TestModelTaskInfoShowsCommentPreview(t *testing.T) {
+// TestModelActionItemInfoShowsCommentPreview verifies actionItem info renders recent markdown comments without requiring thread mode.
+func TestModelActionItemInfoShowsCommentPreview(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "## Details\n\n- read me",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 
 	comment, err := domain.NewComment(domain.CommentInput{
 		ID:           "cm-1",
 		ProjectID:    p.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		Summary:      "comment summary preview",
 		BodyMarkdown: "**latest** comment",
 		ActorID:      "user-1",
@@ -2346,52 +2346,52 @@ func TestModelTaskInfoShowsCommentPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewComment(comment) error = %v", err)
 	}
-	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeActionItem, actionItem.ID)
 	svc.comments[itemKey] = append(svc.comments[itemKey], comment)
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 
-	body := stripANSI(m.taskInfoBody.GetContent())
+	body := stripANSI(m.actionItemInfoBody.GetContent())
 	if !strings.Contains(body, "comments (1)") {
-		t.Fatalf("expected comment preview section in task info body, got %q", body)
+		t.Fatalf("expected comment preview section in actionItem info body, got %q", body)
 	}
 	if !strings.Contains(body, "latest") {
-		t.Fatalf("expected markdown comment content preview in task info body, got %q", body)
+		t.Fatalf("expected markdown comment content preview in actionItem info body, got %q", body)
 	}
 	if !strings.Contains(body, "summary: comment summary preview") {
-		t.Fatalf("expected explicit comment summary in task info body, got %q", body)
+		t.Fatalf("expected explicit comment summary in actionItem info body, got %q", body)
 	}
 	if !strings.Contains(body, "Details") {
-		t.Fatalf("expected markdown details content in task info body, got %q", body)
+		t.Fatalf("expected markdown details content in actionItem info body, got %q", body)
 	}
 }
 
-// TestModelTaskInfoShowsFullCommentsList verifies task-info renders the full comments list with ownership metadata.
-func TestModelTaskInfoShowsFullCommentsList(t *testing.T) {
+// TestModelActionItemInfoShowsFullCommentsList verifies actionItem-info renders the full comments list with ownership metadata.
+func TestModelActionItemInfoShowsFullCommentsList(t *testing.T) {
 	now := time.Date(2026, 3, 4, 8, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "desc",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
-	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeActionItem, actionItem.ID)
 	for i := 1; i <= 6; i++ {
 		comment, err := domain.NewComment(domain.CommentInput{
 			ID:           fmt.Sprintf("cm-%d", i),
 			ProjectID:    p.ID,
-			TargetType:   domain.CommentTargetTypeTask,
-			TargetID:     task.ID,
+			TargetType:   domain.CommentTargetTypeActionItem,
+			TargetID:     actionItem.ID,
 			Summary:      fmt.Sprintf("summary-%d", i),
 			BodyMarkdown: fmt.Sprintf("body-%d", i),
 			ActorID:      fmt.Sprintf("actor-%d", i),
@@ -2406,44 +2406,44 @@ func TestModelTaskInfoShowsFullCommentsList(t *testing.T) {
 
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
-	body := stripANSI(m.taskInfoBody.GetContent())
+	body := stripANSI(m.actionItemInfoBody.GetContent())
 	if !strings.Contains(body, "comments (6)") {
-		t.Fatalf("expected comments count in task info body, got %q", body)
+		t.Fatalf("expected comments count in actionItem info body, got %q", body)
 	}
 	if !strings.Contains(body, "summary: summary-1") {
-		t.Fatalf("expected oldest comment summary in task info body list, got %q", body)
+		t.Fatalf("expected oldest comment summary in actionItem info body list, got %q", body)
 	}
 	if !strings.Contains(body, "id: cm-1") || !strings.Contains(body, "id: cm-6") {
-		t.Fatalf("expected comment ids in task info body list, got %q", body)
+		t.Fatalf("expected comment ids in actionItem info body list, got %q", body)
 	}
 	if !strings.Contains(body, "[user] Actor 1 (actor-1)") || !strings.Contains(body, "[user] Actor 6 (actor-6)") {
-		t.Fatalf("expected owner metadata rows in task info body list, got %q", body)
+		t.Fatalf("expected owner metadata rows in actionItem info body list, got %q", body)
 	}
 	if strings.Contains(body, "older comments") {
 		t.Fatalf("expected full comments list without preview truncation, got %q", body)
 	}
 }
 
-// TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden verifies task-info read mode still shows markdown details.
-func TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.T) {
+// TestModelActionItemInfoShowsMarkdownDetailsWhenCardDescriptionsHidden verifies actionItem-info read mode still shows markdown details.
+func TestModelActionItemInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 35, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
-		Description: "## Hidden Card Description\n\n- still visible in task info",
+		Title:       "ActionItem",
+		Description: "## Hidden Card Description\n\n- still visible in actionItem info",
 		Priority:    domain.PriorityMedium,
 	}, now)
 	m := loadReadyModel(t, NewModel(
-		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
-		WithTaskFieldConfig(TaskFieldConfig{
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem}),
+		WithActionItemFieldConfig(ActionItemFieldConfig{
 			ShowPriority:    false,
 			ShowDueDate:     false,
 			ShowLabels:      false,
@@ -2452,42 +2452,42 @@ func TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.
 	))
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 	overlay := stripANSI(fmt.Sprint(m.renderFullPageNodeModeView().Content))
 	if !strings.Contains(overlay, "Hidden Card Description") {
-		t.Fatalf("expected markdown details visible in task info despite card-description toggle, got %q", overlay)
+		t.Fatalf("expected markdown details visible in actionItem info despite card-description toggle, got %q", overlay)
 	}
 }
 
-// TestModelTaskInfoShowsStructuredMetadataSections verifies task-info renders objective/acceptance/validation/risk markdown sections.
-func TestModelTaskInfoShowsStructuredMetadataSections(t *testing.T) {
+// TestModelActionItemInfoShowsStructuredMetadataSections verifies actionItem-info renders objective/acceptance/validation/risk markdown sections.
+func TestModelActionItemInfoShowsStructuredMetadataSections(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 15, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "details",
 		Priority:    domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			Objective:          "objective token",
 			AcceptanceCriteria: "acceptance token",
 			ValidationPlan:     "validation token",
 			RiskNotes:          "risk token",
 		},
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
-	body := stripANSI(m.taskInfoBody.GetContent())
+	body := stripANSI(m.actionItemInfoBody.GetContent())
 	for _, token := range []string{
 		"objective",
 		"objective token",
@@ -2499,60 +2499,60 @@ func TestModelTaskInfoShowsStructuredMetadataSections(t *testing.T) {
 		"risk token",
 	} {
 		if !strings.Contains(body, token) {
-			t.Fatalf("expected task info metadata token %q, got %q", token, body)
+			t.Fatalf("expected actionItem info metadata token %q, got %q", token, body)
 		}
 	}
 }
 
-// TestModelEditTaskMetadataFieldsPrefillAndSubmit verifies edit-task prefill and save behavior for objective/acceptance/validation/risk metadata fields.
-func TestModelEditTaskMetadataFieldsPrefillAndSubmit(t *testing.T) {
+// TestModelEditActionItemMetadataFieldsPrefillAndSubmit verifies edit-actionItem prefill and save behavior for objective/acceptance/validation/risk metadata fields.
+func TestModelEditActionItemMetadataFieldsPrefillAndSubmit(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 25, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "details",
 		Priority:    domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			Objective:          "draft objective",
 			AcceptanceCriteria: "draft acceptance",
 			ValidationPlan:     "draft validation",
 			RiskNotes:          "draft risk",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldObjective].Value(); got != "draft objective" {
+	if got := m.formInputs[actionItemFieldObjective].Value(); got != "draft objective" {
 		t.Fatalf("expected objective prefill %q, got %q", "draft objective", got)
 	}
-	if got := m.formInputs[taskFieldAcceptanceCriteria].Value(); got != "draft acceptance" {
+	if got := m.formInputs[actionItemFieldAcceptanceCriteria].Value(); got != "draft acceptance" {
 		t.Fatalf("expected acceptance prefill %q, got %q", "draft acceptance", got)
 	}
-	if got := m.formInputs[taskFieldValidationPlan].Value(); got != "draft validation" {
+	if got := m.formInputs[actionItemFieldValidationPlan].Value(); got != "draft validation" {
 		t.Fatalf("expected validation prefill %q, got %q", "draft validation", got)
 	}
-	if got := m.formInputs[taskFieldRiskNotes].Value(); got != "draft risk" {
+	if got := m.formInputs[actionItemFieldRiskNotes].Value(); got != "draft risk" {
 		t.Fatalf("expected risk prefill %q, got %q", "draft risk", got)
 	}
 
-	m.setTaskFormMarkdownDraft(taskFieldObjective, "updated objective", true)
-	m.setTaskFormMarkdownDraft(taskFieldAcceptanceCriteria, "", true)
-	m.setTaskFormMarkdownDraft(taskFieldValidationPlan, "updated validation", true)
-	m.setTaskFormMarkdownDraft(taskFieldRiskNotes, "updated risk", true)
+	m.setActionItemFormMarkdownDraft(actionItemFieldObjective, "updated objective", true)
+	m.setActionItemFormMarkdownDraft(actionItemFieldAcceptanceCriteria, "", true)
+	m.setActionItemFormMarkdownDraft(actionItemFieldValidationPlan, "updated validation", true)
+	m.setActionItemFormMarkdownDraft(actionItemFieldRiskNotes, "updated risk", true)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	updated, ok := svc.taskByID(task.ID)
+	updated, ok := svc.actionItemByID(actionItem.ID)
 	if !ok {
-		t.Fatalf("expected updated task %q in fake service", task.ID)
+		t.Fatalf("expected updated actionItem %q in fake service", actionItem.ID)
 	}
 	if got := updated.Metadata.Objective; got != "updated objective" {
 		t.Fatalf("expected objective %q, got %q", "updated objective", got)
@@ -2568,26 +2568,26 @@ func TestModelEditTaskMetadataFieldsPrefillAndSubmit(t *testing.T) {
 	}
 }
 
-// TestModelEditTaskMetadataEditorCtrlSSavesTask verifies editor-level ctrl+s persists existing task metadata.
-func TestModelEditTaskMetadataEditorCtrlSSavesTask(t *testing.T) {
+// TestModelEditActionItemMetadataEditorCtrlSSavesActionItem verifies editor-level ctrl+s persists existing actionItem metadata.
+func TestModelEditActionItemMetadataEditorCtrlSSavesActionItem(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 40, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			Objective: "draft objective",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('e'))
-	m.formFocus = taskFieldObjective
+	m.formFocus = actionItemFieldObjective
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeDescriptionEditor {
 		t.Fatalf("expected description editor for objective, got %v", m.mode)
@@ -2596,20 +2596,20 @@ func TestModelEditTaskMetadataEditorCtrlSSavesTask(t *testing.T) {
 	m.saveDescriptionEditor()
 	m = applyCmd(t, m, m.closeDescriptionEditor(true))
 
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode after metadata editor save, got %v", m.mode)
 	}
-	updated, ok := svc.taskByID(task.ID)
+	updated, ok := svc.actionItemByID(actionItem.ID)
 	if !ok {
-		t.Fatalf("expected updated task %q in fake service", task.ID)
+		t.Fatalf("expected updated actionItem %q in fake service", actionItem.ID)
 	}
 	if got := updated.Metadata.Objective; got != "saved from editor" {
 		t.Fatalf("expected editor ctrl+s to persist objective, got %q", got)
 	}
 }
 
-// TestModelTaskInfoDetailsViewportScrolls verifies task-info markdown details are bounded and scrollable.
-func TestModelTaskInfoDetailsViewportScrolls(t *testing.T) {
+// TestModelActionItemInfoDetailsViewportScrolls verifies actionItem-info markdown details are bounded and scrollable.
+func TestModelActionItemInfoDetailsViewportScrolls(t *testing.T) {
 	now := time.Date(2026, 3, 3, 12, 45, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -2617,83 +2617,83 @@ func TestModelTaskInfoDetailsViewportScrolls(t *testing.T) {
 	for i := 0; i < 240; i++ {
 		lines = append(lines, fmt.Sprintf("line %03d full page md details", i))
 	}
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Kind:        domain.WorkKindTask,
+		Kind:        domain.WorkKindActionItem,
 		Title:       "full page md",
 		Description: strings.Join(lines, "\n"),
 		Priority:    domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 100, Height: 28})
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 
-	before := m.taskInfoDetails.YOffset()
-	beforeBody := m.taskInfoBody.YOffset()
+	before := m.actionItemInfoDetails.YOffset()
+	beforeBody := m.actionItemInfoBody.YOffset()
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	after := m.taskInfoDetails.YOffset()
-	afterBody := m.taskInfoBody.YOffset()
+	after := m.actionItemInfoDetails.YOffset()
+	afterBody := m.actionItemInfoBody.YOffset()
 	if after != before {
 		t.Fatalf("expected details viewport to stay put on pgdown body scroll, before=%d after=%d", before, after)
 	}
 	if afterBody <= beforeBody {
-		t.Fatalf("expected task-info body viewport to scroll on pgdown, before=%d after=%d", beforeBody, afterBody)
+		t.Fatalf("expected actionItem-info body viewport to scroll on pgdown, before=%d after=%d", beforeBody, afterBody)
 	}
 
-	beforeJ := m.taskInfoBody.YOffset()
+	beforeJ := m.actionItemInfoBody.YOffset()
 	m = applyMsg(t, m, keyRune('j'))
-	afterJ := m.taskInfoBody.YOffset()
+	afterJ := m.actionItemInfoBody.YOffset()
 	if afterJ <= beforeJ {
-		t.Fatalf("expected task-info body viewport to scroll on j, before=%d after=%d", beforeJ, afterJ)
+		t.Fatalf("expected actionItem-info body viewport to scroll on j, before=%d after=%d", beforeJ, afterJ)
 	}
 
-	beforeDown := m.taskInfoBody.YOffset()
+	beforeDown := m.actionItemInfoBody.YOffset()
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	afterDown := m.taskInfoBody.YOffset()
+	afterDown := m.actionItemInfoBody.YOffset()
 	if afterDown <= beforeDown {
-		t.Fatalf("expected task-info body viewport to scroll on down arrow, before=%d after=%d", beforeDown, afterDown)
+		t.Fatalf("expected actionItem-info body viewport to scroll on down arrow, before=%d after=%d", beforeDown, afterDown)
 	}
 
-	beforeK := m.taskInfoBody.YOffset()
+	beforeK := m.actionItemInfoBody.YOffset()
 	m = applyMsg(t, m, keyRune('k'))
-	afterK := m.taskInfoBody.YOffset()
+	afterK := m.actionItemInfoBody.YOffset()
 	if afterK >= beforeK {
-		t.Fatalf("expected task-info body viewport to scroll up on k, before=%d after=%d", beforeK, afterK)
+		t.Fatalf("expected actionItem-info body viewport to scroll up on k, before=%d after=%d", beforeK, afterK)
 	}
 
-	beforeUp := m.taskInfoBody.YOffset()
+	beforeUp := m.actionItemInfoBody.YOffset()
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	afterUp := m.taskInfoBody.YOffset()
+	afterUp := m.actionItemInfoBody.YOffset()
 	if afterUp >= beforeUp {
-		t.Fatalf("expected task-info body viewport to scroll up on up arrow, before=%d after=%d", beforeUp, afterUp)
+		t.Fatalf("expected actionItem-info body viewport to scroll up on up arrow, before=%d after=%d", beforeUp, afterUp)
 	}
 
-	m.taskInfoBody.GotoTop()
-	beforeMouse := m.taskInfoDetails.YOffset()
-	beforeMouseBody := m.taskInfoBody.YOffset()
+	m.actionItemInfoBody.GotoTop()
+	beforeMouse := m.actionItemInfoDetails.YOffset()
+	beforeMouseBody := m.actionItemInfoBody.YOffset()
 	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	afterMouse := m.taskInfoDetails.YOffset()
-	afterMouseBody := m.taskInfoBody.YOffset()
+	afterMouse := m.actionItemInfoDetails.YOffset()
+	afterMouseBody := m.actionItemInfoBody.YOffset()
 	if afterMouse != beforeMouse {
 		t.Fatalf("expected details preview to stay top-aligned on mouse wheel, before=%d after=%d", beforeMouse, afterMouse)
 	}
 	if afterMouseBody <= beforeMouseBody {
-		t.Fatalf("expected task-info body viewport to scroll on mouse wheel, before=%d after=%d", beforeMouseBody, afterMouseBody)
+		t.Fatalf("expected actionItem-info body viewport to scroll on mouse wheel, before=%d after=%d", beforeMouseBody, afterMouseBody)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if got := m.taskInfoDetails.YOffset(); got != 0 {
+	if got := m.actionItemInfoDetails.YOffset(); got != 0 {
 		t.Fatalf("expected home to reset details viewport to top, got y offset=%d", got)
 	}
-	if got := m.taskInfoBody.YOffset(); got != 0 {
-		t.Fatalf("expected home to reset task-info body viewport to top, got y offset=%d", got)
+	if got := m.actionItemInfoBody.YOffset(); got != 0 {
+		t.Fatalf("expected home to reset actionItem-info body viewport to top, got y offset=%d", got)
 	}
 }
 
@@ -2704,7 +2704,7 @@ func TestCommentTargetTypeForWorkKind(t *testing.T) {
 		want   domain.CommentTargetType
 		wantOK bool
 	}{
-		{kind: domain.WorkKindTask, want: domain.CommentTargetTypeTask, wantOK: true},
+		{kind: domain.WorkKindActionItem, want: domain.CommentTargetTypeActionItem, wantOK: true},
 		{kind: domain.WorkKindSubtask, want: domain.CommentTargetTypeSubtask, wantOK: true},
 		{kind: domain.WorkKindPhase, want: domain.CommentTargetTypePhase, wantOK: true},
 		{kind: domain.WorkKindDecision, want: domain.CommentTargetTypeDecision, wantOK: true},
@@ -2728,7 +2728,7 @@ func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -2736,7 +2736,7 @@ func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{parent})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune(':'))
@@ -2750,13 +2750,13 @@ func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode after executing new-subtask, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode after executing new-subtask, got %v", m.mode)
 	}
-	if got := m.taskFormKind; got != domain.WorkKindSubtask {
-		t.Fatalf("expected task form kind subtask, got %q", got)
+	if got := m.actionItemFormKind; got != domain.WorkKindSubtask {
+		t.Fatalf("expected actionItem form kind subtask, got %q", got)
 	}
-	if got := m.taskFormParentID; got != parent.ID {
+	if got := m.actionItemFormParentID; got != parent.ID {
 		t.Fatalf("expected subtask parent %q, got %q", parent.ID, got)
 	}
 }
@@ -2766,9 +2766,9 @@ func TestCommandPaletteInitialismScoringPrefersExpectedAbbreviations(t *testing.
 	if got := commandPaletteInitialism("new-subtask"); got != "ns" {
 		t.Fatalf("commandPaletteInitialism(new-subtask) = %q, want ns", got)
 	}
-	subtaskScore, ok := scoreCommandPaletteItem("ns", commandPaletteItem{
+	subactionItemScore, ok := scoreCommandPaletteItem("ns", commandPaletteItem{
 		Command:     "new-subtask",
-		Aliases:     []string{"task-subtask", "ns"},
+		Aliases:     []string{"actionItem-subtask", "ns"},
 		Description: "create subtask for selected item",
 	})
 	if !ok {
@@ -2779,8 +2779,8 @@ func TestCommandPaletteInitialismScoringPrefersExpectedAbbreviations(t *testing.
 		Aliases:     []string{"auths"},
 		Description: "review access requests; list active sessions",
 	})
-	if ok && authScore >= subtaskScore {
-		t.Fatalf("expected new-subtask score %d to outrank auth-access score %d for ns", subtaskScore, authScore)
+	if ok && authScore >= subactionItemScore {
+		t.Fatalf("expected new-subtask score %d to outrank auth-access score %d for ns", subactionItemScore, authScore)
 	}
 }
 
@@ -2789,15 +2789,15 @@ func TestModelCommandPaletteHighlightColorApplies(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Styled task",
+		Title:     "Styled actionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	updated, cmd := m.executeCommandPalette("highlight-color")
@@ -2910,7 +2910,7 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -2922,7 +2922,7 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"branch-old"},
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "ph1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -2934,19 +2934,19 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"phase-old"},
 	}, now)
-	leaf, _ := domain.NewTask(domain.TaskInput{
+	leaf, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  2,
 		ParentID:  phase.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Leaf",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, leaf})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch, phase, leaf})
 	m := loadReadyModel(t, NewModel(
 		svc,
 		WithLabelConfig(LabelConfig{
@@ -2955,9 +2955,9 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 		}),
 		WithSaveLabelsConfigCallback(func(_ string, _ []string, _ []string) error { return nil }),
 	))
-	m.projectionRootTaskID = branch.ID
+	m.projectionRootActionItemID = branch.ID
 	m.selectedColumn = 0
-	m.selectedTask = 0
+	m.selectedActionItem = 0
 
 	updated, cmd := m.executeCommandPalette("labels-config")
 	m = applyResult(t, updated, cmd)
@@ -2967,8 +2967,8 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 	if len(m.labelsConfigInputs) != 4 {
 		t.Fatalf("expected 4 labels config inputs, got %d", len(m.labelsConfigInputs))
 	}
-	if m.labelsConfigBranchTaskID != branch.ID || m.labelsConfigPhaseTaskID != phase.ID {
-		t.Fatalf("expected branch/phase context IDs, got branch=%q phase=%q", m.labelsConfigBranchTaskID, m.labelsConfigPhaseTaskID)
+	if m.labelsConfigBranchActionItemID != branch.ID || m.labelsConfigPhaseActionItemID != phase.ID {
+		t.Fatalf("expected branch/phase context IDs, got branch=%q phase=%q", m.labelsConfigBranchActionItemID, m.labelsConfigPhaseActionItemID)
 	}
 	if got := strings.TrimSpace(m.labelsConfigInputs[2].Value()); got != "branch-old" {
 		t.Fatalf("expected branch labels prefill, got %q", got)
@@ -2981,24 +2981,24 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 	m.labelsConfigInputs[3].SetValue("phase-new,phase-two")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	findTask := func(taskID string) (domain.Task, bool) {
-		for _, task := range svc.tasks[p.ID] {
-			if task.ID == taskID {
-				return task, true
+	findActionItem := func(actionItemID string) (domain.ActionItem, bool) {
+		for _, actionItem := range svc.tasks[p.ID] {
+			if actionItem.ID == actionItemID {
+				return actionItem, true
 			}
 		}
-		return domain.Task{}, false
+		return domain.ActionItem{}, false
 	}
-	updatedBranch, ok := findTask(branch.ID)
+	updatedBranch, ok := findActionItem(branch.ID)
 	if !ok {
-		t.Fatalf("expected branch task %q to exist", branch.ID)
+		t.Fatalf("expected branch actionItem %q to exist", branch.ID)
 	}
 	if len(updatedBranch.Labels) != 1 || updatedBranch.Labels[0] != "branch-new" {
 		t.Fatalf("expected branch labels updated, got %#v", updatedBranch.Labels)
 	}
-	updatedPhase, ok := findTask(phase.ID)
+	updatedPhase, ok := findActionItem(phase.ID)
 	if !ok {
-		t.Fatalf("expected phase task %q to exist", phase.ID)
+		t.Fatalf("expected phase actionItem %q to exist", phase.ID)
 	}
 	if len(updatedPhase.Labels) != 2 || updatedPhase.Labels[0] != "phase-new" || updatedPhase.Labels[1] != "phase-two" {
 		t.Fatalf("expected phase labels updated, got %#v", updatedPhase.Labels)
@@ -3163,18 +3163,18 @@ func TestModelCommandPaletteBranchLifecycleGuards(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Title:     "Task",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 
 	updated, cmd := m.executeCommandPalette("edit-branch")
 	m = applyResult(t, updated, cmd)
@@ -3206,7 +3206,7 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -3216,7 +3216,7 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch})
 	m := loadReadyModel(t, NewModel(
 		svc,
 		WithConfirmConfig(ConfirmConfig{
@@ -3229,28 +3229,28 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 
 	updated, cmd := m.executeCommandPalette("new-branch")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask || m.taskFormKind != domain.WorkKind("branch") || m.taskFormScope != domain.KindAppliesToBranch {
-		t.Fatalf("expected new branch task form defaults, got mode=%v kind=%q scope=%q", m.mode, m.taskFormKind, m.taskFormScope)
+	if m.mode != modeAddActionItem || m.actionItemFormKind != domain.WorkKind("branch") || m.actionItemFormScope != domain.KindAppliesToBranch {
+		t.Fatalf("expected new branch actionItem form defaults, got mode=%v kind=%q scope=%q", m.mode, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	updated, cmd = m.executeCommandPalette("edit-branch")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeEditTask || strings.TrimSpace(m.editingTaskID) != branch.ID {
-		t.Fatalf("expected branch edit form, got mode=%v task=%q", m.mode, m.editingTaskID)
+	if m.mode != modeEditActionItem || strings.TrimSpace(m.editingActionItemID) != branch.ID {
+		t.Fatalf("expected branch edit form, got mode=%v actionItem=%q", m.mode, m.editingActionItemID)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	updated, cmd = m.executeCommandPalette("archive-branch")
 	m = applyResult(t, updated, cmd)
 	if len(svc.tasks[p.ID]) != 1 || svc.tasks[p.ID][0].ArchivedAt == nil {
-		t.Fatalf("expected archived branch task, got %#v", svc.tasks[p.ID])
+		t.Fatalf("expected archived branch actionItem, got %#v", svc.tasks[p.ID])
 	}
 
 	updated, cmd = m.executeCommandPalette("restore-branch")
 	m = applyResult(t, updated, cmd)
 	if len(svc.tasks[p.ID]) != 1 || svc.tasks[p.ID][0].ArchivedAt != nil {
-		t.Fatalf("expected restored branch task, got %#v", svc.tasks[p.ID])
+		t.Fatalf("expected restored branch actionItem, got %#v", svc.tasks[p.ID])
 	}
 
 	updated, cmd = m.executeCommandPalette("delete-branch")
@@ -3265,7 +3265,7 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 35, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -3275,12 +3275,12 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch})))
 
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != branch.ID {
-		t.Fatalf("expected focused branch root %q, got %q", branch.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != branch.ID {
+		t.Fatalf("expected focused branch root %q, got %q", branch.ID, m.projectionRootActionItemID)
 	}
 
 	updated, cmd := m.executeCommandPalette("new-branch")
@@ -3303,8 +3303,8 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 	if m.mode != modeNone {
 		t.Fatalf("expected enter to dismiss warning modal, got %v", m.mode)
 	}
-	if m.projectionRootTaskID != branch.ID {
-		t.Fatalf("expected subtree focus to stay active after dismissing warning, got %q", m.projectionRootTaskID)
+	if m.projectionRootActionItemID != branch.ID {
+		t.Fatalf("expected subtree focus to stay active after dismissing warning, got %q", m.projectionRootActionItemID)
 	}
 }
 
@@ -3313,25 +3313,25 @@ func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 45, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Title:     "Task",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 
 	updated, cmd := m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask {
-		t.Fatalf("expected project-level new-phase to open add-task mode, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected project-level new-phase to open add-actionItem mode, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected project-level phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected project-level phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 }
 
@@ -3340,26 +3340,26 @@ func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 50, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune(':'))
 	for _, r := range "new_phase" {
 		m = applyMsg(t, m, keyRune(r))
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAddTask {
-		t.Fatalf("expected typed new_phase to open add-task mode, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected typed new_phase to open add-actionItem mode, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected typed new_phase to create project-level phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected typed new_phase to create project-level phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 }
 
@@ -3368,7 +3368,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -3378,7 +3378,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "ph1",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -3389,7 +3389,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	phaseLeaf, _ := domain.NewTask(domain.TaskInput{
+	phaseLeaf, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "ph-empty",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -3400,7 +3400,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		Title:     "Phase Leaf",
 		Priority:  domain.PriorityLow,
 	}, now)
-	branchLeaf, _ := domain.NewTask(domain.TaskInput{
+	branchLeaf, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b-empty",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -3410,77 +3410,77 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		Title:     "Branch Leaf",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, phaseLeaf, branchLeaf})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch, phase, phaseLeaf, branchLeaf})
 	m := loadReadyModel(t, NewModel(svc))
 
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	updated, cmd := m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for new phase, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode for new phase, got %v", m.mode)
 	}
-	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected project-level phase defaults when only a child row is selected, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected project-level phase defaults when only a child row is selected, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
-	m.focusTaskByID(branchLeaf.ID)
+	m.focusActionItemByID(branchLeaf.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != branchLeaf.ID {
-		t.Fatalf("expected empty branch focus root %q, got %q", branchLeaf.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != branchLeaf.ID {
+		t.Fatalf("expected empty branch focus root %q, got %q", branchLeaf.ID, m.projectionRootActionItemID)
 	}
 	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for focused-empty new phase, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode for focused-empty new phase, got %v", m.mode)
 	}
-	if m.taskFormParentID != branchLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected focused-empty-branch phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != branchLeaf.ID || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected focused-empty-branch phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if !m.clearSubtreeFocus() {
 		t.Fatal("expected to clear focused subtree after branch-leaf phase test")
 	}
 
-	m.focusTaskByID(phase.ID)
+	m.focusActionItemByID(phase.ID)
 	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for project-screen new phase with selected phase row, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode for project-screen new phase with selected phase row, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected project-level phase defaults when only a phase row is selected, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected project-level phase defaults when only a phase row is selected, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != branch.ID {
-		t.Fatalf("expected focused branch root %q for nested phase creation, got %q", branch.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != branch.ID {
+		t.Fatalf("expected focused branch root %q for nested phase creation, got %q", branch.ID, m.projectionRootActionItemID)
 	}
-	m.focusTaskByID(phase.ID)
+	m.focusActionItemByID(phase.ID)
 	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for branch-screen new phase, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode for branch-screen new phase, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != branch.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected focused-branch phase defaults even when a child phase row is selected, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != branch.ID || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected focused-branch phase defaults even when a child phase row is selected, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
-	m.focusTaskByID(phaseLeaf.ID)
+	m.focusActionItemByID(phaseLeaf.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != phaseLeaf.ID {
-		t.Fatalf("expected empty phase focus root %q, got %q", phaseLeaf.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != phaseLeaf.ID {
+		t.Fatalf("expected empty phase focus root %q, got %q", phaseLeaf.ID, m.projectionRootActionItemID)
 	}
 	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for focused-empty nested new phase, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode for focused-empty nested new phase, got %v", m.mode)
 	}
-	if m.taskFormParentID != phaseLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected focused-empty-phase nested phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.actionItemFormParentID != phaseLeaf.ID || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected focused-empty-phase nested phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 }
 
@@ -3489,7 +3489,7 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -3500,41 +3500,41 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})))
-	m.focusTaskByID(branch.ID)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch})))
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 
 	for _, raw := range []string{"new_phase", "new phase"} {
 		updated, cmd := m.executeCommandPalette(raw)
 		next := applyResult(t, updated, cmd)
-		if next.mode != modeAddTask {
-			t.Fatalf("raw command %q should open add-task phase form, got mode=%v status=%q", raw, next.mode, next.status)
+		if next.mode != modeAddActionItem {
+			t.Fatalf("raw command %q should open add-actionItem phase form, got mode=%v status=%q", raw, next.mode, next.status)
 		}
-		if next.taskFormParentID != branch.ID || next.taskFormKind != domain.WorkKindPhase || next.taskFormScope != domain.KindAppliesToPhase {
-			t.Fatalf("raw command %q should preserve phase defaults, got parent=%q kind=%q scope=%q", raw, next.taskFormParentID, next.taskFormKind, next.taskFormScope)
+		if next.actionItemFormParentID != branch.ID || next.actionItemFormKind != domain.WorkKindPhase || next.actionItemFormScope != domain.KindAppliesToPhase {
+			t.Fatalf("raw command %q should preserve phase defaults, got parent=%q kind=%q scope=%q", raw, next.actionItemFormParentID, next.actionItemFormKind, next.actionItemFormScope)
 		}
 	}
 }
 
-// TestModelCommandPalettePhaseCreationBlocksTaskFocusedScreens verifies task and subtask screens cannot parent phases.
-func TestModelCommandPalettePhaseCreationBlocksTaskFocusedScreens(t *testing.T) {
+// TestModelCommandPalettePhaseCreationBlocksActionItemFocusedScreens verifies actionItem and subtask screens cannot parent phases.
+func TestModelCommandPalettePhaseCreationBlocksActionItemFocusedScreens(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 20, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Title:     "Task",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	subtask, _ := domain.NewTask(domain.TaskInput{
+	subtask, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "st1",
 		ProjectID: p.ID,
-		ParentID:  task.ID,
+		ParentID:  actionItem.ID,
 		ColumnID:  c.ID,
 		Position:  1,
 		Kind:      domain.WorkKindSubtask,
@@ -3548,17 +3548,17 @@ func TestModelCommandPalettePhaseCreationBlocksTaskFocusedScreens(t *testing.T) 
 		wantRootID  string
 	}{
 		{
-			name: "task",
+			name: "actionItem",
 			enterScreen: func(in Model) Model {
-				in.focusTaskByID(task.ID)
+				in.focusActionItemByID(actionItem.ID)
 				return applyMsg(t, in, keyRune('f'))
 			},
-			wantRootID: task.ID,
+			wantRootID: actionItem.ID,
 		},
 		{
 			name: "subtask",
 			enterScreen: func(in Model) Model {
-				in.focusTaskByID(task.ID)
+				in.focusActionItemByID(actionItem.ID)
 				in = applyMsg(t, in, keyRune('f'))
 				return applyMsg(t, in, keyRune('f'))
 			},
@@ -3566,10 +3566,10 @@ func TestModelCommandPalettePhaseCreationBlocksTaskFocusedScreens(t *testing.T) 
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task, subtask})))
+			current := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem, subtask})))
 			current = tc.enterScreen(current)
-			if current.projectionRootTaskID != tc.wantRootID {
-				t.Fatalf("expected focused %s root %q, got %q", tc.name, tc.wantRootID, current.projectionRootTaskID)
+			if current.projectionRootActionItemID != tc.wantRootID {
+				t.Fatalf("expected focused %s root %q, got %q", tc.name, tc.wantRootID, current.projectionRootActionItemID)
 			}
 
 			updated, cmd := current.executeCommandPalette("new-phase")
@@ -3629,20 +3629,20 @@ func TestSanitizeFormFieldValueStripsTerminalProbeArtifacts(t *testing.T) {
 	}
 }
 
-// TestTaskAndProjectFormValuesSanitizeTerminalProbeArtifacts verifies form extraction applies field sanitization.
-func TestTaskAndProjectFormValuesSanitizeTerminalProbeArtifacts(t *testing.T) {
-	taskInput := textinput.New()
-	taskInput.SetValue("task-title]11;rgb:1e1e/1e1e/2e2e")
+// TestActionItemAndProjectFormValuesSanitizeTerminalProbeArtifacts verifies form extraction applies field sanitization.
+func TestActionItemAndProjectFormValuesSanitizeTerminalProbeArtifacts(t *testing.T) {
+	actionItemInput := textinput.New()
+	actionItemInput.SetValue("actionItem-title]11;rgb:1e1e/1e1e/2e2e")
 	projectInput := textinput.New()
 	projectInput.SetValue("project-name]11;rgb:1e1e/1e1e/2e2e")
 
 	m := Model{
-		formInputs:        []textinput.Model{taskInput},
+		formInputs:        []textinput.Model{actionItemInput},
 		projectFormInputs: []textinput.Model{projectInput},
 	}
-	taskVals := m.taskFormValues()
-	if got := taskVals["title"]; got != "task-title" {
-		t.Fatalf("expected task title sanitized, got %q", got)
+	actionItemVals := m.actionItemFormValues()
+	if got := actionItemVals["title"]; got != "actionItem-title" {
+		t.Fatalf("expected actionItem title sanitized, got %q", got)
 	}
 	projectVals := m.projectFormValues()
 	if got := projectVals["name"]; got != "project-name" {
@@ -3684,15 +3684,15 @@ func TestRenderOverviewPanelHeightMatchesRequestedHeight(t *testing.T) {
 	now := time.Date(2026, 3, 3, 1, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	panel := m.renderOverviewPanel(project, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 44, 14, 0, 0, 0, nil, false)
 	if got := lipgloss.Height(panel); got != 14 {
@@ -3700,19 +3700,19 @@ func TestRenderOverviewPanelHeightMatchesRequestedHeight(t *testing.T) {
 	}
 }
 
-// TestModelTaskDescriptionEditorFlow verifies task-form description always routes through the markdown editor.
-func TestModelTaskDescriptionEditorFlow(t *testing.T) {
+// TestModelActionItemDescriptionEditorFlow verifies actionItem-form description always routes through the markdown editor.
+func TestModelActionItemDescriptionEditorFlow(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
 	m = applyMsg(t, m, keyRune('n'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.formFocus != taskFieldDescription {
+	if m.formFocus != actionItemFieldDescription {
 		t.Fatalf("expected description field focus, got %d", m.formFocus)
 	}
 
@@ -3720,20 +3720,20 @@ func TestModelTaskDescriptionEditorFlow(t *testing.T) {
 	if m.mode != modeDescriptionEditor {
 		t.Fatalf("expected markdown description editor mode, got %v", m.mode)
 	}
-	if m.descriptionEditorTarget != descriptionEditorTargetTask {
-		t.Fatalf("expected task description editor target, got %v", m.descriptionEditorTarget)
+	if m.descriptionEditorTarget != descriptionEditorTargetActionItem {
+		t.Fatalf("expected actionItem description editor target, got %v", m.descriptionEditorTarget)
 	}
 
-	m.descriptionEditorInput.SetValue("## Task Detail\n\n- line one\n- line two")
+	m.descriptionEditorInput.SetValue("## ActionItem Detail\n\n- line one\n- line two")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-	if m.mode != modeAddTask {
-		t.Fatalf("expected return to add-task mode after save, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected return to add-actionItem mode after save, got %v", m.mode)
 	}
-	if got := m.taskFormDescription; !strings.Contains(got, "Task Detail") {
-		t.Fatalf("expected task markdown description persisted, got %q", got)
+	if got := m.actionItemFormDescription; !strings.Contains(got, "ActionItem Detail") {
+		t.Fatalf("expected actionItem markdown description persisted, got %q", got)
 	}
-	if got := m.formInputs[taskFieldDescription].Value(); !strings.Contains(got, "Task Detail") {
-		t.Fatalf("expected compact task description summary in form field, got %q", got)
+	if got := m.formInputs[actionItemFieldDescription].Value(); !strings.Contains(got, "ActionItem Detail") {
+		t.Fatalf("expected compact actionItem description summary in form field, got %q", got)
 	}
 }
 
@@ -3945,43 +3945,43 @@ func TestModelDescriptionEditorPreviewModeScrollsWrappedContent(t *testing.T) {
 	}
 }
 
-// TestModelTaskInfoDescriptionEditorOpensInPreviewMode verifies task-info opens full-screen details in preview submode.
-func TestModelTaskInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
+// TestModelActionItemInfoDescriptionEditorOpensInPreviewMode verifies actionItem-info opens full-screen details in preview submode.
+func TestModelActionItemInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
 	now := time.Date(2026, 3, 3, 12, 55, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Kind:        domain.WorkKindTask,
-		Title:       "Task with details",
+		Kind:        domain.WorkKindActionItem,
+		Title:       "ActionItem with details",
 		Description: "## full page md\n\n- line one\n- line two",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 	m.descriptionPreview.SetYOffset(88)
 	m = applyMsg(t, m, keyRune('d'))
 	if m.mode != modeDescriptionEditor {
-		t.Fatalf("expected description editor mode from task info, got %v", m.mode)
+		t.Fatalf("expected description editor mode from actionItem info, got %v", m.mode)
 	}
 	if m.descriptionEditorMode != descriptionEditorViewModePreview {
-		t.Fatalf("expected task-info details to open in preview submode, got %v", m.descriptionEditorMode)
+		t.Fatalf("expected actionItem-info details to open in preview submode, got %v", m.descriptionEditorMode)
 	}
 	if got := m.descriptionPreview.YOffset(); got != 0 {
-		t.Fatalf("expected task-info details preview to open at top, got y offset=%d", got)
+		t.Fatalf("expected actionItem-info details preview to open at top, got y offset=%d", got)
 	}
-	if m.descriptionEditorBack != modeTaskInfo {
-		t.Fatalf("expected task-info return mode, got %v", m.descriptionEditorBack)
+	if m.descriptionEditorBack != modeActionItemInfo {
+		t.Fatalf("expected actionItem-info return mode, got %v", m.descriptionEditorBack)
 	}
 	if m.descriptionEditorTarget != descriptionEditorTargetThread {
-		t.Fatalf("expected thread target for task-info details, got %v", m.descriptionEditorTarget)
+		t.Fatalf("expected thread target for actionItem-info details, got %v", m.descriptionEditorTarget)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
@@ -3989,12 +3989,12 @@ func TestModelTaskInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
 		t.Fatalf("expected tab to open edit submode, got %v", m.descriptionEditorMode)
 	}
 	if got := m.descriptionEditorInput.ScrollYOffset(); got != 0 {
-		t.Fatalf("expected task-info details edit mode to open at top, got y offset=%d", got)
+		t.Fatalf("expected actionItem-info details edit mode to open at top, got y offset=%d", got)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected esc from details edit mode to return to task info, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected esc from details edit mode to return to actionItem info, got %v", m.mode)
 	}
 }
 
@@ -4040,7 +4040,7 @@ func TestModelFullPageNodeViewStaysWithinScreenBounds(t *testing.T) {
 	now := time.Date(2026, 3, 13, 11, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -4049,11 +4049,11 @@ func TestModelFullPageNodeViewStaysWithinScreenBounds(t *testing.T) {
 		Description: strings.Repeat("wrapped content line\n", 40),
 		Priority:    domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 84, Height: 26})
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode, got %v", m.mode)
 	}
 
@@ -4142,22 +4142,22 @@ func TestModelHelpOverlayModeSpecific(t *testing.T) {
 		t.Fatalf("expected due-picker-specific help guidance, got %q", out)
 	}
 
-	m.mode = modeEditTask
+	m.mode = modeEditActionItem
 	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
 	if !strings.Contains(out, "depends_on/blocked_by fields: enter or e opens dependency picker") {
-		t.Fatalf("expected edit-task help to mention dependency picker, got %q", out)
+		t.Fatalf("expected edit-actionItem help to mention dependency picker, got %q", out)
 	}
 	if !strings.Contains(out, "do not rely") || !strings.Contains(out, "execution sequencing") {
-		t.Fatalf("expected edit-task help to mention dependency-based sequencing, got %q", out)
+		t.Fatalf("expected edit-actionItem help to mention dependency-based sequencing, got %q", out)
 	}
 
-	m.mode = modeAddTask
+	m.mode = modeAddActionItem
 	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
 	if !strings.Contains(out, "depends_on/blocked_by fields: enter or e opens dependency picker") {
-		t.Fatalf("expected add-task help to mention dependency picker, got %q", out)
+		t.Fatalf("expected add-actionItem help to mention dependency picker, got %q", out)
 	}
 	if !strings.Contains(out, "do not rely") || !strings.Contains(out, "execution sequencing") {
-		t.Fatalf("expected add-task help to mention dependency-based sequencing, got %q", out)
+		t.Fatalf("expected add-actionItem help to mention dependency-based sequencing, got %q", out)
 	}
 
 	m.mode = modeAuthInventory
@@ -4211,13 +4211,13 @@ func TestHelpOverlayScreenTitleAndLinesCoverage(t *testing.T) {
 
 	modes := []inputMode{
 		modeNone,
-		modeAddTask,
+		modeAddActionItem,
 		modeSearch,
-		modeRenameTask,
-		modeEditTask,
+		modeRenameActionItem,
+		modeEditActionItem,
 		modeDuePicker,
 		modeProjectPicker,
-		modeTaskInfo,
+		modeActionItemInfo,
 		modeAddProject,
 		modeEditProject,
 		modeSearchResults,
@@ -4351,7 +4351,7 @@ func TestModelQuickActionsDisabledOrderingAndBlocking(t *testing.T) {
 	helpStyle := lipgloss.NewStyle().Foreground(muted)
 	out := m.renderModeOverlay(accent, muted, dim, helpStyle, 96)
 	enabledIdx := strings.Index(out, "Activity Log")
-	disabledIdx := strings.Index(out, "Task Info (no task selected)")
+	disabledIdx := strings.Index(out, "ActionItem Info (no actionItem selected)")
 	if enabledIdx == -1 || disabledIdx == -1 || enabledIdx > disabledIdx {
 		t.Fatalf("expected enabled action before disabled entries, got %q", out)
 	}
@@ -4384,18 +4384,18 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "requires global follow-up",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 
 	rootDir := t.TempDir()
 	reloadCalls := 0
@@ -4405,7 +4405,7 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 			reloadCalls++
 			return RuntimeConfig{
 				DefaultDeleteMode: app.DeleteModeHard,
-				TaskFields: TaskFieldConfig{
+				ActionItemFields: ActionItemFieldConfig{
 					ShowPriority:    false,
 					ShowDueDate:     false,
 					ShowLabels:      false,
@@ -4462,8 +4462,8 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	if m.defaultDeleteMode != app.DeleteModeHard {
 		t.Fatalf("expected hard default delete mode, got %q", m.defaultDeleteMode)
 	}
-	if m.taskFields.ShowPriority || m.taskFields.ShowDueDate || m.taskFields.ShowLabels || !m.taskFields.ShowDescription {
-		t.Fatalf("unexpected task fields after reload %#v", m.taskFields)
+	if m.actionItemFields.ShowPriority || m.actionItemFields.ShowDueDate || m.actionItemFields.ShowLabels || !m.actionItemFields.ShowDescription {
+		t.Fatalf("unexpected actionItem fields after reload %#v", m.actionItemFields)
 	}
 	if !m.searchCrossProject || !m.searchDefaultCrossProject || !m.searchIncludeArchived || !m.searchDefaultIncludeArchive {
 		t.Fatalf("unexpected search scope flags after reload %#v", m)
@@ -4537,15 +4537,15 @@ func TestModelCommandPaletteReloadConfigError(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc, WithReloadConfigCallback(func() (RuntimeConfig, error) {
 		return RuntimeConfig{}, errors.New("disk read failed")
 	})))
@@ -4562,15 +4562,15 @@ func TestModelPathsRootsModalSaveAndClear(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 
 	rootDir := t.TempDir()
 	type saveCall struct {
@@ -4628,15 +4628,15 @@ func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 
 	saveCalls := 0
 	m := loadReadyModel(t, NewModel(
@@ -4675,23 +4675,23 @@ func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 	}
 }
 
-// TestModelResourcePickerFallsBackToBootstrapRootInTaskInfo verifies project-root lookup falls back to bootstrap roots while task-info remains read-only.
-func TestModelResourcePickerFallsBackToBootstrapRootInTaskInfo(t *testing.T) {
+// TestModelResourcePickerFallsBackToBootstrapRootInActionItemInfo verifies project-root lookup falls back to bootstrap roots while actionItem-info remains read-only.
+func TestModelResourcePickerFallsBackToBootstrapRootInActionItemInfo(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	root := t.TempDir()
 
 	m := loadReadyModel(t, NewModel(
-		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem}),
 		WithSearchRoots([]string{root}),
 	))
 	if got := m.resourcePickerRootForCurrentProject(); got != root {
@@ -4699,8 +4699,8 @@ func TestModelResourcePickerFallsBackToBootstrapRootInTaskInfo(t *testing.T) {
 	}
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('r'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode to ignore resource attach key, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode to ignore resource attach key, got %v", m.mode)
 	}
 }
 
@@ -4710,7 +4710,7 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -4718,7 +4718,7 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 		Title:     "One",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -4726,19 +4726,19 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 		Title:     "Two",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.ActionItem{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
 	m.mode = modeNone
 	m.noticesFocused = false
 	m.selectedColumn = 0
-	m.selectedTask = 0
-	if got := len(m.currentColumnTasks()); got != 2 {
+	m.selectedActionItem = 0
+	if got := len(m.currentColumnActionItems()); got != 2 {
 		t.Fatalf("expected two tasks in the active column before wheel input, got %d", got)
 	}
 
 	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if m.selectedTask != 1 {
-		t.Fatalf("expected selectedTask=1 after wheel down, got %d", m.selectedTask)
+	if m.selectedActionItem != 1 {
+		t.Fatalf("expected selectedActionItem=1 after wheel down, got %d", m.selectedActionItem)
 	}
 
 	clickX := m.columnWidth() + 5
@@ -4755,15 +4755,15 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Parent task",
+		Title:     "Parent actionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	childDone, _ := domain.NewTask(domain.TaskInput{
+	childDone, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-child-done",
 		ProjectID:      p.ID,
 		ColumnID:       c1.ID,
@@ -4774,7 +4774,7 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 		ParentID:       parent.ID,
 		LifecycleState: domain.StateDone,
 	}, now)
-	childTodo, _ := domain.NewTask(domain.TaskInput{
+	childTodo, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-child-todo",
 		ProjectID:      p.ID,
 		ColumnID:       c1.ID,
@@ -4786,7 +4786,7 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 		LifecycleState: domain.StateTodo,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{parent, childDone, childTodo})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.ActionItem{parent, childDone, childTodo})
 	m := loadReadyModel(t, NewModel(svc))
 
 	view := m.View()
@@ -4799,22 +4799,22 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 	}
 }
 
-// TestModelTaskInfoShowsSubtasksAcrossColumns verifies task-info modal subtask visibility independent of parent column.
-func TestModelTaskInfoShowsSubtasksAcrossColumns(t *testing.T) {
+// TestModelActionItemInfoShowsSubtasksAcrossColumns verifies actionItem-info modal subtask visibility independent of parent column.
+func TestModelActionItemInfoShowsSubtasksAcrossColumns(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  cProgress.ID,
 		Position:  0,
-		Title:     "Parent task",
+		Title:     "Parent actionItem",
 		Priority:  domain.PriorityHigh,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: p.ID,
 		ColumnID:  cTodo.ID,
@@ -4825,46 +4825,46 @@ func TestModelTaskInfoShowsSubtasksAcrossColumns(t *testing.T) {
 		ParentID:  parent.ID,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.ActionItem{parent, child})
 	m := loadReadyModel(t, NewModel(svc))
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 
 	view := m.View()
 	rendered := fmt.Sprint(view.Content)
 	if !strings.Contains(rendered, "Cross-column subtask") {
-		t.Fatalf("expected task info modal to include subtasks across columns, got\n%s", rendered)
+		t.Fatalf("expected actionItem info modal to include subtasks across columns, got\n%s", rendered)
 	}
 
 	editMode := m
-	_ = editMode.startTaskForm(&parent)
-	editBody, _ := editMode.taskFormBodyLines(72, lipgloss.NewStyle().Foreground(lipgloss.Color("241")), lipgloss.Color("62"))
+	_ = editMode.startActionItemForm(&parent)
+	editBody, _ := editMode.actionItemFormBodyLines(72, lipgloss.NewStyle().Foreground(lipgloss.Color("241")), lipgloss.Color("62"))
 	editRendered := strings.ToLower(stripANSI(strings.Join(editBody, "\n")))
 	if !strings.Contains(editRendered, "subtasks") || !strings.Contains(editRendered, "cross-column subtask") {
-		t.Fatalf("expected edit-task modal to include subtasks section with children, got %q", editRendered)
+		t.Fatalf("expected edit-actionItem modal to include subtasks section with children, got %q", editRendered)
 	}
 }
 
-// TestModelTaskInfoBackspaceMovesToParent verifies backspace navigates from a child info view to its parent.
-func TestModelTaskInfoBackspaceMovesToParent(t *testing.T) {
+// TestModelActionItemInfoBackspaceMovesToParent verifies backspace navigates from a child info view to its parent.
+func TestModelActionItemInfoBackspaceMovesToParent(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  cProgress.ID,
 		Position:  0,
-		Title:     "Parent task",
+		Title:     "Parent actionItem",
 		Priority:  domain.PriorityHigh,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: p.ID,
 		ColumnID:  cTodo.ID,
@@ -4875,49 +4875,49 @@ func TestModelTaskInfoBackspaceMovesToParent(t *testing.T) {
 		ParentID:  parent.ID,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.ActionItem{parent, child})
 	m := loadReadyModel(t, NewModel(svc))
-	if !m.openTaskInfo(child.ID, "task info") {
-		t.Fatal("expected child task info to open")
+	if !m.openActionItemInfo(child.ID, "actionItem info") {
+		t.Fatal("expected child actionItem info to open")
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task-info mode after moving to parent, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem-info mode after moving to parent, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != parent.ID {
-		t.Fatalf("expected backspace to open parent, got %q", m.taskInfoTaskID)
+	if m.actionItemInfoActionItemID != parent.ID {
+		t.Fatalf("expected backspace to open parent, got %q", m.actionItemInfoActionItemID)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
-		t.Fatalf("expected esc to close task-info from parent, got %v", m.mode)
+		t.Fatalf("expected esc to close actionItem-info from parent, got %v", m.mode)
 	}
 }
 
-// TestModelTaskInfoEscClosesCurrentView verifies esc closes the current task-info view without subtask drill-in state.
-func TestModelTaskInfoEscClosesCurrentView(t *testing.T) {
+// TestModelActionItemInfoEscClosesCurrentView verifies esc closes the current actionItem-info view without subtask drill-in state.
+func TestModelActionItemInfoEscClosesCurrentView(t *testing.T) {
 	now := time.Date(2026, 3, 3, 12, 50, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	grand, _ := domain.NewTask(domain.TaskInput{
+	grand, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-grand",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Kind:      domain.WorkKindTask,
+		Kind:      domain.WorkKindActionItem,
 		Title:     "Grandparent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  1,
-		Kind:      domain.WorkKindTask,
+		Kind:      domain.WorkKindActionItem,
 		ParentID:  grand.ID,
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -4928,25 +4928,25 @@ func TestModelTaskInfoEscClosesCurrentView(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{grand, parent, child})))
-	if !m.openTaskInfo(child.ID, "task info") {
-		t.Fatal("expected openTaskInfo(child) to succeed")
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{grand, parent, child})))
+	if !m.openActionItemInfo(child.ID, "actionItem info") {
+		t.Fatal("expected openActionItemInfo(child) to succeed")
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
-		t.Fatalf("expected esc to close current task info view, got %v", m.mode)
+		t.Fatalf("expected esc to close current actionItem info view, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.taskInfoTaskID); got != "" {
-		t.Fatalf("expected closed task info to clear active task id, got %q", got)
+	if got := strings.TrimSpace(m.actionItemInfoActionItemID); got != "" {
+		t.Fatalf("expected closed actionItem info to clear active actionItem id, got %q", got)
 	}
 }
 
-// TestModelTaskInfoAllowsSubtaskCreation verifies task-info view can start a subtask form for the focused task.
-func TestModelTaskInfoAllowsSubtaskCreation(t *testing.T) {
+// TestModelActionItemInfoAllowsSubactionItemCreation verifies actionItem-info view can start a subtask form for the focused actionItem.
+func TestModelActionItemInfoAllowsSubactionItemCreation(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -4954,39 +4954,39 @@ func TestModelTaskInfoAllowsSubtaskCreation(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{parent})
 	m := loadReadyModel(t, NewModel(svc))
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task-info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem-info mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, keyRune('s'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode after task-info subtask key, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode after actionItem-info subtask key, got %v", m.mode)
 	}
-	if got := m.taskFormKind; got != domain.WorkKindSubtask {
+	if got := m.actionItemFormKind; got != domain.WorkKindSubtask {
 		t.Fatalf("expected subtask form kind, got %q", got)
 	}
-	if got := m.taskFormParentID; got != parent.ID {
+	if got := m.actionItemFormParentID; got != parent.ID {
 		t.Fatalf("expected parent id %q, got %q", parent.ID, got)
 	}
 }
 
-// TestModelTaskInfoEnterOpensFocusedSubtask verifies enter drills into the highlighted child task.
-func TestModelTaskInfoEnterOpensFocusedSubtask(t *testing.T) {
+// TestModelActionItemInfoEnterOpensFocusedSubtask verifies enter drills into the highlighted child actionItem.
+func TestModelActionItemInfoEnterOpensFocusedSubtask(t *testing.T) {
 	now := time.Date(2026, 3, 3, 15, 10, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "parent",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "child",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -4996,30 +4996,30 @@ func TestModelTaskInfoEnterOpensFocusedSubtask(t *testing.T) {
 		Title:     "Child",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})))
-	m.focusTaskByID(parent.ID)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{parent, child})))
+	m.focusActionItemByID(parent.ID)
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode after enter, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode after enter, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != child.ID {
-		t.Fatalf("expected enter to open subtask %q, got %q", child.ID, m.taskInfoTaskID)
+	if m.actionItemInfoActionItemID != child.ID {
+		t.Fatalf("expected enter to open subtask %q, got %q", child.ID, m.actionItemInfoActionItemID)
 	}
 }
 
-// TestModelTaskInfoMovesCurrentTaskWithBrackets verifies task-info mode supports moving the focused task between columns.
-func TestModelTaskInfoMovesCurrentTaskWithBrackets(t *testing.T) {
+// TestModelActionItemInfoMovesCurrentActionItemWithBrackets verifies actionItem-info mode supports moving the focused actionItem between columns.
+func TestModelActionItemInfoMovesCurrentActionItemWithBrackets(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  cTodo.ID,
@@ -5027,7 +5027,7 @@ func TestModelTaskInfoMovesCurrentTaskWithBrackets(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: p.ID,
 		ColumnID:  cTodo.ID,
@@ -5037,43 +5037,43 @@ func TestModelTaskInfoMovesCurrentTaskWithBrackets(t *testing.T) {
 		Kind:      domain.WorkKindSubtask,
 		ParentID:  parent.ID,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.ActionItem{parent, child})
 	m := loadReadyModel(t, NewModel(svc))
-	if !m.openTaskInfo(child.ID, "task info") {
-		t.Fatal("expected child task info to open")
+	if !m.openActionItemInfo(child.ID, "actionItem info") {
+		t.Fatal("expected child actionItem info to open")
 	}
 
 	m = applyMsg(t, m, keyRune(']'))
-	moved, ok := svc.taskByID(child.ID)
+	moved, ok := svc.actionItemByID(child.ID)
 	if !ok {
-		t.Fatalf("expected moved child task in fake service")
+		t.Fatalf("expected moved child actionItem in fake service")
 	}
 	if moved.ColumnID != cProgress.ID {
 		t.Fatalf("expected child moved to progress column %q, got %q", cProgress.ID, moved.ColumnID)
 	}
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task-info mode retained after move, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem-info mode retained after move, got %v", m.mode)
 	}
 
 	m = applyMsg(t, m, keyRune('['))
-	moved, ok = svc.taskByID(child.ID)
+	moved, ok = svc.actionItemByID(child.ID)
 	if !ok {
-		t.Fatalf("expected moved child task in fake service")
+		t.Fatalf("expected moved child actionItem in fake service")
 	}
 	if moved.ColumnID != cTodo.ID {
 		t.Fatalf("expected child moved back to todo column %q, got %q", cTodo.ID, moved.ColumnID)
 	}
 }
 
-// TestModelTaskInfoSubtaskChecklistToggleCompletion verifies task-info checklist rendering and completion toggling.
-func TestModelTaskInfoSubtaskChecklistToggleCompletion(t *testing.T) {
+// TestModelActionItemInfoSubactionItemChecklistToggleCompletion verifies actionItem-info checklist rendering and completion toggling.
+func TestModelActionItemInfoSubactionItemChecklistToggleCompletion(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 20, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	cDone, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  cProgress.ID,
@@ -5081,7 +5081,7 @@ func TestModelTaskInfoSubtaskChecklistToggleCompletion(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: p.ID,
 		ColumnID:  cTodo.ID,
@@ -5092,9 +5092,9 @@ func TestModelTaskInfoSubtaskChecklistToggleCompletion(t *testing.T) {
 		ParentID:  parent.ID,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress, cDone}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress, cDone}, []domain.ActionItem{parent, child})
 	m := loadReadyModel(t, NewModel(svc))
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 	m = applyMsg(t, m, keyRune('i'))
 
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
@@ -5102,13 +5102,13 @@ func TestModelTaskInfoSubtaskChecklistToggleCompletion(t *testing.T) {
 		t.Fatalf("expected unchecked checklist row for subtask, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "state:To Do") || !strings.Contains(rendered, "complete:no") {
-		t.Fatalf("expected subtask state metadata in task-info checklist, got\n%s", rendered)
+		t.Fatalf("expected subtask state metadata in actionItem-info checklist, got\n%s", rendered)
 	}
 
 	m = applyMsg(t, m, keyRune(' '))
-	moved, ok := svc.taskByID(child.ID)
+	moved, ok := svc.actionItemByID(child.ID)
 	if !ok {
-		t.Fatalf("expected moved child task in fake service")
+		t.Fatalf("expected moved child actionItem in fake service")
 	}
 	if moved.ColumnID != cDone.ID {
 		t.Fatalf("expected checklist toggle to move child to done column %q, got %q", cDone.ID, moved.ColumnID)
@@ -5123,9 +5123,9 @@ func TestModelTaskInfoSubtaskChecklistToggleCompletion(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune(' '))
-	moved, ok = svc.taskByID(child.ID)
+	moved, ok = svc.actionItemByID(child.ID)
 	if !ok {
-		t.Fatalf("expected moved child task in fake service")
+		t.Fatalf("expected moved child actionItem in fake service")
 	}
 	if moved.ColumnID != cProgress.ID {
 		t.Fatalf("expected reopening toggle to move child to progress column %q, got %q", cProgress.ID, moved.ColumnID)
@@ -5138,17 +5138,17 @@ func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 
-	tasks := make([]domain.Task, 0, 36)
+	tasks := make([]domain.ActionItem, 0, 36)
 	for i := 0; i < 36; i++ {
-		task, _ := domain.NewTask(domain.TaskInput{
+		actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 			ID:        fmt.Sprintf("t-%02d", i),
 			ProjectID: p.ID,
 			ColumnID:  c1.ID,
 			Position:  i,
-			Title:     fmt.Sprintf("Task %02d", i),
+			Title:     fmt.Sprintf("ActionItem %02d", i),
 			Priority:  domain.PriorityLow,
 		}, now)
-		tasks = append(tasks, task)
+		tasks = append(tasks, actionItem)
 	}
 
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, tasks)
@@ -5159,7 +5159,7 @@ func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 
 	view := m.View()
 	rendered := fmt.Sprint(view.Content)
-	if !strings.Contains(rendered, "Task 30") {
+	if !strings.Contains(rendered, "ActionItem 30") {
 		t.Fatalf("expected selected row to remain visible after scrolling, got\n%s", rendered)
 	}
 }
@@ -5169,26 +5169,26 @@ func TestModelFocusedAndSelectedStyling(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Styled task",
+		Title:     "Styled actionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
-	m.selectedTaskIDs = map[string]struct{}{task.ID: {}}
+	m.selectedActionItemIDs = map[string]struct{}{actionItem.ID: {}}
 
 	view := m.View()
 	rendered := fmt.Sprint(view.Content)
 	if !strings.Contains(rendered, "38;5;212") {
-		t.Fatalf("expected focused task rendered with fuchsia color, got\n%s", rendered)
+		t.Fatalf("expected focused actionItem rendered with fuchsia color, got\n%s", rendered)
 	}
 	plain := stripANSI(rendered)
-	if !strings.Contains(plain, "│* Styled task") {
+	if !strings.Contains(plain, "│* Styled actionItem") {
 		t.Fatalf("expected focused+selected marker to preserve selection cue, got\n%s", plain)
 	}
 }
@@ -5198,7 +5198,7 @@ func TestModelSelectionMarkerOnlyOnTitleLine(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -5207,9 +5207,9 @@ func TestModelSelectionMarkerOnlyOnTitleLine(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
-	m.selectedTaskIDs = map[string]struct{}{task.ID: {}}
+	m.selectedActionItemIDs = map[string]struct{}{actionItem.ID: {}}
 
 	plain := stripANSI(fmt.Sprint(m.View().Content))
 	if strings.Count(plain, "│* ") != 1 {
@@ -5222,7 +5222,7 @@ func TestModelEscClearsSubtreeFocus(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -5230,7 +5230,7 @@ func TestModelEscClearsSubtreeFocus(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -5240,14 +5240,14 @@ func TestModelEscClearsSubtreeFocus(t *testing.T) {
 		Kind:      domain.WorkKindSubtask,
 		ParentID:  parent.ID,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{parent, child})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.ActionItem{parent, child})))
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID == "" {
+	if m.projectionRootActionItemID == "" {
 		t.Fatal("expected subtree focus root to be set")
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.projectionRootTaskID != "" {
-		t.Fatalf("expected esc to clear subtree focus, got %q", m.projectionRootTaskID)
+	if m.projectionRootActionItemID != "" {
+		t.Fatalf("expected esc to clear subtree focus, got %q", m.projectionRootActionItemID)
 	}
 	if m.status != "full board view" {
 		t.Fatalf("expected full-board status, got %q", m.status)
@@ -5279,9 +5279,9 @@ func TestModelViewStatesAndPrompts(t *testing.T) {
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 	m = loadReadyModel(t, NewModel(svc))
-	m.mode = modeAddTask
+	m.mode = modeAddActionItem
 	m.input = "abc"
-	if !strings.Contains(m.modePrompt(), "new task:") {
+	if !strings.Contains(m.modePrompt(), "new actionItem:") {
 		t.Fatal("expected add mode prompt")
 	}
 
@@ -5377,12 +5377,12 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	rootA := t.TempDir()
@@ -5394,7 +5394,7 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 	saveCalls := 0
 	var saved BootstrapConfig
 	m := loadReadyModel(t, NewModel(
-		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem}),
 		WithIdentityConfig(IdentityConfig{
 			DisplayName:      "Lane User",
 			DefaultActorType: "user",
@@ -5477,20 +5477,20 @@ func TestModelInputModePaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('n'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if m.mode != modeAddTask {
+	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -5516,9 +5516,9 @@ func TestModelInputModePaths(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('e'))
-	m.input = "Task 2 | expanded details | high | 2026-03-01 | alpha,beta"
+	m.input = "ActionItem 2 | expanded details | high | 2026-03-01 | alpha,beta"
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !strings.Contains(svc.tasks[p.ID][0].Title, "Task 2") {
+	if !strings.Contains(svc.tasks[p.ID][0].Title, "ActionItem 2") {
 		t.Fatalf("expected edited title, got %q", svc.tasks[p.ID][0].Title)
 	}
 	if svc.tasks[p.ID][0].Priority != domain.PriorityHigh || len(svc.tasks[p.ID][0].Labels) != 2 {
@@ -5533,7 +5533,7 @@ func TestModelNormalModeExtraBranches(t *testing.T) {
 	p2, _ := domain.NewProject("p2", "B", "", now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
@@ -5541,7 +5541,7 @@ func TestModelNormalModeExtraBranches(t *testing.T) {
 		Title:     "Alpha",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{t1})
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.ActionItem{t1})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('t'))
@@ -5588,32 +5588,32 @@ func TestModelBulkMoveKeysUseSelection(t *testing.T) {
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
 		Position:  0,
-		Title:     "Task 1",
+		Title:     "ActionItem 1",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
 		Position:  1,
-		Title:     "Task 2",
+		Title:     "ActionItem 2",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{todo, progress}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{todo, progress}, []domain.ActionItem{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
-	m.selectedTaskIDs = map[string]struct{}{"t1": {}, "t2": {}}
+	m.selectedActionItemIDs = map[string]struct{}{"t1": {}, "t2": {}}
 
 	m = applyMsg(t, m, keyRune(']'))
 
 	moved := map[string]string{}
-	for _, task := range svc.tasks[project.ID] {
-		moved[task.ID] = task.ColumnID
+	for _, actionItem := range svc.tasks[project.ID] {
+		moved[actionItem.ID] = actionItem.ColumnID
 	}
 	if moved["t1"] != progress.ID || moved["t2"] != progress.ID {
 		t.Fatalf("expected both selected tasks moved to progress column, got %#v", moved)
@@ -5648,29 +5648,29 @@ func TestHelpersCoverage(t *testing.T) {
 	if m.modeLabel() != "normal" {
 		t.Fatalf("mode label mismatch: %q", m.modeLabel())
 	}
-	m.mode = modeAddTask
-	if !strings.Contains(m.modePrompt(), "new task:") {
+	m.mode = modeAddActionItem
+	if !strings.Contains(m.modePrompt(), "new actionItem:") {
 		t.Fatal("expected add mode prompt")
 	}
 	m.mode = modeSearch
 	if !strings.Contains(m.modePrompt(), "search query") {
 		t.Fatal("expected search mode prompt")
 	}
-	m.mode = modeRenameTask
-	if !strings.Contains(m.modePrompt(), "rename task") {
+	m.mode = modeRenameActionItem
+	if !strings.Contains(m.modePrompt(), "rename actionItem") {
 		t.Fatal("expected rename mode prompt")
 	}
-	m.mode = modeEditTask
-	if !strings.Contains(m.modePrompt(), "edit task:") {
+	m.mode = modeEditActionItem
+	if !strings.Contains(m.modePrompt(), "edit actionItem:") {
 		t.Fatal("expected edit mode prompt")
 	}
 	m.mode = modeProjectPicker
 	if !strings.Contains(m.modePrompt(), "project picker") {
 		t.Fatal("expected picker mode prompt")
 	}
-	m.mode = modeTaskInfo
-	if !strings.Contains(m.modePrompt(), "task info") {
-		t.Fatal("expected task info mode prompt")
+	m.mode = modeActionItemInfo
+	if !strings.Contains(m.modePrompt(), "actionItem info") {
+		t.Fatal("expected actionItem info mode prompt")
 	}
 	m.mode = modeAddProject
 	if !strings.Contains(m.modePrompt(), "new project") {
@@ -5768,10 +5768,10 @@ func TestNoticesPanelSpacingBudget(t *testing.T) {
 	}
 }
 
-// TestTaskEditParsing verifies behavior for the covered scenario.
-func TestTaskEditParsing(t *testing.T) {
+// TestActionItemEditParsing verifies behavior for the covered scenario.
+func TestActionItemEditParsing(t *testing.T) {
 	now := time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
-	current, _ := domain.NewTask(domain.TaskInput{
+	current, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   "p1",
 		ColumnID:    "c1",
@@ -5783,9 +5783,9 @@ func TestTaskEditParsing(t *testing.T) {
 		Labels:      []string{"x"},
 	}, now)
 
-	input, err := parseTaskEditInput("new | details | high | 2026-03-01 | a,b", current)
+	input, err := parseActionItemEditInput("new | details | high | 2026-03-01 | a,b", current)
 	if err != nil {
-		t.Fatalf("parseTaskEditInput() error = %v", err)
+		t.Fatalf("parseActionItemEditInput() error = %v", err)
 	}
 	if input.Title != "new" || input.Priority != domain.PriorityHigh {
 		t.Fatalf("unexpected parsed input %#v", input)
@@ -5794,16 +5794,16 @@ func TestTaskEditParsing(t *testing.T) {
 		t.Fatalf("unexpected parsed due date %#v", input.DueAt)
 	}
 
-	_, err = parseTaskEditInput("x | y | urgent | - | -", current)
+	_, err = parseActionItemEditInput("x | y | urgent | - | -", current)
 	if err == nil {
 		t.Fatal("expected invalid priority error")
 	}
-	_, err = parseTaskEditInput("x | y | low | 03/01/2026 | -", current)
+	_, err = parseActionItemEditInput("x | y | low | 03/01/2026 | -", current)
 	if err == nil {
 		t.Fatal("expected invalid date error")
 	}
 
-	if !strings.Contains(formatTaskEditInput(current), "old") {
+	if !strings.Contains(formatActionItemEditInput(current), "old") {
 		t.Fatal("expected formatter to include title")
 	}
 }
@@ -5829,41 +5829,41 @@ func TestProjectPickerMouseAndWheel(t *testing.T) {
 	}
 }
 
-// TestTaskFieldConfigAffectsRendering verifies behavior for the covered scenario.
-func TestTaskFieldConfigAffectsRendering(t *testing.T) {
+// TestActionItemFieldConfigAffectsRendering verifies behavior for the covered scenario.
+func TestActionItemFieldConfigAffectsRendering(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	due := now.Add(24 * time.Hour)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: "detailed notes",
 		Priority:    domain.PriorityHigh,
 		DueAt:       &due,
 		Labels:      []string{"one", "two", "three"},
 	}, now)
 
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	mDefault := loadReadyModel(t, NewModel(svc))
-	meta := mDefault.cardMeta(task)
+	meta := mDefault.cardMeta(actionItem)
 	if !strings.Contains(meta, "high") || !strings.Contains(meta, "#one,#three+1") {
 		t.Fatalf("expected default card meta with priority and labels, got %q", meta)
 	}
 
-	mHidden := loadReadyModel(t, NewModel(svc, WithTaskFieldConfig(TaskFieldConfig{
+	mHidden := loadReadyModel(t, NewModel(svc, WithActionItemFieldConfig(ActionItemFieldConfig{
 		ShowPriority:    false,
 		ShowDueDate:     false,
 		ShowLabels:      false,
 		ShowDescription: false,
 	})))
-	if mHidden.cardMeta(task) != "" {
-		t.Fatalf("expected empty card meta when all card fields hidden, got %q", mHidden.cardMeta(task))
+	if mHidden.cardMeta(actionItem) != "" {
+		t.Fatalf("expected empty card meta when all card fields hidden, got %q", mHidden.cardMeta(actionItem))
 	}
-	details := mHidden.renderTaskDetails(lipgloss.Color("212"), lipgloss.Color("245"), lipgloss.Color("241"))
+	details := mHidden.renderActionItemDetails(lipgloss.Color("212"), lipgloss.Color("245"), lipgloss.Color("241"))
 	if strings.Contains(details, "priority:") || strings.Contains(details, "due:") || strings.Contains(details, "labels:") {
 		t.Fatalf("expected details metadata hidden, got %q", details)
 	}
@@ -5877,7 +5877,7 @@ func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -5885,7 +5885,7 @@ func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 		Title:     "One",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -5893,7 +5893,7 @@ func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 		Title:     "Two",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{t1, t2})
 
 	m := loadReadyModel(t, NewModel(svc, WithDefaultDeleteMode(app.DeleteModeHard)))
 	m = applyMsg(t, m, keyRune('d'))
@@ -5903,7 +5903,7 @@ func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 	m.confirmChoice = 0
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(svc.tasks[p.ID]) != 1 {
-		t.Fatalf("expected default delete mode hard to remove selected task, got %d", len(svc.tasks[p.ID]))
+		t.Fatalf("expected default delete mode hard to remove selected actionItem, got %d", len(svc.tasks[p.ID]))
 	}
 }
 
@@ -5974,7 +5974,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c1.ID,
@@ -5983,7 +5983,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		Description: "desc one",
 		Priority:    domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -5991,7 +5991,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		Title:     "Second",
 		Priority:  domain.PriorityHigh,
 	}, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -6001,7 +6001,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		Title:     "Platform",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2, branch})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.ActionItem{t1, t2, branch})
 	m := loadReadyModel(t, NewModel(svc))
 
 	accent := lipgloss.Color("62")
@@ -6103,33 +6103,33 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	}
 
 	addMode := m
-	_ = addMode.startTaskForm(nil)
-	if out := addMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "New Task") || !strings.Contains(out, "title:") {
-		t.Fatalf("expected add-task overlay with fields, got %q", out)
+	_ = addMode.startActionItemForm(nil)
+	if out := addMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "New ActionItem") || !strings.Contains(out, "title:") {
+		t.Fatalf("expected add-actionItem overlay with fields, got %q", out)
 	}
 	if out := addMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); strings.Contains(out, "fields: title") {
 		t.Fatalf("expected simplified modal hints without repeated fields legend, got %q", out)
 	}
 
-	task, ok := m.selectedTaskInCurrentColumn()
+	actionItem, ok := m.selectedActionItemInCurrentColumn()
 	if !ok {
-		t.Fatal("expected selected task")
+		t.Fatal("expected selected actionItem")
 	}
 	editMode := m
-	_ = editMode.startTaskForm(&task)
-	if out := editMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Edit Task") {
+	_ = editMode.startActionItemForm(&actionItem)
+	if out := editMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Edit ActionItem") {
 		t.Fatalf("expected edit overlay, got %q", out)
 	} else {
 		if !strings.Contains(out, "scroll:") {
 			t.Fatalf("expected shared node modal scroll indicator in edit overlay, got %q", out)
 		}
-		if !strings.Contains(out, "mode: edit") || !strings.Contains(strings.ToLower(out), "kind: task") {
+		if !strings.Contains(out, "mode: edit") || !strings.Contains(strings.ToLower(out), "kind: actionitem") {
 			t.Fatalf("expected edit header metadata line, got %q", out)
 		}
 	}
-	boxWidth := taskInfoOverlayBoxWidth(80)
+	boxWidth := actionItemInfoOverlayBoxWidth(80)
 	contentWidth := max(24, boxWidth-8)
-	editBody, _ := editMode.taskFormBodyLines(contentWidth, lipgloss.NewStyle().Foreground(muted), accent)
+	editBody, _ := editMode.actionItemFormBodyLines(contentWidth, lipgloss.NewStyle().Foreground(muted), accent)
 	editBodyText := strings.ToLower(stripANSI(strings.Join(editBody, "\n")))
 	assertSectionOrder(editBodyText, []string{"title:", "description:", "subtasks:", "dependencies:", "comments (", "resources:"})
 	assertDescriptionDirectlyUnderTitle(editBody, "title:")
@@ -6140,7 +6140,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	if strings.Contains(editBodyText, "effective labels") || strings.Contains(editBodyText, "inherited labels") {
 		t.Fatalf("expected edit body to hide inherited/effective labels block, got %q", editBodyText)
 	}
-	if strings.Contains(editBodyText, "csv task") {
+	if strings.Contains(editBodyText, "csv actionitem") {
 		t.Fatalf("expected dependency rows to stop advertising inline csv entry, got %q", editBodyText)
 	}
 	addBranchMode := m
@@ -6149,7 +6149,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		t.Fatalf("expected branch add overlay title, got %q", out)
 	}
 	editBranchMode := m
-	_ = editBranchMode.startTaskForm(&branch)
+	_ = editBranchMode.startActionItemForm(&branch)
 	if out := editBranchMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Edit Branch") {
 		t.Fatalf("expected branch edit overlay title, got %q", out)
 	}
@@ -6160,41 +6160,41 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		t.Fatalf("expected search overlay, got %q", out)
 	}
 	searchMode.mode = modeSearchResults
-	searchMode.searchMatches = []app.TaskMatch{{Project: p, Task: t1, StateID: "todo"}}
+	searchMode.searchMatches = []app.ActionItemMatch{{Project: p, ActionItem: t1, StateID: "todo"}}
 	if out := searchMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Search Results") {
 		t.Fatalf("expected search-results overlay, got %q", out)
 	}
 
 	renameMode := m
-	renameMode.mode = modeRenameTask
+	renameMode.mode = modeRenameActionItem
 	renameMode.input = "rename me"
-	if out := renameMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Rename Task") {
+	if out := renameMode.renderModeOverlay(accent, muted, dim, helpStyle, 80); !strings.Contains(out, "Rename ActionItem") {
 		t.Fatalf("expected rename overlay, got %q", out)
 	}
 	infoMode := m
-	infoMode.mode = modeTaskInfo
-	if out := stripANSI(fmt.Sprint(infoMode.renderFullPageNodeModeView().Content)); !strings.Contains(out, "Task Info") {
-		t.Fatalf("expected task info full-page view, got %q", out)
+	infoMode.mode = modeActionItemInfo
+	if out := stripANSI(fmt.Sprint(infoMode.renderFullPageNodeModeView().Content)); !strings.Contains(out, "ActionItem Info") {
+		t.Fatalf("expected actionItem info full-page view, got %q", out)
 	} else {
 		if !strings.Contains(out, "scroll:") {
-			t.Fatalf("expected shared node modal scroll indicator in task info view, got %q", out)
+			t.Fatalf("expected shared node modal scroll indicator in actionItem info view, got %q", out)
 		}
-		if !strings.Contains(out, "mode: info") || !strings.Contains(strings.ToLower(out), "kind: task") {
+		if !strings.Contains(out, "mode: info") || !strings.Contains(strings.ToLower(out), "kind: actionitem") {
 			t.Fatalf("expected info header metadata line, got %q", out)
 		}
 	}
-	infoBody := infoMode.taskInfoBodyLines(task, boxWidth, contentWidth, lipgloss.NewStyle().Foreground(muted))
+	infoBody := infoMode.actionItemInfoBodyLines(actionItem, boxWidth, contentWidth, lipgloss.NewStyle().Foreground(muted))
 	infoBodyText := strings.ToLower(stripANSI(strings.Join(infoBody, "\n")))
-	assertSectionOrder(infoBodyText, []string{strings.ToLower(task.Title), "description:", "subtasks (", "dependencies:", "comments (", "resources:"})
-	assertDescriptionDirectlyUnderTitle(infoBody, strings.ToLower(task.Title))
+	assertSectionOrder(infoBodyText, []string{strings.ToLower(actionItem.Title), "description:", "subtasks (", "dependencies:", "comments (", "resources:"})
+	assertDescriptionDirectlyUnderTitle(infoBody, strings.ToLower(actionItem.Title))
 	assertSubtasksSection(infoBodyText)
 	assertInfoMetadataSplitLines(infoBody)
 	if strings.Contains(infoBodyText, "effective labels") || strings.Contains(infoBodyText, "inherited labels") {
-		t.Fatalf("expected task-info body to hide inherited/effective labels block, got %q", infoBodyText)
+		t.Fatalf("expected actionItem-info body to hide inherited/effective labels block, got %q", infoBodyText)
 	}
 	branchInfoMode := m
-	if !branchInfoMode.openTaskInfo(branch.ID, "task info") {
-		t.Fatal("expected branch task info mode")
+	if !branchInfoMode.openActionItemInfo(branch.ID, "actionItem info") {
+		t.Fatal("expected branch actionItem info mode")
 	}
 	if out := stripANSI(fmt.Sprint(branchInfoMode.renderFullPageNodeModeView().Content)); !strings.Contains(out, "Branch Info") {
 		t.Fatalf("expected branch info full-page title, got %q", out)
@@ -6218,15 +6218,15 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		t.Fatalf("expected quick actions overlay, got %q", out)
 	}
 
-	tasks := m.currentColumnTasks()
-	if idx := m.taskIndexAtRow(tasks, 0); idx != 0 {
-		t.Fatalf("expected row 0 => task 0, got %d", idx)
+	tasks := m.currentColumnActionItems()
+	if idx := m.actionItemIndexAtRow(tasks, 0); idx != 0 {
+		t.Fatalf("expected row 0 => actionItem 0, got %d", idx)
 	}
-	if idx := m.taskIndexAtRow(tasks, 3); idx != 1 {
-		t.Fatalf("expected row 3 => task 1, got %d", idx)
+	if idx := m.actionItemIndexAtRow(tasks, 3); idx != 1 {
+		t.Fatalf("expected row 3 => actionItem 1, got %d", idx)
 	}
-	if idx := m.taskIndexAtRow(tasks, 99); idx != 2 {
-		t.Fatalf("expected large row => last task, got %d", idx)
+	if idx := m.actionItemIndexAtRow(tasks, 99); idx != 2 {
+		t.Fatalf("expected large row => last actionItem, got %d", idx)
 	}
 
 	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
@@ -6236,7 +6236,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	noneSelected := m
 	noneSelected.selectedColumn = 1
 	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
-	if strings.Contains(panelWithoutSelection, "no task selected") {
+	if strings.Contains(panelWithoutSelection, "no actionItem selected") {
 		t.Fatalf("expected overview panel to omit no-selection hint, got %q", panelWithoutSelection)
 	}
 }
@@ -6246,70 +6246,70 @@ func TestModelFullPageNodeViewShowsHeaderAndBorder(t *testing.T) {
 	now := time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task-info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem-info mode, got %v", m.mode)
 	}
 	infoView := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(infoView, "TILLSYN") || !strings.Contains(infoView, "Task Info") {
-		t.Fatalf("expected task-info view to include TILLSYN header + task info title, got\n%s", infoView)
+	if !strings.Contains(infoView, "TILLSYN") || !strings.Contains(infoView, "ActionItem Info") {
+		t.Fatalf("expected actionItem-info view to include TILLSYN header + actionItem info title, got\n%s", infoView)
 	}
 	if !(strings.Contains(infoView, "┌") && strings.Contains(infoView, "┐") && strings.Contains(infoView, "│")) {
-		t.Fatalf("expected bordered full-page node surface in task-info view, got\n%s", infoView)
+		t.Fatalf("expected bordered full-page node surface in actionItem-info view, got\n%s", infoView)
 	}
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode, got %v", m.mode)
 	}
 	editView := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(editView, "TILLSYN") || !strings.Contains(editView, "Edit Task") {
-		t.Fatalf("expected edit-task view to include TILLSYN header + edit title, got\n%s", editView)
+	if !strings.Contains(editView, "TILLSYN") || !strings.Contains(editView, "Edit ActionItem") {
+		t.Fatalf("expected edit-actionItem view to include TILLSYN header + edit title, got\n%s", editView)
 	}
 	if !(strings.Contains(editView, "┌") && strings.Contains(editView, "┐") && strings.Contains(editView, "│")) {
 		t.Fatalf("expected bordered full-page node surface in edit view, got\n%s", editView)
 	}
 }
 
-// TestTaskDescriptionPreviewHeightMatchesBetweenInfoAndEdit verifies info/edit use the same description-preview sizing contract.
-func TestTaskDescriptionPreviewHeightMatchesBetweenInfoAndEdit(t *testing.T) {
+// TestActionItemDescriptionPreviewHeightMatchesBetweenInfoAndEdit verifies info/edit use the same description-preview sizing contract.
+func TestActionItemDescriptionPreviewHeightMatchesBetweenInfoAndEdit(t *testing.T) {
 	now := time.Date(2026, 3, 13, 19, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Priority:    domain.PriorityMedium,
 		Description: "## Overview\n\n- item one\n- item two\n- a much longer bullet that wraps over multiple lines inside the shared preview surface",
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task-info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem-info mode, got %v", m.mode)
 	}
-	infoHeight := m.taskInfoDetails.Height()
+	infoHeight := m.actionItemInfoDetails.Height()
 	if infoHeight <= 0 {
-		t.Fatalf("expected positive task-info preview height, got %d", infoHeight)
+		t.Fatalf("expected positive actionItem-info preview height, got %d", infoHeight)
 	}
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode, got %v", m.mode)
 	}
 
 	accent := projectAccentColor(project)
@@ -6317,12 +6317,12 @@ func TestTaskDescriptionPreviewHeightMatchesBetweenInfoAndEdit(t *testing.T) {
 		accent,
 		lipgloss.Color("241"),
 		lipgloss.Color("239"),
-		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
-		"Edit Task",
-		m.taskFormHeaderMeta(),
+		actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"Edit ActionItem",
+		m.actionItemFormHeaderMeta(),
 		"",
 	)
-	editPreview := m.taskDescriptionPreviewViewportForContentWidth(m.taskFormDescription, metrics.contentWidth)
+	editPreview := m.actionItemDescriptionPreviewViewportForContentWidth(m.actionItemFormDescription, metrics.contentWidth)
 	if got := editPreview.Height(); got != infoHeight {
 		t.Fatalf("expected edit preview height %d to match info preview height %d", got, infoHeight)
 	}
@@ -6333,24 +6333,24 @@ func TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps(t *testing.T) {
 	now := time.Date(2026, 3, 13, 19, 40, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	accent := projectAccentColor(project)
 	metrics := m.fullPageSurfaceMetrics(
 		accent,
 		lipgloss.Color("241"),
 		lipgloss.Color("239"),
-		taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
-		"Task Info",
-		m.taskInfoHeaderMeta(task),
+		actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+		"ActionItem Info",
+		m.actionItemInfoHeaderMeta(actionItem),
 		"",
 	)
 	if metrics.topGapY != 0 || metrics.bottomGapY != 0 {
@@ -6363,7 +6363,7 @@ func TestModelFormValidationPaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	existing, _ := domain.NewTask(domain.TaskInput{
+	existing, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -6371,7 +6371,7 @@ func TestModelFormValidationPaths(t *testing.T) {
 		Title:     "Existing",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{existing})
 	m := loadReadyModel(t, NewModel(svc))
 
 	// Add mode: invalid priority branch.
@@ -6396,11 +6396,11 @@ func TestModelFormValidationPaths(t *testing.T) {
 	m.formInputs[4].SetValue("planning,till")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(svc.tasks[p.ID]) != 2 {
-		t.Fatalf("expected create task success, got %d tasks", len(svc.tasks[p.ID]))
+		t.Fatalf("expected create actionItem success, got %d tasks", len(svc.tasks[p.ID]))
 	}
 
 	// Edit mode: invalid priority branch.
-	m.selectedTask = 0
+	m.selectedActionItem = 0
 	m = applyMsg(t, m, keyRune('e'))
 	m.formInputs[2].SetValue("invalid")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -6409,25 +6409,25 @@ func TestModelFormValidationPaths(t *testing.T) {
 	}
 }
 
-// TestTaskInfoModeAndPriorityPicker verifies behavior for the covered scenario.
-func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
+// TestActionItemInfoModeAndPriorityPicker verifies behavior for the covered scenario.
+func TestActionItemInfoModeAndPriorityPicker(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.projectionRootTaskID != task.ID {
-		t.Fatalf("expected enter to focus subtree on %q, got %q", task.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != actionItem.ID {
+		t.Fatalf("expected enter to focus subtree on %q, got %q", actionItem.ID, m.projectionRootActionItemID)
 	}
 	if m.mode != modeNone {
 		t.Fatalf("expected enter to leave mode as modeNone, got %v", m.mode)
@@ -6437,12 +6437,12 @@ func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('i'))
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected task info mode, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected actionItem info mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit mode from task info, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit mode from actionItem info, got %v", m.mode)
 	}
 
 	m.formFocus = 2
@@ -6459,28 +6459,28 @@ func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	}
 }
 
-// TestTaskFormDependencyPlaceholdersUseCSVTask verifies dependency placeholders use `csv task`.
-func TestTaskFormDependencyPlaceholdersUseCSVTask(t *testing.T) {
+// TestActionItemFormDependencyPlaceholdersUseCSVActionItem verifies dependency placeholders use `csv actionItem`.
+func TestActionItemFormDependencyPlaceholdersUseCSVActionItem(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	assertDependencyPlaceholders := func(mode Model, scope string) {
 		t.Helper()
-		for _, field := range []int{taskFieldDependsOn, taskFieldBlockedBy} {
+		for _, field := range []int{actionItemFieldDependsOn, actionItemFieldBlockedBy} {
 			placeholder := strings.TrimSpace(strings.ToLower(mode.formInputs[field].Placeholder))
-			if placeholder != "csv task" {
-				t.Fatalf("expected %s placeholder %d to be %q, got %q", scope, field, "csv task", placeholder)
+			if placeholder != "csv actionitem" {
+				t.Fatalf("expected %s placeholder %d to be %q, got %q", scope, field, "csv actionitem", placeholder)
 			}
 			if strings.Contains(placeholder, "ids") {
 				t.Fatalf("expected %s placeholder %d to avoid ids wording, got %q", scope, field, placeholder)
@@ -6489,66 +6489,66 @@ func TestTaskFormDependencyPlaceholdersUseCSVTask(t *testing.T) {
 	}
 
 	addMode := m
-	_ = addMode.startTaskForm(nil)
-	assertDependencyPlaceholders(addMode, "add-task")
+	_ = addMode.startActionItemForm(nil)
+	assertDependencyPlaceholders(addMode, "add-actionItem")
 
 	editMode := m
-	_ = editMode.startTaskForm(&task)
-	assertDependencyPlaceholders(editMode, "edit-task")
+	_ = editMode.startActionItemForm(&actionItem)
+	assertDependencyPlaceholders(editMode, "edit-actionItem")
 }
 
-// TestModelEditTaskKeyboardSaveAndPickerShortcuts verifies edit-mode save, picker/editor shortcuts, and wrap-around navigation.
-func TestModelEditTaskKeyboardSaveAndPickerShortcuts(t *testing.T) {
+// TestModelEditActionItemKeyboardSaveAndPickerShortcuts verifies edit-mode save, picker/editor shortcuts, and wrap-around navigation.
+func TestModelEditActionItemKeyboardSaveAndPickerShortcuts(t *testing.T) {
 	now := time.Date(2026, 2, 25, 9, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode, got %v", m.mode)
 	}
-	m.formInputs[taskFieldTitle].SetValue("Task Saved")
+	m.formInputs[actionItemFieldTitle].SetValue("ActionItem Saved")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if m.mode != modeNone {
 		t.Fatalf("expected ctrl+s to save and close edit form, got %v", m.mode)
 	}
-	if svc.createTaskCalls != 0 {
-		t.Fatalf("expected ctrl+s to avoid subtask-create path, got createTaskCalls=%d", svc.createTaskCalls)
+	if svc.createActionItemCalls != 0 {
+		t.Fatalf("expected ctrl+s to avoid subtask-create path, got createActionItemCalls=%d", svc.createActionItemCalls)
 	}
-	updated, ok := svc.taskByID(task.ID)
+	updated, ok := svc.actionItemByID(actionItem.ID)
 	if !ok {
-		t.Fatal("expected updated task in fake service")
+		t.Fatal("expected updated actionItem in fake service")
 	}
-	if updated.Title != "Task Saved" {
+	if updated.Title != "ActionItem Saved" {
 		t.Fatalf("expected ctrl+s save to persist title, got %q", updated.Title)
 	}
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected re-opened edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected re-opened edit-actionItem mode, got %v", m.mode)
 	}
 
-	m.formFocus = taskFieldDescription
+	m.formFocus = actionItemFieldDescription
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeDescriptionEditor {
 		t.Fatalf("expected enter on description to open editor, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc to return from description editor to edit mode, got %v", m.mode)
 	}
 
-	m.formFocus = taskFieldDescription
+	m.formFocus = actionItemFieldDescription
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeDescriptionEditor {
 		t.Fatalf("expected e on description to open editor, got %v", m.mode)
@@ -6557,32 +6557,32 @@ func TestModelEditTaskKeyboardSaveAndPickerShortcuts(t *testing.T) {
 		t.Fatalf("expected e-opened description editor to avoid seed rune injection, got %q", got)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc to return from description editor after e, got %v", m.mode)
 	}
 
-	m.formFocus = taskFieldLabels
+	m.formFocus = actionItemFieldLabels
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeLabelPicker {
 		t.Fatalf("expected enter on labels to open picker, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc from label picker to return edit mode, got %v", m.mode)
 	}
 
-	_ = m.focusTaskFormField(taskFieldLabels)
+	_ = m.focusActionItemFormField(actionItemFieldLabels)
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeLabelPicker {
 		t.Fatalf("expected e on labels to open picker, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc from label picker opened by e to return edit mode, got %v", m.mode)
 	}
 
-	m.setTaskFormMarkdownDraft(taskFieldObjective, "existing objective", true)
-	m.formFocus = taskFieldObjective
+	m.setActionItemFormMarkdownDraft(actionItemFieldObjective, "existing objective", true)
+	m.formFocus = actionItemFieldObjective
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeDescriptionEditor {
 		t.Fatalf("expected e on objective to open editor, got %v", m.mode)
@@ -6591,103 +6591,103 @@ func TestModelEditTaskKeyboardSaveAndPickerShortcuts(t *testing.T) {
 		t.Fatalf("expected e-opened objective editor to avoid seed rune injection, got %q", got)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc from objective editor to return edit mode, got %v", m.mode)
 	}
 
-	_ = m.focusTaskFormField(taskFieldDue)
-	beforeDueText := m.formInputs[taskFieldDue].Value()
+	_ = m.focusActionItemFormField(actionItemFieldDue)
+	beforeDueText := m.formInputs[actionItemFieldDue].Value()
 	m = applyMsg(t, m, keyRune('d'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected d in edit due field to keep edit mode, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldDue].Value(); got != beforeDueText {
+	if got := m.formInputs[actionItemFieldDue].Value(); got != beforeDueText {
 		t.Fatalf("expected due field to stay modal-only and ignore typed d, got %q", got)
 	}
 
-	m.formFocus = taskFieldResources
+	m.formFocus = actionItemFieldResources
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected ctrl+r in edit mode to avoid resource picker shortcut, got %v", m.mode)
 	}
 
-	m.formFocus = taskFieldDependsOn
+	m.formFocus = actionItemFieldDependsOn
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeDependencyInspector {
 		t.Fatalf("expected enter on depends_on to open dependency inspector, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc from dependency inspector to return edit mode, got %v", m.mode)
 	}
 
-	_ = m.focusTaskFormField(taskFieldDependsOn)
-	beforeDepends := m.formInputs[taskFieldDependsOn].Value()
+	_ = m.focusActionItemFormField(actionItemFieldDependsOn)
+	beforeDepends := m.formInputs[actionItemFieldDependsOn].Value()
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeDependencyInspector {
 		t.Fatalf("expected e in depends_on field to open dependency inspector, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc from dependency inspector to return edit mode, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldDependsOn].Value(); got != beforeDepends {
+	if got := m.formInputs[actionItemFieldDependsOn].Value(); got != beforeDepends {
 		t.Fatalf("expected dependency row to remain modal-only, got %q", got)
 	}
 
-	m.formFocus = taskFieldTitle
+	m.formFocus = actionItemFieldTitle
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.formFocus != taskFieldResources {
+	if m.formFocus != actionItemFieldResources {
 		t.Fatalf("expected up at top field to wrap to bottom field, got %d", m.formFocus)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.formFocus != taskFieldTitle {
+	if m.formFocus != actionItemFieldTitle {
 		t.Fatalf("expected down at bottom field to wrap to top field, got %d", m.formFocus)
 	}
 
-	m.formFocus = taskFieldTitle
-	beforeTitle := m.formInputs[taskFieldTitle].Value()
+	m.formFocus = actionItemFieldTitle
+	beforeTitle := m.formInputs[actionItemFieldTitle].Value()
 	m = applyMsg(t, m, keyRune('k'))
-	if m.formFocus != taskFieldTitle {
+	if m.formFocus != actionItemFieldTitle {
 		t.Fatalf("expected k in title field to remain on title, got %d", m.formFocus)
 	}
-	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"k" {
+	if got := m.formInputs[actionItemFieldTitle].Value(); got != beforeTitle+"k" {
 		t.Fatalf("expected k typed into title field, got %q", got)
 	}
-	beforeTitle = m.formInputs[taskFieldTitle].Value()
+	beforeTitle = m.formInputs[actionItemFieldTitle].Value()
 	m = applyMsg(t, m, keyRune('j'))
-	if m.formFocus != taskFieldTitle {
+	if m.formFocus != actionItemFieldTitle {
 		t.Fatalf("expected j in title field to remain on title, got %d", m.formFocus)
 	}
-	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"j" {
+	if got := m.formInputs[actionItemFieldTitle].Value(); got != beforeTitle+"j" {
 		t.Fatalf("expected j typed into title field, got %q", got)
 	}
 
-	m.formFocus = taskFieldSubtasks
+	m.formFocus = actionItemFieldSubtasks
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeAddTask {
+	if m.mode != modeAddActionItem {
 		t.Fatalf("expected e on subtasks section to open subtask form, got %v", m.mode)
 	}
-	if m.taskFormKind != domain.WorkKindSubtask {
-		t.Fatalf("expected subtask kind from subtasks section action, got %q", m.taskFormKind)
+	if m.actionItemFormKind != domain.WorkKindSubtask {
+		t.Fatalf("expected subtask kind from subtasks section action, got %q", m.actionItemFormKind)
 	}
 }
 
-// TestModelEditTaskFocusScrollUsesRenderedRows verifies edit-mode focus scrolling follows rendered wrapped rows.
-func TestModelEditTaskFocusScrollUsesRenderedRows(t *testing.T) {
+// TestModelEditActionItemFocusScrollUsesRenderedRows verifies edit-mode focus scrolling follows rendered wrapped rows.
+func TestModelEditActionItemFocusScrollUsesRenderedRows(t *testing.T) {
 	now := time.Date(2026, 3, 13, 17, 12, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	longMarkdown := strings.Repeat("wrapped markdown content for viewport scrolling\n", 20)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:          "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:          "actionItem-1",
 		ProjectID:   p.ID,
 		ColumnID:    c.ID,
 		Position:    0,
-		Title:       "Task",
+		Title:       "ActionItem",
 		Description: longMarkdown,
 		Priority:    domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason:      longMarkdown,
 			Objective:          longMarkdown,
 			AcceptanceCriteria: longMarkdown,
@@ -6695,38 +6695,38 @@ func TestModelEditTaskFocusScrollUsesRenderedRows(t *testing.T) {
 			RiskNotes:          "final risk note",
 		},
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 88, Height: 22})
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode, got %v", m.mode)
 	}
-	if got := m.taskInfoBody.YOffset(); got != 0 {
+	if got := m.actionItemInfoBody.YOffset(); got != 0 {
 		t.Fatalf("expected edit form to start at top, got y offset=%d", got)
 	}
 
-	for m.formFocus != taskFieldRiskNotes {
+	for m.formFocus != actionItemFieldRiskNotes {
 		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if got := m.taskInfoBody.YOffset(); got <= 0 {
+	if got := m.actionItemInfoBody.YOffset(); got <= 0 {
 		t.Fatalf("expected risk_notes focus to scroll viewport downward, got y offset=%d", got)
 	}
 }
 
-// TestModelEditTaskSubtaskAndResourceRowSelection verifies edit-mode row selection for subtasks/resources.
-func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
+// TestModelEditActionItemSubactionItemAndResourceRowSelection verifies edit-mode row selection for subtasks/resources.
+func TestModelEditActionItemSubactionItemAndResourceRowSelection(t *testing.T) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-parent",
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-parent",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			ResourceRefs: []domain.ResourceRef{{
 				ResourceType: domain.ResourceTypeLocalFile,
 				PathMode:     domain.PathModeRelative,
@@ -6734,8 +6734,8 @@ func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
 			}},
 		},
 	}, now)
-	subtask, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-child",
+	subtask, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-child",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  1,
@@ -6745,107 +6745,107 @@ func TestModelEditTaskSubtaskAndResourceRowSelection(t *testing.T) {
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, subtask})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{parent, subtask})
 	m := loadReadyModel(t, NewModel(svc))
 	m.projectRoots = map[string]string{"inbox": "/tmp"}
 
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode, got %v", m.mode)
 	}
 
-	m.formFocus = taskFieldSubtasks
+	m.formFocus = actionItemFieldSubtasks
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if m.taskFormSubtaskCursor != 1 {
-		t.Fatalf("expected subtask cursor on first existing row, got %d", m.taskFormSubtaskCursor)
+	if m.actionItemFormSubactionItemCursor != 1 {
+		t.Fatalf("expected subtask cursor on first existing row, got %d", m.actionItemFormSubactionItemCursor)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected selected subtask to open in edit mode, got %v", m.mode)
 	}
-	if m.editingTaskID != subtask.ID {
-		t.Fatalf("expected selected subtask %q to open, got %q", subtask.ID, m.editingTaskID)
+	if m.editingActionItemID != subtask.ID {
+		t.Fatalf("expected selected subtask %q to open, got %q", subtask.ID, m.editingActionItemID)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc to reopen parent edit form, got %v", m.mode)
 	}
-	if m.editingTaskID != parent.ID {
-		t.Fatalf("expected parent edit task %q after esc, got %q", parent.ID, m.editingTaskID)
+	if m.editingActionItemID != parent.ID {
+		t.Fatalf("expected parent edit actionItem %q after esc, got %q", parent.ID, m.editingActionItemID)
 	}
-	if m.taskFormSubtaskCursor != 1 {
-		t.Fatalf("expected parent edit to reselect child row, got %d", m.taskFormSubtaskCursor)
+	if m.actionItemFormSubactionItemCursor != 1 {
+		t.Fatalf("expected parent edit to reselect child row, got %d", m.actionItemFormSubactionItemCursor)
 	}
-	m.formFocus = taskFieldResources
+	m.formFocus = actionItemFieldResources
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if m.taskFormResourceCursor != 1 {
-		t.Fatalf("expected resource cursor on first existing row, got %d", m.taskFormResourceCursor)
+	if m.actionItemFormResourceCursor != 1 {
+		t.Fatalf("expected resource cursor on first existing row, got %d", m.actionItemFormResourceCursor)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeResourcePicker {
 		t.Fatalf("expected enter on selected resource row to open resource picker, got %v", m.mode)
 	}
-	if m.taskFormResourceEditIndex != 0 {
-		t.Fatalf("expected selected resource row to set edit index 0, got %d", m.taskFormResourceEditIndex)
+	if m.actionItemFormResourceEditIndex != 0 {
+		t.Fatalf("expected selected resource row to set edit index 0, got %d", m.actionItemFormResourceEditIndex)
 	}
 }
 
-// TestModelAddTaskActionRowsRequireSaveFirst verifies save-dependent rows stay explicit in the new-task form.
-func TestModelAddTaskActionRowsRequireSaveFirst(t *testing.T) {
+// TestModelAddActionItemActionRowsRequireSaveFirst verifies save-dependent rows stay explicit in the new-actionItem form.
+func TestModelAddActionItemActionRowsRequireSaveFirst(t *testing.T) {
 	now := time.Date(2026, 3, 17, 17, 5, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
 	m = applyMsg(t, m, keyRune('n'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add actionItem mode, got %v", m.mode)
 	}
 
-	m.formFocus = taskFieldSubtasks
+	m.formFocus = actionItemFieldSubtasks
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAddTask || !strings.Contains(m.status, "save task first") {
-		t.Fatalf("expected save-first subtask gate in add task, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem || !strings.Contains(m.status, "save actionItem first") {
+		t.Fatalf("expected save-first subtask gate in add actionItem, got mode=%v status=%q", m.mode, m.status)
 	}
 
-	m.formFocus = taskFieldComments
+	m.formFocus = actionItemFieldComments
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAddTask || !strings.Contains(m.status, "save task first") {
-		t.Fatalf("expected save-first comments gate in add task, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem || !strings.Contains(m.status, "save actionItem first") {
+		t.Fatalf("expected save-first comments gate in add actionItem, got mode=%v status=%q", m.mode, m.status)
 	}
 
-	m.formFocus = taskFieldResources
+	m.formFocus = actionItemFieldResources
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAddTask || !strings.Contains(m.status, "save task first") {
-		t.Fatalf("expected save-first resources gate in add task, got mode=%v status=%q", m.mode, m.status)
+	if m.mode != modeAddActionItem || !strings.Contains(m.status, "save actionItem first") {
+		t.Fatalf("expected save-first resources gate in add actionItem, got mode=%v status=%q", m.mode, m.status)
 	}
 }
 
-// TestModelEditTaskQuickActionsRespectFocusedResources verifies dot opens contextual quick actions for focused action rows.
-func TestModelEditTaskQuickActionsRespectFocusedResources(t *testing.T) {
+// TestModelEditActionItemQuickActionsRespectFocusedResources verifies dot opens contextual quick actions for focused action rows.
+func TestModelEditActionItemQuickActionsRespectFocusedResources(t *testing.T) {
 	now := time.Date(2026, 3, 17, 17, 15, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	root := t.TempDir()
 	m := loadReadyModel(t, NewModel(
-		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem}),
 		WithSearchRoots([]string{root}),
 	))
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit actionItem mode, got %v", m.mode)
 	}
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldResources))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldResources))
 	m = applyMsg(t, m, keyRune('.'))
 	if m.mode != modeQuickActions {
 		t.Fatalf("expected focused quick actions from resources row, got %v", m.mode)
@@ -6881,21 +6881,21 @@ func TestModelCommentOwnerLabelUsesConfiguredIdentityFallback(t *testing.T) {
 	}
 }
 
-// TestModelEditTaskSubtaskSubmitReturnsToParent verifies saving a child edit reopens the parent edit flow.
-func TestModelEditTaskSubtaskSubmitReturnsToParent(t *testing.T) {
+// TestModelEditActionItemSubactionItemSubmitReturnsToParent verifies saving a child edit reopens the parent edit flow.
+func TestModelEditActionItemSubactionItemSubmitReturnsToParent(t *testing.T) {
 	now := time.Date(2026, 3, 17, 16, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-parent",
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-parent",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-child",
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-child",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  1,
@@ -6905,53 +6905,53 @@ func TestModelEditTaskSubtaskSubmitReturnsToParent(t *testing.T) {
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{parent, child})
 	m := loadReadyModel(t, NewModel(svc))
 
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 	m = applyMsg(t, m, keyRune('e'))
-	m.formFocus = taskFieldSubtasks
+	m.formFocus = actionItemFieldSubtasks
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.editingTaskID != child.ID {
-		t.Fatalf("expected child edit form, got %q", m.editingTaskID)
+	if m.editingActionItemID != child.ID {
+		t.Fatalf("expected child edit form, got %q", m.editingActionItemID)
 	}
 
-	m.formInputs[taskFieldTitle].SetValue("Child updated")
+	m.formInputs[actionItemFieldTitle].SetValue("Child updated")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected parent edit mode after child save, got %v", m.mode)
 	}
-	if m.editingTaskID != parent.ID {
-		t.Fatalf("expected parent edit task %q after child save, got %q", parent.ID, m.editingTaskID)
+	if m.editingActionItemID != parent.ID {
+		t.Fatalf("expected parent edit actionItem %q after child save, got %q", parent.ID, m.editingActionItemID)
 	}
-	if m.taskFormSubtaskCursor != 1 {
-		t.Fatalf("expected parent edit to reselect saved child row, got %d", m.taskFormSubtaskCursor)
+	if m.actionItemFormSubactionItemCursor != 1 {
+		t.Fatalf("expected parent edit to reselect saved child row, got %d", m.actionItemFormSubactionItemCursor)
 	}
-	updated, ok := svc.taskByID(child.ID)
+	updated, ok := svc.actionItemByID(child.ID)
 	if !ok {
-		t.Fatalf("expected updated child task %q in fake service", child.ID)
+		t.Fatalf("expected updated child actionItem %q in fake service", child.ID)
 	}
 	if updated.Title != "Child updated" {
 		t.Fatalf("expected saved child title %q, got %q", "Child updated", updated.Title)
 	}
 }
 
-// TestTaskInfoEscFromDirectChildClosesWithoutAncestorJump verifies esc closes direct child task-info without jumping to ancestors.
-func TestTaskInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T) {
+// TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump verifies esc closes direct child actionItem-info without jumping to ancestors.
+func TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T) {
 	now := time.Date(2026, 3, 3, 11, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Kind:      domain.WorkKindTask,
-		Title:     "Parent Task",
+		Kind:      domain.WorkKindActionItem,
+		Title:     "Parent ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -6961,22 +6961,22 @@ func TestTaskInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T) {
 		Title:     "Child Subtask",
 		Priority:  domain.PriorityLow,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{parent, child})))
 
-	if !m.openTaskInfo(child.ID, "task info") {
-		t.Fatal("expected openTaskInfo(child) to succeed")
+	if !m.openActionItemInfo(child.ID, "actionItem info") {
+		t.Fatal("expected openActionItemInfo(child) to succeed")
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
-		t.Fatalf("expected esc to close direct child task info, got %v", m.mode)
+		t.Fatalf("expected esc to close direct child actionItem info, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.taskInfoTaskID); got != "" {
-		t.Fatalf("expected closed task info to clear active task id, got %q", got)
+	if got := strings.TrimSpace(m.actionItemInfoActionItemID); got != "" {
+		t.Fatalf("expected closed actionItem info to clear active actionItem id, got %q", got)
 	}
 }
 
-// TestTaskFormDuePickerFlow verifies behavior for the covered scenario.
-func TestTaskFormDuePickerFlow(t *testing.T) {
+// TestActionItemFormDuePickerFlow verifies behavior for the covered scenario.
+func TestActionItemFormDuePickerFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -6984,14 +6984,14 @@ func TestTaskFormDuePickerFlow(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('n'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add actionItem mode, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.formFocus != taskFieldDue {
+	if m.formFocus != actionItemFieldDue {
 		t.Fatalf("expected due field focus, got %d", m.formFocus)
 	}
 	dueOverlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
@@ -7005,17 +7005,17 @@ func TestTaskFormDuePickerFlow(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeAddTask {
-		t.Fatalf("expected return to add task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected return to add actionItem mode, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.formInputs[taskFieldDue].Value()); got != "-" {
+	if got := strings.TrimSpace(m.formInputs[actionItemFieldDue].Value()); got != "-" {
 		t.Fatalf("expected due field to be '-', got %q", got)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	due := strings.TrimSpace(m.formInputs[taskFieldDue].Value())
+	due := strings.TrimSpace(m.formInputs[actionItemFieldDue].Value())
 	if len(due) != 10 || strings.Count(due, "-") != 2 {
 		t.Fatalf("expected YYYY-MM-DD due value, got %q", due)
 	}
@@ -7029,10 +7029,10 @@ func TestDuePickerTypedInputAndFocusControls(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
 	m = applyMsg(t, m, keyRune('n'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add actionItem mode, got %v", m.mode)
 	}
-	m.formFocus = taskFieldDue
+	m.formFocus = actionItemFieldDue
 	m.startDuePicker()
 	if m.mode != modeDuePicker {
 		t.Fatalf("expected due picker mode, got %v", m.mode)
@@ -7066,33 +7066,33 @@ func TestDuePickerTypedInputAndFocusControls(t *testing.T) {
 	}
 }
 
-// TestTaskFormLabelSuggestions verifies behavior for the covered scenario.
-func TestTaskFormLabelSuggestions(t *testing.T) {
+// TestActionItemFormLabelSuggestions verifies behavior for the covered scenario.
+func TestActionItemFormLabelSuggestions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task 1",
+		Title:     "ActionItem 1",
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"planning", "till"},
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  1,
-		Title:     "Task 2",
+		Title:     "ActionItem 2",
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"till", "roadmap"},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyMsg(t, m, keyRune('n'))
-	m = applyCmd(t, m, m.focusTaskFormField(4))
+	m = applyCmd(t, m, m.focusActionItemFormField(4))
 	accent := lipgloss.Color("62")
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
@@ -7111,23 +7111,23 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 	}
 }
 
-// TestTaskFormLabelPickerDoesNotAcceptInlineTyping verifies labels stay modal-only.
-func TestTaskFormLabelPickerDoesNotAcceptInlineTyping(t *testing.T) {
+// TestActionItemFormLabelPickerDoesNotAcceptInlineTyping verifies labels stay modal-only.
+func TestActionItemFormLabelPickerDoesNotAcceptInlineTyping(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"chore"},
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 	m = applyMsg(t, m, keyRune('n'))
-	m = applyCmd(t, m, m.focusTaskFormField(4))
+	m = applyCmd(t, m, m.focusActionItemFormField(4))
 	m = applyMsg(t, m, keyRune('c'))
 	m = applyMsg(t, m, keyRune('h'))
 	if got := strings.TrimSpace(m.formInputs[4].Value()); got != "" {
@@ -7172,7 +7172,7 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -7180,7 +7180,7 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 		Title:     "Roadmap planning",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('/'))
@@ -7255,7 +7255,7 @@ func TestApplySearchFilterShowsLoadingResultsModal(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-loading", "Loading Search", "", now)
 	column, _ := domain.NewColumn("c-loading", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-loading",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -7263,7 +7263,7 @@ func TestApplySearchFilterShowsLoadingResultsModal(t *testing.T) {
 		Title:     "Roadmap planning",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('/'))
@@ -7305,7 +7305,7 @@ func TestSearchResultsIgnoreLateResponseAfterCancel(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-stale-search", "Stale Search", "", now)
 	column, _ := domain.NewColumn("c-stale-search", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-stale-search",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -7313,7 +7313,7 @@ func TestSearchResultsIgnoreLateResponseAfterCancel(t *testing.T) {
 		Title:     "Pagerduty handshake",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m.mode = modeSearchResults
@@ -7336,11 +7336,11 @@ func TestSearchResultsIgnoreLateResponseAfterCancel(t *testing.T) {
 
 	late := searchResultsMsg{
 		requestID: 1,
-		result: app.SearchTaskMatchesResult{
-			Matches: []app.TaskMatch{{
-				Project: project,
-				Task:    task,
-				StateID: "todo",
+		result: app.SearchActionItemMatchesResult{
+			Matches: []app.ActionItemMatch{{
+				Project:    project,
+				ActionItem: actionItem,
+				StateID:    "todo",
 			}},
 			RequestedMode: app.SearchModeHybrid,
 			EffectiveMode: app.SearchModeHybrid,
@@ -7365,7 +7365,7 @@ func TestDueHelpers(t *testing.T) {
 
 	m := Model{
 		dueSoonWindows: []time.Duration{time.Hour},
-		tasks: []domain.Task{
+		tasks: []domain.ActionItem{
 			{ID: "t1", DueAt: &past},
 			{ID: "t2", DueAt: &soon},
 			{ID: "t3", DueAt: &later},
@@ -7398,7 +7398,7 @@ func TestModelMouseSelectionModeDisablesMouseCapture(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -7406,7 +7406,7 @@ func TestModelMouseSelectionModeDisablesMouseCapture(t *testing.T) {
 		Title:     "One",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -7414,13 +7414,13 @@ func TestModelMouseSelectionModeDisablesMouseCapture(t *testing.T) {
 		Title:     "Two",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{t1, t2})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{t1, t2})))
 	m.mouseSelectionMode = true
 
-	before := m.selectedTask
+	before := m.selectedActionItem
 	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if m.selectedTask != before {
-		t.Fatalf("expected mouse wheel ignored in selection mode, selected=%d before=%d", m.selectedTask, before)
+	if m.selectedActionItem != before {
+		t.Fatalf("expected mouse wheel ignored in selection mode, selected=%d before=%d", m.selectedActionItem, before)
 	}
 	view := m.View()
 	if view.MouseMode != tea.MouseModeNone {
@@ -7440,7 +7440,7 @@ func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Doing", 1, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -7448,7 +7448,7 @@ func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 		Title:     "One",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -7456,42 +7456,42 @@ func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 		Title:     "Two",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.ActionItem{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune(' '))
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, keyRune(' '))
-	if len(m.selectedTaskIDs) != 2 {
-		t.Fatalf("expected 2 selected task ids, got %d", len(m.selectedTaskIDs))
+	if len(m.selectedActionItemIDs) != 2 {
+		t.Fatalf("expected 2 selected actionItem ids, got %d", len(m.selectedActionItemIDs))
 	}
 
 	updated, cmd := m.executeCommandPalette("bulk-move-right")
 	m = applyResult(t, updated, cmd)
-	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c2.ID {
-		t.Fatalf("expected t1 moved to %s, got %#v ok=%t", c2.ID, task, ok)
+	if actionItem, ok := svc.actionItemByID("t1"); !ok || actionItem.ColumnID != c2.ID {
+		t.Fatalf("expected t1 moved to %s, got %#v ok=%t", c2.ID, actionItem, ok)
 	}
-	if task, ok := svc.taskByID("t2"); !ok || task.ColumnID != c2.ID {
-		t.Fatalf("expected t2 moved to %s, got %#v ok=%t", c2.ID, task, ok)
+	if actionItem, ok := svc.actionItemByID("t2"); !ok || actionItem.ColumnID != c2.ID {
+		t.Fatalf("expected t2 moved to %s, got %#v ok=%t", c2.ID, actionItem, ok)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
-	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c1.ID {
-		t.Fatalf("expected t1 moved back to %s after undo, got %#v ok=%t", c1.ID, task, ok)
+	if actionItem, ok := svc.actionItemByID("t1"); !ok || actionItem.ColumnID != c1.ID {
+		t.Fatalf("expected t1 moved back to %s after undo, got %#v ok=%t", c1.ID, actionItem, ok)
 	}
-	if task, ok := svc.taskByID("t2"); !ok || task.ColumnID != c1.ID {
-		t.Fatalf("expected t2 moved back to %s after undo, got %#v ok=%t", c1.ID, task, ok)
+	if actionItem, ok := svc.actionItemByID("t2"); !ok || actionItem.ColumnID != c1.ID {
+		t.Fatalf("expected t2 moved back to %s after undo, got %#v ok=%t", c1.ID, actionItem, ok)
 	}
 	if !strings.Contains(strings.ToLower(m.status), "undo") {
 		t.Fatalf("expected undo status message, got %q", m.status)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl | tea.ModShift})
-	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c2.ID {
-		t.Fatalf("expected t1 moved again to %s after redo, got %#v ok=%t", c2.ID, task, ok)
+	if actionItem, ok := svc.actionItemByID("t1"); !ok || actionItem.ColumnID != c2.ID {
+		t.Fatalf("expected t1 moved again to %s after redo, got %#v ok=%t", c2.ID, actionItem, ok)
 	}
-	if task, ok := svc.taskByID("t2"); !ok || task.ColumnID != c2.ID {
-		t.Fatalf("expected t2 moved again to %s after redo, got %#v ok=%t", c2.ID, task, ok)
+	if actionItem, ok := svc.actionItemByID("t2"); !ok || actionItem.ColumnID != c2.ID {
+		t.Fatalf("expected t2 moved again to %s after redo, got %#v ok=%t", c2.ID, actionItem, ok)
 	}
 	if !strings.Contains(strings.ToLower(m.status), "redo") {
 		t.Fatalf("expected redo status message, got %q", m.status)
@@ -7503,20 +7503,20 @@ func TestModelActivityLogOverlay(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationMove,
 			Metadata:   map[string]string{},
 			OccurredAt: now.Add(2 * time.Minute),
@@ -7524,9 +7524,9 @@ func TestModelActivityLogOverlay(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
 		},
 	}
@@ -7540,7 +7540,7 @@ func TestModelActivityLogOverlay(t *testing.T) {
 	if !strings.Contains(out, "Activity Log") {
 		t.Fatalf("expected activity-log title, got %q", out)
 	}
-	if !strings.Contains(out, "move task") || !strings.Contains(out, "create task") {
+	if !strings.Contains(out, "move actionItem") || !strings.Contains(out, "create actionItem") {
 		t.Fatalf("expected persisted activity entries, got %q", out)
 	}
 	if !strings.Contains(out, ":") {
@@ -7553,15 +7553,15 @@ func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEventsErr = errors.New("load failed")
 	m := loadReadyModel(t, NewModel(svc))
 
@@ -7575,7 +7575,7 @@ func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
 		t.Fatalf("expected non-fatal activity load status, got %q", m.status)
 	}
 	out := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
-	if !strings.Contains(out, "select task") {
+	if !strings.Contains(out, "select actionItem") {
 		t.Fatalf("expected in-memory fallback entry after activity load failure, got %q", out)
 	}
 }
@@ -7585,26 +7585,26 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-live-sync",
 			ActorName:  "Live Sync Bot",
 			ActorType:  domain.ActorTypeAgent,
 			Metadata: map[string]string{
-				"title":      task.Title,
+				"title":      actionItem.Title,
 				"item_scope": "phase",
 			},
 			OccurredAt: now.Add(time.Minute),
@@ -7622,7 +7622,7 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	first, _ := domain.NewTask(domain.TaskInput{
+	first, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -7630,7 +7630,7 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 		Title:     "First",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	second, _ := domain.NewTask(domain.TaskInput{
+	second, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -7638,7 +7638,7 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 		Title:     "Second",
 		Priority:  domain.PriorityMedium,
 	}, now.Add(time.Minute))
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{first, second})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{first, second})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         2,
@@ -7652,8 +7652,8 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != first.ID {
-		t.Fatalf("expected first task selected before jump, got %#v ok=%t", task, ok)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != first.ID {
+		t.Fatalf("expected first actionItem selected before jump, got %#v ok=%t", actionItem, ok)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
@@ -7675,35 +7675,35 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 	if m.noticesFocused {
 		t.Fatal("expected notices focus cleared after jump")
 	}
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != second.ID {
-		t.Fatalf("expected jump to second task node, got %#v ok=%t", task, ok)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != second.ID {
+		t.Fatalf("expected jump to second actionItem node, got %#v ok=%t", actionItem, ok)
 	}
 }
 
-// TestModelNoticesSectionNavigationAndTaskInfoAction verifies notices section-level traversal and task-info enter actions.
-func TestModelNoticesSectionNavigationAndTaskInfoAction(t *testing.T) {
+// TestModelNoticesSectionNavigationAndActionItemInfoAction verifies notices section-level traversal and actionItem-info enter actions.
+func TestModelNoticesSectionNavigationAndActionItemInfoAction(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 15, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "waiting for review",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
 		},
 	}
@@ -7738,43 +7738,43 @@ func TestModelNoticesSectionNavigationAndTaskInfoAction(t *testing.T) {
 	if m.mode != modeActivityEventInfo {
 		t.Fatalf("expected enter on recent activity row to open activity event info, got %v", m.mode)
 	}
-	if m.activityInfoItem.WorkItemID != task.ID {
-		t.Fatalf("expected activity event target %q, got %q", task.ID, m.activityInfoItem.WorkItemID)
+	if m.activityInfoItem.WorkItemID != actionItem.ID {
+		t.Fatalf("expected activity event target %q, got %q", actionItem.ID, m.activityInfoItem.WorkItemID)
 	}
 }
 
-// TestModelNoticesAttentionRowsOpenTaskInfoWhenAssociated verifies attention-row enter actions when scoped to one task.
-func TestModelNoticesAttentionRowsOpenTaskInfoWhenAssociated(t *testing.T) {
+// TestModelNoticesAttentionRowsOpenActionItemInfoWhenAssociated verifies attention-row enter actions when scoped to one actionItem.
+func TestModelNoticesAttentionRowsOpenActionItemInfoWhenAssociated(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 25, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "blocked on review",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = focusNoticesSection(t, m, noticesSectionAttention)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected enter on attention row to open task info, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected enter on attention row to open actionItem info, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != task.ID {
-		t.Fatalf("expected attention row task-info target %q, got %q", task.ID, m.taskInfoTaskID)
+	if m.actionItemInfoActionItemID != actionItem.ID {
+		t.Fatalf("expected attention row actionItem-info target %q, got %q", actionItem.ID, m.actionItemInfoActionItemID)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
-		t.Fatalf("expected esc to close task info back to board, got %v", m.mode)
+		t.Fatalf("expected esc to close actionItem info back to board, got %v", m.mode)
 	}
 }
 
@@ -7783,12 +7783,12 @@ func TestModelProjectNotificationsCoordinationRowsOpenCoordination(t *testing.T)
 	now := time.Date(2099, 3, 29, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -7822,7 +7822,7 @@ func TestModelProjectNotificationsCoordinationRowsOpenCoordination(t *testing.T)
 		t.Fatalf("NewCapabilityLease() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[request.ID] = request
 	svc.capabilityLeases = append(svc.capabilityLeases, lease)
 
@@ -7870,12 +7870,12 @@ func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 	projectB, _ := domain.NewProject("p2", "Review", "", now)
 	columnA, _ := domain.NewColumn("c1", projectA.ID, "To Do", 0, 0, now)
 	columnB, _ := domain.NewColumn("c2", projectB.ID, "To Do", 0, 0, now)
-	taskB, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-b",
+	actionItemB, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-b",
 		ProjectID: projectB.ID,
 		ColumnID:  columnB.ID,
 		Position:  0,
-		Title:     "Review Task",
+		Title:     "Review ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
@@ -7891,7 +7891,7 @@ func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 		t.Fatalf("NewCapabilityLease() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{projectA, projectB}, []domain.Column{columnA, columnB}, []domain.Task{taskB})
+	svc := newFakeService([]domain.Project{projectA, projectB}, []domain.Column{columnA, columnB}, []domain.ActionItem{actionItemB})
 	svc.capabilityLeases = append(svc.capabilityLeases, lease)
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -7927,12 +7927,12 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 10, 45, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
@@ -7943,13 +7943,13 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 		wantMode   inputMode
 		wantStatus string
 	}{
-		{name: "project notices new task", panel: noticesPanelFocusProject, key: keyRune('n'), wantMode: modeAddTask, wantStatus: "new task"},
+		{name: "project notices new actionItem", panel: noticesPanelFocusProject, key: keyRune('n'), wantMode: modeAddActionItem, wantStatus: "new actionItem"},
 		{name: "project notices new project", panel: noticesPanelFocusProject, key: keyRune('N'), wantMode: modeAddProject, wantStatus: "new project"},
 		{name: "project notices search", panel: noticesPanelFocusProject, key: keyRune('/'), wantMode: modeSearch, wantStatus: "search"},
 		{name: "project notices lowercase p", panel: noticesPanelFocusProject, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "project notices uppercase p", panel: noticesPanelFocusProject, key: keyRune('P'), wantMode: modeProjectPicker, wantStatus: "project picker"},
 		{name: "project notices command palette", panel: noticesPanelFocusProject, key: keyRune(':'), wantMode: modeCommandPalette, wantStatus: "command palette"},
-		{name: "global notices new task", panel: noticesPanelFocusGlobal, key: keyRune('n'), wantMode: modeAddTask, wantStatus: "new task"},
+		{name: "global notices new actionItem", panel: noticesPanelFocusGlobal, key: keyRune('n'), wantMode: modeAddActionItem, wantStatus: "new actionItem"},
 		{name: "global notices new project", panel: noticesPanelFocusGlobal, key: keyRune('N'), wantMode: modeAddProject, wantStatus: "new project"},
 		{name: "global notices search", panel: noticesPanelFocusGlobal, key: keyRune('/'), wantMode: modeSearch, wantStatus: "search"},
 		{name: "global notices lowercase p", panel: noticesPanelFocusGlobal, key: keyRune('p'), wantMode: modeProjectPicker, wantStatus: "project picker"},
@@ -7959,7 +7959,7 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+			m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 			m.noticesFocused = true
 			m.noticesPanel = tc.panel
 			m = applyMsg(t, m, tc.key)
@@ -7978,21 +7978,21 @@ func TestRenderOverviewPanelScrollsProjectNoticesBody(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.noticesFocused = true
 	m.noticesPanel = noticesPanelFocusProject
 	m.noticesSection = noticesSectionRecentActivity
 	m.noticesActivity = 0
 	m.activityLog = []activityEntry{
-		{At: now, ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create task"},
+		{At: now, ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create actionItem"},
 		{At: now.Add(time.Minute), ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create phase"},
 		{At: now.Add(2 * time.Minute), ActorType: domain.ActorTypeUser, ActorName: "Evan", Summary: "create branch"},
 	}
@@ -8005,20 +8005,20 @@ func TestRenderOverviewPanelScrollsProjectNoticesBody(t *testing.T) {
 	}
 }
 
-// TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread verifies project attention rows without task ids route to thread mode.
-func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testing.T) {
+// TestModelProjectNotificationsEnterOnNonActionItemAttentionRowOpensThread verifies project attention rows without actionItem ids route to thread mode.
+func TestModelProjectNotificationsEnterOnNonActionItemAttentionRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.attentionItems = []domain.AttentionItem{
 		{
 			ID:                 "att-project-thread",
@@ -8048,21 +8048,21 @@ func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testi
 	}
 }
 
-// TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads verifies non-action warning rows remain notification-scoped and open threads when task routing is not applicable.
+// TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads verifies non-action warning rows remain notification-scoped and open threads when actionItem routing is not applicable.
 func TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 5, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.attentionItems = []domain.AttentionItem{
 		{
 			ID:                 "att-warning-project",
@@ -8114,16 +8114,16 @@ func TestModelProjectNotificationsCommentsSectionFiltersViewerMentions(t *testin
 	now := time.Date(2026, 4, 2, 9, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.attentionItems = []domain.AttentionItem{
 		{
 			ID:                 "att-human-mention",
@@ -8179,16 +8179,16 @@ func TestModelProjectNotificationsCommentsCanClearOneRow(t *testing.T) {
 	now := time.Date(2026, 4, 2, 9, 20, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{
 		{
 			ID:                 "att-human-mention-a",
@@ -8242,16 +8242,16 @@ func TestModelProjectNotificationsAgentHandoffsStayInWarnings(t *testing.T) {
 	now := time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.attentionItems = []domain.AttentionItem{
 		{
 			ID:                 "handoff-qa::handoff",
@@ -8300,8 +8300,8 @@ func TestModelProjectNotificationHandoffRowOpensCoordinationDetail(t *testing.T)
 	now := time.Date(2026, 4, 2, 10, 5, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -8313,8 +8313,8 @@ func TestModelProjectNotificationHandoffRowOpensCoordinationDetail(t *testing.T)
 		ProjectID:       project.ID,
 		ScopeType:       domain.ScopeLevelProject,
 		SourceRole:      "qa",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   task.ID,
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   actionItem.ID,
 		TargetRole:      "human",
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         "handoff for human: review the qa result",
@@ -8326,7 +8326,7 @@ func TestModelProjectNotificationHandoffRowOpensCoordinationDetail(t *testing.T)
 		t.Fatalf("NewHandoff() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.handoffs = append(svc.handoffs, handoff)
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -8367,16 +8367,16 @@ func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction
 	now := time.Date(2026, 3, 2, 9, 10, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.attentionItems = []domain.AttentionItem{
 		{
 			ID:                 "att-no-action",
@@ -8427,12 +8427,12 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 12, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -8453,7 +8453,7 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[authRequest.ID] = authRequest
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{
 		{
@@ -8537,12 +8537,12 @@ func TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel(t *testing.T)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	other, _ := domain.NewProject("p2", "Elsewhere", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -8561,7 +8561,7 @@ func TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 authRequest.ID,
 		ProjectID:          project.ID,
@@ -8591,7 +8591,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	now := time.Date(2026, 3, 2, 9, 14, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	requested, _ := domain.NewTask(domain.TaskInput{
+	requested, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "requested",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -8601,7 +8601,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	narrowed, _ := domain.NewTask(domain.TaskInput{
+	narrowed, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "narrowed",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -8627,7 +8627,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{requested, narrowed})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{requested, narrowed})
 	svc.authRequests[authRequest.ID] = authRequest
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 authRequest.ID,
@@ -8689,15 +8689,15 @@ func TestModelAutoRefreshLoadsExternalAuthRequest(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 16, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 	m.autoRefreshInterval = time.Second
 
@@ -8746,12 +8746,12 @@ func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 17, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -8770,7 +8770,7 @@ func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[authRequest.ID] = authRequest
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 authRequest.ID,
@@ -8811,15 +8811,15 @@ func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 "req-missing",
 		ProjectID:          project.ID,
@@ -8854,12 +8854,12 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -8878,7 +8878,7 @@ func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[authRequest.ID] = authRequest
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 authRequest.ID,
@@ -8990,15 +8990,15 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 
 	m := loadReadyModel(t, NewModel(svc))
 	m.pendingConfirm = confirmAction{
@@ -9061,7 +9061,7 @@ func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -9071,7 +9071,7 @@ func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{branch})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.ActionItem{branch})))
 
 	if got := strings.TrimSpace(m.authRequestPathDisplay("project/p1/branch/b1")); got != "Inbox -> Planning Branch" {
 		t.Fatalf("authRequestPathDisplay() = %q, want Inbox -> Planning Branch", got)
@@ -9089,15 +9089,15 @@ func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 19, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 
 	m := loadReadyModel(t, NewModel(svc))
 	m.mode = modeAuthReview
@@ -9160,22 +9160,22 @@ func TestModelViewRendersGenericConfirmHints(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 19, 30, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 
 	m := loadReadyModel(t, NewModel(svc))
 	m.mode = modeConfirmAction
 	m.pendingConfirm = confirmAction{
-		Kind:  "delete-task",
-		Label: "delete task",
-		Task:  task,
+		Kind:       "delete-actionItem",
+		Label:      "delete actionItem",
+		ActionItem: actionItem,
 	}
 
 	rendered := fmt.Sprint(m.View())
@@ -9193,12 +9193,12 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -9220,7 +9220,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[request.ID] = request
 	svc.authRequests["req-other"] = domain.AuthRequest{
 		ID:                  "req-other",
@@ -9281,7 +9281,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.ScopeLevelProject,
 		SourceRole:      "builder",
-		TargetBranchID:  task.ID,
+		TargetBranchID:  actionItem.ID,
 		TargetScopeType: domain.ScopeLevelProject,
 		TargetScopeID:   project.ID,
 		TargetRole:      "qa",
@@ -9353,8 +9353,8 @@ func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -9366,8 +9366,8 @@ func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.ScopeLevelProject,
 		SourceRole:      "builder",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   task.ID,
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   actionItem.ID,
 		TargetRole:      "qa",
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         "builder to qa handoff",
@@ -9379,7 +9379,7 @@ func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 		t.Fatalf("NewHandoff() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.handoffs = append(svc.handoffs, handoff)
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -9418,8 +9418,8 @@ func TestModelCoordinationDetailCanRevokeLease(t *testing.T) {
 	now := time.Date(2030, 3, 29, 11, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -9439,7 +9439,7 @@ func TestModelCoordinationDetailCanRevokeLease(t *testing.T) {
 		t.Fatalf("NewCapabilityLease() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.capabilityLeases = append(svc.capabilityLeases, lease)
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -9479,8 +9479,8 @@ func TestModelCoordinationDetailCanUpdateHandoffStatus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -9492,8 +9492,8 @@ func TestModelCoordinationDetailCanUpdateHandoffStatus(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.ScopeLevelProject,
 		SourceRole:      "builder",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   task.ID,
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   actionItem.ID,
 		TargetRole:      "qa",
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         "builder to qa handoff",
@@ -9505,7 +9505,7 @@ func TestModelCoordinationDetailCanUpdateHandoffStatus(t *testing.T) {
 		t.Fatalf("NewHandoff() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.handoffs = append(svc.handoffs, handoff)
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -9558,24 +9558,24 @@ func TestAuthInventoryLabelsAddSecondaryIdentifiers(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
 		Title:     "QA Check",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc))
 
-	scopeLabel := m.authInventoryScopeEntityLabel(project.ID, domain.ScopeLevelTask, task.ID)
-	if !strings.Contains(scopeLabel, "QA Check") || !strings.Contains(scopeLabel, "task:"+task.ID) {
-		t.Fatalf("scope label = %q, want title plus task secondary id", scopeLabel)
+	scopeLabel := m.authInventoryScopeEntityLabel(project.ID, domain.ScopeLevelActionItem, actionItem.ID)
+	if !strings.Contains(scopeLabel, "QA Check") || !strings.Contains(scopeLabel, "actionItem:"+actionItem.ID) {
+		t.Fatalf("scope label = %q, want title plus actionItem secondary id", scopeLabel)
 	}
 
-	targetLabel := m.authInventoryTargetEntityLabel(project.ID, "branch-1", domain.ScopeLevelTask, task.ID)
-	if !strings.Contains(targetLabel, "branch-1") || !strings.Contains(targetLabel, "QA Check") || !strings.Contains(targetLabel, "task:"+task.ID) {
+	targetLabel := m.authInventoryTargetEntityLabel(project.ID, "branch-1", domain.ScopeLevelActionItem, actionItem.ID)
+	if !strings.Contains(targetLabel, "branch-1") || !strings.Contains(targetLabel, "QA Check") || !strings.Contains(targetLabel, "actionItem:"+actionItem.ID) {
 		t.Fatalf("target label = %q, want branch plus target secondary id", targetLabel)
 	}
 }
@@ -9633,12 +9633,12 @@ func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 30, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	pending, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -9677,7 +9677,7 @@ func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 		t.Fatalf("Approve() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[pending.ID] = pending
 	svc.authRequests[approved.ID] = approved
 
@@ -9720,8 +9720,8 @@ func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 	now := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
@@ -9747,7 +9747,7 @@ func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest(pending) error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[pending.ID] = pending
 	for idx := 0; idx < 7; idx++ {
 		id := fmt.Sprintf("req-pending-%d", idx)
@@ -9803,8 +9803,8 @@ func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.ScopeLevelProject,
 		SourceRole:      "builder",
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   task.ID,
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   actionItem.ID,
 		TargetRole:      "qa",
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         "builder to qa handoff",
@@ -9876,12 +9876,12 @@ func TestModelAuthInventoryApproveReturnsToInventory(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 45, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -9903,7 +9903,7 @@ func TestModelAuthInventoryApproveReturnsToInventory(t *testing.T) {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[request.ID] = request
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -9933,12 +9933,12 @@ func TestModelAuthInventoryDenyReturnsToInventory(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 50, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -9960,7 +9960,7 @@ func TestModelAuthInventoryDenyReturnsToInventory(t *testing.T) {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[request.ID] = request
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -9999,12 +9999,12 @@ func TestModelAuthReviewDenyUsesSingleConfirm(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 55, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -10026,7 +10026,7 @@ func TestModelAuthReviewDenyUsesSingleConfirm(t *testing.T) {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[request.ID] = request
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -10066,15 +10066,15 @@ func TestModelAuthInventoryCanToggleGlobalAndRevokeSession(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authSessions = append(svc.authSessions,
 		app.AuthSession{
 			SessionID:     "session-project",
@@ -10154,7 +10154,7 @@ func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 22, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	initial, _ := domain.NewTask(domain.TaskInput{
+	initial, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -10162,7 +10162,7 @@ func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
 		Title:     "Initial",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	external, _ := domain.NewTask(domain.TaskInput{
+	external, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -10170,7 +10170,7 @@ func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
 		Title:     "External",
 		Priority:  domain.PriorityMedium,
 	}, now.Add(time.Minute))
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{initial})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{initial})
 	m := loadReadyModel(t, NewModel(svc))
 	m.mode = modeAuthInventory
 	m.authInventoryNeedsReload = true
@@ -10184,7 +10184,7 @@ func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
 		t.Fatal("expected deferred auth inventory reload flag to clear on escape")
 	}
 	if got := len(m.tasks); got != 2 {
-		t.Fatalf("expected board reload to pick up external task, got %d tasks", got)
+		t.Fatalf("expected board reload to pick up external actionItem, got %d tasks", got)
 	}
 }
 
@@ -10193,12 +10193,12 @@ func TestModelActionMsgOpenAuthAccessReloadsInventory(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 23, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	request, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -10217,7 +10217,7 @@ func TestModelActionMsgOpenAuthAccessReloadsInventory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[request.ID] = request
 
 	m := loadReadyModel(t, NewModel(svc))
@@ -10234,19 +10234,19 @@ func TestModelActionMsgOpenAuthAccessReloadsInventory(t *testing.T) {
 	}
 }
 
-// TestModelProjectNotificationsEnterRecoversArchivedTask verifies project-notification Enter can reopen an archived hidden task before falling back to a thread.
-func TestModelProjectNotificationsEnterRecoversArchivedTask(t *testing.T) {
+// TestModelProjectNotificationsEnterRecoversArchivedActionItem verifies project-notification Enter can reopen an archived hidden actionItem before falling back to a thread.
+func TestModelProjectNotificationsEnterRecoversArchivedActionItem(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	archivedBlocked, _ := domain.NewTask(domain.TaskInput{
+	archivedBlocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-archived",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Archived Blocked Task",
+		Title:     "Archived Blocked ActionItem",
 		Priority:  domain.PriorityHigh,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "requires archived review",
 		},
 	}, now)
@@ -10255,7 +10255,7 @@ func TestModelProjectNotificationsEnterRecoversArchivedTask(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{project},
 		[]domain.Column{column},
-		[]domain.Task{archivedBlocked},
+		[]domain.ActionItem{archivedBlocked},
 	)))
 
 	// Set the focused notice directly so the test does not depend on OS-specific
@@ -10266,24 +10266,24 @@ func TestModelProjectNotificationsEnterRecoversArchivedTask(t *testing.T) {
 	m.noticesAttention = 0
 	item, ok := m.selectedNoticesPanelItem()
 	if !ok {
-		t.Fatal("expected archived task notice to be selectable")
+		t.Fatal("expected archived actionItem notice to be selectable")
 	}
-	if item.TaskID != archivedBlocked.ID {
-		t.Fatalf("selected notice task id = %q, want %q", item.TaskID, archivedBlocked.ID)
+	if item.ActionItemID != archivedBlocked.ID {
+		t.Fatalf("selected notice actionItem id = %q, want %q", item.ActionItemID, archivedBlocked.ID)
 	}
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	// Archived-task recovery intentionally triggers one immediate reload command,
+	// Archived-actionItem recovery intentionally triggers one immediate reload command,
 	// so run it directly instead of relying on the generic timeout-based helper.
 	m = applyImmediateCmd(t, mustModelValue(t, updated), cmd)
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected archived task notice to recover into task info, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected archived actionItem notice to recover into actionItem info, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != archivedBlocked.ID {
-		t.Fatalf("expected task info target %q, got %q", archivedBlocked.ID, m.taskInfoTaskID)
+	if m.actionItemInfoActionItemID != archivedBlocked.ID {
+		t.Fatalf("expected actionItem info target %q, got %q", archivedBlocked.ID, m.actionItemInfoActionItemID)
 	}
 	if !m.showArchived {
-		t.Fatal("expected archived task recovery to enable archived visibility")
+		t.Fatal("expected archived actionItem recovery to enable archived visibility")
 	}
 }
 
@@ -10292,21 +10292,21 @@ func TestModelProjectNotificationsScopedRowsFallbackToProjectThread(t *testing.T
 	now := time.Date(2026, 3, 2, 9, 20, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 	m.attentionItems = []domain.AttentionItem{
 		{
 			ID:                 "att-malformed-scope",
 			ProjectID:          project.ID,
-			ScopeType:          domain.ScopeLevelTask,
+			ScopeType:          domain.ScopeLevelActionItem,
 			ScopeID:            "",
 			State:              domain.AttentionStateOpen,
 			Kind:               domain.AttentionKindConsensusRequired,
@@ -10332,25 +10332,25 @@ func TestModelPanelFocusTraversalIncludesGlobalNotifications(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 28, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 	m.globalNotices = []globalNoticesPanelItem{
 		{
-			StableKey:    globalNoticesStableKey(p.ID, "att-focus", domain.ScopeLevelTask, task.ID, "focus traversal"),
+			StableKey:    globalNoticesStableKey(p.ID, "att-focus", domain.ScopeLevelActionItem, actionItem.ID, "focus traversal"),
 			AttentionID:  "att-focus",
 			ProjectID:    p.ID,
 			ProjectLabel: p.Name,
-			ScopeType:    domain.ScopeLevelTask,
-			ScopeID:      task.ID,
+			ScopeType:    domain.ScopeLevelActionItem,
+			ScopeID:      actionItem.ID,
 			Summary:      "focus traversal",
-			TaskID:       task.ID,
+			ActionItemID: actionItem.ID,
 		},
 	}
 
@@ -10385,14 +10385,14 @@ func TestModelPanelFocusTraversalIncludesGlobalNotifications(t *testing.T) {
 	}
 }
 
-// TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo verifies global notifications Enter performs deterministic cross-project navigation.
-func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing.T) {
+// TestModelGlobalNotificationsEnterSwitchesProjectAndOpensActionItemInfo verifies global notifications Enter performs deterministic cross-project navigation.
+func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensActionItemInfo(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 29, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
 	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	base, _ := domain.NewTask(domain.TaskInput{
+	base, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
@@ -10400,14 +10400,14 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 		Title:     "Base",
 		Priority:  domain.PriorityLow,
 	}, now)
-	blocked, _ := domain.NewTask(domain.TaskInput{
+	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
 		Position:  0,
 		Title:     "Cross Project Blocked",
 		Priority:  domain.PriorityHigh,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "waiting for external approval",
 		},
 	}, now.Add(2*time.Minute))
@@ -10415,7 +10415,7 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 	svc := newFakeService(
 		[]domain.Project{p1, p2},
 		[]domain.Column{c1, c2},
-		[]domain.Task{base, blocked},
+		[]domain.ActionItem{base, blocked},
 	)
 	m := loadReadyModel(t, NewModel(svc))
 	if m.projects[m.selectedProject].ID != p1.ID {
@@ -10430,11 +10430,11 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyCmdWithTimeout(t, mustModelValue(t, updated), cmd, 100*time.Millisecond)
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected global notification enter to open task info, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected global notification enter to open actionItem info, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != blocked.ID {
-		t.Fatalf("expected cross-project task-info target %q, got %q", blocked.ID, m.taskInfoTaskID)
+	if m.actionItemInfoActionItemID != blocked.ID {
+		t.Fatalf("expected cross-project actionItem-info target %q, got %q", blocked.ID, m.actionItemInfoActionItemID)
 	}
 	if m.projects[m.selectedProject].ID != p2.ID {
 		t.Fatalf("expected project context to switch to %q, got %q", p2.ID, m.projects[m.selectedProject].ID)
@@ -10449,12 +10449,12 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 29, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -10475,7 +10475,7 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[authRequest.ID] = authRequest
 	svc.attentionItemsByProject[project.ID] = []domain.AttentionItem{{
 		ID:                 authRequest.ID,
@@ -10527,20 +10527,20 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	task1, _ := domain.NewTask(domain.TaskInput{
+	task1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Inbox Task",
+		Title:     "Inbox ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	task2, _ := domain.NewTask(domain.TaskInput{
+	task2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
 		Position:  0,
-		Title:     "Roadmap Task",
+		Title:     "Roadmap ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -10561,7 +10561,7 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{task1, task2})
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.ActionItem{task1, task2})
 	svc.authRequests[authRequest.ID] = authRequest
 	m := loadReadyModel(t, NewModel(svc))
 	m.globalNotices = []globalNoticesPanelItem{
@@ -10621,20 +10621,20 @@ func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	task1, _ := domain.NewTask(domain.TaskInput{
+	task1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Inbox Task",
+		Title:     "Inbox ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	task2, _ := domain.NewTask(domain.TaskInput{
+	task2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
 		Position:  0,
-		Title:     "Roadmap Task",
+		Title:     "Roadmap ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -10655,7 +10655,7 @@ func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.Task{task1, task2})
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, []domain.ActionItem{task1, task2})
 	svc.authRequests[authRequest.ID] = authRequest
 	m := loadReadyModel(t, NewModel(svc))
 	m.globalNotices = []globalNoticesPanelItem{{
@@ -10719,8 +10719,8 @@ func TestGlobalNoticesPanelItemFromAttentionCarriesStableIdentifiers(t *testing.
 	if row.StableKey != globalNoticesStableKey(project.ID, item.ID, item.ScopeType, item.ScopeID, item.Summary) {
 		t.Fatalf("expected deterministic stable key, got %q", row.StableKey)
 	}
-	if row.TaskID != "" {
-		t.Fatalf("expected project-scoped row without task id, got %q", row.TaskID)
+	if row.ActionItemID != "" {
+		t.Fatalf("expected project-scoped row without actionItem id, got %q", row.ActionItemID)
 	}
 	if row.ThreadDescription != strings.TrimSpace(item.BodyMarkdown) {
 		t.Fatalf("expected thread description to carry body markdown, got %q", row.ThreadDescription)
@@ -10732,35 +10732,35 @@ func TestModelGlobalNotificationsSelectionReanchorsByStableKey(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 31, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	noticeA := globalNoticesPanelItem{
 		StableKey:    "row-a",
 		AttentionID:  "att-a",
 		ProjectID:    project.ID,
 		ProjectLabel: project.Name,
-		ScopeType:    domain.ScopeLevelTask,
+		ScopeType:    domain.ScopeLevelActionItem,
 		ScopeID:      "t-a",
 		Summary:      "A",
-		TaskID:       "t-a",
+		ActionItemID: "t-a",
 	}
 	noticeB := globalNoticesPanelItem{
 		StableKey:    "row-b",
 		AttentionID:  "att-b",
 		ProjectID:    project.ID,
 		ProjectLabel: project.Name,
-		ScopeType:    domain.ScopeLevelTask,
+		ScopeType:    domain.ScopeLevelActionItem,
 		ScopeID:      "t-b",
 		Summary:      "B",
-		TaskID:       "t-b",
+		ActionItemID: "t-b",
 	}
 	m.globalNotices = []globalNoticesPanelItem{noticeA, noticeB}
 	m.globalNoticesIdx = 1
@@ -10786,33 +10786,33 @@ func TestModelGlobalNotificationsSelectionReanchorsByStableKey(t *testing.T) {
 	}
 }
 
-// TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread verifies non-task global rows open scoped comment threads.
+// TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread verifies non-actionItem global rows open scoped comment threads.
 func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 32, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
 	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Inbox Task",
+		Title:     "Inbox ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
 		Position:  0,
-		Title:     "Roadmap Task",
+		Title:     "Roadmap ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p1, p2},
 		[]domain.Column{c1, c2},
-		[]domain.Task{t1, t2},
+		[]domain.ActionItem{t1, t2},
 	)))
 
 	m.globalNotices = []globalNoticesPanelItem{
@@ -10854,27 +10854,27 @@ func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T
 	}
 }
 
-// TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters verifies project-row enter recovery when the target task is hidden by filters.
+// TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters verifies project-row enter recovery when the target actionItem is hidden by filters.
 func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	active, _ := domain.NewTask(domain.TaskInput{
+	active, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-active",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Visible Active Task",
+		Title:     "Visible Active ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	archivedBlocked, _ := domain.NewTask(domain.TaskInput{
+	archivedBlocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-archived",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  1,
-		Title:     "Archived Blocked Task",
+		Title:     "Archived Blocked ActionItem",
 		Priority:  domain.PriorityHigh,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "requires archived review",
 		},
 	}, now.Add(time.Minute))
@@ -10883,10 +10883,10 @@ func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *t
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{project},
 		[]domain.Column{column},
-		[]domain.Task{active, archivedBlocked},
+		[]domain.ActionItem{active, archivedBlocked},
 	)))
 	if len(m.attentionItems) == 0 {
-		t.Fatal("expected archived blocked task to appear in project notifications")
+		t.Fatal("expected archived blocked actionItem to appear in project notifications")
 	}
 	m.searchApplied = true
 	m.searchQuery = "visible active"
@@ -10897,7 +10897,7 @@ func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *t
 	found := false
 	for _, section := range sections {
 		for idx, item := range section.Items {
-			if item.TaskID != archivedBlocked.ID {
+			if item.ActionItemID != archivedBlocked.ID {
 				continue
 			}
 			targetSection = section.ID
@@ -10910,18 +10910,18 @@ func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *t
 		}
 	}
 	if !found {
-		t.Fatal("expected archived blocked task row in project notifications")
+		t.Fatal("expected archived blocked actionItem row in project notifications")
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m.noticesSection = targetSection
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	if m.mode != modeTaskInfo {
-		t.Fatalf("expected hidden project target to recover into task info, got %v", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("expected hidden project target to recover into actionItem info, got %v", m.mode)
 	}
-	if m.taskInfoTaskID != archivedBlocked.ID {
-		t.Fatalf("expected archived task-info target %q, got %q", archivedBlocked.ID, m.taskInfoTaskID)
+	if m.actionItemInfoActionItemID != archivedBlocked.ID {
+		t.Fatalf("expected archived actionItem-info target %q, got %q", archivedBlocked.ID, m.actionItemInfoActionItemID)
 	}
 	if !m.showArchived {
 		t.Fatal("expected global notice activation to enable archived visibility for archived target")
@@ -10938,32 +10938,32 @@ func TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures(t *test
 	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p1.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
 		Title:     "Inbox Blocked",
 		Priority:  domain.PriorityHigh,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "active project blocker",
 		},
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p2.ID,
 		ColumnID:  c2.ID,
 		Position:  0,
 		Title:     "Roadmap Blocked",
 		Priority:  domain.PriorityHigh,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "non-active project blocker",
 		},
 	}, now.Add(time.Minute))
 	svc := newFakeService(
 		[]domain.Project{p1, p2},
 		[]domain.Column{c1, c2},
-		[]domain.Task{t1, t2},
+		[]domain.ActionItem{t1, t2},
 	)
 	svc.attentionErrByProject[p2.ID] = errors.New("attention load failed")
 
@@ -10990,15 +10990,15 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:        6,
@@ -11015,41 +11015,41 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 		{
 			ID:         5,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationArchive,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(5 * time.Minute),
 		},
 		{
 			ID:         4,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationMove,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(4 * time.Minute),
 		},
 		{
 			ID:         3,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(3 * time.Minute),
 		},
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(2 * time.Minute),
 		},
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
 		},
 	}
@@ -11082,12 +11082,12 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 	}
 }
 
-// TestModelActivityEventJumpLoadsArchivedTask verifies jump-to-node can recover archived nodes hidden by board filters.
-func TestModelActivityEventJumpLoadsArchivedTask(t *testing.T) {
+// TestModelActivityEventJumpLoadsArchivedActionItem verifies jump-to-node can recover archived nodes hidden by board filters.
+func TestModelActivityEventJumpLoadsArchivedActionItem(t *testing.T) {
 	now := time.Date(2026, 3, 1, 14, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	active, _ := domain.NewTask(domain.TaskInput{
+	active, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -11095,7 +11095,7 @@ func TestModelActivityEventJumpLoadsArchivedTask(t *testing.T) {
 		Title:     "Active",
 		Priority:  domain.PriorityLow,
 	}, now)
-	archived, _ := domain.NewTask(domain.TaskInput{
+	archived, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -11105,7 +11105,7 @@ func TestModelActivityEventJumpLoadsArchivedTask(t *testing.T) {
 	}, now.Add(time.Minute))
 	archivedAt := now.Add(2 * time.Minute)
 	archived.Archive(archivedAt)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{active, archived})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{active, archived})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         3,
@@ -11132,8 +11132,8 @@ func TestModelActivityEventJumpLoadsArchivedTask(t *testing.T) {
 	if !m.showArchived {
 		t.Fatal("expected jump flow to enable archived visibility")
 	}
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != archived.ID {
-		t.Fatalf("expected jump to archived node, got %#v ok=%t", task, ok)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != archived.ID {
+		t.Fatalf("expected jump to archived node, got %#v ok=%t", actionItem, ok)
 	}
 	if !strings.Contains(m.status, "jumped to activity node") {
 		t.Fatalf("expected success status after archived jump, got %q", m.status)
@@ -11145,7 +11145,7 @@ func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 	now := time.Date(2026, 3, 1, 15, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -11155,16 +11155,16 @@ func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 		Scope:     "branch",
 		Kind:      "branch",
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
 		ColumnID:  c.ID,
 		Position:  1,
-		Title:     "Nested Task",
+		Title:     "Nested ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now.Add(time.Minute))
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch, child})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         1,
@@ -11188,12 +11188,12 @@ func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 	if m.mode != modeNone {
 		t.Fatalf("expected board mode after jump, got %v", m.mode)
 	}
-	if got := strings.TrimSpace(m.projectionRootTaskID); got != branch.ID {
+	if got := strings.TrimSpace(m.projectionRootActionItemID); got != branch.ID {
 		t.Fatalf("expected jump to scope board to parent branch %q, got %q", branch.ID, got)
 	}
-	task, ok := m.selectedTaskInCurrentColumn()
-	if !ok || task.ID != child.ID {
-		t.Fatalf("expected nested task focused after jump, got %#v ok=%t", task, ok)
+	actionItem, ok := m.selectedActionItemInCurrentColumn()
+	if !ok || actionItem.ID != child.ID {
+		t.Fatalf("expected nested actionItem focused after jump, got %#v ok=%t", actionItem, ok)
 	}
 	if !strings.Contains(m.status, "jumped to activity node") {
 		t.Fatalf("expected jump success status, got %q", m.status)
@@ -11207,20 +11207,20 @@ func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	doing, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  done.ID,
 		Position:  0,
-		Title:     "Done Task",
+		Title:     "Done ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{todo, doing, done}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{todo, doing, done}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         3,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationMove,
 			ActorID:    "agent-sync",
 			ActorType:  domain.ActorTypeAgent,
@@ -11229,7 +11229,7 @@ func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
 				"from_position":  "1",
 				"to_column_id":   done.ID,
 				"to_position":    "0",
-				"title":          task.Title,
+				"title":          actionItem.Title,
 			},
 			OccurredAt: now.Add(time.Minute),
 		},
@@ -11293,7 +11293,7 @@ func TestModelDisplayActivityOwnerNormalizesActorLabels(t *testing.T) {
 	}
 }
 
-// TestModelActivityEventTargetDetailsFallbackLabels verifies non-task activity targets render human-facing node/path labels.
+// TestModelActivityEventTargetDetailsFallbackLabels verifies non-actionItem activity targets render human-facing node/path labels.
 func TestModelActivityEventTargetDetailsFallbackLabels(t *testing.T) {
 	now := time.Date(2026, 3, 1, 16, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -11329,7 +11329,7 @@ func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 	now := time.Date(2026, 3, 1, 17, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Project Atlas", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-branch",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -11337,7 +11337,7 @@ func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 		Title:     "Branch Foundation",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-phase",
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
@@ -11346,7 +11346,7 @@ func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 		Title:     "Phase Delivery",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	leaf, _ := domain.NewTask(domain.TaskInput{
+	leaf, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-leaf",
 		ProjectID: project.ID,
 		ParentID:  phase.ID,
@@ -11360,7 +11360,7 @@ func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 		mode:            modeActivityEventInfo,
 		projects:        []domain.Project{project},
 		selectedProject: 0,
-		tasks:           []domain.Task{branch, phase, leaf},
+		tasks:           []domain.ActionItem{branch, phase, leaf},
 		activityInfoItem: activityEntry{
 			WorkItemID: leaf.ID,
 			Summary:    "updated node metadata",
@@ -11397,7 +11397,7 @@ func TestModelFormatActivityMetadataFriendlyFallbacks(t *testing.T) {
 			"from_state":     "todo",
 			"to_state":       "archived",
 			"notes":          "manual correction",
-			"work_item_id":   "task-123",
+			"work_item_id":   "actionItem-123",
 		},
 	}
 
@@ -11425,28 +11425,28 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 	now := time.Date(2026, 2, 28, 13, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
 	m.autoRefreshInterval = time.Second
-	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "create task" {
+	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "create actionItem" {
 		t.Fatalf("expected initial recent activity from persisted event, got %q", got)
 	}
 
@@ -11454,9 +11454,9 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(2 * time.Minute),
 		},
 	}, svc.changeEvents[p.ID]...)
@@ -11466,11 +11466,11 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 		t.Fatal("expected auto-refresh load to start in board mode")
 	}
 	m = applyAutoRefreshLoadResult(t, m, cmd)
-	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "update task" {
+	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "update actionItem" {
 		t.Fatalf("expected newest persisted event in recent activity after refresh, got %q", got)
 	}
 	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 28, 0, 0, 0, nil, false))
-	if !strings.Contains(panel, "user|unknown update task") {
+	if !strings.Contains(panel, "user|unknown update actionItem") {
 		t.Fatalf("expected notices panel to show refreshed update activity, got %q", panel)
 	}
 }
@@ -11480,7 +11480,7 @@ func TestModelGroupingByPriority(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
-	tLow, _ := domain.NewTask(domain.TaskInput{
+	tLow, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -11488,7 +11488,7 @@ func TestModelGroupingByPriority(t *testing.T) {
 		Title:     "Low first by position",
 		Priority:  domain.PriorityLow,
 	}, now)
-	tHigh, _ := domain.NewTask(domain.TaskInput{
+	tHigh, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -11496,19 +11496,19 @@ func TestModelGroupingByPriority(t *testing.T) {
 		Title:     "High later by position",
 		Priority:  domain.PriorityHigh,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{tLow, tHigh})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{tLow, tHigh})
 	m := loadReadyModel(t, NewModel(svc, WithBoardConfig(BoardConfig{
 		ShowWIPWarnings: true,
 		GroupBy:         "priority",
 	})))
-	colTasks := m.tasksForColumn(c.ID)
-	if len(colTasks) != 2 {
-		t.Fatalf("expected 2 tasks, got %d", len(colTasks))
+	colActionItems := m.tasksForColumn(c.ID)
+	if len(colActionItems) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(colActionItems))
 	}
-	if colTasks[0].Priority != domain.PriorityHigh {
-		t.Fatalf("expected high-priority task first under priority grouping, got %#v", colTasks)
+	if colActionItems[0].Priority != domain.PriorityHigh {
+		t.Fatalf("expected high-priority actionItem first under priority grouping, got %#v", colActionItems)
 	}
-	if got := m.groupLabelForTask(colTasks[0]); got != "Priority: High" {
+	if got := m.groupLabelForActionItem(colActionItems[0]); got != "Priority: High" {
 		t.Fatalf("unexpected group label %q", got)
 	}
 }
@@ -11518,15 +11518,15 @@ func TestWithKeyConfigOverrides(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	m := loadReadyModel(t, NewModel(svc, WithKeyConfig(KeyConfig{
 		CommandPalette: ";",
 		QuickActions:   ",",
@@ -11537,8 +11537,8 @@ func TestWithKeyConfigOverrides(t *testing.T) {
 	})))
 
 	m = applyMsg(t, m, keyRune('x'))
-	if len(m.selectedTaskIDs) != 1 {
-		t.Fatalf("expected selection via configured key, got %d", len(m.selectedTaskIDs))
+	if len(m.selectedActionItemIDs) != 1 {
+		t.Fatalf("expected selection via configured key, got %d", len(m.selectedActionItemIDs))
 	}
 	m = applyMsg(t, m, keyRune('v'))
 	if m.mode != modeActivityLog {
@@ -11551,7 +11551,7 @@ func TestModelSelectionHelpers(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	c1, _ := domain.NewColumn("c1", "p1", "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", "p1", "Doing", 1, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  c1.ID,
@@ -11559,7 +11559,7 @@ func TestModelSelectionHelpers(t *testing.T) {
 		Title:     "One",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: "p1",
 		ColumnID:  c2.ID,
@@ -11568,34 +11568,34 @@ func TestModelSelectionHelpers(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 	m := Model{
-		columns:         []domain.Column{c1, c2},
-		tasks:           []domain.Task{t1, t2},
-		selectedTaskIDs: map[string]struct{}{"t1": {}, "ghost": {}},
+		columns:               []domain.Column{c1, c2},
+		tasks:                 []domain.ActionItem{t1, t2},
+		selectedActionItemIDs: map[string]struct{}{"t1": {}, "ghost": {}},
 	}
 
-	m.retainSelectionForLoadedTasks()
-	if m.isTaskSelected("ghost") {
-		t.Fatalf("expected stale selection removed, got %#v", m.selectedTaskIDs)
+	m.retainSelectionForLoadedActionItems()
+	if m.isActionItemSelected("ghost") {
+		t.Fatalf("expected stale selection removed, got %#v", m.selectedActionItemIDs)
 	}
-	if !m.isTaskSelected("t1") {
+	if !m.isActionItemSelected("t1") {
 		t.Fatalf("expected t1 still selected")
 	}
 
-	if selected := m.toggleTaskSelection("t1"); selected {
+	if selected := m.toggleActionItemSelection("t1"); selected {
 		t.Fatalf("expected toggle remove for existing selection")
 	}
-	if selected := m.toggleTaskSelection("t2"); !selected {
+	if selected := m.toggleActionItemSelection("t2"); !selected {
 		t.Fatalf("expected toggle add for missing selection")
 	}
-	if got := m.sortedSelectedTaskIDs(); len(got) != 1 || got[0] != "t2" {
+	if got := m.sortedSelectedActionItemIDs(); len(got) != 1 || got[0] != "t2" {
 		t.Fatalf("expected deterministic selection order with t2 only, got %#v", got)
 	}
 
-	if removed := m.unselectTasks([]string{"t2", "missing"}); removed != 1 {
+	if removed := m.unselectActionItems([]string{"t2", "missing"}); removed != 1 {
 		t.Fatalf("expected removed=1, got %d", removed)
 	}
-	m.toggleTaskSelection("t1")
-	m.toggleTaskSelection("t2")
+	m.toggleActionItemSelection("t1")
+	m.toggleActionItemSelection("t2")
 	if cleared := m.clearSelection(); cleared != 2 {
 		t.Fatalf("expected clearSelection to clear 2 entries, got %d", cleared)
 	}
@@ -11604,7 +11604,7 @@ func TestModelSelectionHelpers(t *testing.T) {
 // TestModelHistoryGuards verifies undo/redo guard behavior for the covered scenario.
 func TestModelHistoryGuards(t *testing.T) {
 	m := Model{
-		selectedTaskIDs: map[string]struct{}{},
+		selectedActionItemIDs: map[string]struct{}{},
 	}
 
 	updated, cmd := m.undoLastMutation()
@@ -11624,7 +11624,7 @@ func TestModelHistoryGuards(t *testing.T) {
 			Label:    "bulk hard delete",
 			Undoable: false,
 			Steps: []historyStep{
-				{Kind: historyStepHardDelete, TaskID: "t1"},
+				{Kind: historyStepHardDelete, ActionItemID: "t1"},
 			},
 		},
 	}
@@ -11663,7 +11663,7 @@ func TestModelExecuteHistorySetHardDeleteUndo(t *testing.T) {
 	msg := m.executeHistorySet(historyActionSet{
 		Label: "hard delete selection",
 		Steps: []historyStep{
-			{Kind: historyStepHardDelete, TaskID: "t1"},
+			{Kind: historyStepHardDelete, ActionItemID: "t1"},
 		},
 	}, true)()
 	action, ok := msg.(actionMsg)
@@ -11680,7 +11680,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	c1, _ := domain.NewColumn("c1", "p1", "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", "p1", "Doing", 1, 0, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       c1.ID,
@@ -11689,7 +11689,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t2",
 		ProjectID:      "p1",
 		ColumnID:       c1.ID,
@@ -11698,7 +11698,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateDone,
 	}, now)
-	t3, _ := domain.NewTask(domain.TaskInput{
+	t3, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t3",
 		ProjectID:      "p1",
 		ColumnID:       c2.ID,
@@ -11709,7 +11709,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 	}, now)
 	m := Model{
 		columns: []domain.Column{c1, c2},
-		tasks:   []domain.Task{t1, t2, t3},
+		tasks:   []domain.ActionItem{t1, t2, t3},
 	}
 
 	if got := m.buildMoveSteps([]string{"t1", "t2"}, 0); got != nil {
@@ -11719,7 +11719,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 	if len(steps) != 2 {
 		t.Fatalf("expected 2 move steps, got %#v", steps)
 	}
-	if steps[0].TaskID != "t1" || steps[1].TaskID != "t2" {
+	if steps[0].ActionItemID != "t1" || steps[1].ActionItemID != "t2" {
 		t.Fatalf("expected deterministic board ordering, got %#v", steps)
 	}
 	if steps[0].ToPosition != 1 || steps[1].ToPosition != 2 {
@@ -11737,17 +11737,17 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 	}
 
 	m.boardGroupBy = "priority"
-	if got := m.groupLabelForTask(t1); got != "Priority: High" {
+	if got := m.groupLabelForActionItem(t1); got != "Priority: High" {
 		t.Fatalf("unexpected priority group label: %q", got)
 	}
 	m.boardGroupBy = "state"
-	if got := m.groupLabelForTask(t3); got != "State: In Progress" {
+	if got := m.groupLabelForActionItem(t3); got != "State: In Progress" {
 		t.Fatalf("unexpected state group label: %q", got)
 	}
-	if rank := taskGroupRank(t1, "priority"); rank != 0 {
+	if rank := actionItemGroupRank(t1, "priority"); rank != 0 {
 		t.Fatalf("expected high priority rank=0, got %d", rank)
 	}
-	if rank := taskGroupRank(t2, "state"); rank != 2 {
+	if rank := actionItemGroupRank(t2, "state"); rank != 2 {
 		t.Fatalf("expected done state rank=2, got %d", rank)
 	}
 }
@@ -11773,7 +11773,7 @@ func TestModelActivityAndHistoryBounds(t *testing.T) {
 		m.pushUndoHistory(historyActionSet{
 			Label:    "step",
 			Undoable: true,
-			Steps:    []historyStep{{Kind: historyStepMove, TaskID: "t1"}},
+			Steps:    []historyStep{{Kind: historyStepMove, ActionItemID: "t1"}},
 		})
 	}
 	if len(m.undoStack) != 100 {
@@ -11885,7 +11885,7 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	c1, _ := domain.NewColumn("c1", "p1", "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", "p1", "Doing", 1, 0, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "phase",
 		ProjectID: "p1",
 		ColumnID:  c1.ID,
@@ -11894,7 +11894,7 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "child",
 		ProjectID: "p1",
 		ParentID:  phase.ID,
@@ -11903,7 +11903,7 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
 	}, now)
-	unrelated, _ := domain.NewTask(domain.TaskInput{
+	unrelated, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "other",
 		ProjectID: "p1",
 		ColumnID:  c1.ID,
@@ -11914,7 +11914,7 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 
 	m := Model{
 		columns: []domain.Column{c1, c2},
-		tasks:   []domain.Task{phase, child, unrelated},
+		tasks:   []domain.ActionItem{phase, child, unrelated},
 		dependencyRollup: domain.DependencyRollup{
 			TotalItems:                3,
 			BlockedItems:              1,
@@ -11922,16 +11922,16 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 			DependencyEdges:           4,
 		},
 	}
-	m.projectionRootTaskID = phase.ID
-	set := m.projectedTaskSet()
+	m.projectionRootActionItemID = phase.ID
+	set := m.projectedActionItemSet()
 	if len(set) != 1 {
 		t.Fatalf("expected projected set with direct children only, got %#v", set)
 	}
 	if _, ok := set[child.ID]; !ok {
-		t.Fatalf("expected child task in projected set, got %#v", set)
+		t.Fatalf("expected child actionItem in projected set, got %#v", set)
 	}
 	if _, ok := set[unrelated.ID]; ok {
-		t.Fatalf("did not expect unrelated task in projected set")
+		t.Fatalf("did not expect unrelated actionItem in projected set")
 	}
 
 	col1 := m.tasksForColumn(c1.ID)
@@ -11946,7 +11946,7 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 	}
 }
 
-// TestProjectRootLookup verifies strict project-root lookup and non-task browse fallback behavior.
+// TestProjectRootLookup verifies strict project-root lookup and non-actionItem browse fallback behavior.
 func TestProjectRootLookup(t *testing.T) {
 	root := t.TempDir()
 	p := domain.Project{ID: "p1", Slug: "inbox", Name: "Inbox"}
@@ -11973,7 +11973,7 @@ func TestLabelInheritanceHelpers(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p := domain.Project{ID: "p1", Slug: "inbox", Name: "Inbox"}
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "phase",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -11983,27 +11983,27 @@ func TestLabelInheritanceHelpers(t *testing.T) {
 		Labels:    []string{"PhaseA", "shared"},
 		Priority:  domain.PriorityMedium,
 	}, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
 		ColumnID:  c.ID,
 		Position:  1,
-		Title:     "Task",
-		Labels:    []string{"task-only"},
+		Title:     "ActionItem",
+		Labels:    []string{"actionItem-only"},
 		Priority:  domain.PriorityLow,
 	}, now)
 	m := Model{
 		projects:            []domain.Project{p},
 		columns:             []domain.Column{c},
-		tasks:               []domain.Task{phase, task},
+		tasks:               []domain.ActionItem{phase, actionItem},
 		selectedColumn:      0,
-		selectedTask:        1,
+		selectedActionItem:  1,
 		allowedLabelGlobal:  []string{"global", "shared"},
 		allowedLabelProject: map[string][]string{"inbox": {"project", "shared"}},
 	}
 
-	phaseLabels := m.labelsFromPhaseAncestors(task)
+	phaseLabels := m.labelsFromPhaseAncestors(actionItem)
 	if len(phaseLabels) != 2 || phaseLabels[0] != "phasea" {
 		t.Fatalf("unexpected phase ancestor labels %#v", phaseLabels)
 	}
@@ -12017,17 +12017,17 @@ func TestLabelInheritanceHelpers(t *testing.T) {
 		t.Fatalf("unexpected merged label set %#v", merged)
 	}
 
-	m.taskFormParentID = phase.ID
-	_ = m.startTaskForm(nil)
-	m.taskFormParentID = phase.ID
-	items := m.taskFormLabelPickerItems()
+	m.actionItemFormParentID = phase.ID
+	_ = m.startActionItemForm(nil)
+	m.actionItemFormParentID = phase.ID
+	items := m.actionItemFormLabelPickerItems()
 	if len(items) == 0 {
 		t.Fatalf("expected label picker items from inheritance sources")
 	}
 
 	m.formInputs[4].SetValue("alpha")
-	m.appendTaskFormLabel("beta")
-	m.appendTaskFormLabel("alpha")
+	m.appendActionItemFormLabel("beta")
+	m.appendActionItemFormLabel("alpha")
 	if got := m.formInputs[4].Value(); got != "alpha,beta" {
 		t.Fatalf("expected de-duplicated label append, got %q", got)
 	}
@@ -12081,15 +12081,15 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
@@ -12101,20 +12101,20 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 
 	m := loadReadyModel(t, NewModel(svc, WithProjectRoots(map[string]string{"inbox": root})))
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode, got %v", m.mode)
 	}
-	m.formFocus = taskFieldResources
-	m.taskFormResourceCursor = 0
+	m.formFocus = actionItemFieldResources
+	m.actionItemFormResourceCursor = 0
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeResourcePicker {
-		t.Fatalf("expected resource picker mode from edit-task new-resource row, got %v", m.mode)
+		t.Fatalf("expected resource picker mode from edit-actionItem new-resource row, got %v", m.mode)
 	}
 	if got := strings.TrimSpace(m.resourcePickerRoot); got != root {
 		t.Fatalf("expected resource root %q, got %q", root, got)
 	}
-	if m.taskFormResourceEditIndex != -1 {
-		t.Fatalf("expected new-resource row to keep edit index unset, got %d", m.taskFormResourceEditIndex)
+	if m.actionItemFormResourceEditIndex != -1 {
+		t.Fatalf("expected new-resource row to keep edit index unset, got %d", m.actionItemFormResourceEditIndex)
 	}
 	targetName := "notes.md"
 	selected, ok := m.selectedResourcePickerEntry()
@@ -12132,13 +12132,13 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 		t.Fatalf("expected to highlight %q before attach, got %q", targetName, selected.Name)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected return to edit mode after attach, got %v", m.mode)
 	}
-	if len(m.taskFormResourceRefs) != 1 {
-		t.Fatalf("expected 1 staged resource ref in edit form, got %#v", m.taskFormResourceRefs)
+	if len(m.actionItemFormResourceRefs) != 1 {
+		t.Fatalf("expected 1 staged resource ref in edit form, got %#v", m.actionItemFormResourceRefs)
 	}
-	ref := m.taskFormResourceRefs[0]
+	ref := m.actionItemFormResourceRefs[0]
 	if ref.ResourceType != domain.ResourceTypeLocalFile {
 		t.Fatalf("expected local file resource type, got %q", ref.ResourceType)
 	}
@@ -12149,9 +12149,9 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 		t.Fatalf("expected relative location notes.md, got %q", ref.Location)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-	updated, ok := svc.taskByID("t1")
+	updated, ok := svc.actionItemByID("t1")
 	if !ok {
-		t.Fatal("expected updated task in fake service")
+		t.Fatal("expected updated actionItem in fake service")
 	}
 	if len(updated.Metadata.ResourceRefs) != 1 {
 		t.Fatalf("expected 1 attached resource after save, got %#v", updated.Metadata.ResourceRefs)
@@ -12159,38 +12159,38 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 
 	cancelModel := loadReadyModel(t, NewModel(svc, WithProjectRoots(map[string]string{"inbox": root})))
 	cancelModel = applyMsg(t, cancelModel, keyRune('e'))
-	if cancelModel.mode != modeEditTask {
+	if cancelModel.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode for cancel-path check, got %v", cancelModel.mode)
 	}
-	cancelModel = applyCmd(t, cancelModel, cancelModel.focusTaskFormField(taskFieldResources))
-	if cancelModel.formFocus != taskFieldResources {
+	cancelModel = applyCmd(t, cancelModel, cancelModel.focusActionItemFormField(actionItemFieldResources))
+	if cancelModel.formFocus != actionItemFieldResources {
 		t.Fatalf("expected resources row focus for cancel-path check, got %d", cancelModel.formFocus)
 	}
-	cancelModel.taskFormResourceCursor = 0
+	cancelModel.actionItemFormResourceCursor = 0
 	cancelModel = applyMsg(t, cancelModel, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cancelModel.mode != modeResourcePicker {
-		t.Fatalf("expected resource picker mode from reopened edit-task resources section, got %v", cancelModel.mode)
+		t.Fatalf("expected resource picker mode from reopened edit-actionItem resources section, got %v", cancelModel.mode)
 	}
 	cancelModel = applyMsg(t, cancelModel, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if cancelModel.mode != modeEditTask {
+	if cancelModel.mode != modeEditActionItem {
 		t.Fatalf("expected esc from resource picker to return to edit mode, got %v", cancelModel.mode)
 	}
 }
 
-// TestModelResourcePickerFallsBackToBootstrapRoot verifies task attachment uses the bootstrap/search root when no project root is configured.
+// TestModelResourcePickerFallsBackToBootstrapRoot verifies actionItem attachment uses the bootstrap/search root when no project root is configured.
 func TestModelResourcePickerFallsBackToBootstrapRoot(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	root := t.TempDir()
 	m := loadReadyModel(t, NewModel(
 		svc,
@@ -12199,10 +12199,10 @@ func TestModelResourcePickerFallsBackToBootstrapRoot(t *testing.T) {
 
 	m = applyMsg(t, m, keyRune('i'))
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode, got %v", m.mode)
 	}
-	m.formFocus = taskFieldResources
+	m.formFocus = actionItemFieldResources
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeResourcePicker {
 		t.Fatalf("expected resource picker when bootstrap root fallback is available, got %v", m.mode)
@@ -12212,53 +12212,53 @@ func TestModelResourcePickerFallsBackToBootstrapRoot(t *testing.T) {
 	}
 }
 
-// TestModelEditTaskCommentsRowOpensThread verifies edit-mode comments management stays accessible from the form.
-func TestModelEditTaskCommentsRowOpensThread(t *testing.T) {
+// TestModelEditActionItemCommentsRowOpensThread verifies edit-mode comments management stays accessible from the form.
+func TestModelEditActionItemCommentsRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 13, 11, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected edit mode, got %v", m.mode)
 	}
 
-	beforeTitle := m.formInputs[taskFieldTitle].Value()
+	beforeTitle := m.formInputs[actionItemFieldTitle].Value()
 	m = applyMsg(t, m, keyRune('c'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected lowercase c to remain text input in edit mode, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"c" {
+	if got := m.formInputs[actionItemFieldTitle].Value(); got != beforeTitle+"c" {
 		t.Fatalf("expected lowercase c to type into title, got %q", got)
 	}
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected lowercase e to remain text input in edit mode, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"ce" {
+	if got := m.formInputs[actionItemFieldTitle].Value(); got != beforeTitle+"ce" {
 		t.Fatalf("expected lowercase e to type into title, got %q", got)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'E', Text: "E", Mod: tea.ModShift})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected uppercase E to remain text input in edit mode, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldTitle].Value(); got != beforeTitle+"ceE" {
+	if got := m.formInputs[actionItemFieldTitle].Value(); got != beforeTitle+"ceE" {
 		t.Fatalf("expected uppercase E to type into title, got %q", got)
 	}
 
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldComments))
-	if m.formFocus != taskFieldComments {
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldComments))
+	if m.formFocus != actionItemFieldComments {
 		t.Fatalf("expected comments row focus, got %d", m.formFocus)
 	}
 
@@ -12271,7 +12271,7 @@ func TestModelEditTaskCommentsRowOpensThread(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
+	if m.mode != modeEditActionItem {
 		t.Fatalf("expected esc from thread/comments to return to edit mode, got %v", m.mode)
 	}
 }
@@ -12316,12 +12316,12 @@ func TestModelEditProjectCommentsRowOpensThread(t *testing.T) {
 	}
 }
 
-// TestModelTaskInfoAndEditHideLabelInheritanceBlocks verifies info/edit hide inherited label blocks while keeping picker flows available.
-func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
+// TestModelActionItemInfoAndEditHideLabelInheritanceBlocks verifies info/edit hide inherited label blocks while keeping picker flows available.
+func TestModelActionItemInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "phase-1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -12331,23 +12331,23 @@ func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"phase-label"},
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  1,
 		ParentID:  phase.ID,
-		Kind:      domain.WorkKindTask,
-		Title:     "Child Task",
+		Kind:      domain.WorkKindActionItem,
+		Title:     "Child ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{phase, child})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{phase, child})
 	m := loadReadyModel(t, NewModel(svc, WithLabelConfig(LabelConfig{
 		Global:   []string{"global-label"},
 		Projects: map[string][]string{"inbox": {"project-label"}},
 	})))
 
-	m = applyMsg(t, m, keyRune('j')) // select child task
+	m = applyMsg(t, m, keyRune('j')) // select child actionItem
 	m = applyMsg(t, m, keyRune('i'))
 	info := strings.ToLower(stripANSI(m.renderModeOverlay(
 		lipgloss.Color("62"),
@@ -12357,18 +12357,18 @@ func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 		96,
 	)))
 	if strings.Contains(info, "effective labels") || strings.Contains(info, "inherited labels") {
-		t.Fatalf("expected task-info output to hide inherited/effective labels block, got %q", info)
+		t.Fatalf("expected actionItem-info output to hide inherited/effective labels block, got %q", info)
 	}
 
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit actionItem mode, got %v", m.mode)
 	}
-	m.formFocus = taskFieldLabels
-	editBody, _ := m.taskFormBodyLines(80, lipgloss.NewStyle().Foreground(lipgloss.Color("241")), lipgloss.Color("62"))
+	m.formFocus = actionItemFieldLabels
+	editBody, _ := m.actionItemFormBodyLines(80, lipgloss.NewStyle().Foreground(lipgloss.Color("241")), lipgloss.Color("62"))
 	edit := strings.ToLower(stripANSI(strings.Join(editBody, "\n")))
 	if strings.Contains(edit, "effective labels") || strings.Contains(edit, "inherited labels") {
-		t.Fatalf("expected edit-task output to hide inherited/effective labels block, got %q", edit)
+		t.Fatalf("expected edit-actionItem output to hide inherited/effective labels block, got %q", edit)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -12376,18 +12376,18 @@ func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 		t.Fatalf("expected enter on labels to open label picker, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
-		t.Fatalf("expected esc to return to edit-task from label picker, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected esc to return to edit-actionItem from label picker, got %v", m.mode)
 	}
 
-	_ = m.focusTaskFormField(taskFieldLabels)
+	_ = m.focusActionItemFormField(actionItemFieldLabels)
 	m = applyMsg(t, m, keyRune('e'))
 	if m.mode != modeLabelPicker {
 		t.Fatalf("expected e on labels to open label picker, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
-		t.Fatalf("expected esc to return to edit-task from label picker opened by e, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected esc to return to edit-actionItem from label picker opened by e, got %v", m.mode)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeLabelPicker {
@@ -12396,10 +12396,10 @@ func TestModelTaskInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeEditTask {
-		t.Fatalf("expected return to edit-task after picker choose, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected return to edit-actionItem after picker choose, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldLabels].Value(); !strings.Contains(got, "phase-label") {
+	if got := m.formInputs[actionItemFieldLabels].Value(); !strings.Contains(got, "phase-label") {
 		t.Fatalf("expected appended phase label in form value, got %q", got)
 	}
 }
@@ -12409,7 +12409,7 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -12417,7 +12417,7 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -12426,7 +12426,7 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 		Title:     "Child",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	grandchild, _ := domain.NewTask(domain.TaskInput{
+	grandchild, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-grandchild",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -12435,7 +12435,7 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 		Title:     "Grandchild",
 		Priority:  domain.PriorityLow,
 	}, now)
-	other, _ := domain.NewTask(domain.TaskInput{
+	other, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-other",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -12443,16 +12443,16 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 		Title:     "Unrelated",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child, grandchild, other})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{parent, child, grandchild, other})
 	m := loadReadyModel(t, NewModel(svc))
 
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 	m = applyMsg(t, m, keyRune('f')) // enter parent scope (child becomes selected)
 	m = applyMsg(t, m, keyRune('f')) // enter child scope
-	if m.projectionRootTaskID != child.ID {
-		t.Fatalf("expected projection root %q, got %q", child.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != child.ID {
+		t.Fatalf("expected projection root %q, got %q", child.ID, m.projectionRootActionItemID)
 	}
-	tasks := m.currentColumnTasks()
+	tasks := m.currentColumnActionItems()
 	if len(tasks) != 1 || tasks[0].ID != grandchild.ID {
 		t.Fatalf("expected projected child scope to show direct children only, got %#v", tasks)
 	}
@@ -12468,11 +12468,11 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('F'))
-	if m.projectionRootTaskID != "" {
-		t.Fatalf("expected focus cleared after F, got %q", m.projectionRootTaskID)
+	if m.projectionRootActionItemID != "" {
+		t.Fatalf("expected focus cleared after F, got %q", m.projectionRootActionItemID)
 	}
-	if len(m.currentColumnTasks()) != 2 {
-		t.Fatalf("expected full board tasks after clearing focus, got %d", len(m.currentColumnTasks()))
+	if len(m.currentColumnActionItems()) != 2 {
+		t.Fatalf("expected full board tasks after clearing focus, got %d", len(m.currentColumnActionItems()))
 	}
 	fullBoardView := stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(fullBoardView, "path: Inbox") {
@@ -12485,7 +12485,7 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 	now := time.Date(2026, 2, 21, 13, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Roadmap Hub", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-branch",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -12493,7 +12493,7 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 		Title:     "Branch Architecture",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-phase",
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
@@ -12502,7 +12502,7 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 		Title:     "Phase Discovery",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	leaf, _ := domain.NewTask(domain.TaskInput{
+	leaf, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-leaf",
 		ProjectID: project.ID,
 		ParentID:  phase.ID,
@@ -12515,9 +12515,9 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{project},
 		[]domain.Column{column},
-		[]domain.Task{branch, phase, leaf},
+		[]domain.ActionItem{branch, phase, leaf},
 	)))
-	m.projectionRootTaskID = leaf.ID
+	m.projectionRootActionItemID = leaf.ID
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 44, Height: 24})
 
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
@@ -12534,7 +12534,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
 
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "w-branch",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
@@ -12544,7 +12544,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "w-phase",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -12555,7 +12555,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	nestedPhase, _ := domain.NewTask(domain.TaskInput{
+	nestedPhase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "w-nested-phase",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
@@ -12566,39 +12566,39 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	leafTask, _ := domain.NewTask(domain.TaskInput{
-		ID:        "w-task",
+	leafActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "w-actionItem",
 		ProjectID: p.ID,
 		ParentID:  nestedPhase.ID,
 		ColumnID:  done.ID,
 		Position:  1,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
-	unrelated, _ := domain.NewTask(domain.TaskInput{
+	unrelated, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "w-other",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
 		Position:  1,
 		Title:     "Other",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 
 	svc := newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, progress, done},
-		[]domain.Task{branch, phase, nestedPhase, leafTask, unrelated},
+		[]domain.ActionItem{branch, phase, nestedPhase, leafActionItem, unrelated},
 	)
 	m := loadReadyModel(t, NewModel(svc))
 	visibleIDs := func(in Model) []string {
 		out := make([]string, 0)
 		for _, column := range in.columns {
-			for _, task := range in.boardTasksForColumn(column.ID) {
-				out = append(out, task.ID)
+			for _, actionItem := range in.boardActionItemsForColumn(column.ID) {
+				out = append(out, actionItem.ID)
 			}
 		}
 		return out
@@ -12618,7 +12618,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 
 	assertVisible(m, []string{branch.ID, unrelated.ID})
 
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	assertVisible(m, []string{phase.ID})
 
@@ -12626,26 +12626,26 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	assertVisible(m, []string{nestedPhase.ID})
 
 	m = applyMsg(t, m, keyRune('f'))
-	assertVisible(m, []string{leafTask.ID})
+	assertVisible(m, []string{leafActionItem.ID})
 }
 
-// TestModelFocusTaskScopeShowsSubtasks verifies task-focused scope rendering includes direct subtasks.
-func TestModelFocusTaskScopeShowsSubtasks(t *testing.T) {
+// TestModelFocusActionItemScopeShowsSubtasks verifies actionItem-focused scope rendering includes direct subtasks.
+func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	done, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-root",
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-root",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
 		Position:  0,
-		Title:     "Parent Task",
+		Title:     "Parent ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
-	subA, _ := domain.NewTask(domain.TaskInput{
+	subA, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "sub-a",
 		ProjectID: p.ID,
 		ParentID:  parent.ID,
@@ -12656,7 +12656,7 @@ func TestModelFocusTaskScopeShowsSubtasks(t *testing.T) {
 		Kind:      domain.WorkKindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
-	subB, _ := domain.NewTask(domain.TaskInput{
+	subB, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "sub-b",
 		ProjectID: p.ID,
 		ParentID:  parent.ID,
@@ -12667,21 +12667,21 @@ func TestModelFocusTaskScopeShowsSubtasks(t *testing.T) {
 		Kind:      domain.WorkKindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
-	other, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-other",
+	other, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-other",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
 		Position:  2,
-		Title:     "Other Top Task",
+		Title:     "Other Top ActionItem",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, done},
-		[]domain.Task{parent, subA, subB, other},
+		[]domain.ActionItem{parent, subA, subB, other},
 	)))
 
 	projectScope := stripANSI(fmt.Sprint(m.View().Content))
@@ -12689,30 +12689,30 @@ func TestModelFocusTaskScopeShowsSubtasks(t *testing.T) {
 		t.Fatalf("expected project scope board to hide subtasks, got\n%s", projectScope)
 	}
 
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	visible := []string{}
 	for _, column := range m.columns {
-		for _, task := range m.boardTasksForColumn(column.ID) {
-			visible = append(visible, task.ID)
+		for _, actionItem := range m.boardActionItemsForColumn(column.ID) {
+			visible = append(visible, actionItem.ID)
 		}
 	}
 	got := strings.Join(visible, ",")
 	if got != "sub-a,sub-b" {
-		t.Fatalf("expected task-focused scope to show direct subtasks, got %s", got)
+		t.Fatalf("expected actionItem-focused scope to show direct subtasks, got %s", got)
 	}
 	focused := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(focused, "path: Inbox -> Parent Task") {
-		t.Fatalf("expected focused task path in board view, got\n%s", focused)
+	if !strings.Contains(focused, "path: Inbox -> Parent ActionItem") {
+		t.Fatalf("expected focused actionItem path in board view, got\n%s", focused)
 	}
 }
 
-// TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds verifies focus works when direct children are subtasks.
-func TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds(t *testing.T) {
+// TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds verifies focus works when direct children are subtasks.
+func TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds(t *testing.T) {
 	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
@@ -12722,7 +12722,7 @@ func TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds(t *testin
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	legacySubtask, _ := domain.NewTask(domain.TaskInput{
+	legacySubtask, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "st1",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -12737,32 +12737,32 @@ func TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds(t *testin
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo},
-		[]domain.Task{branch, legacySubtask},
+		[]domain.ActionItem{branch, legacySubtask},
 	)))
-	if got := len(m.currentColumnTasks()); got != 1 {
+	if got := len(m.currentColumnActionItems()); got != 1 {
 		t.Fatalf("expected project scope to hide top-level subtask rows, got %d visible", got)
 	}
 
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != branch.ID {
-		t.Fatalf("expected subtree focus root %q, got %q", branch.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != branch.ID {
+		t.Fatalf("expected subtree focus root %q, got %q", branch.ID, m.projectionRootActionItemID)
 	}
-	if got := len(m.currentColumnTasks()); got != 1 {
+	if got := len(m.currentColumnActionItems()); got != 1 {
 		t.Fatalf("expected focused scope to render direct subtask child, got %d visible", got)
 	}
-	child, ok := m.selectedTaskInCurrentColumn()
+	child, ok := m.selectedActionItemInCurrentColumn()
 	if !ok || child.ID != legacySubtask.ID {
-		t.Fatalf("expected focused child %q, got task=%#v ok=%t", legacySubtask.ID, child, ok)
+		t.Fatalf("expected focused child %q, got actionItem=%#v ok=%t", legacySubtask.ID, child, ok)
 	}
 }
 
-// TestModelNewTaskFormDefaultsFollowFocusedScope verifies add-task defaults follow active focus scope.
-func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
+// TestModelNewActionItemFormDefaultsFollowFocusedScope verifies add-actionItem defaults follow active focus scope.
+func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 	now := time.Date(2026, 2, 25, 14, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
@@ -12772,7 +12772,7 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "ph1",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -12783,7 +12783,7 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	nestedPhase, _ := domain.NewTask(domain.TaskInput{
+	nestedPhase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "sph1",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
@@ -12794,21 +12794,21 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ParentID:  nestedPhase.ID,
 		ColumnID:  todo.ID,
 		Position:  3,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
-	subtask, _ := domain.NewTask(domain.TaskInput{
+	subtask, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "st1",
 		ProjectID: p.ID,
-		ParentID:  task.ID,
+		ParentID:  actionItem.ID,
 		ColumnID:  todo.ID,
 		Position:  4,
 		Title:     "Subtask",
@@ -12819,53 +12819,53 @@ func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo},
-		[]domain.Task{branch, phase, nestedPhase, task, subtask},
+		[]domain.ActionItem{branch, phase, nestedPhase, actionItem, subtask},
 	)))
 
 	assertDefaults := func(parentID string, kind domain.WorkKind, scope domain.KindAppliesTo) {
 		t.Helper()
-		if got := m.taskFormParentID; got != parentID {
-			t.Fatalf("task form parent = %q, want %q", got, parentID)
+		if got := m.actionItemFormParentID; got != parentID {
+			t.Fatalf("actionItem form parent = %q, want %q", got, parentID)
 		}
-		if got := m.taskFormKind; got != kind {
-			t.Fatalf("task form kind = %q, want %q", got, kind)
+		if got := m.actionItemFormKind; got != kind {
+			t.Fatalf("actionItem form kind = %q, want %q", got, kind)
 		}
-		if got := m.taskFormScope; got != scope {
-			t.Fatalf("task form scope = %q, want %q", got, scope)
+		if got := m.actionItemFormScope; got != scope {
+			t.Fatalf("actionItem form scope = %q, want %q", got, scope)
 		}
 	}
 
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults("", domain.WorkKindTask, domain.KindAppliesToTask)
+	assertDefaults("", domain.WorkKindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(branch.ID, domain.WorkKindTask, domain.KindAppliesToTask)
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-
-	m = applyMsg(t, m, keyRune('f'))
-	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(phase.ID, domain.WorkKindTask, domain.KindAppliesToTask)
+	assertDefaults(branch.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(nestedPhase.ID, domain.WorkKindTask, domain.KindAppliesToTask)
+	assertDefaults(phase.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(task.ID, domain.WorkKindSubtask, domain.KindAppliesToSubtask)
+	assertDefaults(nestedPhase.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m = applyMsg(t, m, keyRune('f'))
+	m = applyMsg(t, m, keyRune('n'))
+	assertDefaults(actionItem.ID, domain.WorkKindSubtask, domain.KindAppliesToSubtask)
 }
 
-// TestModelCreateTaskFromFocusedScopeUsesScopedParent verifies submitted create-task calls carry focused defaults.
-func TestModelCreateTaskFromFocusedScopeUsesScopedParent(t *testing.T) {
+// TestModelCreateActionItemFromFocusedScopeUsesScopedParent verifies submitted create-actionItem calls carry focused defaults.
+func TestModelCreateActionItemFromFocusedScopeUsesScopedParent(t *testing.T) {
 	now := time.Date(2026, 2, 25, 14, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
@@ -12875,7 +12875,7 @@ func TestModelCreateTaskFromFocusedScopeUsesScopedParent(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "ph1",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -12886,27 +12886,27 @@ func TestModelCreateTaskFromFocusedScopeUsesScopedParent(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{todo}, []domain.Task{branch, phase})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{todo}, []domain.ActionItem{branch, phase})
 	m := loadReadyModel(t, NewModel(svc))
-	m.focusTaskByID(branch.ID)
+	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode, got %v", m.mode)
 	}
-	m.formInputs[taskFieldTitle].SetValue("Focused child")
+	m.formInputs[actionItemFieldTitle].SetValue("Focused child")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if svc.createTaskCalls != 1 {
-		t.Fatalf("expected one create-task call, got %d", svc.createTaskCalls)
+	if svc.createActionItemCalls != 1 {
+		t.Fatalf("expected one create-actionItem call, got %d", svc.createActionItemCalls)
 	}
-	if got := svc.lastCreateTask.ParentID; got != branch.ID {
+	if got := svc.lastCreateActionItem.ParentID; got != branch.ID {
 		t.Fatalf("create parent_id = %q, want %q", got, branch.ID)
 	}
-	if got := svc.lastCreateTask.Kind; got != domain.WorkKindTask {
-		t.Fatalf("create kind = %q, want %q", got, domain.WorkKindTask)
+	if got := svc.lastCreateActionItem.Kind; got != domain.WorkKindActionItem {
+		t.Fatalf("create kind = %q, want %q", got, domain.WorkKindActionItem)
 	}
-	if got := svc.lastCreateTask.Scope; got != domain.KindAppliesToTask {
-		t.Fatalf("create scope = %q, want %q", got, domain.KindAppliesToTask)
+	if got := svc.lastCreateActionItem.Scope; got != domain.KindAppliesToActionItem {
+		t.Fatalf("create scope = %q, want %q", got, domain.KindAppliesToActionItem)
 	}
 }
 
@@ -12915,7 +12915,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -12925,7 +12925,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "p2",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -12940,7 +12940,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c},
-		[]domain.Task{branch, phase},
+		[]domain.ActionItem{branch, phase},
 	)))
 	view := stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(view, "children: 1") {
@@ -12965,30 +12965,30 @@ func TestModelFocusSubtreeAllowsEmptyScope(t *testing.T) {
 	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "leaf-task",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "leaf-actionItem",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Title:     "Leaf Task",
+		Title:     "Leaf ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c},
-		[]domain.Task{task},
+		[]domain.ActionItem{actionItem},
 	)))
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != task.ID {
-		t.Fatalf("expected focus root %q for empty scope, got %q", task.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != actionItem.ID {
+		t.Fatalf("expected focus root %q for empty scope, got %q", actionItem.ID, m.projectionRootActionItemID)
 	}
 	if m.status != "focused subtree" {
 		t.Fatalf("expected focused-subtree status, got %q", m.status)
 	}
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(rendered, "path: Roadmap -> Leaf Task") {
+	if !strings.Contains(rendered, "path: Roadmap -> Leaf ActionItem") {
 		t.Fatalf("expected focused path line for empty scope, got\n%s", rendered)
 	}
 }
@@ -12998,7 +12998,7 @@ func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 	now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "b1",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -13008,7 +13008,7 @@ func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "p2",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -13022,7 +13022,7 @@ func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c},
-		[]domain.Task{branch, phase},
+		[]domain.ActionItem{branch, phase},
 	)))
 	view := stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(view, "[branch|medium]") {
@@ -13040,14 +13040,14 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
-	blocked, _ := domain.NewTask(domain.TaskInput{
+	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-blocked",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
 		Position:  0,
 		Title:     "Blocked",
 		Priority:  domain.PriorityHigh,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			BlockedReason: "waiting on approval",
 			DependsOn:     []string{"missing"},
 		},
@@ -13055,7 +13055,7 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	svc := newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, progress, done},
-		[]domain.Task{blocked},
+		[]domain.ActionItem{blocked},
 	)
 	m := loadReadyModel(t, NewModel(svc))
 	// Notices panel rendering now starts at the clean-fit threshold; widen beyond default test viewport.
@@ -13109,15 +13109,15 @@ func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) 
 	now := time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})))
 
 	panel := stripANSI(m.renderOverviewPanel(project, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 44, 26, 0, 0, 0, nil, false))
 	if !strings.Contains(panel, "Project Notifications") {
@@ -13152,19 +13152,19 @@ func TestModelBoardHorizontalSpacingSymmetry(t *testing.T) {
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
 		Position:  0,
-		Title:     "Task 1",
+		Title:     "ActionItem 1",
 		Priority:  domain.PriorityMedium,
 	}, now)
 
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, progress, done},
-		[]domain.Task{task},
+		[]domain.ActionItem{actionItem},
 	)))
 
 	assertSpacing := func(width int) {
@@ -13215,41 +13215,41 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
 
-	doneTask, _ := domain.NewTask(domain.TaskInput{
+	doneActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-done",
 		ProjectID:      p.ID,
 		ColumnID:       done.ID,
 		Position:       0,
-		Title:          "Done Task",
+		Title:          "Done ActionItem",
 		Priority:       domain.PriorityLow,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateDone,
 	}, now)
-	blockedTask, _ := domain.NewTask(domain.TaskInput{
+	blockedActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-blocked",
 		ProjectID: p.ID,
 		ColumnID:  todo.ID,
 		Position:  0,
-		Title:     "Blocked Task",
+		Title:     "Blocked ActionItem",
 		Priority:  domain.PriorityHigh,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Metadata: domain.TaskMetadata{
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Metadata: domain.ActionItemMetadata{
 			DependsOn:     []string{"t-missing"},
 			BlockedReason: "waiting on partner team",
 		},
 	}, now)
-	waitingTask, _ := domain.NewTask(domain.TaskInput{
+	waitingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-waiting",
 		ProjectID: p.ID,
 		ColumnID:  progress.ID,
 		Position:  0,
-		Title:     "Waiting Task",
+		Title:     "Waiting ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Metadata: domain.TaskMetadata{
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Metadata: domain.ActionItemMetadata{
 			BlockedBy: []string{"t-not-found"},
 		},
 	}, now)
@@ -13257,7 +13257,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{todo, progress, done},
-		[]domain.Task{doneTask, blockedTask, waitingTask},
+		[]domain.ActionItem{doneActionItem, blockedActionItem, waitingActionItem},
 	)))
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
 	if strings.Contains(rendered, "attention: 3") {
@@ -13269,20 +13269,20 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	if !strings.Contains(rendered, "Project Notifications") {
 		t.Fatalf("expected project notifications panel to render, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "Blocked Task !2") {
-		t.Fatalf("expected row marker for blocked task, got\n%s", rendered)
+	if !strings.Contains(rendered, "Blocked Acti… !2") {
+		t.Fatalf("expected row marker for blocked actionItem, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "Waiting Task !1") {
-		t.Fatalf("expected row marker for waiting task, got\n%s", rendered)
+	if !strings.Contains(rendered, "Waiting Acti… !1") {
+		t.Fatalf("expected row marker for waiting actionItem, got\n%s", rendered)
 	}
 }
 
-// TestSearchLevelFiltering verifies level-scoped filtering for project, branch, phase, task, and subtask.
+// TestSearchLevelFiltering verifies level-scoped filtering for project, branch, phase, actionItem, and subtask.
 func TestSearchLevelFiltering(t *testing.T) {
 	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Hierarchy", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	branch, _ := domain.NewTask(domain.TaskInput{
+	branch, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "l-branch",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -13292,7 +13292,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
-	phase, _ := domain.NewTask(domain.TaskInput{
+	phase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "l-phase",
 		ProjectID: p.ID,
 		ParentID:  branch.ID,
@@ -13303,7 +13303,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	nestedPhase, _ := domain.NewTask(domain.TaskInput{
+	nestedPhase, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "l-nested-phase",
 		ProjectID: p.ID,
 		ParentID:  phase.ID,
@@ -13314,21 +13314,21 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Kind:      domain.WorkKindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "l-task",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "l-actionItem",
 		ProjectID: p.ID,
 		ParentID:  nestedPhase.ID,
 		ColumnID:  c.ID,
 		Position:  3,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 	}, now)
-	subtask, _ := domain.NewTask(domain.TaskInput{
+	subtask, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "l-subtask",
 		ProjectID: p.ID,
-		ParentID:  task.ID,
+		ParentID:  actionItem.ID,
 		ColumnID:  c.ID,
 		Position:  4,
 		Title:     "Subtask",
@@ -13338,19 +13338,19 @@ func TestSearchLevelFiltering(t *testing.T) {
 	}, now)
 
 	m := Model{
-		tasks: []domain.Task{branch, phase, nestedPhase, task, subtask},
+		tasks: []domain.ActionItem{branch, phase, nestedPhase, actionItem, subtask},
 	}
-	matches := []app.TaskMatch{
-		{Project: p, Task: branch, StateID: "todo"},
-		{Project: p, Task: phase, StateID: "todo"},
-		{Project: p, Task: nestedPhase, StateID: "todo"},
-		{Project: p, Task: task, StateID: "todo"},
-		{Project: p, Task: subtask, StateID: "todo"},
+	matches := []app.ActionItemMatch{
+		{Project: p, ActionItem: branch, StateID: "todo"},
+		{Project: p, ActionItem: phase, StateID: "todo"},
+		{Project: p, ActionItem: nestedPhase, StateID: "todo"},
+		{Project: p, ActionItem: actionItem, StateID: "todo"},
+		{Project: p, ActionItem: subtask, StateID: "todo"},
 	}
-	ids := func(in []app.TaskMatch) string {
+	ids := func(in []app.ActionItemMatch) string {
 		out := make([]string, 0, len(in))
 		for _, match := range in {
-			out = append(out, match.Task.ID)
+			out = append(out, match.ActionItem.ID)
 		}
 		return strings.Join(out, ",")
 	}
@@ -13360,21 +13360,21 @@ func TestSearchLevelFiltering(t *testing.T) {
 		levels []string
 		want   string
 	}{
-		{name: "project", levels: []string{"project"}, want: "l-branch,l-phase,l-nested-phase,l-task,l-subtask"},
+		{name: "project", levels: []string{"project"}, want: "l-branch,l-phase,l-nested-phase,l-actionItem,l-subtask"},
 		{name: "branch", levels: []string{"branch"}, want: "l-branch"},
 		{name: "phase", levels: []string{"phase"}, want: "l-phase,l-nested-phase"},
-		{name: "task", levels: []string{"task"}, want: "l-task"},
+		{name: "actionItem", levels: []string{"actionItem"}, want: "l-actionItem"},
 		{name: "subtask", levels: []string{"subtask"}, want: "l-subtask"},
 	}
 	for _, tc := range cases {
 		m.searchLevels = tc.levels
-		got := ids(m.filterTaskMatchesBySearchLevels(matches))
+		got := ids(m.filterActionItemMatchesBySearchLevels(matches))
 		if got != tc.want {
 			t.Fatalf("%s level filter mismatch: want %q, got %q", tc.name, tc.want, got)
 		}
 	}
 
-	ready := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, nestedPhase, task, subtask})))
+	ready := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch, phase, nestedPhase, actionItem, subtask})))
 	ready = applyMsg(t, ready, keyRune('/'))
 	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyTab}) // states
 	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyTab}) // levels
@@ -13390,12 +13390,12 @@ func TestSearchLevelFiltering(t *testing.T) {
 	}
 }
 
-// TestModelDependencyRollupAndTaskInfoHints verifies rollup summary and task dependency hints.
-func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
+// TestModelDependencyRollupAndActionItemInfoHints verifies rollup summary and actionItem dependency hints.
+func TestModelDependencyRollupAndActionItemInfoHints(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	done, _ := domain.NewTask(domain.TaskInput{
+	done, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-done",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13404,7 +13404,7 @@ func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateDone,
 	}, now)
-	blocked, _ := domain.NewTask(domain.TaskInput{
+	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-blocked",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13412,13 +13412,13 @@ func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
 		Title:          "Blocked",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateTodo,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			DependsOn:     []string{"t-done", "t-missing"},
 			BlockedBy:     []string{"t-done"},
 			BlockedReason: "waiting on integration",
 		},
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{done, blocked})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{done, blocked})
 	m := loadReadyModel(t, NewModel(svc))
 
 	if summary := m.dependencyRollupSummary(); !strings.Contains(summary, "total 2") || !strings.Contains(summary, "blocked 1") || !strings.Contains(summary, "unresolved 1") {
@@ -13427,15 +13427,15 @@ func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
 
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, keyRune('i'))
-	infoBody := stripANSI(m.taskInfoBody.GetContent())
+	infoBody := stripANSI(m.actionItemInfoBody.GetContent())
 	if !strings.Contains(infoBody, "depends_on: t-done(Finished)") {
-		t.Fatalf("expected depends_on hints in task info body, got %q", infoBody)
+		t.Fatalf("expected depends_on hints in actionItem info body, got %q", infoBody)
 	}
 	if !strings.Contains(infoBody, "blocked_by: t-done(Finished)") {
-		t.Fatalf("expected blocked_by hints in task info body, got %q", infoBody)
+		t.Fatalf("expected blocked_by hints in actionItem info body, got %q", infoBody)
 	}
 	if !strings.Contains(infoBody, "blocked_reason: waiting on integration") {
-		t.Fatalf("expected blocked_reason hint in task info body, got %q", infoBody)
+		t.Fatalf("expected blocked_reason hint in actionItem info body, got %q", infoBody)
 	}
 }
 
@@ -13447,7 +13447,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	cDone, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
 
-	owner, _ := domain.NewTask(domain.TaskInput{
+	owner, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-owner",
 		ProjectID:      p.ID,
 		ColumnID:       cTodo.ID,
@@ -13456,7 +13456,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	depDone, _ := domain.NewTask(domain.TaskInput{
+	depDone, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-done",
 		ProjectID:      p.ID,
 		ColumnID:       cDone.ID,
@@ -13465,7 +13465,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateDone,
 	}, now.Add(time.Minute))
-	depArchived, _ := domain.NewTask(domain.TaskInput{
+	depArchived, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-archived",
 		ProjectID:      p.ID,
 		ColumnID:       cDone.ID,
@@ -13476,7 +13476,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 	}, now.Add(2*time.Minute))
 	archivedAt := now.Add(-time.Minute)
 	depArchived.ArchivedAt = &archivedAt
-	blocker, _ := domain.NewTask(domain.TaskInput{
+	blocker, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-blocker",
 		ProjectID:      p.ID,
 		ColumnID:       cProgress.ID,
@@ -13485,7 +13485,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
 	}, now.Add(3*time.Minute))
-	candidate, _ := domain.NewTask(domain.TaskInput{
+	candidate, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-candidate",
 		ProjectID:      p.ID,
 		ColumnID:       cTodo.ID,
@@ -13495,7 +13495,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		LifecycleState: domain.StateTodo,
 	}, now.Add(4*time.Minute))
 
-	owner.Metadata = domain.TaskMetadata{
+	owner.Metadata = domain.ActionItemMetadata{
 		DependsOn: []string{owner.ID, depDone.ID, depArchived.ID},
 		BlockedBy: []string{blocker.ID},
 	}
@@ -13503,13 +13503,13 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 	svc := newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{cTodo, cProgress, cDone},
-		[]domain.Task{owner, depDone, depArchived, blocker, candidate},
+		[]domain.ActionItem{owner, depDone, depArchived, blocker, candidate},
 	)
 	m := loadReadyModel(t, NewModel(svc))
-	m.searchLevels = []string{"task"}
-	m.focusTaskByID(owner.ID)
+	m.searchLevels = []string{"actionItem"}
+	m.focusActionItemByID(owner.ID)
 	m = applyMsg(t, m, keyRune('e'))
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldDependsOn))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, m.loadDependencyMatches())
 	expectedLevels := canonicalSearchLevels(m.searchDefaultLevels)
@@ -13540,21 +13540,21 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		t.Fatalf("expected linked rows loaded, got %d", len(m.dependencyMatches))
 	}
 	if idx := dependencyCandidateIndexByID(m.dependencyMatches, owner.ID); idx >= 0 {
-		t.Fatalf("expected owner task %q to be excluded from dependency candidates", owner.ID)
+		t.Fatalf("expected owner actionItem %q to be excluded from dependency candidates", owner.ID)
 	}
-	if got := m.dependencyMatches[0].Match.Task.ID; got != depDone.ID {
+	if got := m.dependencyMatches[0].Match.ActionItem.ID; got != depDone.ID {
 		t.Fatalf("expected first pinned row %q, got %q", depDone.ID, got)
 	}
-	if got := m.dependencyMatches[1].Match.Task.ID; got != depArchived.ID {
+	if got := m.dependencyMatches[1].Match.ActionItem.ID; got != depArchived.ID {
 		t.Fatalf("expected second pinned row %q, got %q", depArchived.ID, got)
 	}
-	if got := m.dependencyMatches[2].Match.Task.ID; got != blocker.ID {
+	if got := m.dependencyMatches[2].Match.ActionItem.ID; got != blocker.ID {
 		t.Fatalf("expected third pinned row %q, got %q", blocker.ID, got)
 	}
 
 	foundArchived := false
 	for _, candidateRow := range m.dependencyMatches {
-		if candidateRow.Match.Task.ID == depArchived.ID {
+		if candidateRow.Match.ActionItem.ID == depArchived.ID {
 			foundArchived = true
 			break
 		}
@@ -13576,10 +13576,10 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 	m.dependencyIndex = addIdx
 	m = applyMsg(t, m, keyRune('d'))
 	m = applyMsg(t, m, keyRune('a'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected return to edit-task after apply, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected return to edit-actionItem after apply, got %v", m.mode)
 	}
-	formDepends := parseTaskRefIDsInput(m.formInputs[taskFieldDependsOn].Value(), nil)
+	formDepends := parseActionItemRefIDsInput(m.formInputs[actionItemFieldDependsOn].Value(), nil)
 	if !hasDependencyID(formDepends, candidate.ID) {
 		t.Fatalf("expected candidate dependency %q staged in form, got %#v", candidate.ID, formDepends)
 	}
@@ -13587,9 +13587,9 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		t.Fatalf("expected self dependency %q stripped from staged form value, got %#v", owner.ID, formDepends)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-	ownerAfter, ok := svc.taskByID(owner.ID)
+	ownerAfter, ok := svc.actionItemByID(owner.ID)
 	if !ok {
-		t.Fatalf("expected owner task %q after save", owner.ID)
+		t.Fatalf("expected owner actionItem %q after save", owner.ID)
 	}
 	if !hasDependencyID(ownerAfter.Metadata.DependsOn, candidate.ID) {
 		t.Fatalf("expected candidate dependency %q saved, got %#v", candidate.ID, ownerAfter.Metadata.DependsOn)
@@ -13599,12 +13599,12 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 	}
 }
 
-// TestModelDependencyInspectorEnterFromTaskForm verifies task-form dependency rows open via enter and apply modal-only updates.
-func TestModelDependencyInspectorEnterFromTaskForm(t *testing.T) {
+// TestModelDependencyInspectorEnterFromActionItemForm verifies actionItem-form dependency rows open via enter and apply modal-only updates.
+func TestModelDependencyInspectorEnterFromActionItemForm(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	owner, _ := domain.NewTask(domain.TaskInput{
+	owner, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-owner",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13613,7 +13613,7 @@ func TestModelDependencyInspectorEnterFromTaskForm(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	candidate, _ := domain.NewTask(domain.TaskInput{
+	candidate, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-candidate",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13623,12 +13623,12 @@ func TestModelDependencyInspectorEnterFromTaskForm(t *testing.T) {
 		LifecycleState: domain.StateTodo,
 	}, now.Add(time.Minute))
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{owner, candidate})))
 	m = applyMsg(t, m, keyRune('e'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected edit-actionItem mode, got %v", m.mode)
 	}
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldDependsOn))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, m.loadDependencyMatches())
 	if m.mode != modeDependencyInspector {
@@ -13645,10 +13645,10 @@ func TestModelDependencyInspectorEnterFromTaskForm(t *testing.T) {
 	m.dependencyIndex = addIdx
 	m = applyMsg(t, m, keyRune('d'))
 	m = applyMsg(t, m, keyRune('a'))
-	if m.mode != modeEditTask {
-		t.Fatalf("expected return to edit-task mode after apply, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected return to edit-actionItem mode after apply, got %v", m.mode)
 	}
-	if got := m.formInputs[taskFieldDependsOn].Value(); got != candidate.ID {
+	if got := m.formInputs[actionItemFieldDependsOn].Value(); got != candidate.ID {
 		t.Fatalf("expected depends_on CSV %q, got %q", candidate.ID, got)
 	}
 }
@@ -13658,7 +13658,7 @@ func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	owner, _ := domain.NewTask(domain.TaskInput{
+	owner, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-owner",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13667,7 +13667,7 @@ func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	blocker, _ := domain.NewTask(domain.TaskInput{
+	blocker, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-blocker",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13676,14 +13676,14 @@ func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateTodo,
 	}, now.Add(time.Minute))
-	owner.Metadata = domain.TaskMetadata{
+	owner.Metadata = domain.ActionItemMetadata{
 		DependsOn: []string{"t-missing"},
 		BlockedBy: []string{blocker.ID},
 	}
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, blocker})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{owner, blocker})))
 	m = applyMsg(t, m, keyRune('e'))
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldDependsOn))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, m.loadDependencyMatches())
 	if m.mode != modeDependencyInspector {
@@ -13700,7 +13700,7 @@ func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 	if !strings.Contains(out, "linked refs are pinned at top") {
 		t.Fatalf("expected pinned-linked hint, got %q", out)
 	}
-	if !strings.Contains(out, "(missing task reference)") {
+	if !strings.Contains(out, "(missing actionItem reference)") {
 		t.Fatalf("expected missing reference row, got %q", out)
 	}
 	if !strings.Contains(out, "state: missing") {
@@ -13708,12 +13708,12 @@ func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 	}
 }
 
-// TestModelDependencyInspectorFormEnterDoesNotJump verifies enter-jump is blocked when opened from task form context.
+// TestModelDependencyInspectorFormEnterDoesNotJump verifies enter-jump is blocked when opened from actionItem form context.
 func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
 	now := time.Date(2026, 2, 23, 13, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	owner, _ := domain.NewTask(domain.TaskInput{
+	owner, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-owner",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13722,7 +13722,7 @@ func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	candidate, _ := domain.NewTask(domain.TaskInput{
+	candidate, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-candidate",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13732,9 +13732,9 @@ func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
 		LifecycleState: domain.StateTodo,
 	}, now.Add(time.Minute))
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{owner, candidate})))
 	m = applyMsg(t, m, keyRune('e'))
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldDependsOn))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, m.loadDependencyMatches())
 	if m.mode != modeDependencyInspector {
@@ -13748,30 +13748,30 @@ func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
 	if m.mode != modeDependencyInspector {
 		t.Fatalf("expected dependency inspector to stay open on enter from form mode, got %v", m.mode)
 	}
-	if !strings.Contains(m.status, "task-info inspector") {
-		t.Fatalf("expected non-task-info jump status, got %q", m.status)
+	if !strings.Contains(m.status, "actionItem-info inspector") {
+		t.Fatalf("expected non-actionItem-info jump status, got %q", m.status)
 	}
 }
 
-// TestDependencyStateIDForTask verifies fallback state-id derivation for dependency rows.
-func TestDependencyStateIDForTask(t *testing.T) {
+// TestDependencyStateIDForActionItem verifies fallback state-id derivation for dependency rows.
+func TestDependencyStateIDForActionItem(t *testing.T) {
 	now := time.Date(2026, 2, 23, 14, 0, 0, 0, time.UTC)
 	archivedAt := now.Add(-time.Minute)
-	taskArchived := domain.Task{LifecycleState: domain.StateDone, ArchivedAt: &archivedAt}
-	taskProgress := domain.Task{LifecycleState: domain.StateProgress}
-	taskUnknown := domain.Task{LifecycleState: domain.LifecycleState("review")}
-	taskEmpty := domain.Task{}
+	actionItemArchived := domain.ActionItem{LifecycleState: domain.StateDone, ArchivedAt: &archivedAt}
+	actionItemProgress := domain.ActionItem{LifecycleState: domain.StateProgress}
+	actionItemUnknown := domain.ActionItem{LifecycleState: domain.LifecycleState("review")}
+	actionItemEmpty := domain.ActionItem{}
 
-	if got := dependencyStateIDForTask(taskArchived); got != "archived" {
+	if got := dependencyStateIDForActionItem(actionItemArchived); got != "archived" {
 		t.Fatalf("expected archived state id, got %q", got)
 	}
-	if got := dependencyStateIDForTask(taskProgress); got != "progress" {
+	if got := dependencyStateIDForActionItem(actionItemProgress); got != "progress" {
 		t.Fatalf("expected progress state id, got %q", got)
 	}
-	if got := dependencyStateIDForTask(taskUnknown); got != "review" {
+	if got := dependencyStateIDForActionItem(actionItemUnknown); got != "review" {
 		t.Fatalf("expected custom normalized state id, got %q", got)
 	}
-	if got := dependencyStateIDForTask(taskEmpty); got != "todo" {
+	if got := dependencyStateIDForActionItem(actionItemEmpty); got != "todo" {
 		t.Fatalf("expected todo fallback state id, got %q", got)
 	}
 }
@@ -13781,7 +13781,7 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 	now := time.Date(2026, 2, 23, 15, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	owner, _ := domain.NewTask(domain.TaskInput{
+	owner, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-owner",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13790,7 +13790,7 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	candidate, _ := domain.NewTask(domain.TaskInput{
+	candidate, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-candidate",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13799,11 +13799,11 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateTodo,
 	}, now.Add(time.Minute))
-	owner.Metadata = domain.TaskMetadata{DependsOn: []string{candidate.ID}}
+	owner.Metadata = domain.ActionItemMetadata{DependsOn: []string{candidate.ID}}
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{owner, candidate})))
 	m = applyMsg(t, m, keyRune('e'))
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldDependsOn))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, m.loadDependencyMatches())
 	if m.mode != modeDependencyInspector {
@@ -13812,7 +13812,7 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // states focus
 	m = applyMsg(t, m, keyRune('x'))
-	if m.dependencyActiveField != taskFieldBlockedBy {
+	if m.dependencyActiveField != actionItemFieldBlockedBy {
 		t.Fatalf("expected active field switch to blocked_by, got %d", m.dependencyActiveField)
 	}
 	m = applyMsg(t, m, keyRune('k')) // query focus
@@ -13852,7 +13852,7 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 	if m.dependencyFocus != 4 {
 		t.Fatalf("expected list focus, got %d", m.dependencyFocus)
 	}
-	if m.dependencyActiveField != taskFieldBlockedBy {
+	if m.dependencyActiveField != actionItemFieldBlockedBy {
 		t.Fatalf("expected blocked_by active field before list toggle, got %d", m.dependencyActiveField)
 	}
 	m = applyMsg(t, m, keyRune(' '))
@@ -13868,8 +13868,8 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeEditTask {
-		t.Fatalf("expected esc to return edit-task mode, got %v", m.mode)
+	if m.mode != modeEditActionItem {
+		t.Fatalf("expected esc to return edit-actionItem mode, got %v", m.mode)
 	}
 }
 
@@ -13878,7 +13878,7 @@ func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
 	now := time.Date(2026, 2, 23, 16, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	owner, _ := domain.NewTask(domain.TaskInput{
+	owner, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-owner",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13887,7 +13887,7 @@ func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateTodo,
 	}, now)
-	candidate, _ := domain.NewTask(domain.TaskInput{
+	candidate, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-candidate",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
@@ -13897,9 +13897,9 @@ func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
 		LifecycleState: domain.StateTodo,
 	}, now.Add(time.Minute))
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{owner, candidate})))
 	m = applyMsg(t, m, keyRune('e'))
-	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyCmd(t, m, m.focusActionItemFormField(actionItemFieldDependsOn))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, m.loadDependencyMatches())
 	if m.mode != modeDependencyInspector {
@@ -13963,17 +13963,17 @@ func TestModelSearchFocusNavigationWithJK(t *testing.T) {
 	now := time.Date(2026, 2, 23, 16, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
 		Position:       0,
-		Title:          "Task",
+		Title:          "ActionItem",
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateTodo,
 	}, now)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
 	m = applyMsg(t, m, keyRune('/'))
 	if m.mode != modeSearch {
 		t.Fatalf("expected search mode, got %v", m.mode)
@@ -14013,7 +14013,7 @@ func TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode(t *testing.T) {
 	now := time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	existing, _ := domain.NewTask(domain.TaskInput{
+	existing, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-existing",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14021,11 +14021,11 @@ func TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode(t *testing.T) {
 		Title:     "Existing",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{existing})
 	m := loadReadyModel(t, NewModel(svc))
 	m.autoRefreshInterval = time.Second
 
-	external, _ := domain.NewTask(domain.TaskInput{
+	external, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-external",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14046,7 +14046,7 @@ func TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode(t *testing.T) {
 	if len(m.tasks) != 2 {
 		t.Fatalf("expected 2 tasks after external refresh, got %d", len(m.tasks))
 	}
-	if _, ok := m.taskByID(external.ID); !ok {
+	if _, ok := m.actionItemByID(external.ID); !ok {
 		t.Fatalf("expected refreshed model to include %q", external.ID)
 	}
 	if m.mode != modeNone {
@@ -14059,7 +14059,7 @@ func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
 	now := time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	existing, _ := domain.NewTask(domain.TaskInput{
+	existing, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-existing",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14067,15 +14067,15 @@ func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
 		Title:     "Existing",
 		Priority:  domain.PriorityLow,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{existing})
 	m := loadReadyModel(t, NewModel(svc))
 	m.autoRefreshInterval = time.Second
 	m = applyMsg(t, m, keyRune('n'))
-	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode, got %v", m.mode)
+	if m.mode != modeAddActionItem {
+		t.Fatalf("expected add-actionItem mode, got %v", m.mode)
 	}
 
-	external, _ := domain.NewTask(domain.TaskInput{
+	external, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-external",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14087,7 +14087,7 @@ func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
 
 	m, _ = applyAutoRefreshTickMsg(t, m)
 	if m.autoRefreshInFlight {
-		t.Fatal("expected auto-refresh to defer while add-task modal is open")
+		t.Fatal("expected auto-refresh to defer while add-actionItem modal is open")
 	}
 	if len(m.tasks) != 1 {
 		t.Fatalf("expected in-memory board to remain stale during modal input, got %d tasks", len(m.tasks))
@@ -14103,7 +14103,7 @@ func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
 	}
 	m = applyAutoRefreshLoadResult(t, m, cmd)
 	if len(m.tasks) != 2 {
-		t.Fatalf("expected deferred external task to appear after board-mode refresh, got %d tasks", len(m.tasks))
+		t.Fatalf("expected deferred external actionItem to appear after board-mode refresh, got %d tasks", len(m.tasks))
 	}
 }
 
@@ -14112,7 +14112,7 @@ func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 	now := time.Date(2026, 2, 28, 11, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-parent",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14120,7 +14120,7 @@ func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child-existing",
 		ProjectID: p.ID,
 		ParentID:  parent.ID,
@@ -14129,7 +14129,7 @@ func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 		Title:     "Child Existing",
 		Priority:  domain.PriorityLow,
 	}, now.Add(time.Minute))
-	other, _ := domain.NewTask(domain.TaskInput{
+	other, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-other-existing",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14137,16 +14137,16 @@ func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 		Title:     "Other Existing",
 		Priority:  domain.PriorityLow,
 	}, now.Add(2*time.Minute))
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child, other})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{parent, child, other})
 	m := loadReadyModel(t, NewModel(svc))
 	m.autoRefreshInterval = time.Second
-	m.focusTaskByID(parent.ID)
+	m.focusActionItemByID(parent.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != parent.ID {
-		t.Fatalf("expected subtree focus root %q, got %q", parent.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != parent.ID {
+		t.Fatalf("expected subtree focus root %q, got %q", parent.ID, m.projectionRootActionItemID)
 	}
 
-	childExternal, _ := domain.NewTask(domain.TaskInput{
+	childExternal, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-child-external",
 		ProjectID: p.ID,
 		ParentID:  parent.ID,
@@ -14155,7 +14155,7 @@ func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 		Title:     "Child External",
 		Priority:  domain.PriorityMedium,
 	}, now.Add(3*time.Minute))
-	unrelatedExternal, _ := domain.NewTask(domain.TaskInput{
+	unrelatedExternal, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-unrelated-external",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
@@ -14170,18 +14170,18 @@ func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 		t.Fatal("expected focused subtree refresh to start in board mode")
 	}
 	m = applyAutoRefreshLoadResult(t, m, cmd)
-	if m.projectionRootTaskID != parent.ID {
-		t.Fatalf("expected subtree focus root to remain %q, got %q", parent.ID, m.projectionRootTaskID)
+	if m.projectionRootActionItemID != parent.ID {
+		t.Fatalf("expected subtree focus root to remain %q, got %q", parent.ID, m.projectionRootActionItemID)
 	}
-	if got := taskIDList(m.currentColumnTasks()); got != "t-child-existing,t-child-external" {
+	if got := actionItemIDList(m.currentColumnActionItems()); got != "t-child-existing,t-child-external" {
 		t.Fatalf("expected focused subtree children only, got %q", got)
 	}
 }
 
-// TestSortTaskSlicePrefersCreationTime verifies oldest-first ordering regardless of move position churn.
-func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
+// TestSortActionItemSlicePrefersCreationTime verifies oldest-first ordering regardless of move position churn.
+func TestSortActionItemSlicePrefersCreationTime(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	older, _ := domain.NewTask(domain.TaskInput{
+	older, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-older",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -14189,7 +14189,7 @@ func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 		Title:     "Older",
 		Priority:  domain.PriorityLow,
 	}, now)
-	newer, _ := domain.NewTask(domain.TaskInput{
+	newer, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-newer",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -14198,10 +14198,10 @@ func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now.Add(time.Minute))
 
-	tasks := []domain.Task{newer, older}
-	sortTaskSlice(tasks)
+	tasks := []domain.ActionItem{newer, older}
+	sortActionItemSlice(tasks)
 	if tasks[0].ID != older.ID {
-		t.Fatalf("expected oldest task first, got %#v", tasks)
+		t.Fatalf("expected oldest actionItem first, got %#v", tasks)
 	}
 }
 
@@ -14210,7 +14210,7 @@ func TestLoadDataPreservesSingleProjectSearchFallbackStatus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-search-status", "Search Status", "", now)
 	column, _ := domain.NewColumn("c-search-status", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-search-status",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -14219,7 +14219,7 @@ func TestLoadDataPreservesSingleProjectSearchFallbackStatus(t *testing.T) {
 		Description: "Keep search fallback visible",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.searchRequestedMode = app.SearchModeSemantic
 	svc.searchEffectiveMode = app.SearchModeKeyword
 	svc.searchFallbackReason = "semantic_index_not_ready"
@@ -14253,7 +14253,7 @@ func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 35, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-embeddings-modal", "Embeddings", "", now)
 	column, _ := domain.NewColumn("c-embeddings-modal", project.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-embeddings-modal",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -14264,7 +14264,7 @@ func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
 		Description: "Open the embeddings inventory modal",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-embeddings-modal-child",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -14276,10 +14276,10 @@ func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
 	}, now)
 	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
+		TargetType: domain.CommentTargetTypeActionItem,
 		TargetID:   child.ID,
 	})
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{parent, child})
 	svc.embeddingRows = []app.EmbeddingRecord{{
 		SubjectType: app.EmbeddingSubjectTypeWorkItem,
 		SubjectID:   parent.ID,
@@ -14370,16 +14370,16 @@ func TestEmbeddingsStatusModalShowsInFlightSpinnerState(t *testing.T) {
 	now := time.Date(2026, 3, 29, 21, 5, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-embeddings-spinner", "Embeddings Spinner", "", now)
 	column, _ := domain.NewColumn("c-embeddings-spinner", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-embeddings-spinner",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Reindex spinner task",
+		Title:     "Reindex spinner actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
 
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.reindexDelay = 50 * time.Millisecond
 	m := loadReadyModel(t, NewModel(svc))
 	m = applyCmd(t, m, m.startEmbeddingsStatus(false))
@@ -14417,27 +14417,27 @@ func TestCommandPaletteEmbeddingsReindexPreservesGlobalScope(t *testing.T) {
 	projectB, _ := domain.NewProject("p-embeddings-b", "Embeddings B", "", now)
 	columnA, _ := domain.NewColumn("c-embeddings-a", projectA.ID, "To Do", 0, 0, now)
 	columnB, _ := domain.NewColumn("c-embeddings-b", projectB.ID, "To Do", 0, 0, now)
-	taskA, _ := domain.NewTask(domain.TaskInput{
+	actionItemA, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-embeddings-a",
 		ProjectID: projectA.ID,
 		ColumnID:  columnA.ID,
 		Position:  0,
-		Title:     "Embeddings task A",
+		Title:     "Embeddings actionItem A",
 		Priority:  domain.PriorityLow,
 	}, now)
-	taskB, _ := domain.NewTask(domain.TaskInput{
+	actionItemB, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-embeddings-b",
 		ProjectID: projectB.ID,
 		ColumnID:  columnB.ID,
 		Position:  0,
-		Title:     "Embeddings task B",
+		Title:     "Embeddings actionItem B",
 		Priority:  domain.PriorityLow,
 	}, now)
 
 	svc := newFakeService(
 		[]domain.Project{projectA, projectB},
 		[]domain.Column{columnA, columnB},
-		[]domain.Task{taskA, taskB},
+		[]domain.ActionItem{actionItemA, actionItemB},
 	)
 	svc.reindexResult = app.ReindexEmbeddingsResult{
 		TargetProjects: []string{projectA.ID, projectB.ID},
@@ -14468,23 +14468,23 @@ func TestCommandPaletteEmbeddingsReindexPreservesGlobalScope(t *testing.T) {
 	}
 }
 
-// TestEmbeddingsStatusModalEnterOpensTaskInfo verifies task-backed lifecycle rows open the same task-info flow as search results.
-func TestEmbeddingsStatusModalEnterOpensTaskInfo(t *testing.T) {
+// TestEmbeddingsStatusModalEnterOpensActionItemInfo verifies actionItem-backed lifecycle rows open the same actionItem-info flow as search results.
+func TestEmbeddingsStatusModalEnterOpensActionItemInfo(t *testing.T) {
 	now := time.Date(2026, 3, 29, 23, 40, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-embeddings-open", "Embeddings Open", "", now)
 	column, _ := domain.NewColumn("c-embeddings-open", project.ID, "To Do", 0, 0, now)
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "branch-embeddings-open",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "Roll out hybrid task search",
+		Title:     "Roll out hybrid actionItem search",
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-embeddings-open",
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-embeddings-open",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		ParentID:  parent.ID,
@@ -14494,10 +14494,10 @@ func TestEmbeddingsStatusModalEnterOpensTaskInfo(t *testing.T) {
 	}, now)
 	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
+		TargetType: domain.CommentTargetTypeActionItem,
 		TargetID:   child.ID,
 	})
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{parent, child})
 	svc.embeddingRows = []app.EmbeddingRecord{
 		{
 			SubjectType: app.EmbeddingSubjectTypeWorkItem,
@@ -14517,22 +14517,22 @@ func TestEmbeddingsStatusModalEnterOpensTaskInfo(t *testing.T) {
 	m = applyCmd(t, m, m.startEmbeddingsStatus(false))
 	m = applyMsg(t, m, keyRune('j'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTaskInfo {
-		t.Fatalf("mode = %v, want modeTaskInfo", m.mode)
+	if m.mode != modeActionItemInfo {
+		t.Fatalf("mode = %v, want modeActionItemInfo", m.mode)
 	}
-	if got := strings.TrimSpace(m.taskInfoTaskID); got != child.ID {
-		t.Fatalf("taskInfoTaskID = %q, want %q", got, child.ID)
+	if got := strings.TrimSpace(m.actionItemInfoActionItemID); got != child.ID {
+		t.Fatalf("actionItemInfoActionItemID = %q, want %q", got, child.ID)
 	}
-	if got := strings.TrimSpace(m.projectionRootTaskID); got != parent.ID {
-		t.Fatalf("projectionRootTaskID = %q, want %q", got, parent.ID)
+	if got := strings.TrimSpace(m.projectionRootActionItemID); got != parent.ID {
+		t.Fatalf("projectionRootActionItemID = %q, want %q", got, parent.ID)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
 		t.Fatalf("mode after escape = %v, want modeNone", m.mode)
 	}
-	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != child.ID {
-		t.Fatalf("selected task = %#v ok=%t, want %q", task, ok, child.ID)
+	if actionItem, ok := m.selectedActionItemInCurrentColumn(); !ok || actionItem.ID != child.ID {
+		t.Fatalf("selected actionItem = %#v ok=%t, want %q", actionItem, ok, child.ID)
 	}
 }
 
@@ -14567,12 +14567,12 @@ func TestEmbeddingsStatusModalProjectRowEnterOpensProjectThread(t *testing.T) {
 func TestSearchMatchEmbeddingLabelFormatsMixedSubjects(t *testing.T) {
 	cases := []struct {
 		name  string
-		match app.TaskMatch
+		match app.ActionItemMatch
 		want  string
 	}{
 		{
 			name: "work item ready",
-			match: app.TaskMatch{
+			match: app.ActionItemMatch{
 				EmbeddingStatus:      app.EmbeddingLifecycleReady,
 				EmbeddingSubjectType: app.EmbeddingSubjectTypeWorkItem,
 				UsedSemantic:         true,
@@ -14581,7 +14581,7 @@ func TestSearchMatchEmbeddingLabelFormatsMixedSubjects(t *testing.T) {
 		},
 		{
 			name: "thread context semantic",
-			match: app.TaskMatch{
+			match: app.ActionItemMatch{
 				EmbeddingStatus:      app.EmbeddingLifecyclePending,
 				EmbeddingSubjectType: app.EmbeddingSubjectTypeThreadContext,
 				UsedSemantic:         true,
@@ -14590,7 +14590,7 @@ func TestSearchMatchEmbeddingLabelFormatsMixedSubjects(t *testing.T) {
 		},
 		{
 			name: "project document keyword",
-			match: app.TaskMatch{
+			match: app.ActionItemMatch{
 				EmbeddingStatus:      app.EmbeddingLifecycleFailed,
 				EmbeddingSubjectType: app.EmbeddingSubjectTypeProjectDocument,
 			},
@@ -14635,23 +14635,23 @@ func applyAutoRefreshLoadResult(t *testing.T, m Model, cmd tea.Cmd) Model {
 	return mustModelValue(t, updated)
 }
 
-// taskIDList returns comma-separated IDs for deterministic assertions.
-func taskIDList(tasks []domain.Task) string {
+// actionItemIDList returns comma-separated IDs for deterministic assertions.
+func actionItemIDList(tasks []domain.ActionItem) string {
 	ids := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		ids = append(ids, strings.TrimSpace(task.ID))
+	for _, actionItem := range tasks {
+		ids = append(ids, strings.TrimSpace(actionItem.ID))
 	}
 	return strings.Join(ids, ",")
 }
 
-// dependencyCandidateIndexByID finds one dependency-candidate index by task id.
-func dependencyCandidateIndexByID(candidates []dependencyCandidate, taskID string) int {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
+// dependencyCandidateIndexByID finds one dependency-candidate index by actionItem id.
+func dependencyCandidateIndexByID(candidates []dependencyCandidate, actionItemID string) int {
+	actionItemID = strings.TrimSpace(actionItemID)
+	if actionItemID == "" {
 		return -1
 	}
 	for idx, candidate := range candidates {
-		if strings.TrimSpace(candidate.Match.Task.ID) == taskID {
+		if strings.TrimSpace(candidate.Match.ActionItem.ID) == actionItemID {
 			return idx
 		}
 	}
@@ -14898,30 +14898,30 @@ func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
 	}
 }
 
-// TestTaskInfoBodyLinesRenderSystemSection verifies task info exposes structural/system fields intentionally.
-func TestTaskInfoBodyLinesRenderSystemSection(t *testing.T) {
+// TestActionItemInfoBodyLinesRenderSystemSection verifies actionItem info exposes structural/system fields intentionally.
+func TestActionItemInfoBodyLinesRenderSystemSection(t *testing.T) {
 	now := time.Date(2026, 3, 13, 9, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
 		Position:       4,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
-		Title:          "Task",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
+		Title:          "ActionItem",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "user-a",
 		UpdatedByActor: "agent-b",
 		UpdatedByType:  domain.ActorTypeAgent,
 	}, now)
 	started := now.Add(2 * time.Hour)
-	task.StartedAt = &started
-	task.UpdatedAt = now.Add(4 * time.Hour)
+	actionItem.StartedAt = &started
+	actionItem.UpdatedAt = now.Add(4 * time.Hour)
 
-	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
-	lines := m.taskInfoBodyLines(task, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})))
+	lines := m.actionItemInfoBodyLines(actionItem, actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
 	rendered := strings.Join(lines, "\n")
 
 	for _, want := range []string{
@@ -14929,8 +14929,8 @@ func TestTaskInfoBodyLinesRenderSystemSection(t *testing.T) {
 		"id: t1",
 		"project: p1",
 		"parent: -",
-		"kind: task",
-		"scope: task",
+		"kind: actionItem",
+		"scope: actionItem",
 		"state: todo",
 		"column: c1",
 		"position: 4",
@@ -14939,51 +14939,51 @@ func TestTaskInfoBodyLinesRenderSystemSection(t *testing.T) {
 		"started_at:",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected task info system section to contain %q, got\n%s", want, rendered)
+			t.Fatalf("expected actionItem info system section to contain %q, got\n%s", want, rendered)
 		}
 	}
 }
 
-// TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames verifies system ownership lines reuse activity display names.
-func TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T) {
+// TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames verifies system ownership lines reuse activity display names.
+func TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T) {
 	now := time.Date(2026, 3, 17, 18, 34, 10, 0, time.FixedZone("PDT", -7*60*60))
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
 		Position:       3,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
-		Title:          "Task",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
+		Title:          "ActionItem",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "c75a483e-6628-475e-b12d-9ee7a928a9d1",
 		UpdatedByActor: "agent-instance-1",
 		UpdatedByType:  domain.ActorTypeAgent,
 	}, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
 			ActorID:    "c75a483e-6628-475e-b12d-9ee7a928a9d1",
 			ActorName:  "Evan",
 			ActorType:  domain.ActorTypeUser,
-			Metadata:   map[string]string{"title": task.Title, "item_scope": "task"},
+			Metadata:   map[string]string{"title": actionItem.Title, "item_scope": "actionItem"},
 			OccurredAt: now,
 		},
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: task.ID,
+			WorkItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-instance-1",
 			ActorName:  "Codex Orchestrator",
 			ActorType:  domain.ActorTypeAgent,
-			Metadata:   map[string]string{"title": task.Title, "item_scope": "task"},
+			Metadata:   map[string]string{"title": actionItem.Title, "item_scope": "actionItem"},
 			OccurredAt: now.Add(2 * time.Minute),
 		},
 	}
@@ -14996,7 +14996,7 @@ func TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T
 			DefaultActorType: "user",
 		}),
 	))
-	lines := m.taskInfoBodyLines(task, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
+	lines := m.actionItemInfoBodyLines(actionItem, actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
 	rendered := strings.Join(lines, "\n")
 
 	for _, want := range []string{
@@ -15004,7 +15004,7 @@ func TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T
 		"updated_by: Codex Orchestrator (agent)",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected task info system section to contain %q, got\n%s", want, rendered)
+			t.Fatalf("expected actionItem info system section to contain %q, got\n%s", want, rendered)
 		}
 	}
 	if strings.Contains(rendered, "created_by: c75a483e-6628-475e-b12d-9ee7a928a9d1") {
@@ -15012,8 +15012,8 @@ func TestTaskInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T
 	}
 }
 
-// TestTaskSchemaCoverageIsExplicit verifies every top-level task field is intentionally editable or read-only in the TUI.
-func TestTaskSchemaCoverageIsExplicit(t *testing.T) {
+// TestActionItemSchemaCoverageIsExplicit verifies every top-level actionItem field is intentionally editable or read-only in the TUI.
+func TestActionItemSchemaCoverageIsExplicit(t *testing.T) {
 	editable := map[string]struct{}{
 		"Title":       {},
 		"Description": {},
@@ -15043,11 +15043,11 @@ func TestTaskSchemaCoverageIsExplicit(t *testing.T) {
 		"ArchivedAt":     {},
 		"CanceledAt":     {},
 	}
-	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Task{}), editable, readOnly, nil)
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ActionItem{}), editable, readOnly, nil)
 }
 
-// TestTaskMetadataSchemaCoverageIsExplicit verifies supported vs intentionally unsupported metadata fields stay documented.
-func TestTaskMetadataSchemaCoverageIsExplicit(t *testing.T) {
+// TestActionItemMetadataSchemaCoverageIsExplicit verifies supported vs intentionally unsupported metadata fields stay documented.
+func TestActionItemMetadataSchemaCoverageIsExplicit(t *testing.T) {
 	editable := map[string]struct{}{
 		"Objective":          {},
 		"AcceptanceCriteria": {},
@@ -15074,7 +15074,7 @@ func TestTaskMetadataSchemaCoverageIsExplicit(t *testing.T) {
 		"KindPayload":              {},
 		"Outcome":                  {},
 	}
-	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.TaskMetadata{}), editable, readOnly, internal)
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ActionItemMetadata{}), editable, readOnly, internal)
 }
 
 // TestProjectSchemaCoverageIsExplicit verifies project metadata support remains an intentional contract.
@@ -15256,7 +15256,7 @@ func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
 	svc.kindDefinitions = append(svc.kindDefinitions,
 		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
 		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-		mustNewKindDefinitionForTest("build-task", "Build Task", []domain.KindAppliesTo{domain.KindAppliesToTask}),
+		mustNewKindDefinitionForTest("build-actionItem", "Build ActionItem", []domain.KindAppliesTo{domain.KindAppliesToActionItem}),
 	)
 	m := loadReadyModel(t, NewModel(svc))
 
@@ -15266,7 +15266,7 @@ func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
 	if !strings.Contains(rendered, "classification") || !strings.Contains(rendered, "project_kinds:") || !strings.Contains(rendered, "go-service — Go Service") {
 		t.Fatalf("expected project form to render kind hints, got\n%s", rendered)
 	}
-	if strings.Contains(rendered, "build-task") {
+	if strings.Contains(rendered, "build-actionItem") {
 		t.Fatalf("expected project-only kind hints, got\n%s", rendered)
 	}
 	if got := m.projectKindName("go-service"); got != "Go Service" {
@@ -15281,8 +15281,8 @@ func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
 	if !m.hasProjectKindDefinition("go-service") {
 		t.Fatalf("expected go-service to be selectable")
 	}
-	if m.hasProjectKindDefinition("build-task") {
-		t.Fatalf("expected build-task to be excluded from project picker")
+	if m.hasProjectKindDefinition("build-actionItem") {
+		t.Fatalf("expected build-actionItem to be excluded from project picker")
 	}
 
 	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
@@ -15580,10 +15580,10 @@ func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
 		EligibleMigrationCount: 1,
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
 			{
-				TaskID:            "qa-1",
+				ActionItemID:      "qa-1",
 				Title:             "QA PROOF REVIEW",
-				Scope:             domain.KindAppliesToTask,
-				Kind:              domain.WorkKindTask,
+				Scope:             domain.KindAppliesToActionItem,
+				Kind:              domain.WorkKindActionItem,
 				LifecycleState:    domain.StateTodo,
 				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
@@ -15676,10 +15676,10 @@ func TestModelTemplateMigrationReviewApproveSelectedCompletesSave(t *testing.T) 
 		EligibleMigrationCount: 1,
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
 			{
-				TaskID:            "qa-1",
+				ActionItemID:      "qa-1",
 				Title:             "QA PROOF REVIEW",
-				Scope:             domain.KindAppliesToTask,
-				Kind:              domain.WorkKindTask,
+				Scope:             domain.KindAppliesToActionItem,
+				Kind:              domain.WorkKindActionItem,
 				LifecycleState:    domain.StateTodo,
 				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
@@ -15700,8 +15700,8 @@ func TestModelTemplateMigrationReviewApproveSelectedCompletesSave(t *testing.T) 
 	if got := svc.lastApproveMigrations.ProjectID; got != project.ID {
 		t.Fatalf("ApproveProjectTemplateMigrations() project = %q, want %q", got, project.ID)
 	}
-	if got := svc.lastApproveMigrations.TaskIDs; !reflect.DeepEqual(got, []string{"qa-1"}) {
-		t.Fatalf("ApproveProjectTemplateMigrations() task_ids = %#v, want [qa-1]", got)
+	if got := svc.lastApproveMigrations.ActionItemIDs; !reflect.DeepEqual(got, []string{"qa-1"}) {
+		t.Fatalf("ApproveProjectTemplateMigrations() action_item_ids = %#v, want [qa-1]", got)
 	}
 	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
 		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
@@ -15737,10 +15737,10 @@ func TestModelTemplateMigrationReviewSkipContinuesReapply(t *testing.T) {
 		EligibleMigrationCount: 1,
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
 			{
-				TaskID:            "qa-1",
+				ActionItemID:      "qa-1",
 				Title:             "QA PROOF REVIEW",
-				Scope:             domain.KindAppliesToTask,
-				Kind:              domain.WorkKindTask,
+				Scope:             domain.KindAppliesToActionItem,
+				Kind:              domain.WorkKindActionItem,
 				LifecycleState:    domain.StateTodo,
 				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
@@ -15765,20 +15765,20 @@ func TestModelTemplateMigrationReviewSkipContinuesReapply(t *testing.T) {
 	}
 }
 
-// TestTaskInfoBodyLinesRenderTemplateContractSection verifies task-info exposes project binding and generated-node contract details.
-func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
+// TestActionItemInfoBodyLinesRenderTemplateContractSection verifies actionItem-info exposes project binding and generated-node contract details.
+func TestActionItemInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 	now := time.Date(2026, 3, 30, 13, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
-		ID:        "task-1",
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
 		Title:     "Build feature",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
 		ProjectID:      project.ID,
 		LibraryID:      "go-defaults",
@@ -15787,8 +15787,8 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
 		LatestRevision: 3,
 	}
-	svc.nodeContracts[task.ID] = domain.NodeContractSnapshot{
-		NodeID:                    task.ID,
+	svc.nodeContracts[actionItem.ID] = domain.NodeContractSnapshot{
+		NodeID:                    actionItem.ID,
 		ProjectID:                 project.ID,
 		SourceLibraryID:           "go-defaults",
 		SourceNodeTemplateID:      "build-template",
@@ -15801,7 +15801,7 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 		RequiredForContainingDone: true,
 	}
 	m := loadReadyModel(t, NewModel(svc))
-	lines := m.taskInfoBodyLines(task, taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
+	lines := m.actionItemInfoBodyLines(actionItem, actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
 	rendered := strings.Join(lines, "\n")
 
 	for _, want := range []string{
@@ -15820,7 +15820,7 @@ func TestTaskInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
 		"generated_by: tillsyn-system-template",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected task info template-contract section to contain %q, got\n%s", want, rendered)
+			t.Fatalf("expected actionItem info template-contract section to contain %q, got\n%s", want, rendered)
 		}
 	}
 }
@@ -15835,9 +15835,9 @@ func TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight(t *testing.T) {
 	dim := lipgloss.Color("239")
 
 	m.status = ""
-	base := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit Task", "kind: task", "")
+	base := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit ActionItem", "kind: actionItem", "")
 	m.status = "cancelled"
-	cancelled := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit Task", "kind: task", "")
+	cancelled := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit ActionItem", "kind: actionItem", "")
 	if base.bodyHeight != cancelled.bodyHeight {
 		t.Fatalf("expected shared full-page body height to ignore status text, base=%d cancelled=%d", base.bodyHeight, cancelled.bodyHeight)
 	}
@@ -15852,8 +15852,8 @@ func TestFullPageSurfaceMetricsShrinkBodyToFitShortTerminal(t *testing.T) {
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
 
-	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit Task", "kind: task", "")
-	if metrics.bodyHeight >= taskInfoBodyViewportMinHeight {
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, 96, "Edit ActionItem", "kind: actionItem", "")
+	if metrics.bodyHeight >= actionItemInfoBodyViewportMinHeight {
 		t.Fatalf("expected shared full-page body height to shrink below the default minimum on short terminals, got %d", metrics.bodyHeight)
 	}
 
@@ -15861,7 +15861,7 @@ func TestFullPageSurfaceMetricsShrinkBodyToFitShortTerminal(t *testing.T) {
 	body.SetWidth(metrics.contentWidth)
 	body.SetHeight(metrics.bodyHeight)
 	body.SetContent(strings.Repeat("line\n", 40))
-	surface := renderFullPageSurfaceViewport(accent, muted, metrics.boxWidth, "Edit Task", "kind: task", "", body)
+	surface := renderFullPageSurfaceViewport(accent, muted, metrics.boxWidth, "Edit ActionItem", "kind: actionItem", "", body)
 	totalHeight := lipgloss.Height(metrics.headerBlock) +
 		metrics.headerGapY +
 		metrics.topGapY +

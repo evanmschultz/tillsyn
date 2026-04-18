@@ -500,7 +500,7 @@ func (w *EmbeddingWorker) startHeartbeat(ctx context.Context, claim EmbeddingRec
 }
 
 func (w *EmbeddingWorker) processWorkItemClaim(ctx context.Context, claim EmbeddingRecord, startedAt time.Time) error {
-	task, err := w.repo.GetTask(ctx, claim.SubjectID)
+	actionItem, err := w.repo.GetActionItem(ctx, claim.SubjectID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return w.dropEmbeddingSubject(ctx, claim, "subject_missing")
@@ -508,16 +508,16 @@ func (w *EmbeddingWorker) processWorkItemClaim(ctx context.Context, claim Embedd
 		return w.failClaim(ctx, claim, startedAt, "load_subject_failed", err, true)
 	}
 
-	content := buildTaskEmbeddingContent(task)
+	content := buildActionItemEmbeddingContent(actionItem)
 	if strings.TrimSpace(content) == "" {
 		return w.dropEmbeddingSubject(ctx, claim, "empty_content")
 	}
 	return w.processResolvedDocumentClaim(ctx, claim, startedAt, EmbeddingDocument{
 		SubjectType:      EmbeddingSubjectTypeWorkItem,
-		SubjectID:        task.ID,
-		ProjectID:        task.ProjectID,
+		SubjectID:        actionItem.ID,
+		ProjectID:        actionItem.ProjectID,
 		SearchTargetType: EmbeddingSearchTargetTypeWorkItem,
-		SearchTargetID:   task.ID,
+		SearchTargetID:   actionItem.ID,
 		Content:          content,
 	})
 }
@@ -545,18 +545,18 @@ func (w *EmbeddingWorker) processThreadContextClaim(ctx context.Context, claim E
 		targetTitle = project.Name
 		targetBody = project.Description
 	default:
-		task, getErr := w.repo.GetTask(ctx, target.TargetID)
+		actionItem, getErr := w.repo.GetActionItem(ctx, target.TargetID)
 		if getErr != nil {
 			if errors.Is(getErr, ErrNotFound) {
 				return w.dropEmbeddingSubject(ctx, claim, "subject_missing")
 			}
 			return w.failClaim(ctx, claim, startedAt, "load_subject_failed", getErr, true)
 		}
-		if task.ProjectID != target.ProjectID {
+		if actionItem.ProjectID != target.ProjectID {
 			return w.dropEmbeddingSubject(ctx, claim, "subject_missing")
 		}
-		targetTitle = task.Title
-		targetBody = task.Description
+		targetTitle = actionItem.Title
+		targetBody = actionItem.Description
 	}
 
 	comments, err := w.repo.ListCommentsByTarget(ctx, target)
@@ -815,9 +815,9 @@ func (s *Service) enqueueEmbeddingSubject(
 	return record, nil
 }
 
-func (s *Service) enqueueTaskEmbedding(ctx context.Context, task domain.Task, force bool, reason string) (EmbeddingRecord, error) {
-	content := buildTaskEmbeddingContent(task)
-	return s.enqueueEmbeddingSubject(ctx, EmbeddingSubjectTypeWorkItem, task.ID, task.ProjectID, content, force, reason)
+func (s *Service) enqueueActionItemEmbedding(ctx context.Context, actionItem domain.ActionItem, force bool, reason string) (EmbeddingRecord, error) {
+	content := buildActionItemEmbeddingContent(actionItem)
+	return s.enqueueEmbeddingSubject(ctx, EmbeddingSubjectTypeWorkItem, actionItem.ID, actionItem.ProjectID, content, force, reason)
 }
 
 func (s *Service) enqueueProjectDocumentEmbedding(ctx context.Context, project domain.Project, force bool, reason string) (EmbeddingRecord, error) {
@@ -845,15 +845,15 @@ func (s *Service) enqueueThreadContextEmbedding(ctx context.Context, target doma
 		targetTitle = project.Name
 		targetBody = project.Description
 	default:
-		task, getErr := s.repo.GetTask(ctx, target.TargetID)
+		actionItem, getErr := s.repo.GetActionItem(ctx, target.TargetID)
 		if getErr != nil {
 			return EmbeddingRecord{}, getErr
 		}
-		if task.ProjectID != target.ProjectID {
+		if actionItem.ProjectID != target.ProjectID {
 			return EmbeddingRecord{}, ErrNotFound
 		}
-		targetTitle = task.Title
-		targetBody = task.Description
+		targetTitle = actionItem.Title
+		targetBody = actionItem.Description
 	}
 
 	comments, err := s.repo.ListCommentsByTarget(ctx, target)
@@ -920,18 +920,18 @@ func (s *Service) ReindexEmbeddings(ctx context.Context, in ReindexEmbeddingsInp
 		}
 		accumulateReindexRecord(&result, record)
 
-		tasks, listErr := s.repo.ListTasks(ctx, projectID, true)
+		tasks, listErr := s.repo.ListActionItems(ctx, projectID, true)
 		if listErr != nil {
 			return ReindexEmbeddingsResult{}, listErr
 		}
-		taskByID := make(map[string]domain.Task, len(tasks))
-		for _, task := range tasks {
-			taskByID[task.ID] = task
-			if task.ArchivedAt != nil && !in.IncludeArchived {
+		actionItemByID := make(map[string]domain.ActionItem, len(tasks))
+		for _, actionItem := range tasks {
+			actionItemByID[actionItem.ID] = actionItem
+			if actionItem.ArchivedAt != nil && !in.IncludeArchived {
 				continue
 			}
 			result.ScannedCount++
-			record, enqueueErr := s.enqueueTaskEmbedding(ctx, task, in.Force, "manual_reindex")
+			record, enqueueErr := s.enqueueActionItemEmbedding(ctx, actionItem, in.Force, "manual_reindex")
 			if enqueueErr != nil {
 				return ReindexEmbeddingsResult{}, enqueueErr
 			}
@@ -944,8 +944,8 @@ func (s *Service) ReindexEmbeddings(ctx context.Context, in ReindexEmbeddingsInp
 		}
 		for _, target := range targets {
 			if target.TargetType != domain.CommentTargetTypeProject && !in.IncludeArchived {
-				task, ok := taskByID[target.TargetID]
-				if ok && task.ArchivedAt != nil {
+				actionItem, ok := actionItemByID[target.TargetID]
+				if ok && actionItem.ArchivedAt != nil {
 					continue
 				}
 			}

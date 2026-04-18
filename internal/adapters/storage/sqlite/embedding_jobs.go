@@ -149,8 +149,8 @@ type EmbeddingJobSummary struct {
 	Stale   int
 }
 
-// EmbeddingTaskBackfillInput holds inputs for scanning tasks and seeding lifecycle rows.
-type EmbeddingTaskBackfillInput struct {
+// EmbeddingActionItemBackfillInput holds inputs for scanning tasks and seeding lifecycle rows.
+type EmbeddingActionItemBackfillInput struct {
 	ProjectID       string
 	IncludeArchived bool
 	ModelProvider   string
@@ -679,24 +679,24 @@ func (r *Repository) RecoverExpiredEmbeddingJobs(ctx context.Context, before tim
 	return recovered, nil
 }
 
-// BackfillTaskEmbeddingJobs scans tasks and seeds lifecycle rows for task subjects.
-func (r *Repository) BackfillTaskEmbeddingJobs(ctx context.Context, in EmbeddingTaskBackfillInput) (int, error) {
+// BackfillActionItemEmbeddingJobs scans tasks and seeds lifecycle rows for actionItem subjects.
+func (r *Repository) BackfillActionItemEmbeddingJobs(ctx context.Context, in EmbeddingActionItemBackfillInput) (int, error) {
 	projectID := strings.TrimSpace(in.ProjectID)
 	if projectID == "" {
 		return 0, domain.ErrInvalidID
 	}
-	tasks, err := r.ListTasks(ctx, projectID, in.IncludeArchived)
+	tasks, err := r.ListActionItems(ctx, projectID, in.IncludeArchived)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
-	for _, task := range tasks {
-		content := buildSQLiteTaskEmbeddingContent(task)
+	for _, actionItem := range tasks {
+		content := buildSQLiteActionItemEmbeddingContent(actionItem)
 		hash := hashEmbeddingContent(content)
 		upsertInput := EmbeddingJobUpsertInput{
-			SubjectType:   "task",
-			SubjectID:     task.ID,
-			ProjectID:     task.ProjectID,
+			SubjectType:   "actionItem",
+			SubjectID:     actionItem.ID,
+			ProjectID:     actionItem.ProjectID,
 			DesiredHash:   hash,
 			ModelProvider: strings.TrimSpace(in.ModelProvider),
 			ModelName:     strings.TrimSpace(in.ModelName),
@@ -1028,8 +1028,8 @@ func (r *Repository) deleteEmbeddingVectorForSubject(ctx context.Context, q exec
 	return deleteEmbeddingDocument(ctx, q, normalizeEmbeddingSubjectType(subjectType), subjectID)
 }
 
-// buildSQLiteTaskEmbeddingContent produces canonical searchable text for one task.
-func buildSQLiteTaskEmbeddingContent(task domain.Task) string {
+// buildSQLiteActionItemEmbeddingContent produces canonical searchable text for one actionItem.
+func buildSQLiteActionItemEmbeddingContent(actionItem domain.ActionItem) string {
 	parts := make([]string, 0, 10)
 	appendIfPresent := func(value string) {
 		value = strings.TrimSpace(value)
@@ -1038,16 +1038,16 @@ func buildSQLiteTaskEmbeddingContent(task domain.Task) string {
 		}
 		parts = append(parts, value)
 	}
-	appendIfPresent(task.Title)
-	appendIfPresent(task.Description)
-	if len(task.Labels) > 0 {
-		appendIfPresent(strings.Join(task.Labels, ", "))
+	appendIfPresent(actionItem.Title)
+	appendIfPresent(actionItem.Description)
+	if len(actionItem.Labels) > 0 {
+		appendIfPresent(strings.Join(actionItem.Labels, ", "))
 	}
-	appendIfPresent(task.Metadata.Objective)
-	appendIfPresent(task.Metadata.AcceptanceCriteria)
-	appendIfPresent(task.Metadata.ValidationPlan)
-	appendIfPresent(task.Metadata.BlockedReason)
-	appendIfPresent(task.Metadata.RiskNotes)
+	appendIfPresent(actionItem.Metadata.Objective)
+	appendIfPresent(actionItem.Metadata.AcceptanceCriteria)
+	appendIfPresent(actionItem.Metadata.ValidationPlan)
+	appendIfPresent(actionItem.Metadata.BlockedReason)
+	appendIfPresent(actionItem.Metadata.RiskNotes)
 	return strings.Join(parts, "\n")
 }
 
@@ -1092,8 +1092,8 @@ func staleEmbeddingReason(desiredHash, desiredSignature, processedHash, processe
 
 func normalizeEmbeddingSubjectType(subjectType string) string {
 	switch strings.TrimSpace(strings.ToLower(subjectType)) {
-	case "task":
-		return "work_item"
+	case "actionitem", "work_item":
+		return "actionItem"
 	default:
 		return strings.TrimSpace(strings.ToLower(subjectType))
 	}

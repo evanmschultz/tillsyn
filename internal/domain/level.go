@@ -10,11 +10,11 @@ type ScopeLevel string
 
 // ScopeLevel values.
 const (
-	ScopeLevelProject ScopeLevel = "project"
-	ScopeLevelBranch  ScopeLevel = "branch"
-	ScopeLevelPhase   ScopeLevel = "phase"
-	ScopeLevelTask    ScopeLevel = "task"
-	ScopeLevelSubtask ScopeLevel = "subtask"
+	ScopeLevelProject    ScopeLevel = "project"
+	ScopeLevelBranch     ScopeLevel = "branch"
+	ScopeLevelPhase      ScopeLevel = "phase"
+	ScopeLevelActionItem ScopeLevel = "actionItem"
+	ScopeLevelSubtask    ScopeLevel = "subtask"
 )
 
 // validScopeLevels stores all supported level values.
@@ -22,7 +22,7 @@ var validScopeLevels = []ScopeLevel{
 	ScopeLevelProject,
 	ScopeLevelBranch,
 	ScopeLevelPhase,
-	ScopeLevelTask,
+	ScopeLevelActionItem,
 	ScopeLevelSubtask,
 }
 
@@ -76,9 +76,21 @@ func NewLevelTuple(in LevelTupleInput) (LevelTuple, error) {
 	}, nil
 }
 
-// NormalizeScopeLevel canonicalizes one scope-level value.
+// NormalizeScopeLevel canonicalizes one scope-level value. Inputs are
+// matched case-insensitively against the supported set and returned in
+// their canonical camelCase form (e.g. "actionItem"); unknown values are
+// returned lowercased so callers can still detect invalid inputs.
 func NormalizeScopeLevel(level ScopeLevel) ScopeLevel {
-	return ScopeLevel(strings.TrimSpace(strings.ToLower(string(level))))
+	lowered := strings.TrimSpace(strings.ToLower(string(level)))
+	if lowered == "" {
+		return ""
+	}
+	for _, candidate := range validScopeLevels {
+		if strings.ToLower(string(candidate)) == lowered {
+			return candidate
+		}
+	}
+	return ScopeLevel(lowered)
 }
 
 // IsValidScopeLevel reports whether a scope-level value is supported.
@@ -98,8 +110,8 @@ func ScopeLevelFromKindAppliesTo(scope KindAppliesTo) ScopeLevel {
 		return ScopeLevelPhase
 	case KindAppliesToSubtask:
 		return ScopeLevelSubtask
-	case KindAppliesToTask:
-		return ScopeLevelTask
+	case KindAppliesToActionItem:
+		return ScopeLevelActionItem
 	default:
 		return ""
 	}
@@ -116,8 +128,8 @@ func ScopeLevelFromCapabilityScopeType(scope CapabilityScopeType) ScopeLevel {
 		return ScopeLevelPhase
 	case CapabilityScopeSubtask:
 		return ScopeLevelSubtask
-	case CapabilityScopeTask:
-		return ScopeLevelTask
+	case CapabilityScopeActionItem:
+		return ScopeLevelActionItem
 	default:
 		return ""
 	}
@@ -134,8 +146,8 @@ func (level ScopeLevel) ToCapabilityScopeType() CapabilityScopeType {
 		return CapabilityScopePhase
 	case ScopeLevelSubtask:
 		return CapabilityScopeSubtask
-	case ScopeLevelTask:
-		return CapabilityScopeTask
+	case ScopeLevelActionItem:
+		return CapabilityScopeActionItem
 	default:
 		return ""
 	}
@@ -152,8 +164,8 @@ func (level ScopeLevel) ToKindAppliesTo() KindAppliesTo {
 		return KindAppliesToPhase
 	case ScopeLevelSubtask:
 		return KindAppliesToSubtask
-	case ScopeLevelTask:
-		return KindAppliesToTask
+	case ScopeLevelActionItem:
+		return KindAppliesToActionItem
 	default:
 		return ""
 	}

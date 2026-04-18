@@ -8,9 +8,9 @@ The project/repo name is `tillsyn`, and the runtime command name is `till`.
 `tillsyn` is a local-first multi-actor coordination runtime with TUI, MCP, and CLI surfaces. Planning is only one part of the model: the runtime also carries typed workflow contracts, scoped auth, generated blockers, shared discussion threads, structured handoffs, durable inbox/attention state, and restart-safe recovery.
 A core product purpose is maintaining one DB-backed source of truth for coordination and execution state instead of fragmented markdown files or passive status logs.
 Active tasks, actions, blockers, comments, handoffs, and worklogs should stay in Tillsyn itself rather than in markdown planning files.
-No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit task or subtask at the correct level in Tillsyn.
-If tests, CI, or QA fail, create a new explicit follow-up task or subtask before repair work begins. Tillsyn does not auto-create or force that repair item today, so the orchestrator or human must create it explicitly.
-If additional repair is needed after a task or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one.
+No implementation, cleanup, QA, parity-check, or repair work should happen without an explicit actionItem or subtask at the correct level in Tillsyn.
+If tests, CI, or QA fail, create a new explicit follow-up actionItem or subtask before repair work begins. Tillsyn does not auto-create or force that repair item today, so the orchestrator or human must create it explicitly.
+If additional repair is needed after an actionItem or subtask was already completed, create a new explicit item at that same level instead of silently reusing the completed one.
 
 Current scope:
 - local human + coding-agent coordination workflows in one runtime.
@@ -41,12 +41,12 @@ Local dogfood repo layout note:
 - Raw stdio MCP via `./till mcp` as the primary local MCP transport.
 - Secondary HTTP/API + HTTP MCP serve surface via `./till serve`.
 - Project roots are real filesystem directory mappings; resource attachment is blocked outside the allowed root.
-- Runtime kind-catalog + project allowlist validation for project/task mutations.
+- Runtime kind-catalog + project allowlist validation for project/actionItem mutations.
 - Runtime JSON-schema validation for kind metadata payloads (with compiled-validator caching).
 - Shared-DB `autent` integration for session-first MCP mutation auth.
 - Capability leases retained as secondary local workflow/delegation guards while the auth UX is still being completed.
 - JSON snapshot import/export.
-- Configurable task field visibility.
+- Configurable actionItem field visibility.
 
 ## Active Status (2026-04-12)
 Implemented now:
@@ -62,17 +62,17 @@ Implemented now:
   - and acting-session governance/delegation flows on `till.auth_request` accept `acting_auth_context_id` with the existing `acting_session_id`.
 - Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase navigation, including nested phases.
 - Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase views show immediate children for that level (not full descendant dumps).
-- Task-focused scope renders direct subtasks in the board so `f` on a task opens subtask-level board context.
+- ActionItem-focused scope renders direct subtasks in the board so `f` on an actionItem opens subtask-level board context.
 - Board path context is always visible above columns (`path: project -> ...`) and updates on each `f` drill-down.
-- Board cards now include hierarchy markers in metadata (`[branch|...]` / `[phase|...]`) so branch/phase rows are visually distinct from task rows.
+- Board cards now include hierarchy markers in metadata (`[branch|...]` / `[phase|...]`) so branch/phase rows are visually distinct from actionItem rows.
 - Wide layouts render a right-side notices panel with unresolved attention summary, selected-item context, and recent activity hints.
 - Attention is now the durable inbox substrate for routed coordination:
   - comment mentions for `@dev`, `@builder`, `@qa`, `@orchestrator`, and `@research` materialize as role-targeted attention rows (`@dev` aliases to builder),
   - durable handoffs mirror into stable inbox attention rows for the target role,
   - and project/global notifications now load project-wide unresolved attention instead of only project-root attention.
-- `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
-- Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
-- Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
+- `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused actionItem scope it creates a subtask.
+- Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/actionItem write paths.
+- Project-level `kind` and actionItem-level `scope` persistence are active (`project|branch|phase|actionItem|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
 - Legacy kind-template compatibility paths still exist for create-time defaults and generated work when no template library is selected or when no matching bound node template exists.
 - Locked next-step direction: templates are now intended to evolve into SQLite-backed workflow-and-authority contracts that define generated follow-up work, actor-kind edit/complete permissions, truthful completion gates, `system` audit provenance for generated nodes, and explicit global-to-project adopt/apply flows instead of silent backfill; the current planning contract is tracked in `TEMPLATING_DESIGN_MEMO.md`.
 - Project creation can now optionally bind one approved global template library at create time, so project-scoped template defaults and root generated work start from the template-library model instead of the legacy kind-template path when the operator chooses that path.
@@ -80,7 +80,7 @@ Implemented now:
 - The intended auth model is now explicit:
   - global agent auth is for global catalog admin, template-library admin, and project creation/binding;
   - project-scoped agent auth is for guarded mutations inside that project;
-  - narrower branch/phase/task auth should be used when the runtime can prove that path.
+  - narrower branch/phase/actionItem auth should be used when the runtime can prove that path.
 - Snapshot import/export now preserves template libraries, project bindings, and node-contract snapshots so generated workflow contracts round-trip with the work graph instead of being flattened back to legacy defaults.
 - Current template-library enforcement drop is active for generated nodes:
   - create-child under a generated parent,
@@ -161,7 +161,7 @@ Current auth note:
     - non-orchestrator agents may only inspect/check/revoke the exact same session they are currently using for self-cleanup;
     - do not widen self-cleanup to sibling or descendant session governance;
     - prefer the non-destructive `check_session_governance` operation for negative proof and UI/runtime explanation paths instead of relying on failed destructive revoke attempts;
-    - do not make ordinary task completion implicitly destroy the caller's auth session by default;
+    - do not make ordinary actionItem completion implicitly destroy the caller's auth session by default;
     - if future workflow-specific auto-cleanup exists, keep it opt-in and limited to explicitly ephemeral sessions created for one bounded unit of work.
   - use `till.auth_request(operation=validate_session)` when you already possess the target session secret and need to inspect the resolved session identity/details.
 - Expected scoped-auth workflow:
@@ -175,7 +175,7 @@ Current auth note:
   - do not treat the global-to-project auth split as a runtime bug.
 - Auth hygiene expectations:
   - never use another agent's or user's auth session, session secret, or `auth_context_id`;
-  - never paste auth material into comments, handoffs, task metadata, docs, or external logs;
+  - never paste auth material into comments, handoffs, actionItem metadata, docs, or external logs;
   - always request the narrowest scope and shortest reasonable lifetime for the work being done;
   - orchestrators are responsible for child-session cleanup at the end of a run unless a stricter project/template rule says otherwise;
   - builders, qa, and research agents may clean up only their own sessions and must not govern sibling or broader sessions;
@@ -222,7 +222,7 @@ Current auth note:
     - per-item clear works on routed comment mentions without clearing unrelated handoffs or older mentions in the same role inbox,
     - auth wait wake is proven live through `till.auth_request(operation=claim, wait_timeout=...)`,
     - local cross-process runtime coverage now also proves comment, attention, and handoff waiters wake on the next newer change after the current baseline state,
-    - and the fresh native MCP rerun now also proves live auth wake, routed attention wake, handoff wake, and comment wake on a clean empty task thread.
+    - and the fresh native MCP rerun now also proves live auth wake, routed attention wake, handoff wake, and comment wake on a clean empty actionItem thread.
   - current transport caveat:
     - stdio waitable watcher plumbing is now landed for attention, comments, and handoffs with baseline-aware “next change” semantics,
     - local runtime tests now cover auth plus coordination wake end to end across broker instances,
@@ -258,7 +258,7 @@ Current auth note:
 - Current live-transport caveat: waitable stdio watchers are now landed for auth, attention, comments, and handoffs, but they still depend on an active waiting client. This is not yet a disconnected push-notification system, richer session-aware cleanup layer, or HTTP/continuous-listening transport.
 - Product expectation note: humans and orchestrators are expected to keep active plans current inside Tillsyn itself. When plans change, the corresponding nodes should be updated or archived in Tillsyn so humans and agents are not coordinating against stale markdown drift.
 - Policy-document expectation note:
-  - `AGENTS.md` and any tracked `CLAUDE.md` are durable agent-policy files, not task ledgers.
+  - `AGENTS.md` and any tracked `CLAUDE.md` are durable agent-policy files, not actionItem ledgers.
   - when workflow instructions change, update those files together with bootstrap and instruction-surface guidance so client behavior stays aligned.
   - do not use markdown docs for active worklogs, coordination queues, or execution tracking.
 - Bootstrap/instructions status:
@@ -267,8 +267,8 @@ Current auth note:
   - the current scoped explanation surface already accepts optional `project_id`, `template_library_id`, `kind_id`, and `node_id` plus `focus=project|template|kind|node|topic`.
   - project scope now explains project standards, allowed kinds, template binding, and project-local workflow expectations.
   - template scope now explains node-template descriptions, child rules, responsible actor kinds, blocker rules, and migration/reapply context.
-  - branch/phase/task/subtask scope now explains the concrete node's description plus metadata fields such as objective, implementation notes, acceptance criteria, definition of done, and validation plan, together with any stored node-contract snapshot.
-  - this explanation layer prefers persisted runtime policy sources such as `standards_markdown`, template descriptions, task metadata, project bindings, and node-contract snapshots before falling back to generic embedded docs.
+  - branch/phase/actionItem/subtask scope now explains the concrete node's description plus metadata fields such as objective, implementation notes, acceptance criteria, definition of done, and validation plan, together with any stored node-contract snapshot.
+  - this explanation layer prefers persisted runtime policy sources such as `standards_markdown`, template descriptions, actionItem metadata, project bindings, and node-contract snapshots before falling back to generic embedded docs.
 
 Template-library operator examples:
 - SQLite is the live source of truth. JSON is the stable CLI/MCP transport for template-library reads and writes, while the TUI is the primary human review/approval/editor surface.
@@ -277,7 +277,7 @@ Template-library operator examples:
   - list/show/bind/contract commands render human-readable tables/detail views for auditability instead of raw JSON blobs.
 - TUI surfaces now expose the same contract model without a separate template UI stack:
   - project create/edit includes a project-kind picker and an approved-library picker plus approved-library hints,
-  - task info shows the active project library and any generated-node contract snapshot,
+  - actionItem info shows the active project library and any generated-node contract snapshot,
   - and comments remain shared regardless of template ownership.
 - Template child rules are the contract mechanism:
   - a node template can auto-generate follow-up work,
@@ -289,31 +289,31 @@ Template-library operator examples:
   - a `go-project` auto-generates one project-root `PROJECT SETUP` phase,
   - each `branch` lane auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
   - each generated phase now also includes `PHASE PUSH AND REINGEST CONFIRMATION` so pushed-baseline freshness is explicit before downstream work relies on it,
-  - `build-task`, `refactor-task`, and `dogfood-refactor-task` are first-class default task kinds,
+  - `build-actionItem`, `refactor-actionItem`, and `dogfood-refactor-actionItem` are first-class default actionItem kinds,
   - `refactor-phase` and `dogfood-refactor-phase` are first-class default nested-phase kinds,
-  - `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT PUSH AND REINGEST`,
-  - `refactor-task` adds parity-in-action and metrics capture expectations on top of the normal QA and commit flow,
-  - `dogfood-refactor-task` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
-  - refactor metrics should live in the drop task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
+  - `build-actionItem` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, and `COMMIT PUSH AND REINGEST`,
+  - `refactor-actionItem` adds parity-in-action and metrics capture expectations on top of the normal QA and commit flow,
+  - `dogfood-refactor-actionItem` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
+  - refactor metrics should live in the drop actionItem description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
   - and the fuller lifecycle contract for project setup, branch setup, plan/build/closeout/cleanup, generated QA work, and the initial `TILLSYN` dogfood tree is locked in `TILLSYN_DEFAULT_GO_DOGFOOD_SETUP.md` and shipped from [templates/builtin/default-go.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-go.json).
   - `default-frontend`:
   - a `frontend-project` auto-generates one project-root `PROJECT SETUP` phase,
   - each `branch` lane auto-generates `PLAN`, `BUILD`, `CLOSEOUT`, and `BRANCH CLEANUP`,
   - each generated phase now also includes `PHASE PUSH AND REINGEST CONFIRMATION` so pushed-baseline freshness is explicit before downstream work relies on it,
-  - `build-task`, `refactor-task`, and `dogfood-refactor-task` are first-class default task kinds,
+  - `build-actionItem`, `refactor-actionItem`, and `dogfood-refactor-actionItem` are first-class default actionItem kinds,
   - `refactor-phase` and `dogfood-refactor-phase` are first-class default nested-phase kinds,
-  - `build-task` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, `VISUAL QA`, `ACCESSIBILITY CHECK`, and `COMMIT PUSH AND REINGEST`,
-  - `refactor-task` adds parity-in-action and metrics capture expectations on top of the normal QA, visual, accessibility, and commit flow,
-  - `dogfood-refactor-task` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
-  - refactor metrics should live in the drop task description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
+  - `build-actionItem` auto-generates `QA PROOF REVIEW`, `QA FALSIFICATION REVIEW`, `VISUAL QA`, `ACCESSIBILITY CHECK`, and `COMMIT PUSH AND REINGEST`,
+  - `refactor-actionItem` adds parity-in-action and metrics capture expectations on top of the normal QA, visual, accessibility, and commit flow,
+  - `dogfood-refactor-actionItem` adds mandatory dev-version validation, explicit local used-version confirmation, and metrics capture on top of the normal refactor contract,
+  - refactor metrics should live in the drop actionItem description and parent phase description as well as the orchestrator report artifact, using `git diff` deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings; Tillsyn generates the explicit metrics checkpoints but does not auto-verify every metric field or rollup total today,
   - and the shipped summary plus builtin source are in [TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/TILLSYN_DEFAULT_FRONTEND_TEMPLATE.md) and [templates/builtin/default-frontend.json](/Users/evanschultz/Documents/Code/hylla/tillsyn/main/templates/builtin/default-frontend.json).
   - no work should happen outside explicit tasks or subtasks, and failing tests, CI, or QA should produce a new explicit follow-up item before repair begins; Tillsyn does not auto-create or force that follow-up item today, so the orchestrator or human must do it explicitly.
-  - until richer workflow ordering rules land, task-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete.
+  - until richer workflow ordering rules land, actionItem-level sequencing should still be expressed explicitly with `depends_on`, `blocked_by`, and `blocked_reason` so agents and humans do not start work before prerequisites are complete.
 - Example shape:
-  - a `build-task` template can generate one proof-oriented `qa-check` child, one falsification-oriented `qa-check` child, plus one `commit-and-reingest` child, while a refactor task can add parity/dev-version and metrics children; comments remain the shared coordination lane, and completion blockers still enforce truthful closeout.
+  - a `build-actionItem` template can generate one proof-oriented `qa-check` child, one falsification-oriented `qa-check` child, plus one `commit-and-reingest` child, while a refactor actionItem can add parity/dev-version and metrics children; comments remain the shared coordination lane, and completion blockers still enforce truthful closeout.
 - Shared cross-client named-agent convention:
   - the current runtime still routes work by actor kind such as `orchestrator`, `research`, `builder`, and `qa`,
-  - but template text and docs should explicitly describe the intended named-agent pattern so orchestrators and clients do not forget which style of agent belongs to which task:
+  - but template text and docs should explicitly describe the intended named-agent pattern so orchestrators and clients do not forget which style of agent belongs to which actionItem:
     - `orchestration-agent`
     - `planning-agent`
     - `research-agent`
@@ -358,7 +358,7 @@ Template-library operator examples:
   - `till template builtin status --library-id default-frontend`
   - `till template builtin ensure --library-id default-frontend`
   - `till template library show --library-id go-defaults`
-  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-task","scope_level":"task","node_kind_id":"build-task","display_name":"Build Task","child_rules":[{"id":"qa-proof-review","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA PROOF REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-falsification-review","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA FALSIFICATION REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
+  - `till template library upsert --spec-json '{"id":"go-defaults","scope":"global","name":"Go Defaults","status":"approved","node_templates":[{"id":"tmpl-build-actionItem","scope_level":"actionItem","node_kind_id":"build-actionItem","display_name":"Build ActionItem","child_rules":[{"id":"qa-proof-review","position":1,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA PROOF REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true},{"id":"qa-falsification-review","position":2,"child_scope_level":"subtask","child_kind_id":"qa-check","title_template":"QA FALSIFICATION REVIEW","responsible_actor_kind":"qa","editable_by_actor_kinds":["qa"],"completable_by_actor_kinds":["qa","human"],"required_for_parent_done":true}]}]}'`
   - `till template project bind --project-id <project-id> --library-id go-defaults`
   - `till template project binding --project-id <project-id>`
   - `till template project preview --project-id <project-id>`
@@ -375,9 +375,9 @@ Template-library operator examples:
   - template-library workflow contracts should be created and inspected through `till template`, the TUI project form, or MCP JSON transport instead of the legacy kind-template seam.
 - Documentation expectations:
   - keep README workflow examples aligned with the actor kinds and generated blocker rules that Tillsyn actually enforces.
-  - keep at least one canonical example that shows multi-child gatekeeping such as a build task that auto-generates multiple QA subtasks.
+  - keep at least one canonical example that shows multi-child gatekeeping such as a build actionItem that auto-generates multiple QA subtasks.
   - keep the docs explicit that no implementation, cleanup, QA, parity-check, or repair work should happen outside explicit tasks or subtasks.
-  - keep the docs explicit that failing tests, CI, or QA require a new follow-up task or subtask before repair work starts, and say plainly that Tillsyn does not auto-create that repair item today.
+  - keep the docs explicit that failing tests, CI, or QA require a new follow-up actionItem or subtask before repair work starts, and say plainly that Tillsyn does not auto-create that repair item today.
   - keep the docs explicit that phase-level push-and-reingest confirmation is part of the shipped default workflow and that refactor and dogfood-refactor kinds carry metrics expectations, while also saying the runtime does not auto-verify every metric field or rollup total today.
   - keep examples readable enough for humans to audit quickly in the TUI and CLI; template contracts should clarify ownership and completion gates instead of hiding them in large markdown files.
   - keep the docs explicit that comments are the durable shared communication layer inside Tillsyn, which is a core value-add over external markdown plans for human-to-agent and agent-to-agent coordination.
@@ -390,7 +390,7 @@ Instruction-tool usage guidance:
 - Keep active execution state in Tillsyn itself; markdown docs are for durable policy/documentation, not live coordination or worklogs.
 - When agent workflow policy changes, update `AGENTS.md`, any tracked `CLAUDE.md`, and the bootstrap/instructions docs together.
 - Use `focus=project|template|kind|node` with `project_id`, `template_library_id`, `kind_id`, or `node_id` when you need scoped rules for a real runtime object instead of generic doc guidance.
-- For task sequencing today, use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite order and keep downstream work from starting too early; visual reordering can remain a later enhancement but should not replace explicit dependency intent.
+- For actionItem sequencing today, use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite order and keep downstream work from starting too early; visual reordering can remain a later enhancement but should not replace explicit dependency intent.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
@@ -398,12 +398,12 @@ Roadmap-only in the active wave (explicitly deferred):
 - template-library authoring/approval/binding UX, richer actor-kind-aware template-policy surfaces, stronger truthful-completion surfacing, durable wait/recovery UX, broader template-library expansion, broader session-aware MCP wait/notify reuse for comments and handoffs, richer human+agent search/filtering (keyword/path/vector/hybrid with deduped provenance-aware results), and HTTP/continuous-listening support for a later wave.
 
 After the current active drops close, run one cleanup/refinement wave focused on real dogfood usage:
-- clean/refresh the local dogfood DB and create the canonical `tillsyn` project/task tree that will be used for real collaborative dogfooding.
-- during that dogfood wave, test task sequencing explicitly with `depends_on`, `blocked_by`, and `blocked_reason`, then discuss whether CLI/MCP/TUI should also gain first-class visual reordering semantics in addition to dependency-driven ordering.
+- clean/refresh the local dogfood DB and create the canonical `tillsyn` project/actionItem tree that will be used for real collaborative dogfooding.
+- during that dogfood wave, test actionItem sequencing explicitly with `depends_on`, `blocked_by`, and `blocked_reason`, then discuss whether CLI/MCP/TUI should also gain first-class visual reordering semantics in addition to dependency-driven ordering.
 - add intuitive non-JSON TUI/operator surfaces for viewing and editing workflow rules and template policy:
   - global template rules,
   - project-scoped rules,
-  - branch/phase/task/subtask rule overlays,
+  - branch/phase/actionItem/subtask rule overlays,
   - and the effective inherited rule view for one concrete node.
 - add a dedicated project view mode alongside project edit mode so humans can inspect project metadata, template binding, and drift/update state without dropping straight into an editor.
 - in that later TUI pass, surface project template drift/update visibility in project view as well as project edit so update-available state is obvious without opening the edit workflow.
@@ -415,7 +415,7 @@ After the current active drops close, run one cleanup/refinement wave focused on
 - add an explicit TUI action for builtin template refresh:
   - today the operator can see `shipped update available`, but there is no direct TUI action in project edit or the template-library picker to run builtin ensure/refresh,
   - add one visible `ensure builtin` action from the relevant template surfaces so operators do not have to drop to MCP/CLI just to refresh the installed builtin template row.
-- when the canonical `tillsyn` dogfood project/task tree is loaded into the DB, include one explicit TUI follow-up task to replace project-edit `root_path` free typing with the existing directory-picker flow so the field uses the same picker component instead of manual path entry.
+- when the canonical `tillsyn` dogfood project/actionItem tree is loaded into the DB, include one explicit TUI follow-up actionItem to replace project-edit `root_path` free typing with the existing directory-picker flow so the field uses the same picker component instead of manual path entry.
 - design and implement composable template layering rather than one flat template choice:
   - one project should be able to inherit general `go` rules plus a narrower layer such as `go cli/tui`, `go backend`, or `go wasm`,
   - child template layers should be able to override or extend parent defaults instead of forcing duplicated whole-template copies,
@@ -432,8 +432,8 @@ After the current active drops close, run one cleanup/refinement wave focused on
 - add per-actor mention routing and rename the human mention target:
   - routed mentions must support specific agents of the same role (for example multiple QA or builder agents) instead of only broad role buckets,
   - the human/operator mention target should be `@user`, not `@human`,
-  - and the canonical `tillsyn` dogfood project/task tree should include explicit tasks to validate role-vs-actor-specific mention routing and notification behavior.
-- during real dogfood setup, explicitly re-check and, when needed, update the active project template binding before loading the project task tree so the project does not quietly continue on an older template contract.
+  - and the canonical `tillsyn` dogfood project/actionItem tree should include explicit tasks to validate role-vs-actor-specific mention routing and notification behavior.
+- during real dogfood setup, explicitly re-check and, when needed, update the active project template binding before loading the project actionItem tree so the project does not quietly continue on an older template contract.
 - fix the fresh-DB onboarding gap before or during real dogfood:
   - after a clean DB reset, the TUI project form currently only shows generic built-in kinds and no template libraries,
   - `go-project` and `default-go` do not appear until the custom template kinds are created and builtin `default-go` is explicitly ensured into the DB,
@@ -484,7 +484,7 @@ This section exists because the most common framing mistake — describing Tills
 **What Tillsyn is** — a multi-actor coordination runtime with:
 
 1. A **role model** with distinct semantics per role (`orchestrator`, `builder` / `@dev`, `qa`, `research`, `human`). When you write a skill or subagent, **name the role that owns each step.** "The agent does X" is a smell. QA is two distinct asymmetric passes — `QA PROOF REVIEW` and `QA FALSIFICATION REVIEW` — and the asymmetry is the point; falsification needs fresh context (no parent hindsight bias) and is best run as an isolated subagent.
-2. A **template + child_rules engine** that auto-generates required gates as real blockers. A `build-task` from `default-go` auto-generates QA subtasks owned by `qa`. Treat them as real gates — they block parent completion, they are owned by `qa` not whichever agent is active, and a builder who closes their own QA subtask is bypassing the gate, not satisfying it.
+2. A **template + child_rules engine** that auto-generates required gates as real blockers. A `build-actionItem` from `default-go` auto-generates QA subtasks owned by `qa`. Treat them as real gates — they block parent completion, they are owned by `qa` not whichever agent is active, and a builder who closes their own QA subtask is bypassing the gate, not satisfying it.
 3. **Three coordination surfaces** with distinct semantics that should not be flattened — `till.comment` (shared append-only thread lane; routed `@`-mentions land in `Comments` inbox, **not** `Action Required`), `till.handoff` (structured next-action lane; open handoffs addressed to the viewer **are** `Action Required`), `till.attention_item` (durable inbox substrate underneath both). A flow that only uses comments loses structured Action Required signal; a flow that only uses handoffs loses the discussion lane; you need all three.
 4. **Scoped auth** with delegated child sessions — global-scoped for template/global admin, project-scoped for in-project mutations, delegated child sessions (via `till.auth_request(operation=create, acting_session_id=..., acting_auth_context_id=...)`) for bounded role handoffs. **Never reuse another agent's auth session** — it conflates audit trails and leaks authority across roles.
 5. **Explicit restart recovery** — after restart, recover in order: `till.capture_state` → `till.attention_item(operation=list, all_scopes=true)` → `till.handoff(operation=list)` → `till.comment(operation=list)` for any thread to resume. Do not reconstruct state from worklogs.
@@ -505,7 +505,7 @@ This section exists because the most common framing mistake — describing Tills
 
 **Common anti-patterns to avoid:**
 
-- **Flattening roles to "the agent."** Skills that say "the agent creates a build-task and then the agent does QA on it" miss the entire role model. QA must be a different role than builder; the falsification pass must be a different context than the proof pass.
+- **Flattening roles to "the agent."** Skills that say "the agent creates a build-actionItem and then the agent does QA on it" miss the entire role model. QA must be a different role than builder; the falsification pass must be a different context than the proof pass.
 - **Treating comments as Action Required.** Routed `@`-mentions in comments belong in a Comments inbox section. Open handoffs belong in Action Required. Merging them produces noise humans learn to ignore.
 - **Hand-rolling QA gates instead of using template `child_rules`.** If the template would have generated QA subtasks, generating ad-hoc ones manually means QA can be silently skipped — the runtime does not know they exist.
 - **Reusing one agent's auth session for another role.** Breaks the audit trail and the role model in a single move.
@@ -524,7 +524,7 @@ Tillsyn's recommended response shape opens every substantive response with a `# 
 
 ### The Paper's Shape
 
-The paper equips an agent with a structured reasoning template that renders a *semi-formal certificate* as the agent's final response. Per-task templates share a consistent skeleton — **Definitions** (symbols used) / **Premises** (what must hold) / **Cases** (per-case analysis with execution trace) / **Counterexample** (if the conclusion fails) / **Conclusion** (the claim the certificate supports). Paper Figure 1 shows the certificate rendered in full as the agent's output, not hidden behind a summary. Key finding: on RubberDuckBench patch equivalence, structured certificates lift accuracy from **78.2% baseline to 88.8%** — roughly half the remaining errors removed by forcing explicit per-case reasoning. Similar lifts appear on Defects4J fault localization (+9–12 pp).
+The paper equips an agent with a structured reasoning template that renders a *semi-formal certificate* as the agent's final response. Per-actionItem templates share a consistent skeleton — **Definitions** (symbols used) / **Premises** (what must hold) / **Cases** (per-case analysis with execution trace) / **Counterexample** (if the conclusion fails) / **Conclusion** (the claim the certificate supports). Paper Figure 1 shows the certificate rendered in full as the agent's output, not hidden behind a summary. Key finding: on RubberDuckBench patch equivalence, structured certificates lift accuracy from **78.2% baseline to 88.8%** — roughly half the remaining errors removed by forcing explicit per-case reasoning. Similar lifts appear on Defects4J fault localization (+9–12 pp).
 
 The paper also names the residual failure mode this design does *not* solve, §4.3:
 
@@ -547,10 +547,10 @@ That single-writer self-certification gap is the primary motivation for our mult
 - **Ours:** Section 0 is a reasoning pre-block; the user-facing answer renders as a numbered body below it, with stable item IDs (`1.2`, `T2`) the dev can reply to.
 - **Why best for Tillsyn:** Our downstream consumer is a human dev + a coordination runtime, not an automated judge. The dev wants to skim an addressable answer at the top and drill into reasoning only when needed. Keeping the two lanes separate preserves reply-addressability and reduces scan cost on every turn. Tradeoff accepted: slightly more vertical space per response.
 
-**2. General 5-field scaffold vs paper's task-specific templates.**
-- **Paper:** Each benchmark task has its own template — patch equivalence has "program-state cases"; fault localization has localization-specific fields.
-- **Ours:** One scaffold — Premises / Evidence / Trace or cases / Conclusion / Unknowns — for every task: build, QA, planning, architecture decisions, docs changes, research writeups.
-- **Why best for Tillsyn:** Tillsyn's workload is broader than any single benchmark. A single coordination-runtime session mixes planning, implementation, QA, docs, and meta-discussion. Shipping a new template per task class would balloon the rule surface and fragment agent training. Generalizing to one shape gives a single teachable, enforceable scaffold. Tradeoff accepted: loses some of the paper's task-specific rigor (e.g., patch equivalence's mechanical "what if input X triggers early return?" cases) in exchange for universal applicability.
+**2. General 5-field scaffold vs paper's actionItem-specific templates.**
+- **Paper:** Each benchmark actionItem has its own template — patch equivalence has "program-state cases"; fault localization has localization-specific fields.
+- **Ours:** One scaffold — Premises / Evidence / Trace or cases / Conclusion / Unknowns — for every actionItem: build, QA, planning, architecture decisions, docs changes, research writeups.
+- **Why best for Tillsyn:** Tillsyn's workload is broader than any single benchmark. A single coordination-runtime session mixes planning, implementation, QA, docs, and meta-discussion. Shipping a new template per actionItem class would balloon the rule surface and fragment agent training. Generalizing to one shape gives a single teachable, enforceable scaffold. Tradeoff accepted: loses some of the paper's actionItem-specific rigor (e.g., patch equivalence's mechanical "what if input X triggers early return?" cases) in exchange for universal applicability.
 
 **3. Explicit Evidence field vs paper's evidence-in-cases.**
 - **Paper:** Evidence is woven inline into the per-case trace — "Case 1: if `x=0`, function returns early because of line 42 in `foo()`" — evidence is embedded in the case reasoning.
@@ -564,7 +564,7 @@ That single-writer self-certification gap is the primary motivation for our mult
 - **Where the gate lives at every level:** All 8 subagent definition files at `~/.claude/agents/{go,fe}-{builder,planning,qa-proof,qa-falsification}-agent.md` carry `## Convergence` as the fourth pass of their 4-pass Option C scaffold. Convergence is load-bearing at every level of the nest — orchestrator and subagent both declare it. The Planner+Builder merge (what distinguishes Option C from Option A) is the only structural reduction for subagents; Convergence is never dropped.
 
 **5. Trivial-answer carve-out.**
-- **Paper:** Applies the scaffold to every task in its benchmarks. The benchmarks are non-trivial by construction — patch-equivalence judgments, fault localizations, debugging decisions.
+- **Paper:** Applies the scaffold to every actionItem in its benchmarks. The benchmarks are non-trivial by construction — patch-equivalence judgments, fault localizations, debugging decisions.
 - **Ours:** Skip BOTH Section 0 AND the numbered body for one-line factual lookups, terse confirmations, yes/no answers. The answer is just the answer.
 - **Why best for Tillsyn:** Real-world sessions mix substantive work with trivial asks — "what's the commit hash?", "is CI green?", "approved". Scaffolding every trivial ask is ceremony tax — the dev can't find the answer inside empty reasoning, and the reasoning is empty because there's nothing to reason about. The paper's workload is 100% substantive by design; ours isn't. Tradeoff accepted: judgment call on where the trivial/substantive boundary is — default to scaffold when ambiguous.
 
@@ -717,7 +717,7 @@ Path resolution controls:
   - use this before interpreting missing templates, missing kinds, or binding drift if both stable and dev runtimes may exist on the machine
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
-- task resource attachments require a configured per-project root mapping (`project_roots`)
+- actionItem resource attachments require a configured per-project root mapping (`project_roots`)
 - dev mode logging writes to the repo-local dev runtime `logs/` directory when `logging.dev_file.enabled = true`
   - explicit relative dev log dir overrides are still anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
@@ -766,12 +766,12 @@ Full template: `config.example.toml`
 
 ## Key Controls
 - `h/l` or `←/→`: move column
-- `j/k` or `↓/↑`: move task
-- `n`: new task
-- `e`: edit task
-- `i` or `enter`: task info modal
-- `c` (in task info): open thread for the selected work item
-- `d` (in new-task due field): open due-date picker (`enter`/`e` in edit-task due field)
+- `j/k` or `↓/↑`: move actionItem
+- `n`: new actionItem
+- `e`: edit actionItem
+- `i` or `enter`: actionItem info modal
+- `c` (in actionItem info): open thread for the selected work item
+- `d` (in new-actionItem due field): open due-date picker (`enter`/`e` in edit-actionItem due field)
 - `f`: focus selected subtree (including empty scopes)
 - `F`: return to full board
 - `p`: project picker
@@ -780,9 +780,9 @@ Full template: `config.example.toml`
 - `/`: search
 - `d`: delete using configured default mode
 - `.`: open quick actions (archive/restore and context actions)
-- `a`: archive task
-- `D`: hard delete task
-- `u`: restore task
+- `a`: archive actionItem
+- `D`: hard delete actionItem
+- `u`: restore actionItem
 - `t`: toggle archived visibility
 - `ctrl+y`: toggle text-selection mode (copy-friendly mouse selection)
 - `?`: toggle expanded help
@@ -796,8 +796,8 @@ Command palette highlights:
 
 ## Thread Mode
 - Open project thread from command palette with `thread-project` (`project-thread` alias).
-- Open selected work-item thread with `thread-item` (`item-thread` / `task-thread` aliases), or `c` from task info.
-- Supported thread targets: project, task, subtask, phase, decision, and note.
+- Open selected work-item thread with `thread-item` (`item-thread` / `actionItem-thread` aliases), or `c` from actionItem info.
+- Supported thread targets: project, actionItem, subtask, phase, decision, and note.
 - New comments use configured identity defaults and should render readable actor names when available.
 
 ## Fang Context

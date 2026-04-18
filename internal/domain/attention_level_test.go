@@ -40,7 +40,7 @@ func TestNewLevelTuplePhaseSupport(t *testing.T) {
 
 	if _, err := NewLevelTuple(LevelTupleInput{
 		ProjectID: "p1",
-		ScopeType: ScopeLevelTask,
+		ScopeType: ScopeLevelActionItem,
 	}); !errors.Is(err, ErrInvalidScopeID) {
 		t.Fatalf("expected ErrInvalidScopeID, got %v", err)
 	}
@@ -71,7 +71,7 @@ func TestAttentionItemLifecycleAndBlocking(t *testing.T) {
 	item, err := NewAttentionItem(AttentionItemInput{
 		ID:                 "attn-1",
 		ProjectID:          "p1",
-		ScopeType:          ScopeLevelTask,
+		ScopeType:          ScopeLevelActionItem,
 		ScopeID:            "t1",
 		Kind:               AttentionKindBlocker,
 		Summary:            "need user decision",
@@ -105,7 +105,7 @@ func TestNormalizeAttentionListFilter(t *testing.T) {
 	requiresUserAction := true
 	filter, err := NormalizeAttentionListFilter(AttentionListFilter{
 		ProjectID:          " p1 ",
-		ScopeType:          ScopeLevelTask,
+		ScopeType:          ScopeLevelActionItem,
 		ScopeID:            " t1 ",
 		UnresolvedOnly:     true,
 		States:             []AttentionState{AttentionStateOpen, AttentionState(" OPEN "), AttentionStateResolved},

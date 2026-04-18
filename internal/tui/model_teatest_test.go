@@ -17,19 +17,19 @@ func TestModelWithTeatest(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "First task",
+		Title:     "First actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
 
 	m := NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c1},
-		[]domain.Task{task},
+		[]domain.ActionItem{actionItem},
 	))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 35))
 	t.Cleanup(func() {
@@ -37,7 +37,7 @@ func TestModelWithTeatest(t *testing.T) {
 	})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return strings.Contains(string(out), "First task")
+		return strings.Contains(string(out), "First actionItem")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
 	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
@@ -91,12 +91,12 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c1.ID,
 		Position:    0,
-		Title:       "Golden board task",
+		Title:       "Golden board actionItem",
 		Description: "golden description",
 		Priority:    domain.PriorityMedium,
 		Labels:      []string{"alpha", "beta"},
@@ -105,7 +105,7 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 	m := NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c1},
-		[]domain.Task{task},
+		[]domain.ActionItem{actionItem},
 	))
 	ready := loadReadyModel(t, m)
 	ready = applyMsg(t, ready, tea.WindowSizeMsg{Width: 96, Height: 28})
@@ -118,19 +118,19 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Help Golden Task",
+		Title:     "Help Golden ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
 
 	m := NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c1},
-		[]domain.Task{task},
+		[]domain.ActionItem{actionItem},
 	))
 	ready := loadReadyModel(t, m)
 	ready = applyMsg(t, ready, tea.WindowSizeMsg{Width: 96, Height: 28})
@@ -144,40 +144,40 @@ func TestModelGoldenEmbeddingsStatusOutput(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 45, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
-		Title:     "Embeddings status task",
+		Title:     "Embeddings status actionItem",
 		Kind:      domain.WorkKind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Priority:  domain.PriorityLow,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
-		ParentID:  task.ID,
+		ParentID:  actionItem.ID,
 		Position:  1,
-		Title:     "Embeddings status thread task",
+		Title:     "Embeddings status thread actionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
 	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  p.ID,
-		TargetType: domain.CommentTargetTypeTask,
+		TargetType: domain.CommentTargetTypeActionItem,
 		TargetID:   child.ID,
 	})
 
 	svc := newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c1},
-		[]domain.Task{task, child},
+		[]domain.ActionItem{actionItem, child},
 	)
 	svc.embeddingRows = []app.EmbeddingRecord{
 		{
 			SubjectType: app.EmbeddingSubjectTypeWorkItem,
-			SubjectID:   task.ID,
+			SubjectID:   actionItem.ID,
 			ProjectID:   p.ID,
 			Status:      app.EmbeddingLifecycleReady,
 		},
@@ -206,7 +206,7 @@ func TestModelGoldenSearchResultsEmptyOutput(t *testing.T) {
 	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p-search-empty", "Search Empty", "", now)
 	c1, _ := domain.NewColumn("c-search-empty", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-search-empty",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -218,7 +218,7 @@ func TestModelGoldenSearchResultsEmptyOutput(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c1},
-		[]domain.Task{task},
+		[]domain.ActionItem{actionItem},
 	)))
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 96, Height: 28})
 	m = applyMsg(t, m, keyRune('/'))
@@ -235,7 +235,7 @@ func TestModelWithTeatestWIPWarning(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -243,7 +243,7 @@ func TestModelWithTeatestWIPWarning(t *testing.T) {
 		Title:     "First",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -255,7 +255,7 @@ func TestModelWithTeatestWIPWarning(t *testing.T) {
 	m := NewModel(newFakeService(
 		[]domain.Project{p},
 		[]domain.Column{c1},
-		[]domain.Task{t1, t2},
+		[]domain.ActionItem{t1, t2},
 	), WithBoardConfig(BoardConfig{
 		ShowWIPWarnings: true,
 		GroupBy:         "none",

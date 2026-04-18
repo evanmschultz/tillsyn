@@ -104,7 +104,7 @@ type CaptureStateWorkOverview struct {
 type CaptureStateFollowUpPointers struct {
 	ListAttentionItems      string `json:"list_attention_items"`
 	ListProjectChangeEvents string `json:"list_project_change_events"`
-	ListChildTasks          string `json:"list_child_tasks,omitempty"`
+	ListChildActionItems    string `json:"list_child_tasks,omitempty"`
 }
 
 // RaiseAttentionItem creates one scoped attention item with capability-guard enforcement.
@@ -250,7 +250,7 @@ func (s *Service) CaptureState(ctx context.Context, in CaptureStateInput) (Captu
 		return CaptureStateSummary{}, err
 	}
 
-	tasks, err := s.repo.ListTasks(ctx, level.ProjectID, true)
+	tasks, err := s.repo.ListActionItems(ctx, level.ProjectID, true)
 	if err != nil {
 		return CaptureStateSummary{}, err
 	}
@@ -265,21 +265,21 @@ func (s *Service) CaptureState(ctx context.Context, in CaptureStateInput) (Captu
 		FollowUpPointers: CaptureStateFollowUpPointers{
 			ListAttentionItems:      fmt.Sprintf("till.attention_item(operation=list,project_id=%q,scope_type=%q,scope_id=%q,state=%q)", level.ProjectID, level.ScopeType, level.ScopeID, "open"),
 			ListProjectChangeEvents: fmt.Sprintf("till.project(operation=list_change_events,project_id=%q,limit=25)", level.ProjectID),
-			ListChildTasks:          fmt.Sprintf("till.action_item(operation=list,project_id=%q,parent_id=%q,include_archived=false)", level.ProjectID, level.ScopeID),
+			ListChildActionItems:    fmt.Sprintf("till.action_item(operation=list,project_id=%q,parent_id=%q,include_archived=false)", level.ProjectID, level.ScopeID),
 		},
 	}, nil
 }
 
-// ensureTaskCompletionAttentionClear blocks completion when unresolved blocking attention exists.
-func (s *Service) ensureTaskCompletionAttentionClear(ctx context.Context, task domain.Task) error {
-	scopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+// ensureActionItemCompletionAttentionClear blocks completion when unresolved blocking attention exists.
+func (s *Service) ensureActionItemCompletionAttentionClear(ctx context.Context, actionItem domain.ActionItem) error {
+	scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
 	if scopeType == "" {
-		scopeType = domain.ScopeLevelTask
+		scopeType = domain.ScopeLevelActionItem
 	}
 	attention, err := s.repo.ListAttentionItems(ctx, domain.AttentionListFilter{
-		ProjectID:      task.ProjectID,
+		ProjectID:      actionItem.ProjectID,
 		ScopeType:      scopeType,
-		ScopeID:        task.ID,
+		ScopeID:        actionItem.ID,
 		UnresolvedOnly: true,
 	})
 	if err != nil {
@@ -339,37 +339,37 @@ func buildCaptureStateAttentionOverview(items []domain.AttentionItem) CaptureSta
 }
 
 // buildCaptureStateWorkOverview computes compact work aggregates for a project scope.
-func buildCaptureStateWorkOverview(level domain.LevelTuple, tasks []domain.Task) CaptureStateWorkOverview {
+func buildCaptureStateWorkOverview(level domain.LevelTuple, tasks []domain.ActionItem) CaptureStateWorkOverview {
 	out := CaptureStateWorkOverview{
 		TotalItems:  len(tasks),
 		FocusItemID: level.ScopeID,
 	}
-	for _, task := range tasks {
-		if task.ArchivedAt == nil {
+	for _, actionItem := range tasks {
+		if actionItem.ArchivedAt == nil {
 			out.ActiveItems++
 		}
-		if task.LifecycleState == domain.StateProgress {
+		if actionItem.LifecycleState == domain.StateProgress {
 			out.InProgressItems++
 		}
-		if task.LifecycleState == domain.StateDone {
+		if actionItem.LifecycleState == domain.StateDone {
 			out.DoneItems++
 		}
-		if task.LifecycleState == domain.StateFailed {
+		if actionItem.LifecycleState == domain.StateFailed {
 			out.FailedItems++
 		}
-		if len(task.Metadata.BlockedBy) > 0 || strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+		if len(actionItem.Metadata.BlockedBy) > 0 || strings.TrimSpace(actionItem.Metadata.BlockedReason) != "" {
 			out.BlockedItems++
 		}
 		if level.ScopeType == domain.ScopeLevelProject {
 			continue
 		}
-		if task.ParentID != level.ScopeID {
+		if actionItem.ParentID != level.ScopeID {
 			continue
 		}
-		if task.ArchivedAt != nil {
+		if actionItem.ArchivedAt != nil {
 			continue
 		}
-		if task.LifecycleState != domain.StateDone {
+		if actionItem.LifecycleState != domain.StateDone {
 			out.OpenChildItems++
 		}
 	}

@@ -51,7 +51,7 @@ func (m Model) renderDescriptionEditorModeView() tea.View {
 	if m.descriptionEditorMode == descriptionEditorViewModePreview {
 		subtitle = "mode: preview"
 	}
-	boxWidth := taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
+	boxWidth := actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
 	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, title, subtitle, "")
 	layout := m.descriptionEditorLayout()
 	workspace := ""
@@ -114,7 +114,7 @@ func (m Model) descriptionEditorLayout() descriptionEditorLayoutMetrics {
 	if m.descriptionEditorMode == descriptionEditorViewModePreview {
 		subtitle = "mode: preview"
 	}
-	boxWidth := taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
+	boxWidth := actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
 	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, title, subtitle, "")
 	layoutWidth := max(20, metrics.contentWidth)
 	workspaceHeight := max(10, metrics.bodyHeight)
@@ -181,10 +181,10 @@ func (m Model) descriptionEditorFrameText(lineWidth int) descriptionEditorFrame 
 // descriptionEditorFooterHint returns bottom-hint text for description editor submodes.
 func (m Model) descriptionEditorFooterHint() string {
 	saveVerb := "save"
-	if m.descriptionEditorBack == modeEditTask &&
-		(m.descriptionEditorTarget == descriptionEditorTargetTask || m.descriptionEditorTarget == descriptionEditorTargetTaskFormField) {
-		saveVerb = "save task"
-	} else if m.descriptionEditorBack == modeAddTask {
+	if m.descriptionEditorBack == modeEditActionItem &&
+		(m.descriptionEditorTarget == descriptionEditorTargetActionItem || m.descriptionEditorTarget == descriptionEditorTargetActionItemFormField) {
+		saveVerb = "save actionItem"
+	} else if m.descriptionEditorBack == modeAddActionItem {
 		saveVerb = "apply field"
 	}
 	if m.descriptionEditorMode == descriptionEditorViewModePreview {
@@ -199,8 +199,8 @@ func (m Model) descriptionEditorPathLabel() string {
 		return path
 	}
 	switch m.descriptionEditorTarget {
-	case descriptionEditorTargetTask:
-		return m.descriptionEditorPathForTaskForm()
+	case descriptionEditorTargetActionItem:
+		return m.descriptionEditorPathForActionItemForm()
 	case descriptionEditorTargetProject:
 		return m.descriptionEditorPathForProjectForm()
 	case descriptionEditorTargetThread:
@@ -278,20 +278,20 @@ func (m *Model) resetDescriptionPreviewToTop() {
 	m.descriptionPreview.SetYOffset(0)
 }
 
-// descriptionEditorPathForTaskForm returns a project-rooted path label for task-form description editing.
-func (m Model) descriptionEditorPathForTaskForm() string {
-	if taskID := strings.TrimSpace(m.editingTaskID); taskID != "" {
-		if task, ok := m.taskByID(taskID); ok {
-			return m.descriptionEditorTaskPath(task)
+// descriptionEditorPathForActionItemForm returns a project-rooted path label for actionItem-form description editing.
+func (m Model) descriptionEditorPathForActionItemForm() string {
+	if actionItemID := strings.TrimSpace(m.editingActionItemID); actionItemID != "" {
+		if actionItem, ok := m.actionItemByID(actionItemID); ok {
+			return m.descriptionEditorActionItemPath(actionItem)
 		}
 	}
-	kind := strings.TrimSpace(string(m.taskFormKind))
+	kind := strings.TrimSpace(string(m.actionItemFormKind))
 	if kind == "" {
-		kind = string(domain.WorkKindTask)
+		kind = string(domain.WorkKindActionItem)
 	}
-	if parentID := strings.TrimSpace(m.taskFormParentID); parentID != "" {
-		if parent, ok := m.taskByID(parentID); ok {
-			return m.descriptionEditorTaskPath(parent) + " -> " + fmt.Sprintf("(new %s)", kind)
+	if parentID := strings.TrimSpace(m.actionItemFormParentID); parentID != "" {
+		if parent, ok := m.actionItemByID(parentID); ok {
+			return m.descriptionEditorActionItemPath(parent) + " -> " + fmt.Sprintf("(new %s)", kind)
 		}
 		return m.descriptionEditorProjectLabel("") + " -> " + parentID + " -> " + fmt.Sprintf("(new %s)", kind)
 	}
@@ -318,8 +318,8 @@ func (m Model) descriptionEditorPathForThreadTarget() string {
 		return projectLabel
 	}
 	if targetID != "" {
-		if task, ok := m.taskByID(targetID); ok {
-			return m.descriptionEditorTaskPath(task)
+		if actionItem, ok := m.actionItemByID(targetID); ok {
+			return m.descriptionEditorActionItemPath(actionItem)
 		}
 	}
 	typeLabel := strings.TrimSpace(string(target.TargetType))
@@ -358,16 +358,16 @@ func (m Model) descriptionEditorProjectLabel(projectID string) string {
 	return "(project)"
 }
 
-// descriptionEditorTaskPath renders a project-rooted hierarchy path for one task.
-func (m Model) descriptionEditorTaskPath(task domain.Task) string {
-	chain := []string{fallbackText(strings.TrimSpace(task.Title), "(untitled)")}
-	visited := map[string]struct{}{task.ID: {}}
-	parentID := strings.TrimSpace(task.ParentID)
+// descriptionEditorActionItemPath renders a project-rooted hierarchy path for one actionItem.
+func (m Model) descriptionEditorActionItemPath(actionItem domain.ActionItem) string {
+	chain := []string{fallbackText(strings.TrimSpace(actionItem.Title), "(untitled)")}
+	visited := map[string]struct{}{actionItem.ID: {}}
+	parentID := strings.TrimSpace(actionItem.ParentID)
 	for parentID != "" {
 		if _, seen := visited[parentID]; seen {
 			break
 		}
-		parent, ok := m.taskByID(parentID)
+		parent, ok := m.actionItemByID(parentID)
 		if !ok {
 			break
 		}
@@ -378,6 +378,6 @@ func (m Model) descriptionEditorTaskPath(task domain.Task) string {
 	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
 		chain[left], chain[right] = chain[right], chain[left]
 	}
-	chain = append([]string{m.descriptionEditorProjectLabel(task.ProjectID)}, chain...)
+	chain = append([]string{m.descriptionEditorProjectLabel(actionItem.ProjectID)}, chain...)
 	return strings.Join(chain, " -> ")
 }

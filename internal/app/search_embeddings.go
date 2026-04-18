@@ -128,7 +128,7 @@ func commentTargetEmbeddingSearchTarget(target domain.CommentTarget) (EmbeddingS
 }
 
 // buildWorkItemEmbeddingContent produces canonical searchable text for one work item.
-func buildWorkItemEmbeddingContent(task domain.Task) string {
+func buildWorkItemEmbeddingContent(actionItem domain.ActionItem) string {
 	parts := make([]string, 0, 10)
 	appendIfPresent := func(value string) {
 		value = strings.TrimSpace(value)
@@ -137,21 +137,21 @@ func buildWorkItemEmbeddingContent(task domain.Task) string {
 		}
 		parts = append(parts, value)
 	}
-	appendIfPresent(task.Title)
-	appendIfPresent(task.Description)
-	if len(task.Labels) > 0 {
-		appendIfPresent(strings.Join(task.Labels, ", "))
+	appendIfPresent(actionItem.Title)
+	appendIfPresent(actionItem.Description)
+	if len(actionItem.Labels) > 0 {
+		appendIfPresent(strings.Join(actionItem.Labels, ", "))
 	}
-	appendIfPresent(task.Metadata.Objective)
-	appendIfPresent(task.Metadata.AcceptanceCriteria)
-	appendIfPresent(task.Metadata.ValidationPlan)
-	appendIfPresent(task.Metadata.BlockedReason)
-	appendIfPresent(task.Metadata.RiskNotes)
+	appendIfPresent(actionItem.Metadata.Objective)
+	appendIfPresent(actionItem.Metadata.AcceptanceCriteria)
+	appendIfPresent(actionItem.Metadata.ValidationPlan)
+	appendIfPresent(actionItem.Metadata.BlockedReason)
+	appendIfPresent(actionItem.Metadata.RiskNotes)
 	return strings.Join(parts, "\n")
 }
 
-func buildTaskEmbeddingContent(task domain.Task) string {
-	return buildWorkItemEmbeddingContent(task)
+func buildActionItemEmbeddingContent(actionItem domain.ActionItem) string {
+	return buildWorkItemEmbeddingContent(actionItem)
 }
 
 // buildProjectDocumentEmbeddingContent produces canonical searchable text for project descriptive surfaces.

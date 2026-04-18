@@ -7,8 +7,8 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/app"
 )
 
-// TaskFieldConfig holds configuration for task field.
-type TaskFieldConfig struct {
+// ActionItemFieldConfig holds configuration for actionItem field.
+type ActionItemFieldConfig struct {
 	ShowPriority    bool
 	ShowDueDate     bool
 	ShowLabels      bool
@@ -70,7 +70,7 @@ type LabelConfig struct {
 // RuntimeConfig holds TUI runtime settings that can be applied live.
 type RuntimeConfig struct {
 	DefaultDeleteMode app.DeleteMode
-	TaskFields        TaskFieldConfig
+	ActionItemFields  ActionItemFieldConfig
 	Search            SearchConfig
 	SearchRoots       []string
 	Confirm           ConfirmConfig
@@ -105,9 +105,9 @@ type SaveLabelsConfigFunc func(projectSlug string, globalLabels, projectLabels [
 // Option defines a functional option for model configuration.
 type Option func(*Model)
 
-// DefaultTaskFieldConfig returns default task field config.
-func DefaultTaskFieldConfig() TaskFieldConfig {
-	return TaskFieldConfig{
+// DefaultActionItemFieldConfig returns default actionItem field config.
+func DefaultActionItemFieldConfig() ActionItemFieldConfig {
+	return ActionItemFieldConfig{
 		ShowPriority:    true,
 		ShowDueDate:     true,
 		ShowLabels:      true,
@@ -115,10 +115,10 @@ func DefaultTaskFieldConfig() TaskFieldConfig {
 	}
 }
 
-// WithTaskFieldConfig returns an option that sets task field config.
-func WithTaskFieldConfig(cfg TaskFieldConfig) Option {
+// WithActionItemFieldConfig returns an option that sets actionItem field config.
+func WithActionItemFieldConfig(cfg ActionItemFieldConfig) Option {
 	return func(m *Model) {
-		m.taskFields = cfg
+		m.actionItemFields = cfg
 	}
 }
 
@@ -150,7 +150,7 @@ func WithSearchConfig(cfg SearchConfig) Option {
 			m.searchDefaultLevels = canonicalSearchLevels(cfg.Levels)
 			m.searchLevels = append([]string(nil), m.searchDefaultLevels...)
 		} else {
-			m.searchDefaultLevels = []string{"project", "branch", "phase", "task", "subtask"}
+			m.searchDefaultLevels = []string{"project", "branch", "phase", "actionItem", "subtask"}
 			m.searchLevels = append([]string(nil), m.searchDefaultLevels...)
 		}
 	}
@@ -272,7 +272,7 @@ func WithIdentityConfig(cfg IdentityConfig) Option {
 func WithRuntimeConfig(cfg RuntimeConfig) Option {
 	return func(m *Model) {
 		WithDefaultDeleteMode(cfg.DefaultDeleteMode)(m)
-		WithTaskFieldConfig(cfg.TaskFields)(m)
+		WithActionItemFieldConfig(cfg.ActionItemFields)(m)
 		WithSearchConfig(cfg.Search)(m)
 		WithSearchRoots(cfg.SearchRoots)(m)
 		WithConfirmConfig(cfg.Confirm)(m)

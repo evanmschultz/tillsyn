@@ -21,22 +21,22 @@ func newProjectMutationScopeCandidate(projectID string) mutationScopeCandidate {
 	}
 }
 
-// capabilityScopesForTaskLineage resolves guardrail scope candidates for one task lineage.
-func (s *Service) capabilityScopesForTaskLineage(ctx context.Context, task domain.Task) ([]mutationScopeCandidate, error) {
-	projectID := strings.TrimSpace(task.ProjectID)
+// capabilityScopesForActionItemLineage resolves guardrail scope candidates for one actionItem lineage.
+func (s *Service) capabilityScopesForActionItemLineage(ctx context.Context, actionItem domain.ActionItem) ([]mutationScopeCandidate, error) {
+	projectID := strings.TrimSpace(actionItem.ProjectID)
 	if projectID == "" {
 		return nil, domain.ErrInvalidID
 	}
 
 	scopes := make([]mutationScopeCandidate, 0, 6)
 	scopes = appendMutationScopeCandidate(scopes, newProjectMutationScopeCandidate(projectID))
-	lineage, err := s.taskLineage(ctx, task)
+	lineage, err := s.actionItemLineage(ctx, actionItem)
 	if err != nil {
 		return nil, err
 	}
 	for _, current := range lineage {
 		scope := mutationScopeCandidate{
-			ScopeType: capabilityScopeTypeForTask(current),
+			ScopeType: capabilityScopeTypeForActionItem(current),
 			ScopeID:   strings.TrimSpace(current.ID),
 		}
 		if scope.ScopeType == domain.CapabilityScopeProject {
@@ -64,17 +64,17 @@ func (s *Service) capabilityScopesForLease(ctx context.Context, projectID string
 	if scopeID == "" {
 		return nil, domain.ErrInvalidCapabilityScope
 	}
-	task, err := s.repo.GetTask(ctx, scopeID)
+	actionItem, err := s.repo.GetActionItem(ctx, scopeID)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(task.ProjectID) != projectID {
+	if strings.TrimSpace(actionItem.ProjectID) != projectID {
 		return nil, ErrNotFound
 	}
-	if capabilityScopeTypeForTask(task) != scopeType {
+	if capabilityScopeTypeForActionItem(actionItem) != scopeType {
 		return nil, domain.ErrInvalidCapabilityScope
 	}
-	return s.capabilityScopesForTaskLineage(ctx, task)
+	return s.capabilityScopesForActionItemLineage(ctx, actionItem)
 }
 
 // appendMutationScopeCandidate adds one scope candidate only when valid and unique.

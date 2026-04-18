@@ -1253,7 +1253,7 @@ func authContextPath(contextValues map[string]string) (domain.AuthRequestPath, e
 			return domain.AuthRequestPath{}, domain.ErrInvalidScopeID
 		}
 		return domain.AuthRequestPath{ProjectID: projectID, BranchID: branchID, PhaseIDs: phaseIDs}.Normalize()
-	case domain.ScopeLevelTask, domain.ScopeLevelSubtask:
+	case domain.ScopeLevelActionItem, domain.ScopeLevelSubtask:
 		if branchID == "" {
 			return domain.AuthRequestPath{}, domain.ErrInvalidScopeID
 		}

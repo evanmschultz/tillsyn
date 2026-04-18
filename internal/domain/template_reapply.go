@@ -44,7 +44,7 @@ type ProjectTemplateChildRuleChange struct {
 
 // ProjectTemplateMigrationCandidate stores one existing generated node plus its migration-review eligibility.
 type ProjectTemplateMigrationCandidate struct {
-	TaskID               string                                `json:"task_id"`
+	ActionItemID         string                                `json:"action_item_id"`
 	ParentID             string                                `json:"parent_id,omitempty"`
 	Title                string                                `json:"title"`
 	Scope                KindAppliesTo                         `json:"scope"`
@@ -59,11 +59,11 @@ type ProjectTemplateMigrationCandidate struct {
 
 // ProjectTemplateMigrationApproval stores one generated node that was explicitly approved for migration.
 type ProjectTemplateMigrationApproval struct {
-	TaskID      string   `json:"task_id"`
-	Title       string   `json:"title"`
-	ChangeKinds []string `json:"change_kinds,omitempty"`
-	NewTitle    string   `json:"new_title,omitempty"`
-	NewBody     string   `json:"new_body,omitempty"`
+	ActionItemID string   `json:"action_item_id"`
+	Title        string   `json:"title"`
+	ChangeKinds  []string `json:"change_kinds,omitempty"`
+	NewTitle     string   `json:"new_title,omitempty"`
+	NewBody      string   `json:"new_body,omitempty"`
 }
 
 // ProjectTemplateReapplyPreview stores one project's current drift and explicit migration-review preview.

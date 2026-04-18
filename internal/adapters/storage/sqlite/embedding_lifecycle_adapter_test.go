@@ -25,12 +25,12 @@ func TestRepositoryEmbeddingLifecycleAdapterClaimLossReturnsConflict(t *testing.
 
 	now := time.Date(2026, 3, 29, 20, 0, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-adapter-1")
-	task := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-claim-loss", 0, now, mustEmbeddingMetadata("claim loss"), []string{"claim"})
-	contentHash := hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(task))
+	actionItem := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-claim-loss", 0, now, mustEmbeddingMetadata("claim loss"), []string{"claim"})
+	contentHash := hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItem))
 
 	if _, err := repo.EnqueueEmbedding(ctx, app.EmbeddingEnqueueInput{
 		SubjectType:     app.EmbeddingSubjectTypeWorkItem,
-		SubjectID:       task.ID,
+		SubjectID:       actionItem.ID,
 		ProjectID:       project.ID,
 		ContentHash:     contentHash,
 		ModelProvider:   "fantasy",
@@ -63,7 +63,7 @@ func TestRepositoryEmbeddingLifecycleAdapterClaimLossReturnsConflict(t *testing.
 
 	if err := repo.HeartbeatEmbedding(ctx, app.EmbeddingHeartbeatInput{
 		SubjectType: app.EmbeddingSubjectTypeWorkItem,
-		SubjectID:   task.ID,
+		SubjectID:   actionItem.ID,
 		WorkerID:    "worker-a",
 		Now:         claimNow.Add(3 * time.Second),
 		ClaimTTL:    time.Minute,
@@ -72,7 +72,7 @@ func TestRepositoryEmbeddingLifecycleAdapterClaimLossReturnsConflict(t *testing.
 	}
 	if _, err := repo.MarkEmbeddingSuccess(ctx, app.EmbeddingSuccessInput{
 		SubjectType:     app.EmbeddingSubjectTypeWorkItem,
-		SubjectID:       task.ID,
+		SubjectID:       actionItem.ID,
 		ProjectID:       project.ID,
 		ContentHash:     contentHash,
 		ModelProvider:   "fantasy",
@@ -86,7 +86,7 @@ func TestRepositoryEmbeddingLifecycleAdapterClaimLossReturnsConflict(t *testing.
 	}
 	if _, err := repo.MarkEmbeddingFailure(ctx, app.EmbeddingFailureInput{
 		SubjectType:         app.EmbeddingSubjectTypeWorkItem,
-		SubjectID:           task.ID,
+		SubjectID:           actionItem.ID,
 		ProjectID:           project.ID,
 		ModelSignature:      "fantasy|mini||3",
 		WorkerID:            "worker-a",
@@ -101,7 +101,7 @@ func TestRepositoryEmbeddingLifecycleAdapterClaimLossReturnsConflict(t *testing.
 		t.Fatalf("MarkEmbeddingFailure() error = %v, want ErrEmbeddingClaimLost", err)
 	}
 
-	row, err := repo.GetEmbeddingJob(ctx, "task", task.ID)
+	row, err := repo.GetEmbeddingJob(ctx, "actionItem", actionItem.ID)
 	if err != nil {
 		t.Fatalf("GetEmbeddingJob() error = %v", err)
 	}
@@ -123,12 +123,12 @@ func TestRepositoryEmbeddingLifecycleAdapterModelInvalidationUpdatesMetadata(t *
 
 	now := time.Date(2026, 3, 29, 20, 5, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-adapter-2")
-	task := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-model-sweep", 0, now, mustEmbeddingMetadata("model sweep"), []string{"model"})
-	contentHash := hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(task))
+	actionItem := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-model-sweep", 0, now, mustEmbeddingMetadata("model sweep"), []string{"model"})
+	contentHash := hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItem))
 
 	if _, changed, err := repo.UpsertEmbeddingJob(ctx, EmbeddingJobUpsertInput{
-		SubjectType:   "task",
-		SubjectID:     task.ID,
+		SubjectType:   "actionItem",
+		SubjectID:     actionItem.ID,
 		ProjectID:     project.ID,
 		DesiredHash:   contentHash,
 		ModelProvider: "fantasy",
@@ -143,7 +143,7 @@ func TestRepositoryEmbeddingLifecycleAdapterModelInvalidationUpdatesMetadata(t *
 	}
 	claimNow := time.Now().UTC().Add(time.Second)
 	claimed, found, err := repo.ClaimNextEmbeddingJob(ctx, EmbeddingJobClaimNextInput{
-		SubjectType: "task",
+		SubjectType: "actionItem",
 		ProjectID:   project.ID,
 		WorkerID:    "worker-model",
 		ClaimTTL:    time.Minute,
@@ -217,12 +217,12 @@ func TestRepositoryEmbeddingLifecycleAdapterExplicitEmptyScopeReturnsEmpty(t *te
 
 	now := time.Date(2026, 3, 29, 20, 10, 0, 0, time.UTC)
 	project, column := mustSeedEmbeddingScope(t, repo, now, "p-embeddings-adapter-3")
-	task := mustSeedEmbeddingTask(t, repo, project.ID, column.ID, "task-empty-scope", 0, now, mustEmbeddingMetadata("empty scope"), []string{"scope"})
+	actionItem := mustSeedEmbeddingActionItem(t, repo, project.ID, column.ID, "actionItem-empty-scope", 0, now, mustEmbeddingMetadata("empty scope"), []string{"scope"})
 	if _, err := repo.EnqueueEmbedding(ctx, app.EmbeddingEnqueueInput{
 		SubjectType:     app.EmbeddingSubjectTypeWorkItem,
-		SubjectID:       task.ID,
+		SubjectID:       actionItem.ID,
 		ProjectID:       project.ID,
-		ContentHash:     hashEmbeddingContent(buildSQLiteTaskEmbeddingContent(task)),
+		ContentHash:     hashEmbeddingContent(buildSQLiteActionItemEmbeddingContent(actionItem)),
 		ModelProvider:   "fantasy",
 		ModelName:       "mini",
 		ModelDimensions: 3,
@@ -287,12 +287,12 @@ func TestRepositoryEmbeddingLifecycleSchemaMigratesLegacyDatabase(t *testing.T) 
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
 		)`,
-		`CREATE TABLE work_items (
+		`CREATE TABLE action_items (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			column_id TEXT NOT NULL,
 			parent_id TEXT,
-			kind TEXT NOT NULL DEFAULT 'task',
+			kind TEXT NOT NULL DEFAULT 'actionItem',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			position INTEGER NOT NULL,
 			title TEXT NOT NULL,
@@ -306,8 +306,8 @@ func TestRepositoryEmbeddingLifecycleSchemaMigratesLegacyDatabase(t *testing.T) 
 			archived_at TEXT,
 			canceled_at TEXT
 		)`,
-		`CREATE TABLE task_embeddings (
-			task_id TEXT PRIMARY KEY,
+		`CREATE TABLE action_item_embeddings (
+			action_item_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			content_hash TEXT NOT NULL,
 			content TEXT NOT NULL DEFAULT '',
@@ -354,8 +354,8 @@ func TestRepositoryEmbeddingLifecycleSchemaMigratesLegacyDatabase(t *testing.T) 
 }
 
 // mustEmbeddingMetadata builds one minimal metadata payload for embeddings adapter tests.
-func mustEmbeddingMetadata(objective string) domain.TaskMetadata {
-	return domain.TaskMetadata{
+func mustEmbeddingMetadata(objective string) domain.ActionItemMetadata {
+	return domain.ActionItemMetadata{
 		Objective:          objective,
 		AcceptanceCriteria: "Keep lifecycle durable",
 		ValidationPlan:     "Run storage tests",

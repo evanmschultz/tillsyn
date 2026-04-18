@@ -21,7 +21,7 @@ type Snapshot struct {
 	ExportedAt          time.Time                       `json:"exported_at"`
 	Projects            []SnapshotProject               `json:"projects"`
 	Columns             []SnapshotColumn                `json:"columns"`
-	Tasks               []SnapshotTask                  `json:"tasks"`
+	ActionItems         []SnapshotActionItem            `json:"tasks"`
 	KindDefinitions     []SnapshotKindDefinition        `json:"kind_definitions,omitempty"`
 	ProjectAllowedKinds []SnapshotProjectAllowedKinds   `json:"project_allowed_kinds,omitempty"`
 	TemplateLibraries   []domain.TemplateLibrary        `json:"template_libraries,omitempty"`
@@ -57,33 +57,33 @@ type SnapshotColumn struct {
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 }
 
-// SnapshotTask represents snapshot task data used by this package.
-type SnapshotTask struct {
-	ID             string                `json:"id"`
-	ProjectID      string                `json:"project_id"`
-	ParentID       string                `json:"parent_id,omitempty"`
-	Kind           domain.WorkKind       `json:"kind"`
-	Scope          domain.KindAppliesTo  `json:"scope,omitempty"`
-	LifecycleState domain.LifecycleState `json:"lifecycle_state"`
-	ColumnID       string                `json:"column_id"`
-	Position       int                   `json:"position"`
-	Title          string                `json:"title"`
-	Description    string                `json:"description"`
-	Priority       domain.Priority       `json:"priority"`
-	DueAt          *time.Time            `json:"due_at,omitempty"`
-	Labels         []string              `json:"labels"`
-	Metadata       domain.TaskMetadata   `json:"metadata"`
-	CreatedByActor string                `json:"created_by_actor"`
-	CreatedByName  string                `json:"created_by_name,omitempty"`
-	UpdatedByActor string                `json:"updated_by_actor"`
-	UpdatedByName  string                `json:"updated_by_name,omitempty"`
-	UpdatedByType  domain.ActorType      `json:"updated_by_type"`
-	CreatedAt      time.Time             `json:"created_at"`
-	UpdatedAt      time.Time             `json:"updated_at"`
-	StartedAt      *time.Time            `json:"started_at,omitempty"`
-	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
-	ArchivedAt     *time.Time            `json:"archived_at,omitempty"`
-	CanceledAt     *time.Time            `json:"canceled_at,omitempty"`
+// SnapshotActionItem represents snapshot actionItem data used by this package.
+type SnapshotActionItem struct {
+	ID             string                    `json:"id"`
+	ProjectID      string                    `json:"project_id"`
+	ParentID       string                    `json:"parent_id,omitempty"`
+	Kind           domain.WorkKind           `json:"kind"`
+	Scope          domain.KindAppliesTo      `json:"scope,omitempty"`
+	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
+	ColumnID       string                    `json:"column_id"`
+	Position       int                       `json:"position"`
+	Title          string                    `json:"title"`
+	Description    string                    `json:"description"`
+	Priority       domain.Priority           `json:"priority"`
+	DueAt          *time.Time                `json:"due_at,omitempty"`
+	Labels         []string                  `json:"labels"`
+	Metadata       domain.ActionItemMetadata `json:"metadata"`
+	CreatedByActor string                    `json:"created_by_actor"`
+	CreatedByName  string                    `json:"created_by_name,omitempty"`
+	UpdatedByActor string                    `json:"updated_by_actor"`
+	UpdatedByName  string                    `json:"updated_by_name,omitempty"`
+	UpdatedByType  domain.ActorType          `json:"updated_by_type"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
+	StartedAt      *time.Time                `json:"started_at,omitempty"`
+	CompletedAt    *time.Time                `json:"completed_at,omitempty"`
+	ArchivedAt     *time.Time                `json:"archived_at,omitempty"`
+	CanceledAt     *time.Time                `json:"canceled_at,omitempty"`
 }
 
 // SnapshotKindDefinition represents one kind-catalog definition persisted in a snapshot.
@@ -189,7 +189,7 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 		ExportedAt:          s.clock().UTC(),
 		Projects:            make([]SnapshotProject, 0, len(projects)),
 		Columns:             make([]SnapshotColumn, 0),
-		Tasks:               make([]SnapshotTask, 0),
+		ActionItems:         make([]SnapshotActionItem, 0),
 		KindDefinitions:     make([]SnapshotKindDefinition, 0, len(kindDefinitions)),
 		ProjectAllowedKinds: make([]SnapshotProjectAllowedKinds, 0, len(projects)),
 		TemplateLibraries:   make([]domain.TemplateLibrary, 0, len(templateLibraries)),
@@ -235,13 +235,13 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 			snap.Columns = append(snap.Columns, snapshotColumnFromDomain(column))
 		}
 
-		tasks, listErr := s.repo.ListTasks(ctx, project.ID, includeArchived)
+		tasks, listErr := s.repo.ListActionItems(ctx, project.ID, includeArchived)
 		if listErr != nil {
 			return Snapshot{}, listErr
 		}
-		for _, task := range tasks {
-			snap.Tasks = append(snap.Tasks, snapshotTaskFromDomain(task))
-			nodeContract, getErr := s.repo.GetNodeContractSnapshot(ctx, task.ID)
+		for _, actionItem := range tasks {
+			snap.ActionItems = append(snap.ActionItems, snapshotActionItemFromDomain(actionItem))
+			nodeContract, getErr := s.repo.GetNodeContractSnapshot(ctx, actionItem.ID)
 			switch {
 			case getErr == nil:
 				snap.NodeContracts = append(snap.NodeContracts, snapshotNodeContractFromDomain(nodeContract))
@@ -334,17 +334,17 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 		existingColumnsByProject[dc.ProjectID][dc.ID] = struct{}{}
 	}
 
-	for _, task := range snap.Tasks {
-		dt := task.toDomain()
-		if _, err := s.repo.GetTask(ctx, dt.ID); err == nil {
-			if err := s.repo.UpdateTask(ctx, dt); err != nil {
+	for _, actionItem := range snap.ActionItems {
+		dt := actionItem.toDomain()
+		if _, err := s.repo.GetActionItem(ctx, dt.ID); err == nil {
+			if err := s.repo.UpdateActionItem(ctx, dt); err != nil {
 				return err
 			}
 			continue
 		} else if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if err := s.repo.CreateTask(ctx, dt); err != nil {
+		if err := s.repo.CreateActionItem(ctx, dt); err != nil {
 			return err
 		}
 	}
@@ -428,9 +428,9 @@ func (s *Snapshot) Validate() error {
 		columnIDs[c.ID] = struct{}{}
 	}
 
-	taskIDs := map[string]struct{}{}
-	taskByID := map[string]SnapshotTask{}
-	for i, t := range s.Tasks {
+	actionItemIDs := map[string]struct{}{}
+	actionItemByID := map[string]SnapshotActionItem{}
+	for i, t := range s.ActionItems {
 		if strings.TrimSpace(t.ID) == "" {
 			return fmt.Errorf("tasks[%d].id is required", i)
 		}
@@ -452,19 +452,19 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("tasks[%d].priority must be low|medium|high", i)
 		}
 		if strings.TrimSpace(string(t.Kind)) == "" {
-			t.Kind = domain.WorkKindTask
-			s.Tasks[i].Kind = t.Kind
+			t.Kind = domain.WorkKindActionItem
+			s.ActionItems[i].Kind = t.Kind
 		}
 		if t.Scope == "" {
-			t.Scope = domain.DefaultTaskScope(t.Kind, t.ParentID)
-			s.Tasks[i].Scope = t.Scope
+			t.Scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+			s.ActionItems[i].Scope = t.Scope
 		}
 		if !domain.IsValidWorkItemAppliesTo(t.Scope) {
-			return fmt.Errorf("tasks[%d].scope must be branch|phase|task|subtask", i)
+			return fmt.Errorf("tasks[%d].scope must be branch|phase|actionItem|subtask", i)
 		}
 		if t.LifecycleState == "" {
 			t.LifecycleState = domain.StateTodo
-			s.Tasks[i].LifecycleState = t.LifecycleState
+			s.ActionItems[i].LifecycleState = t.LifecycleState
 		}
 		switch t.LifecycleState {
 		case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateFailed, domain.StateArchived:
@@ -480,23 +480,23 @@ func (s *Snapshot) Validate() error {
 		if _, ok := columnIDs[t.ColumnID]; !ok {
 			return fmt.Errorf("tasks[%d] references unknown column_id %q", i, t.ColumnID)
 		}
-		if _, exists := taskIDs[t.ID]; exists {
-			return fmt.Errorf("duplicate task id: %q", t.ID)
+		if _, exists := actionItemIDs[t.ID]; exists {
+			return fmt.Errorf("duplicate actionItem id: %q", t.ID)
 		}
-		taskIDs[t.ID] = struct{}{}
-		taskByID[t.ID] = s.Tasks[i]
+		actionItemIDs[t.ID] = struct{}{}
+		actionItemByID[t.ID] = s.ActionItems[i]
 	}
-	for i, t := range s.Tasks {
+	for i, t := range s.ActionItems {
 		if strings.TrimSpace(t.ParentID) == "" {
 			continue
 		}
 		if t.ParentID == t.ID {
 			return fmt.Errorf("tasks[%d].parent_id cannot reference itself", i)
 		}
-		if _, exists := taskIDs[t.ParentID]; !exists {
+		if _, exists := actionItemIDs[t.ParentID]; !exists {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
 		}
-		parent := taskByID[t.ParentID]
+		parent := actionItemByID[t.ParentID]
 		if t.Kind == domain.WorkKindPhase && parent.Scope != domain.KindAppliesToBranch && parent.Scope != domain.KindAppliesToPhase {
 			return fmt.Errorf("tasks[%d].parent_id %q invalid for phase parent scope %q", i, t.ParentID, parent.Scope)
 		}
@@ -604,7 +604,7 @@ func (s *Snapshot) Validate() error {
 		if _, ok := projectIDs[normalized.ProjectID]; !ok {
 			return fmt.Errorf("node_contract_snapshots[%d] references unknown project_id %q", i, normalized.ProjectID)
 		}
-		if _, ok := taskIDs[normalized.NodeID]; !ok {
+		if _, ok := actionItemIDs[normalized.NodeID]; !ok {
 			return fmt.Errorf("node_contract_snapshots[%d] references unknown node_id %q", i, normalized.NodeID)
 		}
 		if _, ok := libraryIDs[domain.NormalizeTemplateLibraryID(normalized.SourceLibraryID)]; !ok {
@@ -725,7 +725,7 @@ func (s *Snapshot) Validate() error {
 		leaseIDs[instanceID] = struct{}{}
 	}
 
-	availableHandoffScopes := snapshotAvailableHandoffScopes(s.Projects, s.Tasks)
+	availableHandoffScopes := snapshotAvailableHandoffScopes(s.Projects, s.ActionItems)
 	handoffIDs := map[string]struct{}{}
 	for i, handoff := range s.Handoffs {
 		handoffID := strings.TrimSpace(handoff.ID)
@@ -853,18 +853,18 @@ func (s *Service) upsertTemplateLibrary(ctx context.Context, library domain.Temp
 	return s.repo.UpsertTemplateLibrary(ctx, library)
 }
 
-// commentsForProjectSnapshot collects project and task-scoped comments for snapshot export.
-func (s *Service) commentsForProjectSnapshot(ctx context.Context, project domain.Project, tasks []domain.Task) ([]SnapshotComment, error) {
+// commentsForProjectSnapshot collects project and actionItem-scoped comments for snapshot export.
+func (s *Service) commentsForProjectSnapshot(ctx context.Context, project domain.Project, tasks []domain.ActionItem) ([]SnapshotComment, error) {
 	targets := []domain.CommentTarget{{
 		ProjectID:  project.ID,
 		TargetType: domain.CommentTargetTypeProject,
 		TargetID:   project.ID,
 	}}
-	for _, task := range tasks {
+	for _, actionItem := range tasks {
 		targets = append(targets, domain.CommentTarget{
 			ProjectID:  project.ID,
-			TargetType: snapshotCommentTargetTypeForTask(task),
-			TargetID:   task.ID,
+			TargetType: snapshotCommentTargetTypeForActionItem(actionItem),
+			TargetID:   actionItem.ID,
 		})
 	}
 	out := make([]SnapshotComment, 0)
@@ -887,7 +887,7 @@ func (s *Service) commentsForProjectSnapshot(ctx context.Context, project domain
 }
 
 // handoffsForProjectSnapshot collects durable handoffs for snapshot export.
-func (s *Service) handoffsForProjectSnapshot(ctx context.Context, projectID string, tasks []domain.Task) ([]SnapshotHandoff, error) {
+func (s *Service) handoffsForProjectSnapshot(ctx context.Context, projectID string, tasks []domain.ActionItem) ([]SnapshotHandoff, error) {
 	if s.handoffRepo == nil {
 		return nil, nil
 	}
@@ -913,8 +913,8 @@ func (s *Service) handoffsForProjectSnapshot(ctx context.Context, projectID stri
 	return out, nil
 }
 
-// capabilityLeasesForProjectSnapshot collects project/task hierarchy capability leases for snapshot export.
-func (s *Service) capabilityLeasesForProjectSnapshot(ctx context.Context, projectID string, tasks []domain.Task) ([]SnapshotCapabilityLease, error) {
+// capabilityLeasesForProjectSnapshot collects project/actionItem hierarchy capability leases for snapshot export.
+func (s *Service) capabilityLeasesForProjectSnapshot(ctx context.Context, projectID string, tasks []domain.ActionItem) ([]SnapshotCapabilityLease, error) {
 	type scopeQuery struct {
 		scopeType domain.CapabilityScopeType
 		scopeID   string
@@ -923,10 +923,10 @@ func (s *Service) capabilityLeasesForProjectSnapshot(ctx context.Context, projec
 		scopeType: domain.CapabilityScopeProject,
 		scopeID:   "",
 	}}
-	for _, task := range tasks {
+	for _, actionItem := range tasks {
 		queries = append(queries, scopeQuery{
-			scopeType: snapshotCapabilityScopeTypeForTask(task),
-			scopeID:   task.ID,
+			scopeType: snapshotCapabilityScopeTypeForActionItem(actionItem),
+			scopeID:   actionItem.ID,
 		})
 	}
 	out := make([]SnapshotCapabilityLease, 0)
@@ -1025,9 +1025,9 @@ func (s *Service) importSnapshotHandoffs(ctx context.Context, handoffs []Snapsho
 	return nil
 }
 
-// snapshotCommentTargetTypeForTask maps one work-item row to a comment target type.
-func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType {
-	switch task.Kind {
+// snapshotCommentTargetTypeForActionItem maps one work-item row to a comment target type.
+func snapshotCommentTargetTypeForActionItem(actionItem domain.ActionItem) domain.CommentTargetType {
+	switch actionItem.Kind {
 	case domain.WorkKind(domain.KindAppliesToBranch):
 		return domain.CommentTargetTypeBranch
 	case domain.WorkKindPhase:
@@ -1039,22 +1039,22 @@ func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType
 	case domain.WorkKindNote:
 		return domain.CommentTargetTypeNote
 	default:
-		if task.Scope == domain.KindAppliesToBranch {
+		if actionItem.Scope == domain.KindAppliesToBranch {
 			return domain.CommentTargetTypeBranch
 		}
-		if task.Scope == domain.KindAppliesToSubtask {
+		if actionItem.Scope == domain.KindAppliesToSubtask {
 			return domain.CommentTargetTypeSubtask
 		}
-		if task.Scope == domain.KindAppliesToPhase {
+		if actionItem.Scope == domain.KindAppliesToPhase {
 			return domain.CommentTargetTypePhase
 		}
-		return domain.CommentTargetTypeTask
+		return domain.CommentTargetTypeActionItem
 	}
 }
 
-// snapshotCapabilityScopeTypeForTask maps one work-item row to a capability scope type.
-func snapshotCapabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
-	switch task.Scope {
+// snapshotCapabilityScopeTypeForActionItem maps one work-item row to a capability scope type.
+func snapshotCapabilityScopeTypeForActionItem(actionItem domain.ActionItem) domain.CapabilityScopeType {
+	switch actionItem.Scope {
 	case domain.KindAppliesToBranch:
 		return domain.CapabilityScopeBranch
 	case domain.KindAppliesToPhase:
@@ -1062,7 +1062,7 @@ func snapshotCapabilityScopeTypeForTask(task domain.Task) domain.CapabilityScope
 	case domain.KindAppliesToSubtask:
 		return domain.CapabilityScopeSubtask
 	default:
-		return domain.CapabilityScopeTask
+		return domain.CapabilityScopeActionItem
 	}
 }
 
@@ -1092,9 +1092,9 @@ func (s *Snapshot) sort() {
 		}
 		return a.ProjectID < b.ProjectID
 	})
-	sort.Slice(s.Tasks, func(i, j int) bool {
-		a := s.Tasks[i]
-		b := s.Tasks[j]
+	sort.Slice(s.ActionItems, func(i, j int) bool {
+		a := s.ActionItems[i]
+		b := s.ActionItems[j]
 		if a.ProjectID == b.ProjectID {
 			if a.ColumnID == b.ColumnID {
 				if a.Position == b.Position {
@@ -1200,9 +1200,9 @@ func snapshotTemplateLibraryFromDomain(library domain.TemplateLibrary) domain.Te
 			projectMetadata := *nodeTemplate.ProjectMetadataDefaults
 			copied.ProjectMetadataDefaults = &projectMetadata
 		}
-		if nodeTemplate.TaskMetadataDefaults != nil {
-			taskMetadata := *nodeTemplate.TaskMetadataDefaults
-			copied.TaskMetadataDefaults = &taskMetadata
+		if nodeTemplate.ActionItemMetadataDefaults != nil {
+			actionItemMetadata := *nodeTemplate.ActionItemMetadataDefaults
+			copied.ActionItemMetadataDefaults = &actionItemMetadata
 		}
 		copied.ChildRules = append([]domain.TemplateChildRule(nil), nodeTemplate.ChildRules...)
 		out.NodeTemplates = append(out.NodeTemplates, copied)
@@ -1254,9 +1254,9 @@ func snapshotColumnFromDomain(c domain.Column) SnapshotColumn {
 	}
 }
 
-// snapshotTaskFromDomain handles snapshot task from domain.
-func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
-	return SnapshotTask{
+// snapshotActionItemFromDomain handles snapshot actionItem from domain.
+func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
+	return SnapshotActionItem{
 		ID:             t.ID,
 		ProjectID:      t.ProjectID,
 		ParentID:       t.ParentID,
@@ -1325,9 +1325,9 @@ func normalizeSnapshotTemplateLibrary(library domain.TemplateLibrary) (domain.Te
 			projectMetadata := *nodeTemplate.ProjectMetadataDefaults
 			templateInput.ProjectMetadataDefaults = &projectMetadata
 		}
-		if nodeTemplate.TaskMetadataDefaults != nil {
-			taskMetadata := *nodeTemplate.TaskMetadataDefaults
-			templateInput.TaskMetadataDefaults = &taskMetadata
+		if nodeTemplate.ActionItemMetadataDefaults != nil {
+			actionItemMetadata := *nodeTemplate.ActionItemMetadataDefaults
+			templateInput.ActionItemMetadataDefaults = &actionItemMetadata
 		}
 		for _, childRule := range nodeTemplate.ChildRules {
 			templateInput.ChildRules = append(templateInput.ChildRules, domain.TemplateChildRuleInput{
@@ -1531,7 +1531,7 @@ func normalizeHandoffSnapshotTarget(projectID string, handoff SnapshotHandoff) (
 }
 
 // snapshotAvailableHandoffScopes builds the set of valid source/target scopes present in one snapshot payload.
-func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []SnapshotTask) map[string]struct{} {
+func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []SnapshotActionItem) map[string]struct{} {
 	out := make(map[string]struct{}, len(projects)+len(tasks))
 	for _, project := range projects {
 		projectID := strings.TrimSpace(project.ID)
@@ -1540,15 +1540,15 @@ func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []Snapshot
 		}
 		out[snapshotHandoffScopeKey(projectID, domain.ScopeLevelProject, projectID)] = struct{}{}
 	}
-	for _, task := range tasks {
-		projectID := strings.TrimSpace(task.ProjectID)
-		scopeID := strings.TrimSpace(task.ID)
+	for _, actionItem := range tasks {
+		projectID := strings.TrimSpace(actionItem.ProjectID)
+		scopeID := strings.TrimSpace(actionItem.ID)
 		if projectID == "" || scopeID == "" {
 			continue
 		}
-		scopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+		scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
 		if scopeType == "" {
-			scopeType = domain.ScopeLevelTask
+			scopeType = domain.ScopeLevelActionItem
 		}
 		out[snapshotHandoffScopeKey(projectID, scopeType, scopeID)] = struct{}{}
 	}
@@ -1556,17 +1556,17 @@ func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []Snapshot
 }
 
 // snapshotAvailableDomainHandoffScopes builds the set of valid source/target scopes for export.
-func snapshotAvailableDomainHandoffScopes(projectID string, tasks []domain.Task) map[string]struct{} {
+func snapshotAvailableDomainHandoffScopes(projectID string, tasks []domain.ActionItem) map[string]struct{} {
 	projectID = strings.TrimSpace(projectID)
 	out := map[string]struct{}{
 		snapshotHandoffScopeKey(projectID, domain.ScopeLevelProject, projectID): {},
 	}
-	for _, task := range tasks {
-		scopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+	for _, actionItem := range tasks {
+		scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
 		if scopeType == "" {
-			scopeType = domain.ScopeLevelTask
+			scopeType = domain.ScopeLevelActionItem
 		}
-		out[snapshotHandoffScopeKey(projectID, scopeType, task.ID)] = struct{}{}
+		out[snapshotHandoffScopeKey(projectID, scopeType, actionItem.ID)] = struct{}{}
 	}
 	return out
 }
@@ -1618,7 +1618,7 @@ func (c SnapshotColumn) toDomain() domain.Column {
 }
 
 // toDomain converts domain.
-func (t SnapshotTask) toDomain() domain.Task {
+func (t SnapshotActionItem) toDomain() domain.ActionItem {
 	labels := append([]string(nil), t.Labels...)
 	state := t.LifecycleState
 	if state == "" {
@@ -1626,11 +1626,11 @@ func (t SnapshotTask) toDomain() domain.Task {
 	}
 	kind := t.Kind
 	if kind == "" {
-		kind = domain.WorkKindTask
+		kind = domain.WorkKindActionItem
 	}
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultTaskScope(kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(kind, t.ParentID)
 	}
 	updatedType := t.UpdatedByType
 	if updatedType == "" {
@@ -1657,7 +1657,7 @@ func (t SnapshotTask) toDomain() domain.Task {
 			updatedByName = updatedBy
 		}
 	}
-	return domain.Task{
+	return domain.ActionItem{
 		ID:             strings.TrimSpace(t.ID),
 		ProjectID:      strings.TrimSpace(t.ProjectID),
 		ParentID:       strings.TrimSpace(t.ParentID),

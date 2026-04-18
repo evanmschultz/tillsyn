@@ -36,11 +36,11 @@ type WorkKind string
 
 // Built-in kind defaults.
 const (
-	WorkKindTask     WorkKind = "task"
-	WorkKindSubtask  WorkKind = "subtask"
-	WorkKindPhase    WorkKind = "phase"
-	WorkKindDecision WorkKind = "decision"
-	WorkKindNote     WorkKind = "note"
+	WorkKindActionItem WorkKind = "actionItem"
+	WorkKindSubtask    WorkKind = "subtask"
+	WorkKindPhase      WorkKind = "phase"
+	WorkKindDecision   WorkKind = "decision"
+	WorkKindNote       WorkKind = "note"
 )
 
 // ContextType classifies planning context snippets attached to an item.
@@ -132,8 +132,8 @@ type ResourceRef struct {
 	LastVerifiedAt *time.Time   `json:"last_verified_at,omitempty"`
 }
 
-// TaskMetadata stores rich planning context for an item.
-type TaskMetadata struct {
+// ActionItemMetadata stores rich planning context for an item.
+type ActionItemMetadata struct {
 	Objective                string             `json:"objective"`
 	ImplementationNotesUser  string             `json:"implementation_notes_user"`
 	ImplementationNotesAgent string             `json:"implementation_notes_agent"`
@@ -197,8 +197,8 @@ func isValidWorkKind(kind WorkKind) bool {
 	return strings.TrimSpace(string(kind)) != ""
 }
 
-// normalizeTaskMetadata trims and validates rich metadata.
-func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
+// normalizeActionItemMetadata trims and validates rich metadata.
+func normalizeActionItemMetadata(meta ActionItemMetadata) (ActionItemMetadata, error) {
 	meta.Objective = strings.TrimSpace(meta.Objective)
 	meta.ImplementationNotesUser = strings.TrimSpace(meta.ImplementationNotesUser)
 	meta.ImplementationNotesAgent = strings.TrimSpace(meta.ImplementationNotesAgent)
@@ -217,12 +217,12 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 	meta.BlockedBy = normalizeStringList(meta.BlockedBy)
 	meta.KindPayload = bytes.TrimSpace(meta.KindPayload)
 	if len(meta.KindPayload) > 0 && !json.Valid(meta.KindPayload) {
-		return TaskMetadata{}, ErrInvalidKindPayload
+		return ActionItemMetadata{}, ErrInvalidKindPayload
 	}
 	var err error
 	meta.CompletionContract, err = normalizeCompletionContract(meta.CompletionContract)
 	if err != nil {
-		return TaskMetadata{}, err
+		return ActionItemMetadata{}, err
 	}
 
 	contextBlocks := make([]ContextBlock, 0, len(meta.ContextBlocks))
@@ -244,7 +244,7 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 			ContextTypeWarning,
 			ContextTypeRunbook,
 		}, block.Type) {
-			return TaskMetadata{}, fmt.Errorf("invalid context block type at index %d", i)
+			return ActionItemMetadata{}, fmt.Errorf("invalid context block type at index %d", i)
 		}
 		block.Importance = ContextImportance(strings.TrimSpace(strings.ToLower(string(block.Importance))))
 		if block.Importance == "" {
@@ -256,7 +256,7 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 			ContextImportanceHigh,
 			ContextImportanceCritical,
 		}, block.Importance) {
-			return TaskMetadata{}, fmt.Errorf("invalid context block importance at index %d", i)
+			return ActionItemMetadata{}, fmt.Errorf("invalid context block importance at index %d", i)
 		}
 		contextBlocks = append(contextBlocks, block)
 	}
@@ -285,14 +285,14 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 			ResourceTypeTicket,
 			ResourceTypeSnippet,
 		}, ref.ResourceType) {
-			return TaskMetadata{}, fmt.Errorf("invalid resource type at index %d", i)
+			return ActionItemMetadata{}, fmt.Errorf("invalid resource type at index %d", i)
 		}
 		ref.PathMode = PathMode(strings.TrimSpace(strings.ToLower(string(ref.PathMode))))
 		if ref.PathMode == "" {
 			ref.PathMode = PathModeRelative
 		}
 		if !slices.Contains([]PathMode{PathModeRelative, PathModeAbsolute}, ref.PathMode) {
-			return TaskMetadata{}, fmt.Errorf("invalid path mode at index %d", i)
+			return ActionItemMetadata{}, fmt.Errorf("invalid path mode at index %d", i)
 		}
 		if ref.LastVerifiedAt != nil {
 			ts := ref.LastVerifiedAt.UTC().Truncate(time.Second)
@@ -305,19 +305,19 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 	return meta, nil
 }
 
-// MergeTaskMetadata applies optional defaults to task metadata without weakening explicit values.
-func MergeTaskMetadata(base TaskMetadata, defaults *TaskMetadata) (TaskMetadata, error) {
-	normalizedBase, err := normalizeTaskMetadata(base)
+// MergeActionItemMetadata applies optional defaults to actionItem metadata without weakening explicit values.
+func MergeActionItemMetadata(base ActionItemMetadata, defaults *ActionItemMetadata) (ActionItemMetadata, error) {
+	normalizedBase, err := normalizeActionItemMetadata(base)
 	if err != nil {
-		return TaskMetadata{}, err
+		return ActionItemMetadata{}, err
 	}
 	if defaults == nil {
 		return normalizedBase, nil
 	}
 
-	normalizedDefaults, err := normalizeTaskMetadata(*defaults)
+	normalizedDefaults, err := normalizeActionItemMetadata(*defaults)
 	if err != nil {
-		return TaskMetadata{}, err
+		return ActionItemMetadata{}, err
 	}
 
 	merged := normalizedBase
@@ -361,15 +361,15 @@ func MergeTaskMetadata(base TaskMetadata, defaults *TaskMetadata) (TaskMetadata,
 	merged.ResourceRefs = mergeResourceRefs(merged.ResourceRefs, normalizedDefaults.ResourceRefs)
 	mergedPayload, err := mergeKindPayloadDefaults(merged.KindPayload, normalizedDefaults.KindPayload)
 	if err != nil {
-		return TaskMetadata{}, err
+		return ActionItemMetadata{}, err
 	}
 	merged.KindPayload = mergedPayload
 	merged.CompletionContract, err = MergeCompletionContract(merged.CompletionContract, &normalizedDefaults.CompletionContract)
 	if err != nil {
-		return TaskMetadata{}, err
+		return ActionItemMetadata{}, err
 	}
 
-	return normalizeTaskMetadata(merged)
+	return normalizeActionItemMetadata(merged)
 }
 
 // MergeCompletionContract applies optional defaults to a completion contract without weakening explicit values.

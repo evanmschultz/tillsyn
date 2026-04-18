@@ -64,8 +64,8 @@ func containsStep(steps []string, fragments ...string) bool {
 	return false
 }
 
-// TestAppServiceAdapterProjectTaskCommentLifecycle verifies common adapter wrappers over project/task/comment flows.
-func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
+// TestAppServiceAdapterProjectActionItemCommentLifecycle verifies common adapter wrappers over project/actionItem/comment flows.
+func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	t.Parallel()
 
 	fixture := newCommonLifecycleFixture(t)
@@ -115,10 +115,10 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 		t.Fatalf("CreateColumn(done) error = %v", err)
 	}
 
-	task, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID:   project.ID,
 		ColumnID:    todo.ID,
-		Title:       "Parent task",
+		Title:       "Parent actionItem",
 		Description: "Start here",
 		Priority:    "high",
 		Labels:      []string{"docs"},
@@ -126,89 +126,89 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 		Actor:       actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(parent) error = %v", err)
+		t.Fatalf("CreateActionItem(parent) error = %v", err)
 	}
-	gotTask, err := fixture.adapter.GetTask(ctx, task.ID)
+	gotActionItem, err := fixture.adapter.GetActionItem(ctx, actionItem.ID)
 	if err != nil {
-		t.Fatalf("GetTask() error = %v", err)
+		t.Fatalf("GetActionItem() error = %v", err)
 	}
-	if gotTask.ID != task.ID {
-		t.Fatalf("GetTask() id = %q, want %q", gotTask.ID, task.ID)
+	if gotActionItem.ID != actionItem.ID {
+		t.Fatalf("GetActionItem() id = %q, want %q", gotActionItem.ID, actionItem.ID)
 	}
-	task, err = fixture.adapter.UpdateTask(ctx, UpdateTaskRequest{
-		TaskID:      task.ID,
-		Title:       "Parent task updated",
-		Description: "Updated body",
-		Priority:    "medium",
-		Labels:      []string{"docs", "review"},
-		Actor:       actor,
+	actionItem, err = fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Title:        "Parent actionItem updated",
+		Description:  "Updated body",
+		Priority:     "medium",
+		Labels:       []string{"docs", "review"},
+		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
-	task, err = fixture.adapter.MoveTaskState(ctx, MoveTaskStateRequest{
-		TaskID: task.ID,
-		State:  "done",
-		Actor:  actor,
+	actionItem, err = fixture.adapter.MoveActionItemState(ctx, MoveActionItemStateRequest{
+		ActionItemID: actionItem.ID,
+		State:        "done",
+		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("MoveTaskState() error = %v", err)
+		t.Fatalf("MoveActionItemState() error = %v", err)
 	}
-	if task.ColumnID != done.ID {
-		t.Fatalf("MoveTaskState() column_id = %q, want %q", task.ColumnID, done.ID)
+	if actionItem.ColumnID != done.ID {
+		t.Fatalf("MoveActionItemState() column_id = %q, want %q", actionItem.ColumnID, done.ID)
 	}
-	if task.LifecycleState != domain.StateDone {
-		t.Fatalf("MoveTaskState() lifecycle_state = %q, want %q", task.LifecycleState, domain.StateDone)
+	if actionItem.LifecycleState != domain.StateDone {
+		t.Fatalf("MoveActionItemState() lifecycle_state = %q, want %q", actionItem.LifecycleState, domain.StateDone)
 	}
 
-	child, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	child, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
-		ParentID:  task.ID,
+		ParentID:  actionItem.ID,
 		Kind:      string(domain.WorkKindSubtask),
 		ColumnID:  done.ID,
-		Title:     "Child task",
+		Title:     "Child actionItem",
 		Priority:  "medium",
 		Actor:     actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(child) error = %v", err)
+		t.Fatalf("CreateActionItem(child) error = %v", err)
 	}
-	child, err = fixture.adapter.ReparentTask(ctx, ReparentTaskRequest{
-		TaskID:   child.ID,
-		ParentID: task.ID,
-		Actor:    actor,
+	child, err = fixture.adapter.ReparentActionItem(ctx, ReparentActionItemRequest{
+		ActionItemID: child.ID,
+		ParentID:     actionItem.ID,
+		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("ReparentTask() error = %v", err)
+		t.Fatalf("ReparentActionItem() error = %v", err)
 	}
-	if child.ParentID != task.ID {
-		t.Fatalf("ReparentTask() parent_id = %q, want %q", child.ParentID, task.ID)
+	if child.ParentID != actionItem.ID {
+		t.Fatalf("ReparentActionItem() parent_id = %q, want %q", child.ParentID, actionItem.ID)
 	}
 
-	tasks, err := fixture.adapter.ListTasks(ctx, project.ID, false)
+	tasks, err := fixture.adapter.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 2 {
-		t.Fatalf("ListTasks() len = %d, want 2", len(tasks))
+		t.Fatalf("ListActionItems() len = %d, want 2", len(tasks))
 	}
-	children, err := fixture.adapter.ListChildTasks(ctx, project.ID, task.ID, false)
+	children, err := fixture.adapter.ListChildActionItems(ctx, project.ID, actionItem.ID, false)
 	if err != nil {
-		t.Fatalf("ListChildTasks() error = %v", err)
+		t.Fatalf("ListChildActionItems() error = %v", err)
 	}
 	if len(children) != 1 || children[0].ID != child.ID {
-		t.Fatalf("ListChildTasks() = %#v, want child %q", children, child.ID)
+		t.Fatalf("ListChildActionItems() = %#v, want child %q", children, child.ID)
 	}
-	result, err := fixture.adapter.SearchTasks(ctx, SearchTasksRequest{
+	result, err := fixture.adapter.SearchActionItems(ctx, SearchActionItemsRequest{
 		ProjectID: project.ID,
 		Query:     "updated",
 		Limit:     10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
-	if len(result.Matches) != 1 || result.Matches[0].Task.ID != task.ID {
-		t.Fatalf("SearchTasks() = %#v, want updated parent task", result)
+	if len(result.Matches) != 1 || result.Matches[0].ActionItem.ID != actionItem.ID {
+		t.Fatalf("SearchActionItems() = %#v, want updated parent actionItem", result)
 	}
 
 	comment, err := fixture.adapter.CreateComment(ctx, CreateCommentRequest{
@@ -349,15 +349,15 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 		t.Fatalf("GetProjectDependencyRollup() = %#v, want populated rollup", rollup)
 	}
 
-	if err := fixture.adapter.DeleteTask(ctx, DeleteTaskRequest{TaskID: task.ID, Mode: "archive", Actor: actor}); err != nil {
-		t.Fatalf("DeleteTask(archive) error = %v", err)
+	if err := fixture.adapter.DeleteActionItem(ctx, DeleteActionItemRequest{ActionItemID: actionItem.ID, Mode: "archive", Actor: actor}); err != nil {
+		t.Fatalf("DeleteActionItem(archive) error = %v", err)
 	}
-	restored, err := fixture.adapter.RestoreTask(ctx, RestoreTaskRequest{TaskID: task.ID, Actor: actor})
+	restored, err := fixture.adapter.RestoreActionItem(ctx, RestoreActionItemRequest{ActionItemID: actionItem.ID, Actor: actor})
 	if err != nil {
-		t.Fatalf("RestoreTask() error = %v", err)
+		t.Fatalf("RestoreActionItem() error = %v", err)
 	}
 	if restored.ArchivedAt != nil {
-		t.Fatalf("RestoreTask() archived_at = %#v, want nil", restored.ArchivedAt)
+		t.Fatalf("RestoreActionItem() archived_at = %#v, want nil", restored.ArchivedAt)
 	}
 }
 
@@ -383,9 +383,9 @@ func TestAppServiceAdapterBuiltinTemplateLifecycle(t *testing.T) {
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "refactor-phase", DisplayName: "Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "dogfood-refactor-phase", DisplayName: "Dogfood Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
-		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "refactor-task", DisplayName: "Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "dogfood-refactor-task", DisplayName: "Dogfood Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "build-actionItem", DisplayName: "Build ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "refactor-actionItem", DisplayName: "Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "dogfood-refactor-actionItem", DisplayName: "Dogfood Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
@@ -437,13 +437,13 @@ func TestAppServiceAdapterBuiltinTemplateLifecycleDefaultFrontend(t *testing.T) 
 		{ID: "branch-cleanup-phase", DisplayName: "Branch Cleanup Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "refactor-phase", DisplayName: "Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
 		{ID: "dogfood-refactor-phase", DisplayName: "Dogfood Refactor Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}},
-		{ID: "build-task", DisplayName: "Build Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "refactor-task", DisplayName: "Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: "dogfood-refactor-task", DisplayName: "Dogfood Refactor Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "build-actionItem", DisplayName: "Build ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "refactor-actionItem", DisplayName: "Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: "dogfood-refactor-actionItem", DisplayName: "Dogfood Refactor ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
 		{ID: "qa-check", DisplayName: "QA Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "visual-qa", DisplayName: "Visual QA", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 		{ID: "a11y-check", DisplayName: "Accessibility Check", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
-		{ID: "design-review", DisplayName: "Design Review", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{ID: "design-review", DisplayName: "Design Review", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
 		{ID: "commit-and-reingest", DisplayName: "Commit and Reingest", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}},
 	} {
 		if _, err := fixture.svc.UpsertKindDefinition(ctx, spec); err != nil {
@@ -498,9 +498,9 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -526,15 +526,15 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
-	if _, err := fixture.svc.CreateTask(ctx, app.CreateTaskInput{
+	if _, err := fixture.svc.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
 	}); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if _, err := fixture.svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
 		ID:                  "go-defaults",
@@ -548,9 +548,9 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -606,9 +606,9 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -634,30 +634,30 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
-	parent, err := fixture.svc.CreateTask(ctx, app.CreateTaskInput{
+	parent, err := fixture.svc.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	tasks, err := fixture.svc.ListTasks(ctx, project.ID, false)
+	tasks, err := fixture.svc.ListActionItems(ctx, project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
-	var generated domain.Task
-	for _, task := range tasks {
-		if task.ParentID == parent.ID {
-			generated = task
+	var generated domain.ActionItem
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == parent.ID {
+			generated = actionItem
 			break
 		}
 	}
 	if generated.ID == "" {
-		t.Fatal("expected generated QA child task")
+		t.Fatal("expected generated QA child actionItem")
 	}
 	if _, err := fixture.svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
 		ID:                  "go-defaults",
@@ -671,9 +671,9 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -692,8 +692,8 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 	}
 
 	result, err := fixture.adapter.ApproveProjectTemplateMigrations(ctx, ApproveProjectTemplateMigrationsRequest{
-		ProjectID: project.ID,
-		TaskIDs:   []string{generated.ID},
+		ProjectID:     project.ID,
+		ActionItemIDs: []string{generated.ID},
 		Actor: ActorLeaseTuple{
 			ActorID:   "dev-2",
 			ActorName: "Dev Two",
@@ -706,12 +706,12 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 	if result.AppliedCount != 1 {
 		t.Fatalf("ApproveProjectTemplateMigrations() = %#v, want one applied migration", result)
 	}
-	updatedTask, err := fixture.svc.GetTask(ctx, generated.ID)
+	updatedActionItem, err := fixture.svc.GetActionItem(ctx, generated.ID)
 	if err != nil {
-		t.Fatalf("GetTask() error = %v", err)
+		t.Fatalf("GetActionItem() error = %v", err)
 	}
-	if updatedTask.Title != "QA PROOF REVIEW UPDATE" {
-		t.Fatalf("updated task title = %q, want QA PROOF REVIEW UPDATE", updatedTask.Title)
+	if updatedActionItem.Title != "QA PROOF REVIEW UPDATE" {
+		t.Fatalf("updated actionItem title = %q, want QA PROOF REVIEW UPDATE", updatedActionItem.Title)
 	}
 	snapshot, err := fixture.svc.GetNodeContractSnapshot(ctx, generated.ID)
 	if err != nil {
@@ -812,15 +812,15 @@ func TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies(t 
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := adapter.CreateTask(ctx, CreateTaskRequest{
+	actionItem, err := adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
-		Title:       "Searchable task",
+		Title:       "Searchable actionItem",
 		Description: "work item embeddings content",
 		Actor:       actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if _, err := adapter.UpdateProject(ctx, UpdateProjectRequest{
 		ProjectID:   project.ID,
@@ -842,13 +842,13 @@ func TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies(t 
 	}
 	if _, err := adapter.CreateComment(ctx, CreateCommentRequest{
 		ProjectID:    project.ID,
-		TargetType:   string(domain.CommentTargetTypeTask),
-		TargetID:     task.ID,
-		Summary:      "Task thread",
-		BodyMarkdown: "task thread context content",
+		TargetType:   string(domain.CommentTargetTypeActionItem),
+		TargetID:     actionItem.ID,
+		Summary:      "ActionItem thread",
+		BodyMarkdown: "actionItem thread context content",
 		Actor:        actor,
 	}); err != nil {
-		t.Fatalf("CreateComment(task) error = %v", err)
+		t.Fatalf("CreateComment(actionItem) error = %v", err)
 	}
 
 	status, err := adapter.GetEmbeddingsStatus(ctx, EmbeddingsStatusRequest{
@@ -878,27 +878,27 @@ func TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies(t 
 		t.Fatalf("status summary = %#v, want non-zero lifecycle counts", status.Summary)
 	}
 
-	search, err := adapter.SearchTasks(ctx, SearchTasksRequest{
+	search, err := adapter.SearchActionItems(ctx, SearchActionItemsRequest{
 		ProjectID: project.ID,
-		Query:     "searchable task",
+		Query:     "searchable actionItem",
 		Mode:      string(app.SearchModeSemantic),
 		Limit:     10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	if len(search.Matches) == 0 {
-		t.Fatal("SearchTasks() returned no matches, want searchable task metadata")
+		t.Fatal("SearchActionItems() returned no matches, want searchable actionItem metadata")
 	}
 	match := search.Matches[0]
-	if match.Task.ID != task.ID {
-		t.Fatalf("SearchTasks() match task_id = %q, want %q", match.Task.ID, task.ID)
+	if match.ActionItem.ID != actionItem.ID {
+		t.Fatalf("SearchActionItems() match action_item_id = %q, want %q", match.ActionItem.ID, actionItem.ID)
 	}
 	if match.EmbeddingSubjectType == "" || match.EmbeddingSubjectID == "" {
-		t.Fatalf("SearchTasks() embedding metadata = %#v, want subject type/id", match)
+		t.Fatalf("SearchActionItems() embedding metadata = %#v, want subject type/id", match)
 	}
 	if match.EmbeddingStatus == "" {
-		t.Fatalf("SearchTasks() embedding status = %#v, want lifecycle state", match)
+		t.Fatalf("SearchActionItems() embedding status = %#v, want lifecycle state", match)
 	}
 }
 
@@ -917,7 +917,7 @@ func TestAppServiceAdapterKindAndAllowlistLifecycle(t *testing.T) {
 		ID:                  "review",
 		DisplayName:         "Review",
 		DescriptionMarkdown: "Review item",
-		AppliesTo:           []string{"task"},
+		AppliesTo:           []string{"actionItem"},
 	})
 	if err != nil {
 		t.Fatalf("UpsertKindDefinition() error = %v", err)
@@ -1110,38 +1110,38 @@ func TestAppServiceAdapterAttentionAndCaptureLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
-		Title:       "Blocked task",
+		Title:       "Blocked actionItem",
 		Description: "Needs review",
 		Priority:    "medium",
 		Actor:       actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	comment, err := fixture.adapter.CreateComment(ctx, CreateCommentRequest{
 		ProjectID:    project.ID,
-		TargetType:   string(domain.CommentTargetTypeTask),
-		TargetID:     task.ID,
+		TargetType:   string(domain.CommentTargetTypeActionItem),
+		TargetID:     actionItem.ID,
 		Summary:      "Review summary",
 		BodyMarkdown: "## Follow up\nImportant approval needed",
 		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateComment(task) error = %v", err)
+		t.Fatalf("CreateComment(actionItem) error = %v", err)
 	}
 	if comment.Summary != "Review summary" {
-		t.Fatalf("CreateComment(task) summary = %q, want Review summary", comment.Summary)
+		t.Fatalf("CreateComment(actionItem) summary = %q, want Review summary", comment.Summary)
 	}
 
 	raised, err := fixture.adapter.RaiseAttentionItem(ctx, RaiseAttentionItemRequest{
 		ProjectID:          project.ID,
-		ScopeType:          ScopeTypeTask,
-		ScopeID:            task.ID,
+		ScopeType:          ScopeTypeActionItem,
+		ScopeID:            actionItem.ID,
 		Kind:               string(domain.AttentionKindConsensusRequired),
-		Summary:            "Task needs user decision",
+		Summary:            "ActionItem needs user decision",
 		BodyMarkdown:       "Please review the request",
 		RequiresUserAction: true,
 		Actor:              actor,
@@ -1151,8 +1151,8 @@ func TestAppServiceAdapterAttentionAndCaptureLifecycle(t *testing.T) {
 	}
 	items, err := fixture.adapter.ListAttentionItems(ctx, ListAttentionItemsRequest{
 		ProjectID: project.ID,
-		ScopeType: ScopeTypeTask,
-		ScopeID:   task.ID,
+		ScopeType: ScopeTypeActionItem,
+		ScopeID:   actionItem.ID,
 		State:     AttentionStateOpen,
 	})
 	if err != nil {
@@ -1164,18 +1164,18 @@ func TestAppServiceAdapterAttentionAndCaptureLifecycle(t *testing.T) {
 
 	capture, err := fixture.adapter.CaptureState(ctx, CaptureStateRequest{
 		ProjectID: project.ID,
-		ScopeType: ScopeTypeTask,
-		ScopeID:   task.ID,
+		ScopeType: ScopeTypeActionItem,
+		ScopeID:   actionItem.ID,
 		View:      "full",
 	})
 	if err != nil {
 		t.Fatalf("CaptureState() error = %v", err)
 	}
-	if capture.GoalOverview.ProjectID != project.ID || capture.RequestedScopeType != ScopeTypeTask {
-		t.Fatalf("CaptureState() = %#v, want project/task scope", capture)
+	if capture.GoalOverview.ProjectID != project.ID || capture.RequestedScopeType != ScopeTypeActionItem {
+		t.Fatalf("CaptureState() = %#v, want project/actionItem scope", capture)
 	}
 	if capture.CommentOverview.RecentCount != 1 || capture.CommentOverview.ImportantCount != 1 {
-		t.Fatalf("CaptureState() comment_overview = %#v, want one important task comment", capture.CommentOverview)
+		t.Fatalf("CaptureState() comment_overview = %#v, want one important actionItem comment", capture.CommentOverview)
 	}
 	if capture.AttentionOverview.OpenCount != 1 || capture.AttentionOverview.RequiresUserAction != 1 {
 		t.Fatalf("CaptureState() attention_overview = %#v, want open actionable item", capture.AttentionOverview)
@@ -1263,29 +1263,29 @@ func TestAppServiceAdapterCapabilityLeaseLifecycle(t *testing.T) {
 	}
 }
 
-// TestNormalizeTaskStateInputAcceptsFailed verifies that normalizeTaskStateInput accepts "failed" as a valid move state.
-func TestNormalizeTaskStateInputAcceptsFailed(t *testing.T) {
+// TestNormalizeActionItemStateInputAcceptsFailed verifies that normalizeActionItemStateInput accepts "failed" as a valid move state.
+func TestNormalizeActionItemStateInputAcceptsFailed(t *testing.T) {
 	t.Parallel()
-	state, err := normalizeTaskStateInput("failed")
+	state, err := normalizeActionItemStateInput("failed")
 	if err != nil {
-		t.Fatalf("normalizeTaskStateInput(failed) error = %v", err)
+		t.Fatalf("normalizeActionItemStateInput(failed) error = %v", err)
 	}
 	if state != domain.StateFailed {
-		t.Fatalf("normalizeTaskStateInput(failed) = %q, want %q", state, domain.StateFailed)
+		t.Fatalf("normalizeActionItemStateInput(failed) = %q, want %q", state, domain.StateFailed)
 	}
 }
 
-// TestTaskLifecycleStateForColumnNameFailed verifies that taskLifecycleStateForColumnName maps "Failed" to StateFailed.
-func TestTaskLifecycleStateForColumnNameFailed(t *testing.T) {
+// TestActionItemLifecycleStateForColumnNameFailed verifies that actionItemLifecycleStateForColumnName maps "Failed" to StateFailed.
+func TestActionItemLifecycleStateForColumnNameFailed(t *testing.T) {
 	t.Parallel()
-	state := taskLifecycleStateForColumnName("Failed")
+	state := actionItemLifecycleStateForColumnName("Failed")
 	if state != domain.StateFailed {
-		t.Fatalf("taskLifecycleStateForColumnName(Failed) = %q, want %q", state, domain.StateFailed)
+		t.Fatalf("actionItemLifecycleStateForColumnName(Failed) = %q, want %q", state, domain.StateFailed)
 	}
 }
 
-// TestMoveTaskStateToFailed verifies that the adapter MoveTaskState handles the failed state end-to-end.
-func TestMoveTaskStateToFailed(t *testing.T) {
+// TestMoveActionItemStateToFailed verifies that the adapter MoveActionItemState handles the failed state end-to-end.
+func TestMoveActionItemStateToFailed(t *testing.T) {
 	t.Parallel()
 
 	fixture := newCommonLifecycleFixture(t)
@@ -1314,29 +1314,29 @@ func TestMoveTaskStateToFailed(t *testing.T) {
 		t.Fatalf("CreateColumn(Failed) error = %v", err)
 	}
 
-	task, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
-		Title:     "Task to fail",
+		Title:     "ActionItem to fail",
 		Priority:  "medium",
 		Actor:     actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
-	task, err = fixture.adapter.MoveTaskState(ctx, MoveTaskStateRequest{
-		TaskID: task.ID,
-		State:  "failed",
-		Actor:  actor,
+	actionItem, err = fixture.adapter.MoveActionItemState(ctx, MoveActionItemStateRequest{
+		ActionItemID: actionItem.ID,
+		State:        "failed",
+		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("MoveTaskState(failed) error = %v", err)
+		t.Fatalf("MoveActionItemState(failed) error = %v", err)
 	}
-	if task.LifecycleState != domain.StateFailed {
-		t.Fatalf("MoveTaskState(failed) lifecycle_state = %q, want %q", task.LifecycleState, domain.StateFailed)
+	if actionItem.LifecycleState != domain.StateFailed {
+		t.Fatalf("MoveActionItemState(failed) lifecycle_state = %q, want %q", actionItem.LifecycleState, domain.StateFailed)
 	}
-	if task.ColumnID != failed.ID {
-		t.Fatalf("MoveTaskState(failed) column_id = %q, want %q", task.ColumnID, failed.ID)
+	if actionItem.ColumnID != failed.ID {
+		t.Fatalf("MoveActionItemState(failed) column_id = %q, want %q", actionItem.ColumnID, failed.ID)
 	}
 }

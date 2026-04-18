@@ -88,7 +88,7 @@ func TestAppServiceAdapterAuthorizeMutationRevokedSession(t *testing.T) {
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if !errors.Is(err, ErrInvalidAuthentication) {
@@ -102,7 +102,7 @@ func TestAppServiceAdapterAuthorizeMutationDeniedByRule(t *testing.T) {
 
 	adapter, auth := newAuthOnlyAdapterForTest(t)
 	mustReplaceAuthRulesForTest(t, auth, mustNormalizeRuleForTest(t, autentdomain.Rule{
-		ID:     "deny-create-task",
+		ID:     "deny-create-actionItem",
 		Effect: autentdomain.EffectDeny,
 		Actions: []autentdomain.StringPattern{
 			{Operator: autentdomain.MatchExact, Value: "create_task"},
@@ -110,7 +110,7 @@ func TestAppServiceAdapterAuthorizeMutationDeniedByRule(t *testing.T) {
 		Resources: []autentdomain.ResourcePattern{
 			{
 				Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
-				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "actionItem"},
 				ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
 			},
 		},
@@ -123,7 +123,7 @@ func TestAppServiceAdapterAuthorizeMutationDeniedByRule(t *testing.T) {
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if !errors.Is(err, ErrAuthorizationDenied) {
@@ -137,7 +137,7 @@ func TestAppServiceAdapterAuthorizeMutationGrantRequired(t *testing.T) {
 
 	adapter, auth := newAuthOnlyAdapterForTest(t)
 	mustReplaceAuthRulesForTest(t, auth, mustNormalizeRuleForTest(t, autentdomain.Rule{
-		ID:     "grant-create-task",
+		ID:     "grant-create-actionItem",
 		Effect: autentdomain.EffectAllow,
 		Actions: []autentdomain.StringPattern{
 			{Operator: autentdomain.MatchExact, Value: "create_task"},
@@ -145,7 +145,7 @@ func TestAppServiceAdapterAuthorizeMutationGrantRequired(t *testing.T) {
 		Resources: []autentdomain.ResourcePattern{
 			{
 				Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
-				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+				Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "actionItem"},
 				ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
 			},
 		},
@@ -159,7 +159,7 @@ func TestAppServiceAdapterAuthorizeMutationGrantRequired(t *testing.T) {
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if !errors.Is(err, ErrGrantRequired) {

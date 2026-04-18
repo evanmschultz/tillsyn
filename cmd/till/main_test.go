@@ -750,7 +750,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "template project approve-migrations",
 			args: []string{"template", "project", "approve-migrations", "--help"},
-			want: []string{"till template project approve-migrations", "--project-id", "--task-id", "--all"},
+			want: []string{"till template project approve-migrations", "--project-id", "--actionItem-id", "--all"},
 		},
 		{
 			name: "template contract",
@@ -1351,7 +1351,7 @@ func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
 		SessionSecret: issuedSessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if err != nil {
@@ -1381,7 +1381,7 @@ func TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication(t *testing.
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if !errors.Is(err, servercommon.ErrInvalidAuthentication) {
@@ -1394,7 +1394,7 @@ func TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied(t *testing.T) {
 	adapter, auth := newAuthAdapterForTest(t)
 	if err := auth.ReplaceRules(context.Background(), []autentdomain.Rule{
 		mustNormalizeAuthRuleForTest(t, autentdomain.Rule{
-			ID:     "deny-create-task",
+			ID:     "deny-create-actionItem",
 			Effect: autentdomain.EffectDeny,
 			Actions: []autentdomain.StringPattern{
 				{Operator: autentdomain.MatchExact, Value: "create_task"},
@@ -1402,7 +1402,7 @@ func TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied(t *testing.T) {
 			Resources: []autentdomain.ResourcePattern{
 				{
 					Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
-					Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+					Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "actionItem"},
 					ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
 				},
 			},
@@ -1418,7 +1418,7 @@ func TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied(t *testing.T) {
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if !errors.Is(err, servercommon.ErrAuthorizationDenied) {
@@ -1431,7 +1431,7 @@ func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
 	adapter, auth := newAuthAdapterForTest(t)
 	if err := auth.ReplaceRules(context.Background(), []autentdomain.Rule{
 		mustNormalizeAuthRuleForTest(t, autentdomain.Rule{
-			ID:     "grant-create-task",
+			ID:     "grant-create-actionItem",
 			Effect: autentdomain.EffectAllow,
 			Actions: []autentdomain.StringPattern{
 				{Operator: autentdomain.MatchExact, Value: "create_task"},
@@ -1439,7 +1439,7 @@ func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
 			Resources: []autentdomain.ResourcePattern{
 				{
 					Namespace: autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "project:p1"},
-					Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "task"},
+					Type:      autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "actionItem"},
 					ID:        autentdomain.StringPattern{Operator: autentdomain.MatchExact, Value: "new"},
 				},
 			},
@@ -1456,7 +1456,7 @@ func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
 		Namespace:     "project:p1",
-		ResourceType:  "task",
+		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
 	if !errors.Is(err, servercommon.ErrGrantRequired) {
@@ -1932,7 +1932,7 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 		"kind", "upsert",
 		"--id", "qa-check",
 		"--display-name", "QA Check",
-		"--applies-to", "task",
+		"--applies-to", "actionItem",
 		"--template-json", "{}",
 	}, &upsertOut, io.Discard); err != nil {
 		t.Fatalf("run(kind upsert) error = %v", err)
@@ -2027,7 +2027,7 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	seedProjectForAuthCLITest(t, dbPath, "p1")
 
 	for _, args := range [][]string{
-		{"kind", "upsert", "--id", "build-task", "--display-name", "Build Task", "--applies-to", "task"},
+		{"kind", "upsert", "--id", "build-actionItem", "--display-name", "Build ActionItem", "--applies-to", "actionItem"},
 		{"kind", "upsert", "--id", "qa-pass", "--display-name", "QA Pass", "--applies-to", "subtask"},
 	} {
 		if err := run(context.Background(), append([]string{"--db", dbPath, "--config", cfgPath}, args...), io.Discard, io.Discard); err != nil {
@@ -2042,10 +2042,10 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	  "status": "approved",
 	  "node_templates": [
 	    {
-	      "id": "tmpl-build-task",
-	      "scope_level": "task",
-	      "node_kind_id": "build-task",
-	      "display_name": "Build Task",
+	      "id": "tmpl-build-actionItem",
+	      "scope_level": "actionItem",
+	      "node_kind_id": "build-actionItem",
+	      "display_name": "Build ActionItem",
 	      "child_rules": [
 	        {
 	          "id": "rule-qa-pass",
@@ -2079,7 +2079,7 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	if got := extractCLIKVValue(t, upsertOutput, "name"); got != "Go Defaults" {
 		t.Fatalf("template library upsert name = %q, want Go Defaults", got)
 	}
-	for _, want := range []string{"Template Library", "Node Templates", "Template Child Rules", "Build Task", "QA Pass"} {
+	for _, want := range []string{"Template Library", "Node Templates", "Template Child Rules", "Build ActionItem", "QA Pass"} {
 		if !strings.Contains(upsertOutput, want) {
 			t.Fatalf("expected %q in template library upsert output, got %q", want, upsertOutput)
 		}
@@ -2114,7 +2114,7 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	if got := extractCLIKVValue(t, showOutput, "id"); got != "go-defaults" {
 		t.Fatalf("template library show id = %q, want go-defaults", got)
 	}
-	for _, want := range []string{"Template Library", "Node Templates", "Build Task", "Template Child Rules", "QA Pass"} {
+	for _, want := range []string{"Template Library", "Node Templates", "Build ActionItem", "Template Child Rules", "QA Pass"} {
 		if !strings.Contains(showOutput, want) {
 			t.Fatalf("expected %q in template library show output, got %q", want, showOutput)
 		}
@@ -2183,27 +2183,27 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 	if err := repo.CreateColumn(context.Background(), column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
-		ID:        "task-qa-1",
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "actionItem-qa-1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "QA Pass",
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Priority:  domain.PriorityMedium,
 	}, time.Date(2026, 3, 29, 12, 58, 0, 0, time.UTC))
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(context.Background(), task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(context.Background(), actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
-		NodeID:                  "task-qa-1",
+		NodeID:                  "actionItem-qa-1",
 		ProjectID:               "p1",
 		SourceLibraryID:         "go-defaults",
-		SourceNodeTemplateID:    "tmpl-build-task",
+		SourceNodeTemplateID:    "tmpl-build-actionItem",
 		SourceChildRuleID:       "rule-qa-pass",
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -2222,7 +2222,7 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 		"--db", dbPath,
 		"--config", cfgPath,
 		"template", "contract", "show",
-		"--node-id", "task-qa-1",
+		"--node-id", "actionItem-qa-1",
 	}, &contractOut, io.Discard); err != nil {
 		t.Fatalf("run(template contract show) error = %v", err)
 	}
@@ -2286,9 +2286,9 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -2314,30 +2314,30 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("BindProjectTemplateLibrary() error = %v", err)
 	}
-	parent, err := svc.CreateTask(context.Background(), app.CreateTaskInput{
+	parent, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	tasks, err := svc.ListTasks(context.Background(), project.ID, false)
+	tasks, err := svc.ListActionItems(context.Background(), project.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
-	var generated domain.Task
-	for _, task := range tasks {
-		if task.ParentID == parent.ID {
-			generated = task
+	var generated domain.ActionItem
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == parent.ID {
+			generated = actionItem
 			break
 		}
 	}
 	if generated.ID == "" {
-		t.Fatal("expected generated QA task")
+		t.Fatal("expected generated QA actionItem")
 	}
 	if _, err := svc.UpsertTemplateLibrary(context.Background(), app.UpsertTemplateLibraryInput{
 		ID:                  "go-defaults",
@@ -2351,9 +2351,9 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 		ApprovedByActorName: "Dev",
 		ApprovedByActorType: domain.ActorTypeUser,
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "task-template",
-			ScopeLevel: domain.KindAppliesToTask,
-			NodeKindID: domain.KindID(domain.WorkKindTask),
+			ID:         "actionItem-template",
+			ScopeLevel: domain.KindAppliesToActionItem,
+			NodeKindID: domain.KindID(domain.WorkKindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
@@ -2392,12 +2392,12 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 		t.Fatalf("expected updated title in approve-migrations output, got %q", output)
 	}
 
-	updatedTask, err := repo.GetTask(context.Background(), generated.ID)
+	updatedActionItem, err := repo.GetActionItem(context.Background(), generated.ID)
 	if err != nil {
-		t.Fatalf("GetTask() error = %v", err)
+		t.Fatalf("GetActionItem() error = %v", err)
 	}
-	if updatedTask.Title != "QA PROOF REVIEW UPDATE" {
-		t.Fatalf("updated task title = %q, want QA PROOF REVIEW UPDATE", updatedTask.Title)
+	if updatedActionItem.Title != "QA PROOF REVIEW UPDATE" {
+		t.Fatalf("updated actionItem title = %q, want QA PROOF REVIEW UPDATE", updatedActionItem.Title)
 	}
 }
 
@@ -3163,13 +3163,13 @@ func TestRunImportCommandReadsSnapshot(t *testing.T) {
 				UpdatedAt: now,
 			},
 		},
-		Tasks: []app.SnapshotTask{
+		ActionItems: []app.SnapshotActionItem{
 			{
 				ID:        "t-import",
 				ProjectID: "p-import",
 				ColumnID:  "c-import",
 				Position:  0,
-				Title:     "Imported Task",
+				Title:     "Imported ActionItem",
 				Priority:  domain.PriorityMedium,
 				CreatedAt: now,
 				UpdatedAt: now,
@@ -3203,21 +3203,21 @@ func TestRunImportCommandReadsSnapshot(t *testing.T) {
 	}
 
 	foundProject := false
-	foundTask := false
+	foundActionItem := false
 	for _, p := range outSnap.Projects {
 		if p.ID == "p-import" {
 			foundProject = true
 			break
 		}
 	}
-	for _, tk := range outSnap.Tasks {
+	for _, tk := range outSnap.ActionItems {
 		if tk.ID == "t-import" {
-			foundTask = true
+			foundActionItem = true
 			break
 		}
 	}
-	if !foundProject || !foundTask {
-		t.Fatalf("expected imported data in exported snapshot, foundProject=%t foundTask=%t", foundProject, foundTask)
+	if !foundProject || !foundActionItem {
+		t.Fatalf("expected imported data in exported snapshot, foundProject=%t foundActionItem=%t", foundProject, foundActionItem)
 	}
 }
 
@@ -3890,8 +3890,8 @@ redo = "U"
 	if runtimeCfg.DefaultDeleteMode != app.DeleteModeHard {
 		t.Fatalf("expected hard delete mode, got %q", runtimeCfg.DefaultDeleteMode)
 	}
-	if runtimeCfg.TaskFields.ShowPriority || runtimeCfg.TaskFields.ShowDueDate || runtimeCfg.TaskFields.ShowLabels || !runtimeCfg.TaskFields.ShowDescription {
-		t.Fatalf("unexpected task fields runtime config %#v", runtimeCfg.TaskFields)
+	if runtimeCfg.ActionItemFields.ShowPriority || runtimeCfg.ActionItemFields.ShowDueDate || runtimeCfg.ActionItemFields.ShowLabels || !runtimeCfg.ActionItemFields.ShowDescription {
+		t.Fatalf("unexpected actionItem fields runtime config %#v", runtimeCfg.ActionItemFields)
 	}
 	if !runtimeCfg.Search.CrossProject || !runtimeCfg.Search.IncludeArchived {
 		t.Fatalf("unexpected search runtime config %#v", runtimeCfg.Search)

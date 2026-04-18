@@ -36,8 +36,8 @@ func traceDebug(msg string, keyvals ...any) {
 	log.Debug(msg, keyvals...)
 }
 
-// traceTaskScreenAction emits one structured task-screen interaction trace.
-func traceTaskScreenAction(screen, action string, keyvals ...any) {
+// traceActionItemScreenAction emits one structured actionItem-screen interaction trace.
+func traceActionItemScreenAction(screen, action string, keyvals ...any) {
 	fields := []any{
 		"screen", strings.TrimSpace(screen),
 		"action", strings.TrimSpace(action),
@@ -116,8 +116,8 @@ func (m *Model) markGlobalNoticeApplyLoadedCompletion(startedAt time.Time, loadE
 		transitionElapsed = time.Since(m.globalNoticeTransition.StartedAt).Milliseconds()
 	}
 	hasPendingProject := strings.TrimSpace(m.pendingProjectID) != ""
-	hasPendingFocusTask := strings.TrimSpace(m.pendingFocusTaskID) != ""
-	hasPendingTaskInfo := strings.TrimSpace(m.pendingOpenTaskInfoID) != ""
+	hasPendingFocusActionItem := strings.TrimSpace(m.pendingFocusActionItemID) != ""
+	hasPendingActionItemInfo := strings.TrimSpace(m.pendingOpenActionItemInfoID) != ""
 	_, _, _, hasPendingThread := m.pendingNotificationThread()
 	traceFields := []any{
 		"transition_id", transitionID,
@@ -126,8 +126,8 @@ func (m *Model) markGlobalNoticeApplyLoadedCompletion(startedAt time.Time, loadE
 		"load_count", m.globalNoticeTransition.LoadCount,
 		"load_error", loadErr != nil,
 		"pending_project", hasPendingProject,
-		"pending_focus_task", hasPendingFocusTask,
-		"pending_task_info", hasPendingTaskInfo,
+		"pending_focus_task", hasPendingFocusActionItem,
+		"pending_task_info", hasPendingActionItemInfo,
 		"pending_thread", hasPendingThread,
 	}
 	if loadErr != nil {
@@ -138,7 +138,7 @@ func (m *Model) markGlobalNoticeApplyLoadedCompletion(startedAt time.Time, loadE
 		m.completeGlobalNoticeTransition("load_error")
 		return
 	}
-	if hasPendingProject || hasPendingFocusTask || hasPendingTaskInfo || hasPendingThread {
+	if hasPendingProject || hasPendingFocusActionItem || hasPendingActionItemInfo || hasPendingThread {
 		return
 	}
 	m.completeGlobalNoticeTransition("apply_loaded_settled")

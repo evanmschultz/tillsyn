@@ -122,11 +122,11 @@ func TestColumnMutations(t *testing.T) {
 	}
 }
 
-// TestNewTaskDefaultsAndLabels verifies behavior for the covered scenario.
-func TestNewTaskDefaultsAndLabels(t *testing.T) {
+// TestNewActionItemDefaultsAndLabels verifies behavior for the covered scenario.
+func TestNewActionItemDefaultsAndLabels(t *testing.T) {
 	now := time.Now()
 	due := now.Add(24 * time.Hour)
-	task, err := NewTask(TaskInput{
+	actionItem, err := NewActionItem(ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -136,23 +136,23 @@ func TestNewTaskDefaultsAndLabels(t *testing.T) {
 		Labels:    []string{"Backend", "backend", "  ", "Urgent"},
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if task.Priority != PriorityMedium {
-		t.Fatalf("expected default medium, got %q", task.Priority)
+	if actionItem.Priority != PriorityMedium {
+		t.Fatalf("expected default medium, got %q", actionItem.Priority)
 	}
-	if task.Title != "Ship feature" {
-		t.Fatalf("unexpected title %q", task.Title)
+	if actionItem.Title != "Ship feature" {
+		t.Fatalf("unexpected title %q", actionItem.Title)
 	}
-	if len(task.Labels) != 2 || task.Labels[0] != "backend" || task.Labels[1] != "urgent" {
-		t.Fatalf("unexpected labels %#v", task.Labels)
+	if len(actionItem.Labels) != 2 || actionItem.Labels[0] != "backend" || actionItem.Labels[1] != "urgent" {
+		t.Fatalf("unexpected labels %#v", actionItem.Labels)
 	}
 }
 
-// TestNewTaskValidation verifies behavior for the covered scenario.
-func TestNewTaskValidation(t *testing.T) {
+// TestNewActionItemValidation verifies behavior for the covered scenario.
+func TestNewActionItemValidation(t *testing.T) {
 	now := time.Now()
-	_, err := NewTask(TaskInput{
+	_, err := NewActionItem(ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -165,10 +165,10 @@ func TestNewTaskValidation(t *testing.T) {
 	}
 }
 
-// TestTaskMoveUpdateArchiveRestore verifies behavior for the covered scenario.
-func TestTaskMoveUpdateArchiveRestore(t *testing.T) {
+// TestActionItemMoveUpdateArchiveRestore verifies behavior for the covered scenario.
+func TestActionItemMoveUpdateArchiveRestore(t *testing.T) {
 	now := time.Now()
-	task, err := NewTask(TaskInput{
+	actionItem, err := NewActionItem(ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -177,46 +177,46 @@ func TestTaskMoveUpdateArchiveRestore(t *testing.T) {
 		Priority:  PriorityLow,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
 
-	if err := task.Move("c2", 2, now.Add(time.Minute)); err != nil {
+	if err := actionItem.Move("c2", 2, now.Add(time.Minute)); err != nil {
 		t.Fatalf("Move() error = %v", err)
 	}
-	if task.ColumnID != "c2" || task.Position != 2 {
-		t.Fatalf("unexpected move state: %#v", task)
+	if actionItem.ColumnID != "c2" || actionItem.Position != 2 {
+		t.Fatalf("unexpected move state: %#v", actionItem)
 	}
 
 	due := now.Add(2 * time.Hour)
-	err = task.UpdateDetails("new", "desc", PriorityHigh, &due, []string{"A", "a", "B"}, now.Add(2*time.Minute))
+	err = actionItem.UpdateDetails("new", "desc", PriorityHigh, &due, []string{"A", "a", "B"}, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("UpdateDetails() error = %v", err)
 	}
-	if task.Title != "new" || task.Priority != PriorityHigh {
-		t.Fatalf("unexpected task update state %#v", task)
+	if actionItem.Title != "new" || actionItem.Priority != PriorityHigh {
+		t.Fatalf("unexpected actionItem update state %#v", actionItem)
 	}
-	task.Archive(now.Add(3 * time.Minute))
-	if task.ArchivedAt == nil {
+	actionItem.Archive(now.Add(3 * time.Minute))
+	if actionItem.ArchivedAt == nil {
 		t.Fatal("expected archived_at to be set")
 	}
-	task.Restore(now.Add(4 * time.Minute))
-	if task.ArchivedAt != nil {
+	actionItem.Restore(now.Add(4 * time.Minute))
+	if actionItem.ArchivedAt != nil {
 		t.Fatal("expected archived_at nil")
 	}
 }
 
-// TestNewTaskRichMetadataAndDefaults verifies behavior for the covered scenario.
-func TestNewTaskRichMetadataAndDefaults(t *testing.T) {
+// TestNewActionItemRichMetadataAndDefaults verifies behavior for the covered scenario.
+func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	lastVerified := now.Add(-time.Hour)
-	task, err := NewTask(TaskInput{
+	actionItem, err := NewActionItem(ActionItemInput{
 		ID:        "t-rich",
 		ProjectID: "p1",
 		ColumnID:  "c1",
 		Position:  0,
-		Title:     "rich task",
+		Title:     "rich actionItem",
 		Priority:  PriorityMedium,
-		Metadata: TaskMetadata{
+		Metadata: ActionItemMetadata{
 			Objective: "  Ship feature  ",
 			ContextBlocks: []ContextBlock{
 				{Title: "rule", Body: "  always run tests  ", Type: ContextType("RUNBOOK"), Importance: ContextImportance("HIGH")},
@@ -237,35 +237,35 @@ func TestNewTaskRichMetadataAndDefaults(t *testing.T) {
 		},
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if task.Kind != WorkKindTask {
-		t.Fatalf("expected default kind task, got %q", task.Kind)
+	if actionItem.Kind != WorkKindActionItem {
+		t.Fatalf("expected default kind actionItem, got %q", actionItem.Kind)
 	}
-	if task.LifecycleState != StateTodo {
-		t.Fatalf("expected default state todo, got %q", task.LifecycleState)
+	if actionItem.LifecycleState != StateTodo {
+		t.Fatalf("expected default state todo, got %q", actionItem.LifecycleState)
 	}
-	if task.UpdatedByType != ActorTypeUser {
-		t.Fatalf("expected default actor type user, got %q", task.UpdatedByType)
+	if actionItem.UpdatedByType != ActorTypeUser {
+		t.Fatalf("expected default actor type user, got %q", actionItem.UpdatedByType)
 	}
-	if task.Metadata.Objective != "Ship feature" {
-		t.Fatalf("expected normalized objective, got %q", task.Metadata.Objective)
+	if actionItem.Metadata.Objective != "Ship feature" {
+		t.Fatalf("expected normalized objective, got %q", actionItem.Metadata.Objective)
 	}
-	if len(task.Metadata.ContextBlocks) != 1 || task.Metadata.ContextBlocks[0].Type != ContextTypeRunbook {
-		t.Fatalf("unexpected context blocks %#v", task.Metadata.ContextBlocks)
+	if len(actionItem.Metadata.ContextBlocks) != 1 || actionItem.Metadata.ContextBlocks[0].Type != ContextTypeRunbook {
+		t.Fatalf("unexpected context blocks %#v", actionItem.Metadata.ContextBlocks)
 	}
-	if len(task.Metadata.ResourceRefs) != 1 || task.Metadata.ResourceRefs[0].ResourceType != ResourceTypeURL {
-		t.Fatalf("unexpected resource refs %#v", task.Metadata.ResourceRefs)
+	if len(actionItem.Metadata.ResourceRefs) != 1 || actionItem.Metadata.ResourceRefs[0].ResourceType != ResourceTypeURL {
+		t.Fatalf("unexpected resource refs %#v", actionItem.Metadata.ResourceRefs)
 	}
-	if len(task.Metadata.ResourceRefs[0].Tags) != 1 || task.Metadata.ResourceRefs[0].Tags[0] != "spec" {
-		t.Fatalf("unexpected normalized resource tags %#v", task.Metadata.ResourceRefs[0].Tags)
+	if len(actionItem.Metadata.ResourceRefs[0].Tags) != 1 || actionItem.Metadata.ResourceRefs[0].Tags[0] != "spec" {
+		t.Fatalf("unexpected normalized resource tags %#v", actionItem.Metadata.ResourceRefs[0].Tags)
 	}
 }
 
-// TestTaskLifecycleTransitions verifies behavior for the covered scenario.
-func TestTaskLifecycleTransitions(t *testing.T) {
+// TestActionItemLifecycleTransitions verifies behavior for the covered scenario.
+func TestActionItemLifecycleTransitions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	task, err := NewTask(TaskInput{
+	actionItem, err := NewActionItem(ActionItemInput{
 		ID:        "t-state",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -274,69 +274,69 @@ func TestTaskLifecycleTransitions(t *testing.T) {
 		Priority:  PriorityLow,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
 
-	if err := task.SetLifecycleState(StateProgress, now.Add(time.Minute)); err != nil {
+	if err := actionItem.SetLifecycleState(StateProgress, now.Add(time.Minute)); err != nil {
 		t.Fatalf("SetLifecycleState(progress) error = %v", err)
 	}
-	if task.StartedAt == nil || task.LifecycleState != StateProgress {
-		t.Fatalf("expected started/progress state, got %#v", task)
+	if actionItem.StartedAt == nil || actionItem.LifecycleState != StateProgress {
+		t.Fatalf("expected started/progress state, got %#v", actionItem)
 	}
-	if err := task.SetLifecycleState(StateDone, now.Add(2*time.Minute)); err != nil {
+	if err := actionItem.SetLifecycleState(StateDone, now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("SetLifecycleState(done) error = %v", err)
 	}
-	if task.CompletedAt == nil || task.LifecycleState != StateDone {
-		t.Fatalf("expected completed/done state, got %#v", task)
+	if actionItem.CompletedAt == nil || actionItem.LifecycleState != StateDone {
+		t.Fatalf("expected completed/done state, got %#v", actionItem)
 	}
-	if err := task.Reparent("parent-1", now.Add(3*time.Minute)); err != nil {
+	if err := actionItem.Reparent("parent-1", now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("Reparent() error = %v", err)
 	}
-	if task.ParentID != "parent-1" {
-		t.Fatalf("unexpected parent id %q", task.ParentID)
+	if actionItem.ParentID != "parent-1" {
+		t.Fatalf("unexpected parent id %q", actionItem.ParentID)
 	}
-	if err := task.Reparent(task.ID, now.Add(4*time.Minute)); err != ErrInvalidParentID {
+	if err := actionItem.Reparent(actionItem.ID, now.Add(4*time.Minute)); err != ErrInvalidParentID {
 		t.Fatalf("expected ErrInvalidParentID, got %v", err)
 	}
-	task.Archive(now.Add(5 * time.Minute))
-	if task.LifecycleState != StateArchived {
-		t.Fatalf("expected archived state, got %q", task.LifecycleState)
+	actionItem.Archive(now.Add(5 * time.Minute))
+	if actionItem.LifecycleState != StateArchived {
+		t.Fatalf("expected archived state, got %q", actionItem.LifecycleState)
 	}
-	task.Restore(now.Add(6 * time.Minute))
-	if task.LifecycleState != StateTodo {
-		t.Fatalf("expected restore to todo, got %q", task.LifecycleState)
+	actionItem.Restore(now.Add(6 * time.Minute))
+	if actionItem.LifecycleState != StateTodo {
+		t.Fatalf("expected restore to todo, got %q", actionItem.LifecycleState)
 	}
 
 	// todo → failed is valid (discovered invalid before work starts).
-	if err := task.SetLifecycleState(StateFailed, now.Add(7*time.Minute)); err != nil {
+	if err := actionItem.SetLifecycleState(StateFailed, now.Add(7*time.Minute)); err != nil {
 		t.Fatalf("SetLifecycleState(failed from todo) error = %v", err)
 	}
-	if task.LifecycleState != StateFailed {
-		t.Fatalf("expected failed state, got %q", task.LifecycleState)
+	if actionItem.LifecycleState != StateFailed {
+		t.Fatalf("expected failed state, got %q", actionItem.LifecycleState)
 	}
-	if task.CompletedAt == nil {
+	if actionItem.CompletedAt == nil {
 		t.Fatal("expected CompletedAt to be set when entering failed")
 	}
 
 	// Leaving a terminal state back to todo clears CompletedAt.
-	if err := task.SetLifecycleState(StateTodo, now.Add(8*time.Minute)); err != nil {
+	if err := actionItem.SetLifecycleState(StateTodo, now.Add(8*time.Minute)); err != nil {
 		t.Fatalf("SetLifecycleState(todo from failed) error = %v", err)
 	}
-	if task.CompletedAt != nil {
+	if actionItem.CompletedAt != nil {
 		t.Fatal("expected CompletedAt to be nil after leaving failed to todo")
 	}
 
 	// in_progress → failed is valid (failure during work).
-	if err := task.SetLifecycleState(StateProgress, now.Add(9*time.Minute)); err != nil {
+	if err := actionItem.SetLifecycleState(StateProgress, now.Add(9*time.Minute)); err != nil {
 		t.Fatalf("SetLifecycleState(progress) error = %v", err)
 	}
-	if err := task.SetLifecycleState(StateFailed, now.Add(10*time.Minute)); err != nil {
+	if err := actionItem.SetLifecycleState(StateFailed, now.Add(10*time.Minute)); err != nil {
 		t.Fatalf("SetLifecycleState(failed from progress) error = %v", err)
 	}
-	if task.LifecycleState != StateFailed {
-		t.Fatalf("expected failed state from progress, got %q", task.LifecycleState)
+	if actionItem.LifecycleState != StateFailed {
+		t.Fatalf("expected failed state from progress, got %q", actionItem.LifecycleState)
 	}
-	if task.CompletedAt == nil {
+	if actionItem.CompletedAt == nil {
 		t.Fatal("expected CompletedAt to be set when entering failed from progress")
 	}
 }
@@ -360,17 +360,17 @@ func TestIsTerminalState(t *testing.T) {
 	}
 }
 
-// TestTaskContractUnmetChecks verifies behavior for the covered scenario.
-func TestTaskContractUnmetChecks(t *testing.T) {
+// TestActionItemContractUnmetChecks verifies behavior for the covered scenario.
+func TestActionItemContractUnmetChecks(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	task, err := NewTask(TaskInput{
+	actionItem, err := NewActionItem(ActionItemInput{
 		ID:        "t-contract",
 		ProjectID: "p1",
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "contract",
 		Priority:  PriorityHigh,
-		Metadata: TaskMetadata{
+		Metadata: ActionItemMetadata{
 			CompletionContract: CompletionContract{
 				StartCriteria: []ChecklistItem{
 					{ID: "s1", Text: "design approved", Done: false},
@@ -387,32 +387,32 @@ func TestTaskContractUnmetChecks(t *testing.T) {
 		},
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	startUnmet := task.StartCriteriaUnmet()
+	startUnmet := actionItem.StartCriteriaUnmet()
 	if len(startUnmet) != 1 || startUnmet[0] != "design approved" {
 		t.Fatalf("unexpected start unmet list %#v", startUnmet)
 	}
-	children := []Task{
+	children := []ActionItem{
 		{ID: "child-1", Title: "child", LifecycleState: StateProgress},
 	}
-	doneUnmet := task.CompletionCriteriaUnmet(children)
+	doneUnmet := actionItem.CompletionCriteriaUnmet(children)
 	if len(doneUnmet) < 3 {
 		t.Fatalf("expected unmet completion checks, got %#v", doneUnmet)
 	}
 }
 
-// TestNewTaskRejectsInvalidMetadata verifies behavior for the covered scenario.
-func TestNewTaskRejectsInvalidMetadata(t *testing.T) {
+// TestNewActionItemRejectsInvalidMetadata verifies behavior for the covered scenario.
+func TestNewActionItemRejectsInvalidMetadata(t *testing.T) {
 	now := time.Now()
-	_, err := NewTask(TaskInput{
+	_, err := NewActionItem(ActionItemInput{
 		ID:        "t-bad",
 		ProjectID: "p1",
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "bad",
 		Priority:  PriorityMedium,
-		Metadata: TaskMetadata{
+		Metadata: ActionItemMetadata{
 			ContextBlocks: []ContextBlock{
 				{Body: "x", Type: ContextType("invalid")},
 			},
@@ -479,9 +479,9 @@ func TestMergeProjectMetadataDefaults(t *testing.T) {
 	}
 }
 
-// TestMergeTaskMetadataDefaults verifies conservative task metadata defaulting.
-func TestMergeTaskMetadataDefaults(t *testing.T) {
-	merged, err := MergeTaskMetadata(TaskMetadata{
+// TestMergeActionItemMetadataDefaults verifies conservative actionItem metadata defaulting.
+func TestMergeActionItemMetadataDefaults(t *testing.T) {
+	merged, err := MergeActionItemMetadata(ActionItemMetadata{
 		Objective:       "Existing objective",
 		CommandSnippets: []string{"make test"},
 		DecisionLog:     []string{"decision-a"},
@@ -489,7 +489,7 @@ func TestMergeTaskMetadataDefaults(t *testing.T) {
 		CompletionContract: CompletionContract{
 			CompletionChecklist: []ChecklistItem{{ID: "ck-existing", Text: "existing check", Done: false}},
 		},
-	}, &TaskMetadata{
+	}, &ActionItemMetadata{
 		ImplementationNotesUser:  "default user notes",
 		ImplementationNotesAgent: "default agent notes",
 		AcceptanceCriteria:       "default acceptance",
@@ -521,7 +521,7 @@ func TestMergeTaskMetadataDefaults(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("MergeTaskMetadata() error = %v", err)
+		t.Fatalf("MergeActionItemMetadata() error = %v", err)
 	}
 	if merged.Objective != "Existing objective" {
 		t.Fatalf("Objective = %q, want existing", merged.Objective)

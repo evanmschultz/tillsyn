@@ -137,7 +137,7 @@ func TestHandlerCaptureStateSuccess(t *testing.T) {
 				ProjectID:   "p1",
 				ProjectName: "Roadmap",
 			},
-			WorkOverview: common.WorkOverview{TotalTasks: 3},
+			WorkOverview: common.WorkOverview{TotalActionItems: 3},
 		},
 	}
 	handler := NewHandler(capture, nil)

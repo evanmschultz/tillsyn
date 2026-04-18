@@ -19,7 +19,7 @@ func TestWriteBuiltinTemplateLibraryStatusDetail(t *testing.T) {
 		BuiltinSource:         "builtin://tillsyn/default-go",
 		BuiltinVersion:        "2026-04-12.1",
 		BuiltinRevisionDigest: "builtin-digest",
-		RequiredKindIDs:       []domain.KindID{"build-task", "go-project", "plan-phase"},
+		RequiredKindIDs:       []domain.KindID{"build-actionItem", "go-project", "plan-phase"},
 		MissingKindIDs:        []domain.KindID{"qa-check"},
 		Installed:             true,
 		InstalledLibraryName:  "Default Go",

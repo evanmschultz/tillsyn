@@ -65,11 +65,11 @@ type CapabilityScopeType string
 
 // Capability scope values.
 const (
-	CapabilityScopeProject CapabilityScopeType = "project"
-	CapabilityScopeBranch  CapabilityScopeType = "branch"
-	CapabilityScopePhase   CapabilityScopeType = "phase"
-	CapabilityScopeTask    CapabilityScopeType = "task"
-	CapabilityScopeSubtask CapabilityScopeType = "subtask"
+	CapabilityScopeProject    CapabilityScopeType = "project"
+	CapabilityScopeBranch     CapabilityScopeType = "branch"
+	CapabilityScopePhase      CapabilityScopeType = "phase"
+	CapabilityScopeActionItem CapabilityScopeType = "actionItem"
+	CapabilityScopeSubtask    CapabilityScopeType = "subtask"
 )
 
 // validCapabilityRoles stores supported capability roles.
@@ -86,7 +86,7 @@ var validCapabilityScopes = []CapabilityScopeType{
 	CapabilityScopeProject,
 	CapabilityScopeBranch,
 	CapabilityScopePhase,
-	CapabilityScopeTask,
+	CapabilityScopeActionItem,
 	CapabilityScopeSubtask,
 }
 
@@ -196,9 +196,21 @@ func NormalizeCapabilityRole(role CapabilityRole) CapabilityRole {
 	}
 }
 
-// NormalizeCapabilityScopeType canonicalizes scope values.
+// NormalizeCapabilityScopeType canonicalizes scope values. Inputs are matched
+// case-insensitively against the supported set and returned in their
+// canonical camelCase form (e.g. "actionItem"); unknown values are returned
+// lowercased so callers can still detect invalid inputs.
 func NormalizeCapabilityScopeType(scope CapabilityScopeType) CapabilityScopeType {
-	return CapabilityScopeType(strings.TrimSpace(strings.ToLower(string(scope))))
+	lowered := strings.TrimSpace(strings.ToLower(string(scope)))
+	if lowered == "" {
+		return ""
+	}
+	for _, candidate := range validCapabilityScopes {
+		if strings.ToLower(string(candidate)) == lowered {
+			return candidate
+		}
+	}
+	return CapabilityScopeType(lowered)
 }
 
 // IsValidCapabilityRole reports whether a role value is supported.

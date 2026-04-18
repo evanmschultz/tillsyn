@@ -21,16 +21,16 @@ type stubExpandedService struct {
 	stubMutationAuthorizer
 	lastCreateProjectReq             common.CreateProjectRequest
 	lastListProjectsArchived         bool
-	lastGetTaskID                    string
-	lastListTasksProjectID           string
-	lastListTasksArchived            bool
+	lastGetActionItemID              string
+	lastListActionItemsProjectID     string
+	lastListActionItemsArchived      bool
 	lastListChildProjectID           string
 	lastListChildParentID            string
 	lastListChildArchived            bool
-	lastCreateTaskReq                common.CreateTaskRequest
-	lastUpdateTaskReq                common.UpdateTaskRequest
-	lastMoveTaskStateReq             common.MoveTaskStateRequest
-	lastRestoreTaskReq               common.RestoreTaskRequest
+	lastCreateActionItemReq          common.CreateActionItemRequest
+	lastUpdateActionItemReq          common.UpdateActionItemRequest
+	lastMoveActionItemStateReq       common.MoveActionItemStateRequest
+	lastRestoreActionItemReq         common.RestoreActionItemRequest
 	lastIssueLeaseReq                common.IssueCapabilityLeaseRequest
 	lastListLeaseReq                 common.ListCapabilityLeasesRequest
 	lastCreateCommentReq             common.CreateCommentRequest
@@ -51,7 +51,7 @@ type stubExpandedService struct {
 	lastGetTemplateBindingID         string
 	lastGetTemplatePreviewID         string
 	lastGetNodeContractID            string
-	lastSearchTasksReq               common.SearchTasksRequest
+	lastSearchActionItemsReq         common.SearchActionItemsRequest
 	lastEmbeddingsStatusReq          common.EmbeddingsStatusRequest
 	lastEmbeddingsReindexReq         common.ReindexEmbeddingsRequest
 	lastCreateAuthRequestReq         common.CreateAuthRequestRequest
@@ -334,20 +334,20 @@ func (s *stubExpandedService) RevokeAuthSession(_ context.Context, in common.Rev
 	}, nil
 }
 
-// ListTasks returns one deterministic task row.
-func (s *stubExpandedService) ListTasks(_ context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
-	s.lastListTasksProjectID = projectID
-	s.lastListTasksArchived = includeArchived
+// ListActionItems returns one deterministic actionItem row.
+func (s *stubExpandedService) ListActionItems(_ context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
+	s.lastListActionItemsProjectID = projectID
+	s.lastListActionItemsArchived = includeArchived
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return []domain.Task{
+	return []domain.ActionItem{
 		{
 			ID:             "t1",
 			ProjectID:      "p1",
 			ColumnID:       "c1",
 			Position:       0,
-			Title:          "Task One",
-			Kind:           domain.WorkKindTask,
-			Scope:          domain.KindAppliesToTask,
+			Title:          "ActionItem One",
+			Kind:           domain.WorkKindActionItem,
+			Scope:          domain.KindAppliesToActionItem,
 			LifecycleState: domain.StateTodo,
 			Priority:       domain.PriorityMedium,
 			CreatedAt:      now,
@@ -356,48 +356,48 @@ func (s *stubExpandedService) ListTasks(_ context.Context, projectID string, inc
 	}, nil
 }
 
-// GetTask returns one deterministic task row by id.
-func (s *stubExpandedService) GetTask(_ context.Context, taskID string) (domain.Task, error) {
-	s.lastGetTaskID = taskID
+// GetActionItem returns one deterministic actionItem row by id.
+func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID string) (domain.ActionItem, error) {
+	s.lastGetActionItemID = actionItemID
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
-		ID:             strings.TrimSpace(taskID),
+	return domain.ActionItem{
+		ID:             strings.TrimSpace(actionItemID),
 		ProjectID:      "p1",
 		ColumnID:       "c1",
 		Position:       0,
-		Title:          "Task One",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		Description:    "Implement the scoped instructions explainer.",
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			Objective:                "Explain the node's real workflow rules.",
 			ImplementationNotesAgent: "Use MCP surfaces and keep Go changes idiomatic.",
 			AcceptanceCriteria:       "The explainer shows project rules and node-local rules.",
 			DefinitionOfDone:         "Focused tests pass and docs are aligned.",
 			ValidationPlan:           "Run mage test-pkg ./internal/adapters/server/mcpapi and mage ci.",
 			DependsOn:                []string{"phase-plan"},
-			BlockedBy:                []string{"task-design-review"},
-			BlockedReason:            "Waiting for the design review task to finish before implementation starts.",
+			BlockedBy:                []string{"actionItem-design-review"},
+			BlockedReason:            "Waiting for the design review actionItem to finish before implementation starts.",
 		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, nil
 }
 
-// CreateTask returns one deterministic created task row.
-func (s *stubExpandedService) CreateTask(_ context.Context, in common.CreateTaskRequest) (domain.Task, error) {
-	s.lastCreateTaskReq = in
+// CreateActionItem returns one deterministic created actionItem row.
+func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.CreateActionItemRequest) (domain.ActionItem, error) {
+	s.lastCreateActionItemReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
+	return domain.ActionItem{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       "c1",
 		Position:       0,
-		Title:          "Task One",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -405,18 +405,18 @@ func (s *stubExpandedService) CreateTask(_ context.Context, in common.CreateTask
 	}, nil
 }
 
-// UpdateTask returns one deterministic updated task row.
-func (s *stubExpandedService) UpdateTask(_ context.Context, in common.UpdateTaskRequest) (domain.Task, error) {
-	s.lastUpdateTaskReq = in
+// UpdateActionItem returns one deterministic updated actionItem row.
+func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.UpdateActionItemRequest) (domain.ActionItem, error) {
+	s.lastUpdateActionItemReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
+	return domain.ActionItem{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       "c1",
 		Position:       0,
-		Title:          "Task One Updated",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One Updated",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -424,17 +424,17 @@ func (s *stubExpandedService) UpdateTask(_ context.Context, in common.UpdateTask
 	}, nil
 }
 
-// MoveTask returns one deterministic moved task row.
-func (s *stubExpandedService) MoveTask(_ context.Context, _ common.MoveTaskRequest) (domain.Task, error) {
+// MoveActionItem returns one deterministic moved actionItem row.
+func (s *stubExpandedService) MoveActionItem(_ context.Context, _ common.MoveActionItemRequest) (domain.ActionItem, error) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
+	return domain.ActionItem{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       "c2",
 		Position:       1,
-		Title:          "Task One",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateProgress,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -442,18 +442,18 @@ func (s *stubExpandedService) MoveTask(_ context.Context, _ common.MoveTaskReque
 	}, nil
 }
 
-// MoveTaskState returns one deterministic moved-by-state task row.
-func (s *stubExpandedService) MoveTaskState(_ context.Context, in common.MoveTaskStateRequest) (domain.Task, error) {
-	s.lastMoveTaskStateReq = in
+// MoveActionItemState returns one deterministic moved-by-state actionItem row.
+func (s *stubExpandedService) MoveActionItemState(_ context.Context, in common.MoveActionItemStateRequest) (domain.ActionItem, error) {
+	s.lastMoveActionItemStateReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
-		ID:             strings.TrimSpace(in.TaskID),
+	return domain.ActionItem{
+		ID:             strings.TrimSpace(in.ActionItemID),
 		ProjectID:      "p1",
 		ColumnID:       "c2",
 		Position:       0,
-		Title:          "Task One",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateDone,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -461,23 +461,23 @@ func (s *stubExpandedService) MoveTaskState(_ context.Context, in common.MoveTas
 	}, nil
 }
 
-// DeleteTask reports deterministic success.
-func (s *stubExpandedService) DeleteTask(_ context.Context, _ common.DeleteTaskRequest) error {
+// DeleteActionItem reports deterministic success.
+func (s *stubExpandedService) DeleteActionItem(_ context.Context, _ common.DeleteActionItemRequest) error {
 	return nil
 }
 
-// RestoreTask returns one deterministic restored row.
-func (s *stubExpandedService) RestoreTask(_ context.Context, in common.RestoreTaskRequest) (domain.Task, error) {
-	s.lastRestoreTaskReq = in
+// RestoreActionItem returns one deterministic restored row.
+func (s *stubExpandedService) RestoreActionItem(_ context.Context, in common.RestoreActionItemRequest) (domain.ActionItem, error) {
+	s.lastRestoreActionItemReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
+	return domain.ActionItem{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       "c1",
 		Position:       0,
-		Title:          "Task One",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -485,18 +485,18 @@ func (s *stubExpandedService) RestoreTask(_ context.Context, in common.RestoreTa
 	}, nil
 }
 
-// ReparentTask returns one deterministic reparented row.
-func (s *stubExpandedService) ReparentTask(_ context.Context, _ common.ReparentTaskRequest) (domain.Task, error) {
+// ReparentActionItem returns one deterministic reparented row.
+func (s *stubExpandedService) ReparentActionItem(_ context.Context, _ common.ReparentActionItemRequest) (domain.ActionItem, error) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return domain.Task{
+	return domain.ActionItem{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ParentID:       "parent-1",
 		ColumnID:       "c1",
 		Position:       0,
-		Title:          "Task One",
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
+		Title:          "ActionItem One",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -504,13 +504,13 @@ func (s *stubExpandedService) ReparentTask(_ context.Context, _ common.ReparentT
 	}, nil
 }
 
-// ListChildTasks returns one deterministic child row.
-func (s *stubExpandedService) ListChildTasks(_ context.Context, projectID, parentID string, includeArchived bool) ([]domain.Task, error) {
+// ListChildActionItems returns one deterministic child row.
+func (s *stubExpandedService) ListChildActionItems(_ context.Context, projectID, parentID string, includeArchived bool) ([]domain.ActionItem, error) {
 	s.lastListChildProjectID = projectID
 	s.lastListChildParentID = parentID
 	s.lastListChildArchived = includeArchived
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return []domain.Task{
+	return []domain.ActionItem{
 		{
 			ID:             "child-1",
 			ProjectID:      "p1",
@@ -528,21 +528,21 @@ func (s *stubExpandedService) ListChildTasks(_ context.Context, projectID, paren
 	}, nil
 }
 
-// SearchTasks returns one deterministic match row plus search metadata.
-func (s *stubExpandedService) SearchTasks(_ context.Context, in common.SearchTasksRequest) (common.SearchTasksResult, error) {
-	s.lastSearchTasksReq = in
+// SearchActionItems returns one deterministic match row plus search metadata.
+func (s *stubExpandedService) SearchActionItems(_ context.Context, in common.SearchActionItemsRequest) (common.SearchActionItemsResult, error) {
+	s.lastSearchActionItemsReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return common.SearchTasksResult{
-		Matches: []common.SearchTaskMatch{{
+	return common.SearchActionItemsResult{
+		Matches: []common.SearchActionItemMatch{{
 			Project: domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One", CreatedAt: now, UpdatedAt: now},
-			Task: domain.Task{
+			ActionItem: domain.ActionItem{
 				ID:             "t1",
 				ProjectID:      "p1",
 				ColumnID:       "c1",
 				Position:       0,
-				Title:          "Task One",
-				Kind:           domain.WorkKindTask,
-				Scope:          domain.KindAppliesToTask,
+				Title:          "ActionItem One",
+				Kind:           domain.WorkKindActionItem,
+				Scope:          domain.KindAppliesToActionItem,
 				LifecycleState: domain.StateTodo,
 				Priority:       domain.PriorityMedium,
 				CreatedAt:      now,
@@ -655,11 +655,11 @@ func (s *stubExpandedService) ListKindDefinitions(_ context.Context, includeArch
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return []domain.KindDefinition{
 		{
-			ID:                  domain.KindID("task"),
-			DisplayName:         "Task",
+			ID:                  domain.KindID("actionItem"),
+			DisplayName:         "ActionItem",
 			DescriptionMarkdown: "Normal implementation work item. Prefer comments for progress and handoffs for explicit routing.",
-			AppliesTo:           []domain.KindAppliesTo{domain.KindAppliesToTask},
-			AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToTask},
+			AppliesTo:           []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+			AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToActionItem},
 			CreatedAt:           now,
 			UpdatedAt:           now,
 		},
@@ -687,7 +687,7 @@ func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, in commo
 
 // ListProjectAllowedKinds returns deterministic allowlist rows.
 func (s *stubExpandedService) ListProjectAllowedKinds(_ context.Context, _ string) ([]string, error) {
-	return []string{"build-task", "go-project", "qa-check", "task"}, nil
+	return []string{"build-actionItem", "go-project", "qa-check", "actionItem"}, nil
 }
 
 // ListTemplateLibraries returns one deterministic template-library row.
@@ -706,15 +706,15 @@ func (s *stubExpandedService) ListTemplateLibraries(_ context.Context, in common
 			UpdatedAt:   now,
 			NodeTemplates: []domain.NodeTemplate{
 				{
-					ID:                  "tmpl-task-build",
+					ID:                  "tmpl-actionItem-build",
 					LibraryID:           "go-defaults",
-					ScopeLevel:          domain.KindAppliesToTask,
-					NodeKindID:          domain.KindID("build-task"),
-					DisplayName:         "Build Task",
+					ScopeLevel:          domain.KindAppliesToActionItem,
+					NodeKindID:          domain.KindID("build-actionItem"),
+					DisplayName:         "Build ActionItem",
 					DescriptionMarkdown: "Build work should stay TDD-first and hand off to QA once implementation evidence is attached.",
 					ChildRules: []domain.TemplateChildRule{{
 						ID:                      "rule-qa-pass",
-						NodeTemplateID:          "tmpl-task-build",
+						NodeTemplateID:          "tmpl-actionItem-build",
 						ChildScopeLevel:         domain.KindAppliesToSubtask,
 						ChildKindID:             domain.KindID("qa-check"),
 						TitleTemplate:           "QA PROOF REVIEW",
@@ -745,7 +745,7 @@ func (s *stubExpandedService) GetBuiltinTemplateLibraryStatus(_ context.Context,
 		BuiltinSource:         "builtin://tillsyn/default-go",
 		BuiltinVersion:        "2026-04-13.1",
 		BuiltinRevisionDigest: "builtin-digest",
-		RequiredKindIDs:       []domain.KindID{"branch", "build-phase", "build-task", "branch-cleanup-phase", "closeout-phase", "commit-and-reingest", "dogfood-refactor-phase", "dogfood-refactor-task", "go-project", "plan-phase", "project-setup-phase", "qa-check", "refactor-phase", "refactor-task", "subtask", "task"},
+		RequiredKindIDs:       []domain.KindID{"branch", "build-phase", "build-actionItem", "branch-cleanup-phase", "closeout-phase", "commit-and-reingest", "dogfood-refactor-phase", "dogfood-refactor-actionItem", "go-project", "plan-phase", "project-setup-phase", "qa-check", "refactor-phase", "refactor-actionItem", "subtask", "actionItem"},
 		State:                 domain.BuiltinTemplateLibraryStateCurrent,
 		Installed:             true,
 		InstalledLibraryName:  "Default Go",
@@ -791,11 +791,11 @@ func (s *stubExpandedService) UpsertTemplateLibrary(_ context.Context, in common
 		UpdatedAt: now,
 		NodeTemplates: []domain.NodeTemplate{
 			{
-				ID:          "tmpl-task-build",
+				ID:          "tmpl-actionItem-build",
 				LibraryID:   strings.TrimSpace(in.ID),
-				ScopeLevel:  domain.KindAppliesToTask,
-				NodeKindID:  domain.KindID("build-task"),
-				DisplayName: "Build Task",
+				ScopeLevel:  domain.KindAppliesToActionItem,
+				NodeKindID:  domain.KindID("build-actionItem"),
+				DisplayName: "Build ActionItem",
 			},
 		},
 	}, nil
@@ -837,18 +837,18 @@ func (s *stubExpandedService) GetProjectTemplateReapplyPreview(_ context.Context
 		EligibleMigrationCount: 1,
 		ReviewRequired:         true,
 		ChildRuleChanges: []domain.ProjectTemplateChildRuleChange{{
-			NodeTemplateID:        "build-task-template",
-			NodeTemplateName:      "Build Task",
+			NodeTemplateID:        "build-actionItem-template",
+			NodeTemplateName:      "Build ActionItem",
 			ChildRuleID:           "qa-proof-review",
 			ChangeKinds:           []string{"title", "editable_by"},
 			PreviousTitleTemplate: "QA PROOF REVIEW",
 			CurrentTitleTemplate:  "QA PROOF REVIEW UPDATE",
 		}},
 		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{{
-			TaskID:      "task-qa-1",
-			Title:       "QA PROOF REVIEW",
-			Status:      domain.ProjectTemplateReapplyCandidateEligible,
-			ChangeKinds: []string{"title", "editable_by"},
+			ActionItemID: "actionItem-qa-1",
+			Title:        "QA PROOF REVIEW",
+			Status:       domain.ProjectTemplateReapplyCandidateEligible,
+			ChangeKinds:  []string{"title", "editable_by"},
 		}},
 	}, nil
 }
@@ -862,13 +862,13 @@ func (s *stubExpandedService) ApproveProjectTemplateMigrations(_ context.Context
 		LibraryName:            "Go Defaults",
 		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
 		ApprovedAll:            in.ApproveAll,
-		AppliedCount:           max(1, len(in.TaskIDs)),
+		AppliedCount:           max(1, len(in.ActionItemIDs)),
 		RemainingEligibleCount: 0,
 		Approvals: []domain.ProjectTemplateMigrationApproval{{
-			TaskID:      "task-qa-1",
-			Title:       "QA PROOF REVIEW",
-			ChangeKinds: []string{"title", "editable_by"},
-			NewTitle:    "QA PROOF REVIEW UPDATE",
+			ActionItemID: "actionItem-qa-1",
+			Title:        "QA PROOF REVIEW",
+			ChangeKinds:  []string{"title", "editable_by"},
+			NewTitle:     "QA PROOF REVIEW UPDATE",
 		}},
 	}, nil
 }
@@ -880,7 +880,7 @@ func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID 
 		NodeID:                  nodeID,
 		ProjectID:               "p1",
 		SourceLibraryID:         "go-defaults",
-		SourceNodeTemplateID:    "tmpl-task-build",
+		SourceNodeTemplateID:    "tmpl-actionItem-build",
 		SourceChildRuleID:       "rule-qa-pass",
 		ResponsibleActorKind:    domain.TemplateActorKindQA,
 		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
@@ -960,7 +960,7 @@ func (s *stubExpandedService) CreateComment(_ context.Context, in common.CreateC
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	targetType := domain.NormalizeCommentTargetType(domain.CommentTargetType(in.TargetType))
 	if targetType == "" {
-		targetType = domain.CommentTargetTypeTask
+		targetType = domain.CommentTargetTypeActionItem
 	}
 	return common.CommentRecord{
 		ID:           "c1",
@@ -998,12 +998,12 @@ func (s *stubExpandedService) CreateHandoff(_ context.Context, in common.CreateH
 		ID:              "handoff-1",
 		ProjectID:       strings.TrimSpace(in.ProjectID),
 		BranchID:        strings.TrimSpace(in.BranchID),
-		ScopeType:       domain.ScopeLevelTask,
-		ScopeID:         firstNonEmptyString(strings.TrimSpace(in.ScopeID), "task-1"),
+		ScopeType:       domain.ScopeLevelActionItem,
+		ScopeID:         firstNonEmptyString(strings.TrimSpace(in.ScopeID), "actionItem-1"),
 		SourceRole:      strings.TrimSpace(in.SourceRole),
 		TargetBranchID:  strings.TrimSpace(in.TargetBranchID),
-		TargetScopeType: domain.ScopeLevelTask,
-		TargetScopeID:   firstNonEmptyString(strings.TrimSpace(in.TargetScopeID), "task-qa-1"),
+		TargetScopeType: domain.ScopeLevelActionItem,
+		TargetScopeID:   firstNonEmptyString(strings.TrimSpace(in.TargetScopeID), "actionItem-qa-1"),
 		TargetRole:      strings.TrimSpace(in.TargetRole),
 		Status:          domain.HandoffStatusWaiting,
 		Summary:         strings.TrimSpace(in.Summary),
@@ -1025,8 +1025,8 @@ func (s *stubExpandedService) GetHandoff(_ context.Context, handoffID string) (d
 	return s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
 		ProjectID: "p1",
 		BranchID:  "branch-1",
-		ScopeType: "task",
-		ScopeID:   "task-1",
+		ScopeType: "actionItem",
+		ScopeID:   "actionItem-1",
 		Summary:   strings.TrimSpace(handoffID),
 	})
 }
@@ -1041,8 +1041,8 @@ func (s *stubExpandedService) ListHandoffs(_ context.Context, in common.ListHand
 		ScopeID:         strings.TrimSpace(in.ScopeID),
 		SourceRole:      "builder",
 		TargetBranchID:  "branch-1",
-		TargetScopeType: "task",
-		TargetScopeID:   "task-qa-1",
+		TargetScopeType: "actionItem",
+		TargetScopeID:   "actionItem-qa-1",
 		TargetRole:      "qa",
 		Summary:         "handoff summary",
 		NextAction:      "run qa",
@@ -1059,8 +1059,8 @@ func (s *stubExpandedService) UpdateHandoff(_ context.Context, in common.UpdateH
 	handoff, _ := s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
 		ProjectID:       "p1",
 		BranchID:        "branch-1",
-		ScopeType:       "task",
-		ScopeID:         "task-1",
+		ScopeType:       "actionItem",
+		ScopeID:         "actionItem-1",
 		SourceRole:      in.SourceRole,
 		TargetBranchID:  in.TargetBranchID,
 		TargetScopeType: in.TargetScopeType,
@@ -1296,25 +1296,25 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"acting_session_secret": "secret-1",
 		}},
 		{name: "till.action_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
-		{name: "till.action_item", args: map[string]any{"operation": "get", "task_id": "t1"}},
+		{name: "till.action_item", args: map[string]any{"operation": "get", "action_item_id": "t1"}},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
 			"column_id":         "c1",
-			"title":             "Task One",
+			"title":             "ActionItem One",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
-			"task_id":           "t1",
-			"title":             "Task One Updated",
+			"action_item_id":    "t1",
+			"title":             "ActionItem One Updated",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move",
-			"task_id":           "t1",
+			"action_item_id":    "t1",
 			"to_column_id":      "c2",
 			"position":          1,
 			"agent_instance_id": "inst-1",
@@ -1322,37 +1322,37 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move_state",
-			"task_id":           "t1",
+			"action_item_id":    "t1",
 			"state":             "done",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "delete",
-			"task_id":           "t1",
+			"action_item_id":    "t1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "restore",
-			"task_id":           "t1",
+			"action_item_id":    "t1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "reparent",
-			"task_id":           "t1",
+			"action_item_id":    "t1",
 			"parent_id":         "parent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: map[string]any{"operation": "list", "project_id": "p1", "parent_id": "parent-1"}},
-		{name: "till.action_item", args: map[string]any{"operation": "search", "project_id": "p1", "query": "task"}},
+		{name: "till.action_item", args: map[string]any{"operation": "search", "project_id": "p1", "query": "actionItem"}},
 		{name: "till.project", args: map[string]any{"operation": "list_change_events", "project_id": "p1", "limit": 25}},
 		{name: "till.project", args: map[string]any{"operation": "get_dependency_rollup", "project_id": "p1"}},
 		{name: "till.kind", args: map[string]any{"operation": "list"}},
 		{name: "till.kind", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "upsert", "id": "phase", "applies_to": []any{"phase"}})},
-		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "task"}})},
+		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "actionItem"}})},
 		{name: "till.project", args: map[string]any{"operation": "list_allowed_kinds", "project_id": "p1"}},
 		{name: "till.template", args: map[string]any{"operation": "list", "scope": "global", "status": "approved"}},
 		{name: "till.template", args: map[string]any{"operation": "get", "library_id": "go-defaults"}},
@@ -1367,10 +1367,10 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 				"status": "approved",
 				"node_templates": []any{
 					map[string]any{
-						"id":           "tmpl-task-build",
-						"scope_level":  "task",
+						"id":           "tmpl-actionItem-build",
+						"scope_level":  "actionItem",
 						"node_kind_id": "phase",
-						"display_name": "Build Task",
+						"display_name": "Build ActionItem",
 					},
 				},
 			},
@@ -1381,11 +1381,11 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "approve_template_migrations",
 			"project_id":        "p1",
-			"task_ids":          []any{"task-qa-1"},
+			"action_item_ids":   []any{"actionItem-qa-1"},
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.template", args: map[string]any{"operation": "get_node_contract", "node_id": "task-qa-1"}},
+		{name: "till.template", args: map[string]any{"operation": "get_node_contract", "node_id": "actionItem-qa-1"}},
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
 		{name: "till.embeddings", args: map[string]any{"operation": "reindex", "project_id": "p1", "wait": true}},
 		{name: "till.capability_lease", args: map[string]any{"operation": "list", "project_id": "p1", "scope_type": "project", "include_revoked": true}},
@@ -1397,24 +1397,24 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.comment", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
-			"target_type":       "task",
+			"target_type":       "actionItem",
 			"target_id":         "t1",
 			"summary":           "Thread summary",
 			"body_markdown":     "hello",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.comment", args: map[string]any{"operation": "list", "project_id": "p1", "target_type": "task", "target_id": "t1"}},
+		{name: "till.comment", args: map[string]any{"operation": "list", "project_id": "p1", "target_type": "actionItem", "target_id": "t1"}},
 		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
 			"branch_id":         "branch-1",
-			"scope_type":        "task",
-			"scope_id":          "task-1",
+			"scope_type":        "actionItem",
+			"scope_id":          "actionItem-1",
 			"source_role":       "builder",
 			"target_branch_id":  "branch-1",
-			"target_scope_type": "task",
-			"target_scope_id":   "task-qa-1",
+			"target_scope_type": "actionItem",
+			"target_scope_id":   "actionItem-qa-1",
 			"target_role":       "qa",
 			"status":            "waiting",
 			"summary":           "handoff summary",
@@ -1425,15 +1425,15 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.handoff", args: map[string]any{"operation": "get", "handoff_id": "handoff-1"}},
-		{name: "till.handoff", args: map[string]any{"operation": "list", "project_id": "p1", "branch_id": "branch-1", "scope_type": "task", "scope_id": "task-1", "statuses": []any{"waiting"}, "limit": 10}},
+		{name: "till.handoff", args: map[string]any{"operation": "list", "project_id": "p1", "branch_id": "branch-1", "scope_type": "actionItem", "scope_id": "actionItem-1", "statuses": []any{"waiting"}, "limit": 10}},
 		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
 			"handoff_id":        "handoff-1",
 			"status":            "resolved",
 			"source_role":       "builder",
 			"target_branch_id":  "branch-1",
-			"target_scope_type": "task",
-			"target_scope_id":   "task-qa-1",
+			"target_scope_type": "actionItem",
+			"target_scope_id":   "actionItem-qa-1",
 			"target_role":       "qa",
 			"summary":           "handoff summary",
 			"next_action":       "none",
@@ -1456,8 +1456,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	if got := service.lastApproveTemplateMigrationsReq.ProjectID; got != "p1" {
 		t.Fatalf("approve_template_migrations project_id = %q, want p1", got)
 	}
-	if got := service.lastApproveTemplateMigrationsReq.TaskIDs; !slices.Equal(got, []string{"task-qa-1"}) {
-		t.Fatalf("approve_template_migrations task_ids = %#v, want [task-qa-1]", got)
+	if got := service.lastApproveTemplateMigrationsReq.ActionItemIDs; !slices.Equal(got, []string{"actionItem-qa-1"}) {
+		t.Fatalf("approve_template_migrations action_item_ids = %#v, want [actionItem-qa-1]", got)
 	}
 	if got := service.lastCreateAuthRequestReq.PrincipalRole; got != "research" {
 		t.Fatalf("create auth request principal_role = %q, want research", got)
@@ -1706,7 +1706,7 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedActionItemToolVisibility verifies reduced action-item mutations are default and legacy task aliases are opt-in.
+// TestHandlerExpandedActionItemToolVisibility verifies reduced action-item mutations are default and legacy actionItem aliases are opt-in.
 func TestHandlerExpandedActionItemToolVisibility(t *testing.T) {
 	t.Parallel()
 
@@ -1761,7 +1761,7 @@ func TestHandlerExpandedActionItemToolVisibility(t *testing.T) {
 		"till.search_task_matches",
 	} {
 		if slices.Contains(defaultTools, legacy) {
-			t.Fatalf("unexpected legacy task tool %q in default surface: %#v", legacy, defaultTools)
+			t.Fatalf("unexpected legacy actionItem tool %q in default surface: %#v", legacy, defaultTools)
 		}
 	}
 
@@ -1784,7 +1784,7 @@ func TestHandlerExpandedActionItemToolVisibility(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedLegacyActionItemMutationAliases verifies the legacy task mutation aliases still execute when enabled.
+// TestHandlerExpandedLegacyActionItemMutationAliases verifies the legacy actionItem mutation aliases still execute when enabled.
 func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 	t.Parallel()
 
@@ -1821,7 +1821,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			args: mergeArgs(validSessionArgs(), map[string]any{
 				"project_id":        "p1",
 				"column_id":         "c1",
-				"title":             "Task One",
+				"title":             "ActionItem One",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
 			}),
@@ -1830,8 +1830,8 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "update_task",
 			tool: "till.update_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"task_id":           "t1",
-				"title":             "Task One Updated",
+				"action_item_id":    "t1",
+				"title":             "ActionItem One Updated",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
 			}),
@@ -1840,7 +1840,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "move_task",
 			tool: "till.move_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"task_id":           "t1",
+				"action_item_id":    "t1",
 				"to_column_id":      "c2",
 				"position":          1,
 				"agent_instance_id": "inst-1",
@@ -1851,7 +1851,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "delete_task",
 			tool: "till.delete_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"task_id":           "t1",
+				"action_item_id":    "t1",
 				"mode":              "archive",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
@@ -1861,7 +1861,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "restore_task",
 			tool: "till.restore_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"task_id":           "t1",
+				"action_item_id":    "t1",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
 			}),
@@ -1870,7 +1870,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "reparent_task",
 			tool: "till.reparent_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"task_id":           "t1",
+				"action_item_id":    "t1",
 				"parent_id":         "parent-1",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
@@ -1943,7 +1943,7 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 			tool: "till.set_project_allowed_kinds",
 			args: mergeArgs(validSessionArgs(), map[string]any{
 				"project_id": "p1",
-				"kind_ids":   []any{"phase", "task"},
+				"kind_ids":   []any{"phase", "actionItem"},
 			}),
 		},
 		{
@@ -2089,14 +2089,14 @@ func TestHandlerExpandedActionItemReadOperations(t *testing.T) {
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4800, "till.action_item", map[string]any{
-		"operation": "get",
-		"task_id":   "t1",
+		"operation":      "get",
+		"action_item_id": "t1",
 	}))
 	if isError, _ := getResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item get returned isError=true: %#v", getResp.Result)
 	}
-	if got := service.lastGetTaskID; got != "t1" {
-		t.Fatalf("action_item get task_id = %q, want t1", got)
+	if got := service.lastGetActionItemID; got != "t1" {
+		t.Fatalf("action_item get action_item_id = %q, want t1", got)
 	}
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4801, "till.action_item", map[string]any{
@@ -2107,10 +2107,10 @@ func TestHandlerExpandedActionItemReadOperations(t *testing.T) {
 	if isError, _ := listResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item list returned isError=true: %#v", listResp.Result)
 	}
-	if got := service.lastListTasksProjectID; got != "p1" {
+	if got := service.lastListActionItemsProjectID; got != "p1" {
 		t.Fatalf("action_item list project_id = %q, want p1", got)
 	}
-	if !service.lastListTasksArchived {
+	if !service.lastListActionItemsArchived {
 		t.Fatal("action_item list include_archived = false, want true")
 	}
 
@@ -2291,7 +2291,7 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 		"till.get_instructions",
 		map[string]any{
 			"focus":            "node",
-			"node_id":          "task-1",
+			"node_id":          "actionItem-1",
 			"include_evidence": true,
 		},
 	))
@@ -2306,8 +2306,8 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 	if !ok {
 		t.Fatalf("resolved_scope missing: %#v", structured)
 	}
-	if got, _ := resolved["node_id"].(string); got != "task-1" {
-		t.Fatalf("node_id = %q, want task-1", got)
+	if got, _ := resolved["node_id"].(string); got != "actionItem-1" {
+		t.Fatalf("node_id = %q, want actionItem-1", got)
 	}
 	explanation, ok := structured["explanation"].(map[string]any)
 	if !ok {
@@ -2335,8 +2335,8 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 	if !strings.Contains(rulesText, "blocked by") {
 		t.Fatalf("scoped_rules = %q, want blocked_by sequencing guidance", rulesText)
 	}
-	if !strings.Contains(workflowText, "task-level sequencing") {
-		t.Fatalf("workflow_contract = %q, want task sequencing guidance", workflowText)
+	if !strings.Contains(workflowText, "actionitem-level sequencing") {
+		t.Fatalf("workflow_contract = %q, want actionItem sequencing guidance", workflowText)
 	}
 }
 
@@ -2588,7 +2588,7 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(610, "till.action_item", map[string]any{
 		"operation":        "search",
 		"project_id":       "p1",
-		"query":            "task",
+		"query":            "actionItem",
 		"cross_project":    true,
 		"include_archived": true,
 		"states":           []any{"todo"},
@@ -2605,43 +2605,43 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 		t.Fatalf("action_item search returned isError=true: %#v", callResp.Result)
 	}
 
-	if got := service.lastSearchTasksReq.ProjectID; got != "p1" {
+	if got := service.lastSearchActionItemsReq.ProjectID; got != "p1" {
 		t.Fatalf("project_id = %q, want p1", got)
 	}
-	if got := service.lastSearchTasksReq.Query; got != "task" {
-		t.Fatalf("query = %q, want task", got)
+	if got := service.lastSearchActionItemsReq.Query; got != "actionItem" {
+		t.Fatalf("query = %q, want actionItem", got)
 	}
-	if !service.lastSearchTasksReq.CrossProject {
+	if !service.lastSearchActionItemsReq.CrossProject {
 		t.Fatalf("cross_project = false, want true")
 	}
-	if !service.lastSearchTasksReq.IncludeArchived {
+	if !service.lastSearchActionItemsReq.IncludeArchived {
 		t.Fatalf("include_archived = false, want true")
 	}
-	if got := service.lastSearchTasksReq.Mode; got != "hybrid" {
+	if got := service.lastSearchActionItemsReq.Mode; got != "hybrid" {
 		t.Fatalf("mode = %q, want hybrid", got)
 	}
-	if got := service.lastSearchTasksReq.Sort; got != "title_asc" {
+	if got := service.lastSearchActionItemsReq.Sort; got != "title_asc" {
 		t.Fatalf("sort = %q, want title_asc", got)
 	}
-	if got := service.lastSearchTasksReq.Limit; got != 75 {
+	if got := service.lastSearchActionItemsReq.Limit; got != 75 {
 		t.Fatalf("limit = %d, want 75", got)
 	}
-	if got := service.lastSearchTasksReq.Offset; got != 10 {
+	if got := service.lastSearchActionItemsReq.Offset; got != 10 {
 		t.Fatalf("offset = %d, want 10", got)
 	}
-	if len(service.lastSearchTasksReq.States) != 1 || service.lastSearchTasksReq.States[0] != "todo" {
-		t.Fatalf("states = %#v, want [todo]", service.lastSearchTasksReq.States)
+	if len(service.lastSearchActionItemsReq.States) != 1 || service.lastSearchActionItemsReq.States[0] != "todo" {
+		t.Fatalf("states = %#v, want [todo]", service.lastSearchActionItemsReq.States)
 	}
-	if got := service.lastSearchTasksReq.Levels; !slices.Equal(got, []string{"phase"}) {
+	if got := service.lastSearchActionItemsReq.Levels; !slices.Equal(got, []string{"phase"}) {
 		t.Fatalf("levels = %#v, want [phase]", got)
 	}
-	if got := service.lastSearchTasksReq.Kinds; !slices.Equal(got, []string{"phase"}) {
+	if got := service.lastSearchActionItemsReq.Kinds; !slices.Equal(got, []string{"phase"}) {
 		t.Fatalf("kinds = %#v, want [phase]", got)
 	}
-	if got := service.lastSearchTasksReq.LabelsAny; !slices.Equal(got, []string{"backend", "ops"}) {
+	if got := service.lastSearchActionItemsReq.LabelsAny; !slices.Equal(got, []string{"backend", "ops"}) {
 		t.Fatalf("labels_any = %#v, want [backend ops]", got)
 	}
-	if got := service.lastSearchTasksReq.LabelsAll; !slices.Equal(got, []string{"urgent"}) {
+	if got := service.lastSearchActionItemsReq.LabelsAll; !slices.Equal(got, []string{"urgent"}) {
 		t.Fatalf("labels_all = %#v, want [urgent]", got)
 	}
 
@@ -2652,29 +2652,29 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	if isError, _ := defaultResp.Result["isError"].(bool); isError {
 		t.Fatalf("default action_item search returned isError=true: %#v", defaultResp.Result)
 	}
-	if got := service.lastSearchTasksReq.Mode; got != "" {
+	if got := service.lastSearchActionItemsReq.Mode; got != "" {
 		t.Fatalf("default mode = %q, want empty for app-defaulting", got)
 	}
-	if got := service.lastSearchTasksReq.Sort; got != "" {
+	if got := service.lastSearchActionItemsReq.Sort; got != "" {
 		t.Fatalf("default sort = %q, want empty for app-defaulting", got)
 	}
-	if got := service.lastSearchTasksReq.Limit; got != 0 {
+	if got := service.lastSearchActionItemsReq.Limit; got != 0 {
 		t.Fatalf("default limit = %d, want 0 for app-defaulting", got)
 	}
-	if got := service.lastSearchTasksReq.Offset; got != 0 {
+	if got := service.lastSearchActionItemsReq.Offset; got != 0 {
 		t.Fatalf("default offset = %d, want 0", got)
 	}
-	if len(service.lastSearchTasksReq.Levels) != 0 {
-		t.Fatalf("default levels = %#v, want empty", service.lastSearchTasksReq.Levels)
+	if len(service.lastSearchActionItemsReq.Levels) != 0 {
+		t.Fatalf("default levels = %#v, want empty", service.lastSearchActionItemsReq.Levels)
 	}
-	if len(service.lastSearchTasksReq.Kinds) != 0 {
-		t.Fatalf("default kinds = %#v, want empty", service.lastSearchTasksReq.Kinds)
+	if len(service.lastSearchActionItemsReq.Kinds) != 0 {
+		t.Fatalf("default kinds = %#v, want empty", service.lastSearchActionItemsReq.Kinds)
 	}
-	if len(service.lastSearchTasksReq.LabelsAny) != 0 {
-		t.Fatalf("default labels_any = %#v, want empty", service.lastSearchTasksReq.LabelsAny)
+	if len(service.lastSearchActionItemsReq.LabelsAny) != 0 {
+		t.Fatalf("default labels_any = %#v, want empty", service.lastSearchActionItemsReq.LabelsAny)
 	}
-	if len(service.lastSearchTasksReq.LabelsAll) != 0 {
-		t.Fatalf("default labels_all = %#v, want empty", service.lastSearchTasksReq.LabelsAll)
+	if len(service.lastSearchActionItemsReq.LabelsAll) != 0 {
+		t.Fatalf("default labels_all = %#v, want empty", service.lastSearchActionItemsReq.LabelsAll)
 	}
 }
 
@@ -2699,7 +2699,7 @@ func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) 
 	_, searchResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(612, "till.action_item", map[string]any{
 		"operation":   "search",
 		"project_id":  "p1",
-		"query":       "task",
+		"query":       "actionItem",
 		"search_mode": "semantic",
 	}))
 	if isError, _ := searchResp.Result["isError"].(bool); isError {
@@ -2773,8 +2773,8 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	_, leaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(620, "till.capability_lease", map[string]any{
 		"operation":       "list",
 		"project_id":      "p1",
-		"scope_type":      "task",
-		"scope_id":        "task-1",
+		"scope_type":      "actionItem",
+		"scope_id":        "actionItem-1",
 		"include_revoked": true,
 	}))
 	if isError, _ := leaseResp.Result["isError"].(bool); isError {
@@ -2783,11 +2783,11 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	if got := service.lastListLeaseReq.ProjectID; got != "p1" {
 		t.Fatalf("list_capability_leases project_id = %q, want p1", got)
 	}
-	if got := service.lastListLeaseReq.ScopeType; got != "task" {
-		t.Fatalf("list_capability_leases scope_type = %q, want task", got)
+	if got := service.lastListLeaseReq.ScopeType; got != "actionItem" {
+		t.Fatalf("list_capability_leases scope_type = %q, want actionItem", got)
 	}
-	if got := service.lastListLeaseReq.ScopeID; got != "task-1" {
-		t.Fatalf("list_capability_leases scope_id = %q, want task-1", got)
+	if got := service.lastListLeaseReq.ScopeID; got != "actionItem-1" {
+		t.Fatalf("list_capability_leases scope_id = %q, want actionItem-1", got)
 	}
 	if !service.lastListLeaseReq.IncludeRevoked {
 		t.Fatal("list_capability_leases include_revoked = false, want true")
@@ -2808,8 +2808,8 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 		"operation":    "list",
 		"project_id":   "p1",
 		"branch_id":    "branch-1",
-		"scope_type":   "task",
-		"scope_id":     "task-1",
+		"scope_type":   "actionItem",
+		"scope_id":     "actionItem-1",
 		"statuses":     []any{"waiting", "blocked"},
 		"limit":        25,
 		"wait_timeout": "30s",
@@ -2823,11 +2823,11 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	if got := service.lastListHandoffsReq.BranchID; got != "branch-1" {
 		t.Fatalf("list_handoffs branch_id = %q, want branch-1", got)
 	}
-	if got := service.lastListHandoffsReq.ScopeType; got != "task" {
-		t.Fatalf("list_handoffs scope_type = %q, want task", got)
+	if got := service.lastListHandoffsReq.ScopeType; got != "actionItem" {
+		t.Fatalf("list_handoffs scope_type = %q, want actionItem", got)
 	}
-	if got := service.lastListHandoffsReq.ScopeID; got != "task-1" {
-		t.Fatalf("list_handoffs scope_id = %q, want task-1", got)
+	if got := service.lastListHandoffsReq.ScopeID; got != "actionItem-1" {
+		t.Fatalf("list_handoffs scope_id = %q, want actionItem-1", got)
 	}
 	if got := service.lastListHandoffsReq.Statuses; !slices.Equal(got, []string{"waiting", "blocked"}) {
 		t.Fatalf("list_handoffs statuses = %#v, want [waiting blocked]", got)
@@ -2868,49 +2868,49 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"operation":         "create",
 		"project_id":        "p1",
 		"column_id":         "c1",
-		"title":             "Task One",
+		"title":             "ActionItem One",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
 	}
-	if got := service.lastCreateTaskReq.Actor.ActorType; got != "agent" {
+	if got := service.lastCreateActionItemReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("action_item create actor_type = %q, want agent", got)
 	}
-	if got := service.lastCreateTaskReq.Actor.ActorID; got != "agent-session-1" {
+	if got := service.lastCreateActionItemReq.Actor.ActorID; got != "agent-session-1" {
 		t.Fatalf("action_item create actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastCreateTaskReq.Actor.ActorName; got != "Agent Session One" {
+	if got := service.lastCreateActionItemReq.Actor.ActorName; got != "Agent Session One" {
 		t.Fatalf("action_item create actor_name = %q, want Agent Session One", got)
 	}
 
 	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "update",
-		"task_id":           "t1",
-		"title":             "Task One Updated",
+		"action_item_id":    "t1",
+		"title":             "ActionItem One Updated",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := updateResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
 	}
-	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "agent" {
+	if got := service.lastUpdateActionItemReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("action_item update actor_type = %q, want agent", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "agent-session-1" {
+	if got := service.lastUpdateActionItemReq.Actor.AgentName; got != "agent-session-1" {
 		t.Fatalf("action_item update agent_name = %q, want agent-session-1", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "agent-session-1" {
+	if got := service.lastUpdateActionItemReq.Actor.ActorID; got != "agent-session-1" {
 		t.Fatalf("action_item update actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Agent Session One" {
+	if got := service.lastUpdateActionItemReq.Actor.ActorName; got != "Agent Session One" {
 		t.Fatalf("action_item update actor_name = %q, want Agent Session One", got)
 	}
 
 	_, moveStateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3010, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "move_state",
-		"task_id":           "t1",
+		"action_item_id":    "t1",
 		"state":             "done",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
@@ -2918,20 +2918,20 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	if isError, _ := moveStateResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item move_state returned isError=true: %#v", moveStateResp.Result)
 	}
-	if got := service.lastMoveTaskStateReq.Actor.ActorType; got != "agent" {
+	if got := service.lastMoveActionItemStateReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("action_item move_state actor_type = %q, want agent", got)
 	}
-	if got := service.lastMoveTaskStateReq.Actor.ActorID; got != "agent-session-1" {
+	if got := service.lastMoveActionItemStateReq.Actor.ActorID; got != "agent-session-1" {
 		t.Fatalf("action_item move_state actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastMoveTaskStateReq.State; got != "done" {
+	if got := service.lastMoveActionItemStateReq.State; got != "done" {
 		t.Fatalf("action_item move_state state = %q, want done", got)
 	}
 
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.comment", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "create",
 		"project_id":        "p1",
-		"target_type":       "task",
+		"target_type":       "actionItem",
 		"target_id":         "t1",
 		"summary":           "Thread summary",
 		"body_markdown":     "hello",
@@ -2958,12 +2958,12 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"operation":         "create",
 		"project_id":        "p1",
 		"branch_id":         "branch-1",
-		"scope_type":        "task",
-		"scope_id":          "task-1",
+		"scope_type":        "actionItem",
+		"scope_id":          "actionItem-1",
 		"source_role":       "builder",
 		"target_branch_id":  "branch-1",
-		"target_scope_type": "task",
-		"target_scope_id":   "task-qa-1",
+		"target_scope_type": "actionItem",
+		"target_scope_id":   "actionItem-qa-1",
 		"target_role":       "qa",
 		"summary":           "handoff summary",
 		"next_action":       "run qa",
@@ -2989,8 +2989,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"status":            "resolved",
 		"source_role":       "builder",
 		"target_branch_id":  "branch-1",
-		"target_scope_type": "task",
-		"target_scope_id":   "task-qa-1",
+		"target_scope_type": "actionItem",
+		"target_scope_id":   "actionItem-qa-1",
 		"target_role":       "qa",
 		"summary":           "handoff summary",
 		"next_action":       "none",
@@ -3013,7 +3013,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "restore",
-		"task_id":           "t1",
+		"action_item_id":    "t1",
 		"agent_instance_id": "agent-1",
 		"lease_token":       "lease-1",
 		"override_token":    "override-1",
@@ -3021,19 +3021,19 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	if isError, _ := restoreResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item restore returned isError=true: %#v", restoreResp.Result)
 	}
-	if got := service.lastRestoreTaskReq.Actor.ActorType; got != "agent" {
+	if got := service.lastRestoreActionItemReq.Actor.ActorType; got != "agent" {
 		t.Fatalf("action_item restore actor_type = %q, want agent", got)
 	}
-	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "agent-session-1" {
+	if got := service.lastRestoreActionItemReq.Actor.AgentName; got != "agent-session-1" {
 		t.Fatalf("action_item restore agent_name = %q, want agent-session-1", got)
 	}
-	if got := service.lastRestoreTaskReq.Actor.AgentInstanceID; got != "agent-1" {
+	if got := service.lastRestoreActionItemReq.Actor.AgentInstanceID; got != "agent-1" {
 		t.Fatalf("action_item restore agent_instance_id = %q, want agent-1", got)
 	}
-	if got := service.lastRestoreTaskReq.Actor.LeaseToken; got != "lease-1" {
+	if got := service.lastRestoreActionItemReq.Actor.LeaseToken; got != "lease-1" {
 		t.Fatalf("action_item restore lease_token = %q, want lease-1", got)
 	}
-	if got := service.lastRestoreTaskReq.Actor.OverrideToken; got != "override-1" {
+	if got := service.lastRestoreActionItemReq.Actor.OverrideToken; got != "override-1" {
 		t.Fatalf("action_item restore override_token = %q, want override-1", got)
 	}
 
@@ -3273,7 +3273,7 @@ func TestHandlerExpandedMutationFamiliesAcceptAuthContextHandles(t *testing.T) {
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(502, "till.comment", map[string]any{
 		"operation":         "create",
 		"project_id":        "p1",
-		"target_type":       "task",
+		"target_type":       "actionItem",
 		"target_id":         "t1",
 		"summary":           "Thread summary",
 		"body_markdown":     "hello",

@@ -22,10 +22,10 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	return BootstrapGuide{
 		Mode:          "bootstrap_required",
 		Summary:       "No project context exists yet. If you already have an approved global agent session, create a project; otherwise open an auth request, wait for approval, and claim the continuation with the requester-owned resume_token returned by till.auth_request(operation=create) before continuing. Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself rather than in markdown files. Once work exists, use comments for shared discussion, mentions for routed comment inbox items, and handoffs for explicit next-action coordination that are action-required only for the addressed viewer.",
-		WhatTillsynIs: "Tillsyn is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, waitable stdio coordination watchers, and SQLite-backed template libraries for generated workflow contracts. Durable policy docs such as AGENTS.md, CLAUDE.md, and README.md may describe the workflow, but the active execution state belongs in Tillsyn itself.",
+		WhatTillsynIs: "Tillsyn is a strict actionItem/state planner with level-scoped work (project|branch|phase|actionItem|subtask), guardrailed mutations, shared comment and handoff coordination, routed mention inbox attention, pre-session auth requests, summary-first recovery context, waitable stdio coordination watchers, and SQLite-backed template libraries for generated workflow contracts. Durable policy docs such as AGENTS.md, CLAUDE.md, and README.md may describe the workflow, but the active execution state belongs in Tillsyn itself.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
-			"Task graph operations across branch/phase/task/subtask scopes",
+			"ActionItem graph operations across branch/phase/actionItem/subtask scopes",
 			"Markdown comments as the shared discussion thread for human-agent and agent-agent coordination",
 			"Role-routed @mentions that materialize viewer-scoped comment inbox rows",
 			"Durable handoffs for explicit next-action routing and action-required notifications",
@@ -43,7 +43,7 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"If a guarded mutation rejects a user session plus lease tuple, either remove agent_instance_id/lease_token to act as a human or claim/validate a project-scoped approved agent session before retrying; renewing a lease alone does not change caller type",
 			"Never reuse another actor's session or auth_context_id; each actor should claim or validate its own scoped auth and clean up stale child sessions, leases, and pending requests truthfully after the run",
 			"If the project should use workflow contracts, inspect approved template libraries with till.template(operation=list) and bind one with till.project(operation=bind_template) before creating level-scoped work",
-			"Keep active coordination inside Tillsyn itself; do not create markdown task trackers, worklogs, or temporary execution plans for the run",
+			"Keep active coordination inside Tillsyn itself; do not create markdown actionItem trackers, worklogs, or temporary execution plans for the run",
 			"Use till.comment(operation=create) for shared discussion and status updates inside Tillsyn; role mentions such as @human, @builder, @qa, @orchestrator, and @research route comment inbox rows",
 			"Use till.handoff for explicit next-action routing; open handoffs should be interpreted as Action Required only for the addressed viewer and as oversight warnings for everyone else",
 			"If workflow policy changes, update the tracked AGENTS.md and any tracked CLAUDE.md in the active worktree alongside the relevant bootstrap/instructions surfaces so client guidance stays aligned, but keep live execution state in Tillsyn",
@@ -598,48 +598,48 @@ func (a *AppServiceAdapter) UpdateProject(ctx context.Context, in UpdateProjectR
 	return project, nil
 }
 
-// ListTasks returns tasks for one project with deterministic ordering from app-level APIs.
-func (a *AppServiceAdapter) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
+// ListActionItems returns tasks for one project with deterministic ordering from app-level APIs.
+func (a *AppServiceAdapter) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	tasks, err := a.service.ListTasks(ctx, strings.TrimSpace(projectID), includeArchived)
+	tasks, err := a.service.ListActionItems(ctx, strings.TrimSpace(projectID), includeArchived)
 	if err != nil {
 		return nil, mapAppError("list tasks", err)
 	}
 	return tasks, nil
 }
 
-// GetTask returns one task/work-item row by id.
-func (a *AppServiceAdapter) GetTask(ctx context.Context, taskID string) (domain.Task, error) {
+// GetActionItem returns one actionItem/work-item row by id.
+func (a *AppServiceAdapter) GetActionItem(ctx context.Context, actionItemID string) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	task, err := a.service.GetTask(ctx, strings.TrimSpace(taskID))
+	actionItem, err := a.service.GetActionItem(ctx, strings.TrimSpace(actionItemID))
 	if err != nil {
-		return domain.Task{}, mapAppError("get task", err)
+		return domain.ActionItem{}, mapAppError("get actionItem", err)
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// CreateTask creates one level-scoped task/work item.
-func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest) (domain.Task, error) {
+// CreateActionItem creates one level-scoped actionItem/work item.
+func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	dueAt, err := parseOptionalRFC3339(in.DueAt)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	if err := validateMetadataOutcome(&in.Metadata); err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
-	task, err := a.service.CreateTask(ctx, app.CreateTaskInput{
+	actionItem, err := a.service.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID:      strings.TrimSpace(in.ProjectID),
 		ParentID:       strings.TrimSpace(in.ParentID),
 		Kind:           domain.WorkKind(strings.TrimSpace(in.Kind)),
@@ -658,30 +658,30 @@ func (a *AppServiceAdapter) CreateTask(ctx context.Context, in CreateTaskRequest
 		UpdatedByType:  actorType,
 	})
 	if err != nil {
-		return domain.Task{}, mapAppError("create task", err)
+		return domain.ActionItem{}, mapAppError("create actionItem", err)
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// UpdateTask updates one task/work-item row.
-func (a *AppServiceAdapter) UpdateTask(ctx context.Context, in UpdateTaskRequest) (domain.Task, error) {
+// UpdateActionItem updates one actionItem/work-item row.
+func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	dueAt, err := parseOptionalRFC3339(in.DueAt)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	if err := validateMetadataOutcome(in.Metadata); err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
-	task, err := a.service.UpdateTask(ctx, app.UpdateTaskInput{
-		TaskID:        strings.TrimSpace(in.TaskID),
+	actionItem, err := a.service.UpdateActionItem(ctx, app.UpdateActionItemInput{
+		ActionItemID:  strings.TrimSpace(in.ActionItemID),
 		Title:         strings.TrimSpace(in.Title),
 		Description:   strings.TrimSpace(in.Description),
 		Priority:      domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
@@ -693,64 +693,64 @@ func (a *AppServiceAdapter) UpdateTask(ctx context.Context, in UpdateTaskRequest
 		UpdatedType:   actorType,
 	})
 	if err != nil {
-		return domain.Task{}, mapAppError("update task", err)
+		return domain.ActionItem{}, mapAppError("update actionItem", err)
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// MoveTask moves one task to a target column/position.
-func (a *AppServiceAdapter) MoveTask(ctx context.Context, in MoveTaskRequest) (domain.Task, error) {
+// MoveActionItem moves one actionItem to a target column/position.
+func (a *AppServiceAdapter) MoveActionItem(ctx context.Context, in MoveActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	task, err := a.service.MoveTask(ctx, strings.TrimSpace(in.TaskID), strings.TrimSpace(in.ToColumnID), in.Position)
+	actionItem, err := a.service.MoveActionItem(ctx, strings.TrimSpace(in.ActionItemID), strings.TrimSpace(in.ToColumnID), in.Position)
 	if err != nil {
-		return domain.Task{}, mapAppError("move task", err)
+		return domain.ActionItem{}, mapAppError("move actionItem", err)
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// MoveTaskState moves one task/work-item to the column that represents the requested lifecycle state.
-func (a *AppServiceAdapter) MoveTaskState(ctx context.Context, in MoveTaskStateRequest) (domain.Task, error) {
+// MoveActionItemState moves one actionItem/work-item to the column that represents the requested lifecycle state.
+func (a *AppServiceAdapter) MoveActionItemState(ctx context.Context, in MoveActionItemStateRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	taskID := strings.TrimSpace(in.TaskID)
-	if taskID == "" {
-		return domain.Task{}, fmt.Errorf("task_id is required: %w", ErrInvalidCaptureStateRequest)
+	actionItemID := strings.TrimSpace(in.ActionItemID)
+	if actionItemID == "" {
+		return domain.ActionItem{}, fmt.Errorf("action_item_id is required: %w", ErrInvalidCaptureStateRequest)
 	}
-	state, err := normalizeTaskStateInput(in.State)
+	state, err := normalizeActionItemStateInput(in.State)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	task, err := a.service.GetTask(ctx, taskID)
+	actionItem, err := a.service.GetActionItem(ctx, actionItemID)
 	if err != nil {
-		return domain.Task{}, mapAppError("move task state", err)
+		return domain.ActionItem{}, mapAppError("move actionItem state", err)
 	}
-	targetColumnID, err := a.resolveTaskColumnIDForState(ctx, task.ProjectID, state)
+	targetColumnID, err := a.resolveActionItemColumnIDForState(ctx, actionItem.ProjectID, state)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	if strings.TrimSpace(task.ColumnID) == targetColumnID && task.LifecycleState == state {
-		return task, nil
+	if strings.TrimSpace(actionItem.ColumnID) == targetColumnID && actionItem.LifecycleState == state {
+		return actionItem, nil
 	}
-	moved, err := a.service.MoveTask(ctx, task.ID, targetColumnID, task.Position)
+	moved, err := a.service.MoveActionItem(ctx, actionItem.ID, targetColumnID, actionItem.Position)
 	if err != nil {
-		return domain.Task{}, mapAppError("move task state", err)
+		return domain.ActionItem{}, mapAppError("move actionItem state", err)
 	}
 	return moved, nil
 }
 
-// DeleteTask applies archive/hard delete behavior for one task.
-func (a *AppServiceAdapter) DeleteTask(ctx context.Context, in DeleteTaskRequest) error {
+// DeleteActionItem applies archive/hard delete behavior for one actionItem.
+func (a *AppServiceAdapter) DeleteActionItem(ctx context.Context, in DeleteActionItemRequest) error {
 	if a == nil || a.service == nil {
 		return fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
@@ -758,73 +758,73 @@ func (a *AppServiceAdapter) DeleteTask(ctx context.Context, in DeleteTaskRequest
 	if err != nil {
 		return err
 	}
-	if err := a.service.DeleteTask(ctx, strings.TrimSpace(in.TaskID), app.DeleteMode(strings.TrimSpace(in.Mode))); err != nil {
-		return mapAppError("delete task", err)
+	if err := a.service.DeleteActionItem(ctx, strings.TrimSpace(in.ActionItemID), app.DeleteMode(strings.TrimSpace(in.Mode))); err != nil {
+		return mapAppError("delete actionItem", err)
 	}
 	return nil
 }
 
-// RestoreTask restores one archived task.
-func (a *AppServiceAdapter) RestoreTask(ctx context.Context, in RestoreTaskRequest) (domain.Task, error) {
+// RestoreActionItem restores one archived actionItem.
+func (a *AppServiceAdapter) RestoreActionItem(ctx context.Context, in RestoreActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	task, err := a.service.RestoreTask(ctx, strings.TrimSpace(in.TaskID))
+	actionItem, err := a.service.RestoreActionItem(ctx, strings.TrimSpace(in.ActionItemID))
 	if err != nil {
-		return domain.Task{}, mapAppError("restore task", err)
+		return domain.ActionItem{}, mapAppError("restore actionItem", err)
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// ReparentTask changes the parent relationship for one task.
-func (a *AppServiceAdapter) ReparentTask(ctx context.Context, in ReparentTaskRequest) (domain.Task, error) {
+// ReparentActionItem changes the parent relationship for one actionItem.
+func (a *AppServiceAdapter) ReparentActionItem(ctx context.Context, in ReparentActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
-		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	task, err := a.service.ReparentTask(ctx, strings.TrimSpace(in.TaskID), strings.TrimSpace(in.ParentID))
+	actionItem, err := a.service.ReparentActionItem(ctx, strings.TrimSpace(in.ActionItemID), strings.TrimSpace(in.ParentID))
 	if err != nil {
-		return domain.Task{}, mapAppError("reparent task", err)
+		return domain.ActionItem{}, mapAppError("reparent actionItem", err)
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// ListChildTasks lists children for one parent task.
-func (a *AppServiceAdapter) ListChildTasks(ctx context.Context, projectID, parentID string, includeArchived bool) ([]domain.Task, error) {
+// ListChildActionItems lists children for one parent actionItem.
+func (a *AppServiceAdapter) ListChildActionItems(ctx context.Context, projectID, parentID string, includeArchived bool) ([]domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	tasks, err := a.service.ListChildTasks(ctx, strings.TrimSpace(projectID), strings.TrimSpace(parentID), includeArchived)
+	tasks, err := a.service.ListChildActionItems(ctx, strings.TrimSpace(projectID), strings.TrimSpace(parentID), includeArchived)
 	if err != nil {
 		return nil, mapAppError("list child tasks", err)
 	}
 	return tasks, nil
 }
 
-func (a *AppServiceAdapter) resolveTaskColumnIDForState(ctx context.Context, projectID string, state domain.LifecycleState) (string, error) {
+func (a *AppServiceAdapter) resolveActionItemColumnIDForState(ctx context.Context, projectID string, state domain.LifecycleState) (string, error) {
 	columns, err := a.service.ListColumns(ctx, strings.TrimSpace(projectID), true)
 	if err != nil {
-		return "", mapAppError("resolve task state column", err)
+		return "", mapAppError("resolve actionItem state column", err)
 	}
 	for _, column := range columns {
-		if taskLifecycleStateForColumnName(column.Name) == state {
+		if actionItemLifecycleStateForColumnName(column.Name) == state {
 			return strings.TrimSpace(column.ID), nil
 		}
 	}
 	return "", fmt.Errorf("state %q has no mapped column in project %q: %w", state, strings.TrimSpace(projectID), ErrInvalidCaptureStateRequest)
 }
 
-func normalizeTaskStateInput(raw string) (domain.LifecycleState, error) {
-	switch taskLifecycleStateForColumnName(raw) {
+func normalizeActionItemStateInput(raw string) (domain.LifecycleState, error) {
+	switch actionItemLifecycleStateForColumnName(raw) {
 	case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateFailed:
-		return taskLifecycleStateForColumnName(raw), nil
+		return actionItemLifecycleStateForColumnName(raw), nil
 	case domain.StateArchived:
 		return "", fmt.Errorf("state %q is unsupported for move_state; use delete/restore for archive flows: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
 	default:
@@ -835,7 +835,7 @@ func normalizeTaskStateInput(raw string) (domain.LifecycleState, error) {
 // validateMetadataOutcome rejects unrecognized metadata.outcome values at the
 // MCP adapter boundary. Empty is valid (outcome not yet set). The valid set is
 // small and stable: success, failure, blocked, superseded.
-func validateMetadataOutcome(md *domain.TaskMetadata) error {
+func validateMetadataOutcome(md *domain.ActionItemMetadata) error {
 	if md == nil {
 		return nil
 	}
@@ -852,7 +852,7 @@ func validateMetadataOutcome(md *domain.TaskMetadata) error {
 	}
 }
 
-func taskLifecycleStateForColumnName(name string) domain.LifecycleState {
+func actionItemLifecycleStateForColumnName(name string) domain.LifecycleState {
 	switch normalizeStateLikeID(name) {
 	case "todo":
 		return domain.StateTodo
@@ -906,12 +906,12 @@ func normalizeStateLikeID(name string) string {
 	}
 }
 
-// SearchTasks runs a scoped or cross-project search query.
-func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksRequest) (SearchTasksResult, error) {
+// SearchActionItems runs a scoped or cross-project search query.
+func (a *AppServiceAdapter) SearchActionItems(ctx context.Context, in SearchActionItemsRequest) (SearchActionItemsResult, error) {
 	if a == nil || a.service == nil {
-		return SearchTasksResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return SearchActionItemsResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	result, err := a.service.SearchTasks(ctx, app.SearchTasksFilter{
+	result, err := a.service.SearchActionItems(ctx, app.SearchActionItemsFilter{
 		ProjectID:       strings.TrimSpace(in.ProjectID),
 		Query:           strings.TrimSpace(in.Query),
 		CrossProject:    in.CrossProject,
@@ -927,13 +927,13 @@ func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksReque
 		Offset:          in.Offset,
 	})
 	if err != nil {
-		return SearchTasksResult{}, mapAppError("search task matches", err)
+		return SearchActionItemsResult{}, mapAppError("search actionItem matches", err)
 	}
-	out := make([]SearchTaskMatch, 0, len(result.Matches))
+	out := make([]SearchActionItemMatch, 0, len(result.Matches))
 	for _, match := range result.Matches {
-		out = append(out, SearchTaskMatch{
+		out = append(out, SearchActionItemMatch{
 			Project:                   match.Project,
-			Task:                      match.Task,
+			ActionItem:                match.ActionItem,
 			StateID:                   match.StateID,
 			EmbeddingSubjectType:      string(match.EmbeddingSubjectType),
 			EmbeddingSubjectID:        match.EmbeddingSubjectID,
@@ -945,7 +945,7 @@ func (a *AppServiceAdapter) SearchTasks(ctx context.Context, in SearchTasksReque
 			UsedSemantic:              match.UsedSemantic,
 		})
 	}
-	return SearchTasksResult{
+	return SearchActionItemsResult{
 		Matches:                out,
 		RequestedMode:          string(result.RequestedMode),
 		EffectiveMode:          string(result.EffectiveMode),
@@ -1276,14 +1276,14 @@ func (a *AppServiceAdapter) UpsertTemplateLibrary(ctx context.Context, in Upsert
 			})
 		}
 		nodeTemplates = append(nodeTemplates, app.UpsertNodeTemplateInput{
-			ID:                      strings.TrimSpace(nodeTemplate.ID),
-			ScopeLevel:              nodeTemplate.ScopeLevel,
-			NodeKindID:              nodeTemplate.NodeKindID,
-			DisplayName:             strings.TrimSpace(nodeTemplate.DisplayName),
-			DescriptionMarkdown:     strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
-			ProjectMetadataDefaults: nodeTemplate.ProjectMetadataDefaults,
-			TaskMetadataDefaults:    nodeTemplate.TaskMetadataDefaults,
-			ChildRules:              childRules,
+			ID:                         strings.TrimSpace(nodeTemplate.ID),
+			ScopeLevel:                 nodeTemplate.ScopeLevel,
+			NodeKindID:                 nodeTemplate.NodeKindID,
+			DisplayName:                strings.TrimSpace(nodeTemplate.DisplayName),
+			DescriptionMarkdown:        strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
+			ProjectMetadataDefaults:    nodeTemplate.ProjectMetadataDefaults,
+			ActionItemMetadataDefaults: nodeTemplate.ActionItemMetadataDefaults,
+			ChildRules:                 childRules,
 		})
 	}
 	library, err := a.service.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
@@ -1360,7 +1360,7 @@ func (a *AppServiceAdapter) ApproveProjectTemplateMigrations(ctx context.Context
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	result, err := a.service.ApproveProjectTemplateMigrations(ctx, app.ApproveProjectTemplateMigrationsInput{
 		ProjectID:      strings.TrimSpace(in.ProjectID),
-		TaskIDs:        append([]string(nil), in.TaskIDs...),
+		ActionItemIDs:  append([]string(nil), in.ActionItemIDs...),
 		ApproveAll:     in.ApproveAll,
 		ApprovedBy:     actorID,
 		ApprovedByName: actorName,

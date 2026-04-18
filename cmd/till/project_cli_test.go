@@ -244,9 +244,9 @@ func TestRunProjectCreateUsesTemplateLibrary(t *testing.T) {
 	if got, want := allowedKinds, []domain.KindID{"branch", "go-service"}; !slices.Equal(got, want) {
 		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
 	}
-	tasks, err := svc.ListTasks(context.Background(), projects[0].ID, false)
+	tasks, err := svc.ListActionItems(context.Background(), projects[0].ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 1 || tasks[0].Title != "Main Branch" {
 		t.Fatalf("unexpected generated tasks %#v", tasks)

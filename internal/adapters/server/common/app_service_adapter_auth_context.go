@@ -111,7 +111,7 @@ func (a *AppServiceAdapter) enrichMutationAuthorizationContext(ctx context.Conte
 	contextValues := in.Context
 	switch in.Action {
 	case "create_task":
-		return a.populateCreateTaskAuthContext(ctx, contextValues)
+		return a.populateCreateActionItemAuthContext(ctx, contextValues)
 	case "create_comment":
 		return a.populateCommentAuthContext(ctx, contextValues, in.ResourceID)
 	case "create_handoff":
@@ -138,8 +138,8 @@ func (a *AppServiceAdapter) enrichMutationAuthorizationContext(ctx context.Conte
 	case "project":
 		populateProjectAuthContext(contextValues, firstNonEmptyTrimmed(contextValues["project_id"], in.ResourceID))
 		return nil
-	case "task":
-		return a.populateTaskAuthContext(ctx, contextValues, firstNonEmptyTrimmed(contextValues["task_id"], in.ResourceID))
+	case "actionItem":
+		return a.populateActionItemAuthContext(ctx, contextValues, firstNonEmptyTrimmed(contextValues["action_item_id"], in.ResourceID))
 	case "handoff":
 		return a.populateHandoffAuthContext(ctx, contextValues, firstNonEmptyTrimmed(contextValues["handoff_id"], in.ResourceID))
 	case "attention_item":
@@ -154,14 +154,14 @@ func (a *AppServiceAdapter) enrichMutationAuthorizationContext(ctx context.Conte
 	}
 }
 
-// populateCreateTaskAuthContext derives the auth path for create-task mutations.
-func (a *AppServiceAdapter) populateCreateTaskAuthContext(ctx context.Context, contextValues map[string]string) error {
+// populateCreateActionItemAuthContext derives the auth path for create-actionItem mutations.
+func (a *AppServiceAdapter) populateCreateActionItemAuthContext(ctx context.Context, contextValues map[string]string) error {
 	parentID := strings.TrimSpace(contextValues["parent_id"])
 	if parentID == "" {
 		populateProjectAuthContext(contextValues, contextValues["project_id"])
 		return nil
 	}
-	return a.populateTaskAuthContext(ctx, contextValues, parentID)
+	return a.populateActionItemAuthContext(ctx, contextValues, parentID)
 }
 
 // populateCommentAuthContext derives the auth path for comment creation.
@@ -172,21 +172,21 @@ func (a *AppServiceAdapter) populateCommentAuthContext(ctx context.Context, cont
 		populateProjectAuthContext(contextValues, projectID)
 		return nil
 	default:
-		return a.populateTaskAuthContext(ctx, contextValues, targetID)
+		return a.populateActionItemAuthContext(ctx, contextValues, targetID)
 	}
 }
 
-// populateTaskAuthContext derives auth scope from one existing task row.
-func (a *AppServiceAdapter) populateTaskAuthContext(ctx context.Context, contextValues map[string]string, taskID string) error {
-	task, err := a.service.GetTask(ctx, taskID)
+// populateActionItemAuthContext derives auth scope from one existing actionItem row.
+func (a *AppServiceAdapter) populateActionItemAuthContext(ctx context.Context, contextValues map[string]string, actionItemID string) error {
+	actionItem, err := a.service.GetActionItem(ctx, actionItemID)
 	if err != nil {
 		return err
 	}
-	scopeType := domain.ScopeLevelFromKindAppliesTo(task.Scope)
+	scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
 	if scopeType == "" {
 		return domain.ErrInvalidScopeType
 	}
-	return a.populateLevelAuthContext(ctx, contextValues, task.ProjectID, string(scopeType), task.ID)
+	return a.populateLevelAuthContext(ctx, contextValues, actionItem.ProjectID, string(scopeType), actionItem.ID)
 }
 
 // populateHandoffAuthContext derives auth scope from one existing handoff row.

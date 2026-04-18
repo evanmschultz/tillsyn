@@ -51,11 +51,11 @@ const (
 
 // supportedSearchLevelFilters lists accepted level values for search filters.
 var supportedSearchLevelFilters = map[string]struct{}{
-	string(domain.KindAppliesToProject): {},
-	string(domain.KindAppliesToBranch):  {},
-	string(domain.KindAppliesToPhase):   {},
-	string(domain.KindAppliesToTask):    {},
-	string(domain.KindAppliesToSubtask): {},
+	string(domain.KindAppliesToProject):    {},
+	string(domain.KindAppliesToBranch):     {},
+	string(domain.KindAppliesToPhase):      {},
+	string(domain.KindAppliesToActionItem): {},
+	string(domain.KindAppliesToSubtask):    {},
 }
 
 // ServiceConfig holds configuration for service.
@@ -290,7 +290,7 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 			return domain.Project{}, err
 		}
 	default:
-		if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToTask, 1); err != nil {
+		if err := s.validateKindTemplateExpansion(ctx, project.ID, kindDef, nil, domain.KindAppliesToActionItem, 1); err != nil {
 			return domain.Project{}, err
 		}
 	}
@@ -462,8 +462,8 @@ func (s *Service) CreateColumn(ctx context.Context, projectID, name string, posi
 	return column, nil
 }
 
-// CreateTaskInput holds input values for create task operations.
-type CreateTaskInput struct {
+// CreateActionItemInput holds input values for create actionItem operations.
+type CreateActionItemInput struct {
 	ProjectID      string
 	ParentID       string
 	Kind           domain.WorkKind
@@ -474,7 +474,7 @@ type CreateTaskInput struct {
 	Priority       domain.Priority
 	DueAt          *time.Time
 	Labels         []string
-	Metadata       domain.TaskMetadata
+	Metadata       domain.ActionItemMetadata
 	CreatedByActor string
 	CreatedByName  string
 	UpdatedByActor string
@@ -482,15 +482,15 @@ type CreateTaskInput struct {
 	UpdatedByType  domain.ActorType
 }
 
-// UpdateTaskInput holds input values for update task operations.
-type UpdateTaskInput struct {
-	TaskID        string
+// UpdateActionItemInput holds input values for update actionItem operations.
+type UpdateActionItemInput struct {
+	ActionItemID  string
 	Title         string
 	Description   string
 	Priority      domain.Priority
 	DueAt         *time.Time
 	Labels        []string
-	Metadata      *domain.TaskMetadata
+	Metadata      *domain.ActionItemMetadata
 	UpdatedBy     string
 	UpdatedByName string
 	UpdatedType   domain.ActorType
@@ -516,8 +516,8 @@ type ListCommentsByTargetInput struct {
 	WaitTimeout time.Duration
 }
 
-// SearchTasksFilter defines filtering criteria for queries.
-type SearchTasksFilter struct {
+// SearchActionItemsFilter defines filtering criteria for queries.
+type SearchActionItemsFilter struct {
 	ProjectID       string
 	Query           string
 	CrossProject    bool
@@ -533,10 +533,10 @@ type SearchTasksFilter struct {
 	Offset          int
 }
 
-// TaskMatch describes a matched result.
-type TaskMatch struct {
+// ActionItemMatch describes a matched result.
+type ActionItemMatch struct {
 	Project                   domain.Project
-	Task                      domain.Task
+	ActionItem                domain.ActionItem
 	StateID                   string
 	EmbeddingSubjectType      EmbeddingSubjectType
 	EmbeddingSubjectID        string
@@ -548,9 +548,9 @@ type TaskMatch struct {
 	UsedSemantic              bool
 }
 
-// SearchTaskMatchesResult stores search rows plus execution metadata.
-type SearchTaskMatchesResult struct {
-	Matches                []TaskMatch
+// SearchActionItemMatchesResult stores search rows plus execution metadata.
+type SearchActionItemMatchesResult struct {
+	Matches                []ActionItemMatch
 	RequestedMode          SearchMode
 	EffectiveMode          SearchMode
 	FallbackReason         string
@@ -559,13 +559,13 @@ type SearchTaskMatchesResult struct {
 	EmbeddingSummary       EmbeddingSummary
 }
 
-// CreateTask creates task.
-func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Task, error) {
-	return s.createTaskWithTemplates(ctx, in, 1)
+// CreateActionItem creates actionItem.
+func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput) (domain.ActionItem, error) {
+	return s.createActionItemWithTemplates(ctx, in, 1)
 }
 
-// createTaskWithTemplates creates one task and recursively applies kind-template children.
-func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInput, depth int) (domain.Task, error) {
+// createActionItemWithTemplates creates one actionItem and recursively applies kind-template children.
+func (s *Service) createActionItemWithTemplates(ctx context.Context, in CreateActionItemInput, depth int) (domain.ActionItem, error) {
 	actorType := in.UpdatedByType
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
@@ -576,81 +576,81 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 		firstNonEmptyTrimmed(in.UpdatedByName, in.CreatedByName),
 		actorType,
 	)
-	var parent *domain.Task
+	var parent *domain.ActionItem
 	guardScopes := []mutationScopeCandidate{
 		newProjectMutationScopeCandidate(in.ProjectID),
 	}
 	if strings.TrimSpace(in.ParentID) != "" {
-		parentTask, err := s.repo.GetTask(ctx, in.ParentID)
+		parentActionItem, err := s.repo.GetActionItem(ctx, in.ParentID)
 		if err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
-		if parentTask.ProjectID != in.ProjectID {
-			return domain.Task{}, domain.ErrInvalidParentID
+		if parentActionItem.ProjectID != in.ProjectID {
+			return domain.ActionItem{}, domain.ErrInvalidParentID
 		}
-		parent = &parentTask
-		guardScopes, err = s.capabilityScopesForTaskLineage(ctx, parentTask)
+		parent = &parentActionItem
+		guardScopes, err = s.capabilityScopesForActionItemLineage(ctx, parentActionItem)
 		if err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
 	}
 	if !(actorType == domain.ActorTypeSystem && internalTemplateMutationAllowed(ctx)) {
 		if err := s.enforceMutationGuardAcrossScopes(ctx, in.ProjectID, actorType, guardScopes, domain.CapabilityActionCreateChild); err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
 		if parent != nil {
-			if err := s.ensureTaskEditableByNodeContract(ctx, *parent); err != nil {
-				return domain.Task{}, err
+			if err := s.ensureActionItemEditableByNodeContract(ctx, *parent); err != nil {
+				return domain.ActionItem{}, err
 			}
 		}
 	}
 
-	scope := normalizeTaskScopeForKind(domain.KindID(in.Kind), in.Scope, parent)
-	kindDef, err := s.resolveTaskKindDefinition(ctx, in.ProjectID, domain.KindID(in.Kind), scope, parent)
+	scope := normalizeActionItemScopeForKind(domain.KindID(in.Kind), in.Scope, parent)
+	kindDef, err := s.resolveActionItemKindDefinition(ctx, in.ProjectID, domain.KindID(in.Kind), scope, parent)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	boundLibrary, nodeTemplate, foundNodeTemplate, err := s.resolveBoundNodeTemplate(ctx, in.ProjectID, scope, kindDef.ID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	var mergedMetadata domain.TaskMetadata
+	var mergedMetadata domain.ActionItemMetadata
 	switch {
 	case foundNodeTemplate:
-		mergedMetadata, err = mergeTaskMetadataWithNodeTemplate(in.Metadata, nodeTemplate)
+		mergedMetadata, err = mergeActionItemMetadataWithNodeTemplate(in.Metadata, nodeTemplate)
 		if err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
 	default:
-		mergedMetadata, err = mergeTaskMetadataWithKindTemplate(in.Metadata, kindDef)
+		mergedMetadata, err = mergeActionItemMetadataWithKindTemplate(in.Metadata, kindDef)
 		if err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
 	}
 	if err := s.validateKindPayload(kindDef, mergedMetadata.KindPayload); err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	templateParent := &domain.Task{
+	templateParent := &domain.ActionItem{
 		ProjectID: in.ProjectID,
 		Scope:     scope,
 	}
 	switch {
 	case foundNodeTemplate:
 		if err := s.validateTemplateChildRules(ctx, in.ProjectID, nodeTemplate.ChildRules, templateParent, depth); err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
 	default:
 		if err := s.validateKindTemplateExpansion(ctx, in.ProjectID, kindDef, templateParent, domain.KindAppliesToSubtask, depth); err != nil {
-			return domain.Task{}, err
+			return domain.ActionItem{}, err
 		}
 	}
-	tasks, err := s.repo.ListTasks(ctx, in.ProjectID, false)
+	tasks, err := s.repo.ListActionItems(ctx, in.ProjectID, false)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	columns, err := s.repo.ListColumns(ctx, in.ProjectID, true)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	lifecycleState := lifecycleStateForColumnID(columns, in.ColumnID)
 	if lifecycleState == "" {
@@ -663,7 +663,7 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 		}
 	}
 
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:             s.idGen(),
 		ProjectID:      in.ProjectID,
 		ParentID:       in.ParentID,
@@ -685,45 +685,45 @@ func (s *Service) createTaskWithTemplates(ctx context.Context, in CreateTaskInpu
 		UpdatedByType:  actorType,
 	}, s.clock())
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 
-	if err := s.repo.CreateTask(ctx, task); err != nil {
-		return domain.Task{}, err
+	if err := s.repo.CreateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_created"); err != nil {
-		return domain.Task{}, err
+	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_created"); err != nil {
+		return domain.ActionItem{}, err
 	}
 	switch {
 	case foundNodeTemplate:
-		if err := s.applyTemplateChildRules(ctx, task, boundLibrary, nodeTemplate, depth+1); err != nil {
-			return domain.Task{}, err
+		if err := s.applyTemplateChildRules(ctx, actionItem, boundLibrary, nodeTemplate, depth+1); err != nil {
+			return domain.ActionItem{}, err
 		}
 	default:
-		if err := s.applyKindTemplateSystemActions(ctx, task, kindDef, depth+1); err != nil {
-			return domain.Task{}, err
+		if err := s.applyKindTemplateSystemActions(ctx, actionItem, kindDef, depth+1); err != nil {
+			return domain.ActionItem{}, err
 		}
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// MoveTask moves task.
-func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, position int) (domain.Task, error) {
-	task, err := s.repo.GetTask(ctx, taskID)
+// MoveActionItem moves actionItem.
+func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID string, position int) (domain.ActionItem, error) {
+	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	guardScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
+	guardScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
+	columns, err := s.repo.ListColumns(ctx, actionItem.ProjectID, true)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	fromState := lifecycleStateForColumnID(columns, task.ColumnID)
+	fromState := lifecycleStateForColumnID(columns, actionItem.ColumnID)
 	if fromState == "" {
-		fromState = task.LifecycleState
+		fromState = actionItem.LifecycleState
 	}
 	toState := lifecycleStateForColumnID(columns, toColumnID)
 	if toState == "" {
@@ -738,247 +738,247 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	case fromState == domain.StateTodo && toState == domain.StateProgress:
 		moveAction = domain.CapabilityActionMarkInProgress
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, moveAction); err != nil {
-		return domain.Task{}, err
+	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), guardScopes, moveAction); err != nil {
+		return domain.ActionItem{}, err
 	}
 	// Terminal-state guard: transitions FROM done or failed are blocked until
 	// override auth (D3) is implemented. Once D3 lands, this guard will check
 	// for an override token instead of blocking unconditionally.
 	if domain.IsTerminalState(fromState) && fromState != toState {
-		return domain.Task{}, fmt.Errorf("%w: cannot transition from terminal state %q without override auth", domain.ErrTransitionBlocked, fromState)
+		return domain.ActionItem{}, fmt.Errorf("%w: cannot transition from terminal state %q without override auth", domain.ErrTransitionBlocked, fromState)
 	}
 	if fromState == domain.StateTodo && toState == domain.StateProgress {
-		if unmet := task.StartCriteriaUnmet(); len(unmet) > 0 {
-			return domain.Task{}, fmt.Errorf("%w: start criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
+		if unmet := actionItem.StartCriteriaUnmet(); len(unmet) > 0 {
+			return domain.ActionItem{}, fmt.Errorf("%w: start criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
 		}
 	}
 	if toState == domain.StateDone {
-		if err := s.ensureTaskCompletableByNodeContract(ctx, task); err != nil {
-			return domain.Task{}, err
+		if err := s.ensureActionItemCompletableByNodeContract(ctx, actionItem); err != nil {
+			return domain.ActionItem{}, err
 		}
-		projectTasks, listErr := s.ListTasks(ctx, task.ProjectID, true)
+		projectActionItems, listErr := s.ListActionItems(ctx, actionItem.ProjectID, true)
 		if listErr != nil {
-			return domain.Task{}, listErr
+			return domain.ActionItem{}, listErr
 		}
-		if blockErr := s.ensureTaskCompletionBlockersClear(ctx, task, projectTasks); blockErr != nil {
-			return domain.Task{}, blockErr
+		if blockErr := s.ensureActionItemCompletionBlockersClear(ctx, actionItem, projectActionItems); blockErr != nil {
+			return domain.ActionItem{}, blockErr
 		}
-		if blockErr := s.ensureTaskCompletionAttentionClear(ctx, task); blockErr != nil {
-			return domain.Task{}, blockErr
+		if blockErr := s.ensureActionItemCompletionAttentionClear(ctx, actionItem); blockErr != nil {
+			return domain.ActionItem{}, blockErr
 		}
-	} else if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
-		return domain.Task{}, err
+	} else if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := task.Move(toColumnID, position, s.clock()); err != nil {
-		return domain.Task{}, err
+	if err := actionItem.Move(toColumnID, position, s.clock()); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := task.SetLifecycleState(toState, s.clock()); err != nil {
-		return domain.Task{}, err
+	if err := actionItem.SetLifecycleState(toState, s.clock()); err != nil {
+		return domain.ActionItem{}, err
 	}
-	applyMutationActorToTask(ctx, &task)
-	if err := s.repo.UpdateTask(ctx, task); err != nil {
-		return domain.Task{}, err
+	applyMutationActorToActionItem(ctx, &actionItem)
+	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_moved"); err != nil {
-		return domain.Task{}, err
+	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_moved"); err != nil {
+		return domain.ActionItem{}, err
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// RestoreTask restores task.
-func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, error) {
-	task, err := s.repo.GetTask(ctx, taskID)
+// RestoreActionItem restores actionItem.
+func (s *Service) RestoreActionItem(ctx context.Context, actionItemID string) (domain.ActionItem, error) {
+	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	guardScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
+	guardScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	// Guard enforcement must follow the caller's request actor, not historical task attribution.
+	// Guard enforcement must follow the caller's request actor, not historical actionItem attribution.
 	guardActorType := currentMutationActorType(ctx, "")
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, guardActorType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
-		return domain.Task{}, err
+	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, guardActorType, guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
-		return domain.Task{}, err
+	if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	task.Restore(s.clock())
-	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
+	actionItem.Restore(s.clock())
+	columns, err := s.repo.ListColumns(ctx, actionItem.ProjectID, true)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	restoredState := lifecycleStateForColumnID(columns, task.ColumnID)
+	restoredState := lifecycleStateForColumnID(columns, actionItem.ColumnID)
 	if restoredState == "" {
 		restoredState = domain.StateTodo
 	}
-	if err := task.SetLifecycleState(restoredState, s.clock()); err != nil {
-		return domain.Task{}, err
+	if err := actionItem.SetLifecycleState(restoredState, s.clock()); err != nil {
+		return domain.ActionItem{}, err
 	}
-	applyMutationActorToTask(ctx, &task)
-	if err := s.repo.UpdateTask(ctx, task); err != nil {
-		return domain.Task{}, err
+	applyMutationActorToActionItem(ctx, &actionItem)
+	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_restored"); err != nil {
-		return domain.Task{}, err
+	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_restored"); err != nil {
+		return domain.ActionItem{}, err
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// RenameTask renames task.
-func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.Task, error) {
-	task, err := s.repo.GetTask(ctx, taskID)
+// RenameActionItem renames actionItem.
+func (s *Service) RenameActionItem(ctx context.Context, actionItemID, title string) (domain.ActionItem, error) {
+	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	guardScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
+	guardScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionEditNode); err != nil {
-		return domain.Task{}, err
+	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionEditNode); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
-		return domain.Task{}, err
+	if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := task.UpdateDetails(title, task.Description, task.Priority, task.DueAt, task.Labels, s.clock()); err != nil {
-		return domain.Task{}, err
+	if err := actionItem.UpdateDetails(title, actionItem.Description, actionItem.Priority, actionItem.DueAt, actionItem.Labels, s.clock()); err != nil {
+		return domain.ActionItem{}, err
 	}
-	applyMutationActorToTask(ctx, &task)
-	if err := s.repo.UpdateTask(ctx, task); err != nil {
-		return domain.Task{}, err
+	applyMutationActorToActionItem(ctx, &actionItem)
+	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_renamed"); err != nil {
-		return domain.Task{}, err
+	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_renamed"); err != nil {
+		return domain.ActionItem{}, err
 	}
 	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
-		ProjectID:  task.ProjectID,
-		TargetType: snapshotCommentTargetTypeForTask(task),
-		TargetID:   task.ID,
+		ProjectID:  actionItem.ProjectID,
+		TargetType: snapshotCommentTargetTypeForActionItem(actionItem),
+		TargetID:   actionItem.ID,
 	}, false, "task_renamed"); err != nil && !errors.Is(err, ErrNotFound) {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// UpdateTask updates state for the requested operation.
-func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Task, error) {
-	task, err := s.repo.GetTask(ctx, in.TaskID)
+// UpdateActionItem updates state for the requested operation.
+func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput) (domain.ActionItem, error) {
+	actionItem, err := s.repo.GetActionItem(ctx, in.ActionItemID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
 	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	actorType := currentMutationActorType(ctx, in.UpdatedType)
-	guardScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
+	guardScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, actorType, guardScopes, domain.CapabilityActionEditNode); err != nil {
-		return domain.Task{}, err
+	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, actorType, guardScopes, domain.CapabilityActionEditNode); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
-		return domain.Task{}, err
+	if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
 	if hasResolvedActor && strings.TrimSpace(resolvedActor.ActorID) != "" {
-		task.UpdatedByActor = resolvedActor.ActorID
-		task.UpdatedByName = firstNonEmptyTrimmed(resolvedActor.ActorName, resolvedActor.ActorID)
-		task.UpdatedByType = actorType
+		actionItem.UpdatedByActor = resolvedActor.ActorID
+		actionItem.UpdatedByName = firstNonEmptyTrimmed(resolvedActor.ActorName, resolvedActor.ActorID)
+		actionItem.UpdatedByType = actorType
 	} else if updatedBy := strings.TrimSpace(in.UpdatedBy); updatedBy != "" {
-		task.UpdatedByActor = updatedBy
-		task.UpdatedByName = firstNonEmptyTrimmed(in.UpdatedByName, updatedBy)
-		task.UpdatedByType = actorType
+		actionItem.UpdatedByActor = updatedBy
+		actionItem.UpdatedByName = firstNonEmptyTrimmed(in.UpdatedByName, updatedBy)
+		actionItem.UpdatedByType = actorType
 	}
-	applyMutationActorToTask(ctx, &task)
+	applyMutationActorToActionItem(ctx, &actionItem)
 	priority := in.Priority
 	if strings.TrimSpace(string(priority)) == "" {
-		priority = task.Priority
+		priority = actionItem.Priority
 	}
-	if err := task.UpdateDetails(in.Title, in.Description, priority, in.DueAt, in.Labels, s.clock()); err != nil {
-		return domain.Task{}, err
+	if err := actionItem.UpdateDetails(in.Title, in.Description, priority, in.DueAt, in.Labels, s.clock()); err != nil {
+		return domain.ActionItem{}, err
 	}
 	if in.Metadata != nil {
-		var parent *domain.Task
-		if strings.TrimSpace(task.ParentID) != "" {
-			parentTask, parentErr := s.repo.GetTask(ctx, task.ParentID)
+		var parent *domain.ActionItem
+		if strings.TrimSpace(actionItem.ParentID) != "" {
+			parentActionItem, parentErr := s.repo.GetActionItem(ctx, actionItem.ParentID)
 			if parentErr != nil {
-				return domain.Task{}, parentErr
+				return domain.ActionItem{}, parentErr
 			}
-			parent = &parentTask
+			parent = &parentActionItem
 		}
-		if _, validateErr := s.validateTaskKind(ctx, task.ProjectID, domain.KindID(task.Kind), task.Scope, parent, in.Metadata.KindPayload); validateErr != nil {
-			return domain.Task{}, validateErr
+		if _, validateErr := s.validateActionItemKind(ctx, actionItem.ProjectID, domain.KindID(actionItem.Kind), actionItem.Scope, parent, in.Metadata.KindPayload); validateErr != nil {
+			return domain.ActionItem{}, validateErr
 		}
-		if err := task.UpdatePlanningMetadata(*in.Metadata, task.UpdatedByActor, task.UpdatedByType, s.clock()); err != nil {
-			return domain.Task{}, err
+		if err := actionItem.UpdatePlanningMetadata(*in.Metadata, actionItem.UpdatedByActor, actionItem.UpdatedByType, s.clock()); err != nil {
+			return domain.ActionItem{}, err
 		}
 	}
-	if err := s.repo.UpdateTask(ctx, task); err != nil {
-		return domain.Task{}, err
+	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if _, err := s.enqueueTaskEmbedding(ctx, task, false, "task_updated"); err != nil {
-		return domain.Task{}, err
+	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_updated"); err != nil {
+		return domain.ActionItem{}, err
 	}
 	if _, err := s.enqueueThreadContextEmbedding(ctx, domain.CommentTarget{
-		ProjectID:  task.ProjectID,
-		TargetType: snapshotCommentTargetTypeForTask(task),
-		TargetID:   task.ID,
+		ProjectID:  actionItem.ProjectID,
+		TargetType: snapshotCommentTargetTypeForActionItem(actionItem),
+		TargetID:   actionItem.ID,
 	}, false, "task_updated"); err != nil && !errors.Is(err, ErrNotFound) {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// DeleteTask deletes task.
-func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode) error {
+// DeleteActionItem deletes actionItem.
+func (s *Service) DeleteActionItem(ctx context.Context, actionItemID string, mode DeleteMode) error {
 	if mode == "" {
 		mode = s.defaultDeleteMode
 	}
 
 	switch mode {
 	case DeleteModeArchive:
-		task, err := s.repo.GetTask(ctx, taskID)
+		actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 		if err != nil {
 			return err
 		}
-		guardScopes, guardErr := s.capabilityScopesForTaskLineage(ctx, task)
+		guardScopes, guardErr := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 		if guardErr != nil {
 			return guardErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
 			return err
 		}
-		if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
+		if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
 			return err
 		}
-		task.Archive(s.clock())
-		applyMutationActorToTask(ctx, &task)
-		return s.repo.UpdateTask(ctx, task)
+		actionItem.Archive(s.clock())
+		applyMutationActorToActionItem(ctx, &actionItem)
+		return s.repo.UpdateActionItem(ctx, actionItem)
 	case DeleteModeHard:
-		task, err := s.repo.GetTask(ctx, taskID)
+		actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 		if err != nil {
 			return err
 		}
-		guardScopes, guardErr := s.capabilityScopesForTaskLineage(ctx, task)
+		guardScopes, guardErr := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 		if guardErr != nil {
 			return guardErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
+		if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionArchiveOrCleanup); err != nil {
 			return err
 		}
-		if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
+		if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
 			return err
 		}
-		if err := s.repo.DeleteTask(ctx, taskID); err != nil {
+		if err := s.repo.DeleteActionItem(ctx, actionItemID); err != nil {
 			return err
 		}
 		if s.searchIndex != nil {
-			if err := s.searchIndex.DeleteEmbeddingDocument(ctx, EmbeddingSubjectTypeWorkItem, taskID); err != nil {
+			if err := s.searchIndex.DeleteEmbeddingDocument(ctx, EmbeddingSubjectTypeWorkItem, actionItemID); err != nil {
 				return err
 			}
 			threadSubjectID := BuildThreadContextSubjectID(domain.CommentTarget{
-				ProjectID:  task.ProjectID,
-				TargetType: snapshotCommentTargetTypeForTask(task),
-				TargetID:   task.ID,
+				ProjectID:  actionItem.ProjectID,
+				TargetType: snapshotCommentTargetTypeForActionItem(actionItem),
+				TargetID:   actionItem.ID,
 			})
 			if threadSubjectID != "" {
 				if err := s.searchIndex.DeleteEmbeddingDocument(ctx, EmbeddingSubjectTypeThreadContext, threadSubjectID); err != nil {
@@ -987,13 +987,13 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 			}
 		}
 		if s.embeddingLifecycle != nil {
-			if err := s.embeddingLifecycle.DeleteEmbeddingSubject(ctx, EmbeddingSubjectTypeWorkItem, taskID); err != nil {
+			if err := s.embeddingLifecycle.DeleteEmbeddingSubject(ctx, EmbeddingSubjectTypeWorkItem, actionItemID); err != nil {
 				return err
 			}
 			threadSubjectID := BuildThreadContextSubjectID(domain.CommentTarget{
-				ProjectID:  task.ProjectID,
-				TargetType: snapshotCommentTargetTypeForTask(task),
-				TargetID:   task.ID,
+				ProjectID:  actionItem.ProjectID,
+				TargetType: snapshotCommentTargetTypeForActionItem(actionItem),
+				TargetID:   actionItem.ID,
 			})
 			if threadSubjectID != "" {
 				if err := s.embeddingLifecycle.DeleteEmbeddingSubject(ctx, EmbeddingSubjectTypeThreadContext, threadSubjectID); err != nil {
@@ -1024,13 +1024,13 @@ func (s *Service) ListColumns(ctx context.Context, projectID string, includeArch
 	return columns, nil
 }
 
-// ListTasks lists tasks.
-func (s *Service) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
-	tasks, err := s.repo.ListTasks(ctx, projectID, includeArchived)
+// ListActionItems lists tasks.
+func (s *Service) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
+	tasks, err := s.repo.ListActionItems(ctx, projectID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(tasks, func(a, b domain.Task) int {
+	slices.SortFunc(tasks, func(a, b domain.ActionItem) int {
 		if a.ColumnID == b.ColumnID {
 			return a.Position - b.Position
 		}
@@ -1056,14 +1056,14 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		newProjectMutationScopeCandidate(target.ProjectID),
 	}
 	if target.TargetType != domain.CommentTargetTypeProject {
-		task, taskErr := s.repo.GetTask(ctx, target.TargetID)
-		if taskErr != nil {
-			return domain.Comment{}, taskErr
+		actionItem, actionItemErr := s.repo.GetActionItem(ctx, target.TargetID)
+		if actionItemErr != nil {
+			return domain.Comment{}, actionItemErr
 		}
-		if task.ProjectID != target.ProjectID {
+		if actionItem.ProjectID != target.ProjectID {
 			return domain.Comment{}, ErrNotFound
 		}
-		guardScopes, err = s.capabilityScopesForTaskLineage(ctx, task)
+		guardScopes, err = s.capabilityScopesForActionItemLineage(ctx, actionItem)
 		if err != nil {
 			return domain.Comment{}, err
 		}
@@ -1118,11 +1118,11 @@ func (s *Service) ensureCommentTargetExists(ctx context.Context, target domain.C
 		}
 		return nil
 	}
-	task, err := s.repo.GetTask(ctx, target.TargetID)
+	actionItem, err := s.repo.GetActionItem(ctx, target.TargetID)
 	if err != nil {
 		return err
 	}
-	if task.ProjectID != target.ProjectID {
+	if actionItem.ProjectID != target.ProjectID {
 		return ErrNotFound
 	}
 	return nil
@@ -1186,115 +1186,115 @@ func (s *Service) GetProjectDependencyRollup(ctx context.Context, projectID stri
 	if _, err := s.repo.GetProject(ctx, projectID); err != nil {
 		return domain.DependencyRollup{}, err
 	}
-	tasks, err := s.repo.ListTasks(ctx, projectID, false)
+	tasks, err := s.repo.ListActionItems(ctx, projectID, false)
 	if err != nil {
 		return domain.DependencyRollup{}, err
 	}
 	return buildDependencyRollup(projectID, tasks), nil
 }
 
-// ListChildTasks lists child tasks for a parent within the same project.
-func (s *Service) ListChildTasks(ctx context.Context, projectID, parentID string, includeArchived bool) ([]domain.Task, error) {
+// ListChildActionItems lists child tasks for a parent within the same project.
+func (s *Service) ListChildActionItems(ctx context.Context, projectID, parentID string, includeArchived bool) ([]domain.ActionItem, error) {
 	parentID = strings.TrimSpace(parentID)
 	if parentID == "" {
 		return nil, domain.ErrInvalidParentID
 	}
-	tasks, err := s.ListTasks(ctx, projectID, includeArchived)
+	tasks, err := s.ListActionItems(ctx, projectID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if task.ParentID == parentID {
-			out = append(out, task)
+	out := make([]domain.ActionItem, 0)
+	for _, actionItem := range tasks {
+		if actionItem.ParentID == parentID {
+			out = append(out, actionItem)
 		}
 	}
 	return out, nil
 }
 
-// ReparentTask changes parent task relationship.
-func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (domain.Task, error) {
-	task, err := s.repo.GetTask(ctx, taskID)
+// ReparentActionItem changes parent actionItem relationship.
+func (s *Service) ReparentActionItem(ctx context.Context, actionItemID, parentID string) (domain.ActionItem, error) {
+	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	taskScopes, err := s.capabilityScopesForTaskLineage(ctx, task)
+	actionItemScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.ActionItem{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), taskScopes, domain.CapabilityActionEditNode); err != nil {
-		return domain.Task{}, err
+	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), actionItemScopes, domain.CapabilityActionEditNode); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := s.ensureTaskEditableByNodeContract(ctx, task); err != nil {
-		return domain.Task{}, err
+	if err := s.ensureActionItemEditableByNodeContract(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
 	parentID = strings.TrimSpace(parentID)
-	var parent *domain.Task
+	var parent *domain.ActionItem
 	if parentID != "" {
-		parentTask, parentErr := s.repo.GetTask(ctx, parentID)
+		parentActionItem, parentErr := s.repo.GetActionItem(ctx, parentID)
 		if parentErr != nil {
-			return domain.Task{}, parentErr
+			return domain.ActionItem{}, parentErr
 		}
-		if parentTask.ProjectID != task.ProjectID {
-			return domain.Task{}, domain.ErrInvalidParentID
+		if parentActionItem.ProjectID != actionItem.ProjectID {
+			return domain.ActionItem{}, domain.ErrInvalidParentID
 		}
-		parent = &parentTask
-		parentScopes, scopeErr := s.capabilityScopesForTaskLineage(ctx, parentTask)
+		parent = &parentActionItem
+		parentScopes, scopeErr := s.capabilityScopesForActionItemLineage(ctx, parentActionItem)
 		if scopeErr != nil {
-			return domain.Task{}, scopeErr
+			return domain.ActionItem{}, scopeErr
 		}
-		if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, currentMutationActorType(ctx, ""), parentScopes, domain.CapabilityActionEditNode); err != nil {
-			return domain.Task{}, err
+		if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), parentScopes, domain.CapabilityActionEditNode); err != nil {
+			return domain.ActionItem{}, err
 		}
-		if err := s.ensureTaskEditableByNodeContract(ctx, parentTask); err != nil {
-			return domain.Task{}, err
+		if err := s.ensureActionItemEditableByNodeContract(ctx, parentActionItem); err != nil {
+			return domain.ActionItem{}, err
 		}
-		tasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)
+		tasks, listErr := s.repo.ListActionItems(ctx, actionItem.ProjectID, true)
 		if listErr != nil {
-			return domain.Task{}, listErr
+			return domain.ActionItem{}, listErr
 		}
-		if wouldCreateParentCycle(task.ID, parentTask.ID, tasks) {
-			return domain.Task{}, domain.ErrInvalidParentID
+		if wouldCreateParentCycle(actionItem.ID, parentActionItem.ID, tasks) {
+			return domain.ActionItem{}, domain.ErrInvalidParentID
 		}
 	}
-	if parentID == "" && task.Scope == domain.KindAppliesToSubtask {
-		return domain.Task{}, domain.ErrInvalidParentID
+	if parentID == "" && actionItem.Scope == domain.KindAppliesToSubtask {
+		return domain.ActionItem{}, domain.ErrInvalidParentID
 	}
-	if _, err := s.validateTaskKind(ctx, task.ProjectID, domain.KindID(task.Kind), task.Scope, parent, task.Metadata.KindPayload); err != nil {
-		return domain.Task{}, err
+	if _, err := s.validateActionItemKind(ctx, actionItem.ProjectID, domain.KindID(actionItem.Kind), actionItem.Scope, parent, actionItem.Metadata.KindPayload); err != nil {
+		return domain.ActionItem{}, err
 	}
-	if err := task.Reparent(parentID, s.clock()); err != nil {
-		return domain.Task{}, err
+	if err := actionItem.Reparent(parentID, s.clock()); err != nil {
+		return domain.ActionItem{}, err
 	}
-	applyMutationActorToTask(ctx, &task)
-	if err := s.repo.UpdateTask(ctx, task); err != nil {
-		return domain.Task{}, err
+	applyMutationActorToActionItem(ctx, &actionItem)
+	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
-	return task, nil
+	return actionItem, nil
 }
 
-// SearchTaskMatches finds task matches using project, state, and archive filters.
-func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) ([]TaskMatch, error) {
-	result, err := s.SearchTasks(ctx, in)
+// SearchActionItemMatches finds actionItem matches using project, state, and archive filters.
+func (s *Service) SearchActionItemMatches(ctx context.Context, in SearchActionItemsFilter) ([]ActionItemMatch, error) {
+	result, err := s.SearchActionItems(ctx, in)
 	if err != nil {
 		return nil, err
 	}
 	return result.Matches, nil
 }
 
-// SearchTasks finds task matches and includes execution metadata for operator-visible surfaces.
-func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (SearchTaskMatchesResult, error) {
+// SearchActionItems finds actionItem matches and includes execution metadata for operator-visible surfaces.
+func (s *Service) SearchActionItems(ctx context.Context, in SearchActionItemsFilter) (SearchActionItemMatchesResult, error) {
 	mode, err := normalizeSearchMode(in.Mode)
 	if err != nil {
-		return SearchTaskMatchesResult{}, err
+		return SearchActionItemMatchesResult{}, err
 	}
 	sortOrder, err := normalizeSearchSort(in.Sort)
 	if err != nil {
-		return SearchTaskMatchesResult{}, err
+		return SearchActionItemMatchesResult{}, err
 	}
 	limit, offset, err := normalizeSearchPagination(in.Limit, in.Offset)
 	if err != nil {
-		return SearchTaskMatchesResult{}, err
+		return SearchActionItemMatchesResult{}, err
 	}
 
 	stateFilter := map[string]struct{}{}
@@ -1322,21 +1322,21 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 	if in.CrossProject {
 		projects, err := s.repo.ListProjects(ctx, in.IncludeArchived)
 		if err != nil {
-			return SearchTaskMatchesResult{}, err
+			return SearchActionItemMatchesResult{}, err
 		}
 		targetProjects = append(targetProjects, projects...)
 	} else {
 		projectID := strings.TrimSpace(in.ProjectID)
 		if projectID == "" {
-			return SearchTaskMatchesResult{}, domain.ErrInvalidID
+			return SearchActionItemMatchesResult{}, domain.ErrInvalidID
 		}
 		project, err := s.repo.GetProject(ctx, projectID)
 		if err != nil {
-			return SearchTaskMatchesResult{}, err
+			return SearchActionItemMatchesResult{}, err
 		}
 		if !in.IncludeArchived && project.ArchivedAt != nil {
-			return SearchTaskMatchesResult{
-				Matches:          []TaskMatch{},
+			return SearchActionItemMatchesResult{
+				Matches:          []ActionItemMatch{},
 				RequestedMode:    mode,
 				EffectiveMode:    mode,
 				EmbeddingSummary: EmbeddingSummary{},
@@ -1346,33 +1346,33 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 	}
 
 	query := strings.TrimSpace(strings.ToLower(in.Query))
-	out := make([]TaskMatch, 0)
+	out := make([]ActionItemMatch, 0)
 	lexicalScores := map[string]float64{}
 	projectIDs := make([]string, 0, len(targetProjects))
 	for _, project := range targetProjects {
 		projectIDs = append(projectIDs, project.ID)
 		columns, err := s.repo.ListColumns(ctx, project.ID, true)
 		if err != nil {
-			return SearchTaskMatchesResult{}, err
+			return SearchActionItemMatchesResult{}, err
 		}
 		stateByColumn := make(map[string]string, len(columns))
 		for _, column := range columns {
 			stateByColumn[column.ID] = normalizeStateID(column.Name)
 		}
 
-		tasks, err := s.repo.ListTasks(ctx, project.ID, true)
+		tasks, err := s.repo.ListActionItems(ctx, project.ID, true)
 		if err != nil {
-			return SearchTaskMatchesResult{}, err
+			return SearchActionItemMatchesResult{}, err
 		}
-		for _, task := range tasks {
-			stateID := stateByColumn[task.ColumnID]
+		for _, actionItem := range tasks {
+			stateID := stateByColumn[actionItem.ColumnID]
 			if stateID == "" {
-				stateID = string(task.LifecycleState)
+				stateID = string(actionItem.LifecycleState)
 			}
 			if stateID == "" {
 				stateID = "todo"
 			}
-			if task.ArchivedAt != nil {
+			if actionItem.ArchivedAt != nil {
 				if !in.IncludeArchived || !wantsArchivedState {
 					continue
 				}
@@ -1382,15 +1382,15 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 					continue
 				}
 			}
-			if !taskMatchesExtendedSearchFilters(task, levelFilter, kindFilter, labelsAnyFilter, labelsAllFilter) {
+			if !actionItemMatchesExtendedSearchFilters(actionItem, levelFilter, kindFilter, labelsAnyFilter, labelsAllFilter) {
 				continue
 			}
-			lexicalScores[task.ID] = taskLexicalMatchScore(task, query)
+			lexicalScores[actionItem.ID] = actionItemLexicalMatchScore(actionItem, query)
 
-			out = append(out, TaskMatch{
-				Project: project,
-				Task:    task,
-				StateID: stateID,
+			out = append(out, ActionItemMatch{
+				Project:    project,
+				ActionItem: actionItem,
+				StateID:    stateID,
 			})
 		}
 	}
@@ -1417,14 +1417,14 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 					fallbackReason = "embedding_status_unavailable"
 				} else {
 					for _, row := range readyRows {
-						taskID := strings.TrimSpace(row.SearchTargetID)
-						if taskID == "" || row.SearchTargetType != EmbeddingSearchTargetTypeWorkItem {
+						actionItemID := strings.TrimSpace(row.SearchTargetID)
+						if actionItemID == "" || row.SearchTargetType != EmbeddingSearchTargetTypeWorkItem {
 							continue
 						}
 						score := clamp01(row.Similarity)
-						if previous, ok := semanticScores[taskID]; !ok || score > previous {
-							semanticScores[taskID] = score
-							semanticSubjects[taskID] = row
+						if previous, ok := semanticScores[actionItemID]; !ok || score > previous {
+							semanticScores[actionItemID] = score
+							semanticSubjects[actionItemID] = row
 						}
 					}
 				}
@@ -1457,11 +1457,11 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 	}
 
 	if query != "" {
-		filtered := make([]TaskMatch, 0, len(out))
+		filtered := make([]ActionItemMatch, 0, len(out))
 		for _, match := range out {
-			taskID := match.Task.ID
-			lexicalScore := lexicalScores[taskID]
-			_, hasSemantic := semanticScores[taskID]
+			actionItemID := match.ActionItem.ID
+			lexicalScore := lexicalScores[actionItemID]
+			_, hasSemantic := semanticScores[actionItemID]
 			switch effectiveMode {
 			case SearchModeKeyword:
 				if lexicalScore <= 0 {
@@ -1484,49 +1484,49 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 	rankScores := map[string]float64{}
 	if query != "" {
 		for idx := range out {
-			taskID := out[idx].Task.ID
-			lexicalScore := clamp01(lexicalScores[taskID])
-			semanticScore := clamp01(semanticScores[taskID])
+			actionItemID := out[idx].ActionItem.ID
+			lexicalScore := clamp01(lexicalScores[actionItemID])
+			semanticScore := clamp01(semanticScores[actionItemID])
 			out[idx].SemanticScore = semanticScore
 			out[idx].UsedSemantic = semanticScore > 0 && effectiveMode != SearchModeKeyword
 			switch effectiveMode {
 			case SearchModeSemantic:
-				rankScores[taskID] = semanticScore
+				rankScores[actionItemID] = semanticScore
 			case SearchModeHybrid:
-				rankScores[taskID] = (s.searchLexicalW * lexicalScore) + (s.searchSemanticW * semanticScore)
+				rankScores[actionItemID] = (s.searchLexicalW * lexicalScore) + (s.searchSemanticW * semanticScore)
 			default:
-				rankScores[taskID] = lexicalScore
+				rankScores[actionItemID] = lexicalScore
 			}
 		}
 	}
 
-	slices.SortFunc(out, func(a, b TaskMatch) int {
+	slices.SortFunc(out, func(a, b ActionItemMatch) int {
 		switch sortOrder {
 		case SearchSortTitleAsc:
-			left := strings.ToLower(strings.TrimSpace(a.Task.Title))
-			right := strings.ToLower(strings.TrimSpace(b.Task.Title))
+			left := strings.ToLower(strings.TrimSpace(a.ActionItem.Title))
+			right := strings.ToLower(strings.TrimSpace(b.ActionItem.Title))
 			if cmp := strings.Compare(left, right); cmp != 0 {
 				return cmp
 			}
-			if cmp := strings.Compare(a.Task.Title, b.Task.Title); cmp != 0 {
+			if cmp := strings.Compare(a.ActionItem.Title, b.ActionItem.Title); cmp != 0 {
 				return cmp
 			}
 		case SearchSortCreatedAtDesc:
-			if cmp := compareTimeDesc(a.Task.CreatedAt, b.Task.CreatedAt); cmp != 0 {
+			if cmp := compareTimeDesc(a.ActionItem.CreatedAt, b.ActionItem.CreatedAt); cmp != 0 {
 				return cmp
 			}
 		case SearchSortUpdatedAtDesc:
-			if cmp := compareTimeDesc(a.Task.UpdatedAt, b.Task.UpdatedAt); cmp != 0 {
+			if cmp := compareTimeDesc(a.ActionItem.UpdatedAt, b.ActionItem.UpdatedAt); cmp != 0 {
 				return cmp
 			}
 		case SearchSortRankDesc:
 			if query != "" {
-				if cmp := compareFloat64Desc(rankScores[a.Task.ID], rankScores[b.Task.ID]); cmp != 0 {
+				if cmp := compareFloat64Desc(rankScores[a.ActionItem.ID], rankScores[b.ActionItem.ID]); cmp != 0 {
 					return cmp
 				}
 			}
 		}
-		return compareTaskMatchRankDesc(a, b)
+		return compareActionItemMatchRankDesc(a, b)
 	})
 
 	if offset < len(out) {
@@ -1534,13 +1534,13 @@ func (s *Service) SearchTasks(ctx context.Context, in SearchTasksFilter) (Search
 		if end > len(out) {
 			end = len(out)
 		}
-		out = append([]TaskMatch(nil), out[offset:end]...)
+		out = append([]ActionItemMatch(nil), out[offset:end]...)
 	} else {
-		out = []TaskMatch{}
+		out = []ActionItemMatch{}
 	}
 
-	s.annotateTaskMatchesWithEmbeddingState(ctx, projectIDs, out, semanticSubjects)
-	return SearchTaskMatchesResult{
+	s.annotateActionItemMatchesWithEmbeddingState(ctx, projectIDs, out, semanticSubjects)
+	return SearchActionItemMatchesResult{
 		Matches:                out,
 		RequestedMode:          mode,
 		EffectiveMode:          effectiveMode,
@@ -1597,7 +1597,7 @@ func (s *Service) filterReadySemanticMatches(ctx context.Context, projectIDs []s
 	return readyRows, nil
 }
 
-func (s *Service) annotateTaskMatchesWithEmbeddingState(ctx context.Context, projectIDs []string, matches []TaskMatch, semanticSubjects map[string]EmbeddingSearchMatch) {
+func (s *Service) annotateActionItemMatchesWithEmbeddingState(ctx context.Context, projectIDs []string, matches []ActionItemMatch, semanticSubjects map[string]EmbeddingSearchMatch) {
 	if len(matches) == 0 {
 		return
 	}
@@ -1612,8 +1612,8 @@ func (s *Service) annotateTaskMatchesWithEmbeddingState(ctx context.Context, pro
 	subjectIDsByType := make(map[EmbeddingSubjectType][]string)
 	for idx := range matches {
 		selectedType := EmbeddingSubjectTypeWorkItem
-		selectedID := matches[idx].Task.ID
-		if selected, ok := semanticSubjects[matches[idx].Task.ID]; ok {
+		selectedID := matches[idx].ActionItem.ID
+		if selected, ok := semanticSubjects[matches[idx].ActionItem.ID]; ok {
 			selectedType = selected.SubjectType
 			selectedID = selected.SubjectID
 		}
@@ -1753,15 +1753,15 @@ func unsupportedSearchLevels(levelFilter map[string]struct{}) []string {
 	return out
 }
 
-// taskMatchesExtendedSearchFilters applies optional level/kind/label filter constraints to one task.
-func taskMatchesExtendedSearchFilters(task domain.Task, levelFilter, kindFilter, labelsAnyFilter, labelsAllFilter map[string]struct{}) bool {
+// actionItemMatchesExtendedSearchFilters applies optional level/kind/label filter constraints to one actionItem.
+func actionItemMatchesExtendedSearchFilters(actionItem domain.ActionItem, levelFilter, kindFilter, labelsAnyFilter, labelsAllFilter map[string]struct{}) bool {
 	if len(levelFilter) > 0 {
-		if _, ok := levelFilter[strings.ToLower(strings.TrimSpace(string(task.Scope)))]; !ok {
+		if _, ok := levelFilter[strings.ToLower(strings.TrimSpace(string(actionItem.Scope)))]; !ok {
 			return false
 		}
 	}
 	if len(kindFilter) > 0 {
-		if _, ok := kindFilter[strings.ToLower(strings.TrimSpace(string(task.Kind)))]; !ok {
+		if _, ok := kindFilter[strings.ToLower(strings.TrimSpace(string(actionItem.Kind)))]; !ok {
 			return false
 		}
 	}
@@ -1769,18 +1769,18 @@ func taskMatchesExtendedSearchFilters(task domain.Task, levelFilter, kindFilter,
 		return true
 	}
 
-	taskLabelSet := make(map[string]struct{}, len(task.Labels))
-	for _, raw := range task.Labels {
+	actionItemLabelSet := make(map[string]struct{}, len(actionItem.Labels))
+	for _, raw := range actionItem.Labels {
 		label := strings.TrimSpace(strings.ToLower(raw))
 		if label == "" {
 			continue
 		}
-		taskLabelSet[label] = struct{}{}
+		actionItemLabelSet[label] = struct{}{}
 	}
 	if len(labelsAnyFilter) > 0 {
 		matchedAny := false
 		for label := range labelsAnyFilter {
-			if _, ok := taskLabelSet[label]; ok {
+			if _, ok := actionItemLabelSet[label]; ok {
 				matchedAny = true
 				break
 			}
@@ -1790,24 +1790,24 @@ func taskMatchesExtendedSearchFilters(task domain.Task, levelFilter, kindFilter,
 		}
 	}
 	for label := range labelsAllFilter {
-		if _, ok := taskLabelSet[label]; !ok {
+		if _, ok := actionItemLabelSet[label]; !ok {
 			return false
 		}
 	}
 	return true
 }
 
-// compareTaskMatchRankDesc keeps the legacy deterministic rank ordering for matches.
-func compareTaskMatchRankDesc(a, b TaskMatch) int {
+// compareActionItemMatchRankDesc keeps the legacy deterministic rank ordering for matches.
+func compareActionItemMatchRankDesc(a, b ActionItemMatch) int {
 	if a.Project.ID == b.Project.ID {
 		if a.StateID == b.StateID {
-			if a.Task.ColumnID == b.Task.ColumnID {
-				if a.Task.Position == b.Task.Position {
-					return strings.Compare(a.Task.ID, b.Task.ID)
+			if a.ActionItem.ColumnID == b.ActionItem.ColumnID {
+				if a.ActionItem.Position == b.ActionItem.Position {
+					return strings.Compare(a.ActionItem.ID, b.ActionItem.ID)
 				}
-				return a.Task.Position - b.Task.Position
+				return a.ActionItem.Position - b.ActionItem.Position
 			}
-			return strings.Compare(a.Task.ColumnID, b.Task.ColumnID)
+			return strings.Compare(a.ActionItem.ColumnID, b.ActionItem.ColumnID)
 		}
 		return strings.Compare(a.StateID, b.StateID)
 	}
@@ -1847,23 +1847,23 @@ func clamp01(value float64) float64 {
 	return value
 }
 
-// taskLexicalMatchScore calculates a normalized lexical score for one task/query pair.
-func taskLexicalMatchScore(task domain.Task, query string) float64 {
+// actionItemLexicalMatchScore calculates a normalized lexical score for one actionItem/query pair.
+func actionItemLexicalMatchScore(actionItem domain.ActionItem, query string) float64 {
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "" {
 		return 0
 	}
 	score := 0.0
-	score = max(score, fieldLexicalScore(task.Title, query))
-	score = max(score, fieldLexicalScore(task.Description, query)*0.9)
-	for _, label := range task.Labels {
+	score = max(score, fieldLexicalScore(actionItem.Title, query))
+	score = max(score, fieldLexicalScore(actionItem.Description, query)*0.9)
+	for _, label := range actionItem.Labels {
 		score = max(score, fieldLexicalScore(label, query)*0.8)
 	}
-	score = max(score, fieldLexicalScore(task.Metadata.Objective, query)*0.82)
-	score = max(score, fieldLexicalScore(task.Metadata.AcceptanceCriteria, query)*0.8)
-	score = max(score, fieldLexicalScore(task.Metadata.ValidationPlan, query)*0.78)
-	score = max(score, fieldLexicalScore(task.Metadata.BlockedReason, query)*0.76)
-	score = max(score, fieldLexicalScore(task.Metadata.RiskNotes, query)*0.76)
+	score = max(score, fieldLexicalScore(actionItem.Metadata.Objective, query)*0.82)
+	score = max(score, fieldLexicalScore(actionItem.Metadata.AcceptanceCriteria, query)*0.8)
+	score = max(score, fieldLexicalScore(actionItem.Metadata.ValidationPlan, query)*0.78)
+	score = max(score, fieldLexicalScore(actionItem.Metadata.BlockedReason, query)*0.76)
+	score = max(score, fieldLexicalScore(actionItem.Metadata.RiskNotes, query)*0.76)
 	return clamp01(score)
 }
 
@@ -1929,24 +1929,24 @@ func fuzzyContainsQuery(candidate, query string) bool {
 }
 
 // buildDependencyRollup computes aggregate dependency and blocked-state counts.
-func buildDependencyRollup(projectID string, tasks []domain.Task) domain.DependencyRollup {
+func buildDependencyRollup(projectID string, tasks []domain.ActionItem) domain.DependencyRollup {
 	rollup := domain.DependencyRollup{
 		ProjectID:  projectID,
 		TotalItems: len(tasks),
 	}
 	stateByID := make(map[string]domain.LifecycleState, len(tasks))
-	for _, task := range tasks {
-		stateByID[task.ID] = task.LifecycleState
+	for _, actionItem := range tasks {
+		stateByID[actionItem.ID] = actionItem.LifecycleState
 	}
-	for _, task := range tasks {
-		dependsOn := uniqueNonEmptyIDs(task.Metadata.DependsOn)
-		blockedBy := uniqueNonEmptyIDs(task.Metadata.BlockedBy)
+	for _, actionItem := range tasks {
+		dependsOn := uniqueNonEmptyIDs(actionItem.Metadata.DependsOn)
+		blockedBy := uniqueNonEmptyIDs(actionItem.Metadata.BlockedBy)
 
 		if len(dependsOn) > 0 {
 			rollup.ItemsWithDependencies++
 			rollup.DependencyEdges += len(dependsOn)
 		}
-		if len(blockedBy) > 0 || strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+		if len(blockedBy) > 0 || strings.TrimSpace(actionItem.Metadata.BlockedReason) != "" {
 			rollup.BlockedItems++
 		}
 		rollup.BlockedByEdges += len(blockedBy)
@@ -1981,20 +1981,20 @@ func uniqueNonEmptyIDs(in []string) []string {
 }
 
 // wouldCreateParentCycle reports whether assigning candidateParentID would create a cycle.
-func wouldCreateParentCycle(taskID, candidateParentID string, tasks []domain.Task) bool {
-	taskID = strings.TrimSpace(taskID)
+func wouldCreateParentCycle(actionItemID, candidateParentID string, tasks []domain.ActionItem) bool {
+	actionItemID = strings.TrimSpace(actionItemID)
 	candidateParentID = strings.TrimSpace(candidateParentID)
-	if taskID == "" || candidateParentID == "" {
+	if actionItemID == "" || candidateParentID == "" {
 		return false
 	}
 	parentByID := make(map[string]string, len(tasks))
-	for _, task := range tasks {
-		parentByID[task.ID] = strings.TrimSpace(task.ParentID)
+	for _, actionItem := range tasks {
+		parentByID[actionItem.ID] = strings.TrimSpace(actionItem.ParentID)
 	}
 	current := candidateParentID
 	visited := map[string]struct{}{}
 	for current != "" {
-		if current == taskID {
+		if current == actionItemID {
 			return true
 		}
 		if _, ok := visited[current]; ok {
@@ -2136,9 +2136,9 @@ func normalizeActorTypeInput(actorType domain.ActorType) domain.ActorType {
 	return actorType
 }
 
-// applyMutationActorToTask applies context-provided mutation actor metadata to a task.
-func applyMutationActorToTask(ctx context.Context, task *domain.Task) {
-	if task == nil {
+// applyMutationActorToActionItem applies context-provided mutation actor metadata to a actionItem.
+func applyMutationActorToActionItem(ctx context.Context, actionItem *domain.ActionItem) {
+	if actionItem == nil {
 		return
 	}
 	actor, ok := MutationActorFromContext(ctx)
@@ -2146,14 +2146,14 @@ func applyMutationActorToTask(ctx context.Context, task *domain.Task) {
 		return
 	}
 	if actorID := strings.TrimSpace(actor.ActorID); actorID != "" {
-		task.UpdatedByActor = actorID
+		actionItem.UpdatedByActor = actorID
 	}
 	if actorName := strings.TrimSpace(actor.ActorName); actorName != "" {
-		task.UpdatedByName = actorName
-	} else if strings.TrimSpace(task.UpdatedByName) == "" && strings.TrimSpace(task.UpdatedByActor) != "" {
-		task.UpdatedByName = task.UpdatedByActor
+		actionItem.UpdatedByName = actorName
+	} else if strings.TrimSpace(actionItem.UpdatedByName) == "" && strings.TrimSpace(actionItem.UpdatedByActor) != "" {
+		actionItem.UpdatedByName = actionItem.UpdatedByActor
 	}
-	task.UpdatedByType = normalizeActorTypeInput(actor.ActorType)
+	actionItem.UpdatedByType = normalizeActorTypeInput(actor.ActorType)
 }
 
 // withResolvedMutationActor merges explicit mutation-attribution input with context identity metadata.

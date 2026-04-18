@@ -17,63 +17,63 @@ func TestValidateMetadataOutcome(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		metadata    *domain.TaskMetadata
+		metadata    *domain.ActionItemMetadata
 		wantErr     bool
 		wantOutcome string
 	}{
 		{
 			name:        "success is valid",
-			metadata:    &domain.TaskMetadata{Outcome: "success"},
+			metadata:    &domain.ActionItemMetadata{Outcome: "success"},
 			wantOutcome: "success",
 		},
 		{
 			name:        "failure is valid",
-			metadata:    &domain.TaskMetadata{Outcome: "failure"},
+			metadata:    &domain.ActionItemMetadata{Outcome: "failure"},
 			wantOutcome: "failure",
 		},
 		{
 			name:        "blocked is valid",
-			metadata:    &domain.TaskMetadata{Outcome: "blocked"},
+			metadata:    &domain.ActionItemMetadata{Outcome: "blocked"},
 			wantOutcome: "blocked",
 		},
 		{
 			name:        "superseded is valid",
-			metadata:    &domain.TaskMetadata{Outcome: "superseded"},
+			metadata:    &domain.ActionItemMetadata{Outcome: "superseded"},
 			wantOutcome: "superseded",
 		},
 		{
 			name:        "empty outcome is valid",
-			metadata:    &domain.TaskMetadata{Outcome: ""},
+			metadata:    &domain.ActionItemMetadata{Outcome: ""},
 			wantOutcome: "",
 		},
 		{
 			name:        "uppercase SUCCESS normalizes to lowercase",
-			metadata:    &domain.TaskMetadata{Outcome: "SUCCESS"},
+			metadata:    &domain.ActionItemMetadata{Outcome: "SUCCESS"},
 			wantOutcome: "success",
 		},
 		{
 			name:        "mixed case Blocked normalizes to lowercase",
-			metadata:    &domain.TaskMetadata{Outcome: "Blocked"},
+			metadata:    &domain.ActionItemMetadata{Outcome: "Blocked"},
 			wantOutcome: "blocked",
 		},
 		{
 			name:        "whitespace-padded outcome normalizes",
-			metadata:    &domain.TaskMetadata{Outcome: "  failure  "},
+			metadata:    &domain.ActionItemMetadata{Outcome: "  failure  "},
 			wantOutcome: "failure",
 		},
 		{
 			name:     "banana is rejected",
-			metadata: &domain.TaskMetadata{Outcome: "banana"},
+			metadata: &domain.ActionItemMetadata{Outcome: "banana"},
 			wantErr:  true,
 		},
 		{
 			name:     "done is rejected",
-			metadata: &domain.TaskMetadata{Outcome: "done"},
+			metadata: &domain.ActionItemMetadata{Outcome: "done"},
 			wantErr:  true,
 		},
 		{
 			name:     "in_progress is rejected",
-			metadata: &domain.TaskMetadata{Outcome: "in_progress"},
+			metadata: &domain.ActionItemMetadata{Outcome: "in_progress"},
 			wantErr:  true,
 		},
 		{
@@ -106,10 +106,10 @@ func TestValidateMetadataOutcome(t *testing.T) {
 	}
 }
 
-// TestUpdateTaskRejectsInvalidOutcome verifies end-to-end that the UpdateTask
+// TestUpdateActionItemRejectsInvalidOutcome verifies end-to-end that the UpdateActionItem
 // adapter method rejects unrecognized metadata.outcome values before they reach
 // the application service layer.
-func TestUpdateTaskRejectsInvalidOutcome(t *testing.T) {
+func TestUpdateActionItemRejectsInvalidOutcome(t *testing.T) {
 	t.Parallel()
 
 	fixture := newCommonLifecycleFixture(t)
@@ -120,7 +120,7 @@ func TestUpdateTaskRejectsInvalidOutcome(t *testing.T) {
 		ActorType: string(domain.ActorTypeUser),
 	}
 
-	// Create a project and column so we can create a real task.
+	// Create a project and column so we can create a real actionItem.
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
 		Name:        "OutcomeTest",
 		Description: "Test project for outcome validation",
@@ -135,61 +135,61 @@ func TestUpdateTaskRejectsInvalidOutcome(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
-	task, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
-		Title:     "Task for outcome test",
+		Title:     "ActionItem for outcome test",
 		Priority:  "medium",
 		Actor:     actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
 	// Updating with an invalid outcome should fail.
-	_, err = fixture.adapter.UpdateTask(ctx, UpdateTaskRequest{
-		TaskID:   task.ID,
-		Title:    "Task for outcome test",
-		Metadata: &domain.TaskMetadata{Outcome: "banana"},
-		Actor:    actor,
+	_, err = fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Title:        "ActionItem for outcome test",
+		Metadata:     &domain.ActionItemMetadata{Outcome: "banana"},
+		Actor:        actor,
 	})
 	if err == nil {
-		t.Fatal("UpdateTask() expected error for invalid outcome 'banana', got nil")
+		t.Fatal("UpdateActionItem() expected error for invalid outcome 'banana', got nil")
 	}
 	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
-		t.Fatalf("UpdateTask() error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+		t.Fatalf("UpdateActionItem() error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
 	}
 
 	// Updating with a valid outcome should succeed.
-	updated, err := fixture.adapter.UpdateTask(ctx, UpdateTaskRequest{
-		TaskID:   task.ID,
-		Title:    "Task for outcome test",
-		Metadata: &domain.TaskMetadata{Outcome: "success"},
-		Actor:    actor,
+	updated, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Title:        "ActionItem for outcome test",
+		Metadata:     &domain.ActionItemMetadata{Outcome: "success"},
+		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() unexpected error = %v", err)
+		t.Fatalf("UpdateActionItem() unexpected error = %v", err)
 	}
 	if updated.Metadata.Outcome != "success" {
-		t.Fatalf("UpdateTask() outcome = %q, want %q", updated.Metadata.Outcome, "success")
+		t.Fatalf("UpdateActionItem() outcome = %q, want %q", updated.Metadata.Outcome, "success")
 	}
 
 	// Updating with nil metadata should succeed (no validation needed).
-	_, err = fixture.adapter.UpdateTask(ctx, UpdateTaskRequest{
-		TaskID:   task.ID,
-		Title:    "Task for outcome test updated",
-		Metadata: nil,
-		Actor:    actor,
+	_, err = fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Title:        "ActionItem for outcome test updated",
+		Metadata:     nil,
+		Actor:        actor,
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() with nil metadata unexpected error = %v", err)
+		t.Fatalf("UpdateActionItem() with nil metadata unexpected error = %v", err)
 	}
 }
 
-// TestCreateTaskRejectsInvalidOutcome verifies end-to-end that the CreateTask
+// TestCreateActionItemRejectsInvalidOutcome verifies end-to-end that the CreateActionItem
 // adapter method rejects unrecognized metadata.outcome values before they reach
 // the application service layer.
-func TestCreateTaskRejectsInvalidOutcome(t *testing.T) {
+func TestCreateActionItemRejectsInvalidOutcome(t *testing.T) {
 	t.Parallel()
 
 	fixture := newCommonLifecycleFixture(t)
@@ -200,7 +200,7 @@ func TestCreateTaskRejectsInvalidOutcome(t *testing.T) {
 		ActorType: string(domain.ActorTypeUser),
 	}
 
-	// Create a project and column so we can attempt task creation.
+	// Create a project and column so we can attempt actionItem creation.
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
 		Name:        "CreateOutcomeTest",
 		Description: "Test project for create outcome validation",
@@ -215,47 +215,47 @@ func TestCreateTaskRejectsInvalidOutcome(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
-	// Creating a task with an invalid outcome should fail.
-	_, err = fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	// Creating a actionItem with an invalid outcome should fail.
+	_, err = fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
-		Title:     "Task with invalid outcome",
+		Title:     "ActionItem with invalid outcome",
 		Priority:  "medium",
-		Metadata:  domain.TaskMetadata{Outcome: "banana"},
+		Metadata:  domain.ActionItemMetadata{Outcome: "banana"},
 		Actor:     actor,
 	})
 	if err == nil {
-		t.Fatal("CreateTask() expected error for invalid outcome 'banana', got nil")
+		t.Fatal("CreateActionItem() expected error for invalid outcome 'banana', got nil")
 	}
 	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
-		t.Fatalf("CreateTask() error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+		t.Fatalf("CreateActionItem() error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
 	}
 
-	// Creating a task with a valid outcome should succeed.
-	task, err := fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	// Creating a actionItem with a valid outcome should succeed.
+	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
-		Title:     "Task with valid outcome",
+		Title:     "ActionItem with valid outcome",
 		Priority:  "medium",
-		Metadata:  domain.TaskMetadata{Outcome: "success"},
+		Metadata:  domain.ActionItemMetadata{Outcome: "success"},
 		Actor:     actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() unexpected error = %v", err)
+		t.Fatalf("CreateActionItem() unexpected error = %v", err)
 	}
-	if task.Metadata.Outcome != "success" {
-		t.Fatalf("CreateTask() outcome = %q, want %q", task.Metadata.Outcome, "success")
+	if actionItem.Metadata.Outcome != "success" {
+		t.Fatalf("CreateActionItem() outcome = %q, want %q", actionItem.Metadata.Outcome, "success")
 	}
 
-	// Creating a task with empty outcome (default) should succeed.
-	_, err = fixture.adapter.CreateTask(ctx, CreateTaskRequest{
+	// Creating a actionItem with empty outcome (default) should succeed.
+	_, err = fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
-		Title:     "Task with empty outcome",
+		Title:     "ActionItem with empty outcome",
 		Priority:  "medium",
 		Actor:     actor,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() with empty outcome unexpected error = %v", err)
+		t.Fatalf("CreateActionItem() with empty outcome unexpected error = %v", err)
 	}
 }

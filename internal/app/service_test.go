@@ -16,25 +16,25 @@ import (
 
 // fakeRepo represents fake repo data used by this package.
 type fakeRepo struct {
-	projects            map[string]domain.Project
-	columns             map[string]domain.Column
-	tasks               map[string]domain.Task
-	comments            map[string][]domain.Comment
-	attentionItems      map[string]domain.AttentionItem
-	authRequests        map[string]domain.AuthRequest
-	handoffs            map[string]domain.Handoff
-	changeEvents        map[string][]domain.ChangeEvent
-	kindDefs            map[domain.KindID]domain.KindDefinition
-	projectAllowedKinds map[string][]domain.KindID
-	templateLibraries   map[string]domain.TemplateLibrary
-	projectBindings     map[string]domain.ProjectTemplateBinding
-	nodeContracts       map[string]domain.NodeContractSnapshot
-	capabilityLeases    map[string]domain.CapabilityLease
-	createProjectActor  MutationActor
-	updateProjectActor  MutationActor
-	createTaskActor     MutationActor
-	updateTaskActor     MutationActor
-	createCommentActor  MutationActor
+	projects              map[string]domain.Project
+	columns               map[string]domain.Column
+	tasks                 map[string]domain.ActionItem
+	comments              map[string][]domain.Comment
+	attentionItems        map[string]domain.AttentionItem
+	authRequests          map[string]domain.AuthRequest
+	handoffs              map[string]domain.Handoff
+	changeEvents          map[string][]domain.ChangeEvent
+	kindDefs              map[domain.KindID]domain.KindDefinition
+	projectAllowedKinds   map[string][]domain.KindID
+	templateLibraries     map[string]domain.TemplateLibrary
+	projectBindings       map[string]domain.ProjectTemplateBinding
+	nodeContracts         map[string]domain.NodeContractSnapshot
+	capabilityLeases      map[string]domain.CapabilityLease
+	createProjectActor    MutationActor
+	updateProjectActor    MutationActor
+	createActionItemActor MutationActor
+	updateActionItemActor MutationActor
+	createCommentActor    MutationActor
 }
 
 // newFakeRepo constructs fake repo.
@@ -42,7 +42,7 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		projects:            map[string]domain.Project{},
 		columns:             map[string]domain.Column{},
-		tasks:               map[string]domain.Task{},
+		tasks:               map[string]domain.ActionItem{},
 		comments:            map[string][]domain.Comment{},
 		attentionItems:      map[string]domain.AttentionItem{},
 		authRequests:        map[string]domain.AuthRequest{},
@@ -78,8 +78,8 @@ func (f *fakeEmbeddingGenerator) Embed(_ context.Context, inputs []string) ([][]
 	return out, nil
 }
 
-// fakeTaskSearchIndex captures semantic document writes/search requests in tests.
-type fakeTaskSearchIndex struct {
+// fakeActionItemSearchIndex captures semantic document writes/search requests in tests.
+type fakeActionItemSearchIndex struct {
 	upserts            []EmbeddingDocument
 	deletedSubjectIDs  []string
 	deletedSubjectType []EmbeddingSubjectType
@@ -89,7 +89,7 @@ type fakeTaskSearchIndex struct {
 }
 
 // UpsertEmbeddingDocument stores one in-memory upsert call.
-func (f *fakeTaskSearchIndex) UpsertEmbeddingDocument(_ context.Context, in EmbeddingDocument) error {
+func (f *fakeActionItemSearchIndex) UpsertEmbeddingDocument(_ context.Context, in EmbeddingDocument) error {
 	doc := in
 	doc.Vector = append([]float32(nil), in.Vector...)
 	f.upserts = append(f.upserts, doc)
@@ -97,14 +97,14 @@ func (f *fakeTaskSearchIndex) UpsertEmbeddingDocument(_ context.Context, in Embe
 }
 
 // DeleteEmbeddingDocument stores one in-memory delete call.
-func (f *fakeTaskSearchIndex) DeleteEmbeddingDocument(_ context.Context, subjectType EmbeddingSubjectType, subjectID string) error {
+func (f *fakeActionItemSearchIndex) DeleteEmbeddingDocument(_ context.Context, subjectType EmbeddingSubjectType, subjectID string) error {
 	f.deletedSubjectType = append(f.deletedSubjectType, subjectType)
 	f.deletedSubjectIDs = append(f.deletedSubjectIDs, subjectID)
 	return nil
 }
 
 // SearchEmbeddingDocuments returns configured semantic match rows.
-func (f *fakeTaskSearchIndex) SearchEmbeddingDocuments(_ context.Context, in EmbeddingSearchInput) ([]EmbeddingSearchMatch, error) {
+func (f *fakeActionItemSearchIndex) SearchEmbeddingDocuments(_ context.Context, in EmbeddingSearchInput) ([]EmbeddingSearchMatch, error) {
 	f.searchIn = in
 	if f.searchErr != nil {
 		return nil, f.searchErr
@@ -291,19 +291,19 @@ func (f *fakeEmbeddingLifecycleStore) embeddingKey(subjectType EmbeddingSubjectT
 	return string(subjectType) + "::" + strings.TrimSpace(subjectID)
 }
 
-// seedReadyTaskEmbedding stores ready lifecycle rows for the provided tasks.
-func seedReadyTaskEmbeddings(lifecycle *fakeEmbeddingLifecycleStore, projectID string, tasks ...domain.Task) {
+// seedReadyActionItemEmbedding stores ready lifecycle rows for the provided tasks.
+func seedReadyActionItemEmbeddings(lifecycle *fakeEmbeddingLifecycleStore, projectID string, tasks ...domain.ActionItem) {
 	if lifecycle == nil {
 		return
 	}
-	for _, task := range tasks {
-		lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeWorkItem, task.ID)] = EmbeddingRecord{
+	for _, actionItem := range tasks {
+		lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeWorkItem, actionItem.ID)] = EmbeddingRecord{
 			SubjectType:        EmbeddingSubjectTypeWorkItem,
-			SubjectID:          task.ID,
+			SubjectID:          actionItem.ID,
 			ProjectID:          projectID,
 			Status:             EmbeddingLifecycleReady,
-			ContentHashDesired: hashEmbeddingContent(buildTaskEmbeddingContent(task)),
-			ContentHashIndexed: hashEmbeddingContent(buildTaskEmbeddingContent(task)),
+			ContentHashDesired: hashEmbeddingContent(buildActionItemEmbeddingContent(actionItem)),
+			ContentHashIndexed: hashEmbeddingContent(buildActionItemEmbeddingContent(actionItem)),
 		}
 	}
 }
@@ -327,7 +327,7 @@ func seedReadyThreadContextEmbeddings(lifecycle *fakeEmbeddingLifecycleStore, pr
 }
 
 // newSecondWaveEmbeddingService seeds one fake-repo service used by second-wave app-layer embeddings tests.
-func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() string) (*Service, *fakeRepo, *fakeEmbeddingLifecycleStore, domain.Project, domain.Column, domain.Task) {
+func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() string) (*Service, *fakeRepo, *fakeEmbeddingLifecycleStore, domain.Project, domain.Column, domain.ActionItem) {
 	t.Helper()
 
 	repo := newFakeRepo()
@@ -349,7 +349,7 @@ func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() str
 	if err := repo.CreateColumn(context.Background(), column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-second-wave",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -359,10 +359,10 @@ func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() str
 		Priority:    domain.PriorityMedium,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(context.Background(), task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(context.Background(), actionItem); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	lifecycle := newFakeEmbeddingLifecycleStore()
 
@@ -377,7 +377,7 @@ func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() str
 			MaxAttempts:    5,
 		},
 	})
-	return svc, repo, lifecycle, project, column, task
+	return svc, repo, lifecycle, project, column, actionItem
 }
 
 // mustDeterministicEmbeddingGenerator returns one deterministic embedding generator for second-wave search tests.
@@ -442,11 +442,11 @@ func (f *fakeRepo) DeleteProject(_ context.Context, id string) error {
 		}
 		delete(f.columns, columnID)
 	}
-	for taskID, task := range f.tasks {
-		if task.ProjectID != id {
+	for actionItemID, actionItem := range f.tasks {
+		if actionItem.ProjectID != id {
 			continue
 		}
-		delete(f.tasks, taskID)
+		delete(f.tasks, actionItemID)
 	}
 	return nil
 }
@@ -626,16 +626,16 @@ func (f *fakeRepo) ListColumns(_ context.Context, projectID string, includeArchi
 	return out, nil
 }
 
-// CreateTask creates task.
-func (f *fakeRepo) CreateTask(ctx context.Context, t domain.Task) error {
-	f.createTaskActor, _ = MutationActorFromContext(ctx)
+// CreateActionItem creates actionItem.
+func (f *fakeRepo) CreateActionItem(ctx context.Context, t domain.ActionItem) error {
+	f.createActionItemActor, _ = MutationActorFromContext(ctx)
 	f.tasks[t.ID] = t
 	return nil
 }
 
-// UpdateTask updates state for the requested operation.
-func (f *fakeRepo) UpdateTask(ctx context.Context, t domain.Task) error {
-	f.updateTaskActor, _ = MutationActorFromContext(ctx)
+// UpdateActionItem updates state for the requested operation.
+func (f *fakeRepo) UpdateActionItem(ctx context.Context, t domain.ActionItem) error {
+	f.updateActionItemActor, _ = MutationActorFromContext(ctx)
 	if _, ok := f.tasks[t.ID]; !ok {
 		return ErrNotFound
 	}
@@ -643,18 +643,18 @@ func (f *fakeRepo) UpdateTask(ctx context.Context, t domain.Task) error {
 	return nil
 }
 
-// GetTask returns task.
-func (f *fakeRepo) GetTask(_ context.Context, id string) (domain.Task, error) {
+// GetActionItem returns actionItem.
+func (f *fakeRepo) GetActionItem(_ context.Context, id string) (domain.ActionItem, error) {
 	t, ok := f.tasks[id]
 	if !ok {
-		return domain.Task{}, ErrNotFound
+		return domain.ActionItem{}, ErrNotFound
 	}
 	return t, nil
 }
 
-// ListTasks lists tasks.
-func (f *fakeRepo) ListTasks(_ context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
-	out := make([]domain.Task, 0, len(f.tasks))
+// ListActionItems lists tasks.
+func (f *fakeRepo) ListActionItems(_ context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
+	out := make([]domain.ActionItem, 0, len(f.tasks))
 	for _, t := range f.tasks {
 		if t.ProjectID != projectID {
 			continue
@@ -667,14 +667,14 @@ func (f *fakeRepo) ListTasks(_ context.Context, projectID string, includeArchive
 	return out, nil
 }
 
-// DeleteTask deletes task.
-func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
-	task, ok := f.tasks[id]
+// DeleteActionItem deletes actionItem.
+func (f *fakeRepo) DeleteActionItem(_ context.Context, id string) error {
+	actionItem, ok := f.tasks[id]
 	if !ok {
 		return ErrNotFound
 	}
 	delete(f.tasks, id)
-	targetKey := task.ProjectID + "|" + string(snapshotCommentTargetTypeForTask(task)) + "|" + task.ID
+	targetKey := actionItem.ProjectID + "|" + string(snapshotCommentTargetTypeForActionItem(actionItem)) + "|" + actionItem.ID
 	delete(f.comments, targetKey)
 	return nil
 }
@@ -1048,8 +1048,8 @@ func TestEnsureDefaultProject(t *testing.T) {
 	}
 }
 
-// TestCreateTaskMoveSearchAndDeleteModes verifies behavior for the covered scenario.
-func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
+// TestCreateActionItemMoveSearchAndDeleteModes verifies behavior for the covered scenario.
+func TestCreateActionItemMoveSearchAndDeleteModes(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	ids := []string{"p1", "c1", "c2", "t1"}
@@ -1075,7 +1075,7 @@ func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:   project.ID,
 		ColumnID:    col1.ID,
 		Title:       "Fix parser",
@@ -1084,60 +1084,60 @@ func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
 		Labels:      []string{"parser"},
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	if task.Position != 0 {
-		t.Fatalf("unexpected task position %d", task.Position)
+	if actionItem.Position != 0 {
+		t.Fatalf("unexpected actionItem position %d", actionItem.Position)
 	}
 
-	task, err = svc.MoveTask(context.Background(), task.ID, col2.ID, 1)
+	actionItem, err = svc.MoveActionItem(context.Background(), actionItem.ID, col2.ID, 1)
 	if err != nil {
-		t.Fatalf("MoveTask() error = %v", err)
+		t.Fatalf("MoveActionItem() error = %v", err)
 	}
-	if task.ColumnID != col2.ID || task.Position != 1 {
-		t.Fatalf("unexpected moved task %#v", task)
+	if actionItem.ColumnID != col2.ID || actionItem.Position != 1 {
+		t.Fatalf("unexpected moved actionItem %#v", actionItem)
 	}
 
-	search, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	search, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "parser",
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches() error = %v", err)
+		t.Fatalf("SearchActionItemMatches() error = %v", err)
 	}
 	if len(search) != 1 {
 		t.Fatalf("expected 1 search result, got %d", len(search))
 	}
 
-	if err := svc.DeleteTask(context.Background(), task.ID, ""); err != nil {
-		t.Fatalf("DeleteTask(archive default) error = %v", err)
+	if err := svc.DeleteActionItem(context.Background(), actionItem.ID, ""); err != nil {
+		t.Fatalf("DeleteActionItem(archive default) error = %v", err)
 	}
-	tAfterArchive, err := repo.GetTask(context.Background(), task.ID)
+	tAfterArchive, err := repo.GetActionItem(context.Background(), actionItem.ID)
 	if err != nil {
-		t.Fatalf("GetTask() error = %v", err)
+		t.Fatalf("GetActionItem() error = %v", err)
 	}
 	if tAfterArchive.ArchivedAt == nil {
-		t.Fatal("expected task to be archived")
+		t.Fatal("expected actionItem to be archived")
 	}
 
-	restored, err := svc.RestoreTask(context.Background(), task.ID)
+	restored, err := svc.RestoreActionItem(context.Background(), actionItem.ID)
 	if err != nil {
-		t.Fatalf("RestoreTask() error = %v", err)
+		t.Fatalf("RestoreActionItem() error = %v", err)
 	}
 	if restored.ArchivedAt != nil {
-		t.Fatal("expected task to be restored")
+		t.Fatal("expected actionItem to be restored")
 	}
 
-	if err := svc.DeleteTask(context.Background(), task.ID, DeleteModeHard); err != nil {
-		t.Fatalf("DeleteTask(hard) error = %v", err)
+	if err := svc.DeleteActionItem(context.Background(), actionItem.ID, DeleteModeHard); err != nil {
+		t.Fatalf("DeleteActionItem(hard) error = %v", err)
 	}
-	if _, err := repo.GetTask(context.Background(), task.ID); err != ErrNotFound {
+	if _, err := repo.GetActionItem(context.Background(), actionItem.ID); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 
-// TestRestoreTaskUsesRequestActorContext verifies restore guard actor type comes from request actor context.
-func TestRestoreTaskUsesRequestActorContext(t *testing.T) {
+// TestRestoreActionItemUsesRequestActorContext verifies restore guard actor type comes from request actor context.
+func TestRestoreActionItemUsesRequestActorContext(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t1"}
 	idx := 0
@@ -1158,36 +1158,36 @@ func TestRestoreTaskUsesRequestActorContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:     project.ID,
 		ColumnID:      column.ID,
-		Title:         "archived task",
+		Title:         "archived actionItem",
 		Priority:      domain.PriorityMedium,
 		UpdatedByType: domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	if err := svc.DeleteTask(context.Background(), task.ID, DeleteModeArchive); err != nil {
-		t.Fatalf("DeleteTask(archive) error = %v", err)
+	if err := svc.DeleteActionItem(context.Background(), actionItem.ID, DeleteModeArchive); err != nil {
+		t.Fatalf("DeleteActionItem(archive) error = %v", err)
 	}
 
-	archivedTask, err := repo.GetTask(context.Background(), task.ID)
+	archivedActionItem, err := repo.GetActionItem(context.Background(), actionItem.ID)
 	if err != nil {
-		t.Fatalf("GetTask(archived) error = %v", err)
+		t.Fatalf("GetActionItem(archived) error = %v", err)
 	}
 	// Simulate prior archival attribution from an agent mutation.
-	archivedTask.UpdatedByActor = "agent-1"
-	archivedTask.UpdatedByType = domain.ActorTypeAgent
-	repo.tasks[task.ID] = archivedTask
+	archivedActionItem.UpdatedByActor = "agent-1"
+	archivedActionItem.UpdatedByType = domain.ActorTypeAgent
+	repo.tasks[actionItem.ID] = archivedActionItem
 
 	ctx := WithMutationActor(context.Background(), MutationActor{
 		ActorID:   "user-1",
 		ActorType: domain.ActorTypeUser,
 	})
-	restored, err := svc.RestoreTask(ctx, task.ID)
+	restored, err := svc.RestoreActionItem(ctx, actionItem.ID)
 	if err != nil {
-		t.Fatalf("RestoreTask() error = %v", err)
+		t.Fatalf("RestoreActionItem() error = %v", err)
 	}
 	if restored.ArchivedAt != nil {
 		t.Fatal("expected restore to clear archived_at")
@@ -1200,8 +1200,8 @@ func TestRestoreTaskUsesRequestActorContext(t *testing.T) {
 	}
 }
 
-// TestRestoreTaskRequiresLeaseForNonUserCaller verifies non-user restore calls fail closed without a lease tuple.
-func TestRestoreTaskRequiresLeaseForNonUserCaller(t *testing.T) {
+// TestRestoreActionItemRequiresLeaseForNonUserCaller verifies non-user restore calls fail closed without a lease tuple.
+func TestRestoreActionItemRequiresLeaseForNonUserCaller(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t1"}
 	idx := 0
@@ -1222,44 +1222,44 @@ func TestRestoreTaskRequiresLeaseForNonUserCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Title:     "archived task",
+		Title:     "archived actionItem",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
-	if err := svc.DeleteTask(context.Background(), task.ID, DeleteModeArchive); err != nil {
-		t.Fatalf("DeleteTask(archive) error = %v", err)
+	if err := svc.DeleteActionItem(context.Background(), actionItem.ID, DeleteModeArchive); err != nil {
+		t.Fatalf("DeleteActionItem(archive) error = %v", err)
 	}
 
 	ctx := WithMutationActor(context.Background(), MutationActor{
 		ActorID:   "agent-1",
 		ActorType: domain.ActorTypeAgent,
 	})
-	_, err = svc.RestoreTask(ctx, task.ID)
+	_, err = svc.RestoreActionItem(ctx, actionItem.ID)
 	if !errors.Is(err, domain.ErrMutationLeaseRequired) {
-		t.Fatalf("RestoreTask() error = %v, want ErrMutationLeaseRequired", err)
+		t.Fatalf("RestoreActionItem() error = %v, want ErrMutationLeaseRequired", err)
 	}
 }
 
-// TestDeleteTaskModeValidation verifies behavior for the covered scenario.
-func TestDeleteTaskModeValidation(t *testing.T) {
+// TestDeleteActionItemModeValidation verifies behavior for the covered scenario.
+func TestDeleteActionItemModeValidation(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo, func() string { return "x" }, time.Now, ServiceConfig{})
-	err := svc.DeleteTask(context.Background(), "task-1", DeleteMode("invalid"))
+	err := svc.DeleteActionItem(context.Background(), "actionItem-1", DeleteMode("invalid"))
 	if err != ErrInvalidDeleteMode {
 		t.Fatalf("expected ErrInvalidDeleteMode, got %v", err)
 	}
 }
 
-// TestRenameTask verifies behavior for the covered scenario.
-func TestRenameTask(t *testing.T) {
+// TestRenameActionItem verifies behavior for the covered scenario.
+func TestRenameActionItem(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1267,23 +1267,23 @@ func TestRenameTask(t *testing.T) {
 		Title:     "old",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	updated, err := svc.RenameTask(context.Background(), task.ID, "new title")
+	updated, err := svc.RenameActionItem(context.Background(), actionItem.ID, "new title")
 	if err != nil {
-		t.Fatalf("RenameTask() error = %v", err)
+		t.Fatalf("RenameActionItem() error = %v", err)
 	}
 	if updated.Title != "new title" {
 		t.Fatalf("unexpected title %q", updated.Title)
 	}
 }
 
-// TestUpdateTask verifies behavior for the covered scenario.
-func TestUpdateTask(t *testing.T) {
+// TestUpdateActionItem verifies behavior for the covered scenario.
+func TestUpdateActionItem(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1291,34 +1291,34 @@ func TestUpdateTask(t *testing.T) {
 		Title:     "old",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	due := now.Add(24 * time.Hour)
-	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
-		TaskID:      task.ID,
-		Title:       "new title",
-		Description: "details",
-		Priority:    domain.PriorityHigh,
-		DueAt:       &due,
-		Labels:      []string{"frontend", "backend"},
+	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        "new title",
+		Description:  "details",
+		Priority:     domain.PriorityHigh,
+		DueAt:        &due,
+		Labels:       []string{"frontend", "backend"},
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
 	if updated.Title != "new title" || updated.Description != "details" || updated.Priority != domain.PriorityHigh {
-		t.Fatalf("unexpected updated task %#v", updated)
+		t.Fatalf("unexpected updated actionItem %#v", updated)
 	}
 	if updated.DueAt == nil || len(updated.Labels) != 2 {
 		t.Fatalf("expected due date and labels, got %#v", updated)
 	}
 }
 
-// TestUpdateTaskAppliesMutationActorContext verifies context-supplied actor attribution is persisted on updates.
-func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
+// TestUpdateActionItemAppliesMutationActorContext verifies context-supplied actor attribution is persisted on updates.
+func TestUpdateActionItemAppliesMutationActorContext(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       "c1",
@@ -1329,19 +1329,19 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 		UpdatedByActor: "EVAN",
 		UpdatedByType:  domain.ActorTypeUser,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	ctx := WithMutationActor(context.Background(), MutationActor{
 		ActorID:   "user-context-1",
 		ActorType: domain.ActorTypeUser,
 	})
-	updated, err := svc.UpdateTask(ctx, UpdateTaskInput{
-		TaskID: task.ID,
-		Title:  "new title",
+	updated, err := svc.UpdateActionItem(ctx, UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        "new title",
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
 	if updated.UpdatedByActor != "user-context-1" {
 		t.Fatalf("updated actor id = %q, want user-context-1", updated.UpdatedByActor)
@@ -1351,8 +1351,8 @@ func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
 	}
 }
 
-// TestCreateTaskCarriesHumanActorName verifies task mutations pass display attribution to the repo boundary.
-func TestCreateTaskCarriesHumanActorName(t *testing.T) {
+// TestCreateActionItemCarriesHumanActorName verifies actionItem mutations pass display attribution to the repo boundary.
+func TestCreateActionItemCarriesHumanActorName(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1360,8 +1360,8 @@ func TestCreateTaskCarriesHumanActorName(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:        domain.KindID(domain.WorkKindTask),
-		AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask},
+		ID:        domain.KindID(domain.WorkKindActionItem),
+		AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 	}, now)
 	if err != nil {
 		t.Fatalf("NewKindDefinition() error = %v", err)
@@ -1369,7 +1369,7 @@ func TestCreateTaskCarriesHumanActorName(t *testing.T) {
 	repo.kindDefs[kind.ID] = kind
 
 	svc := NewService(repo, func() string { return "t1" }, func() time.Time { return now }, ServiceConfig{})
-	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
 		Title:          "Ship attribution",
@@ -1379,27 +1379,27 @@ func TestCreateTaskCarriesHumanActorName(t *testing.T) {
 		UpdatedByType:  domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if created.CreatedByActor != "user-1" || created.UpdatedByActor != "user-1" {
-		t.Fatalf("expected task attribution to use actor id user-1, got %#v", created)
+		t.Fatalf("expected actionItem attribution to use actor id user-1, got %#v", created)
 	}
-	if repo.createTaskActor.ActorID != "user-1" {
-		t.Fatalf("create task actor id = %q, want user-1", repo.createTaskActor.ActorID)
+	if repo.createActionItemActor.ActorID != "user-1" {
+		t.Fatalf("create actionItem actor id = %q, want user-1", repo.createActionItemActor.ActorID)
 	}
-	if repo.createTaskActor.ActorName != "Evan Schultz" {
-		t.Fatalf("create task actor name = %q, want Evan Schultz", repo.createTaskActor.ActorName)
+	if repo.createActionItemActor.ActorName != "Evan Schultz" {
+		t.Fatalf("create actionItem actor name = %q, want Evan Schultz", repo.createActionItemActor.ActorName)
 	}
-	if repo.createTaskActor.ActorType != domain.ActorTypeUser {
-		t.Fatalf("create task actor type = %q, want %q", repo.createTaskActor.ActorType, domain.ActorTypeUser)
+	if repo.createActionItemActor.ActorType != domain.ActorTypeUser {
+		t.Fatalf("create actionItem actor type = %q, want %q", repo.createActionItemActor.ActorType, domain.ActorTypeUser)
 	}
 }
 
-// TestUpdateTaskCarriesExplicitActorName verifies explicit update attribution is propagated without a pre-seeded context.
-func TestUpdateTaskCarriesExplicitActorName(t *testing.T) {
+// TestUpdateActionItemCarriesExplicitActorName verifies explicit update attribution is propagated without a pre-seeded context.
+func TestUpdateActionItemCarriesExplicitActorName(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 10, 30, 0, 0, time.UTC)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1407,18 +1407,18 @@ func TestUpdateTaskCarriesExplicitActorName(t *testing.T) {
 		Title:     "old",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
-		TaskID:        task.ID,
+	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
+		ActionItemID:  actionItem.ID,
 		Title:         "new title",
 		UpdatedBy:     "user-2",
 		UpdatedByName: "Evan Schultz",
 		UpdatedType:   domain.ActorTypeUser,
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
 	if updated.UpdatedByActor != "user-2" {
 		t.Fatalf("updated actor id = %q, want user-2", updated.UpdatedByActor)
@@ -1426,22 +1426,22 @@ func TestUpdateTaskCarriesExplicitActorName(t *testing.T) {
 	if updated.UpdatedByType != domain.ActorTypeUser {
 		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeUser)
 	}
-	if repo.updateTaskActor.ActorID != "user-2" {
-		t.Fatalf("update task actor id = %q, want user-2", repo.updateTaskActor.ActorID)
+	if repo.updateActionItemActor.ActorID != "user-2" {
+		t.Fatalf("update actionItem actor id = %q, want user-2", repo.updateActionItemActor.ActorID)
 	}
-	if repo.updateTaskActor.ActorName != "Evan Schultz" {
-		t.Fatalf("update task actor name = %q, want Evan Schultz", repo.updateTaskActor.ActorName)
+	if repo.updateActionItemActor.ActorName != "Evan Schultz" {
+		t.Fatalf("update actionItem actor name = %q, want Evan Schultz", repo.updateActionItemActor.ActorName)
 	}
-	if repo.updateTaskActor.ActorType != domain.ActorTypeUser {
-		t.Fatalf("update task actor type = %q, want %q", repo.updateTaskActor.ActorType, domain.ActorTypeUser)
+	if repo.updateActionItemActor.ActorType != domain.ActorTypeUser {
+		t.Fatalf("update actionItem actor type = %q, want %q", repo.updateActionItemActor.ActorType, domain.ActorTypeUser)
 	}
 }
 
-// TestUpdateTaskPreservesPriorityWhenOmitted verifies update behavior when priority is omitted.
-func TestUpdateTaskPreservesPriorityWhenOmitted(t *testing.T) {
+// TestUpdateActionItemPreservesPriorityWhenOmitted verifies update behavior when priority is omitted.
+func TestUpdateActionItemPreservesPriorityWhenOmitted(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1449,15 +1449,15 @@ func TestUpdateTaskPreservesPriorityWhenOmitted(t *testing.T) {
 		Title:     "old",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
-		TaskID: task.ID,
-		Title:  "new title",
+	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        "new title",
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask(title-only) error = %v", err)
+		t.Fatalf("UpdateActionItem(title-only) error = %v", err)
 	}
 	if updated.Priority != domain.PriorityMedium {
 		t.Fatalf("priority = %q, want %q", updated.Priority, domain.PriorityMedium)
@@ -1475,7 +1475,7 @@ func TestListAndSortHelpers(t *testing.T) {
 	repo.columns[c1.ID] = c1
 	repo.columns[c2.ID] = c2
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -1483,7 +1483,7 @@ func TestListAndSortHelpers(t *testing.T) {
 		Title:     "later",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -1491,7 +1491,7 @@ func TestListAndSortHelpers(t *testing.T) {
 		Title:     "earlier",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t3, _ := domain.NewTask(domain.TaskInput{
+	t3, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t3",
 		ProjectID: p.ID,
 		ColumnID:  c2.ID,
@@ -1520,31 +1520,31 @@ func TestListAndSortHelpers(t *testing.T) {
 		t.Fatalf("expected column c2 first after sort, got %q", columns[0].ID)
 	}
 
-	tasks, err := svc.ListTasks(context.Background(), p.ID, false)
+	tasks, err := svc.ListActionItems(context.Background(), p.ID, false)
 	if err != nil {
-		t.Fatalf("ListTasks() error = %v", err)
+		t.Fatalf("ListActionItems() error = %v", err)
 	}
 	if len(tasks) != 3 {
 		t.Fatalf("expected 3 tasks, got %d", len(tasks))
 	}
 	if tasks[0].ID != t2.ID || tasks[1].ID != t1.ID || tasks[2].ID != t3.ID {
-		t.Fatalf("unexpected task order: %#v", tasks)
+		t.Fatalf("unexpected actionItem order: %#v", tasks)
 	}
 
-	allWithEmptyQuery, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	allWithEmptyQuery, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: p.ID,
 		Query:     " ",
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(empty) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(empty) error = %v", err)
 	}
 	if len(allWithEmptyQuery) != 3 {
 		t.Fatalf("expected 3 results for empty query, got %d", len(allWithEmptyQuery))
 	}
 }
 
-// TestSearchTaskMatchesAcrossProjectsAndStates verifies behavior for the covered scenario.
-func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
+// TestSearchActionItemMatchesAcrossProjectsAndStates verifies behavior for the covered scenario.
+func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1559,7 +1559,7 @@ func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 	repo.columns[c2.ID] = c2
 	repo.columns[c3.ID] = c3
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p1.ID,
 		ColumnID:    c1.ID,
@@ -1568,7 +1568,7 @@ func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 		Description: "planning",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t2",
 		ProjectID:   p1.ID,
 		ColumnID:    c2.ID,
@@ -1577,7 +1577,7 @@ func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 		Description: "roadmap parser",
 		Priority:    domain.PriorityHigh,
 	}, now)
-	t3, _ := domain.NewTask(domain.TaskInput{
+	t3, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t3",
 		ProjectID:   p2.ID,
 		ColumnID:    c3.ID,
@@ -1593,35 +1593,35 @@ func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
 
-	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	matches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		CrossProject:    true,
 		IncludeArchived: false,
 		States:          []string{"progress"},
 		Query:           "parser",
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches() error = %v", err)
+		t.Fatalf("SearchActionItemMatches() error = %v", err)
 	}
-	if len(matches) != 1 || matches[0].Task.ID != "t2" || matches[0].StateID != "progress" {
+	if len(matches) != 1 || matches[0].ActionItem.ID != "t2" || matches[0].StateID != "progress" {
 		t.Fatalf("unexpected active matches %#v", matches)
 	}
 
-	matches, err = svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	matches, err = svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		CrossProject:    true,
 		IncludeArchived: true,
 		States:          []string{"archived"},
 		Query:           "roadmap",
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(archived) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(archived) error = %v", err)
 	}
-	if len(matches) != 1 || matches[0].Task.ID != "t3" || matches[0].StateID != "archived" {
+	if len(matches) != 1 || matches[0].ActionItem.ID != "t3" || matches[0].StateID != "archived" {
 		t.Fatalf("unexpected archived matches %#v", matches)
 	}
 }
 
-// TestSearchTaskMatchesFuzzyQuery verifies behavior for the covered scenario.
-func TestSearchTaskMatchesFuzzyQuery(t *testing.T) {
+// TestSearchActionItemMatchesFuzzyQuery verifies behavior for the covered scenario.
+func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1630,7 +1630,7 @@ func TestSearchTaskMatchesFuzzyQuery(t *testing.T) {
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	repo.columns[c1.ID] = c1
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p1.ID,
 		ColumnID:    c1.ID,
@@ -1640,7 +1640,7 @@ func TestSearchTaskMatchesFuzzyQuery(t *testing.T) {
 		Priority:    domain.PriorityMedium,
 		Labels:      []string{"frontend", "parsing"},
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t2",
 		ProjectID:   p1.ID,
 		ColumnID:    c1.ID,
@@ -1684,27 +1684,27 @@ func TestSearchTaskMatchesFuzzyQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+			matches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 				ProjectID: p1.ID,
 				Query:     tt.query,
 			})
 			if err != nil {
-				t.Fatalf("SearchTaskMatches() error = %v", err)
+				t.Fatalf("SearchActionItemMatches() error = %v", err)
 			}
 			if len(matches) != len(tt.wantIDs) {
 				t.Fatalf("expected %d results, got %d for query %q", len(tt.wantIDs), len(matches), tt.query)
 			}
 			for i := range tt.wantIDs {
-				if matches[i].Task.ID != tt.wantIDs[i] {
-					t.Fatalf("unexpected result order for query %q: got %q want %q", tt.query, matches[i].Task.ID, tt.wantIDs[i])
+				if matches[i].ActionItem.ID != tt.wantIDs[i] {
+					t.Fatalf("unexpected result order for query %q: got %q want %q", tt.query, matches[i].ActionItem.ID, tt.wantIDs[i])
 				}
 			}
 		})
 	}
 }
 
-// TestSearchTaskMatchesExtendedFilters verifies optional level/kind/label filters and pagination.
-func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
+// TestSearchActionItemMatchesExtendedFilters verifies optional level/kind/label filters and pagination.
+func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 11, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1715,7 +1715,7 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[progress.ID] = progress
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
@@ -1726,7 +1726,7 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
@@ -1737,18 +1737,18 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend"},
 	}, now)
-	t3, _ := domain.NewTask(domain.TaskInput{
+	t3, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t3",
 		ProjectID: project.ID,
 		ColumnID:  progress.ID,
 		Position:  0,
-		Title:     "Task implementation",
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
+		Title:     "ActionItem implementation",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
-	t4, _ := domain.NewTask(domain.TaskInput{
+	t4, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t4",
 		ProjectID: project.ID,
 		ColumnID:  progress.ID,
@@ -1767,7 +1767,7 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
 
-	strictMatches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	strictMatches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Levels:    []string{"phase"},
 		Kinds:     []string{"phase"},
@@ -1775,13 +1775,13 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 		LabelsAll: []string{"urgent"},
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(strict filters) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(strict filters) error = %v", err)
 	}
-	if len(strictMatches) != 1 || strictMatches[0].Task.ID != "t1" {
+	if len(strictMatches) != 1 || strictMatches[0].ActionItem.ID != "t1" {
 		t.Fatalf("strict filter rows = %#v, want only t1", strictMatches)
 	}
 
-	pagedMatches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	pagedMatches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Levels:    []string{"phase"},
 		Kinds:     []string{"phase"},
@@ -1790,13 +1790,13 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 		Offset:    1,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(paged filters) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(paged filters) error = %v", err)
 	}
-	if len(pagedMatches) != 1 || pagedMatches[0].Task.ID != "t2" {
+	if len(pagedMatches) != 1 || pagedMatches[0].ActionItem.ID != "t2" {
 		t.Fatalf("paged filter rows = %#v, want only t2", pagedMatches)
 	}
 
-	archivedMatches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	archivedMatches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID:       project.ID,
 		IncludeArchived: true,
 		States:          []string{"archived"},
@@ -1806,15 +1806,15 @@ func TestSearchTaskMatchesExtendedFilters(t *testing.T) {
 		LabelsAll:       []string{"urgent"},
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(archived filters) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(archived filters) error = %v", err)
 	}
-	if len(archivedMatches) != 1 || archivedMatches[0].Task.ID != "t4" || archivedMatches[0].StateID != "archived" {
+	if len(archivedMatches) != 1 || archivedMatches[0].ActionItem.ID != "t4" || archivedMatches[0].StateID != "archived" {
 		t.Fatalf("archived filter rows = %#v, want only archived t4", archivedMatches)
 	}
 }
 
-// TestSearchTaskMatchesLexicalMetadataFields verifies lexical scoring covers embedding metadata fields.
-func TestSearchTaskMatchesLexicalMetadataFields(t *testing.T) {
+// TestSearchActionItemMatchesLexicalMetadataFields verifies lexical scoring covers embedding metadata fields.
+func TestSearchActionItemMatchesLexicalMetadataFields(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 11, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1822,7 +1822,7 @@ func TestSearchTaskMatchesLexicalMetadataFields(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -1831,7 +1831,7 @@ func TestSearchTaskMatchesLexicalMetadataFields(t *testing.T) {
 		Description: "No metadata keywords in primary fields",
 		Priority:    domain.PriorityLow,
 		Labels:      []string{"ops"},
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			Objective:          "objective-alpha-signal",
 			AcceptanceCriteria: "acceptance-beta-signal",
 			ValidationPlan:     "validation-gamma-signal",
@@ -1839,7 +1839,7 @@ func TestSearchTaskMatchesLexicalMetadataFields(t *testing.T) {
 			RiskNotes:          "risk-epsilon-signal",
 		},
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
 	tests := []struct {
@@ -1854,22 +1854,22 @@ func TestSearchTaskMatchesLexicalMetadataFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+			matches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Query:     tt.query,
 			})
 			if err != nil {
-				t.Fatalf("SearchTaskMatches(%s) error = %v", tt.name, err)
+				t.Fatalf("SearchActionItemMatches(%s) error = %v", tt.name, err)
 			}
-			if len(matches) != 1 || matches[0].Task.ID != task.ID {
-				t.Fatalf("query %q rows = %#v, want only %q", tt.query, matches, task.ID)
+			if len(matches) != 1 || matches[0].ActionItem.ID != actionItem.ID {
+				t.Fatalf("query %q rows = %#v, want only %q", tt.query, matches, actionItem.ID)
 			}
 		})
 	}
 }
 
-// TestSearchTaskMatchesSortAndPagination verifies optioned sorting and pagination behavior.
-func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
+// TestSearchActionItemMatchesSortAndPagination verifies optioned sorting and pagination behavior.
+func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1878,7 +1878,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1886,7 +1886,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		Title:     "Charlie",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1894,7 +1894,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		Title:     "Alpha",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t3, _ := domain.NewTask(domain.TaskInput{
+	t3, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t3",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1902,7 +1902,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		Title:     "Bravo",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t4, _ := domain.NewTask(domain.TaskInput{
+	t4, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t4",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1929,19 +1929,19 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		filter  SearchTasksFilter
+		filter  SearchActionItemsFilter
 		wantIDs []string
 	}{
 		{
 			name: "default rank_desc order",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 			},
 			wantIDs: []string{"t2", "t3", "t1", "t4"},
 		},
 		{
 			name: "title_asc sort with deterministic tie-breaker",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Sort:      SearchSortTitleAsc,
 			},
@@ -1949,7 +1949,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		},
 		{
 			name: "created_at_desc sort",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Sort:      SearchSortCreatedAtDesc,
 			},
@@ -1957,7 +1957,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		},
 		{
 			name: "updated_at_desc sort",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Sort:      SearchSortUpdatedAtDesc,
 			},
@@ -1965,7 +1965,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		},
 		{
 			name: "pagination limit and offset",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Limit:     2,
 				Offset:    1,
@@ -1974,7 +1974,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		},
 		{
 			name: "hybrid mode default remains backward-compatible in this lane",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Query:     "alpha",
 			},
@@ -1982,7 +1982,7 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 		},
 		{
 			name: "semantic mode remains backward-compatible in this lane",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				ProjectID: project.ID,
 				Query:     "alpha",
 				Mode:      SearchModeSemantic,
@@ -1993,24 +1993,24 @@ func TestSearchTaskMatchesSortAndPagination(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			matches, err := svc.SearchTaskMatches(context.Background(), tt.filter)
+			matches, err := svc.SearchActionItemMatches(context.Background(), tt.filter)
 			if err != nil {
-				t.Fatalf("SearchTaskMatches() error = %v", err)
+				t.Fatalf("SearchActionItemMatches() error = %v", err)
 			}
 			if len(matches) != len(tt.wantIDs) {
 				t.Fatalf("expected %d rows, got %d", len(tt.wantIDs), len(matches))
 			}
 			for idx := range tt.wantIDs {
-				if matches[idx].Task.ID != tt.wantIDs[idx] {
-					t.Fatalf("unexpected id at %d: got %q want %q", idx, matches[idx].Task.ID, tt.wantIDs[idx])
+				if matches[idx].ActionItem.ID != tt.wantIDs[idx] {
+					t.Fatalf("unexpected id at %d: got %q want %q", idx, matches[idx].ActionItem.ID, tt.wantIDs[idx])
 				}
 			}
 		})
 	}
 }
 
-// TestSearchTaskMatchesLimitDefaultsAndCaps verifies default and capped limits.
-func TestSearchTaskMatchesLimitDefaultsAndCaps(t *testing.T) {
+// TestSearchActionItemMatchesLimitDefaultsAndCaps verifies default and capped limits.
+func TestSearchActionItemMatchesLimitDefaultsAndCaps(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2020,92 +2020,92 @@ func TestSearchTaskMatchesLimitDefaultsAndCaps(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	for i := 0; i < 205; i++ {
-		task, _ := domain.NewTask(domain.TaskInput{
+		actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 			ID:        fmt.Sprintf("t%03d", i),
 			ProjectID: project.ID,
 			ColumnID:  column.ID,
 			Position:  i,
-			Title:     fmt.Sprintf("Task %03d", i),
+			Title:     fmt.Sprintf("ActionItem %03d", i),
 			Priority:  domain.PriorityLow,
 		}, now)
-		repo.tasks[task.ID] = task
+		repo.tasks[actionItem.ID] = actionItem
 	}
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
 
-	defaultRows, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{ProjectID: project.ID})
+	defaultRows, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{ProjectID: project.ID})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(default limit) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(default limit) error = %v", err)
 	}
 	if len(defaultRows) != 50 {
 		t.Fatalf("default limit rows = %d, want 50", len(defaultRows))
 	}
-	if defaultRows[0].Task.ID != "t000" || defaultRows[len(defaultRows)-1].Task.ID != "t049" {
-		t.Fatalf("unexpected default row ids: first=%q last=%q", defaultRows[0].Task.ID, defaultRows[len(defaultRows)-1].Task.ID)
+	if defaultRows[0].ActionItem.ID != "t000" || defaultRows[len(defaultRows)-1].ActionItem.ID != "t049" {
+		t.Fatalf("unexpected default row ids: first=%q last=%q", defaultRows[0].ActionItem.ID, defaultRows[len(defaultRows)-1].ActionItem.ID)
 	}
 
-	clampedRows, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	clampedRows, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Limit:     500,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(clamped limit) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(clamped limit) error = %v", err)
 	}
 	if len(clampedRows) != 200 {
 		t.Fatalf("clamped limit rows = %d, want 200", len(clampedRows))
 	}
 
-	tailRows, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	tailRows, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Limit:     20,
 		Offset:    198,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches(tail page) error = %v", err)
+		t.Fatalf("SearchActionItemMatches(tail page) error = %v", err)
 	}
 	if len(tailRows) != 7 {
 		t.Fatalf("tail page rows = %d, want 7", len(tailRows))
 	}
-	if tailRows[0].Task.ID != "t198" || tailRows[len(tailRows)-1].Task.ID != "t204" {
-		t.Fatalf("unexpected tail row ids: first=%q last=%q", tailRows[0].Task.ID, tailRows[len(tailRows)-1].Task.ID)
+	if tailRows[0].ActionItem.ID != "t198" || tailRows[len(tailRows)-1].ActionItem.ID != "t204" {
+		t.Fatalf("unexpected tail row ids: first=%q last=%q", tailRows[0].ActionItem.ID, tailRows[len(tailRows)-1].ActionItem.ID)
 	}
 }
 
-// TestSearchTaskMatchesRejectsInvalidOptions verifies mode/sort/pagination validation.
-func TestSearchTaskMatchesRejectsInvalidOptions(t *testing.T) {
+// TestSearchActionItemMatchesRejectsInvalidOptions verifies mode/sort/pagination validation.
+func TestSearchActionItemMatchesRejectsInvalidOptions(t *testing.T) {
 	svc := NewService(newFakeRepo(), nil, time.Now, ServiceConfig{})
 	tests := []struct {
 		name   string
-		filter SearchTasksFilter
+		filter SearchActionItemsFilter
 	}{
 		{
 			name: "invalid mode",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				Mode: "unsupported",
 			},
 		},
 		{
 			name: "invalid sort",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				Sort: "unsupported",
 			},
 		},
 		{
 			name: "negative limit",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				Limit: -1,
 			},
 		},
 		{
 			name: "negative offset",
-			filter: SearchTasksFilter{
+			filter: SearchActionItemsFilter{
 				Offset: -1,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := svc.SearchTaskMatches(context.Background(), tt.filter)
+			_, err := svc.SearchActionItemMatches(context.Background(), tt.filter)
 			if !errors.Is(err, domain.ErrInvalidID) {
 				t.Fatalf("expected ErrInvalidID, got %v", err)
 			}
@@ -2113,8 +2113,8 @@ func TestSearchTaskMatchesRejectsInvalidOptions(t *testing.T) {
 	}
 }
 
-// TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle verifies task writes enqueue durable lifecycle work.
-func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
+// TestServiceCreateAndUpdateActionItemEnqueueEmbeddingLifecycle verifies actionItem writes enqueue durable lifecycle work.
+func TestServiceCreateAndUpdateActionItemEnqueueEmbeddingLifecycle(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2135,7 +2135,7 @@ func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
 		},
 	})
 
-	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:     project.ID,
 		ColumnID:      column.ID,
 		Title:         "Ship search",
@@ -2143,7 +2143,7 @@ func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
 		Priority:      domain.PriorityMedium,
 		Labels:        []string{"search", "vector"},
 		UpdatedByType: domain.ActorTypeUser,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			Objective:          "Stabilize search quality",
 			AcceptanceCriteria: "Rank semantic matches first",
 			ValidationPlan:     "Run focused package tests",
@@ -2152,12 +2152,12 @@ func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	if len(lifecycle.inputs) != 1 {
 		t.Fatalf("expected 1 enqueue after create, got %d", len(lifecycle.inputs))
 	}
-	content := buildTaskEmbeddingContent(created)
+	content := buildActionItemEmbeddingContent(created)
 	for _, want := range []string{
 		created.Title,
 		"Finalize ranking",
@@ -2175,17 +2175,17 @@ func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
 		t.Fatalf("create content hash = %q, want %q", lifecycle.inputs[0].ContentHash, hashEmbeddingContent(content))
 	}
 
-	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
-		TaskID:      created.ID,
-		Title:       "Ship hybrid search",
-		Description: created.Description,
-		Priority:    created.Priority,
-		Labels:      created.Labels,
-		DueAt:       created.DueAt,
-		Metadata:    &created.Metadata,
+	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
+		ActionItemID: created.ID,
+		Title:        "Ship hybrid search",
+		Description:  created.Description,
+		Priority:     created.Priority,
+		Labels:       created.Labels,
+		DueAt:        created.DueAt,
+		Metadata:     &created.Metadata,
 	})
 	if err != nil {
-		t.Fatalf("UpdateTask() error = %v", err)
+		t.Fatalf("UpdateActionItem() error = %v", err)
 	}
 	if len(lifecycle.inputs) != 2 {
 		t.Fatalf("expected second enqueue after update, got %d", len(lifecycle.inputs))
@@ -2200,13 +2200,13 @@ func TestServiceCreateAndUpdateTaskEnqueueEmbeddingLifecycle(t *testing.T) {
 	if row.Status != EmbeddingLifecyclePending {
 		t.Fatalf("status = %s, want pending", row.Status)
 	}
-	if row.ContentHashDesired != hashEmbeddingContent(buildTaskEmbeddingContent(updated)) {
-		t.Fatalf("desired content hash = %q, want %q", row.ContentHashDesired, hashEmbeddingContent(buildTaskEmbeddingContent(updated)))
+	if row.ContentHashDesired != hashEmbeddingContent(buildActionItemEmbeddingContent(updated)) {
+		t.Fatalf("desired content hash = %q, want %q", row.ContentHashDesired, hashEmbeddingContent(buildActionItemEmbeddingContent(updated)))
 	}
 }
 
-// TestSearchTaskMatchesSemanticModeUsesIndex verifies semantic mode ranking can return non-lexical rows.
-func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
+// TestSearchActionItemMatchesSemanticModeUsesIndex verifies semantic mode ranking can return non-lexical rows.
+func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2214,7 +2214,7 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2222,7 +2222,7 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 		Title:     "Update docs",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2233,7 +2233,7 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
 
-	searchIndex := &fakeTaskSearchIndex{
+	searchIndex := &fakeActionItemSearchIndex{
 		searchRows: []EmbeddingSearchMatch{
 			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.93},
 			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t1", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t1", Similarity: 0.22},
@@ -2241,28 +2241,28 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 	}
 	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.7, 0.1, 0.3}}}
 	lifecycle := newFakeEmbeddingLifecycleStore()
-	seedReadyTaskEmbeddings(lifecycle, project.ID, t1, t2)
+	seedReadyActionItemEmbeddings(lifecycle, project.ID, t1, t2)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
 		SearchIndex:        searchIndex,
 		EmbeddingLifecycle: lifecycle,
 	})
 
-	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchActionItems(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "semantic query",
 		Mode:      SearchModeSemantic,
 		Limit:     10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	matches := result.Matches
 	if len(matches) != 2 {
 		t.Fatalf("semantic mode rows = %d, want 2", len(matches))
 	}
-	if matches[0].Task.ID != "t2" || matches[1].Task.ID != "t1" {
-		t.Fatalf("unexpected semantic ordering: %#v", []string{matches[0].Task.ID, matches[1].Task.ID})
+	if matches[0].ActionItem.ID != "t2" || matches[1].ActionItem.ID != "t1" {
+		t.Fatalf("unexpected semantic ordering: %#v", []string{matches[0].ActionItem.ID, matches[1].ActionItem.ID})
 	}
 	if len(searchIndex.searchIn.ProjectIDs) != 1 || searchIndex.searchIn.ProjectIDs[0] != project.ID {
 		t.Fatalf("semantic project filter = %#v, want [%s]", searchIndex.searchIn.ProjectIDs, project.ID)
@@ -2278,8 +2278,8 @@ func TestSearchTaskMatchesSemanticModeUsesIndex(t *testing.T) {
 	}
 }
 
-// TestSearchTaskMatchesSemanticFallsBackToKeyword verifies semantic mode falls back when embeddings are unavailable.
-func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
+// TestSearchActionItemMatchesSemanticFallsBackToKeyword verifies semantic mode falls back when embeddings are unavailable.
+func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 15, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2287,7 +2287,7 @@ func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	keywordTask, _ := domain.NewTask(domain.TaskInput{
+	keywordActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2295,7 +2295,7 @@ func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
 		Title:     "Server rollout checklist",
 		Priority:  domain.PriorityLow,
 	}, now)
-	otherTask, _ := domain.NewTask(domain.TaskInput{
+	otherActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2303,32 +2303,32 @@ func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
 		Title:     "Roadmap grooming",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[keywordTask.ID] = keywordTask
-	repo.tasks[otherTask.ID] = otherTask
+	repo.tasks[keywordActionItem.ID] = keywordActionItem
+	repo.tasks[otherActionItem.ID] = otherActionItem
 
 	embedder := &fakeEmbeddingGenerator{err: errors.New("embedding unavailable")}
-	searchIndex := &fakeTaskSearchIndex{
+	searchIndex := &fakeActionItemSearchIndex{
 		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.99}},
 	}
 	lifecycle := newFakeEmbeddingLifecycleStore()
-	seedReadyTaskEmbeddings(lifecycle, project.ID, keywordTask, otherTask)
+	seedReadyActionItemEmbeddings(lifecycle, project.ID, keywordActionItem, otherActionItem)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
 		SearchIndex:        searchIndex,
 		EmbeddingLifecycle: lifecycle,
 	})
 
-	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchActionItems(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "server",
 		Mode:      SearchModeSemantic,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	matches := result.Matches
-	if len(matches) != 1 || matches[0].Task.ID != keywordTask.ID {
-		t.Fatalf("semantic fallback rows = %#v, want only %q", matches, keywordTask.ID)
+	if len(matches) != 1 || matches[0].ActionItem.ID != keywordActionItem.ID {
+		t.Fatalf("semantic fallback rows = %#v, want only %q", matches, keywordActionItem.ID)
 	}
 	if result.RequestedMode != SearchModeSemantic || result.EffectiveMode != SearchModeKeyword {
 		t.Fatalf("search modes = requested %q effective %q, want semantic/keyword", result.RequestedMode, result.EffectiveMode)
@@ -2341,8 +2341,8 @@ func TestSearchTaskMatchesSemanticFallsBackToKeyword(t *testing.T) {
 	}
 }
 
-// TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity verifies duplicate semantic rows keep the highest similarity per task.
-func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.T) {
+// TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity verifies duplicate semantic rows keep the highest similarity per actionItem.
+func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 20, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2350,7 +2350,7 @@ func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	t1, _ := domain.NewTask(domain.TaskInput{
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2358,7 +2358,7 @@ func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.
 		Title:     "Alpha",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewTask(domain.TaskInput{
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2369,7 +2369,7 @@ func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
 
-	searchIndex := &fakeTaskSearchIndex{
+	searchIndex := &fakeActionItemSearchIndex{
 		searchRows: []EmbeddingSearchMatch{
 			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t1", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t1", Similarity: 0.93},
 			{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.85},
@@ -2378,32 +2378,32 @@ func TestSearchTaskMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.
 	}
 	embedder := &fakeEmbeddingGenerator{vectors: [][]float32{{0.4, 0.2, 0.9}}}
 	lifecycle := newFakeEmbeddingLifecycleStore()
-	seedReadyTaskEmbeddings(lifecycle, project.ID, t1, t2)
+	seedReadyActionItemEmbeddings(lifecycle, project.ID, t1, t2)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
 		EmbeddingGenerator: embedder,
 		SearchIndex:        searchIndex,
 		EmbeddingLifecycle: lifecycle,
 	})
 
-	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	matches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "semantic query",
 		Mode:      SearchModeSemantic,
 		Limit:     10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches() error = %v", err)
+		t.Fatalf("SearchActionItemMatches() error = %v", err)
 	}
 	if len(matches) != 2 {
 		t.Fatalf("semantic mode rows = %d, want 2", len(matches))
 	}
-	if matches[0].Task.ID != "t1" || matches[1].Task.ID != "t2" {
-		t.Fatalf("unexpected semantic ordering with duplicate rows: %#v", []string{matches[0].Task.ID, matches[1].Task.ID})
+	if matches[0].ActionItem.ID != "t1" || matches[1].ActionItem.ID != "t2" {
+		t.Fatalf("unexpected semantic ordering with duplicate rows: %#v", []string{matches[0].ActionItem.ID, matches[1].ActionItem.ID})
 	}
 }
 
-// TestSearchTaskMatchesHybridFallsBackToKeyword verifies hybrid mode falls back when semantic lookup fails.
-func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
+// TestSearchActionItemMatchesHybridFallsBackToKeyword verifies hybrid mode falls back when semantic lookup fails.
+func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -2411,7 +2411,7 @@ func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	keywordTask, _ := domain.NewTask(domain.TaskInput{
+	keywordActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2419,7 +2419,7 @@ func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
 		Title:     "Server rollout checklist",
 		Priority:  domain.PriorityLow,
 	}, now)
-	otherTask, _ := domain.NewTask(domain.TaskInput{
+	otherActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2427,11 +2427,11 @@ func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
 		Title:     "Roadmap grooming",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[keywordTask.ID] = keywordTask
-	repo.tasks[otherTask.ID] = otherTask
+	repo.tasks[keywordActionItem.ID] = keywordActionItem
+	repo.tasks[otherActionItem.ID] = otherActionItem
 
 	embedder := &fakeEmbeddingGenerator{err: errors.New("embedding unavailable")}
-	searchIndex := &fakeTaskSearchIndex{
+	searchIndex := &fakeActionItemSearchIndex{
 		searchRows: []EmbeddingSearchMatch{{SubjectType: EmbeddingSubjectTypeWorkItem, SubjectID: "t2", SearchTargetType: EmbeddingSearchTargetTypeWorkItem, SearchTargetID: "t2", Similarity: 0.99}},
 	}
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{
@@ -2439,16 +2439,16 @@ func TestSearchTaskMatchesHybridFallsBackToKeyword(t *testing.T) {
 		SearchIndex:        searchIndex,
 	})
 
-	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+	matches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "server",
 		Mode:      SearchModeHybrid,
 	})
 	if err != nil {
-		t.Fatalf("SearchTaskMatches() error = %v", err)
+		t.Fatalf("SearchActionItemMatches() error = %v", err)
 	}
-	if len(matches) != 1 || matches[0].Task.ID != keywordTask.ID {
-		t.Fatalf("hybrid fallback rows = %#v, want only %q", matches, keywordTask.ID)
+	if len(matches) != 1 || matches[0].ActionItem.ID != keywordActionItem.ID {
+		t.Fatalf("hybrid fallback rows = %#v, want only %q", matches, keywordActionItem.ID)
 	}
 }
 
@@ -2575,7 +2575,7 @@ func TestUpdateProject(t *testing.T) {
 // TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings verifies project documents and thread-context subjects are queued on the real sqlite store.
 func TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings(t *testing.T) {
 	now := time.Date(2026, 3, 29, 12, 30, 0, 0, time.UTC)
-	svc, repo, lifecycle, project, _, task := newSecondWaveEmbeddingService(t, now, func() string {
+	svc, repo, lifecycle, project, _, actionItem := newSecondWaveEmbeddingService(t, now, func() string {
 		return "comment-second-wave"
 	})
 
@@ -2593,8 +2593,8 @@ func TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings(t *testing.T) 
 	}
 	comment, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		Summary:      "Thread context note",
 		BodyMarkdown: "Latency budget belongs in thread context.",
 	})
@@ -2623,13 +2623,13 @@ func TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings(t *testing.T) 
 	}
 	threadRow := lifecycle.enqueues[lifecycle.embeddingKey(EmbeddingSubjectTypeThreadContext, BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	}))]
 	wantThreadID := BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 	if threadRow.SubjectID != wantThreadID {
 		t.Fatalf("thread_context subject_id = %q, want %q", threadRow.SubjectID, wantThreadID)
@@ -2639,17 +2639,17 @@ func TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings(t *testing.T) 
 	}
 	comments, err := repo.ListCommentsByTarget(context.Background(), domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByTarget() error = %v", err)
 	}
 	wantThreadContent := buildThreadContextEmbeddingContent(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
-	}, task.Title, task.Description, comments)
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
+	}, actionItem.Title, actionItem.Description, comments)
 	if threadRow.ContentHashDesired != hashEmbeddingContent(wantThreadContent) {
 		t.Fatalf("thread_context content hash = %q, want %q", threadRow.ContentHashDesired, hashEmbeddingContent(wantThreadContent))
 	}
@@ -2661,17 +2661,17 @@ func TestUpdateProjectAndCreateCommentEnqueueSecondWaveEmbeddings(t *testing.T) 
 	}
 }
 
-// TestSearchTaskMatchesSemanticUsesThreadContextDocuments verifies comment language can rank work items through thread-context documents.
-func TestSearchTaskMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
+// TestSearchActionItemMatchesSemanticUsesThreadContextDocuments verifies comment language can rank work items through thread-context documents.
+func TestSearchActionItemMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
 	now := time.Date(2026, 3, 29, 13, 0, 0, 0, time.UTC)
 	ids := []string{"comment-a", "comment-b"}
 	nextID := 0
-	svc, repo, lifecycle, project, column, taskA := newSecondWaveEmbeddingService(t, now, func() string {
+	svc, repo, lifecycle, project, column, actionItemA := newSecondWaveEmbeddingService(t, now, func() string {
 		id := ids[nextID]
 		nextID++
 		return id
 	})
-	taskB, err := domain.NewTask(domain.TaskInput{
+	actionItemB, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:          "t-thread-b",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -2681,26 +2681,26 @@ func TestSearchTaskMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
 		Priority:    domain.PriorityLow,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask() error = %v", err)
+		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if err := repo.CreateTask(context.Background(), taskB); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if err := repo.CreateActionItem(context.Background(), actionItemB); err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 	svc.embeddingGenerator = mustDeterministicEmbeddingGenerator(t, 32)
-	searchIndex := &fakeTaskSearchIndex{
+	searchIndex := &fakeActionItemSearchIndex{
 		searchRows: []EmbeddingSearchMatch{
 			{
 				SubjectType:      EmbeddingSubjectTypeThreadContext,
-				SubjectID:        BuildThreadContextSubjectID(domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskA.ID}),
+				SubjectID:        BuildThreadContextSubjectID(domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeActionItem, TargetID: actionItemA.ID}),
 				SearchTargetType: EmbeddingSearchTargetTypeWorkItem,
-				SearchTargetID:   taskA.ID,
+				SearchTargetID:   actionItemA.ID,
 				Similarity:       0.93,
 			},
 			{
 				SubjectType:      EmbeddingSubjectTypeThreadContext,
-				SubjectID:        BuildThreadContextSubjectID(domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskB.ID}),
+				SubjectID:        BuildThreadContextSubjectID(domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeActionItem, TargetID: actionItemB.ID}),
 				SearchTargetType: EmbeddingSearchTargetTypeWorkItem,
-				SearchTargetID:   taskB.ID,
+				SearchTargetID:   actionItemB.ID,
 				Similarity:       0.24,
 			},
 		},
@@ -2709,35 +2709,35 @@ func TestSearchTaskMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
 
 	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     taskA.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItemA.ID,
 		Summary:      "Latency budget",
 		BodyMarkdown: "Latency budget needs attention before launch.",
 	}); err != nil {
-		t.Fatalf("CreateComment(task A) error = %v", err)
+		t.Fatalf("CreateComment(actionItem A) error = %v", err)
 	}
 	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     taskB.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItemB.ID,
 		Summary:      "Release checklist",
 		BodyMarkdown: "Release checklist stays small and routine.",
 	}); err != nil {
-		t.Fatalf("CreateComment(task B) error = %v", err)
+		t.Fatalf("CreateComment(actionItem B) error = %v", err)
 	}
 	seedReadyThreadContextEmbeddings(lifecycle, project.ID,
-		domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskA.ID},
-		domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeTask, TargetID: taskB.ID},
+		domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeActionItem, TargetID: actionItemA.ID},
+		domain.CommentTarget{ProjectID: project.ID, TargetType: domain.CommentTargetTypeActionItem, TargetID: actionItemB.ID},
 	)
 
-	result, err := svc.SearchTasks(context.Background(), SearchTasksFilter{
+	result, err := svc.SearchActionItems(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
 		Query:     "latency budget",
 		Mode:      SearchModeSemantic,
 		Limit:     10,
 	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchActionItems() error = %v", err)
 	}
 	if result.RequestedMode != SearchModeSemantic || result.EffectiveMode != SearchModeSemantic {
 		t.Fatalf("search modes = requested %q effective %q, want semantic/semantic", result.RequestedMode, result.EffectiveMode)
@@ -2748,18 +2748,18 @@ func TestSearchTaskMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
 	if len(result.Matches) != 2 {
 		t.Fatalf("expected 2 semantic matches, got %d", len(result.Matches))
 	}
-	if result.Matches[0].Task.ID != taskA.ID || result.Matches[1].Task.ID != taskB.ID {
-		t.Fatalf("unexpected semantic ordering %#v", []string{result.Matches[0].Task.ID, result.Matches[1].Task.ID})
+	if result.Matches[0].ActionItem.ID != actionItemA.ID || result.Matches[1].ActionItem.ID != actionItemB.ID {
+		t.Fatalf("unexpected semantic ordering %#v", []string{result.Matches[0].ActionItem.ID, result.Matches[1].ActionItem.ID})
 	}
 	if result.Matches[0].EmbeddingSubjectType != EmbeddingSubjectTypeThreadContext {
 		t.Fatalf("top match subject type = %q, want thread_context", result.Matches[0].EmbeddingSubjectType)
 	}
 	if result.Matches[0].EmbeddingSubjectID != BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   taskA.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItemA.ID,
 	}) {
-		t.Fatalf("top match subject id = %q, want thread-context subject id for task A", result.Matches[0].EmbeddingSubjectID)
+		t.Fatalf("top match subject id = %q, want thread-context subject id for actionItem A", result.Matches[0].EmbeddingSubjectID)
 	}
 	if !result.Matches[0].UsedSemantic || result.Matches[0].SemanticScore <= 0 {
 		t.Fatalf("expected top semantic metadata, got %#v", result.Matches[0])
@@ -2769,9 +2769,9 @@ func TestSearchTaskMatchesSemanticUsesThreadContextDocuments(t *testing.T) {
 // TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets verifies real-db reindex/backfill covers project docs and comment targets.
 func TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets(t *testing.T) {
 	now := time.Date(2026, 3, 29, 13, 30, 0, 0, time.UTC)
-	ids := []string{"comment-project", "comment-task"}
+	ids := []string{"comment-project", "comment-actionItem"}
 	nextID := 0
-	svc, _, lifecycle, project, _, task := newSecondWaveEmbeddingService(t, now, func() string {
+	svc, _, lifecycle, project, _, actionItem := newSecondWaveEmbeddingService(t, now, func() string {
 		id := ids[nextID]
 		nextID++
 		return id
@@ -2788,12 +2788,12 @@ func TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets(t *testing.T) {
 	}
 	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
-		Summary:      "Task note",
-		BodyMarkdown: "Task thread for retrieval coverage.",
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
+		Summary:      "ActionItem note",
+		BodyMarkdown: "ActionItem thread for retrieval coverage.",
 	}); err != nil {
-		t.Fatalf("CreateComment(task) error = %v", err)
+		t.Fatalf("CreateComment(actionItem) error = %v", err)
 	}
 	lifecycle.inputs = nil
 
@@ -2832,13 +2832,13 @@ func TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets(t *testing.T) {
 		TargetType: domain.CommentTargetTypeProject,
 		TargetID:   project.ID,
 	})
-	wantTaskThread := BuildThreadContextSubjectID(domain.CommentTarget{
+	wantActionItemThread := BuildThreadContextSubjectID(domain.CommentTarget{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 	seenProjectThread := false
-	seenTaskThread := false
+	seenActionItemThread := false
 	seenProjectDocument := false
 	seenWorkItem := false
 	for key, record := range lifecycle.enqueues {
@@ -2849,13 +2849,13 @@ func TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets(t *testing.T) {
 		case EmbeddingSubjectTypeProjectDocument:
 			seenProjectDocument = record.SubjectID == project.ID
 		case EmbeddingSubjectTypeWorkItem:
-			seenWorkItem = record.SubjectID == task.ID
+			seenWorkItem = record.SubjectID == actionItem.ID
 		case EmbeddingSubjectTypeThreadContext:
 			switch record.SubjectID {
 			case wantProjectThread:
 				seenProjectThread = true
-			case wantTaskThread:
-				seenTaskThread = true
+			case wantActionItemThread:
+				seenActionItemThread = true
 			}
 		}
 	}
@@ -2865,8 +2865,8 @@ func TestReindexEmbeddingsSeedsProjectDocumentsAndCommentTargets(t *testing.T) {
 	if !seenWorkItem {
 		t.Fatal("expected work_item lifecycle row to be present")
 	}
-	if !seenProjectThread || !seenTaskThread {
-		t.Fatalf("expected both thread-context rows to be present (project=%v task=%v)", seenProjectThread, seenTaskThread)
+	if !seenProjectThread || !seenActionItemThread {
+		t.Fatalf("expected both thread-context rows to be present (project=%v actionItem=%v)", seenProjectThread, seenActionItemThread)
 	}
 }
 
@@ -2909,15 +2909,15 @@ func TestArchiveRestoreAndDeleteProject(t *testing.T) {
 
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Title:     "task",
+		Title:     "actionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 
@@ -2954,7 +2954,7 @@ func TestArchiveRestoreAndDeleteProject(t *testing.T) {
 	if _, ok := repo.columns[column.ID]; ok {
 		t.Fatal("expected project columns deleted with project")
 	}
-	if _, ok := repo.tasks[task.ID]; ok {
+	if _, ok := repo.tasks[actionItem.ID]; ok {
 		t.Fatal("expected project tasks deleted with project")
 	}
 }
@@ -2999,8 +2999,8 @@ func TestEnsureDefaultProjectErrorPropagation(t *testing.T) {
 	}
 }
 
-// TestMoveTaskBlocksWhenStartCriteriaUnmet verifies behavior for the covered scenario.
-func TestMoveTaskBlocksWhenStartCriteriaUnmet(t *testing.T) {
+// TestMoveActionItemBlocksWhenStartCriteriaUnmet verifies behavior for the covered scenario.
+func TestMoveActionItemBlocksWhenStartCriteriaUnmet(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -3010,30 +3010,30 @@ func TestMoveTaskBlocksWhenStartCriteriaUnmet(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[progress.ID] = progress
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
 		Position:  0,
 		Title:     "blocked",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
 				StartCriteria: []domain.ChecklistItem{{ID: "s1", Text: "design reviewed", Done: false}},
 			},
 		},
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
-	_, err := svc.MoveTask(context.Background(), task.ID, progress.ID, 0)
+	_, err := svc.MoveActionItem(context.Background(), actionItem.ID, progress.ID, 0)
 	if err == nil || !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
 }
 
-// TestMoveTaskAllowsDoneWhenContractsSatisfied verifies behavior for the covered scenario.
-func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
+// TestMoveActionItemAllowsDoneWhenContractsSatisfied verifies behavior for the covered scenario.
+func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -3043,7 +3043,7 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-parent",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -3051,7 +3051,7 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
 				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Done: true}},
 				CompletionChecklist: []domain.ChecklistItem{
@@ -3061,7 +3061,7 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 			},
 		},
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-child",
 		ProjectID:      project.ID,
 		ParentID:       parent.ID,
@@ -3075,9 +3075,9 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	repo.tasks[child.ID] = child
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	moved, err := svc.MoveTask(context.Background(), parent.ID, done.ID, 0)
+	moved, err := svc.MoveActionItem(context.Background(), parent.ID, done.ID, 0)
 	if err != nil {
-		t.Fatalf("MoveTask() error = %v", err)
+		t.Fatalf("MoveActionItem() error = %v", err)
 	}
 	if moved.LifecycleState != domain.StateDone {
 		t.Fatalf("expected done lifecycle state, got %q", moved.LifecycleState)
@@ -3087,8 +3087,8 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	}
 }
 
-// TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren verifies legacy require-children behavior remains intact.
-func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) {
+// TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren verifies legacy require-children behavior remains intact.
+func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -3098,7 +3098,7 @@ func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) 
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-parent",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -3106,13 +3106,13 @@ func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) 
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
 				Policy: domain.CompletionPolicy{RequireChildrenDone: true},
 			},
 		},
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-child",
 		ProjectID:      project.ID,
 		ParentID:       parent.ID,
@@ -3126,7 +3126,7 @@ func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) 
 	repo.tasks[child.ID] = child
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	_, err := svc.MoveTask(context.Background(), parent.ID, done.ID, 0)
+	_, err := svc.MoveActionItem(context.Background(), parent.ID, done.ID, 0)
 	if err == nil || !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
@@ -3135,15 +3135,15 @@ func TestMoveTaskBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) 
 	}
 }
 
-// TestReparentTaskAndListChildTasks verifies behavior for the covered scenario.
-func TestReparentTaskAndListChildTasks(t *testing.T) {
+// TestReparentActionItemAndListChildActionItems verifies behavior for the covered scenario.
+func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "parent",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -3151,7 +3151,7 @@ func TestReparentTaskAndListChildTasks(t *testing.T) {
 		Title:     "parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "child",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -3163,16 +3163,16 @@ func TestReparentTaskAndListChildTasks(t *testing.T) {
 	repo.tasks[child.ID] = child
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(2 * time.Minute) }, ServiceConfig{})
-	updated, err := svc.ReparentTask(context.Background(), child.ID, parent.ID)
+	updated, err := svc.ReparentActionItem(context.Background(), child.ID, parent.ID)
 	if err != nil {
-		t.Fatalf("ReparentTask() error = %v", err)
+		t.Fatalf("ReparentActionItem() error = %v", err)
 	}
 	if updated.ParentID != parent.ID {
 		t.Fatalf("expected parent id %q, got %q", parent.ID, updated.ParentID)
 	}
-	children, err := svc.ListChildTasks(context.Background(), project.ID, parent.ID, false)
+	children, err := svc.ListChildActionItems(context.Background(), project.ID, parent.ID, false)
 	if err != nil {
-		t.Fatalf("ListChildTasks() error = %v", err)
+		t.Fatalf("ListChildActionItems() error = %v", err)
 	}
 	if len(children) != 1 || children[0].ID != child.ID {
 		t.Fatalf("unexpected child list %#v", children)
@@ -3188,7 +3188,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	readyDep, _ := domain.NewTask(domain.TaskInput{
+	readyDep, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "dep-ready",
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
@@ -3197,7 +3197,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateDone,
 	}, now)
-	openDep, _ := domain.NewTask(domain.TaskInput{
+	openDep, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "dep-open",
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
@@ -3206,14 +3206,14 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateProgress,
 	}, now)
-	blocked, _ := domain.NewTask(domain.TaskInput{
+	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "blocked",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  2,
 		Title:     "blocked",
 		Priority:  domain.PriorityMedium,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			DependsOn:     []string{"dep-ready", "dep-open", "dep-missing"},
 			BlockedBy:     []string{"dep-open"},
 			BlockedReason: "waiting on review",
@@ -3272,15 +3272,15 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	nextID := 0
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, func() string {
 		id := ids[nextID]
@@ -3293,8 +3293,8 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 
 	first, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		Summary:      "  explicit summary  ",
 		BodyMarkdown: "first",
 		ActorType:    domain.ActorType("USER"),
@@ -3306,8 +3306,8 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	}
 	second, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		BodyMarkdown: "\n\nsecond",
 	})
 	if err != nil {
@@ -3331,8 +3331,8 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 
 	comments, err := svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
 		ProjectID:  project.ID,
-		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   task.ID,
+		TargetType: domain.CommentTargetTypeActionItem,
+		TargetID:   actionItem.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByTarget() error = %v", err)
@@ -3408,15 +3408,15 @@ func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	now := time.Date(2026, 2, 26, 11, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, func() string { return "comment-1" }, func() time.Time { return now }, ServiceConfig{})
 	ctx := WithMutationActor(context.Background(), MutationActor{
@@ -3426,8 +3426,8 @@ func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	})
 	comment, err := svc.CreateComment(ctx, CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		BodyMarkdown: "hello",
 		ActorID:      "user-1",
 	})
@@ -3448,21 +3448,21 @@ func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
 	now := time.Date(2026, 2, 26, 11, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, func() string { return "comment-1" }, func() time.Time { return now }, ServiceConfig{})
 	comment, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		Summary:      "Need review from @dev and @qa",
 		BodyMarkdown: "Please check this branch, @qa. @dev already has context.",
 		ActorID:      "user-1",
@@ -3480,8 +3480,8 @@ func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
 	if builderMention.Kind != domain.AttentionKindMention || builderMention.TargetRole != "builder" {
 		t.Fatalf("unexpected builder mention %#v", builderMention)
 	}
-	if builderMention.ScopeType != domain.ScopeLevelTask || builderMention.ScopeID != task.ID {
-		t.Fatalf("expected task-scoped builder mention, got %#v", builderMention)
+	if builderMention.ScopeType != domain.ScopeLevelActionItem || builderMention.ScopeID != actionItem.ID {
+		t.Fatalf("expected actionItem-scoped builder mention, got %#v", builderMention)
 	}
 
 	qaMention, ok := repo.attentionItems[comment.ID+"::mention::qa"]
@@ -3502,15 +3502,15 @@ func TestCreateCommentValidation(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
 		Position:  0,
-		Title:     "Task",
+		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 	svc := NewService(repo, func() string { return "comment-1" }, time.Now, ServiceConfig{})
 
 	_, err := svc.CreateComment(context.Background(), CreateCommentInput{
@@ -3525,8 +3525,8 @@ func TestCreateCommentValidation(t *testing.T) {
 
 	_, err = svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
 		BodyMarkdown: " ",
 	})
 	if err != domain.ErrInvalidBodyMarkdown {
@@ -3534,8 +3534,8 @@ func TestCreateCommentValidation(t *testing.T) {
 	}
 	_, err = svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     "missing-task",
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     "missing-actionItem",
 		BodyMarkdown: "body",
 	})
 	if !errors.Is(err, ErrNotFound) {
@@ -3545,46 +3545,46 @@ func TestCreateCommentValidation(t *testing.T) {
 	_, err = svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
 		ProjectID:  project.ID,
 		TargetType: domain.CommentTargetType("invalid"),
-		TargetID:   task.ID,
+		TargetID:   actionItem.ID,
 	})
 	if err != domain.ErrInvalidTargetType {
 		t.Fatalf("expected ErrInvalidTargetType, got %v", err)
 	}
 }
 
-// TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes verifies branch/phase comment target mapping.
-func TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes(t *testing.T) {
+// TestSnapshotCommentTargetTypeForActionItemSupportsHierarchyNodes verifies branch/phase comment target mapping.
+func TestSnapshotCommentTargetTypeForActionItemSupportsHierarchyNodes(t *testing.T) {
 	tests := []struct {
-		name string
-		task domain.Task
-		want domain.CommentTargetType
+		name       string
+		actionItem domain.ActionItem
+		want       domain.CommentTargetType
 	}{
 		{
-			name: "branch kind",
-			task: domain.Task{Kind: domain.WorkKind(domain.KindAppliesToBranch)},
-			want: domain.CommentTargetTypeBranch,
+			name:       "branch kind",
+			actionItem: domain.ActionItem{Kind: domain.WorkKind(domain.KindAppliesToBranch)},
+			want:       domain.CommentTargetTypeBranch,
 		},
 		{
-			name: "branch scope fallback",
-			task: domain.Task{Kind: domain.WorkKindTask, Scope: domain.KindAppliesToBranch},
-			want: domain.CommentTargetTypeBranch,
+			name:       "branch scope fallback",
+			actionItem: domain.ActionItem{Kind: domain.WorkKindActionItem, Scope: domain.KindAppliesToBranch},
+			want:       domain.CommentTargetTypeBranch,
 		},
 		{
-			name: "phase kind",
-			task: domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
-			want: domain.CommentTargetTypePhase,
+			name:       "phase kind",
+			actionItem: domain.ActionItem{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
+			want:       domain.CommentTargetTypePhase,
 		},
 		{
-			name: "task backward compatible",
-			task: domain.Task{Kind: domain.WorkKindTask, Scope: domain.KindAppliesToTask},
-			want: domain.CommentTargetTypeTask,
+			name:       "actionItem backward compatible",
+			actionItem: domain.ActionItem{Kind: domain.WorkKindActionItem, Scope: domain.KindAppliesToActionItem},
+			want:       domain.CommentTargetTypeActionItem,
 		},
 	}
 
 	for _, tc := range tests {
-		got := snapshotCommentTargetTypeForTask(tc.task)
+		got := snapshotCommentTargetTypeForActionItem(tc.actionItem)
 		if got != tc.want {
-			t.Fatalf("%s: snapshotCommentTargetTypeForTask() = %q, want %q", tc.name, got, tc.want)
+			t.Fatalf("%s: snapshotCommentTargetTypeForActionItem() = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
@@ -4059,7 +4059,7 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("branch"),
@@ -4068,7 +4068,7 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
@@ -4106,8 +4106,8 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 	}
 }
 
-// TestCreateTaskMutationGuardRequiredForAgent verifies strict guard enforcement for non-user actor writes.
-func TestCreateTaskMutationGuardRequiredForAgent(t *testing.T) {
+// TestCreateActionItemMutationGuardRequiredForAgent verifies strict guard enforcement for non-user actor writes.
+func TestCreateActionItemMutationGuardRequiredForAgent(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t1", "lease-1", "lease-token-1", "t2"}
 	idx := 0
@@ -4128,10 +4128,10 @@ func TestCreateTaskMutationGuardRequiredForAgent(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
-	_, err = svc.CreateTask(context.Background(), CreateTaskInput{
+	_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
-		Title:          "agent task",
+		Title:          "agent actionItem",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "agent-1",
 		UpdatedByActor: "agent-1",
@@ -4157,36 +4157,36 @@ func TestCreateTaskMutationGuardRequiredForAgent(t *testing.T) {
 		AgentInstanceID: lease.InstanceID,
 		LeaseToken:      lease.LeaseToken,
 	})
-	created, err := svc.CreateTask(guardedCtx, CreateTaskInput{
+	created, err := svc.CreateActionItem(guardedCtx, CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
-		Title:          "guarded agent task",
+		Title:          "guarded agent actionItem",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "agent-1",
 		UpdatedByActor: "agent-1",
 		UpdatedByType:  domain.ActorTypeAgent,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(guarded) error = %v", err)
+		t.Fatalf("CreateActionItem(guarded) error = %v", err)
 	}
 	if strings.TrimSpace(created.ID) == "" {
-		t.Fatal("expected created task id to be populated")
+		t.Fatal("expected created actionItem id to be populated")
 	}
 	if created.UpdatedByType != domain.ActorTypeAgent {
-		t.Fatalf("expected agent attribution on guarded task, got %q", created.UpdatedByType)
+		t.Fatalf("expected agent attribution on guarded actionItem, got %q", created.UpdatedByType)
 	}
 }
 
-// TestScopedLeaseAllowsLineageMutations verifies branch/phase/task scoped lease behavior in-subtree.
+// TestScopedLeaseAllowsLineageMutations verifies branch/phase/actionItem scoped lease behavior in-subtree.
 func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{
 		"p1", "c1",
-		"branch-1", "phase-1", "task-1",
+		"branch-1", "phase-1", "actionItem-1",
 		"lease-branch", "lease-token-branch",
 		"lease-phase", "lease-token-phase",
-		"task-2",
-		"lease-task", "lease-token-task",
+		"actionItem-2",
+		"lease-actionItem", "lease-token-actionItem",
 		"comment-1",
 	}
 	idx := 0
@@ -4206,7 +4206,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("branch"),
@@ -4215,9 +4215,9 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
-	phase, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	phase, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
@@ -4227,19 +4227,19 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(phase) error = %v", err)
+		t.Fatalf("CreateActionItem(phase) error = %v", err)
 	}
-	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  phase.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Title:     "Task A1",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Title:     "ActionItem A1",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(task) error = %v", err)
+		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
 	}
 
 	branchLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
@@ -4258,15 +4258,15 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		AgentInstanceID: branchLease.InstanceID,
 		LeaseToken:      branchLease.LeaseToken,
 	})
-	if _, err := svc.UpdateTask(branchCtx, UpdateTaskInput{
-		TaskID:      task.ID,
-		Title:       "Task A1",
-		Description: "branch-updated",
-		Priority:    domain.PriorityMedium,
-		UpdatedBy:   "branch-agent",
-		UpdatedType: domain.ActorTypeAgent,
+	if _, err := svc.UpdateActionItem(branchCtx, UpdateActionItemInput{
+		ActionItemID: actionItem.ID,
+		Title:        "ActionItem A1",
+		Description:  "branch-updated",
+		Priority:     domain.PriorityMedium,
+		UpdatedBy:    "branch-agent",
+		UpdatedType:  domain.ActorTypeAgent,
 	}); err != nil {
-		t.Fatalf("UpdateTask(branch scoped) error = %v", err)
+		t.Fatalf("UpdateActionItem(branch scoped) error = %v", err)
 	}
 
 	phaseLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
@@ -4285,47 +4285,47 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		AgentInstanceID: phaseLease.InstanceID,
 		LeaseToken:      phaseLease.LeaseToken,
 	})
-	if _, err := svc.CreateTask(phaseCtx, CreateTaskInput{
+	if _, err := svc.CreateActionItem(phaseCtx, CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       phase.ID,
 		ColumnID:       column.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
-		Title:          "Task A2",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
+		Title:          "ActionItem A2",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "phase-agent",
 		UpdatedByActor: "phase-agent",
 		UpdatedByType:  domain.ActorTypeAgent,
 	}); err != nil {
-		t.Fatalf("CreateTask(phase scoped) error = %v", err)
+		t.Fatalf("CreateActionItem(phase scoped) error = %v", err)
 	}
 
-	taskLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	actionItemLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeTask,
-		ScopeID:         task.ID,
+		ScopeType:       domain.CapabilityScopeActionItem,
+		ScopeID:         actionItem.ID,
 		Role:            domain.CapabilityRoleBuilder,
-		AgentName:       "task-agent",
-		AgentInstanceID: "task-agent",
+		AgentName:       "actionItem-agent",
+		AgentInstanceID: "actionItem-agent",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(task) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(actionItem) error = %v", err)
 	}
-	taskCtx := WithMutationGuard(context.Background(), MutationGuard{
-		AgentName:       taskLease.AgentName,
-		AgentInstanceID: taskLease.InstanceID,
-		LeaseToken:      taskLease.LeaseToken,
+	actionItemCtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       actionItemLease.AgentName,
+		AgentInstanceID: actionItemLease.InstanceID,
+		LeaseToken:      actionItemLease.LeaseToken,
 	})
-	if _, err := svc.CreateComment(taskCtx, CreateCommentInput{
+	if _, err := svc.CreateComment(actionItemCtx, CreateCommentInput{
 		ProjectID:    project.ID,
-		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     task.ID,
-		BodyMarkdown: "task scoped comment",
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     actionItem.ID,
+		BodyMarkdown: "actionItem scoped comment",
 		ActorType:    domain.ActorTypeAgent,
-		ActorID:      "task-agent",
-		ActorName:    "task-agent",
+		ActorID:      "actionItem-agent",
+		ActorName:    "actionItem-agent",
 	}); err != nil {
-		t.Fatalf("CreateComment(task scoped) error = %v", err)
+		t.Fatalf("CreateComment(actionItem scoped) error = %v", err)
 	}
 }
 
@@ -4335,7 +4335,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 	ids := []string{
 		"p1", "c1",
 		"branch-1", "phase-a", "phase-b",
-		"task-a", "task-b",
+		"actionItem-a", "actionItem-b",
 		"lease-phase-a", "lease-token-phase-a",
 	}
 	idx := 0
@@ -4355,7 +4355,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("branch"),
@@ -4364,9 +4364,9 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
-	phaseA, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	phaseA, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
@@ -4376,9 +4376,9 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(phaseA) error = %v", err)
+		t.Fatalf("CreateActionItem(phaseA) error = %v", err)
 	}
-	phaseB, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	phaseB, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
@@ -4388,19 +4388,19 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(phaseB) error = %v", err)
+		t.Fatalf("CreateActionItem(phaseB) error = %v", err)
 	}
-	taskB, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	actionItemB, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  phaseB.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindTask,
-		Scope:     domain.KindAppliesToTask,
-		Title:     "Task B1",
+		Kind:      domain.WorkKindActionItem,
+		Scope:     domain.KindAppliesToActionItem,
+		Title:     "ActionItem B1",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(taskB) error = %v", err)
+		t.Fatalf("CreateActionItem(actionItemB) error = %v", err)
 	}
 
 	phaseALease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
@@ -4420,35 +4420,35 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		LeaseToken:      phaseALease.LeaseToken,
 	})
 
-	if _, err := svc.UpdateTask(phaseACtx, UpdateTaskInput{
-		TaskID:      taskB.ID,
-		Title:       "Task B1",
-		Description: "out of scope",
-		Priority:    domain.PriorityMedium,
-		UpdatedBy:   "phase-a-agent",
-		UpdatedType: domain.ActorTypeAgent,
+	if _, err := svc.UpdateActionItem(phaseACtx, UpdateActionItemInput{
+		ActionItemID: actionItemB.ID,
+		Title:        "ActionItem B1",
+		Description:  "out of scope",
+		Priority:     domain.PriorityMedium,
+		UpdatedBy:    "phase-a-agent",
+		UpdatedType:  domain.ActorTypeAgent,
 	}); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
-		t.Fatalf("UpdateTask(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
+		t.Fatalf("UpdateActionItem(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
 	}
 
-	if _, err := svc.CreateTask(phaseACtx, CreateTaskInput{
+	if _, err := svc.CreateActionItem(phaseACtx, CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       phaseB.ID,
 		ColumnID:       column.ID,
-		Kind:           domain.WorkKindTask,
-		Scope:          domain.KindAppliesToTask,
-		Title:          "Task B2",
+		Kind:           domain.WorkKindActionItem,
+		Scope:          domain.KindAppliesToActionItem,
+		Title:          "ActionItem B2",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "phase-a-agent",
 		UpdatedByActor: "phase-a-agent",
 		UpdatedByType:  domain.ActorTypeAgent,
 	}); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
-		t.Fatalf("CreateTask(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
+		t.Fatalf("CreateActionItem(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
 	}
 }
 
-// TestCreateTaskKindPayloadValidation verifies schema-based runtime validation for dynamic kinds.
-func TestCreateTaskKindPayloadValidation(t *testing.T) {
+// TestCreateActionItemKindPayloadValidation verifies schema-based runtime validation for dynamic kinds.
+func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t1", "t2"}
 	idx := 0
@@ -4472,7 +4472,7 @@ func TestCreateTaskKindPayloadValidation(t *testing.T) {
 	_, err = svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:                "refactor",
 		DisplayName:       "Refactor",
-		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToTask},
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}},"additionalProperties":false}`,
 	})
 	if err != nil {
@@ -4480,41 +4480,41 @@ func TestCreateTaskKindPayloadValidation(t *testing.T) {
 	}
 	if err := svc.SetProjectAllowedKinds(context.Background(), SetProjectAllowedKindsInput{
 		ProjectID: project.ID,
-		KindIDs:   []domain.KindID{"refactor", domain.DefaultProjectKind, domain.KindID(domain.WorkKindTask), domain.KindID(domain.WorkKindSubtask)},
+		KindIDs:   []domain.KindID{"refactor", domain.DefaultProjectKind, domain.KindID(domain.WorkKindActionItem), domain.KindID(domain.WorkKindSubtask)},
 	}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
 	}
 
-	_, err = svc.CreateTask(context.Background(), CreateTaskInput{
+	_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("refactor"),
 		Title:     "invalid payload",
 		Priority:  domain.PriorityMedium,
-		Metadata:  domain.TaskMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
+		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
 	})
 	if !errors.Is(err, domain.ErrInvalidKindPayload) {
 		t.Fatalf("expected ErrInvalidKindPayload, got %v", err)
 	}
 
-	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Kind:      domain.WorkKind("refactor"),
 		Title:     "valid payload",
 		Priority:  domain.PriorityMedium,
-		Metadata:  domain.TaskMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
+		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(valid payload) error = %v", err)
+		t.Fatalf("CreateActionItem(valid payload) error = %v", err)
 	}
 	if created.Kind != domain.WorkKind("refactor") {
 		t.Fatalf("expected refactor kind, got %q", created.Kind)
 	}
 }
 
-// TestReparentTaskRejectsCycle verifies cycle prevention during reparenting.
-func TestReparentTaskRejectsCycle(t *testing.T) {
+// TestReparentActionItemRejectsCycle verifies cycle prevention during reparenting.
+func TestReparentActionItemRejectsCycle(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t-parent", "t-child"}
 	idx := 0
@@ -4534,16 +4534,16 @@ func TestReparentTaskRejectsCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	parent, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Title:     "parent",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(parent) error = %v", err)
+		t.Fatalf("CreateActionItem(parent) error = %v", err)
 	}
-	child, err := svc.CreateTask(context.Background(), CreateTaskInput{
+	child, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  parent.ID,
 		Kind:      domain.WorkKindSubtask,
@@ -4552,16 +4552,16 @@ func TestReparentTaskRejectsCycle(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateTask(child) error = %v", err)
+		t.Fatalf("CreateActionItem(child) error = %v", err)
 	}
 
-	if _, err := svc.ReparentTask(context.Background(), parent.ID, child.ID); err != domain.ErrInvalidParentID {
+	if _, err := svc.ReparentActionItem(context.Background(), parent.ID, child.ID); err != domain.ErrInvalidParentID {
 		t.Fatalf("expected ErrInvalidParentID, got %v", err)
 	}
 }
 
-// TestMoveTaskToFailedUsesMarkFailedCapability verifies that moving to the failed column uses CapabilityActionMarkFailed.
-func TestMoveTaskToFailedUsesMarkFailedCapability(t *testing.T) {
+// TestMoveActionItemToFailedUsesMarkFailedCapability verifies that moving to the failed column uses CapabilityActionMarkFailed.
+func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -4571,21 +4571,21 @@ func TestMoveTaskToFailedUsesMarkFailedCapability(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[failed.ID] = failed
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
 		Position:       0,
-		Title:          "failing task",
+		Title:          "failing actionItem",
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateProgress,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	moved, err := svc.MoveTask(context.Background(), task.ID, failed.ID, 0)
+	moved, err := svc.MoveActionItem(context.Background(), actionItem.ID, failed.ID, 0)
 	if err != nil {
-		t.Fatalf("MoveTask() error = %v", err)
+		t.Fatalf("MoveActionItem() error = %v", err)
 	}
 	if moved.LifecycleState != domain.StateFailed {
 		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
@@ -4595,8 +4595,8 @@ func TestMoveTaskToFailedUsesMarkFailedCapability(t *testing.T) {
 	}
 }
 
-// TestMoveTaskToFailedSkipsCompletionCriteria verifies that moving to failed does not check completion criteria.
-func TestMoveTaskToFailedSkipsCompletionCriteria(t *testing.T) {
+// TestMoveActionItemToFailedSkipsCompletionCriteria verifies that moving to failed does not check completion criteria.
+func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -4606,7 +4606,7 @@ func TestMoveTaskToFailedSkipsCompletionCriteria(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[failed.ID] = failed
 
-	parent, _ := domain.NewTask(domain.TaskInput{
+	parent, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-parent",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -4614,14 +4614,14 @@ func TestMoveTaskToFailedSkipsCompletionCriteria(t *testing.T) {
 		Title:          "parent with incomplete children",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateProgress,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
 				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Done: false}},
 				Policy:             domain.CompletionPolicy{RequireChildrenDone: true},
 			},
 		},
 	}, now)
-	child, _ := domain.NewTask(domain.TaskInput{
+	child, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t-child",
 		ProjectID:      project.ID,
 		ParentID:       parent.ID,
@@ -4635,17 +4635,17 @@ func TestMoveTaskToFailedSkipsCompletionCriteria(t *testing.T) {
 	repo.tasks[child.ID] = child
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	moved, err := svc.MoveTask(context.Background(), parent.ID, failed.ID, 0)
+	moved, err := svc.MoveActionItem(context.Background(), parent.ID, failed.ID, 0)
 	if err != nil {
-		t.Fatalf("MoveTask() to failed should succeed with incomplete children, got error = %v", err)
+		t.Fatalf("MoveActionItem() to failed should succeed with incomplete children, got error = %v", err)
 	}
 	if moved.LifecycleState != domain.StateFailed {
 		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
 	}
 }
 
-// TestMoveTaskFromFailedToTodoBlocked verifies that transitions FROM the failed terminal state are blocked.
-func TestMoveTaskFromFailedToTodoBlocked(t *testing.T) {
+// TestMoveActionItemFromFailedToTodoBlocked verifies that transitions FROM the failed terminal state are blocked.
+func TestMoveActionItemFromFailedToTodoBlocked(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -4655,29 +4655,29 @@ func TestMoveTaskFromFailedToTodoBlocked(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[failed.ID] = failed
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       failed.ID,
 		Position:       0,
-		Title:          "failed task",
+		Title:          "failed actionItem",
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateFailed,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	_, err := svc.MoveTask(context.Background(), task.ID, todo.ID, 0)
+	_, err := svc.MoveActionItem(context.Background(), actionItem.ID, todo.ID, 0)
 	if err == nil {
-		t.Fatal("MoveTask() from failed to todo should return an error")
+		t.Fatal("MoveActionItem() from failed to todo should return an error")
 	}
 	if !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
 }
 
-// TestMoveTaskFromDoneToTodoBlocked verifies that transitions FROM the done terminal state are blocked.
-func TestMoveTaskFromDoneToTodoBlocked(t *testing.T) {
+// TestMoveActionItemFromDoneToTodoBlocked verifies that transitions FROM the done terminal state are blocked.
+func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -4687,29 +4687,29 @@ func TestMoveTaskFromDoneToTodoBlocked(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[done.ID] = done
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       done.ID,
 		Position:       0,
-		Title:          "done task",
+		Title:          "done actionItem",
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateDone,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	_, err := svc.MoveTask(context.Background(), task.ID, todo.ID, 0)
+	_, err := svc.MoveActionItem(context.Background(), actionItem.ID, todo.ID, 0)
 	if err == nil {
-		t.Fatal("MoveTask() from done to todo should return an error")
+		t.Fatal("MoveActionItem() from done to todo should return an error")
 	}
 	if !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
 	}
 }
 
-// TestMoveTaskFromFailedIdempotentAllowed verifies that idempotent moves (same column, same state) are permitted for terminal states.
-func TestMoveTaskFromFailedIdempotentAllowed(t *testing.T) {
+// TestMoveActionItemFromFailedIdempotentAllowed verifies that idempotent moves (same column, same state) are permitted for terminal states.
+func TestMoveActionItemFromFailedIdempotentAllowed(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -4717,21 +4717,21 @@ func TestMoveTaskFromFailedIdempotentAllowed(t *testing.T) {
 	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
 	repo.columns[failed.ID] = failed
 
-	task, _ := domain.NewTask(domain.TaskInput{
+	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       failed.ID,
 		Position:       0,
-		Title:          "failed task",
+		Title:          "failed actionItem",
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateFailed,
 	}, now)
-	repo.tasks[task.ID] = task
+	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
-	moved, err := svc.MoveTask(context.Background(), task.ID, failed.ID, 0)
+	moved, err := svc.MoveActionItem(context.Background(), actionItem.ID, failed.ID, 0)
 	if err != nil {
-		t.Fatalf("MoveTask() idempotent move on failed task should succeed, got error = %v", err)
+		t.Fatalf("MoveActionItem() idempotent move on failed actionItem should succeed, got error = %v", err)
 	}
 	if moved.LifecycleState != domain.StateFailed {
 		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)

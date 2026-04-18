@@ -182,9 +182,9 @@ type templateProjectPreviewCommandOptions struct {
 
 // templateProjectApproveMigrationsCommandOptions stores existing-node migration approval flag values.
 type templateProjectApproveMigrationsCommandOptions struct {
-	projectID  string
-	taskIDs    []string
-	approveAll bool
+	projectID     string
+	actionItemIDs []string
+	approveAll    bool
 }
 
 // templateContractShowCommandOptions stores node-contract lookup values.
@@ -774,7 +774,7 @@ in order rather than relying on remembered setup steps.
 		Long: strings.TrimSpace(`
 Inspect persistent embeddings lifecycle state, view pending/failed/stale rows,
 and trigger explicit backfill or reindex operations without blocking normal
-task mutations.
+actionItem mutations.
 `),
 		Example: strings.Join([]string{
 			"  till embeddings status --cross-project",
@@ -859,7 +859,7 @@ overview, attention overview, and follow-up pointers.
 		},
 	}
 	captureStateCmd.Flags().StringVar(&captureStateOpts.projectID, "project-id", "", "Project identifier")
-	captureStateCmd.Flags().StringVar(&captureStateOpts.scopeType, "scope-type", captureStateOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	captureStateCmd.Flags().StringVar(&captureStateOpts.scopeType, "scope-type", captureStateOpts.scopeType, "Scope type (project|branch|phase|actionItem|subtask)")
 	captureStateCmd.Flags().StringVar(&captureStateOpts.scopeID, "scope-id", "", "Optional scope identifier")
 	captureStateCmd.Flags().StringVar(&captureStateOpts.view, "view", captureStateOpts.view, "Capture state view (summary|full)")
 
@@ -884,7 +884,7 @@ registry path.
 		Long: strings.TrimSpace(`
 List every stored kind definition in deterministic order.
 
-Use this to discover valid kind ids before project creation, task creation, or
+Use this to discover valid kind ids before project creation, actionItem creation, or
 template authoring. Add --include-archived when auditing historical kinds.
 `),
 		Example: strings.Join([]string{
@@ -909,9 +909,9 @@ workflow contracts do not live here anymore. The hidden '--template-json' flag
 remains compatibility-only and should not be used for new work.
 `),
 		Example: strings.Join([]string{
-			"  till kind upsert --id research-task --display-name \"Research Task\" --applies-to task",
+			"  till kind upsert --id research-actionItem --display-name \"Research ActionItem\" --applies-to actionItem",
 			"  till kind upsert --id qa-check --display-name \"QA Check\" \\",
-			"    --applies-to subtask --allowed-parent-scopes task \\",
+			"    --applies-to subtask --allowed-parent-scopes actionItem \\",
 			"    --payload-schema-json '{\"type\":\"object\"}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -943,7 +943,7 @@ small set of generic kinds on top of the template-defined workflow.
 `),
 		Example: strings.Join([]string{
 			"  till kind allowlist list --project-id PROJECT_ID",
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-actionItem --kind-id qa-check",
 		}, "\n"),
 		Args: cobra.NoArgs,
 	}
@@ -978,8 +978,8 @@ need to keep a project limited to template-defined node kinds or deliberately
 opt specific generic kinds back in.
 `),
 		Example: strings.Join([]string{
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-task --kind-id qa-check",
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id research-task",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-actionItem --kind-id qa-check",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id research-actionItem",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1212,7 +1212,7 @@ Use this after previewing drift so the dev can explicitly adopt changed child
 rule contracts for already-generated nodes without silently rewriting work.
 `),
 		Example: strings.Join([]string{
-			"  till template project approve-migrations --project-id PROJECT_ID --task-id TASK_ID",
+			"  till template project approve-migrations --project-id PROJECT_ID --actionItem-id TASK_ID",
 			"  till template project approve-migrations --project-id PROJECT_ID --all",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1221,7 +1221,7 @@ rule contracts for already-generated nodes without silently rewriting work.
 		},
 	}
 	templateProjectApproveMigrationsCmd.Flags().StringVar(&templateProjectApproveMigrationsOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectApproveMigrationsCmd.Flags().StringArrayVar(&templateProjectApproveMigrationsOpts.taskIDs, "task-id", nil, "Eligible generated node id to migrate (repeatable)")
+	templateProjectApproveMigrationsCmd.Flags().StringArrayVar(&templateProjectApproveMigrationsOpts.actionItemIDs, "actionItem-id", nil, "Eligible generated node id to migrate (repeatable)")
 	templateProjectApproveMigrationsCmd.Flags().BoolVar(&templateProjectApproveMigrationsOpts.approveAll, "all", false, "Approve all eligible migration candidates")
 	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd, templateProjectPreviewCmd, templateProjectApproveMigrationsCmd)
 
@@ -1282,7 +1282,7 @@ issuing a new lease or cleaning up abandoned runtime state.
 `),
 		Example: strings.Join([]string{
 			"  till lease list --project-id PROJECT_ID",
-			"  till lease list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID",
+			"  till lease list --project-id PROJECT_ID --scope-type actionItem --scope-id TASK_ID",
 			"  till lease list --project-id PROJECT_ID --include-revoked",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1291,7 +1291,7 @@ issuing a new lease or cleaning up abandoned runtime state.
 		},
 	}
 	leaseListCmd.Flags().StringVar(&leaseListOpts.projectID, "project-id", "", "Project identifier")
-	leaseListCmd.Flags().StringVar(&leaseListOpts.scopeType, "scope-type", leaseListOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	leaseListCmd.Flags().StringVar(&leaseListOpts.scopeType, "scope-type", leaseListOpts.scopeType, "Scope type (project|branch|phase|actionItem|subtask)")
 	leaseListCmd.Flags().StringVar(&leaseListOpts.scopeID, "scope-id", "", "Optional scope identifier")
 	leaseListCmd.Flags().BoolVar(&leaseListOpts.includeRevoked, "include-revoked", false, "Include revoked leases")
 	leaseIssueCmd := &cobra.Command{
@@ -1305,7 +1305,7 @@ authority to a builder, qa, or orchestrator agent for one project path.
 `),
 		Example: strings.Join([]string{
 			"  till lease issue --project-id PROJECT_ID --agent-name AGENT_NAME --role builder",
-			"  till lease issue --project-id PROJECT_ID --scope-type task \\",
+			"  till lease issue --project-id PROJECT_ID --scope-type actionItem \\",
 			"    --scope-id TASK_ID --agent-name AGENT_NAME --role qa \\",
 			"    --requested-ttl 30m",
 		}, "\n"),
@@ -1315,7 +1315,7 @@ authority to a builder, qa, or orchestrator agent for one project path.
 		},
 	}
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.projectID, "project-id", "", "Project identifier")
-	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.scopeType, "scope-type", leaseIssueOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.scopeType, "scope-type", leaseIssueOpts.scopeType, "Scope type (project|branch|phase|actionItem|subtask)")
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.scopeID, "scope-id", "", "Optional scope identifier")
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.role, "role", leaseIssueOpts.role, "Lease role (orchestrator|builder|qa|research)")
 	leaseIssueCmd.Flags().StringVar(&leaseIssueOpts.agentName, "agent-name", "", "Human-readable agent label")
@@ -1388,11 +1388,11 @@ should no longer permit mutations.
 Revoke every lease in one project scope in a single operator action.
 
 Use this during recovery or reset flows when an entire project, branch, phase,
-or task scope should be cleared of active leases.
+or actionItem scope should be cleared of active leases.
 `),
 		Example: strings.Join([]string{
 			"  till lease revoke-all --project-id PROJECT_ID --reason reset",
-			"  till lease revoke-all --project-id PROJECT_ID --scope-type task \\",
+			"  till lease revoke-all --project-id PROJECT_ID --scope-type actionItem \\",
 			"    --scope-id TASK_ID --reason operator_recover",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1401,7 +1401,7 @@ or task scope should be cleared of active leases.
 		},
 	}
 	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.projectID, "project-id", "", "Project identifier")
-	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.scopeType, "scope-type", leaseRevokeAllOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.scopeType, "scope-type", leaseRevokeAllOpts.scopeType, "Scope type (project|branch|phase|actionItem|subtask)")
 	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.scopeID, "scope-id", "", "Optional scope identifier")
 	leaseRevokeAllCmd.Flags().StringVar(&leaseRevokeAllOpts.reason, "reason", "", "Revocation reason")
 	leaseCmd.AddCommand(leaseListCmd, leaseIssueCmd, leaseHeartbeatCmd, leaseRenewCmd, leaseRevokeCmd, leaseRevokeAllCmd)
@@ -1433,7 +1433,7 @@ next action, missing evidence list, and related references.
 		Example: strings.Join([]string{
 			"  till handoff create --project-id PROJECT_ID --summary \"QA ready for review\" \\",
 			"    --source-role builder --target-role qa",
-			"  till handoff create --project-id PROJECT_ID --scope-type task \\",
+			"  till handoff create --project-id PROJECT_ID --scope-type actionItem \\",
 			"    --scope-id TASK_ID --summary \"Need product decision\" \\",
 			"    --target-role orchestrator --missing-evidence decision-log",
 		}, "\n"),
@@ -1444,7 +1444,7 @@ next action, missing evidence list, and related references.
 	}
 	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.projectID, "project-id", "", "Project identifier")
 	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.branchID, "branch-id", "", "Optional branch identifier")
-	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.scopeType, "scope-type", handoffCreateOpts.scopeType, "Source scope type (project|branch|phase|task|subtask)")
+	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.scopeType, "scope-type", handoffCreateOpts.scopeType, "Source scope type (project|branch|phase|actionItem|subtask)")
 	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.scopeID, "scope-id", "", "Optional source scope identifier")
 	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.sourceRole, "source-role", "", "Optional source role")
 	handoffCreateCmd.Flags().StringVar(&handoffCreateOpts.targetBranchID, "target-branch-id", "", "Optional target branch identifier")
@@ -1484,7 +1484,7 @@ handoff lane you need to review.
 `),
 		Example: strings.Join([]string{
 			"  till handoff list --project-id PROJECT_ID",
-			"  till handoff list --project-id PROJECT_ID --scope-type task --scope-id TASK_ID --status pending",
+			"  till handoff list --project-id PROJECT_ID --scope-type actionItem --scope-id TASK_ID --status pending",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1493,7 +1493,7 @@ handoff lane you need to review.
 	}
 	handoffListCmd.Flags().StringVar(&handoffListOpts.projectID, "project-id", "", "Project identifier")
 	handoffListCmd.Flags().StringVar(&handoffListOpts.branchID, "branch-id", "", "Optional branch identifier")
-	handoffListCmd.Flags().StringVar(&handoffListOpts.scopeType, "scope-type", handoffListOpts.scopeType, "Scope type (project|branch|phase|task|subtask)")
+	handoffListCmd.Flags().StringVar(&handoffListOpts.scopeType, "scope-type", handoffListOpts.scopeType, "Scope type (project|branch|phase|actionItem|subtask)")
 	handoffListCmd.Flags().StringVar(&handoffListOpts.scopeID, "scope-id", "", "Optional scope identifier")
 	handoffListCmd.Flags().StringSliceVar(&handoffListOpts.statuses, "status", nil, "Optional handoff status filter")
 	handoffListCmd.Flags().IntVar(&handoffListOpts.limit, "limit", handoffListOpts.limit, "Maximum rows to return")
@@ -2528,7 +2528,7 @@ func executeCommandFlow(
 		case embeddingGenerator == nil:
 			logger.Warn("embeddings worker not started; queued states remain observable until provider setup succeeds")
 		case embeddingSearchIndex == nil:
-			logger.Warn("embeddings worker not started; task search index is unavailable")
+			logger.Warn("embeddings worker not started; actionItem search index is unavailable")
 		default:
 			go func() {
 				if err := app.NewEmbeddingWorker(repo, embeddingLifecycle, embeddingGenerator, embeddingSearchIndex, nil, embeddingRuntimeCfg).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -3109,14 +3109,14 @@ func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.
 			})
 		}
 		nodeTemplates = append(nodeTemplates, app.UpsertNodeTemplateInput{
-			ID:                      strings.TrimSpace(nodeTemplate.ID),
-			ScopeLevel:              nodeTemplate.ScopeLevel,
-			NodeKindID:              nodeTemplate.NodeKindID,
-			DisplayName:             strings.TrimSpace(nodeTemplate.DisplayName),
-			DescriptionMarkdown:     strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
-			ProjectMetadataDefaults: nodeTemplate.ProjectMetadataDefaults,
-			TaskMetadataDefaults:    nodeTemplate.TaskMetadataDefaults,
-			ChildRules:              childRules,
+			ID:                         strings.TrimSpace(nodeTemplate.ID),
+			ScopeLevel:                 nodeTemplate.ScopeLevel,
+			NodeKindID:                 nodeTemplate.NodeKindID,
+			DisplayName:                strings.TrimSpace(nodeTemplate.DisplayName),
+			DescriptionMarkdown:        strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
+			ProjectMetadataDefaults:    nodeTemplate.ProjectMetadataDefaults,
+			ActionItemMetadataDefaults: nodeTemplate.ActionItemMetadataDefaults,
+			ChildRules:                 childRules,
 		})
 	}
 	library, err := svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
@@ -3237,15 +3237,15 @@ func runTemplateProjectApproveMigrations(ctx context.Context, svc *app.Service, 
 	if err := requireProjectID("template project approve-migrations", projectID); err != nil {
 		return err
 	}
-	if opts.approveAll && len(opts.taskIDs) > 0 {
-		return fmt.Errorf("--task-id and --all cannot be combined")
+	if opts.approveAll && len(opts.actionItemIDs) > 0 {
+		return fmt.Errorf("--actionItem-id and --all cannot be combined")
 	}
-	if !opts.approveAll && len(opts.taskIDs) == 0 {
-		return fmt.Errorf("--task-id or --all is required")
+	if !opts.approveAll && len(opts.actionItemIDs) == 0 {
+		return fmt.Errorf("--actionItem-id or --all is required")
 	}
 	result, err := svc.ApproveProjectTemplateMigrations(ctx, app.ApproveProjectTemplateMigrationsInput{
 		ProjectID:      projectID,
-		TaskIDs:        append([]string(nil), opts.taskIDs...),
+		ActionItemIDs:  append([]string(nil), opts.actionItemIDs...),
 		ApproveAll:     opts.approveAll,
 		ApprovedBy:     cliMutationActorID(cfg),
 		ApprovedByName: strings.TrimSpace(cfg.Identity.DisplayName),
@@ -3892,11 +3892,11 @@ func loadRuntimeConfig(configPath string, defaults config.Config, dbPath string,
 func toTUIRuntimeConfig(cfg config.Config) tui.RuntimeConfig {
 	return tui.RuntimeConfig{
 		DefaultDeleteMode: app.DeleteMode(cfg.Delete.DefaultMode),
-		TaskFields: tui.TaskFieldConfig{
-			ShowPriority:    cfg.TaskFields.ShowPriority,
-			ShowDueDate:     cfg.TaskFields.ShowDueDate,
-			ShowLabels:      cfg.TaskFields.ShowLabels,
-			ShowDescription: cfg.TaskFields.ShowDescription,
+		ActionItemFields: tui.ActionItemFieldConfig{
+			ShowPriority:    cfg.ActionItemFields.ShowPriority,
+			ShowDueDate:     cfg.ActionItemFields.ShowDueDate,
+			ShowLabels:      cfg.ActionItemFields.ShowLabels,
+			ShowDescription: cfg.ActionItemFields.ShowDescription,
 		},
 		Search: tui.SearchConfig{
 			CrossProject:    cfg.Search.CrossProject,
