@@ -118,7 +118,7 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		RequestedTTL:     "2h",
 		Timeout:          "30m",
 		Reason:           "manual MCP review",
-		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.plan_item","resume":{"path":"project/p1","attempt":1}}`,
+		ContinuationJSON: `{"resume_token":"resume-123","resume_tool":"till.action_item","resume":{"path":"project/p1","attempt":1}}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest() error = %v", err)
@@ -200,7 +200,7 @@ func TestAppServiceAdapterAuthRequestLifecycle(t *testing.T) {
 		ClientType:        "mcp-stdio",
 		RequestedTTL:      "4h",
 		Reason:            "continuation claim",
-		ContinuationJSON:  `{"resume_token":"resume-123","resume_tool":"till.plan_item"}`,
+		ContinuationJSON:  `{"resume_token":"resume-123","resume_tool":"till.action_item"}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAuthRequest(continuation) error = %v", err)
@@ -787,7 +787,7 @@ func TestAppServiceAdapterCreateAuthRequestRejectsBadContinuationJSON(t *testing
 		PrincipalID:      "review-agent",
 		ClientID:         "till-mcp-stdio",
 		Reason:           "manual MCP review",
-		ContinuationJSON: `{"resume_tool":"till.plan_item"}`,
+		ContinuationJSON: `{"resume_tool":"till.action_item"}`,
 	})
 	if err == nil || !strings.Contains(err.Error(), "continuation_json.resume_token") {
 		t.Fatalf("CreateAuthRequest() error = %v, want continuation_json.resume_token validation", err)

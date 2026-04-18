@@ -1427,7 +1427,7 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 		"requested_ttl":         "2h",
 		"timeout":               "30m",
 		"reason":                "manual MCP review",
-		"continuation_json":     `{"resume_tool":"till.plan_item"}`,
+		"continuation_json":     `{"resume_tool":"till.action_item"}`,
 	}))
 	createStructured := toolResultStructured(t, createResp.Result)
 	if got := createStructured["id"].(string); got != "req-1" {

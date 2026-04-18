@@ -1231,7 +1231,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.get_bootstrap_guide",
 		"till.get_instructions",
 		"till.auth_request",
-		"till.plan_item",
+		"till.action_item",
 		"till.project",
 		"till.embeddings",
 		"till.kind",
@@ -1295,9 +1295,9 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"acting_session_id":     "sess-1",
 			"acting_session_secret": "secret-1",
 		}},
-		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
-		{name: "till.plan_item", args: map[string]any{"operation": "get", "task_id": "t1"}},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
+		{name: "till.action_item", args: map[string]any{"operation": "get", "task_id": "t1"}},
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
 			"column_id":         "c1",
@@ -1305,14 +1305,14 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
 			"task_id":           "t1",
 			"title":             "Task One Updated",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move",
 			"task_id":           "t1",
 			"to_column_id":      "c2",
@@ -1320,34 +1320,34 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move_state",
 			"task_id":           "t1",
 			"state":             "done",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "delete",
 			"task_id":           "t1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "restore",
 			"task_id":           "t1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: mergeArgs(validSessionArgs(), map[string]any{
+		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "reparent",
 			"task_id":           "t1",
 			"parent_id":         "parent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.plan_item", args: map[string]any{"operation": "list", "project_id": "p1", "parent_id": "parent-1"}},
-		{name: "till.plan_item", args: map[string]any{"operation": "search", "project_id": "p1", "query": "task"}},
+		{name: "till.action_item", args: map[string]any{"operation": "list", "project_id": "p1", "parent_id": "parent-1"}},
+		{name: "till.action_item", args: map[string]any{"operation": "search", "project_id": "p1", "query": "task"}},
 		{name: "till.project", args: map[string]any{"operation": "list_change_events", "project_id": "p1", "limit": 25}},
 		{name: "till.project", args: map[string]any{"operation": "get_dependency_rollup", "project_id": "p1"}},
 		{name: "till.kind", args: map[string]any{"operation": "list"}},
@@ -1706,8 +1706,8 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedPlanItemToolVisibility verifies reduced plan-item mutations are default and legacy task aliases are opt-in.
-func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
+// TestHandlerExpandedActionItemToolVisibility verifies reduced action-item mutations are default and legacy task aliases are opt-in.
+func TestHandlerExpandedActionItemToolVisibility(t *testing.T) {
 	t.Parallel()
 
 	collectToolNames := func(t *testing.T, cfg Config) []string {
@@ -1746,8 +1746,8 @@ func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
 	}
 
 	defaultTools := collectToolNames(t, Config{})
-	if !slices.Contains(defaultTools, "till.plan_item") {
-		t.Fatalf("default plan-item surface missing till.plan_item: %#v", defaultTools)
+	if !slices.Contains(defaultTools, "till.action_item") {
+		t.Fatalf("default action-item surface missing till.action_item: %#v", defaultTools)
 	}
 	for _, legacy := range []string{
 		"till.list_tasks",
@@ -1765,9 +1765,9 @@ func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
 		}
 	}
 
-	legacyTools := collectToolNames(t, Config{ExposeLegacyPlanItemTools: true})
+	legacyTools := collectToolNames(t, Config{ExposeLegacyActionItemTools: true})
 	for _, required := range []string{
-		"till.plan_item",
+		"till.action_item",
 		"till.list_tasks",
 		"till.create_task",
 		"till.update_task",
@@ -1779,13 +1779,13 @@ func TestHandlerExpandedPlanItemToolVisibility(t *testing.T) {
 		"till.search_task_matches",
 	} {
 		if !slices.Contains(legacyTools, required) {
-			t.Fatalf("legacy plan-item mode missing %q: %#v", required, legacyTools)
+			t.Fatalf("legacy action-item mode missing %q: %#v", required, legacyTools)
 		}
 	}
 }
 
-// TestHandlerExpandedLegacyPlanItemMutationAliases verifies the legacy task mutation aliases still execute when enabled.
-func TestHandlerExpandedLegacyPlanItemMutationAliases(t *testing.T) {
+// TestHandlerExpandedLegacyActionItemMutationAliases verifies the legacy task mutation aliases still execute when enabled.
+func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 	t.Parallel()
 
 	service := &stubExpandedService{
@@ -1801,7 +1801,7 @@ func TestHandlerExpandedLegacyPlanItemMutationAliases(t *testing.T) {
 			},
 		},
 	}
-	handler, err := NewHandler(Config{ExposeLegacyPlanItemTools: true}, service, nil)
+	handler, err := NewHandler(Config{ExposeLegacyActionItemTools: true}, service, nil)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
@@ -2070,8 +2070,8 @@ func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedPlanItemReadOperations verifies default plan-item reads route through get/list shapes.
-func TestHandlerExpandedPlanItemReadOperations(t *testing.T) {
+// TestHandlerExpandedActionItemReadOperations verifies default action-item reads route through get/list shapes.
+func TestHandlerExpandedActionItemReadOperations(t *testing.T) {
 	t.Parallel()
 
 	service := &stubExpandedService{
@@ -2088,45 +2088,45 @@ func TestHandlerExpandedPlanItemReadOperations(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4800, "till.plan_item", map[string]any{
+	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4800, "till.action_item", map[string]any{
 		"operation": "get",
 		"task_id":   "t1",
 	}))
 	if isError, _ := getResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item get returned isError=true: %#v", getResp.Result)
+		t.Fatalf("action_item get returned isError=true: %#v", getResp.Result)
 	}
 	if got := service.lastGetTaskID; got != "t1" {
-		t.Fatalf("plan_item get task_id = %q, want t1", got)
+		t.Fatalf("action_item get task_id = %q, want t1", got)
 	}
 
-	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4801, "till.plan_item", map[string]any{
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4801, "till.action_item", map[string]any{
 		"operation":        "list",
 		"project_id":       "p1",
 		"include_archived": true,
 	}))
 	if isError, _ := listResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item list returned isError=true: %#v", listResp.Result)
+		t.Fatalf("action_item list returned isError=true: %#v", listResp.Result)
 	}
 	if got := service.lastListTasksProjectID; got != "p1" {
-		t.Fatalf("plan_item list project_id = %q, want p1", got)
+		t.Fatalf("action_item list project_id = %q, want p1", got)
 	}
 	if !service.lastListTasksArchived {
-		t.Fatal("plan_item list include_archived = false, want true")
+		t.Fatal("action_item list include_archived = false, want true")
 	}
 
-	_, childListResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4802, "till.plan_item", map[string]any{
+	_, childListResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4802, "till.action_item", map[string]any{
 		"operation":  "list",
 		"project_id": "p1",
 		"parent_id":  "parent-1",
 	}))
 	if isError, _ := childListResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item child list returned isError=true: %#v", childListResp.Result)
+		t.Fatalf("action_item child list returned isError=true: %#v", childListResp.Result)
 	}
 	if got := service.lastListChildProjectID; got != "p1" {
-		t.Fatalf("plan_item child list project_id = %q, want p1", got)
+		t.Fatalf("action_item child list project_id = %q, want p1", got)
 	}
 	if got := service.lastListChildParentID; got != "parent-1" {
-		t.Fatalf("plan_item child list parent_id = %q, want parent-1", got)
+		t.Fatalf("action_item child list parent_id = %q, want parent-1", got)
 	}
 }
 
@@ -2502,7 +2502,7 @@ func TestHandlerExpandedSearchToolSchemaOptions(t *testing.T) {
 		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
 	}
 
-	searchSchema := findToolSchemaByName(t, toolsRaw, "till.plan_item")
+	searchSchema := findToolSchemaByName(t, toolsRaw, "till.action_item")
 	modeDesc := schemaStringPropertyDescription(t, searchSchema, "search_mode")
 	if !strings.Contains(modeDesc, "default hybrid") {
 		t.Fatalf("mode description = %q, want default hybrid guidance", modeDesc)
@@ -2585,7 +2585,7 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(610, "till.plan_item", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(610, "till.action_item", map[string]any{
 		"operation":        "search",
 		"project_id":       "p1",
 		"query":            "task",
@@ -2602,7 +2602,7 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 		"offset":           10,
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item search returned isError=true: %#v", callResp.Result)
+		t.Fatalf("action_item search returned isError=true: %#v", callResp.Result)
 	}
 
 	if got := service.lastSearchTasksReq.ProjectID; got != "p1" {
@@ -2645,12 +2645,12 @@ func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 		t.Fatalf("labels_all = %#v, want [urgent]", got)
 	}
 
-	_, defaultResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(611, "till.plan_item", map[string]any{
+	_, defaultResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(611, "till.action_item", map[string]any{
 		"operation":  "search",
 		"project_id": "p1",
 	}))
 	if isError, _ := defaultResp.Result["isError"].(bool); isError {
-		t.Fatalf("default plan_item search returned isError=true: %#v", defaultResp.Result)
+		t.Fatalf("default action_item search returned isError=true: %#v", defaultResp.Result)
 	}
 	if got := service.lastSearchTasksReq.Mode; got != "" {
 		t.Fatalf("default mode = %q, want empty for app-defaulting", got)
@@ -2696,14 +2696,14 @@ func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) 
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, searchResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(612, "till.plan_item", map[string]any{
+	_, searchResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(612, "till.action_item", map[string]any{
 		"operation":   "search",
 		"project_id":  "p1",
 		"query":       "task",
 		"search_mode": "semantic",
 	}))
 	if isError, _ := searchResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item search returned isError=true: %#v", searchResp.Result)
+		t.Fatalf("action_item search returned isError=true: %#v", searchResp.Result)
 	}
 	searchStructured := toolResultStructured(t, searchResp.Result)
 	matchesAny, ok := searchStructured["matches"].([]any)
@@ -2864,7 +2864,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "create",
 		"project_id":        "p1",
 		"column_id":         "c1",
@@ -2873,19 +2873,19 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item create returned isError=true: %#v", createResp.Result)
+		t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("plan_item create actor_type = %q, want agent", got)
+		t.Fatalf("action_item create actor_type = %q, want agent", got)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("plan_item create actor_id = %q, want agent-session-1", got)
+		t.Fatalf("action_item create actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("plan_item create actor_name = %q, want Agent Session One", got)
+		t.Fatalf("action_item create actor_name = %q, want Agent Session One", got)
 	}
 
-	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "update",
 		"task_id":           "t1",
 		"title":             "Task One Updated",
@@ -2893,22 +2893,22 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := updateResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item update returned isError=true: %#v", updateResp.Result)
+		t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("plan_item update actor_type = %q, want agent", got)
+		t.Fatalf("action_item update actor_type = %q, want agent", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "agent-session-1" {
-		t.Fatalf("plan_item update agent_name = %q, want agent-session-1", got)
+		t.Fatalf("action_item update agent_name = %q, want agent-session-1", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("plan_item update actor_id = %q, want agent-session-1", got)
+		t.Fatalf("action_item update actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.ActorName; got != "Agent Session One" {
-		t.Fatalf("plan_item update actor_name = %q, want Agent Session One", got)
+		t.Fatalf("action_item update actor_name = %q, want Agent Session One", got)
 	}
 
-	_, moveStateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3010, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+	_, moveStateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3010, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "move_state",
 		"task_id":           "t1",
 		"state":             "done",
@@ -2916,16 +2916,16 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"lease_token":       "lease-1",
 	})))
 	if isError, _ := moveStateResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item move_state returned isError=true: %#v", moveStateResp.Result)
+		t.Fatalf("action_item move_state returned isError=true: %#v", moveStateResp.Result)
 	}
 	if got := service.lastMoveTaskStateReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("plan_item move_state actor_type = %q, want agent", got)
+		t.Fatalf("action_item move_state actor_type = %q, want agent", got)
 	}
 	if got := service.lastMoveTaskStateReq.Actor.ActorID; got != "agent-session-1" {
-		t.Fatalf("plan_item move_state actor_id = %q, want agent-session-1", got)
+		t.Fatalf("action_item move_state actor_id = %q, want agent-session-1", got)
 	}
 	if got := service.lastMoveTaskStateReq.State; got != "done" {
-		t.Fatalf("plan_item move_state state = %q, want done", got)
+		t.Fatalf("action_item move_state state = %q, want done", got)
 	}
 
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.comment", mergeArgs(validSessionArgs(), map[string]any{
@@ -3011,7 +3011,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		t.Fatalf("handoff update actor_name = %q, want Agent Session One", got)
 	}
 
-	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "restore",
 		"task_id":           "t1",
 		"agent_instance_id": "agent-1",
@@ -3019,22 +3019,22 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 		"override_token":    "override-1",
 	})))
 	if isError, _ := restoreResp.Result["isError"].(bool); isError {
-		t.Fatalf("plan_item restore returned isError=true: %#v", restoreResp.Result)
+		t.Fatalf("action_item restore returned isError=true: %#v", restoreResp.Result)
 	}
 	if got := service.lastRestoreTaskReq.Actor.ActorType; got != "agent" {
-		t.Fatalf("plan_item restore actor_type = %q, want agent", got)
+		t.Fatalf("action_item restore actor_type = %q, want agent", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "agent-session-1" {
-		t.Fatalf("plan_item restore agent_name = %q, want agent-session-1", got)
+		t.Fatalf("action_item restore agent_name = %q, want agent-session-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.AgentInstanceID; got != "agent-1" {
-		t.Fatalf("plan_item restore agent_instance_id = %q, want agent-1", got)
+		t.Fatalf("action_item restore agent_instance_id = %q, want agent-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.LeaseToken; got != "lease-1" {
-		t.Fatalf("plan_item restore lease_token = %q, want lease-1", got)
+		t.Fatalf("action_item restore lease_token = %q, want lease-1", got)
 	}
 	if got := service.lastRestoreTaskReq.Actor.OverrideToken; got != "override-1" {
-		t.Fatalf("plan_item restore override_token = %q, want override-1", got)
+		t.Fatalf("action_item restore override_token = %q, want override-1", got)
 	}
 
 	_, issueLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3014, "till.capability_lease", mergeArgs(validSessionArgs(), map[string]any{
@@ -3084,7 +3084,7 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	missingSessionHTTPResp, missingSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.plan_item", map[string]any{
+	missingSessionHTTPResp, missingSessionResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.action_item", map[string]any{
 		"operation":  "create",
 		"project_id": "p1",
 		"column_id":  "c1",
@@ -3111,7 +3111,7 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		SessionID:     "sess-1",
 	}
 
-	guardedUserHTTPResp, guardedUserResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.plan_item", mergeArgs(validSessionArgs(), map[string]any{
+	guardedUserHTTPResp, guardedUserResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "create",
 		"project_id":        "p1",
 		"column_id":         "c1",
@@ -3139,7 +3139,7 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 		PrincipalType: domain.ActorTypeAgent,
 		SessionID:     "sess-1",
 	}
-	missingLeaseHTTPResp, missingLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4012, "till.plan_item", map[string]any{
+	missingLeaseHTTPResp, missingLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4012, "till.action_item", map[string]any{
 		"operation":      "create",
 		"project_id":     "p1",
 		"column_id":      "c1",

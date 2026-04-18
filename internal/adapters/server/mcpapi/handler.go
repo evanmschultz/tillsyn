@@ -24,7 +24,7 @@ type Config struct {
 	ExposeLegacyLeaseTools        bool
 	ExposeLegacyCoordinationTools bool
 	ExposeLegacyProjectTools      bool
-	ExposeLegacyPlanItemTools     bool
+	ExposeLegacyActionItemTools   bool
 }
 
 // Handler wraps one stateless MCP streamable HTTP handler.
@@ -80,7 +80,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		pickSearchService(captureState, attention),
 		pickEmbeddingsService(captureState, attention),
 		authContexts,
-		cfg.ExposeLegacyPlanItemTools,
+		cfg.ExposeLegacyActionItemTools,
 	)
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)
 	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)

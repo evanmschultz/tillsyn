@@ -265,7 +265,7 @@ func (s *Service) CaptureState(ctx context.Context, in CaptureStateInput) (Captu
 		FollowUpPointers: CaptureStateFollowUpPointers{
 			ListAttentionItems:      fmt.Sprintf("till.attention_item(operation=list,project_id=%q,scope_type=%q,scope_id=%q,state=%q)", level.ProjectID, level.ScopeType, level.ScopeID, "open"),
 			ListProjectChangeEvents: fmt.Sprintf("till.project(operation=list_change_events,project_id=%q,limit=25)", level.ProjectID),
-			ListChildTasks:          fmt.Sprintf("till.plan_item(operation=list,project_id=%q,parent_id=%q,include_archived=false)", level.ProjectID, level.ScopeID),
+			ListChildTasks:          fmt.Sprintf("till.action_item(operation=list,project_id=%q,parent_id=%q,include_archived=false)", level.ProjectID, level.ScopeID),
 		},
 	}, nil
 }

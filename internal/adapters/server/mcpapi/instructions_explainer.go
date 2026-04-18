@@ -574,7 +574,7 @@ func explainNodeInstructions(ctx context.Context, services instructionsExplainSe
 			WorkflowContract:  workflow,
 			AgentExpectations: expectations,
 			RelatedTools: []instructionsToolRelatedTool{
-				{Tool: "till.plan_item", Operation: "get|update|move_state", Reason: "inspect or advance the node lifecycle"},
+				{Tool: "till.action_item", Operation: "get|update|move_state", Reason: "inspect or advance the node lifecycle"},
 				{Tool: "till.comment", Operation: "create|list", Reason: "coordinate on the node thread"},
 				{Tool: "till.handoff", Operation: "create|list|update", Reason: "route explicit next-action work for the node"},
 				{Tool: "till.template", Operation: "get_node_contract", Reason: "inspect the raw stored node-contract snapshot"},

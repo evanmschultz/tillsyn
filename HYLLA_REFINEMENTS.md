@@ -29,7 +29,7 @@ Drop 0 continuation after compaction. Dev flagged a `glamour` theme update + com
 - **Semantic-query flood.** `"markdown render"` is the conceptually correct query, but the project has heavy markdown-data surface (comments, docs, snapshots) so the single renderer file gets drowned. No way to bias toward behavior blocks vs data carriers.
 - **Net cost.** 3 Hylla calls + 1 schema error vs. 1 Grep call. For library-name lookups, Hylla was strictly worse than Grep.
 
-### Refinement candidates (Hylla-project plan items)
+### Refinement candidates (Hylla-project action items)
 - **Imports facet.** Index third-party imports as a first-class facet so queries by package name (`glamour`, `bubbletea`, `lipgloss`, `cobra`) return files that import it.
 - **Qualified-ident tokenization.** Ensure `glamour.NewTermRenderer`, `glamour.WithAutoStyle`, etc. are indexed as individual tokens so keyword search against `content` finds them.
 - **Dependency reverse lookup.** New tool or mode: `hylla_imports_find` — "files that import X." Complements the imports facet.

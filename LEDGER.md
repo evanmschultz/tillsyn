@@ -47,7 +47,7 @@ Template for every drop entry (append to this file; do not rewrite prior entries
 ## Drop <N> — <Title>
 
 - **Closed**: YYYY-MM-DD
-- **Drop plan-item ID**: <uuid>
+- **Drop action-item ID**: <uuid>
 - **Ingest snapshot**: <snapshot_int>
 - **Commit**: `<sha>` (git describe: `<short>`)
 - **Ingest cost (this run)**: $X.XXXX
@@ -58,6 +58,6 @@ Template for every drop entry (append to this file; do not rewrite prior entries
   - bullet
 - **Description**: 2–3 sentence summary of what shipped in this drop.
 - **Commit SHAs**: sha1, sha2, …
-- **Notable plan-item IDs**: uuid1, uuid2, …
+- **Notable action-item IDs**: uuid1, uuid2, …
 - **Unknowns forwarded**: bullet, or "none".
 ```

@@ -184,12 +184,12 @@ func TestBuildResumeHintsFromFollowUps(t *testing.T) {
 	hints := buildResumeHintsFromFollowUps(app.CaptureStateFollowUpPointers{
 		ListAttentionItems:      "till.attention_item(operation=list,project_id=\"p1\")",
 		ListProjectChangeEvents: "till.project(operation=list_change_events,project_id=\"p1\")",
-		ListChildTasks:          "till.plan_item(operation=list,project_id=\"p1\",parent_id=\"t1\")",
+		ListChildTasks:          "till.action_item(operation=list,project_id=\"p1\",parent_id=\"t1\")",
 	})
 	if len(hints) != 3 {
 		t.Fatalf("buildResumeHintsFromFollowUps() len = %d, want 3", len(hints))
 	}
-	if hints[0].Rel != "till.attention_item" || hints[2].Rel != "till.plan_item" {
+	if hints[0].Rel != "till.attention_item" || hints[2].Rel != "till.action_item" {
 		t.Fatalf("buildResumeHintsFromFollowUps() = %#v, want stable rel ordering", hints)
 	}
 

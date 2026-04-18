@@ -992,17 +992,17 @@ func registerProjectTools(
 	}
 }
 
-// registerTaskTools registers task reads plus the reduced plan-item mutation family.
+// registerTaskTools registers task reads plus the reduced action-item mutation family.
 func registerTaskTools(
 	srv *mcpserver.MCPServer,
 	tasks common.TaskService,
 	search common.SearchService,
 	embeddings common.EmbeddingsService,
 	authContexts *mcpAuthContextStore,
-	exposeLegacyPlanItemTools bool,
+	exposeLegacyActionItemTools bool,
 ) {
 	if tasks != nil {
-		handlePlanItemOperation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
+		handleActionItemOperation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
 				Operation       string               `json:"operation"`
@@ -1476,25 +1476,25 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"till.plan_item",
-				mcp.WithDescription("Read or mutate one plan-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."+mcpGuardedMutationToolSuffix),
-				mcp.WithString("operation", mcp.Required(), mcp.Description("Plan-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
+				"till.action_item",
+				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|task|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."+mcpGuardedMutationToolSuffix),
+				mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
 				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create and optional for operation=search")),
-				mcp.WithString("task_id", mcp.Description("Plan-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
+				mcp.WithString("task_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
 				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
 				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
 				mcp.WithString("state", mcp.Description("Lifecycle state target for operation=move_state (for example: todo|in_progress|done)")),
 				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
-				mcp.WithString("parent_id", mcp.Description("Optional parent plan-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
+				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
 				mcp.WithString("scope", mcp.Description("project|branch|phase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
-				mcp.WithString("description", mcp.Description("Plan-item details in markdown-rich text")),
+				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
-				mcp.WithObject("metadata", mcp.Description("Optional plan-item metadata object")),
-				mcp.WithBoolean("include_archived", mcp.Description("Include archived plan-items for operation=list|search")),
+				mcp.WithObject("metadata", mcp.Description("Optional action-item metadata object")),
+				mcp.WithBoolean("include_archived", mcp.Description("Include archived action-items for operation=list|search")),
 				mcp.WithString("query", mcp.Description("Search query for operation=search")),
 				mcp.WithBoolean("cross_project", mcp.Description("Search across all projects for operation=search")),
 				mcp.WithArray("states", mcp.Description("Optional state filter for operation=search"), mcp.WithStringItems()),
@@ -1515,27 +1515,27 @@ func registerTaskTools(
 				mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return handlePlanItemOperation(ctx, req, "plan_item", "")
+				return handleActionItemOperation(ctx, req, "action_item", "")
 			},
 		)
 
-		if exposeLegacyPlanItemTools {
+		if exposeLegacyActionItemTools {
 			srv.AddTool(
 				mcp.NewTool(
 					"till.list_tasks",
-					mcp.WithDescription("List tasks/work-items for one project (legacy alias for till.plan_item operation=list)."),
+					mcp.WithDescription("List tasks/work-items for one project (legacy alias for till.action_item operation=list)."),
 					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 					mcp.WithBoolean("include_archived", mcp.Description("Include archived tasks")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "list_tasks", "list")
+					return handleActionItemOperation(ctx, req, "list_tasks", "list")
 				},
 			)
 
 			srv.AddTool(
 				mcp.NewTool(
 					"till.create_task",
-					mcp.WithDescription("Create one task/work-item (legacy alias for till.plan_item operation=create)."),
+					mcp.WithDescription("Create one task/work-item (legacy alias for till.action_item operation=create)."),
 					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 					mcp.WithString("column_id", mcp.Required(), mcp.Description("Column identifier")),
 					mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
@@ -1554,14 +1554,14 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "create_task", "create")
+					return handleActionItemOperation(ctx, req, "create_task", "create")
 				},
 			)
 
 			srv.AddTool(
 				mcp.NewTool(
 					"till.update_task",
-					mcp.WithDescription("Update one task/work-item (legacy alias for till.plan_item operation=update)."),
+					mcp.WithDescription("Update one task/work-item (legacy alias for till.action_item operation=update)."),
 					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 					mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
 					mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
@@ -1576,14 +1576,14 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "update_task", "update")
+					return handleActionItemOperation(ctx, req, "update_task", "update")
 				},
 			)
 
 			srv.AddTool(
 				mcp.NewTool(
 					"till.move_task",
-					mcp.WithDescription("Move one task/work-item to another column/position (legacy alias for till.plan_item operation=move)."),
+					mcp.WithDescription("Move one task/work-item to another column/position (legacy alias for till.action_item operation=move)."),
 					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 					mcp.WithString("to_column_id", mcp.Required(), mcp.Description("Destination column identifier")),
 					mcp.WithNumber("position", mcp.Required(), mcp.Description("Destination position")),
@@ -1594,14 +1594,14 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "move_task", "move")
+					return handleActionItemOperation(ctx, req, "move_task", "move")
 				},
 			)
 
 			srv.AddTool(
 				mcp.NewTool(
 					"till.delete_task",
-					mcp.WithDescription("Delete one task/work-item (archive or hard; legacy alias for till.plan_item operation=delete)."),
+					mcp.WithDescription("Delete one task/work-item (archive or hard; legacy alias for till.action_item operation=delete)."),
 					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 					mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
@@ -1611,14 +1611,14 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "delete_task", "delete")
+					return handleActionItemOperation(ctx, req, "delete_task", "delete")
 				},
 			)
 
 			srv.AddTool(
 				mcp.NewTool(
 					"till.restore_task",
-					mcp.WithDescription("Restore one archived task/work-item (legacy alias for till.plan_item operation=restore)."),
+					mcp.WithDescription("Restore one archived task/work-item (legacy alias for till.action_item operation=restore)."),
 					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -1627,14 +1627,14 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "restore_task", "restore")
+					return handleActionItemOperation(ctx, req, "restore_task", "restore")
 				},
 			)
 
 			srv.AddTool(
 				mcp.NewTool(
 					"till.reparent_task",
-					mcp.WithDescription("Change parent relationship for one task/work-item (legacy alias for till.plan_item operation=reparent)."),
+					mcp.WithDescription("Change parent relationship for one task/work-item (legacy alias for till.action_item operation=reparent)."),
 					mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 					mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
@@ -1644,25 +1644,25 @@ func registerTaskTools(
 					mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "reparent_task", "reparent")
+					return handleActionItemOperation(ctx, req, "reparent_task", "reparent")
 				},
 			)
 			srv.AddTool(
 				mcp.NewTool(
 					"till.list_child_tasks",
-					mcp.WithDescription("List child tasks for a parent scope (legacy alias for till.plan_item operation=list with parent_id)."),
+					mcp.WithDescription("List child tasks for a parent scope (legacy alias for till.action_item operation=list with parent_id)."),
 					mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 					mcp.WithString("parent_id", mcp.Required(), mcp.Description("Parent task identifier")),
 					mcp.WithBoolean("include_archived", mcp.Description("Include archived child rows")),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "list_child_tasks", "list")
+					return handleActionItemOperation(ctx, req, "list_child_tasks", "list")
 				},
 			)
 			srv.AddTool(
 				mcp.NewTool(
 					"till.search_task_matches",
-					mcp.WithDescription("Search task/work-item matches by query, mode, sort, filters, and scope (legacy alias for till.plan_item operation=search)."),
+					mcp.WithDescription("Search task/work-item matches by query, mode, sort, filters, and scope (legacy alias for till.action_item operation=search)."),
 					mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project queries")),
 					mcp.WithString("query", mcp.Description("Search query")),
 					mcp.WithBoolean("cross_project", mcp.Description("Search across all projects")),
@@ -1678,7 +1678,7 @@ func registerTaskTools(
 					mcp.WithNumber("offset", mcp.Description("Optional row offset (default 0, must be >= 0)"), mcp.DefaultNumber(0), mcp.Min(0)),
 				),
 				func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					return handlePlanItemOperation(ctx, req, "search_task_matches", "search")
+					return handleActionItemOperation(ctx, req, "search_task_matches", "search")
 				},
 			)
 		}
