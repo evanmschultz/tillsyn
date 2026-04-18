@@ -330,9 +330,9 @@ func appendPathResourceRefs(meta domain.ActionItemMetadata, root string, entries
 //  2. Each surviving entry is tagged with Tags[0]=="file" and its
 //     ResourceType is always ResourceTypeLocalFile (dir semantics do not apply).
 //
-// Pure function — operates on the TaskMetadata value the caller hands in.
-// Callers drive the actual domain.UpdateTask call separately.
-func appendFileResourceRefs(meta domain.TaskMetadata, root string, entries []filePickerEntry) domain.TaskMetadata {
+// Pure function — operates on the ActionItemMetadata value the caller hands in.
+// Callers drive the actual domain.UpdateActionItem call separately.
+func appendFileResourceRefs(meta domain.ActionItemMetadata, root string, entries []filePickerEntry) domain.ActionItemMetadata {
 	out := meta
 	refs := append([]domain.ResourceRef(nil), meta.ResourceRefs...)
 	for _, entry := range entries {

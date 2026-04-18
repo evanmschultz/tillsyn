@@ -17,7 +17,7 @@ func TestFilePickerSpecialization_AppendFileRefsBuildsResourceRef(t *testing.T) 
 	mustMkdir(t, filepath.Join(root, filepath.Dir(rel)))
 	mustTouch(t, filepath.Join(root, rel))
 
-	meta := domain.TaskMetadata{}
+	meta := domain.ActionItemMetadata{}
 	selections := []filePickerEntry{
 		{Name: "main.go", Path: filepath.Join(root, rel), IsDir: false},
 	}
@@ -46,7 +46,7 @@ func TestFilePickerSpecialization_AppendFileRefsBuildsResourceRef(t *testing.T) 
 func TestFilePickerSpecialization_AppendFileRefsSkipsNonexistent(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "does-not-exist.go")
-	meta := domain.TaskMetadata{}
+	meta := domain.ActionItemMetadata{}
 	selections := []filePickerEntry{
 		{Name: "does-not-exist.go", Path: missing, IsDir: false},
 	}
@@ -63,7 +63,7 @@ func TestFilePickerSpecialization_AppendFileRefsSkipsDirs(t *testing.T) {
 	dirRel := "internal/domain"
 	mustMkdir(t, filepath.Join(root, dirRel))
 
-	meta := domain.TaskMetadata{}
+	meta := domain.ActionItemMetadata{}
 	selections := []filePickerEntry{
 		// Caller may have flagged IsDir; helper must still gate on os.Stat.
 		{Name: "domain", Path: filepath.Join(root, dirRel), IsDir: true},
@@ -83,7 +83,7 @@ func TestFilePickerSpecialization_AppendFileRefsForcesFileSemantics(t *testing.T
 	rel := "some-file.go"
 	mustTouch(t, filepath.Join(root, rel))
 
-	meta := domain.TaskMetadata{}
+	meta := domain.ActionItemMetadata{}
 	selections := []filePickerEntry{
 		{Name: "some-file.go", Path: filepath.Join(root, rel), IsDir: true},
 	}
@@ -116,7 +116,7 @@ func TestFilePickerSpecialization_DefaultAllFiles(t *testing.T) {
 	}
 	// Simulate accept-without-narrowing: no selection → callers pass the full
 	// visibleEntries slice. The helper itself filters dirs and non-regulars.
-	meta := domain.TaskMetadata{}
+	meta := domain.ActionItemMetadata{}
 	updated := appendFileResourceRefs(meta, root, entries)
 
 	if len(updated.ResourceRefs) != 3 {
@@ -154,7 +154,7 @@ func TestFilePickerSpecialization_NarrowedSelection(t *testing.T) {
 		{Name: "alpha.go", Path: filepath.Join(root, "alpha.go"), IsDir: false},
 		{Name: "gamma.go", Path: filepath.Join(root, "gamma.go"), IsDir: false},
 	}
-	meta := domain.TaskMetadata{}
+	meta := domain.ActionItemMetadata{}
 	updated := appendFileResourceRefs(meta, root, selections)
 
 	if len(updated.ResourceRefs) != 2 {
@@ -190,7 +190,7 @@ func TestFilePickerSpecialization_PreservesPriorResourceRefs(t *testing.T) {
 		PathMode:     domain.PathModeAbsolute,
 		Tags:         []string{"doc"},
 	}
-	meta := domain.TaskMetadata{
+	meta := domain.ActionItemMetadata{
 		ResourceRefs: []domain.ResourceRef{priorPath, priorURL},
 	}
 	selections := []filePickerEntry{
@@ -225,7 +225,7 @@ func TestFilePickerSpecialization_Dedupes(t *testing.T) {
 	rel := "dup.go"
 	mustTouch(t, filepath.Join(root, rel))
 
-	meta := domain.TaskMetadata{
+	meta := domain.ActionItemMetadata{
 		ResourceRefs: []domain.ResourceRef{
 			{
 				ResourceType: domain.ResourceTypeLocalFile,

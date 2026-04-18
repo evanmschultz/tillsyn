@@ -40,6 +40,7 @@ type keyMap struct {
 	activityLog          key.Binding
 	undo                 key.Binding
 	redo                 key.Binding
+	diffModeToggle       key.Binding
 }
 
 // newKeyMap constructs key map.
@@ -75,6 +76,7 @@ func newKeyMap() keyMap {
 		activityLog:          key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "activity log")),
 		undo:                 key.NewBinding(key.WithKeys("ctrl+z"), key.WithHelp("ctrl+z", "undo")),
 		redo:                 key.NewBinding(key.WithKeys("ctrl+shift+z"), key.WithHelp("ctrl+shift+z", "redo")),
+		diffModeToggle:       key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "diff mode")),
 	}
 }
 
