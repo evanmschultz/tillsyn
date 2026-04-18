@@ -27,6 +27,7 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/tui/gitdiff"
 )
 
 // Service represents service data used by this package.
@@ -137,6 +138,7 @@ const (
 	modeTemplateMigrationReview
 	modeDescriptionEditor
 	modeThread
+	modeDiff
 )
 
 // descriptionEditorTarget identifies which form field receives markdown-description editor output.
@@ -954,6 +956,17 @@ type Model struct {
 	autoRefreshInterval time.Duration
 	autoRefreshArmed    bool
 	autoRefreshInFlight bool
+
+	// diff owns the ctrl+d full-page diff surface. The pointer itself is the
+	// one Model-level field this feature adds; the inner state (viewport,
+	// differ, highlighter, result, error, dimensions) lives on *diffMode so
+	// the Model-field budget stays within Drop 1.5 P4-T3 acceptance criteria.
+	diff *diffMode
+
+	// diffBackMode captures the mode active when ctrl+d was pressed so esc
+	// restores the prior surface instead of unconditionally returning to the
+	// board (falsification vector 5). Required second field alongside diff.
+	diffBackMode inputMode
 }
 
 // loadedMsg carries message data through update handling.
@@ -1325,6 +1338,10 @@ func NewModel(svc Service, opts ...Option) Model {
 	} else {
 		m.defaultRootDir = "."
 	}
+	// Default diff-mode wiring uses the exec-backed Differ and chroma
+	// Highlighter. Tests override this via WithDiffMode to inject deterministic
+	// fakes, so real shell invocations never happen during unit runs.
+	m.diff = newDiffMode(gitdiff.NewExecDiffer(), gitdiff.NewChromaHighlighter())
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&m)
@@ -1669,6 +1686,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == modeAuthInventory {
 			m.syncAuthInventoryViewport()
+		}
+		if m.mode == modeDiff && m.diff != nil {
+			// Match the chrome math used at render time so mid-session resize
+			// doesn't skew banner placement until the next frame.
+			accent := lipgloss.Color("62")
+			if project, ok := m.currentProject(); ok {
+				accent = projectAccentColor(project)
+			}
+			muted := lipgloss.Color("241")
+			dim := lipgloss.Color("239")
+			metrics := m.fullPageSurfaceMetrics(
+				accent, muted, dim,
+				actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+				"Git Diff", "", "",
+			)
+			m.diff.resize(metrics.contentWidth, max(1, metrics.bodyHeight-1))
 		}
 		m.normalizePanelFocus()
 		return m, nil
@@ -2070,6 +2103,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "comment posted"
 		return m, nil
 
+	case diffLoadedMsg:
+		return m.applyDiffLoadedMsg(msg)
+
 	case tea.KeyPressMsg:
 		// Always honor terminal interrupt for deterministic emergency exit across all modes.
 		if msg.String() == "ctrl+c" {
@@ -2111,6 +2147,9 @@ func (m Model) View() tea.View {
 	}
 	if m.mode == modeThread {
 		return m.renderThreadModeView()
+	}
+	if m.mode == modeDiff {
+		return m.renderDiffModeView()
 	}
 	if m.mode == modeAuthReview {
 		return m.renderAuthReviewModeView()
@@ -9831,6 +9870,8 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.quit):
 		return m, tea.Quit
+	case key.Matches(msg, m.keys.diffModeToggle):
+		return m.enterDiffMode()
 	case key.Matches(msg, m.keys.toggleHelp):
 		m.toggleHelpOverlay()
 		return m, nil
@@ -10159,6 +10200,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.toggleHelpOverlay()
 		}
 		return m, nil
+	}
+
+	if m.mode == modeDiff {
+		return m.handleDiffModeKey(msg)
 	}
 
 	if m.mode == modeActivityEventInfo {
@@ -17851,6 +17896,13 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"ctrl+s posts while composing; esc exits composer or returns to the prior screen",
 			"up/down, pgup/pgdown/home/end, or mouse wheel scroll comments",
 		}
+	case modeDiff:
+		return "diff", []string{
+			"up/down or j/k scroll one line at a time",
+			"pgup/pgdown or ctrl+u/ctrl+d move half a page",
+			"esc returns to the prior screen",
+			"a divergence banner appears when the start commit is not an ancestor of HEAD",
+		}
 	default:
 		return "current screen", []string{
 			"enter confirms primary action",
@@ -19828,6 +19880,14 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("?", "help"),
 		)
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeDiff:
+		short := []key.Binding{
+			helpBinding("↑/↓", "scroll"),
+			helpBinding("pgup/pgdn", "page"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	default:
 		if m.mode == modeNone {
 			short := []key.Binding{
@@ -21553,6 +21613,8 @@ func (m Model) modeLabel() string {
 		return "description-editor"
 	case modeThread:
 		return "thread"
+	case modeDiff:
+		return "diff"
 	default:
 		return "normal"
 	}
@@ -21632,6 +21694,8 @@ func (m Model) modePrompt() string {
 		return "description editor: tab preview/edit, ctrl+s saves current draft, esc cancel"
 	case modeThread:
 		return "thread: tab/shift+tab or left/right wrap panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; up/down or pgup/pgdown/home/end scroll comments; esc backs out"
+	case modeDiff:
+		return "diff: up/down or j/k scroll; pgup/pgdown or ctrl+u/ctrl+d page; esc returns to the prior screen"
 	default:
 		return ""
 	}
