@@ -212,6 +212,8 @@ This is how a drop orch routes per-drop content to STEWARD without crossing the 
 
 ## Response Shape — Section 0 Semi-Formal Reasoning
 
+**Canonical spec: `SEMI-FORMAL-REASONING.md`** (this directory). That file is the source of truth for the scaffold — adopter requirements, subagent pass-through, Tillsyn artifact boundary, bootstrap checklist. This section is a quick-reference summary; read the canonical file before extending or adapting the shape.
+
 **Every project adopting Tillsyn as a coordination runtime MUST carry the Section 0 response shape in its project `CLAUDE.md` and in every worktree-checked-out sibling `CLAUDE.md`.** This is non-negotiable for adopters that want the reasoning-accuracy lift the scaffold delivers. The shape is the rollout's adaptation of arxiv 2603.01896 ("Agentic Code Reasoning," Ugare & Chandra, Meta, 4 Mar 2026).
 
 Every substantive response (anything beyond a trivial one-line answer or factual lookup) begins with a `# Section 0 — SEMI-FORMAL REASONING` block, then the normal response body in the `tillsyn-flow` numbered format. Section 0 contains five named passes for orchestrator-facing responses — `## Planner`, `## Builder`, `## QA Proof`, `## QA Falsification`, `## Convergence` — and four passes for subagent responses — `## Proposal`, `## QA Proof`, `## QA Falsification`, `## Convergence`. Each pass uses the 5-field certificate where applicable: **Premises**, **Evidence**, **Trace or cases**, **Conclusion**, **Unknowns**.
@@ -263,4 +265,4 @@ Every drop's final task is `DROP <N> END — LEDGER UPDATE`. Orchestrator-role-g
 - `HYLLA_FEEDBACK.md` — per-drop aggregation of subagent-reported Hylla misses.
 - `HYLLA_REFINEMENTS.md` — append-only log of Hylla ergonomics + search-quality refinement candidates.
 - `REFINEMENTS.md` — append-only log of Tillsyn product refinements + TUI/CLI/MCP ergonomics issues.
-- `OLD_MDS/` — **deleted by dev after Drop 0 fold was verified.** Pre-consolidation source docs lived there briefly. Retrievable from git history (commit `fc31679` and earlier) if a drift investigation needs them; see `CLAUDE.md` § "Pre-Consolidation Source Archive" for the fold map.
+- `OLD_MDS/` — **deleted by dev after Drop 0 fold was verified.** Pre-consolidation source docs lived there briefly. Retrievable from git history (commit `fc31679` and earlier) via `git show fc31679^:main/OLD_MDS/<file>` if a drift investigation ever needs them.

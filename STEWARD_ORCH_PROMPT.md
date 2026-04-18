@@ -50,7 +50,7 @@ When `DROP_N_ORCH` spins up drop N in Tillsyn, it creates six items that are STE
 - Agent prompt files under `~/.claude/agents/*.md` — `go-builder-agent.md`, `go-planning-agent.md`, `go-qa-proof-agent.md`, `go-qa-falsification-agent.md`, future shared agents.
 - Orchestrator prompt files under `main/` — this file (`STEWARD_ORCH_PROMPT.md`), `DROP_1_ORCH_PROMPT.md`, future `DROP_N_ORCH_PROMPT.md`.
 
-Discipline: edits only land after a DISCUSSIONS child (for design discussions) or a drop-branch merge (for per-drop artifacts) converges. `main/OLD_MDS/` was a pre-consolidation audit archive; it was deleted by the dev after Drop 0. If a drift investigation needs it, pull from git history (commit `fc31679` and earlier) per `CLAUDE.md` § "Pre-Consolidation Source Archive".
+Discipline: edits only land after a DISCUSSIONS child (for design discussions) or a drop-branch merge (for per-drop artifacts) converges. `main/OLD_MDS/` was a pre-consolidation audit archive deleted by the dev after Drop 0; if a drift investigation ever needs it, pull from git history (commit `fc31679` and earlier).
 
 ### 1.4 Other Responsibilities
 
@@ -142,7 +142,7 @@ Confirm all five created cleanly before moving to §5.1.
 
 **Skip this step unless a content-drift flag surfaces.** The dev deleted `main/OLD_MDS/` after Drop 0 once the fold into `PLAN.md` / `README.md` was verified intact. No proactive compare-and-contrast is required on this session.
 
-If a drift investigation surfaces (a later reader spots something that looks missing from `PLAN.md` / `README.md` and suspects it was dropped during the 2026-04-16 consolidation fold), the retrieval path is git history: `git show fc31679^:main/OLD_MDS/<file>`. The fold map lives in `CLAUDE.md` § "Pre-Consolidation Source Archive". Only spin up a DISCUSSIONS child for this work if drift is actually detected — do not run it speculatively.
+If a drift investigation surfaces (a later reader spots something that looks missing from `PLAN.md` / `README.md` and suspects it was dropped during the 2026-04-16 consolidation fold), the retrieval path is git history: `git show fc31679^:main/OLD_MDS/<file>`. Only spin up a DISCUSSIONS child for this work if drift is actually detected — do not run it speculatively.
 
 ### 5.2 PLAN.md Semi-Formal QA — Residual Check Only
 
@@ -173,7 +173,7 @@ These diffs were drafted pre-session. They apply only after §5.1/§5.2 confirm 
 
 **CLAUDE.md drift:**
 
-- Both `CLAUDE.md` bodies already carry the STEWARD-routing model under § "Drop End — Ledger Update Task" and § "Pre-Consolidation Source Archive" (applied during the 2026-04-16 post-Drop-0 sweep). No action here unless a new drift surfaces.
+- Both `CLAUDE.md` bodies already carry the STEWARD-routing model under § "Drop End — Ledger Update Task" (applied during the 2026-04-16 post-Drop-0 sweep). No action here unless a new drift surfaces.
 
 **PLAN.md scope for the new role-separation model:**
 
@@ -314,7 +314,30 @@ When `DROP_N_ORCH` creates drop N under the project, it creates six STEWARD-scop
 - Five level_2 findings drops under the persistent parents: `DROP_N_HYLLA_FINDINGS`, `DROP_N_LEDGER_ENTRY`, `DROP_N_WIKI_CHANGELOG_ENTRY`, `DROP_N_REFINEMENTS_RAISED`, `DROP_N_HYLLA_REFINEMENTS_RAISED`.
 - One refinements-gate item inside drop N's tree: `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1`.
 
-During drop N's work, drop-orch populates the level_2 findings descriptions as material surfaces. At drop end, drop-orch runs `hylla_ingest` and finalizes the five descriptions. Drop-orch closes `DROP N END — LEDGER UPDATE` (drop-orch-owned) **before merge**. Drop-orch never touches MD files and never changes state on any STEWARD-owned item.
+During drop N's work, drop-orch populates the level_2 findings descriptions as material surfaces. At drop end, drop-orch runs `hylla_ingest` and finalizes the five descriptions. Drop-orch closes `DROP <N> END — LEDGER UPDATE` (drop-orch-owned) **before merge**. Drop-orch never touches MD files and never changes state on any STEWARD-owned item.
+
+#### 10.1.1 Drop-Orch Pre-Merge Checklist (12 Steps)
+
+The canonical `DROP <N> END — LEDGER UPDATE` sequence the drop-orch runs on the drop branch **before** signaling the dev to merge. This is the source of truth; both `CLAUDE.md` files point here.
+
+1. Move `DROP <N> END — LEDGER UPDATE` to `in_progress`.
+2. Confirm all sibling tasks in the drop are `done`. Confirm `git status --porcelain` clean.
+3. Confirm every commit from this drop has landed on the remote drop branch.
+4. Run `gh run watch --exit-status` on the latest CI run. Do NOT proceed unless CI is green.
+5. Call `hylla_ingest` on the remote ref `github.com/evanmschultz/tillsyn@main`. **ALWAYS `enrichment_mode=full_enrichment`. NEVER `structural_only`. NEVER from a local working copy — always from remote, after push + CI green.**
+6. Poll `hylla_run_get` via `/loop 120` while ingest progresses. When the run reports "nearly done" (enrichment stage entered), kill the loop and `ScheduleWakeup` once for the estimated remaining time.
+7. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta.
+8. **Finalize each of the five level_2 findings-drop descriptions** — `DROP_N_HYLLA_FINDINGS`, `DROP_N_LEDGER_ENTRY`, `DROP_N_WIKI_CHANGELOG_ENTRY`, `DROP_N_REFINEMENTS_RAISED`, `DROP_N_HYLLA_REFINEMENTS_RAISED` — with drop-in-ready content STEWARD will splice into the MDs post-merge. The `DROP_N_LEDGER_ENTRY.description` must carry a fully-formatted `## Drop <N> — <Title>` block (closed date, action-item ID, ingest snapshot, cost, node counts, orphan delta, refactors, description, commit SHAs, notable IDs, unknowns forwarded).
+9. Post a `till.handoff` to `@STEWARD` with `next_action_type: post-merge-md-write` naming the five level_2 drops.
+10. Close `DROP <N> END — LEDGER UPDATE` with `metadata.outcome: "success"` and the five level_2 drop IDs in `completion_notes`.
+11. **Do NOT write any MD file.** STEWARD writes all per-drop MDs on `main` post-merge (§10.3).
+12. Signal the dev the drop branch is ready to merge.
+
+**Hylla ingest invariants (drop-orch-only — subagents and STEWARD never call `hylla_ingest`):**
+
+- Always `enrichment_mode=full_enrichment`.
+- Always source from the GitHub remote.
+- Never before `git push` + `gh run watch --exit-status` green.
 
 ### 10.2 Merge Is Your Trigger
 

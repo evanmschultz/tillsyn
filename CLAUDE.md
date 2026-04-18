@@ -9,8 +9,8 @@ All work is tracked in Tillsyn. No exceptions.
 - No markdown files for work tracking, coordination, worklogs, or execution state.
 - **Tillsyn = durable truth. Every piece of work gets a Tillsyn action item before it starts.**
 - **Use Tillsyn exclusively for work tracking.** Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they are in-session-only and evaporate on compaction/restart. If a turn needs finer procedural granularity, decompose into child Tillsyn action items rather than bolting on a parallel in-session tracker.
-- **When work starts on a action item, move it to `in_progress` immediately.** No items left in `todo` while being worked on.
-- **Read `main/WIKI.md` at session start and after every compaction.** The wiki is the living best-practice snapshot for this project and changes drop-by-drop. CLAUDE.md is auto-loaded; WIKI.md is NOT — you must read it deliberately. On the first turn after cold-start or compaction, Read `WIKI.md` before substantive orchestration.
+- **When work starts on an action item, move it to `in_progress` immediately.** No items left in `todo` while being worked on.
+- **Read `WIKI.md` at session start and after every compaction.** The wiki is the living best-practice snapshot for this project and changes drop-by-drop. CLAUDE.md is auto-loaded; WIKI.md is NOT — you must read it deliberately. On the first turn after cold-start or compaction, Read `WIKI.md` before substantive orchestration.
 
 ### Discussion Mode (Chat-Primary Until TUI Ergonomics Land)
 
@@ -18,22 +18,7 @@ Cross-cutting decisions still park on a Tillsyn action item (description = conve
 
 ## Cascade Plan
 
-The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory — moved from bare-root in Drop 0 so it is git-tracked with the rest of the repo; renamed from `CLAUDE_MINIONS_PLAN.md` during the 2026-04-16 consolidation pass). That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
-
-## Pre-Consolidation Source Archive (Deleted — Retrievable From Git)
-
-The 2026-04-16 consolidation pass folded six legacy MDs into `PLAN.md` + `README.md` and archived the originals under `OLD_MDS/`. The archive was kept in-tree briefly for verification, then deleted by the dev once the fold was confirmed intact. If a content-drift investigation needs the pre-consolidation text, pull the file from git history — everything under `OLD_MDS/` is reachable up to and including commit `fc31679` (`chore(docs): archive pre-consolidation md sources into old_mds/`).
-
-Fold map (so you know which legacy file landed where):
-
-- `HEADLESS_DISCUSSIONS.md` — folded into `PLAN.md` §4.1 / §19.10 / §23 / §24 and drop-4.5 scope.
-- `TOS_COMPLIANCE.md` — folded into `PLAN.md` §22 (verbatim quote appendix §22.4.1–22.4.6) and §22.5 engineering-constraint carryover.
-- `TOS_DISCUSSIONS.md` — converged rows folded into `PLAN.md` §22; pending Qs threaded into refinement-drop bullets under §19.10.
-- `MINIONS_RESEARCH_2026-04-13.md` — folded into `PLAN.md` §20 open questions + §21 source links + risk register.
-- `TILLSYN_PURPOSE_AND_INTEGRATION_FRAMING_2026-04-11.md` — folded into `README.md` §Integration Framing For MCP Clients.
-- `temp.md` — the pre-apply Consolidation Decisions Ledger that drove this pass.
-
-If `PLAN.md` or `README.md` looks like it's missing pre-consolidation context, `git show fc31679^:main/OLD_MDS/<file>` is the retrieval path.
+The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory). That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
 
 ## Cascade Tree Structure (Template Architecture)
 
@@ -103,7 +88,7 @@ Only after all gates pass do the build-task's QA children fire.
 
 ### State-Trigger Dispatch
 
-Moving a action item to `in_progress` is the dispatch trigger (Drop 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt.
+Moving an action item to `in_progress` is the dispatch trigger (Drop 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt.
 
 ## Tillsyn Project
 
@@ -118,12 +103,12 @@ The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf
 
 - **Artifact ref**: `github.com/evanmschultz/tillsyn@main` — Hylla resolves `@main` to the latest ingest automatically. Do not track snapshot numbers or commit hashes here.
 - **Also stored on the Tillsyn project metadata** under `metadata.hylla_artifact_ref` so planners read it programmatically rather than copy-paste from this file.
-- **Ledger**: `main/LEDGER.md` tracks per-drop cost, node count (total / code / tests / packages), orphan deltas, refactors, and drop descriptions. Populated by the orchestrator during the per-drop `DROP <N> END — LEDGER UPDATE` task after ingest completes.
-- **Hylla feedback**: `main/HYLLA_FEEDBACK.md` aggregates subagent-reported Hylla ergonomics and search-quality issues. Subagents report misses in their closing comment; the orchestrator rolls them up at drop end before running the drop-end ingest.
+- **Ledger**: `LEDGER.md` tracks per-drop cost, node count (total / code / tests / packages), orphan deltas, refactors, and drop descriptions. Populated by STEWARD post-merge from the drop-orch's finalized `DROP_N_LEDGER_ENTRY` description.
+- **Hylla feedback**: `HYLLA_FEEDBACK.md` aggregates subagent-reported Hylla ergonomics and search-quality issues. Subagents report misses in their closing comment; drop-orch rolls them up into the `DROP_N_HYLLA_FINDINGS` description at drop end; STEWARD writes the MD post-merge.
 
 ### Code Understanding Rules
 
-1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Whenever a Hylla miss forces a fallback, the subagent must record the miss in its closing comment** under a `## Hylla Feedback` heading so the orchestrator can aggregate it into `main/HYLLA_FEEDBACK.md` at drop end.
+1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Whenever a Hylla miss forces a fallback, the subagent must record the miss in its closing comment** under a `## Hylla Feedback` heading so the orchestrator can aggregate it at drop end.
 2. **Changed since last ingest**: use `git diff` for files touched after the last Hylla ingest. Hylla is stale for those files until reingest.
 3. **Non-Go code** (markdown, TOML, YAML, magefile, SQL, etc.): use `Read`, `Grep`, `Glob`, `Bash` directly. Hylla doesn't cover non-Go files.
 4. **External semantics**: Context7 + `go doc` + `LSP` for library and language questions the repo can't answer itself.
@@ -141,24 +126,15 @@ The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf
 6. **Push** — `git push` so CI runs.
 7. **CI green** — `gh run watch --exit-status` until CI lands green. If CI fails, fix before continuing — no ingest on a red commit.
 8. **Update Tillsyn** — checklist + metadata + lifecycle state. If it's not in Tillsyn, it didn't happen.
-9. **Move on to the next task.** Per-task Hylla reingest does NOT happen. Ingest happens once per drop, at drop end, inside the `DROP <N> END — LEDGER UPDATE` task — see "Cascade Ledger + Hylla Feedback" and "Drop End — Ledger Update Task" below.
+9. **Move on to the next task.** Per-task Hylla reingest does NOT happen. Ingest happens once per drop, at drop end, inside the `DROP <N> END — LEDGER UPDATE` task.
 
 No batched commits. No deferred pushes. No skipped QA. No skipped CI watch. No claiming done in chat without Tillsyn reflecting it.
 
 ## Cascade Ledger + Hylla Feedback
 
-Per-drop artifact MDs live in `main/`. **All MD writes route through `STEWARD`** (the persistent continuation orchestrator — see `STEWARD_ORCH_PROMPT.md`). Numbered-drop orchestrators (`DROP_N_ORCH`) never edit MDs — they file per-drop content into `description` fields of **level_2 findings drops** under STEWARD's persistent level_1 parents, and STEWARD writes the MDs on `main` post-merge.
+Per-drop artifact MDs live in `main/`. **All MD writes route through `STEWARD`.** Numbered-drop orchestrators (`DROP_N_ORCH`) never edit MDs — they file per-drop content into `description` fields of **level_2 findings drops** under STEWARD's persistent level_1 parents. STEWARD writes the MDs on `main` post-merge.
 
-STEWARD-owned per-drop MDs:
-
-- **`LEDGER.md`** — per-drop snapshot of project state, cost, and code-quality deltas. Fields per drop: closed date, drop action-item ID, ingest snapshot, ingest cost + cost-to-date, node counts (total / code / tests / packages), orphan delta, refactors, description, commit SHAs, notable action-item IDs, unknowns forwarded. Fed by `DROP_N_LEDGER_ENTRY.description`.
-- **`HYLLA_FEEDBACK.md`** — running log of Hylla ergonomics and search-quality feedback from subagents. Fed by `DROP_N_HYLLA_FINDINGS.description`.
-- **`WIKI_CHANGELOG.md`** — per-drop wiki deltas. Fed by `DROP_N_WIKI_CHANGELOG_ENTRY.description`.
-- **`REFINEMENTS.md`** — deferred refinements raised per drop. Fed by `DROP_N_REFINEMENTS_RAISED.description`.
-- **`HYLLA_REFINEMENTS.md`** — Hylla-scoped deferred refinements. Fed by `DROP_N_HYLLA_REFINEMENTS_RAISED.description`.
-- **`WIKI.md`** — living best-practice snapshot; STEWARD curates between drops.
-
-**Flow:** during drop N, drop-orch populates the five level_2 findings-drop descriptions incrementally. At drop end, drop-orch runs ingest, finalizes the descriptions, and closes `DROP <N> END — LEDGER UPDATE` before merge. Post-merge on `main`, STEWARD reads the level_2 descriptions, discusses with dev, writes the corresponding MDs, commits docs-only on `main`, and closes the level_2 drops. The six persistent level_1 parents (`DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS`) never close. See `STEWARD_ORCH_PROMPT.md` §10 + `feedback_steward_owns_md_writes.md` memory.
+Full flow, level_1 parent catalog, and drop-orch vs STEWARD split live in `STEWARD_ORCH_PROMPT.md` §1.3 (orchestrator roster) and §10 (drop-end sequence). Don't duplicate it here.
 
 **Subagent responsibility:** in every closing comment, always include a `## Hylla Feedback` section. If you had no Hylla misses, write `None — Hylla answered everything needed.`. If you did, record each miss with:
 
@@ -173,35 +149,18 @@ Explicit "no miss" is still useful signal. Ergonomic-only gripes (awkward parame
 
 Every drop gets a final drop-orch-owned task named `DROP <N> END — LEDGER UPDATE`. `blocked_by` every other task in the drop. Runs once all siblings are `done`. Closed by drop-orch **before the drop branch merges to `main`**. Drop-orch owns ingest + level_2 findings-drop description finalization; STEWARD owns the MD writes post-merge.
 
-**Drop-orch steps (pre-merge, on the drop branch):**
+**The full 12-step drop-orch pre-merge checklist lives in `STEWARD_ORCH_PROMPT.md` §10.** Don't duplicate here; read that section when closing a drop.
 
-1. Move the task to `in_progress`.
-2. Confirm all sibling tasks in the drop are `done`. Confirm `git status --porcelain` clean.
-3. Confirm every commit from this drop has landed on the remote drop branch.
-4. Run `gh run watch --exit-status` on the latest CI run. Do NOT proceed unless CI is green.
-5. Call `hylla_ingest` on the remote ref `github.com/evanmschultz/tillsyn@main`. **ALWAYS full enrichment. NEVER `structural_only`. NEVER from a local working copy — always from remote, after push + CI green.**
-6. Poll `hylla_run_get` via `/loop 120` while ingest progresses. When the run reports "nearly done" (enrichment stage entered), kill the loop and `ScheduleWakeup` once for the estimated remaining time.
-7. When ingest completes, read `hylla_run_get` final result. Extract: ingest snapshot, cost (this run + lineage-to-date), node counts (total / code / tests / packages), orphan delta.
-8. **Finalize each of the five level_2 findings-drop descriptions** drop-orch created at drop spin-up — `DROP_N_HYLLA_FINDINGS`, `DROP_N_LEDGER_ENTRY`, `DROP_N_WIKI_CHANGELOG_ENTRY`, `DROP_N_REFINEMENTS_RAISED`, `DROP_N_HYLLA_REFINEMENTS_RAISED` — with drop-in-ready content STEWARD will splice into the MDs post-merge. The `DROP_N_LEDGER_ENTRY.description` must carry a fully-formatted `## Drop <N> — <Title>` block (closed date, action-item ID, ingest snapshot, cost, node counts, orphan delta, refactors, description, commit SHAs, notable IDs, unknowns forwarded).
-9. Post a `till.handoff` to `@STEWARD` with `next_action_type: post-merge-md-write` naming the five level_2 drops.
-10. Close `DROP <N> END — LEDGER UPDATE` with `metadata.outcome: "success"` and the five level_2 drop IDs in `completion_notes`.
-11. **Do NOT write any MD file.** STEWARD writes all per-drop MDs on `main` post-merge.
-12. Signal the dev the drop branch is ready to merge.
+**Hylla ingest invariants (repeat for emphasis — these are inviolable):**
 
-**Post-merge (STEWARD, on `main`):**
-
-STEWARD reads each level_2 findings-drop description, discusses with dev, writes the corresponding MD on `main`, commits docs-only with single-line conventional-commits, pushes, and closes the level_2 drops. STEWARD then works the `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` item inside drop N's tree — discussing next-drop refinements + STEWARD-self refinement with the dev, applying agreed changes, closing the gate. Closing the refinements-gate unblocks drop N's level_1 closure. Full sequence in `STEWARD_ORCH_PROMPT.md` §10.
-
-**Hylla ingest invariants (repeat for emphasis):**
-
-- Always `enrichment_mode=full_enrichment`.
-- Always source from the GitHub remote.
+- Always `enrichment_mode=full_enrichment`. Never `structural_only`.
+- Always source from the GitHub remote (`github.com/evanmschultz/tillsyn@main`). Never from a local working copy.
 - Never before `git push` + `gh run watch --exit-status` green.
 - Only the drop-orch calls `hylla_ingest`. Subagents never do. STEWARD never does.
 
 ## Git Management (Pre-Cascade)
 
-Until the cascade dispatcher takes over commits (`PLAN.md` Drop 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files a action item declares) is a precondition for creating a action item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
+Until the cascade dispatcher takes over commits (`PLAN.md` Drop 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files an action item declares) is a precondition for creating an action item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
 
 ## Orchestrator-as-Hub Architecture
 
@@ -209,7 +168,7 @@ The parent Claude Code session launched by the dev from this directory is always
 
 **CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only.
 
-**Markdown documentation edits route through `STEWARD`.** STEWARD (the persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) is the only orchestrator that edits MD files in this repo. Numbered-drop orchestrators (`DROP_N_ORCH`) never touch MDs — they file per-drop artifact content into level_2 findings-drop descriptions under STEWARD's persistent level_1 parents. STEWARD writes the MDs on `main` post-merge. See "Cascade Ledger + Hylla Feedback" and "Drop End — Ledger Update Task" above.
+**Markdown documentation edits route through `STEWARD`.** STEWARD (the persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) is the only orchestrator that edits MD files in this repo. Numbered-drop orchestrators (`DROP_N_ORCH`) never touch MDs — they file per-drop artifact content into level_2 findings-drop descriptions under STEWARD's persistent level_1 parents. STEWARD writes the MDs on `main` post-merge.
 
 ### How It Works
 
@@ -219,42 +178,13 @@ The parent Claude Code session launched by the dev from this directory is always
 4. Subagents do not poll or watch anything. Read task at spawn, execute, update, return.
 5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
 
-### Agent State Management — Critical
+### Agent State Management
 
-Every subagent manages its own Tillsyn action item state. The orchestrator can't move role-gated items (e.g. QA subtasks gated to `qa`).
+Every subagent manages its own Tillsyn action-item state. The orchestrator can't move role-gated items.
 
-**Split of concerns — spawn prompt vs. action-item description:**
+**Spawn prompt vs. action-item description split:** the spawn prompt carries ephemeral fields (task_id, auth credentials, working directory, move-state directive); the action-item description carries durable content (Hylla artifact ref, paths, packages, acceptance criteria, mage targets, cross-references). Rule: if a field changes every spawn, put it in the prompt; if it's stable across time and authors, put it in the description.
 
-- The **spawn prompt** (what the orchestrator passes to the `Agent` tool) carries only spawn-unique and ephemeral fields. It does NOT duplicate content already in the action-item description or project metadata.
-- The **action-item description** (what the agent reads via `till.auth_request(operation=claim)`) carries the durable task content: what to do, acceptance criteria, Hylla artifact ref, paths, packages, mage targets, cross-references.
-- Rule of thumb: if a field changes every spawn, put it in the prompt. If it's stable across time and authors, put it in the description.
-
-**Spawn prompt must include (ephemeral / spawn-unique):**
-
-- Tillsyn `task_id` of the action item the agent owns.
-- Auth credentials: `session_id`, `session_secret`, `auth_context_id`, `agent_instance_id`, `lease_token`.
-- Project working directory: absolute path to `main/` (`/Users/evanschultz/Documents/Code/hylla/tillsyn/main`). The agent `cd`s into this before any file or mage work.
-- Move-state directive:
-  - "Move your Tillsyn task to `in_progress` immediately when you start."
-  - "When done: update metadata, move to terminal state."
-  - "If you find issues that need fixing: leave `in_progress`, update metadata with findings, return to orchestrator."
-- Short pointer: "Everything else is in your task description — follow it."
-
-**Action-item description must include (durable / authored):**
-
-- Hylla artifact ref (`github.com/evanmschultz/tillsyn@main`). Also retrievable via Tillsyn project metadata (`metadata.hylla_artifact_ref`); planners copy it into each child description for convenience.
-- Paths (post-Drop-1, `paths []string`) or affected files (pre-Drop-1, in prose).
-- Packages (post-Drop-1, `packages []string`).
-- Acceptance criteria.
-- Mage targets for verification (discover via `mage -l`).
-- Cross-references to sibling tasks, blockers, or upstream action items.
-
-**Before spawning any subagent:**
-
-- Move the target item to `in_progress` if permission allows; otherwise the agent prompt's move-state directive instructs the subagent to do it itself.
-- Verify the action-item description carries everything the agent needs — do not patch missing description content by cramming it into the spawn prompt; fix the description instead so it's correct for future spawns.
-
-**QA subagents specifically:** gated to `qa` role. Request a `qa`-role auth session and pass those credentials. QA agent moves its subtask to `in_progress` at start and `done` on pass. On findings that need fixes: leave `in_progress`, report findings, orchestrator spawns builder, re-runs QA.
+Full contract — exact spawn-prompt fields, exact description fields, spawn-gate checks — lives in each agent file at `~/.claude/agents/*.md` under "Required Prompt Fields" and "Spawn Prompt vs Action-Item Description Split." Don't duplicate it here.
 
 ## Task Lifecycle (Current HEAD)
 
@@ -294,7 +224,7 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 
 ## Role Model
 
-- **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. May edit markdown docs (this file, plan docs, agent files).
+- **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. Only STEWARD edits markdown docs; drop-orchs don't.
 - **Builder** — subagent. The ONLY role that edits Go code. Reads task, implements, updates, dies.
 - **QA Proof / QA Falsification** — subagents. Ephemeral. Read task, review, update with verdict, die.
 - **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
@@ -343,39 +273,13 @@ Run both for every build-task. They are asymmetric — proof checks whether the 
 
 ## Semi-Formal Reasoning — Section 0 Response Shape
 
-Every substantive response (anything beyond a trivial one-line answer or factual lookup) begins with a `# Section 0 — SEMI-FORMAL REASONING` block, then the normal response body in the `tillsyn-flow` numbered format. The shape is the rollout's adaptation of the certificate from arxiv 2603.01896 ("Agentic Code Reasoning," Ugare & Chandra, Meta, 4 Mar 2026), with two additions — **Evidence** and **Unknowns** as first-class fields — and one extension: an explicit multi-role self-review loop the paper does not include. The extension targets the paper's §4.3 residual failure mode: *"elaborate but incomplete reasoning chains ... leading to a confident but wrong answer."* A single writer can converge confidently on a wrong answer; a dedicated adversarial pass is the hedge.
+Every substantive response begins with a `# Section 0 — SEMI-FORMAL REASONING` block before the normal response body. Orchestrator-facing responses use five passes (`Planner` / `Builder` / `QA Proof` / `QA Falsification` / `Convergence`); subagent-facing responses use four (`Proposal` / `QA Proof` / `QA Falsification` / `Convergence`). Each pass uses the 5-field certificate: **Premises** / **Evidence** / **Trace or cases** / **Conclusion** / **Unknowns**.
 
-### Section 0 Structure
+**Canonical spec: `SEMI-FORMAL-REASONING.md`** (this directory). Read that file for the full rules, the subagent pass-through directive, and the Tillsyn artifact boundary (Section 0 reasoning lives in the orchestrator-facing response ONLY — never in Tillsyn descriptions, metadata, completion_notes, or comments).
 
-`# Section 0 — SEMI-FORMAL REASONING` contains five named passes as `##` subsections, in order:
+Trivial-answer carve-out: one-line factual lookups and terse confirmations skip both Section 0 and the numbered body.
 
-- `## Planner` — frame the goal, gather evidence, enumerate open questions.
-- `## Builder` — construct the proposed answer, design, or edit.
-- `## QA Proof` — verify every claim is backed by evidence and the trace covers every case.
-- `## QA Falsification` — actively attack the proposal via counterexamples, hidden dependencies, contract mismatches, YAGNI pressure, memory-rule conflicts. Each attack either mitigates or is explicitly accepted.
-- `## Convergence` — declare: (a) QA Falsification produced no unmitigated counterexample, (b) QA Proof confirmed evidence completeness, (c) remaining Unknowns are explicit and routed. If any of (a)/(b)/(c) fail, loop back to the earliest pass that needs re-work before declaring Convergence.
-
-Each pass uses the 5-field certificate where applicable. Not every pass needs all five, but the bundle as a whole must cover all five before Convergence:
-
-- **Premises** — what must be true.
-- **Evidence** — grounded in Hylla / `git diff` / Context7 / `go doc` / gopls / MDN / CanIUse / cited papers. Not implicit background.
-- **Trace or cases** — concrete paths through the reasoning.
-- **Conclusion** — the claim.
-- **Unknowns** — what remains uncertain, routed as a Tillsyn comment / handoff / attention item or explicitly accepted.
-
-### Body After Section 0
-
-After `# Section 0` closes, the response body uses the `tillsyn-flow` output style unchanged (`## 1. Section`, `- 1.1`, `## TL;DR`, `TN`). **Section 0 precedes the numbered body; it does not replace it.** `tillsyn-flow` remains the canonical source for body format.
-
-### Trivial-Answer Carve-Out
-
-One-line factual lookups, terse confirmations, and simple yes/no answers skip BOTH Section 0 AND the numbered body.
-
-### Subagent Pass-Through
-
-Subagents do NOT inherit CLAUDE.md. When delegating substantive work, the spawn prompt MUST include the Section 0 directive verbatim — and MUST remind the subagent that Section 0 reasoning lives in the orchestrator-facing response ONLY. Do NOT write Proposal / Planner / Builder / QA / Convergence pass text into Tillsyn `description`, `metadata.*`, `completion_contract.completion_notes`, closing comments, or any other Tillsyn artifact. Tillsyn stores finalized artifacts, not process.
-
-Canonical spec lives in `~/.claude/CLAUDE.md` §"Semi-Formal Reasoning — Section 0 Response Shape." This file mirrors it so project readers and subagents see the same rules.
+Subagents do NOT inherit CLAUDE.md. When delegating substantive work, the spawn prompt MUST include the Section 0 directive verbatim (the exact wording is in `SEMI-FORMAL-REASONING.md` §Subagent Pass-Through).
 
 ## Evidence Sources
 
@@ -404,21 +308,7 @@ Go 1.26+ · Bubble Tea v2 · Bubbles v2 · Lip Gloss v2 · SQLite (`modernc.org/
 
 ## Dev MCP Server
 
-Every worktree needs a local dev MCP server pointing at its own built binary — test against the dev version, not the installed one. **Each worktree gets a unique MCP name so binaries from different worktrees can't collide.** MCP server names cannot contain `.`, so `drop/1.5` maps to `drop-1-5`.
-
-```bash
-# from each worktree:
-mage build
-claude mcp add --scope local <unique-name> -- /path/to/worktree/till serve-mcp
-```
-
-Active registrations:
-
-- **main (STEWARD)**: `tillsyn-dev` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/till serve-mcp`
-- **drop/1 (DROP_1_ORCH)**: `tillsyn-dev-drop-1` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1/till serve-mcp`
-- **drop/1.5 (DROP_1.5_ORCH)**: `tillsyn-dev-drop-1-5` → `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1.5/till serve-mcp`
-
-Each orchestrator references its own MCP name, not `tillsyn-dev`, unless it's the STEWARD session launched from `main/`. Confirm with `claude mcp list` — three `tillsyn-dev*` entries should be visible. After every `mage build` in a given worktree, that worktree's binary updates in place and MCP picks up changes on next invocation. When retiring a worktree, remove its MCP entry.
+Test against `tillsyn-dev` (or the worktree-specific MCP name for non-main worktrees). Each worktree gets a unique MCP entry pointing at its own built binary. Full setup instructions — `claude mcp add` command, per-worktree naming scheme, active registrations — live in `CONTRIBUTING.md` §"Dev MCP Server Setup."
 
 ## Build Verification
 
@@ -447,18 +337,6 @@ Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <p
 - **Context7**: before any code, after any test failure. If unavailable, record the fallback source.
 - **Markdown-first authoring** for Tillsyn `description`, `summary`, `body_markdown`, thread comments.
 - **Clarification**: when stuck, first ask goal-alignment questions, then specific implementation-detail questions.
-
-## Git Commit Format
-
-Conventional-commit: `type(scope): message`. All lowercase except proper nouns, acronyms (HTTP, TUI, WASM). Concise, describe what changed, not how.
-
-Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `style`, `perf`
-
-Examples:
-- `feat(ingest): add per-file progress reporting`
-- `fix(tui): correct viewport wrap on narrow terminals`
-
-No co-authored-by trailers. No period at end. No capitalized first word after the colon unless proper noun/acronym.
 
 ## Safety
 

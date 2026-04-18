@@ -82,3 +82,40 @@ Require these checks on `main`:
 ## Notes
 
 Local gates greatly reduce CI surprises, but they do not fully replace GitHub-hosted OS/environment validation.
+
+## Dev MCP Server Setup
+
+When hacking on Tillsyn itself, test against the worktree's own built binary — not the version installed on your system. Each worktree registers its own MCP server entry pointing at that worktree's `till` binary, so changes you make in one worktree don't leak into others.
+
+**Naming rule:** MCP server names cannot contain `.`, so `drop/1.5` maps to `drop-1-5`. Use a unique suffix per worktree so binaries from different worktrees can't collide. The canonical pattern is `tillsyn-dev` for the `main/` worktree and `tillsyn-dev-<branch-slug>` for every other worktree.
+
+**Setup (from each worktree):**
+
+```bash
+mage build
+claude mcp add --scope local <unique-name> -- /absolute/path/to/worktree/till serve-mcp
+```
+
+For example, from `main/`:
+
+```bash
+mage build
+claude mcp add --scope local tillsyn-dev -- /Users/evanschultz/Documents/Code/hylla/tillsyn/main/till serve-mcp
+```
+
+And from `drop/1/`:
+
+```bash
+mage build
+claude mcp add --scope local tillsyn-dev-drop-1 -- /Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1/till serve-mcp
+```
+
+**Active registrations in this repo's dev environment:**
+
+- `main` (STEWARD): `tillsyn-dev` → `<repo>/main/till serve-mcp`
+- `drop/1` (DROP_1_ORCH): `tillsyn-dev-drop-1` → `<repo>/drop/1/till serve-mcp`
+- `drop/1.5` (DROP_1.5_ORCH): `tillsyn-dev-drop-1-5` → `<repo>/drop/1.5/till serve-mcp`
+
+**After every `mage build`** in a given worktree, that worktree's binary updates in place and MCP picks up the change on the next invocation — no re-registration needed. Orchestrators reference their worktree's MCP name (not the generic `tillsyn-dev`) unless they're the STEWARD session launched from `main/`. Confirm with `claude mcp list`.
+
+**When retiring a worktree,** remove its MCP entry with `claude mcp remove <name>`.
