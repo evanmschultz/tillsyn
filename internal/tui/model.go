@@ -892,6 +892,11 @@ type Model struct {
 	resourcePickerItems        []resourcePickerEntry
 	resourcePickerFilter       textinput.Model
 
+	// pickerCore holds the shared file-picker state. Path-picker, file-picker,
+	// and future variants all route through this sub-struct so Model field
+	// additions stay bounded (synthesis §5.2 / Drop 1.5 P3-A acceptance criteria).
+	pickerCore filePickerCore
+
 	labelPickerBack            inputMode
 	labelPickerIndex           int
 	labelPickerItems           []labelPickerItem
@@ -1271,6 +1276,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		actionItemInfoDetails:                actionItemInfoDetails,
 		descriptionPreview:                   descriptionPreview,
 		resourcePickerFilter:                 resourcePickerFilter,
+		pickerCore:                           newFilePickerCore(),
 		duePickerDateInput:                   duePickerDateInput,
 		duePickerTimeInput:                   duePickerTimeInput,
 		labelPickerInput:                     labelPickerInput,
