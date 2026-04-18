@@ -229,7 +229,7 @@ Same shape — takes `ResolvedBy` at face value, issues the session, marks the r
 
 ### 4.4 Capability `ApproveAuthWithinBounds` Exists But Is Orphan
 
-`internal/domain/capability.go:19` defines `CapabilityActionApproveAuthWithinBounds`; `DefaultCapabilityActions` at lines 221–280 grants it to `CapabilityRoleOrchestrator` by default. No caller of `CanPerform(ApproveAuthWithinBounds)` exists in the approval path — I grepped `CanPerform` against the approval codepaths and found it used only for mutation guard on plan-item, handoff, comment, etc. The capability is declared but unused on the approve seam.
+`internal/domain/capability.go:19` defines `CapabilityActionApproveAuthWithinBounds`; `DefaultCapabilityActions` at lines 221–280 grants it to `CapabilityRoleOrchestrator` by default. No caller of `CanPerform(ApproveAuthWithinBounds)` exists in the approval path — I grepped `CanPerform` against the approval codepaths and found it used only for mutation guard on action-item, handoff, comment, etc. The capability is declared but unused on the approve seam.
 
 ### 4.5 Related But Not The Same: `acting_session_id` Delegation On CREATE
 

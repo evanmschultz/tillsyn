@@ -2,7 +2,7 @@
 
 Running log of Hylla ergonomics, tool-shape, search-quality, and definition-quality feedback from subagents and the orchestrator.
 
-At drop-end, the orchestrator aggregates feedback from every subagent closing comment produced during the drop (search each plan-item's comments for a `## Hylla Feedback` section) into a new `## Drop <N>` heading below.
+At drop-end, the orchestrator aggregates feedback from every subagent closing comment produced during the drop (search each action-item's comments for a `## Hylla Feedback` section) into a new `## Drop <N>` heading below.
 
 ## What Goes In
 

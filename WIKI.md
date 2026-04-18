@@ -23,7 +23,7 @@ Tillsyn has exactly **two node types** you should use today:
 1. **Project** — the root container. One per repo / product / coordination scope. Never nested inside another project.
 2. **Drop** — every node below the project. Drops nest **infinitely**.
 
-A "drop" is the Tillsyn-native word for a unit of work. In current runtime terms it is a plan item with `kind='task'` (the pre-Drop-2 creation rule — see `CLAUDE.md` § "Pre-Drop-2 Creation Rule"). Drop 2 of the cascade collapses every non-project kind to literal `kind='drop'`; for now, write `kind='task', scope='task'` and **refer to the node as a drop in prose**.
+A "drop" is the Tillsyn-native word for a unit of work. In current runtime terms it is a action item with `kind='task'` (the pre-Drop-2 creation rule — see `CLAUDE.md` § "Pre-Drop-2 Creation Rule"). Drop 2 of the cascade collapses every non-project kind to literal `kind='drop'`; for now, write `kind='task', scope='task'` and **refer to the node as a drop in prose**.
 
 ### Do Not Use Other Kinds Today
 

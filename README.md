@@ -113,7 +113,7 @@ Current MCP/runtime direction:
   - bootstrap guidance: `till.get_bootstrap_guide`
   - auth requests: `till.auth_request`
   - projects and project-root reads/admin: `till.project`
-  - tasks/work graph: `till.plan_item`
+  - tasks/work graph: `till.action_item`
   - capture/attention: `till.capture_state`, `till.attention_item`
   - kinds/catalog admin: `till.kind`
   - template libraries/contracts: `till.template`
@@ -129,7 +129,7 @@ Current MCP/runtime direction:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
     - `till.capability_lease(operation=revoke_all)` fails closed on invalid/unknown scope tuples;
     - `till.comment(operation=create)` fails closed when the target does not exist in the referenced project;
-    - `till.plan_item(operation=update)` title-only updates preserve existing priority when `priority` is omitted.
+    - `till.action_item(operation=update)` title-only updates preserve existing priority when `priority` is omitted.
 
 Current auth note:
 - Normal TUI users should not need to manually issue themselves auth sessions for routine TUI use.
@@ -148,7 +148,7 @@ Current auth note:
 - MCP requesters can now also withdraw their own pending requests through `till.auth_request(operation=cancel)` using that same requester-owned continuation proof (`request_id`, `resume_token`, `principal_id`, and `client_id`), and cancel ownership stays separate from child self-claim.
 - On raw stdio MCP, callers should prefer auth-context handles over repeating secrets:
   - `till.auth_request(operation=claim|validate_session)` returns `auth_context_id`,
-  - mutation-family tools such as `till.project`, `till.plan_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`, and `till.capability_lease` accept `session_id` plus `auth_context_id`,
+  - mutation-family tools such as `till.project`, `till.action_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`, and `till.capability_lease` accept `session_id` plus `auth_context_id`,
   - acting-session flows on `till.auth_request` accept `acting_session_id` plus `acting_auth_context_id`,
   - inline `session_secret` and `acting_session_secret` remain compatibility fallbacks,
   - and the local auth-context handle path is currently a stdio-runtime feature, not the preferred HTTP serve flow yet.
@@ -166,7 +166,7 @@ Current auth note:
   - use `till.auth_request(operation=validate_session)` when you already possess the target session secret and need to inspect the resolved session identity/details.
 - Expected scoped-auth workflow:
   - use global approved agent sessions for template-library admin and `till.project(operation=create)`;
-  - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.plan_item(operation=create)`;
+  - once the project exists, use a project-scoped approved agent session for guarded in-project mutations such as `till.action_item(operation=create)`;
   - a user session plus `agent_instance_id`/`lease_token` is invalid for guarded mutations; either remove the guard tuple to act as a human or claim/validate a project-scoped approved agent session before retrying;
   - issuing or renewing a capability lease does not convert a user session into an agent session;
   - on raw stdio MCP, first claim or validate the acting session to get `auth_context_id`, then prefer `session_id` + `auth_context_id` for subsequent mutation calls;
@@ -189,17 +189,17 @@ Current auth note:
   - `till.auth_request` now owns auth-request create, list, get, claim, and cancel plus auth-session list, validate, governance-check, and revoke;
   - `till.project` now owns project-root mutations such as create, update, template bind, and allowed-kinds updates;
   - `till.project` also owns project-root reads such as list, template binding lookup, allowed-kinds lookup, change events, and dependency rollups;
-  - `till.plan_item` now owns plan-item reads and mutations such as get, list, search, create, update, move, move_state, delete, restore, and reparent;
+  - `till.action_item` now owns action-item reads and mutations such as get, list, search, create, update, move, move_state, delete, restore, and reparent;
   - `till.kind` now owns kind catalog list/upsert, `till.template` now owns template-library list/get/upsert plus node-contract lookup, `till.embeddings` now owns status/reindex, and `till.comment` now owns comment create/list;
   - only selected older flat project/template/kind aliases remain behind explicit legacy config for compatibility testing.
-- Policy direction for the unified `plan_item` surface:
+- Policy direction for the unified `action_item` surface:
   - the responsible actor kind should be able to move its own work through ordinary active states such as `todo -> progress -> done` when the stored node contract allows it;
   - humans remain allowed to perform those transitions;
-  - `till.plan_item(operation=move_state)` is the preferred contract-aware state-transition shape for policy-gated forward and backward workflow movement;
+  - `till.action_item(operation=move_state)` is the preferred contract-aware state-transition shape for policy-gated forward and backward workflow movement;
   - builders should not gain unrestricted power over terminal cleanup just because they can progress their own work, and QA/orchestrator/human transitions should still be gated by stored policy and scope;
   - destructive or terminal cleanup actions such as delete, hard cleanup, and final archive remain more restricted and should not default to agent autonomy.
 - Comment-family direction:
-  - comments should not be folded into `till.plan_item`; they are a separate coordination/threading type.
+  - comments should not be folded into `till.action_item`; they are a separate coordination/threading type.
   - the default comment-family shape is `till.comment(operation=create|list)`.
   - comments should stay append-only by default in the first family pass; agent comment editing is intentionally deferred so the coordination log remains trustworthy.
   - comments should be allowed anywhere inside the caller's approved scope subtree, which means parallel/sibling commenting is fine when the approved scope already covers both nodes.
@@ -479,7 +479,7 @@ This section exists because the most common framing mistake — describing Tills
 - **Not** "the system of record for planning." Planning is one of many things Tillsyn coordinates; that framing is technically true the way "an airplane is a metal tube" is technically true, and just as useless.
 - **Not** a passive append-only log of what happened. The runtime actively routes work and enforces gates.
 - **Not** interchangeable with a markdown worklog. Worklogs are unstructured notes for a single author. Tillsyn carries typed state, role ownership, blocking relationships, template-generated subtasks, and addressable inboxes that worklogs cannot represent.
-- **Not** a wrapper around `till.get_instructions`. Instructions return *policy context*. They are not a substitute for direct runtime state via `till.attention_item`, `till.handoff`, `till.comment`, `till.plan_item`, `till.kind`, etc.
+- **Not** a wrapper around `till.get_instructions`. Instructions return *policy context*. They are not a substitute for direct runtime state via `till.attention_item`, `till.handoff`, `till.comment`, `till.action_item`, `till.kind`, etc.
 
 **What Tillsyn is** — a multi-actor coordination runtime with:
 

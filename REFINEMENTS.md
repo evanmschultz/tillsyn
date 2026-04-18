@@ -98,14 +98,14 @@ No TUI / CLI / MCP surface today understands dotted addresses. Examples of the i
 
 - **TUI**: dev types `0.1.5.2` or `8.9.3` into a go-to / search field and is focused on that drop.
 - **CLI**: `till view tillsyn-8.9.3`, `till comment tillsyn-8.9.3 "looks good"`, `till state tillsyn-8.9.3 done` — all resolve the dotted path to the current UUID and operate on it.
-- **MCP**: orchestrator can pass dotted addresses to tool calls for **reads** (`till.plan_item(operation=get, address="0.1.5.2")`). Mutations should still require UUID — dotted addresses shift under re-parenting.
+- **MCP**: orchestrator can pass dotted addresses to tool calls for **reads** (`till.action_item(operation=get, address="0.1.5.2")`). Mutations should still require UUID — dotted addresses shift under re-parenting.
 
 Project-name prefix (`tillsyn-`) is unnecessary inside a scope-bound surface (TUI already knows the project; MCP session is project-scoped). Required for cross-project references.
 
 ### Proposed fix
 1. Add a dotted-address resolver in `internal/domain` (or `internal/app`) that walks the drop tree by position to find the UUID.
 2. Wire the resolver into TUI go-to input, CLI positional args, and MCP read operations.
-3. Document the mutations-are-UUID-only rule so no agent accidentally relies on a dotted address for a `till.plan_item(operation=update)` call.
+3. Document the mutations-are-UUID-only rule so no agent accidentally relies on a dotted address for a `till.action_item(operation=update)` call.
 
 ### Target drop
 Post-Drop-3 template overhaul or a dedicated addressing drop. Not Drop 1.
@@ -115,20 +115,20 @@ Post-Drop-3 template overhaul or a dedicated addressing drop. Not Drop 1.
 
 ---
 
-## 2026-04-14 — Drop 0 — Batch operations on plan-item nodes
+## 2026-04-14 — Drop 0 — Batch operations on action-item nodes
 
 ### Context
-Orchestrator + cascade agents frequently perform many small plan-item mutations in sequence (create N drops, update M descriptions, move K items to `in_progress`). Every call is a separate MCP round-trip.
+Orchestrator + cascade agents frequently perform many small action-item mutations in sequence (create N drops, update M descriptions, move K items to `in_progress`). Every call is a separate MCP round-trip.
 
 ### Observation
 Post-Drop-4 the cascade dispatcher will be doing hundreds of these per cascade run. One-at-a-time MCP round-trips will become a real latency and rate-limit problem. Pre-cascade, the orchestrator already feels the friction (e.g. creating refinement drops, creating build-task + qa-proof + qa-falsification trios).
 
 ### Proposed fix
-Batch operations on `till.plan_item`:
+Batch operations on `till.action_item`:
 
-- `till.plan_item(operation=create_batch, items=[...])` — create N items in one call.
-- `till.plan_item(operation=update_batch, updates=[...])` — apply N updates in one call.
-- `till.plan_item(operation=move_state_batch, moves=[...])` — bulk lifecycle transitions.
+- `till.action_item(operation=create_batch, items=[...])` — create N items in one call.
+- `till.action_item(operation=update_batch, updates=[...])` — apply N updates in one call.
+- `till.action_item(operation=move_state_batch, moves=[...])` — bulk lifecycle transitions.
 - Configurable limit per call (e.g. 25 items) to bound request size.
 
 Atomicity policy (all-or-nothing vs best-effort with per-item error rows) is a design question — lean toward best-effort with a results array so partial success is observable.

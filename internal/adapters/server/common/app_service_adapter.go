@@ -511,7 +511,7 @@ func buildResumeHintsFromFollowUps(in app.CaptureStateFollowUpPointers) []Resume
 	}
 	if pointer := strings.TrimSpace(in.ListChildTasks); pointer != "" {
 		hints = append(hints, ResumeHint{
-			Rel:  "till.plan_item",
+			Rel:  "till.action_item",
 			Note: pointer,
 		})
 	}

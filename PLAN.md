@@ -50,7 +50,7 @@ The dispatched one-shot unit is called an **agent**. The term is already used th
 The execution pattern is a **cascade**: **design down, build up.** Planning decomposes downward through levels; completion propagates upward. State changes trigger the next step.
 
 - **Cascade run** — a single top-to-bottom-to-top execution, starting from a drop moving to `in_progress`
-- **Cascade tree** — the tree of plan items produced by a cascade run
+- **Cascade tree** — the tree of action items produced by a cascade run
 
 ### 1.3. Glossary
 
@@ -59,7 +59,7 @@ The execution pattern is a **cascade**: **design down, build up.** Planning deco
 | **agent** | A one-shot autonomous unit dispatched by Tillsyn. Receives auth + task context, does work via MCP, moves its task to `complete`/`failed`, dies. Typed by role: planner, builder, QA, commit. |
 | **cascade** | The hierarchical execution pattern: planning decomposes downward ("design down"), completion propagates upward ("build up"). State changes trigger the next step. |
 | **cascade run** | A single execution of a cascade, from drop `in_progress` through completion or failure. |
-| **cascade tree** | The tree of plan items produced by a cascade run. |
+| **cascade tree** | The tree of action items produced by a cascade run. |
 | **dispatcher** | The Tillsyn subsystem that watches for state changes and spawns agent processes. Not an agent — purely programmatic (except commit message formation, which uses a lightweight haiku agent). |
 | **gate** | A deterministic verification step (e.g., `mage ci`) that runs programmatically after an agent completes. No LLM involved. |
 | **drop** *(rename from phase)* | A nestable grouping of work. Contains a plan-task (with plan-qa children), and either sub-drops or build-tasks. See §1.4 for typed-drop kinds and §2.2 for the tree shape. |
@@ -82,7 +82,7 @@ Converged during drop 0 closeout discussions. Pre-cascade these are conceptual; 
 - Sub-drop `M` of drop `N` is `N.M` (e.g. `0.1` is drop 0's second sub-drop).
 - `0.1.5.2` = project's drop_0 → its sub-drop_1 → that sub-drop's sub-drop_5 → that sub-drop's sub-drop_2.
 - Project-qualified form: `<proj_name>-<dotted>` (e.g. `tillsyn-0.1.5.2`) for unambiguous cross-project references.
-- **Dotted addresses are read-only.** For mutations, always use the UUID plan-item id. Dotted addresses are unstable under re-parenting and should never be load-bearing in scripts.
+- **Dotted addresses are read-only.** For mutations, always use the UUID action-item id. Dotted addresses are unstable under re-parenting and should never be load-bearing in scripts.
 
 **Type-drop kinds (post-drop-3 template vocabulary):**
 
@@ -160,7 +160,7 @@ project
 - **Human-verify-drops** (START CONFIRMATION, REFINEMENT REVIEW, END REVIEW DONE) do **not** carry plan-task / plan-qa children — they are dev-gated hold points whose internal structure is attention item(s) + checklist task(s) (see §1.4). No planner fires for them.
 - A planner can create a task directly (small enough, no further decomposition needed) — it just creates the task with its QA children.
 
-**Why bracketing, not just a wrap-up note.** The prior "per-drop wrap-up" was documentation-level — nothing structurally prevented a drop from completing without dev sign-off. The START/END bracketing makes dev sign-off a real `blocked_by` edge the dispatcher enforces. It is the primary hook for the Discussion Mode rule in `CLAUDE.md` ("cross-cutting decisions happen in chat, converged shape lands on the plan item") — the START subdrop is where those chats are scheduled, the END subdrop is where they're validated.
+**Why bracketing, not just a wrap-up note.** The prior "per-drop wrap-up" was documentation-level — nothing structurally prevented a drop from completing without dev sign-off. The START/END bracketing makes dev sign-off a real `blocked_by` edge the dispatcher enforces. It is the primary hook for the Discussion Mode rule in `CLAUDE.md` ("cross-cutting decisions happen in chat, converged shape lands on the action item") — the START subdrop is where those chats are scheduled, the END subdrop is where they're validated.
 
 ### 2.3. Remove `branch`
 
@@ -238,7 +238,7 @@ drop: "Add failed lifecycle state" ← human/orchestrator moves to in_progress
 │   │        sets blocked_by between sequential drops,
 │   │        sets file paths on each task for file-level gating
 │   │  Output: creates SUB-drop-1, SUB-drop-2 as children of drop
-│   │          via till.plan_item(operation=create)
+│   │          via till.action_item(operation=create)
 │   │  Terminal: moves own task to complete via MCP → auth revoked → killed
 │   │
 │   ├── PLAN-QA-PROOF ← blocked_by: PLAN-TASK → fires when plan completes
@@ -284,7 +284,7 @@ drop: "Add failed lifecycle state" ← human/orchestrator moves to in_progress
 │   │
 │   ├── BUILD-TASK-1 ← no blocked_by → auto in_progress
 │   │   │  Agent: go-builder-agent (sonnet, standard effort)
-│   │   │  File gating: can only edit files listed in plan item paths
+│   │   │  File gating: can only edit files listed in action item paths
 │   │   │  Pre-check: system confirms assigned files have clean git status
 │   │   │  Work: implements code, runs mage test-func on affected funcs
 │   │   │  max-tries=2 (builder can retry once on test failure)
@@ -342,7 +342,7 @@ drop: "Add failed lifecycle state" ← human/orchestrator moves to in_progress
 - Planning QA verifies the decomposition before execution proceeds
 - Planner must explicitly set file paths and `blocked_by` for file-level conflicts
 - Plan QA falsification specifically checks for missing file-level blockers
-- The planner creates child plan items via `till.plan_item(operation=create)`
+- The planner creates child action items via `till.action_item(operation=create)`
 - Template `child_rules` auto-create QA children for each created item
 
 **Build up (completion):**
@@ -377,7 +377,7 @@ The planner sets `blocked_by` at creation time for planned ordering. Runtime dis
 The dispatcher is a **programmatic subsystem inside Tillsyn**, not a separate process or CLI command. It watches for lifecycle state transitions and spawns agent processes.
 
 ```
-State change detected: plan_item moved to in_progress
+State change detected: action_item moved to in_progress
   │
   ├── Does the item's kind have an agent binding in the template?
   │   NO → nothing happens (manual work, or deterministic gate)
@@ -405,7 +405,7 @@ State change detected: plan_item moved to in_progress
   │     --output-format stream-json \
   │     --mcp-config <agent_mcp_config>
   │
-  ├── Monitor: subscribe to LiveWaitBroker for this plan item's state changes
+  ├── Monitor: subscribe to LiveWaitBroker for this action item's state changes
   │
   └── On state change to complete|failed:
       ├── Auth auto-revoked (state-machine hook in MoveTask)
@@ -419,15 +419,15 @@ State change detected: plan_item moved to in_progress
 
 There is no `till run` CLI command. The dispatch is triggered by state changes. The state change can come from:
 
-- **TUI** — human moves a plan item to `in_progress`
-- **MCP** — orchestrator calls `till.plan_item(operation=move_state, state=in_progress)`
+- **TUI** — human moves a action item to `in_progress`
+- **MCP** — orchestrator calls `till.action_item(operation=move_state, state=in_progress)`
 - **Dispatcher itself** — when a blocker clears, the dispatcher auto-moves eligible items to `in_progress`
 
 The dispatcher is always running as part of the Tillsyn process (serve, serve-mcp, or TUI). It subscribes to `LiveWaitBroker` state-change events.
 
 ### 4.3. Auto-Promotion of Eligible Items
 
-When any plan item moves to `complete`:
+When any action item moves to `complete`:
 1. Dispatcher checks all items that have `blocked_by` pointing to the completed item
 2. For each: if ALL blockers are now `complete`, auto-move to `in_progress`
 3. The `in_progress` transition triggers dispatch (4.1)
@@ -452,14 +452,14 @@ Dispatcher spawns claude CLI process
   ├── Agent boots, claims auth via till.auth_request(operation=claim)
   │   (auth was pre-created by dispatcher, no human approval needed)
   │
-  ├── Agent reads task details via plan_item(get) — its working brief
+  ├── Agent reads task details via action_item(get) — its working brief
   │
   ├── Agent does work:
-  │   ├── Planner: creates child plan items via MCP
+  │   ├── Planner: creates child action items via MCP
   │   ├── Builder: edits files (gated to allowed paths), runs mage test-func
   │   └── QA: reads code, verifies, writes certificate
   │
-  ├── Agent calls till.plan_item(operation=move_state, state=complete|failed)
+  ├── Agent calls till.action_item(operation=move_state, state=complete|failed)
   │   ├── Includes metadata.outcome, completion notes, comments
   │   └── This is the terminal MCP call
   │
@@ -524,7 +524,7 @@ git status --porcelain -- <file1> <file2> ...
 
 If any assigned files have uncommitted changes (dirty git status):
 - **Block dispatch** — do not start the builder
-- Post a comment on the plan item listing the dirty files
+- Post a comment on the action item listing the dirty files
 - Fire an attention item to the orchestrator
 - The orchestrator or human must resolve the dirty state before the builder can proceed
 
@@ -653,7 +653,7 @@ The cascade uses these agent types:
 
 | Agent Type | Agent File | Role | Edits Code? |
 |---|---|---|---|
-| **Planner** | `go-planning-agent.md` | Decomposes work into plan items | No |
+| **Planner** | `go-planning-agent.md` | Decomposes work into action items | No |
 | **Plan QA Proof** | `go-qa-proof-agent.md` | Verifies plan completeness/consistency | No |
 | **Plan QA Falsification** | `go-qa-falsification-agent.md` | Attacks plan for vagueness/errors | No |
 | **Builder** | `go-builder-agent.md` | Implements code changes | **Yes** |
@@ -672,7 +672,7 @@ The cascade uses these agent types:
 | **Builder** | sonnet | standard | Code generation is well-bounded by the plan. The plan already did the thinking. |
 | **Build QA Proof** | sonnet | medium | Evidence verification is structured. Semi-formal certificate guides the work. |
 | **Build QA Falsification** | sonnet | medium | Counterexample search is structured. Certificate + `paths`/`packages` scope the search. |
-| **Commit Agent** | haiku | low | Reads `git diff`, plan item title, and template commit format rules. Forms a conventional-commit message. Extremely narrow scope. |
+| **Commit Agent** | haiku | low | Reads `git diff`, action item title, and template commit format rules. Forms a conventional-commit message. Extremely narrow scope. |
 | **Wiki** | haiku | low | Summarization task. Absorb child wikis, produce summary. |
 | **Quality/Vuln** | sonnet | high | Deep graph analysis. Needs careful reasoning about resource lifecycles. |
 
@@ -698,11 +698,11 @@ Agent auth is **pre-approved by the system**. No human approval step because:
 
 1. The human already approved the cascade by moving the parent to `in_progress`
 2. The template defines which agents fire — the human approved the template
-3. Each agent gets auth scoped to its specific plan item (or parent drop for planners)
+3. Each agent gets auth scoped to its specific action item (or parent drop for planners)
 
 ```
-Dispatcher detects: plan_item moved to in_progress
-  ├── Creates auth session: role=<from_template>, scope=<from_template>, item=<plan_item_id>
+Dispatcher detects: action_item moved to in_progress
+  ├── Creates auth session: role=<from_template>, scope=<from_template>, item=<action_item_id>
   │   TTL: from template (default 30 min)
   │   No human approval — system-issued
   ├── Passes auth credentials in agent prompt
@@ -718,7 +718,7 @@ Auth is revoked when:
 
 ### 8.3. Agent Terminal Action
 
-When an agent calls `till.plan_item(operation=move_state, state=complete|failed)`:
+When an agent calls `till.action_item(operation=move_state, state=complete|failed)`:
 
 1. MoveTask validates the transition
 2. Auth is auto-revoked
@@ -759,7 +759,7 @@ Build agent moves task to complete
   ├── GATE 3: commit + push + CI green (deterministic + commit agent)
   │   ├── git add <affected files>
   │   ├── Spawn commit agent (haiku):
-  │   │     reads git diff, plan item title, commit style rules embedded
+  │   │     reads git diff, action item title, commit style rules embedded
   │   │     in the agent's prompt (hardcoded in the agent file's details),
   │   │     outputs a single conventional-commit message
   │   ├── System validates structure and length only (non-empty, within
@@ -784,7 +784,7 @@ Build agent moves task to complete
 The commit agent is a special lightweight agent:
 
 - **Model:** haiku (cheapest, fastest)
-- **Scope:** Reads `git diff --cached`, the plan item's title and description, and outputs a single commit message string.
+- **Scope:** Reads `git diff --cached`, the action item's title and description, and outputs a single commit message string.
 - **Commit style rules are hardcoded in the agent file's prompt details**, not templated per-project. The agent knows the conventional-commit format, length caps, and repo conventions because its system prompt says so.
 - **No file edits.** No MCP mutations. No state changes. Pure text generation.
 - **System validates structure and length only** — non-empty, within a hard length cap. There is **no regex style validator** and **no deterministic fallback**. If the message fails structure/length, the system re-spawns the commit agent with the rejection reason.
@@ -807,7 +807,7 @@ When `auto_push = false`, the dispatcher commits locally but defers push. The **
 
 ### 9.5. Gate Output
 
-Gate stdout/stderr is captured and posted as a `till.comment` on the plan item. On failure:
+Gate stdout/stderr is captured and posted as a `till.comment` on the action item. On failure:
 - Task moves to `failed` (dispatcher uses override auth for `complete → failed` transition)
 - `metadata.outcome: "failure"`
 - `metadata.gate_name: "<which gate failed>"`
@@ -861,7 +861,7 @@ The template carries Hylla settings (artifact ref, enrichment mode) so the drop-
 
 Agents confabulate, skip cases, claim tests pass without running them. Unstructured agents are wrong 20-22% of the time on code verification tasks (semi-formal reasoning paper, arXiv 2603.01896).
 
-In current Tillsyn usage: agents forget to move plan items, claim work is complete but don't update state, orchestrators skip QA, and completion claims are unverifiable.
+In current Tillsyn usage: agents forget to move action items, claim work is complete but don't update state, orchestrators skip QA, and completion claims are unverifiable.
 
 ### 10.2. How the Cascade Solves It
 
@@ -966,7 +966,7 @@ STATUS: CONFIRMED | REFUTED | REFINED
 REVISION: [if REFINED, what changed and why]
 ```
 
-Track this in the plan item's comments so the orchestrator can see the reasoning chain. Each hypothesis gets its own comment entry with the status update.
+Track this in the action item's comments so the orchestrator can see the reasoning chain. Each hypothesis gets its own comment entry with the status update.
 
 ### 11.4. Pre-Build Preparation — Update Existing Agents and CLAUDE.md
 
@@ -1193,7 +1193,7 @@ Not on failure — the orchestrator gets failure info directly via attention ite
 ### 15.2. What the Wiki Contains
 
 - Affected code blocks (from `paths` / `packages`)
-- Plan item IDs and their current states
+- Action item IDs and their current states
 - Code still to be affected (open items)
 - Summary of changes made (from completed items' comments)
 
@@ -1209,15 +1209,15 @@ The further up the tree, the more summarized. This gives the orchestrator a quic
 ### 15.4. Storage
 
 **Open question:** Where do wikis live?
-- Option A: As comments on the plan item (simple, uses existing infrastructure)
-- Option B: As a dedicated `wiki` field in plan item metadata (queryable, structured)
+- Option A: As comments on the action item (simple, uses existing infrastructure)
+- Option B: As a dedicated `wiki` field in action item metadata (queryable, structured)
 - Option C: As a separate wiki table in the DB (most flexible, most work)
 
 **Leaning toward:** Option A (comments) for initial drop, Option B (metadata) for later. Comments are append-only and human-readable. Metadata is structured and queryable.
 
 ### 15.5. Orchestrator Memory Compaction
 
-When the orchestrator compacts memory, it should absorb the wiki summaries. The wiki provides a structured, pre-summarized view that's cheaper to load than re-reading all plan items and comments.
+When the orchestrator compacts memory, it should absorb the wiki summaries. The wiki provides a structured, pre-summarized view that's cheaper to load than re-reading all action items and comments.
 
 **Open question:** How does wiki content integrate with orchestrator memory management? This needs design work.
 
@@ -1256,7 +1256,7 @@ When the orchestrator compacts memory, it should absorb the wiki summaries. The 
 
 When STEWARD works the refinements-gate post-merge, the conversation covers **two prompts**:
 
-1. **Next-drop refinements** — which of drop N's refinements-raised entries (captured in `DROP_N_REFINEMENTS_RAISED` + `DROP_N_HYLLA_REFINEMENTS_RAISED`) should be applied to drop N+1's plan items before N+1 starts? Apply agreed refinements directly to the level_2 items under drop N+1 (creating N+1's parent if the dev is ready to spin it up).
+1. **Next-drop refinements** — which of drop N's refinements-raised entries (captured in `DROP_N_REFINEMENTS_RAISED` + `DROP_N_HYLLA_REFINEMENTS_RAISED`) should be applied to drop N+1's action items before N+1 starts? Apply agreed refinements directly to the level_2 items under drop N+1 (creating N+1's parent if the dev is ready to spin it up).
 2. **STEWARD-self refinement** — does STEWARD's scope, prompt, persistent-drop set, or per-drop flow need refinement from drop N's lessons? Dev quote (2026-04-16): *"every drop the amount will be a refinement thing, lol."* Expect non-zero STEWARD-self refinement every drop. Common outcomes: add/rename a persistent drop; adjust drop-close sequence; update memory; edit `STEWARD_ORCH_PROMPT.md`.
 
 Closing the refinements-gate unblocks the numbered drop's level_1 closure. STEWARD summarizes the gate's decisions in `completion_notes`.
@@ -1307,7 +1307,7 @@ More replicas = higher chance of catching issues = higher cost. Template-configu
 Quality/vuln checks can also run independently, not as part of a build cascade:
 
 ```
-Human creates a quality-check plan item → fires quality agents
+Human creates a quality-check action item → fires quality agents
   → Agents scan specified code using Hylla graph nav
   → Report findings as comments
 ```
@@ -1316,7 +1316,7 @@ Useful for periodic codebase health scans.
 
 ### 16.5. Language-Specific
 
-Currently Go-only. Each language will need its own quality agent with language-specific checks. Add a plan item to support more languages when Hylla supports them.
+Currently Go-only. Each language will need its own quality agent with language-specific checks. Add a action item to support more languages when Hylla supports them.
 
 ---
 
@@ -1332,10 +1332,10 @@ Currently Go-only. Each language will need its own quality agent with language-s
 | **Human supersede CLI** | `till task supersede <id> --reason "..."` — human-only command that marks a `failed` task as `superseded` in `metadata.outcome` and transitions `failed → complete`. Bypasses the terminal-state guard because the CLI asserts human intent at the binary boundary. | Currently the human has no way to resolve stuck `failed` items. Before any cascade runs, the human needs to be able to unstick things. |
 | **Auth auto-revoke on terminal state** | Auth session ends when task moves to `complete` or `failed` | Dead agent auth sessions must clean up. "One auth per scope" constraint. |
 | **Task details as prompt** | Agent reads task detail fields as its working brief | Simplifies agent prompts — the task IS the prompt. |
-| **Plan-item `paths` as first-class field** | `paths []string` on the plan item, planner-set, readable by builder + QA. Domain-level, not buried in metadata JSON. | Plan-QA falsification needs to query siblings' paths to detect cross-task file conflicts (Section 5.3). Without a first-class field, QA has no data to check. Replaces the removed D10 "affected_artifacts". |
-| **Plan-item `files` as first-class field (read-only reference)** | `files []string` on the plan item, planner-set via TUI file-picker, distinct from `paths` (which is edit-scope). Holds reference files the builder should read but not edit. | The drop 4.5 file-viewer (§24) and mention-routing (§23) both read `files` to render attached material. Without a first-class field, reference attachments leak into metadata JSON and can't be rendered in the TUI. Validation enforces files exist in the repo at creation time. |
-| **Plan-item `start_commit` / `end_commit`** | Two fields on the plan item. `start_commit` set at creation (current HEAD). `end_commit` set at move-to-complete (current HEAD). Domain-level. | Needed before the dispatcher takes over commits. Pre-dogfood: orchestrator + dev manage git manually, these fields just record the boundary. Post-dogfood: dispatcher reads these to decide reingest/commit scope. |
-| **Creation gated on clean git for declared paths** | At plan-item creation, if any path in `paths` is dirty in `git status --porcelain`, creation fails with an error telling the orchestrator to clean up git first. | Without this gate, a cascade agent (or orchestrator) inherits uncommitted state and silently mixes it into its work. Always-on behavior. |
+| **Action-item `paths` as first-class field** | `paths []string` on the action item, planner-set, readable by builder + QA. Domain-level, not buried in metadata JSON. | Plan-QA falsification needs to query siblings' paths to detect cross-task file conflicts (Section 5.3). Without a first-class field, QA has no data to check. Replaces the removed D10 "affected_artifacts". |
+| **Action-item `files` as first-class field (read-only reference)** | `files []string` on the action item, planner-set via TUI file-picker, distinct from `paths` (which is edit-scope). Holds reference files the builder should read but not edit. | The drop 4.5 file-viewer (§24) and mention-routing (§23) both read `files` to render attached material. Without a first-class field, reference attachments leak into metadata JSON and can't be rendered in the TUI. Validation enforces files exist in the repo at creation time. |
+| **Action-item `start_commit` / `end_commit`** | Two fields on the action item. `start_commit` set at creation (current HEAD). `end_commit` set at move-to-complete (current HEAD). Domain-level. | Needed before the dispatcher takes over commits. Pre-dogfood: orchestrator + dev manage git manually, these fields just record the boundary. Post-dogfood: dispatcher reads these to decide reingest/commit scope. |
+| **Creation gated on clean git for declared paths** | At action-item creation, if any path in `paths` is dirty in `git status --porcelain`, creation fails with an error telling the orchestrator to clean up git first. | Without this gate, a cascade agent (or orchestrator) inherits uncommitted state and silently mixes it into its work. Always-on behavior. |
 | **Orchestrator supersede auth (deferred, post-dogfood)** | Programmatic supersede via orchestrator auth (not human CLI). | Only needed when the orchestrator has to unstick things autonomously. Pre-dogfood, the human CLI is enough. Keep this out of drop 1; it ships in drop 11. |
 | **`drop-human-verify` subdrop kind** | New kind for dev-gated subdrops that bracket every drop (START — PLANNING CONFIRMATION, END — REVIEW DONE + CORRECT — see §2.2). Shape: subdrop with an attention item child addressed to `@dev`, `blocked_by` semantics so parent drop cannot complete until it's signed off. | The START/END bracketing rule (§2.2) needs a real kind to hang off of, not prose. Pre-drop-3 template encoding, the orchestrator creates these manually with `kind='task', scope='task'` + `Role: human-verify` in the description (per the bare-root `CLAUDE.md` pre-drop-2 creation rule). drop 3 promotes to a template kind. |
 
@@ -1422,7 +1422,7 @@ At the END subdrop, orchestrator + dev review and update:
 
 **Template constraint (applies throughout).** The `default-go` template structure gets trimmed to what the cascade actually reads. Templates bind kinds to: agents, models, effort levels, tools, budgets, turns, gates, child-rules, trigger state, escalation, and push policy — nothing more. Don't add fields the dispatcher doesn't consume.
 
-**Git management pre-dispatcher.** Until the dispatcher's commit logic lands (post-dogfood refinement, drop 11), the **orchestrator and dev manage git manually**: the orchestrator reminds the dev to clean up dirty paths before a plan item is created, and the dev handles the actual commits. Plan items still carry `start_commit` / `end_commit` fields from drop 1, but those fields are records, not triggers, until the dispatcher is wired up.
+**Git management pre-dispatcher.** Until the dispatcher's commit logic lands (post-dogfood refinement, drop 11), the **orchestrator and dev manage git manually**: the orchestrator reminds the dev to clean up dirty paths before a action item is created, and the dev handles the actual commits. Action items still carry `start_commit` / `end_commit` fields from drop 1, but those fields are records, not triggers, until the dispatcher is wired up.
 
 ### 19.0. drop 0 — Project Reset + Docs Cleanup
 
@@ -1438,10 +1438,10 @@ Before any cascade code lands:
 - [x] Add `mage install` with dev-promoted commit pinning (18.5) — **superseded** in `d4fd2c2` to a simplified dev-only build-and-save target (`refactor(install): simplify mage install to dev-only build-and-save`). Dev-promoted commit pinning deferred to §19.10 refinement bullet — pre-cascade dogfood doesn't need the pin yet.
 - [x] MCP passthrough for headless agents — **already resolved** (Sections 18.6, 20.6). No pre-build research remaining.
 - [x] CI cleanup — strip Linux/Windows from `.github/workflows/`, keep macOS only (18.7) — landed in `08cb397` (`fix(ci): cold-cache mage ci parity and macos-only matrix`).
-- [x] **Mid-drop additions** *(added during drop 0 execution — detail tracked in Tillsyn plan items, not re-described here)*:
+- [x] **Mid-drop additions** *(added during drop 0 execution — detail tracked in Tillsyn action items, not re-described here)*:
   - **18.10 gofumpt adoption** — committed `d684dcb`; required 18.10B follow-up because of cold-cache leak.
   - **18.10B fix cold-cache `mage ci` gofumpt gate** (`runGofumptList` + `trackedGoFiles` stdout/stderr split; `wrapCommandErrorWithStderr` for error paths). Ships with 18.7 in a single push so post-push CI is macos-only and green.
-  - **18.11 auth-cache `SessionStart`-hook MVP** — shipped; read-side cache-inject on resume/compact/startup. **18.11B `PostToolUse`-hook auto-persist** — shipped; removes manual-Write discipline. Retroactively captured as plan items post-ship.
+  - **18.11 auth-cache `SessionStart`-hook MVP** — shipped; read-side cache-inject on resume/compact/startup. **18.11B `PostToolUse`-hook auto-persist** — shipped; removes manual-Write discipline. Retroactively captured as action items post-ship.
   - **18.12 fix gopls build-tags for `magefile.go`** — **closed without shipping (2026-04-14)**. Initial builder landed `.vscode/settings.json` with `gopls.build.buildFlags = ["-tags=mage"]`, but the premise was wrong: the dev uses nvim (not VS Code) on this repo, and gopls does not auto-read project-root `.vscode/settings.json` — its config comes from the LSP client (nvim-lspconfig for the dev, the `gopls-lsp@claude-plugins-official` plugin for Claude Code). The checked-in file would not have affected either runtime. File was reverted; `.vscode/` is now ignored alongside other editor cruft. Real fix (if still needed) belongs in editor-side config, not the repo tree.
 - [ ] **Per-drop wrap-up:** confirm the rewritten CLAUDE.md and agent files match the plan post-cleanup.
 
@@ -1491,14 +1491,14 @@ The hard prerequisites from Section 17.1, shipped cleanly against the fresh proj
 - [ ] Human supersede CLI: `till task supersede <id> --reason "..."` — marks `failed` task as `metadata.outcome: "superseded"` and transitions `failed → complete`. Bypasses the terminal-state guard because the CLI asserts human intent at the binary boundary.
 - [ ] Auth auto-revoke on terminal state (`complete` or `failed`).
 - [ ] **Server-infer `client_type` on auth request create** *(gap surfaced in drop 0)*. Remove `client_type` from the `till.auth_request(operation=create)` MCP tool schema — callers shouldn't declare transport; the server knows. Entrypoint adapters stamp it: MCP-stdio adapter stamps `"mcp-stdio"`, TUI stamps `"tui"`, CLI stamps `"cli"`. Tighten `app.Service.CreateAuthRequest` to reject empty `ClientType` at create time (matches the existing approve-path check in `autentauth.Service.ensureClient`) so the asymmetric validation bug that bit drop 0 — create accepted empty, approve rejected empty with `ErrInvalidClientType` — is structurally unreachable. Governance + display still consume `client_type` as a first-class field; only the caller responsibility moves server-side. MCP-layer tests drop the field; domain-layer tests keep it on `CreateAuthRequestInput` since that's the domain boundary. `client_id` stays caller-supplied (same transport can come from different software).
-- [ ] **Reject unknown keys across all MCP mutation paths** *(gap surfaced in drop 0)*. `till.project(operation=create)` silently dropped every non-schema key in my drop-0 metadata payload — caller thought fields landed, they didn't. Same asymmetric-validation pattern as the `client_type` bug above. Audit every `till.*` mutation tool (`till.project`, `till.plan_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.capability_lease`, `till.kind`, `till.template`) and every nested metadata/extension object each one accepts. Every MCP handler must reject unknown keys with a structured error naming the offending key and the accepted schema — never silent-drop. If extension-style freeform fields are wanted for any surface, add an explicit named `extensions map[string]string` (or equivalent) to the domain type so it's documented and validated, not an anything-goes sink. Add golden tests asserting the error shape for each handler. Scope note: this is the *validation* fix; adding new first-class cascade fields to the project node is drop 4's dispatcher prerequisite, not this item.
-- [ ] **PATCH semantics on all update handlers — no more silent full-replace** *(gap surfaced in drop 0; second repro confirmed in 18.2 closeout)*. `till.project(operation=update)` with a partial payload (only `name` + `metadata`) wiped the stored `description` back to empty string — the handler is full-replace without documenting it. Second silent-data-loss bug in the same family as unknown-key drop above. **Live second repro from 18.2 closeout (2026-04-14)**: `till.plan_item(operation=update)` on task `f4334081-84ad-47a4-bcf9-238c2f915ad2` passing only `title` + `metadata` wiped `description` (full rewrite contract) and `labels` (`["agents","docs","orchestrator-scope","drop-0"]`). Confirms the behavior is handler-family-wide, not project-only. Audit every `till.*` update/mutation handler for the same behavior (`till.project`, `till.plan_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`). Pick ONE semantics per handler and enforce it: either (a) true PATCH — only provided fields change, omitted fields preserved — which matches caller intuition and is strongly preferred, or (b) explicit full-PUT with a required `replace_all: true` flag that forces the caller to acknowledge they are overwriting. Never silently wipe fields because the caller didn't repeat them. Preserve the drop 0 precedent in tests: `update(name, metadata)` must leave `description` intact; `till.plan_item.update(title, metadata)` must leave `description` + `labels` intact. **Third repro (2026-04-14, 18.10B closeout)**: builder on 18.10B + 18.7 hit it again — a `till.plan_item.update(title, ...)` with no `description` arg cleared 18.7's stored description; builder worked around by re-calling update with the full original description restored. Evidence that every orchestrator / builder round-trip through update is a latent data-loss risk until this lands.
-- [ ] **Accept `state` in place of `column_id` on `till.plan_item(operation=create)`; stop leaking column UUIDs into the agent contract** *(gap surfaced in drop 0)*. Fresh project had auto-seeded default columns (`To Do`, `In Progress`, `Done`) but `till.plan_item(op=create)` rejects the call unless the caller passes the literal column UUID — and no MCP op exposes column UUIDs (`till.capture_state` loads them for state-hashing but does not surface them; there is no `list_columns` operation). An orchestrator following MCP-only discipline has no way to discover the UUID. Column identity is a UI/layout concern; agents only care about lifecycle state. Fix: `till.plan_item(op=create)` must accept `state` (`todo` / `in_progress` / `done` / `failed` once drop 1 adds it) and resolve the column UUID server-side via the existing `resolveTaskColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop callers that genuinely know the UUID, but make `state` the documented agent-facing input and reject the call only when *both* are empty. Same cleanup on `till.plan_item(op=move)` where `to_column_id` currently faces the same leak — accept `state` and resolve internally. Add a golden test proving an orchestrator with no column knowledge can create a plan item purely by `state`. No column-listing MCP op needs to be added; the goal is to make column IDs invisible to the agent surface, not to expose them. **Second + third repro (2026-04-17)**: both the `rak` and `fckin` template-free projects blocked their DROP_1_ORCH / DROP_1.5_ORCH-equivalent launches the same way — agent couldn't create any plan item because `column_id` is required at the MCP boundary and no discovery op exists; dev had to hand-surface column UUIDs via direct sqlite query and paste them into the orchestrator prompt. Confirms the fix is launch-gating for every fresh project using the cascade model, not just drop 0.
+- [ ] **Reject unknown keys across all MCP mutation paths** *(gap surfaced in drop 0)*. `till.project(operation=create)` silently dropped every non-schema key in my drop-0 metadata payload — caller thought fields landed, they didn't. Same asymmetric-validation pattern as the `client_type` bug above. Audit every `till.*` mutation tool (`till.project`, `till.action_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.capability_lease`, `till.kind`, `till.template`) and every nested metadata/extension object each one accepts. Every MCP handler must reject unknown keys with a structured error naming the offending key and the accepted schema — never silent-drop. If extension-style freeform fields are wanted for any surface, add an explicit named `extensions map[string]string` (or equivalent) to the domain type so it's documented and validated, not an anything-goes sink. Add golden tests asserting the error shape for each handler. Scope note: this is the *validation* fix; adding new first-class cascade fields to the project node is drop 4's dispatcher prerequisite, not this item.
+- [ ] **PATCH semantics on all update handlers — no more silent full-replace** *(gap surfaced in drop 0; second repro confirmed in 18.2 closeout)*. `till.project(operation=update)` with a partial payload (only `name` + `metadata`) wiped the stored `description` back to empty string — the handler is full-replace without documenting it. Second silent-data-loss bug in the same family as unknown-key drop above. **Live second repro from 18.2 closeout (2026-04-14)**: `till.action_item(operation=update)` on task `f4334081-84ad-47a4-bcf9-238c2f915ad2` passing only `title` + `metadata` wiped `description` (full rewrite contract) and `labels` (`["agents","docs","orchestrator-scope","drop-0"]`). Confirms the behavior is handler-family-wide, not project-only. Audit every `till.*` update/mutation handler for the same behavior (`till.project`, `till.action_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`). Pick ONE semantics per handler and enforce it: either (a) true PATCH — only provided fields change, omitted fields preserved — which matches caller intuition and is strongly preferred, or (b) explicit full-PUT with a required `replace_all: true` flag that forces the caller to acknowledge they are overwriting. Never silently wipe fields because the caller didn't repeat them. Preserve the drop 0 precedent in tests: `update(name, metadata)` must leave `description` intact; `till.action_item.update(title, metadata)` must leave `description` + `labels` intact. **Third repro (2026-04-14, 18.10B closeout)**: builder on 18.10B + 18.7 hit it again — a `till.action_item.update(title, ...)` with no `description` arg cleared 18.7's stored description; builder worked around by re-calling update with the full original description restored. Evidence that every orchestrator / builder round-trip through update is a latent data-loss risk until this lands.
+- [ ] **Accept `state` in place of `column_id` on `till.action_item(operation=create)`; stop leaking column UUIDs into the agent contract** *(gap surfaced in drop 0)*. Fresh project had auto-seeded default columns (`To Do`, `In Progress`, `Done`) but `till.action_item(op=create)` rejects the call unless the caller passes the literal column UUID — and no MCP op exposes column UUIDs (`till.capture_state` loads them for state-hashing but does not surface them; there is no `list_columns` operation). An orchestrator following MCP-only discipline has no way to discover the UUID. Column identity is a UI/layout concern; agents only care about lifecycle state. Fix: `till.action_item(op=create)` must accept `state` (`todo` / `in_progress` / `done` / `failed` once drop 1 adds it) and resolve the column UUID server-side via the existing `resolveTaskColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop callers that genuinely know the UUID, but make `state` the documented agent-facing input and reject the call only when *both* are empty. Same cleanup on `till.action_item(op=move)` where `to_column_id` currently faces the same leak — accept `state` and resolve internally. Add a golden test proving an orchestrator with no column knowledge can create a action item purely by `state`. No column-listing MCP op needs to be added; the goal is to make column IDs invisible to the agent surface, not to expose them. **Second + third repro (2026-04-17)**: both the `rak` and `fckin` template-free projects blocked their DROP_1_ORCH / DROP_1.5_ORCH-equivalent launches the same way — agent couldn't create any action item because `column_id` is required at the MCP boundary and no discovery op exists; dev had to hand-surface column UUIDs via direct sqlite query and paste them into the orchestrator prompt. Confirms the fix is launch-gating for every fresh project using the cascade model, not just drop 0.
 - [ ] Task details as prompt (agent reads task fields as working brief).
-- [ ] First-class `paths []string` field on plan items (planner-set, readable by builder + QA). Domain-level field, not buried in metadata JSON. Replaces the removed `affected_artifacts`.
-- [ ] First-class `packages []string` field on plan items (covers every file in `paths`). Used by package-level blocking (Section 5.2).
-- [ ] First-class `files []string` field on plan items — set of files **attached to** the drop (distinct from `paths`). Populated by the planner via the TUI file-picker (drop 4.5 §24) so a drop can carry reference material (existing code the builder should read, prior-design docs, sibling-drop output) without those files being counted as edit-scope. `files` is **read-only reference**; `paths` is **edit-scope**. The drop 4.5 file-viewer (§24) reads `files` to render attached content with `charmbracelet/glamour` and show `git diff` against `start_commit`. Validation: every `files` entry must exist in the repo at creation time; duplicates across `files` + `paths` are allowed (a file can be both edit-scope and reference). QA-proof + QA-falsification verify that the planner populated `files` where reference material is needed (Plan QA falsification treats missing reference attachments on work that depends on external context as a plan gap).
-- [ ] First-class `start_commit` / `end_commit` fields on plan items. `start_commit` set at creation (current HEAD). `end_commit` set at move-to-complete (current HEAD).
+- [ ] First-class `paths []string` field on action items (planner-set, readable by builder + QA). Domain-level field, not buried in metadata JSON. Replaces the removed `affected_artifacts`.
+- [ ] First-class `packages []string` field on action items (covers every file in `paths`). Used by package-level blocking (Section 5.2).
+- [ ] First-class `files []string` field on action items — set of files **attached to** the drop (distinct from `paths`). Populated by the planner via the TUI file-picker (drop 4.5 §24) so a drop can carry reference material (existing code the builder should read, prior-design docs, sibling-drop output) without those files being counted as edit-scope. `files` is **read-only reference**; `paths` is **edit-scope**. The drop 4.5 file-viewer (§24) reads `files` to render attached content with `charmbracelet/glamour` and show `git diff` against `start_commit`. Validation: every `files` entry must exist in the repo at creation time; duplicates across `files` + `paths` are allowed (a file can be both edit-scope and reference). QA-proof + QA-falsification verify that the planner populated `files` where reference material is needed (Plan QA falsification treats missing reference attachments on work that depends on external context as a plan gap).
+- [ ] First-class `start_commit` / `end_commit` fields on action items. `start_commit` set at creation (current HEAD). `end_commit` set at move-to-complete (current HEAD).
 - [ ] Creation gated on clean git for declared paths: if any path in `paths` is dirty in `git status --porcelain`, creation fails with an error telling the orchestrator/dev to clean git first. Always-on.
 - [ ] CLI failure listing: `till task list --state failed` (or `till failures list`) so the human can see `failed` tasks without TUI rendering. TUI rendering of `failed` is deferred post-dogfood.
 - [ ] **Deferred post-dogfood (documented here, not built yet):** orchestrator programmatic supersede via system-issued auth. Human CLI is enough for Wave-1-equivalent scope.
@@ -1531,9 +1531,9 @@ This is the touchiest code change. Each step ripples through 5+ packages. Increm
 - [ ] **Rename `phase` → `drop`**: schema migration, domain constants, TUI labels, MCP adapter normalization, templates, docs.
 - [ ] **Rename `done` → `complete`**: DB column values, domain `StateComplete`, TUI labels, MCP normalization, templates, docs. Combine with any leftover `failed` state migration since they touch the same surfaces.
 - [ ] **Allow infinite drop nesting**: update domain validation to allow drop-under-drop. Update TUI tree rendering.
-- [ ] **Dotted-address fast-nav (CLI + MCP read paths, TUI bindings in drop 4.5)** *(§1.4 convergence landing in drop 2)*. Implement dotted-address resolution (`N`, `N.M`, `N.M.K`, `<proj_name>-<dotted>`) as a pure resolver in `internal/domain` or `internal/app`: takes a dotted string + project context, returns the UUID of the matching drop (or an error if ambiguous/missing). Wire into `till.plan_item(operation=get)` and any other MCP read operation that takes a plan-item identifier — accept either UUID or dotted form. Wire into CLI read commands the same way. **Dotted addresses remain read-only**: all mutation paths (`till.plan_item(op=update|move|create)`, `till.comment(op=create)`, etc.) reject dotted form and require UUIDs. Motivation: §1.4 pins dotted addresses as read-only shorthand for unambiguous cross-drop references; hierarchy refactor is the natural landing window since the resolver depends on the stable parent-child shape Drop 2 produces. TUI keybindings that consume the resolver (type `0.1.5.2` → jump there) land in drop 4.5 (§24) alongside the rest of the TUI overhaul.
+- [ ] **Dotted-address fast-nav (CLI + MCP read paths, TUI bindings in drop 4.5)** *(§1.4 convergence landing in drop 2)*. Implement dotted-address resolution (`N`, `N.M`, `N.M.K`, `<proj_name>-<dotted>`) as a pure resolver in `internal/domain` or `internal/app`: takes a dotted string + project context, returns the UUID of the matching drop (or an error if ambiguous/missing). Wire into `till.action_item(operation=get)` and any other MCP read operation that takes a action-item identifier — accept either UUID or dotted form. Wire into CLI read commands the same way. **Dotted addresses remain read-only**: all mutation paths (`till.action_item(op=update|move|create)`, `till.comment(op=create)`, etc.) reject dotted form and require UUIDs. Motivation: §1.4 pins dotted addresses as read-only shorthand for unambiguous cross-drop references; hierarchy refactor is the natural landing window since the resolver depends on the stable parent-child shape Drop 2 produces. TUI keybindings that consume the resolver (type `0.1.5.2` → jump there) land in drop 4.5 (§24) alongside the rest of the TUI overhaul.
 - [ ] **Update kind-hierarchy ASCII art in both `CLAUDE.md` copies** to reflect the post-drop-2 "only `project` + `drop` kinds + `metadata.role`" target state. Current ASCII still shows `plan-task` / `qa-check` / `task` as distinct kinds — contradicts the collapse. Fix during the rename sweep since it touches the same surfaces.
-- [ ] **Add `research` to the `metadata.role` vocabulary** alongside the eight existing values (`builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`). No migration needed — `research` has no pre-collapse kind to hydrate from; new research drops post-Drop-2 set `metadata.role: "research"` at creation time. Agent bindings: `go-research-agent` (Go projects), `fe-research-agent` (FE projects). Also surface `research` in the §19.1.6 auth approval cascade's non-orch role list (already noted there) so orch self-approval covers research subagent auth from day one. Research agents are read-only — they own their own Tillsyn plan item, compile findings, post a closing comment, and die; they never edit code, never route work, never create plan items.
+- [ ] **Add `research` to the `metadata.role` vocabulary** alongside the eight existing values (`builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`). No migration needed — `research` has no pre-collapse kind to hydrate from; new research drops post-Drop-2 set `metadata.role: "research"` at creation time. Agent bindings: `go-research-agent` (Go projects), `fe-research-agent` (FE projects). Also surface `research` in the §19.1.6 auth approval cascade's non-orch role list (already noted there) so orch self-approval covers research subagent auth from day one. Research agents are read-only — they own their own Tillsyn action item, compile findings, post a closing comment, and die; they never edit code, never route work, never create action items.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files for the new vocabulary.
 
 **Order matters:** Remove `branch` first (least entangled), then `phase → drop` (more entangled but no state-machine changes), then `done → complete` (most entangled, touches state machine + `failed` state).
@@ -1542,13 +1542,13 @@ This is the touchiest code change. Each step ripples through 5+ packages. Increm
 
 **Cascade Vocabulary Adoption (dev direction, 2026-04-17).** Before template configuration can be encoded cleanly, the node vocabulary needs a stable classification that templates can bind to. "Drops all the way down" makes the shape unambiguous but is painful to talk about — dotted addresses (`0.1.5.2`) help readers but not speakers. Drop 3 adopts a **waterfall metaphor** that aligns the branding (`Tillsyn Cascade`) with the node-type axis templates need. Concretely: `drop` remains the level_1 cascade step (parallelizable, one bare worktree + branch + drop-orch per drop); a new `segment` concept names a parallel execution stream within a drop (fan-out); a `confluence` is a merge/integration item where multiple segments or drops converge; a `droplet` is the atomic, indivisible leaf action. These four classifications live on `metadata.structural_type` (closed enum, NOT open-ended) and are orthogonal to `metadata.role` (builder / qa-proof / qa-falsification / planner / commit / design / …). Templates `child_rules` and gate rules bind on `structural_type`, not on the collapsed `kind=drop`. This lands at the **start of drop 3** because every bullet below depends on having a stable classification vocabulary to bind rules against.
 
-- [ ] **Add `metadata.structural_type` as a first-class enum field on every non-project node.** Closed 4-value enum: `drop | segment | confluence | droplet`. Not customizable initially — branding cohesion and agent-context-budget discipline win over adopter flexibility. Escape hatch (`metadata.structural_subtype` free-form string) stays deferred until a concrete adopter use case forces it. Validation at the `till.action_item(operation=create|update)` boundary rejects unknown values. Default is NOT inferred — the creator (planner / orch / dev) chooses explicitly. **`action_item` is NOT a structural_type value** — it is the generic node concept (renamed from `plan_item`, see next bullet).
+- [ ] **Add `metadata.structural_type` as a first-class enum field on every non-project node.** Closed 4-value enum: `drop | segment | confluence | droplet`. Not customizable initially — branding cohesion and agent-context-budget discipline win over adopter flexibility. Escape hatch (`metadata.structural_subtype` free-form string) stays deferred until a concrete adopter use case forces it. Validation at the `till.action_item(operation=create|update)` boundary rejects unknown values. Default is NOT inferred — the creator (planner / orch / dev) chooses explicitly. **`action_item` is NOT a structural_type value** — it is the generic node concept (renamed from `action_item`, see next bullet).
 - [ ] **Define cascade semantics per structural_type (waterfall metaphor — single canonical source in WIKI glossary, pointers from every other doc).**
   - `drop` — vertical cascade step. Level_1 children of the project are always drops; deeper drops are sub-cascades. Parallelizable across siblings when path/package blockers allow. Best practice: one bare worktree + branch + drop-orch per level_1 drop.
   - `segment` — parallel execution stream within a drop. The fan-out unit. Segments within a drop run in parallel; segments across drops coordinate via `till.handoff`. A segment may recurse (segment within segment) when a sub-stream needs its own fan-out.
   - `confluence` — merge/integration node. Pulls work from multiple segments or sibling drops and produces the integrated output. Always has non-empty `blocked_by` naming the upstream segments/drops. The plan-QA-falsification pass attacks empty-`blocked_by` confluences and confluences whose `blocked_by` doesn't cover every upstream contributor.
   - `droplet` — atomic, indivisible leaf action. MUST have zero children. The plan-QA-falsification pass attacks droplets-with-children (misclassification → should be segment or drop).
-- [ ] **Rename `plan_item → action_item` across every surface.** DB schema (table + every FK + every index referencing the old name), Go domain types (`PlanItem → ActionItem`), MCP tool names (`till.plan_item → till.action_item`), CLI commands, every doc (PLAN / WIKI / README / CLAUDE / STEWARD_ORCH_PROMPT / every agent file under `.claude/agents/` / every memory file), every in-tree script. **Ordering matters: run the SQL schema migration against every live DB BEFORE bringing up the renamed binary, otherwise the new code boots against an unmigrated schema and crashes.** Migration sequence: (1) dev writes + stages the migration SQL, (2) dev stops every running `till serve-mcp` process across every worktree, (3) dev runs the SQL against every affected DB (dev workstation live DB + any fixture DBs used by tests + any worktree-local DB), (4) dev applies the code rename + MD sweep, (5) new binary comes up against the already-migrated schema. Single migration droplet inside drop 3 owning the full sweep — do not partial-migrate and leave both names live. Backward-compat shim for the old MCP name stays off the table because the tool is self-hosted dogfood — only this project consumes it today.
+- [ ] **Rename `action_item → action_item` across every surface.** DB schema (table + every FK + every index referencing the old name), Go domain types (`ActionItem → ActionItem`), MCP tool names (`till.action_item → till.action_item`), CLI commands, every doc (PLAN / WIKI / README / CLAUDE / STEWARD_ORCH_PROMPT / every agent file under `.claude/agents/` / every memory file), every in-tree script. **Ordering matters: run the SQL schema migration against every live DB BEFORE bringing up the renamed binary, otherwise the new code boots against an unmigrated schema and crashes.** Migration sequence: (1) dev writes + stages the migration SQL, (2) dev stops every running `till serve-mcp` process across every worktree, (3) dev runs the SQL against every affected DB (dev workstation live DB + any fixture DBs used by tests + any worktree-local DB), (4) dev applies the code rename + MD sweep, (5) new binary comes up against the already-migrated schema. Single migration droplet inside drop 3 owning the full sweep — do not partial-migrate and leave both names live. Backward-compat shim for the old MCP name stays off the table because the tool is self-hosted dogfood — only this project consumes it today.
 - [ ] **Template binding by `structural_type`, not by `kind`.** After Drop 2's kind collapse (everything non-project is `kind=drop`), templates bind `child_rules`, gate rules, validation constraints, and agent bindings on the `structural_type` axis instead. A template declares: "a `drop` auto-creates a `planner` droplet + `qa-proof` droplet + `qa-falsification` droplet"; "a build `droplet` auto-creates `qa-proof` + `qa-falsification` sibling droplets"; "a `confluence` requires non-empty `blocked_by`"; and so on. Kind stays binary (`project | drop`); structural_type carries the semantic shape.
 - [ ] **Retroactive classification of existing action_items (one-shot SQL + TUI verification).** Every non-project node alive pre-drop-3 gets a `metadata.structural_type` assignment:
   - Generic containers without a clean cascade shape — especially STEWARD's six persistent level_1 parents (`DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS`) — stay as plain `action_item`s with `metadata.persistent: true`. They are NOT drops, NOT segments, NOT confluences, NOT droplets. They are long-lived coordination anchors and don't need structural_type at all. The plan-QA-falsification pass accepts "no structural_type + metadata.persistent=true" as a valid shape.
@@ -1565,7 +1565,7 @@ This is the touchiest code change. Each step ripples through 5+ packages. Increm
   - **Confluence with partial upstream coverage** — confluence whose `blocked_by` doesn't name every segment/drop it claims to integrate. Planner must list every upstream.
   - **Role/structural_type contradiction** — role=`qa-proof` on a non-droplet; role=`builder` on a confluence; role=`planner` on a droplet without a downstream integration target. Each combination has narrow legitimate shapes.
 - [ ] **Adopter bootstrap updates (`go-project-bootstrap` + `fe-project-bootstrap` skills + every `CLAUDE.md` template).** Every new project adopting Tillsyn post-drop-3 must inherit the cascade glossary pointer at bootstrap time. Bootstrap writes a WIKI scaffolding with the `## Cascade Vocabulary` section pre-filled from a template-controlled source, plus a CLAUDE.md pointer line: *"Cascade vocabulary canonical: `WIKI.md` §`Cascade Vocabulary`."* Every agent file under `.claude/agents/` (builder / qa / planning variants for both languages) gets a one-line reminder in its frontmatter body: *"Structural classifications (drop | segment | confluence | droplet) live in WIKI glossary — never redefine."*
-- [ ] **Per-drop wrap-up for cascade vocabulary specifically.** After the rename + enum + template binding land, sweep every lingering `plan_item` / `plan-item` / `plan item` / `PlanItem` string across docs, agent prompts, slash-command files, skill files, and memory files. Update `metadata.role` vs `metadata.structural_type` crosswalk wherever docs previously conflated role with kind. Commit the sweep as a final docs-only droplet under drop 3.
+- [ ] **Per-drop wrap-up for cascade vocabulary specifically.** After the rename + enum + template binding land, sweep every lingering `action_item` / `action-item` / `action item` / `ActionItem` string across docs, agent prompts, slash-command files, skill files, and memory files. Update `metadata.role` vs `metadata.structural_type` crosswalk wherever docs previously conflated role with kind. Commit the sweep as a final docs-only droplet under drop 3.
 
 - [ ] Add agent binding fields to kind definitions (`agent_name`, `model`, `effort`, `tools`, etc.).
 - [ ] Add gate definitions to kind templates.
@@ -1573,7 +1573,7 @@ This is the touchiest code change. Each step ripples through 5+ packages. Increm
 - [ ] Add `blocked_retries`, `blocked_retry_cooldown` to kind definitions.
 - [ ] Template parsing and validation for new fields.
 - [ ] Build a fresh `default-go` template (or equivalent) aligned to the cascade — do not resurrect the current bloated one.
-- [ ] **New `steward` orch `principal_type` + auth-level state-lock** (see §15.7). Add `principal_type: steward` to Tillsyn's auth model as an orchestrator variant distinct from the generic `agent` principal type. Enforce at the auth layer: sessions whose `principal_type != steward` are rejected when attempting any `till.plan_item` state transition on an item whose `metadata.owner = STEWARD`. Drop-orchs keep `create` + `update(description/details/metadata)` permissions on STEWARD-owned items but literally cannot move them through state. Replaces the pre-Drop-3 honor-system rule in the prompts.
+- [ ] **New `steward` orch `principal_type` + auth-level state-lock** (see §15.7). Add `principal_type: steward` to Tillsyn's auth model as an orchestrator variant distinct from the generic `agent` principal type. Enforce at the auth layer: sessions whose `principal_type != steward` are rejected when attempting any `till.action_item` state transition on an item whose `metadata.owner = STEWARD`. Drop-orchs keep `create` + `update(description/details/metadata)` permissions on STEWARD-owned items but literally cannot move them through state. Replaces the pre-Drop-3 honor-system rule in the prompts.
 - [ ] **Template auto-generation of STEWARD-scope items on every numbered-drop creation.** When `DROP_N_ORCH` creates a new level_1 numbered drop, template `child_rules` must auto-create the five level_2 findings drops under the persistent STEWARD parents (`DROP_N_HYLLA_FINDINGS` / `DROP_N_LEDGER_ENTRY` / `DROP_N_WIKI_CHANGELOG_ENTRY` / `DROP_N_REFINEMENTS_RAISED` / `DROP_N_HYLLA_REFINEMENTS_RAISED`) AND the refinements-gate item inside the drop's tree (`DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1`). Each auto-generated item lands with `metadata.owner = STEWARD`, `metadata.drop_number = N`, and the correct `blocked_by` wiring on the refinements-gate (every other drop N item + the five level_2 findings drops).
 - [ ] **Template-defined STEWARD-owned drop kind(s).** Templates must allow marking specific kinds as STEWARD-owned — drop-orchs can create + edit `description` on them, but only `steward`-principal sessions can transition their state. Pair with the `principal_type: steward` gate above.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files.
@@ -1583,7 +1583,7 @@ This is the touchiest code change. Each step ripples through 5+ packages. Increm
 The minimal dispatch loop, now that lifecycle + template fields exist.
 
 - [ ] Refactor path logic from TUI to backend (18.4 output).
-- [ ] **First-class project-node fields the dispatcher reads** *(prerequisite; replaces the old single-field `project_dir` bullet)*. Add these as domain-level fields on `Project`, not metadata JSON, each with explicit validation: `hylla_artifact_ref` (string, e.g. `github.com/evanmschultz/tillsyn@main`), `repo_bare_root` (abs path), `repo_primary_worktree` (abs path — the `cd` target for dispatched agents; supersedes the old `project_dir` concept), `language` (enum matching agent variants: `go`, `fe`, …), `build_tool` (string: `mage`, `npm`, `cargo`, …), `dev_mcp_server_name` (string — which MCP server dispatched agents register against). Planner fills these at project create; dispatcher reads them to spawn agents with correct `cd`, correct `{lang}-builder-agent` / `{lang}-qa-*-agent` variant, correct artifact ref in the prompt, correct MCP server registration. Fields *not* on the project node: `agent_bindings` + `post_build_gates` + kind vocabulary → template-scope (drop 3); `current_drop` → already encoded by the `kind=drop` plan item in `state=in_progress`, no field needed; `go_version` → derive from `go.mod`, don't duplicate. Depends on the drop 1 metadata-validation tightening so unknown keys surface as errors instead of silent drops.
+- [ ] **First-class project-node fields the dispatcher reads** *(prerequisite; replaces the old single-field `project_dir` bullet)*. Add these as domain-level fields on `Project`, not metadata JSON, each with explicit validation: `hylla_artifact_ref` (string, e.g. `github.com/evanmschultz/tillsyn@main`), `repo_bare_root` (abs path), `repo_primary_worktree` (abs path — the `cd` target for dispatched agents; supersedes the old `project_dir` concept), `language` (enum matching agent variants: `go`, `fe`, …), `build_tool` (string: `mage`, `npm`, `cargo`, …), `dev_mcp_server_name` (string — which MCP server dispatched agents register against). Planner fills these at project create; dispatcher reads them to spawn agents with correct `cd`, correct `{lang}-builder-agent` / `{lang}-qa-*-agent` variant, correct artifact ref in the prompt, correct MCP server registration. Fields *not* on the project node: `agent_bindings` + `post_build_gates` + kind vocabulary → template-scope (drop 3); `current_drop` → already encoded by the `kind=drop` action item in `state=in_progress`, no field needed; `go_version` → derive from `go.mod`, don't duplicate. Depends on the drop 1 metadata-validation tightening so unknown keys surface as errors instead of silent drops.
 - [ ] Implement dispatcher: LiveWaitBroker subscription for state changes.
 - [ ] Implement agent spawn: `cd <project_dir> && claude --agent <type> --bare -p "..." --mcp-config <per-run mcp.json> --strict-mcp-config --permission-mode acceptEdits --max-budget-usd <N> --max-turns <N>`.
 - [ ] Implement agent lifecycle: auth issuance, process monitoring, cleanup on state change.
@@ -1604,8 +1604,8 @@ The minimal dispatch loop, now that lifecycle + template fields exist.
 
 - [ ] **File viewer with `charmbracelet/glamour`** *(§24)*. TUI gains a file-viewer pane that renders drop-attached files via `glamour` — markdown with theme-aware rendering, syntax-highlighted fenced code blocks via glamour's chroma integration. Reads the drop's `files []string` (drop 1). Keybindings: open file-picker to attach, jump to attached file list, cycle through attached files, toggle glamour render vs. raw view. See §24 for the full viewer design.
 - [ ] **Path picker + file picker (TUI)** *(§24)*. Two distinct pickers: path-picker for edit-scope (`paths`), file-picker for reference attachments (`files`). Both navigate the repo tree, filter by glob, multi-select. Path-picker enforces file-exists validation and package inference (derive `packages` from selected paths for builder-task creation). File-picker is laxer — any repo-tracked file is attachable.
-- [ ] **Git-diff-per-plan-item against `start_commit`** *(§24)*. For any drop with `start_commit` set, render a split-view diff of the drop's `paths` against `start_commit..HEAD` (or `start_commit..end_commit` if complete). Uses go-git or shells out to `git diff`; rendering via glamour's diff lexer. Live-updates on file-watcher events while the drop is `in_progress`.
-- [ ] **Dotted-address fast-nav TUI bindings** *(§1.4 + drop 2 follow-through)*. Consume the read-only dotted-address resolver landed in drop 2. Keybinding (default `g` for "go-to"): prompt accepts `0.1.5.2` or `tillsyn-0.1.5.2`, resolves to plan-item UUID, jumps focus + scrolls tree to that node. Handles `<proj_name>-<dotted>` cross-project form by switching project context first.
+- [ ] **Git-diff-per-action-item against `start_commit`** *(§24)*. For any drop with `start_commit` set, render a split-view diff of the drop's `paths` against `start_commit..HEAD` (or `start_commit..end_commit` if complete). Uses go-git or shells out to `git diff`; rendering via glamour's diff lexer. Live-updates on file-watcher events while the drop is `in_progress`.
+- [ ] **Dotted-address fast-nav TUI bindings** *(§1.4 + drop 2 follow-through)*. Consume the read-only dotted-address resolver landed in drop 2. Keybinding (default `g` for "go-to"): prompt accepts `0.1.5.2` or `tillsyn-0.1.5.2`, resolves to action-item UUID, jumps focus + scrolls tree to that node. Handles `<proj_name>-<dotted>` cross-project form by switching project context first.
 - [ ] **Mention-routing UX** *(§23)*. TUI surface for the `@`-mention routing system defined in §23. Inline comment composer that autocompletes `@dev` / `@builder` / `@qa` / `@qa-proof` / `@qa-falsification` / `@orchestrator` / `@research` / `@human`; on post, the comment is wired into the Tillsyn mention-routing backend so addressed parties see it in their Action Required list. **Requires a planning subdrop** (per §2.2 START bracketing rule) because the system-prompt decisions for dispatched cascade agents to answer `@`-addressed comments are load-bearing and must be confirmed with dev before builder fires.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files for the new TUI surface.
 
@@ -1613,7 +1613,7 @@ The minimal dispatch loop, now that lifecycle + template fields exist.
 
 From here on, the cascade can build itself.
 
-- [ ] Planner agent integration: agent creates child plan items via MCP.
+- [ ] Planner agent integration: agent creates child action items via MCP.
 - [ ] Planning QA integration: plan-qa-proof and plan-qa-falsification auto-fire.
 - [ ] Plan acceptance flow: plan QA pass → children become eligible.
 - [ ] Template child_rules for plan-task → plan-qa-proof + plan-qa-falsification.
@@ -1622,7 +1622,7 @@ From here on, the cascade can build itself.
 
 ### 19.6. drop 6 — Escalation
 
-- [ ] Retry tracking per plan item (attempt count in metadata).
+- [ ] Retry tracking per action item (attempt count in metadata).
 - [ ] Re-fire on failure (up to max-tries).
 - [ ] External failure detection + blocked retries (max-tries + 2).
 - [ ] Escalation up: failed build → new plan task at parent level.
@@ -1672,7 +1672,7 @@ After real dogfooding reveals what works and what doesn't.
 - [ ] **Full `magefile.go` cleanup + refine pass** *(deferred from drop 0)*. drop 0 added `mage test-func` (18.3) and `mage install` with commit pinning (18.5) as point additions without touching the rest. Do a full sweep: consolidate duplicated invocation helpers, normalize target naming (`test-pkg` vs `test-func` vs `test-golden` vs `ci` — are the prefixes + argument shapes consistent?), prune any dead or stub targets, verify every target has a one-line `mg:` doc comment, confirm no target shells out to a raw `go` command (force everything through a single `runGo` helper), and make sure `mage -l` output reads like a coherent menu. QA-proof + QA-falsification required — the magefile is the build gate, can't silently break.
 - [ ] **`mage install` post-MVP retire-or-reshape** *(deferred from drop 0 fix-finish)*. drop 0's closeout reshaped `mage install` to the minimum dogfood-safe shape: single required positional arg `sha` (never resolved from `git HEAD`, empty errors out), temp `git worktree add --detach <sha>`, `go build` with `-X ...buildinfo.Commit=<sha>` ldflag, install binary to hardcoded `$HOME/.tillsyn/till` colocated with `config.toml` / `tillsyn.db` / `logs/`, defer cleanup of both the worktree and the temp root. **Enforcement for "dev-only, never agents" is docstring + `CLAUDE.md` rule only** — no tool-permission deny, no env-marker guard, no code-level check. This target exists solely because we're pre-MVP and need a stable `till` on the dev box to orchestrate the cascade against. Once MVP ships with proper release artifacts (goreleaser snapshot is already wired in CI), decide: retire `mage install` entirely in favor of `gh release download` + install, or keep it as a dev convenience with the shape above. Whichever: no pin-log file, no printer notice, no helpers — if it stays, it stays at ~30 lines.
 - [ ] **Agent tool-permission deny for `mage install`** *(refinement-only, add when needed)*. If an agent ever tries to invoke `mage install` despite the CLAUDE.md rule, add `Bash(mage install*)` to the `tools: { deny: [...] }` block in every `~/.claude/agents/*.md` (builder, QA, research, planning variants) and record the incident so we know the docstring-only enforcement was insufficient. Until that happens, the docstring rule is load-bearing and good enough — no proactive guardrail work.
-- [ ] **Project lifecycle operations — delete + archive** *(gap surfaced in drop 0)*. Add `till.project(operation=delete)` MCP op and corresponding `till project delete` CLI. Guard: project must have no active auth sessions or leases, no in-flight cascade runs. Must cascade-clean plan items, comments, handoffs, attention items, template bindings, embeddings, capture snapshots — audit FK coverage and add explicit cleanup where `ON DELETE CASCADE` is missing. Also add `till.project(operation=archive)` MCP op + `till project archive` CLI that flips the archived flag already surfaced in `include_archived` list filter (preserves data, hides from default list). drop 0 worked around the missing delete by renaming the messy pre-cascade project to `TILLSYN-OLD`; retire that renamed project via `delete` (or `archive` if we want to keep the old data for comparison) once these ops ship.
+- [ ] **Project lifecycle operations — delete + archive** *(gap surfaced in drop 0)*. Add `till.project(operation=delete)` MCP op and corresponding `till project delete` CLI. Guard: project must have no active auth sessions or leases, no in-flight cascade runs. Must cascade-clean action items, comments, handoffs, attention items, template bindings, embeddings, capture snapshots — audit FK coverage and add explicit cleanup where `ON DELETE CASCADE` is missing. Also add `till.project(operation=archive)` MCP op + `till project archive` CLI that flips the archived flag already surfaced in `include_archived` list filter (preserves data, hides from default list). drop 0 worked around the missing delete by renaming the messy pre-cascade project to `TILLSYN-OLD`; retire that renamed project via `delete` (or `archive` if we want to keep the old data for comparison) once these ops ship.
 - [ ] **Compaction-resilient auth cache — refinement pass** *(MVP shipped in drop 0 as 18.11; this is the follow-up hardening)*.
 
   **Background — what drop 0 shipped.** The MVP solves orchestrator auth loss across context compaction using a `SessionStart` hook + a per-project file cache. No keychain. The full design:
@@ -1703,7 +1703,7 @@ After real dogfooding reveals what works and what doesn't.
 
 Move git responsibility from orchestrator+dev to the dispatcher.
 
-- [ ] Dispatcher performs all commits for plan items it dispatched (commit agent handles the message; no deterministic fallback; commit-agent failure escalates to orchestrator CLI tool).
+- [ ] Dispatcher performs all commits for action items it dispatched (commit agent handles the message; no deterministic fallback; commit-agent failure escalates to orchestrator CLI tool).
 - [ ] Dispatcher reads `start_commit` / `end_commit` fields to decide reingest scope.
 - [ ] Orchestrator CLI tool for manual commit override when the commit agent escalates.
 - [ ] Orchestrator programmatic supersede via system-issued auth (the post-dogfood supersede path from drop 1's deferred list).
@@ -1806,7 +1806,7 @@ Is this sufficient? Does the orchestrator need more visibility during a running 
 
 ### 20.9. Planning Agent Auth Scope
 
-**Q11:** The planner agent needs to create child plan items via `till.plan_item(operation=create)`. But its auth is scoped to its own plan-task. Creating children on the drop (the plan-task's parent) requires broader scope.
+**Q11:** The planner agent needs to create child action items via `till.action_item(operation=create)`. But its auth is scoped to its own plan-task. Creating children on the drop (the plan-task's parent) requires broader scope.
 
 Options:
 - a) Planner's auth is scoped to the drop, not just its plan-task
@@ -2036,7 +2036,7 @@ Routed `@`-mentions, in order of specificity:
 
 Two coordination surfaces carry mentions with different semantics:
 
-- **`till.comment`** — shared append-only thread lane on the plan item. Mentions surface in the addressed viewer's Comments notifications section. Lightweight discussion, question-and-answer, audit-trail.
+- **`till.comment`** — shared append-only thread lane on the action item. Mentions surface in the addressed viewer's Comments notifications section. Lightweight discussion, question-and-answer, audit-trail.
 - **`till.handoff`** — structured next-action routing. Mentions surface in the addressed viewer's **Action Required** list. Used when a concrete next action is expected.
 
 Rule of thumb: questions and audit-trail → comments; routed next-action → handoffs. `till.attention_item` is the orchestrator's inbox substrate and is not addressed via `@`-mentions in user text.
@@ -2045,8 +2045,8 @@ Rule of thumb: questions and audit-trail → comments; routed next-action → ha
 
 Dispatched cascade agents need a system-prompt addendum that teaches them how to:
 
-1. **Detect** `@`-mentions addressed to their role in comments on the plan item they own.
-2. **Respond** via a new comment on the same plan item, echoing the addresser so the thread reads naturally.
+1. **Detect** `@`-mentions addressed to their role in comments on the action item they own.
+2. **Respond** via a new comment on the same action item, echoing the addresser so the thread reads naturally.
 3. **Escalate** to `till.handoff` or `till.attention_item` when the question requires a decision the agent cannot make.
 
 The addendum is passed via `claude -p --append-system-prompt <text>` (Anthropic Claude Code flag — see §20.5 resolution for pass-through mechanics). The text is hardcoded per-role in the agent's `.md` file, not per-dispatch.

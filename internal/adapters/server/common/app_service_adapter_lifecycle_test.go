@@ -280,7 +280,7 @@ func TestAppServiceAdapterProjectTaskCommentLifecycle(t *testing.T) {
 		"till.auth_request",
 		"till.project",
 		"till.template",
-		"till.plan_item",
+		"till.action_item",
 		"till.capture_state",
 	} {
 		if !slices.Contains(guide.Recommended, tool) {
