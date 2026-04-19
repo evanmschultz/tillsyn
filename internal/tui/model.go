@@ -27,6 +27,7 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/tui/gitdiff"
 )
 
 // Service represents service data used by this package.
@@ -137,6 +138,8 @@ const (
 	modeTemplateMigrationReview
 	modeDescriptionEditor
 	modeThread
+	modeDiff
+	modeFileViewer
 )
 
 // descriptionEditorTarget identifies which form field receives markdown-description editor output.
@@ -892,6 +895,11 @@ type Model struct {
 	resourcePickerItems        []resourcePickerEntry
 	resourcePickerFilter       textinput.Model
 
+	// pickerCore holds the shared file-picker state. Path-picker, file-picker,
+	// and future variants all route through this sub-struct so Model field
+	// additions stay bounded (synthesis §5.2 / Drop 1.5 P3-A acceptance criteria).
+	pickerCore filePickerCore
+
 	labelPickerBack            inputMode
 	labelPickerIndex           int
 	labelPickerItems           []labelPickerItem
@@ -941,7 +949,7 @@ type Model struct {
 	threadDetailsEditorActive bool
 	threadComposerUndo        []string
 	threadComposerRedo        []string
-	threadMarkdown            markdownRenderer
+	threadMarkdown            *markdownRenderer
 	actionItemInfoBody        viewport.Model
 	actionItemInfoDetails     viewport.Model
 	descriptionPreview        viewport.Model
@@ -949,6 +957,26 @@ type Model struct {
 	autoRefreshInterval time.Duration
 	autoRefreshArmed    bool
 	autoRefreshInFlight bool
+
+	// diff owns the ctrl+d full-page diff surface. The pointer itself is the
+	// one Model-level field this feature adds; the inner state (viewport,
+	// differ, highlighter, result, error, dimensions) lives on *diffMode so
+	// the Model-field budget stays within Drop 1.5 P4-T3 acceptance criteria.
+	diff *diffMode
+
+	// diffBackMode captures the mode active when ctrl+d was pressed so esc
+	// restores the prior surface instead of unconditionally returning to the
+	// board (falsification vector 5). Required second field alongside diff.
+	diffBackMode inputMode
+
+	// fileViewer owns the v-key full-page file-viewer surface. The pointer
+	// itself is the one Model-level field this feature adds; inner state
+	// (viewport, markdownRenderer, content) lives on *fileViewerMode.
+	fileViewer *fileViewerMode
+
+	// fileViewerBackMode captures the mode active when v was pressed so esc
+	// restores the prior surface.
+	fileViewerBackMode inputMode
 }
 
 // loadedMsg carries message data through update handling.
@@ -1271,6 +1299,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		actionItemInfoDetails:                actionItemInfoDetails,
 		descriptionPreview:                   descriptionPreview,
 		resourcePickerFilter:                 resourcePickerFilter,
+		pickerCore:                           newFilePickerCore(),
 		duePickerDateInput:                   duePickerDateInput,
 		duePickerTimeInput:                   duePickerTimeInput,
 		labelPickerInput:                     labelPickerInput,
@@ -1319,6 +1348,18 @@ func NewModel(svc Service, opts ...Option) Model {
 	} else {
 		m.defaultRootDir = "."
 	}
+	// threadMarkdown is heap-allocated so its address is stable across Model
+	// copies. fileViewerMode.md holds the same pointer; pointer equality is
+	// asserted by TestFileViewer_SharesThreadMarkdown.
+	m.threadMarkdown = &markdownRenderer{}
+	// Default diff-mode wiring uses the exec-backed Differ and chroma
+	// Highlighter. Tests override this via WithDiffMode to inject deterministic
+	// fakes, so real shell invocations never happen during unit runs.
+	m.diff = newDiffMode(gitdiff.NewExecDiffer(), gitdiff.NewChromaHighlighter())
+	// File viewer shares the model's glamour-backed markdownRenderer so
+	// markdown rendering uses the same pipeline as the thread view. The
+	// pointer m.threadMarkdown is stable for the lifetime of the Model.
+	m.fileViewer = newFileViewerMode(m.threadMarkdown, defaultFileViewerConfig())
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&m)
@@ -1663,6 +1704,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == modeAuthInventory {
 			m.syncAuthInventoryViewport()
+		}
+		if m.mode == modeDiff && m.diff != nil {
+			// Match the chrome math used at render time so mid-session resize
+			// doesn't skew banner placement until the next frame.
+			accent := lipgloss.Color("62")
+			if project, ok := m.currentProject(); ok {
+				accent = projectAccentColor(project)
+			}
+			muted := lipgloss.Color("241")
+			dim := lipgloss.Color("239")
+			metrics := m.fullPageSurfaceMetrics(
+				accent, muted, dim,
+				actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+				"Git Diff", "", "",
+			)
+			m.diff.resize(metrics.contentWidth, max(1, metrics.bodyHeight-1))
+		}
+		if m.mode == modeFileViewer && m.fileViewer != nil {
+			accent := lipgloss.Color("62")
+			if project, ok := m.currentProject(); ok {
+				accent = projectAccentColor(project)
+			}
+			muted := lipgloss.Color("241")
+			dim := lipgloss.Color("239")
+			metrics := m.fullPageSurfaceMetrics(
+				accent, muted, dim,
+				actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())),
+				"File Viewer", "", "",
+			)
+			m.fileViewer.resize(metrics.contentWidth, max(1, metrics.bodyHeight-1))
 		}
 		m.normalizePanelFocus()
 		return m, nil
@@ -2064,6 +2135,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "comment posted"
 		return m, nil
 
+	case diffLoadedMsg:
+		return m.applyDiffLoadedMsg(msg)
+
 	case tea.KeyPressMsg:
 		// Always honor terminal interrupt for deterministic emergency exit across all modes.
 		if msg.String() == "ctrl+c" {
@@ -2105,6 +2179,12 @@ func (m Model) View() tea.View {
 	}
 	if m.mode == modeThread {
 		return m.renderThreadModeView()
+	}
+	if m.mode == modeDiff {
+		return m.renderDiffModeView()
+	}
+	if m.mode == modeFileViewer {
+		return m.renderFileViewerModeView()
 	}
 	if m.mode == modeAuthReview {
 		return m.renderAuthReviewModeView()
@@ -9825,6 +9905,8 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.quit):
 		return m, tea.Quit
+	case key.Matches(msg, m.keys.diffModeToggle):
+		return m.enterDiffMode()
 	case key.Matches(msg, m.keys.toggleHelp):
 		m.toggleHelpOverlay()
 		return m, nil
@@ -10032,6 +10114,8 @@ func (m Model) handleBoardPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		return m, nil
 	case key.Matches(msg, m.keys.activityLog):
 		return m, m.openActivityLog()
+	case key.Matches(msg, m.keys.fileViewerToggle):
+		return m.enterFileViewerMode()
 	case key.Matches(msg, m.keys.undo):
 		return m.undoLastMutation()
 	case key.Matches(msg, m.keys.redo):
@@ -10153,6 +10237,14 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.toggleHelpOverlay()
 		}
 		return m, nil
+	}
+
+	if m.mode == modeDiff {
+		return m.handleDiffModeKey(msg)
+	}
+
+	if m.mode == modeFileViewer {
+		return m.handleFileViewerModeKey(msg)
 	}
 
 	if m.mode == modeActivityEventInfo {
@@ -17845,6 +17937,19 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"ctrl+s posts while composing; esc exits composer or returns to the prior screen",
 			"up/down, pgup/pgdown/home/end, or mouse wheel scroll comments",
 		}
+	case modeDiff:
+		return "diff", []string{
+			"up/down or j/k scroll one line at a time",
+			"pgup/pgdown or ctrl+u/ctrl+d move half a page",
+			"esc returns to the prior screen",
+			"a divergence banner appears when the start commit is not an ancestor of HEAD",
+		}
+	case modeFileViewer:
+		return "file-viewer", []string{
+			"up/down or j/k scroll one line at a time",
+			"pgup/pgdown move half a page",
+			"esc returns to the prior screen",
+		}
 	default:
 		return "current screen", []string{
 			"enter confirms primary action",
@@ -19822,6 +19927,22 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("?", "help"),
 		)
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeDiff:
+		short := []key.Binding{
+			helpBinding("↑/↓", "scroll"),
+			helpBinding("pgup/pgdn", "page"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
+	case modeFileViewer:
+		short := []key.Binding{
+			helpBinding("↑/↓", "scroll"),
+			helpBinding("pgup/pgdn", "page"),
+			helpBinding("esc", "back"),
+			helpBinding("?", "help"),
+		}
+		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	default:
 		if m.mode == modeNone {
 			short := []key.Binding{
@@ -21547,6 +21668,10 @@ func (m Model) modeLabel() string {
 		return "description-editor"
 	case modeThread:
 		return "thread"
+	case modeDiff:
+		return "diff"
+	case modeFileViewer:
+		return "file-viewer"
 	default:
 		return "normal"
 	}
@@ -21626,6 +21751,10 @@ func (m Model) modePrompt() string {
 		return "description editor: tab preview/edit, ctrl+s saves current draft, esc cancel"
 	case modeThread:
 		return "thread: tab/shift+tab or left/right wrap panels; enter opens the focused panel action; i composes from comments; ctrl+s posts while composing; up/down or pgup/pgdown/home/end scroll comments; esc backs out"
+	case modeDiff:
+		return "diff: up/down or j/k scroll; pgup/pgdown or ctrl+u/ctrl+d page; esc returns to the prior screen"
+	case modeFileViewer:
+		return "file-viewer: up/down or j/k scroll; pgup/pgdown page; esc returns to the prior screen"
 	default:
 		return ""
 	}

@@ -1221,9 +1221,23 @@ When the orchestrator compacts memory, it should absorb the wiki summaries. The 
 
 **Open question:** How does wiki content integrate with orchestrator memory management? This needs design work.
 
-### 15.7. STEWARD Continuation Orchestrator + Per-Drop MD Routing
+### 15.7. Drop-Orch + STEWARD MD Ownership Split (Post-2026-04-19)
 
-**Role separation (load-bearing).** Numbered-drop orchestrators (`DROP_N_ORCH`) implement each numbered drop end-to-end but **never edit MD files**. A persistent continuation orchestrator, `STEWARD`, is the **only** orchestrator that writes MDs in `main/`. See `main/STEWARD_ORCH_PROMPT.md` and memory `feedback_steward_owns_md_writes.md` for the canonical rule body.
+**Supersedes the earlier "STEWARD owns all MD writes" framing.** Dev directive 2026-04-19 during Drop 1.5 `DROP_END_LEDGER_UPDATE` execution. Applies every drop going forward. See `STEWARD_ORCH_PROMPT.md` §1.3 for the canonical MD ownership map and memory `project_drop_pr_flow_and_workflow_architecture.md` for the full flow. Memory `feedback_steward_owns_md_writes.md` is marked **SUPERSEDED**.
+
+**Drop-orch (`DROP_N_ORCH`) owns on the drop branch:**
+
+- All drop-lifetime artifact content — LEDGER entry, REFINEMENTS raised, HYLLA feedback, WIKI changelog, DISCUSSIONS. Written to files under `main/workflow/drop_N/` (see §15.9 for layout) on the drop branch; flows to `main` via drop merge.
+- Architecture-MD edits when the drop's scope touches process (`CLAUDE.md`, `PLAN.md`, `AGENT_CASCADE_DESIGN.md`, `STEWARD_ORCH_PROMPT.md`, `workflow/README.md`, `workflow/example/drops/_TEMPLATE/*`).
+- Rebase onto `origin/main` + conflict resolution (Go conflicts → builder subagent; MD conflicts → drop-orch directly).
+- PR creation + dev-approved merge.
+- Remote branch + local branch ref cleanup (`git push origin --delete drop/N` + `git branch -D drop/N`).
+
+**STEWARD owns post-merge, running from `main/` (not bare root):**
+
+- Reads `main/workflow/drop_N/` content post-merge; discusses with dev; collates into `main/LEDGER.md`, `main/REFINEMENTS.md`, `main/HYLLA_FEEDBACK.md`, `main/WIKI_CHANGELOG.md`, `main/HYLLA_REFINEMENTS.md`.
+- Continues to curate `main/WIKI.md` between drops.
+- Runs `git worktree remove drop/N` for local cleanup — **nothing else**. STEWARD does **not** delete branches (remote or local); drop-orch already did that.
 
 **Six persistent level_1 STEWARD-owned drops.** Direct children of the project; never close. The set is subject to refinement over time — dev intent (2026-04-16): *"we will need to refine steward each drop too. So, that may change as we develop this system."*
 
@@ -1236,19 +1250,20 @@ When the orchestrator compacts memory, it should absorb the wiki summaries. The 
 | `REFINEMENTS` | `REFINEMENTS.md` |
 | `HYLLA_REFINEMENTS` | `HYLLA_REFINEMENTS.md` |
 
-**Per-drop level_2 findings drops.** When `DROP_N_ORCH` spins up drop N, it creates five level_2 findings drops — one under each non-`DISCUSSIONS` persistent parent: `DROP_N_HYLLA_FINDINGS`, `DROP_N_LEDGER_ENTRY`, `DROP_N_WIKI_CHANGELOG_ENTRY`, `DROP_N_REFINEMENTS_RAISED`, `DROP_N_HYLLA_REFINEMENTS_RAISED`. Drop-orch **creates + edits `description`/`details`/`metadata`** on these items (populates per-drop findings content). Drop-orch **cannot change state** — STEWARD owns every state transition on every STEWARD-scope item.
+**Tillsyn L1/L2 structure still tracks the work.** Drop-orch still creates the per-drop level_2 findings drops under STEWARD's persistent L1 parents for Tillsyn-native visibility. The **content** source of truth is the on-disk files under `main/workflow/drop_N/` (§15.9) — drop-orch writes to disk during the drop, and STEWARD reads from disk post-merge. Level_2 drop descriptions may carry short pointers into the disk MDs but are no longer the canonical content store.
 
 **Drop-close sequence (load-bearing).**
 
-1. All build + QA tasks in drop N → `done`.
-2. Drop-orch works `DROP N END — LEDGER UPDATE` (drop-orch-owned): `git push` → `gh run watch --exit-status` green → `hylla_ingest` (full enrichment, remote ref) → finalize the five level_2 findings-drop descriptions → post `till.handoff` to `@STEWARD` → close `DROP N END — LEDGER UPDATE`. All pre-merge, on the drop branch.
-3. Drop branch merges to `main` — merge is STEWARD's trigger.
-4. STEWARD on `main`: reads each level_2 description, discusses with dev, writes the corresponding MDs on `main`, commits docs-only with single-line conventional-commits, pushes, closes the level_2 drops.
+1. All build + QA action items in drop N → `done`.
+2. Drop-orch works `DROP N END — LEDGER UPDATE` pre-merge on the drop branch: finalizes the drop-end artifact MDs under `main/workflow/drop_N/` → `git push` → `gh run watch --exit-status` green → `hylla_ingest` (full enrichment, remote ref) → `gh pr create --base main --head drop/N` → dev-approved merge.
+3. Drop-orch post-merge: `git push origin --delete drop/N` + `git branch -D drop/N` → post `till.handoff` to `@STEWARD` naming `main/workflow/drop_N/` → close `DROP N END — LEDGER UPDATE`.
+4. STEWARD on `main/`: reads `main/workflow/drop_N/`, discusses with dev, writes the corresponding MDs on `main`, commits docs-only with single-line conventional-commits, pushes, closes the level_2 findings drops.
 5. STEWARD works the refinements-gate item inside drop N's tree (§15.8) — discusses next-drop refinements + STEWARD-self refinement with dev, applies agreed changes, closes the gate.
 6. Only after the refinements-gate closes can drop N's level_1 close (parent-blocks-on-incomplete-child).
-7. Drop N+1 starts.
+7. STEWARD runs `git worktree remove drop/N` locally.
+8. Drop N+1 starts.
 
-**Pre-Drop-3 enforcement = honor-system.** Both `DROP_N_ORCH_PROMPT.md` and `STEWARD_ORCH_PROMPT.md` carry the rule explicitly: drop-orch can create + edit `description` on STEWARD-owned items, but never changes state, and never edits MDs. **Drop 3 enforcement** = template auto-generation of the five level_2 findings drops + refinements-gate + new `steward` orch `principal_type` with auth-level state-lock. See §19.3.
+**Pre-Drop-3 enforcement = honor-system.** Drop 3 enforcement = template auto-generation of per-drop `workflow/drop_N/` scaffolding + refinements-gate + new `steward` orch `principal_type` with auth-level state-lock. See §19.3.
 
 ### 15.8. Per-Drop Refinements-Gate + STEWARD-Self Refinement
 
@@ -1260,6 +1275,34 @@ When STEWARD works the refinements-gate post-merge, the conversation covers **tw
 2. **STEWARD-self refinement** — does STEWARD's scope, prompt, persistent-drop set, or per-drop flow need refinement from drop N's lessons? Dev quote (2026-04-16): *"every drop the amount will be a refinement thing, lol."* Expect non-zero STEWARD-self refinement every drop. Common outcomes: add/rename a persistent drop; adjust drop-close sequence; update memory; edit `STEWARD_ORCH_PROMPT.md`.
 
 Closing the refinements-gate unblocks the numbered drop's level_1 closure. STEWARD summarizes the gate's decisions in `completion_notes`.
+
+### 15.9. Per-Drop `workflow/` Dir Architecture
+
+**`workflow/` is git-tracked** and lives in `main/workflow/`. Bare-root `workflow/` is retired. STEWARD ran the one-time migration at commit `effaad9` on main. See `AGENT_CASCADE_DESIGN.md` §8.4 for the atomic-small-things rendering contract.
+
+**Per-drop subdir:** `main/workflow/drop_N/` — created by drop-orch at drop spin-up, mirrors `workflow/example/` + `workflow/example/drops/_TEMPLATE/` shape (atomic-small-things discipline — many small MDs, not monoliths). Drop-orch writes directly to files under this subdir as the drop progresses; all of `workflow/drop_N/` flows to `main` via the drop's PR merge.
+
+**`failures/` subdir at each branched level of `drop_N/`.** Never delete QA / plan / build artifacts. Failed QA, plan, or build content moves into `failures/` so the next iteration's plan / QA files can learn from and count them. Retention = forever. **Forward-only** — no retroactive backfill for pre-2026-04-19 drops (dev directive 2026-04-19).
+
+**Only edit workflow-process flow from `AGENT_CASCADE_DESIGN.md` + `workflow/example/drops/_TEMPLATE/`.** Those two are the canonical atomic-small-things source; `workflow/drop_N/` for any specific N is a rendering of that template shape for drop N's specific work.
+
+**Flow during drop N (pre-merge, on the drop branch):**
+
+1. Drop-orch spin-up: create `main/workflow/drop_N/` mirroring `_TEMPLATE`.
+2. Planners, builders, QA populate per-unit MDs under their respective subdirs as work progresses.
+3. Failed iterations move to `failures/` at the appropriate level; never deleted.
+4. At drop end, the `DROP_N_END_LEDGER_UPDATE` subdir holds the five drop-end artifact MDs (hylla findings, ledger entry, wiki changelog entry, refinements raised, Hylla refinements raised).
+
+**Flow post-merge (STEWARD on `main/`):**
+
+1. Reads `main/workflow/drop_N/` content (primarily the drop-end artifact MDs).
+2. Discusses with dev, splices content into `main/LEDGER.md` / `main/REFINEMENTS.md` / `main/HYLLA_FEEDBACK.md` / `main/WIKI_CHANGELOG.md` / `main/HYLLA_REFINEMENTS.md`.
+3. Commits docs-only on `main` with single-line conventional-commits, pushes.
+4. Works drop N's refinements-gate (§15.8) — discussing next-drop + STEWARD-self refinements with dev.
+5. Closes drop N's level_2 findings drops + level_1.
+6. Runs `git worktree remove drop/N` for local cleanup. (Remote + local branch refs were already deleted by drop-orch pre-STEWARD.)
+
+**Rebase + Hylla staleness.** During a main-diverged rebase, use `git diff` as primary evidence, **not Hylla**. Hylla reflects `main` at time of last ingest; post-rename (e.g. Drop 1's `task → action_item`, `plan_item → action_item`), Hylla's node names drift from current committed state. Re-ingest on `main` post-drop-merge restores Hylla freshness for next drop. Subagents report "Hylla stale vs rebase target; used `git diff`" as expected pattern during rebase, not a miss.
 
 ---
 
