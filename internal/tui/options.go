@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/tui/gitdiff"
 )
 
 // ActionItemFieldConfig holds configuration for actionItem field.
@@ -310,5 +311,18 @@ func WithSaveBootstrapConfigCallback(cb SaveBootstrapConfigFunc) Option {
 func WithSaveLabelsConfigCallback(cb SaveLabelsConfigFunc) Option {
 	return func(m *Model) {
 		m.saveLabels = cb
+	}
+}
+
+// WithDiffMode returns an option that injects the Differ and Highlighter used
+// by the ctrl+d full-page diff surface. Production callers rely on the default
+// exec-backed Differ and chroma-backed Highlighter wired in NewModel; tests
+// inject fakes here so teatest runs never shell out to `git`.
+func WithDiffMode(d gitdiff.Differ, h gitdiff.Highlighter) Option {
+	return func(m *Model) {
+		if d == nil || h == nil {
+			return
+		}
+		m.diff = newDiffMode(d, h)
 	}
 }

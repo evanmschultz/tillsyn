@@ -187,6 +187,15 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	}
 }
 
+// Clock returns the service's current-time source so callers that share this
+// service can stay aligned with its time perspective (including test clocks).
+func (s *Service) Clock() Clock {
+	if s == nil || s.clock == nil {
+		return time.Now
+	}
+	return s.clock
+}
+
 // EnsureDefaultProject ensures default project.
 func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, error) {
 	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
