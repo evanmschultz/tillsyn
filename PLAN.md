@@ -1702,6 +1702,15 @@ After real dogfooding reveals what works and what doesn't.
   - [ ] **Port to Linux / Windows** if the project ever runs there — the file semantics are portable; only the `date -j -u -f` parsing in the hook script is macOS-specific and needs a GNU-date alt path.
   - [ ] **Integration with `till auth session show`**: today the CLI's `show` command redacts the secret. If a user wants to seed the cache for a pre-existing session, they can't. Add `till auth session reveal --session-id <id>` (interactive, requires TTY, logs an attention item) so seeding works without re-claiming. Lower priority — the cache is normally written at claim time where the secret is already in hand.
 - [ ] **Cascade Tree Structure docs relocation — MVP docs prep** *(surfaced during 2026-04-17 CLAUDE.md size-cleanup sweep)*. The authoritative "Cascade Tree Structure (Template Architecture)" section — kind hierarchy diagram, required-children rules, agent bindings table, post-build gates, blocker semantics, state-trigger dispatch, pre-Drop-2 creation rule — currently lives in both `main/CLAUDE.md` and the bare-root `CLAUDE.md`. It's not duplicated anywhere in `PLAN.md` today. Before MVP release, relocate the canonical text into `PLAN.md` (natural home: a new top-level section near §3 "The Cascade Model" or as an explicit §3.x "Template Architecture by Kind") and shrink both `CLAUDE.md` bodies to a short summary + pointer. Rationale: `PLAN.md` is the documented source of truth for cascade architecture (per each `CLAUDE.md`'s "Cascade Plan" pointer); having the tree structure live in `CLAUDE.md` instead is a structural inversion that will confuse OSS readers once MVP docs are written. QA-proof + QA-falsification: verify `PLAN.md` version is complete (no content dropped), both `CLAUDE.md` pointers resolve correctly, and WIKI.md `Related Files` is updated. Deferred from the 2026-04-17 sweep because doing it then would have required a large `PLAN.md` edit alongside the CLAUDE.md shrink; the sweep preserved Cascade Tree Structure in both `CLAUDE.md` files pending this refinement.
+- [ ] **Cascade granularity refinements (source: `main/AGENT_CASCADE_DESIGN.md` 2026-04-18).** The design doc sets starting values hardcoded into the dogfood build and lists every dial that should become dev-tunable once we have metrics data:
+  - [ ] **Role→model bindings configurable by path + actionItem type.** `AGENT_CASCADE_DESIGN.md` §3 ships a fixed binding (planner=sonnet, all QA=opus, builder=sonnet, commit=haiku). Refinement: template/project-config fields so the dev can override per path glob + per actionItem type. Configuration surface design is open — see §20.10 Q12.
+  - [ ] **Nested planners + QA inside Go packages.** Pre-dogfood rule (`AGENT_CASCADE_DESIGN.md` §2.2): planners and LLM QA stop at the Go-package boundary; droplets go sub-package with `blocked_by` serialization on shared compile. Refinement: figure out how to nest planners + QA *inside* a package keyed on file-clusters or feature-slices. Unblocks finer parallelism and tighter-scoped LLM QA for large packages. Data from dogfood decides if it's worth building.
+  - [ ] **Global plan-QA sweep depth threshold configurable.** `AGENT_CASCADE_DESIGN.md` §4.4 hardcodes depth ≥ 3 as the trigger for the second plan-QA pass. Refinement: promote to a template field. Starter value stays at 3; real drops tell us where the threshold actually earns its cost.
+  - [ ] **Droplet LOC/file ceilings configurable per actionItem type, with planner-asks-for-permission flow.** `AGENT_CASCADE_DESIGN.md` §2.1 ships soft ~80 LOC target / ~200 LOC ceiling / ~3 files. Refinement: template fields per actionItem type (SQL migration droplet may want different ceilings than a unit-test droplet than a TUI-component droplet). When a planner genuinely can't decompose under the ceiling, the workflow should let the planner *request* permission to exceed it — captured as an attention item or structured handoff — rather than silently ignoring the rule or forcing a contrived split.
+  - [ ] **Audit-trail storage strategy evaluation.** `AGENT_CASCADE_DESIGN.md` §8 ships Option X (full snapshot per change) on YAGNI grounds. Refinement: if dogfood shows edit-count × node-size bounds out uncomfortably, evaluate Option Y (diff-per-change) or Option Z (snapshot + diffs). Do not optimize until data says to.
+  - [ ] **Metrics catalog → structured ledger emission.** `AGENT_CASCADE_DESIGN.md` §13 lists the metrics we want (per-droplet build-green rate, per-planner-node plan-QA pass rate, per-drop cost by tier, re-QA frequency, parallelism extraction rate, etc.). Today the ledger captures this as prose inside `DROP_N_LEDGER_ENTRY`. Refinement: define a structured JSON/TOML block embedded in each ledger entry with the full metric set, so we can aggregate cleanly for the eventual comparative benchmarks (§12 of the design doc — arxiv 2603.01896 framework).
+  - [ ] **Split `AGENT_CASCADE_DESIGN.md` into concept + operations before MVP public release.** Today the doc is unified-for-now to prevent drift between the conceptual explanation (audiences: people running a similar cascade with plain Markdown + off-the-shelf subagents, and the future blog-post/article source material) and the internal pre-dogfood MD-only operations content (dev + STEWARD day-to-day reference during Drops 1.75 → 4). Before MVP, split into `docs/cascade-concept.md` (public-facing: §1 thesis, §2 droplet shape, §3 role/model bindings, §4 QA placement, §5 nesting, §6 failure handling, §7 blocker re-QA, §8 audit trail, §9 cascade tree ASCII art, §12 benchmarking framework, §13 metrics catalog) and `docs/cascade-operations.md` (internal: §10 dogfood plan, §11 affected cascade drops, §14 open questions). QA-proof + QA-falsification: verify no content dropped; every cross-reference in `PLAN.md`, `CLAUDE.md`, and other MDs updated to the new locations.
+  - [x] **De-Rak-ify `main/workflow/example/` for public-release shipping.** *(Landed 2026-04-19.)* `main/workflow/example/` is now a generic cascade-workflow reference — every file uses `<PROJECT>` / `<package>` / `<org>` placeholders, no project-specific names remain. Content aligned with `AGENT_CASCADE_DESIGN.md` §2 (droplet shape), §4 (QA placement), §5 (sub-drop nesting / planner-calls-planner), §7 (ancestor re-QA on blocker failure). Structure: `example/CLAUDE.md` (generic project CLAUDE), `example/drops/WORKFLOW.md` (cascade-aware 7-phase lifecycle), `example/drops/_TEMPLATE/` (per-drop scaffold), `example/drops/DROP_N_EXAMPLE/` (concrete pedagogical walkthrough of one closed drop in a fictional generic Go project). Double-nested `drops/drops/` import bug flattened to `drops/` at the same time.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files.
 
 ### 19.11. drop 11 — Dispatcher Git Ownership (Post-Dogfood Refinement)
@@ -1819,6 +1828,35 @@ Options:
 - c) Planner creates children under the drop via a dedicated "create-child-on-parent" MCP operation
 
 **Leaning:** (a) — the planner needs drop-scoped auth because its job is to decompose the drop. Template configuration specifies the auth scope for each kind.
+
+### 20.10. Cascade Granularity Configuration (source: `main/AGENT_CASCADE_DESIGN.md`)
+
+**Q12:** How are role→model bindings configured per path + per actionItem type? `AGENT_CASCADE_DESIGN.md` §3 hardcodes the bindings (planner=sonnet, all QA=opus, builder=sonnet, commit=haiku) for the dogfood phase. Options for the configurable form:
+
+- a) Template field: `role_model_bindings: { planner: "sonnet", plan_qa: "opus", ... }` on the project's template binding. One binding set per template.
+- b) Project-level settings: a `model_bindings.toml` (or block in `tillsyn.toml`) that lives at the project root. Per-path glob overrides inside.
+- c) Per-drop override: drop kind or drop metadata can shadow the template/project default for that drop's subtree.
+- d) All three layered: template default → project override → drop override → per-actionItem override.
+
+**Leaning:** (d) with sensible precedence — template sets the baseline, project overrides for the project's characteristic work (e.g., "this project does a lot of TUI work, bump builder to opus for `internal/tui/**`"), drop metadata overrides for an unusual drop, per-actionItem for final surgery. Ship template-only in Drop 10's first refinement pass; add layers as real use-cases demand.
+
+**Q13:** How do we record the dogfood metrics catalog from `AGENT_CASCADE_DESIGN.md` §13 in a machine-aggregable form? The per-droplet / per-planner-node / per-drop / comparative metrics need structured retention, not prose. Options:
+
+- a) JSON block embedded in each ledger `description` under a stable `## Metrics` heading.
+- b) A sibling file `main/METRICS/<drop-slug>.json` updated by the drop-orch at close.
+- c) A dedicated `till.metrics` MCP operation that writes to a dedicated table.
+
+**Leaning:** (a) first (cheapest, no schema work, data lives next to the narrative). Promote to (c) once the aggregator needs typed queries.
+
+**Q14:** Droplet ceiling breach workflow. When a planner genuinely can't decompose a droplet under the ceiling (`AGENT_CASCADE_DESIGN.md` §2.1), what's the approval path?
+
+- a) Planner marks `irreducible: true` + justification. Plan-QA validates.
+- b) Planner opens an attention item asking the dev to ratify the breach.
+- c) Planner creates a structured handoff to the drop-orch with the breach request.
+
+**Leaning:** (a) is the baseline — plan-QA falsification should be able to reject unjustified irreducibility. Escalate to (b) or (c) only if we see planners abusing `irreducible: true` as an easy out.
+
+**Q15:** Workflow-MD exit criteria. When do we retire `drops/` MDs in favor of direct Tillsyn writes? `AGENT_CASCADE_DESIGN.md` §14 Q1 recommends: after Drop 4 dispatcher lands AND at least 3 workflow-MD drops have completed. Confirm the 3-drop floor; document the retirement trigger as a refinement action item when we reach it.
 
 ---
 
