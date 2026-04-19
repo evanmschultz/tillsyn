@@ -132,9 +132,11 @@ No batched commits. No deferred pushes. No skipped QA. No skipped CI watch. No c
 
 ## Cascade Ledger + Hylla Feedback
 
-Per-drop artifact MDs live in `main/`. **All MD writes route through `STEWARD`.** Numbered-drop orchestrators (`DROP_N_ORCH`) never edit MDs — they file per-drop content into `description` fields of **level_2 findings drops** under STEWARD's persistent level_1 parents. STEWARD writes the MDs on `main` post-merge.
+Per-drop artifact MDs live in `main/workflow/drop_N/` on the **drop branch** — drop-orch (`DROP_N_ORCH`) owns writing them as the drop progresses. Drop-orch also owns architecture-MD edits (`CLAUDE.md`, `PLAN.md`, `AGENT_CASCADE_DESIGN.md`, `STEWARD_ORCH_PROMPT.md`, `workflow/README.md`, `workflow/example/**`) when the drop's scope touches process. All drop-branch MD content flows to `main` via the drop's PR merge.
 
-Full flow, level_1 parent catalog, and drop-orch vs STEWARD split live in `STEWARD_ORCH_PROMPT.md` §1.3 (orchestrator roster) and §10 (drop-end sequence). Don't duplicate it here.
+**STEWARD runs post-merge on `main`**, reads `main/workflow/drop_N/` content, and collates it into the six top-level MDs (`LEDGER.md`, `REFINEMENTS.md`, `HYLLA_FEEDBACK.md`, `WIKI_CHANGELOG.md`, `HYLLA_REFINEMENTS.md`, plus ongoing `WIKI.md` curation). STEWARD does NOT edit MDs on drop branches and does NOT delete remote or local branch refs — drop-orch owns branch cleanup as part of the PR flow. STEWARD's only cleanup step is `git worktree remove drop/N` locally.
+
+Full flow, level_1 parent catalog, and drop-orch vs STEWARD split live in `STEWARD_ORCH_PROMPT.md` §1.3 (MD ownership map) and §10 (drop-end sequence + worktree cleanup). Don't duplicate it here.
 
 **Subagent responsibility:** in every closing comment, always include a `## Hylla Feedback` section. If you had no Hylla misses, write `None — Hylla answered everything needed.`. If you did, record each miss with:
 
@@ -168,7 +170,7 @@ The parent Claude Code session launched by the dev from this directory is always
 
 **CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only.
 
-**Markdown documentation edits route through `STEWARD`.** STEWARD (the persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) is the only orchestrator that edits MD files in this repo. Numbered-drop orchestrators (`DROP_N_ORCH`) never touch MDs — they file per-drop artifact content into level_2 findings-drop descriptions under STEWARD's persistent level_1 parents. STEWARD writes the MDs on `main` post-merge.
+**Markdown doc ownership is split between drop-orch (drop branch) and STEWARD (`main` post-merge).** Drop-orchs (`DROP_N_ORCH`) own per-drop artifact content in `main/workflow/drop_N/` and any architecture-MD edits (`CLAUDE.md`, `PLAN.md`, `AGENT_CASCADE_DESIGN.md`, `STEWARD_ORCH_PROMPT.md`, `workflow/README.md`, `workflow/example/**`) when the drop's scope touches process — all on the drop branch, flowing to `main` via PR merge. STEWARD (persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) runs post-merge on `main`, reads `main/workflow/drop_N/` content, collates it into the six top-level MDs (`LEDGER.md`, `REFINEMENTS.md`, `HYLLA_FEEDBACK.md`, `WIKI_CHANGELOG.md`, `HYLLA_REFINEMENTS.md`, plus `WIKI.md` curation), then `git worktree remove drop/N` after drop-orch has deleted the remote + local branch refs.
 
 ### How It Works
 
@@ -224,7 +226,7 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 
 ## Role Model
 
-- **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. Only STEWARD edits markdown docs; drop-orchs don't.
+- **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. Drop-orchs edit MDs on their drop branch (artifact content in `main/workflow/drop_N/` + architecture MDs when scope touches process); STEWARD edits MDs on `main` post-merge (collation into top-level MDs + worktree cleanup).
 - **Builder** — subagent. The ONLY role that edits Go code. Reads actionItem, implements, updates, dies.
 - **QA Proof / QA Falsification** — subagents. Ephemeral. Read actionItem, review, update with verdict, die.
 - **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
@@ -347,12 +349,12 @@ Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <p
 
 ## Bare-Root and Worktree Discipline
 
-- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up from `main/`) is both the git orchestration root AND STEWARD's launch directory. Git internals live under `.bare/`; a top-level `.git` pointer file redirects there (matches the fckin layout).
+- The bare repo at `/Users/evanschultz/Documents/Code/hylla/tillsyn` (one level up from `main/`) is the git orchestration root — `.bare/` holds git internals; a top-level `.git` pointer file redirects there. **Not an orchestrator launch directory.** No session launches from the bare root in steady-state.
 - **Orchestrator launch locations:**
-  - **bare root itself** — `STEWARD` (persistent). STEWARD launches from the bare root, auto-loads the bare-root `CLAUDE.md`, and operates on files in `main/` (and every other worktree when applicable) *without* `cd`ing into them. **STEWARD's `pwd` is the bare root, never `main/`.**
-  - `main/` — drop orchs whose scope is the `main` branch launch from here. None active today.
+  - `main/` — `STEWARD` launches here (persistent continuation orchestrator, runs post-merge MD collation + worktree cleanup). Drop orchs whose scope is the `main` branch also launch from here when applicable.
   - `drop/1/` — `DROP_1_ORCH` (branch `drop/1`). Drop 1 code work (auth TTL, lifecycle, paths/packages, MCP additions).
   - `drop/1.5/` — `DROP_1.5_ORCH` (branch `drop/1.5`). Drop 1.5 TUI work.
-- Drop orchs always launch from their branch's worktree. Cascade agents dispatched by a drop orch `cd` into that drop's worktree, not into `main/` and not into the bare root.
-- Always confirm `pwd` matches the intended role: bare root for STEWARD; `<worktree>/` for every drop orch.
+- Drop orchs always launch from their branch's worktree. Cascade agents dispatched by a drop orch `cd` into that drop's worktree.
+- Always confirm `pwd` matches the intended role: `main/` for STEWARD; `<worktree>/` for every drop orch.
 - Shared-package pinches (e.g. `internal/tui` touched by both Drop 1 and Drop 1.5) coordinate via `till.handoff` with `next_action_type: unblock`, not by shared git state.
+- STEWARD does NOT delete branches (remote or local). Drop-orch deletes the remote branch + local branch ref as part of its PR flow; STEWARD then runs `git worktree remove drop/N` as its only cleanup step.
