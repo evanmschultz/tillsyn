@@ -338,12 +338,12 @@ func TestDiffMode_Teatest_E2E(t *testing.T) {
 	}
 }
 
-// newDiffTestTask builds a domain.Task with the given ResourceRefs for diff-mode unit tests.
+// newDiffTestTask builds a domain.ActionItem with the given ResourceRefs for diff-mode unit tests.
 //
-// The helper keeps test bodies concise by pre-filling all required Task fields
+// The helper keeps test bodies concise by pre-filling all required ActionItem fields
 // with stable values; callers only need to supply the ResourceRefs that drive
 // resolveDiffPaths behaviour under test.
-func newDiffTestTask(t *testing.T, refs []domain.ResourceRef) domain.Task {
+func newDiffTestTask(t *testing.T, refs []domain.ResourceRef) domain.ActionItem {
 	t.Helper()
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, err := domain.NewProject("p1", "Inbox", "", now)
@@ -354,14 +354,14 @@ func newDiffTestTask(t *testing.T, refs []domain.ResourceRef) domain.Task {
 	if err != nil {
 		t.Fatalf("NewColumn: %v", err)
 	}
-	task, err := domain.NewTask(domain.TaskInput{
+	task, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t-diff-test",
 		ProjectID: p.ID,
 		ColumnID:  col.ID,
 		Position:  0,
 		Title:     "diff test task",
 		Priority:  domain.PriorityLow,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			ResourceRefs: refs,
 		},
 	}, now)
@@ -560,14 +560,14 @@ func TestDiffMode_SetItem_PassesResolvedPaths(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	task, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
 		Title:     "resource task",
 		Priority:  domain.PriorityLow,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			ResourceRefs: []domain.ResourceRef{
 				refWith("internal/tui", "path"),
 				refWith("internal/domain", "package"),
@@ -576,7 +576,7 @@ func TestDiffMode_SetItem_PassesResolvedPaths(t *testing.T) {
 	}, now)
 
 	fd := &fakeDiffer{result: gitdiff.DiffResult{Patch: samplePatchForDiffMode, Divergence: gitdiff.DivergenceAncestor}}
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.ActionItem{task})
 	m := loadReadyModel(t, NewModel(svc, WithDiffMode(fd, stubHighlighter{})))
 
 	// Enter diff mode — this should call SetItem with the selected board task.
@@ -609,14 +609,14 @@ func TestDiffMode_RecomputesOnItemChange(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewTask(domain.TaskInput{
+	task, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
 		Title:     "recompute task",
 		Priority:  domain.PriorityLow,
-		Metadata: domain.TaskMetadata{
+		Metadata: domain.ActionItemMetadata{
 			ResourceRefs: []domain.ResourceRef{
 				refWith("internal/app", "path"),
 			},
@@ -624,7 +624,7 @@ func TestDiffMode_RecomputesOnItemChange(t *testing.T) {
 	}, now)
 
 	fd := &fakeDiffer{result: gitdiff.DiffResult{Patch: samplePatchForDiffMode, Divergence: gitdiff.DivergenceAncestor}}
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{task})
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.ActionItem{task})
 	m := loadReadyModel(t, NewModel(svc, WithDiffMode(fd, stubHighlighter{})))
 
 	// First diff entry — uses task's initial ResourceRefs.
@@ -653,7 +653,7 @@ func TestDiffMode_RecomputesOnItemChange(t *testing.T) {
 		refWith("internal/domain", "package"),
 		refWith("cmd/till", "path"),
 	}
-	svc.tasks[p.ID] = []domain.Task{updatedTask}
+	svc.tasks[p.ID] = []domain.ActionItem{updatedTask}
 	m2 := loadReadyModel(t, NewModel(svc, WithDiffMode(fd, stubHighlighter{})))
 
 	// Second diff entry — uses updated ResourceRefs.

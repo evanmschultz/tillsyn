@@ -1,0 +1,8 @@
+package example
+
+import "fmt"
+
+// Hello prints a greeting.
+func Hello(name string) {
+	fmt.Printf("Hello, %s!\n", name)
+}

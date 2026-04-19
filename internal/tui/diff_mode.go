@@ -54,7 +54,7 @@ type diffMode struct {
 	// activeItem is the plan-item whose ResourceRefs were last used to resolve
 	// the diff path list. SetItem writes it on each enterDiffMode call so path
 	// resolution is always fresh and never cached across sessions.
-	activeItem *domain.Task
+	activeItem *domain.ActionItem
 }
 
 // SetItem records the active plan-item and feeds its ResourceRefs into the next
@@ -62,7 +62,7 @@ type diffMode struct {
 // issuing diffModeCmd so the resolved path list reflects the current board
 // selection. Passing nil is safe — resolveDiffPaths returns an empty slice,
 // causing Differ.Diff to fall back to whole-repo behaviour.
-func (d *diffMode) SetItem(item *domain.Task) {
+func (d *diffMode) SetItem(item *domain.ActionItem) {
 	if d == nil {
 		return
 	}
@@ -97,7 +97,7 @@ func (d *diffMode) resolvePaths() []string {
 //
 // An empty result (nil item / nil refs / all-skipped) signals Differ.Diff to
 // run whole-repo (conventional git diff behaviour).
-func resolveDiffPaths(item *domain.Task) []string {
+func resolveDiffPaths(item *domain.ActionItem) []string {
 	if item == nil {
 		return nil
 	}
@@ -388,8 +388,8 @@ func (m Model) enterDiffMode() (tea.Model, tea.Cmd) {
 	m.status = "loading diff..."
 	// Resolve the active task's ResourceRefs fresh on each entry so path lists
 	// are never cached across sessions (P4-T4 acceptance criterion).
-	var activeTask *domain.Task
-	if task, ok := m.selectedTaskInCurrentColumn(); ok {
+	var activeTask *domain.ActionItem
+	if task, ok := m.selectedActionItemInCurrentColumn(); ok {
 		activeTask = &task
 	}
 	m.diff.SetItem(activeTask)
