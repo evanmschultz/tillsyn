@@ -290,7 +290,7 @@ func (a *AppServiceAdapter) ListAuthSessions(ctx context.Context, in ListAuthSes
 		if !authSessionWithinApprovedPath(session, actingPath) {
 			continue
 		}
-		out = append(out, mapAuthSessionRecord(session, time.Now().UTC()))
+		out = append(out, mapAuthSessionRecord(session, a.now().UTC()))
 		if in.Limit > 0 && len(out) >= in.Limit {
 			break
 		}
@@ -315,7 +315,7 @@ func (a *AppServiceAdapter) ValidateAuthSession(ctx context.Context, in Validate
 	if err != nil {
 		return AuthSessionRecord{}, mapAppError("validate auth session", err)
 	}
-	return mapAuthSessionRecord(validated.Session, time.Now().UTC()), nil
+	return mapAuthSessionRecord(validated.Session, a.now().UTC()), nil
 }
 
 // CheckAuthSessionGovernance returns one non-destructive auth-session governance decision.
@@ -354,7 +354,7 @@ func (a *AppServiceAdapter) RevokeAuthSession(ctx context.Context, in RevokeAuth
 	if err != nil {
 		return AuthSessionRecord{}, mapAppError("revoke auth session", err)
 	}
-	return mapAuthSessionRecord(revoked, time.Now().UTC()), nil
+	return mapAuthSessionRecord(revoked, a.now().UTC()), nil
 }
 
 // authorizeAuthSessionGovernance validates one acting auth session and returns its effective approved path.
@@ -412,7 +412,7 @@ func (a *AppServiceAdapter) resolveAuthSessionGovernance(ctx context.Context, ac
 		ActingPrincipalID:   strings.TrimSpace(actingSession.PrincipalID),
 		ActingPrincipalRole: strings.TrimSpace(actingSession.PrincipalRole),
 		ActingApprovedPath:  strings.TrimSpace(actingSession.ApprovedPath),
-		TargetSession:       mapAuthSessionRecord(targetSession, time.Now().UTC()),
+		TargetSession:       mapAuthSessionRecord(targetSession, a.now().UTC()),
 	}
 	if strings.TrimSpace(actingSession.SessionID) == strings.TrimSpace(targetSession.SessionID) {
 		decision.Authorized = true
