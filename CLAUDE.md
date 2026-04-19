@@ -230,7 +230,7 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 - **Builder** — subagent. The ONLY role that edits Go code. Reads actionItem, implements, updates, dies.
 - **QA Proof / QA Falsification** — subagents. Ephemeral. Read actionItem, review, update with verdict, die.
 - **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
-- **Research** — Claude's built-in `Explore` subagent.
+- **Research** — subagent (`go-research-agent`). Compiles durable findings under `workflow/<drop_subdir>/RESEARCH/`. For throwaway in-session lookups use Claude's built-in `Explore`.
 - **Human** — approves auth, reviews results, makes design decisions.
 
 ## Recovery After Session Restart
@@ -251,9 +251,23 @@ Spawn via the `Agent` tool with `subagent_type`. There is no orchestration-agent
 | **Planning** | `go-planning-agent` | Hylla-first planning grounded in committed code reality |
 | **QA Proof** | `go-qa-proof-agent` | Proof-completeness check — evidence supports the claim |
 | **QA Falsification** | `go-qa-falsification-agent` | Falsification attempt — try to break the conclusion |
+| **Research** | `go-research-agent` | Durable findings with write scope under `workflow/<drop_subdir>/RESEARCH/` |
 
-Inline (no subagent file):
-- **research-agent** — Claude's built-in `Explore` subagent.
+For throwaway in-session lookups that don't produce a durable MD, use Claude's built-in `Explore` subagent.
+
+### Workflow Path Scoping (Honor-System, Pre-Hook Enforcement)
+
+When spawning a subagent, the orchestrator MUST include the subagent's assigned `workflow/<drop_subdir>/` write target in the spawn prompt, keyed by agent type:
+
+- **Planner** → `workflow/<drop_subdir>/PLAN.md` (Planner section). Nested sub-drops: `workflow/<drop_subdir>/<nested_drop>/PLAN.md`.
+- **Plan QA Proof** → `workflow/<drop_subdir>/PLAN_QA_PROOF.md` (transient per round; orch `git rm`s between rounds).
+- **Plan QA Falsification** → `workflow/<drop_subdir>/PLAN_QA_FALSIFICATION.md` (transient per round).
+- **Builder** → source code (per task `paths`) + `workflow/<drop_subdir>/BUILDER_WORKLOG.md` (append-per-round).
+- **Build QA Proof** → `workflow/<drop_subdir>/BUILDER_QA_PROOF.md` (append `## Round N`).
+- **Build QA Falsification** → `workflow/<drop_subdir>/BUILDER_QA_FALSIFICATION.md` (append `## Round N`).
+- **Research** → `workflow/<drop_subdir>/RESEARCH/<topic_slug>.md` (orch supplies the topic slug).
+
+Each agent's `~/.claude/agents/*.md` carries the same honor-system rule in its `## MD Doctrine Write Scope` section. Runtime enforcement arrives via a PreToolUse hook (tracked separately); until then, the spawn-prompt path + agent-def honor-system are the gate.
 
 ### QA Discipline
 
