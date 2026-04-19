@@ -41,6 +41,7 @@ type Config struct {
 	ProjectRoots     map[string]string      `toml:"project_roots"`
 	Labels           LabelConfig            `toml:"labels"`
 	Keys             KeyConfig              `toml:"keys"`
+	TUI              TUIConfig              `toml:"tui"`
 }
 
 // DatabaseConfig holds configuration for database.
@@ -147,6 +148,31 @@ type KeyConfig struct {
 	Redo           string `toml:"redo"`
 }
 
+// TUIConfig holds configuration for TUI-specific surface overrides.
+type TUIConfig struct {
+	Surfaces TUISurfacesConfig `toml:"surfaces"`
+}
+
+// TUISurfacesConfig holds per-surface TUI configuration.
+type TUISurfacesConfig struct {
+	FileViewer FileViewerConfig `toml:"file_viewer"`
+}
+
+// FileViewerConfig holds configuration for the file viewer surface opened by v.
+// MaxBytes caps the file size that will be read into memory; files larger than
+// this limit render a banner instead of content. DotfileBanner is the exact
+// string shown when the active file's basename starts with a dot.
+type FileViewerConfig struct {
+	MaxBytes      int    `toml:"max_bytes"`
+	DotfileBanner string `toml:"dotfile_banner"`
+}
+
+// DefaultFileViewerMaxBytes is the default maximum file size (1 MiB) for the file viewer.
+const DefaultFileViewerMaxBytes = 1048576
+
+// DefaultFileViewerDotfileBanner is the default banner shown for dotfiles.
+const DefaultFileViewerDotfileBanner = "Dotfiles not supported in v1"
+
 // embeddingsFieldPresence captures whether embeddings keys were explicitly present in TOML.
 type embeddingsFieldPresence struct {
 	Embeddings *embeddingsFieldPresenceSection `toml:"embeddings"`
@@ -239,6 +265,14 @@ func Default(dbPath string) Config {
 			ActivityLog:    "g",
 			Undo:           "z",
 			Redo:           "Z",
+		},
+		TUI: TUIConfig{
+			Surfaces: TUISurfacesConfig{
+				FileViewer: FileViewerConfig{
+					MaxBytes:      DefaultFileViewerMaxBytes,
+					DotfileBanner: DefaultFileViewerDotfileBanner,
+				},
+			},
 		},
 	}
 }
@@ -629,6 +663,13 @@ func (c *Config) normalize() {
 	c.Keys.ActivityLog = normalizeKeyBinding(c.Keys.ActivityLog, "g")
 	c.Keys.Undo = normalizeKeyBinding(c.Keys.Undo, "z")
 	c.Keys.Redo = normalizeKeyBinding(c.Keys.Redo, "Z")
+
+	if c.TUI.Surfaces.FileViewer.MaxBytes <= 0 {
+		c.TUI.Surfaces.FileViewer.MaxBytes = DefaultFileViewerMaxBytes
+	}
+	if c.TUI.Surfaces.FileViewer.DotfileBanner == "" {
+		c.TUI.Surfaces.FileViewer.DotfileBanner = DefaultFileViewerDotfileBanner
+	}
 }
 
 // normalizeLabelConfigList trims, lowercases, and deduplicates label config entries.

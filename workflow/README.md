@@ -31,22 +31,36 @@ substrate; the design doc is the concept + rationale.
     one closed drop (scaffold a CLI + mage + CI in a fictional generic Go
     project). Shows how `PLAN.md`, `PLAN_QA_PROOF.md`, `BUILDER_WORKLOG.md`,
     and `CLOSEOUT.md` content evolves across a drop's lifecycle.
-- `drop_1_5/` — Tillsyn's own active Drop 1.5 TUI work, using the
-  filesystem-MD pattern because Tillsyn itself is pre-cascade-dispatcher.
-  Not public-release content; active scratch + audit trail for the
-  `DROP_1.5_ORCH` session. Directory moves to retire-or-relocate once
-  Drop 1.5 closes.
+- `drop_1_5/` — Tillsyn's own active Drop 1.5 TUI work. First per-drop
+  subdir under the **post-2026-04-19 doctrine**: git-tracked on the drop
+  branch, flowing to `main` via PR merge. Under that doctrine the
+  drop-orch writes artifact content directly into `drop_N/` on the drop
+  branch; post-merge, the integrating orch (STEWARD in this repo) reads
+  `main/workflow/drop_N/` and splices into the top-level MDs. Per-drop
+  subdirs are **retained** after close — they are the permanent on-disk
+  audit trail, not transient scratch. See `../PLAN.md` §15.9 +
+  `../AGENT_CASCADE_DESIGN.md` §8.3.
 
-## Scope Note (Transient)
+## `failures/` Subdir Rule (Forward-Only From 2026-04-19)
 
-Everything here is **pre-cascade / pre-MVP dogfood substrate**. Once the
-Tillsyn cascade dispatcher ships (Drop 4) and Tillsyn can dogfood against
-itself via action items instead of MD files, most contents move out of
-`workflow/` and into Tillsyn's runtime state. The `example/` tree stays
-(as a public-release reference showing the MD-only variant for users
-without Tillsyn installed), but the `drop_1_5/`-style per-drop scratch
-dirs retire.
+Each branched level of `drop_N/` carries a `failures/` subdir. When a
+plan, QA, or build round fails, its artifact content moves into
+`failures/` at that level so the next iteration can read + count the
+prior failure. **Never delete QA / plan / build artifacts.** Retention =
+forever. **Forward-only**: pre-2026-04-19 drops are not retroactively
+backfilled.
 
-See `../PLAN.md` §19.10 for the "Split `AGENT_CASCADE_DESIGN.md` into
-concept + operations before MVP" refinement bullet, which is coupled with
-the final shape of this directory.
+## Scope Note
+
+The `example/` tree is the generic adopter-facing reference — public-release
+content showing the MD-only cascade variant. `drop_N/` subdirs under this
+project's `workflow/` are real per-drop artifact trails for Tillsyn's own
+drops, git-tracked and durable.
+
+Once the Tillsyn cascade dispatcher ships (Drop 4) and Tillsyn can dogfood
+against itself via action items, the Tillsyn-specific runtime state for
+planning + execution moves into the action-item DB, but the `workflow/drop_N/`
+on-disk audit trail stays — it is STEWARD's post-merge input and the
+permanent history. See `../PLAN.md` §19.10 for the
+"Split `AGENT_CASCADE_DESIGN.md` into concept + operations before MVP"
+refinement bullet, which is coupled with the final shape of this directory.

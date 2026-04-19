@@ -394,6 +394,42 @@ fit. Dev confirmed: "don't optimize too soon."
 Filed as `PLAN.md` §19.10 refinement: evaluate diff-based storage or
 hybrid if snapshot sizes become unwieldy.
 
+### 8.3 Per-Drop Workflow Artifacts — On-Disk Audit Trail
+
+The Tillsyn audit trail above captures planner-editable field history
+and state transitions. The **on-disk** audit trail for per-drop work
+lives under `main/workflow/drop_N/`, git-tracked on the drop branch,
+flowing to `main` via the drop's PR merge.
+
+**Rendering contract.** `main/workflow/drop_N/` mirrors
+`workflow/example/` + `workflow/example/drops/_TEMPLATE/` shape
+(atomic-small-things discipline — many small MDs, not monoliths).
+Only edit workflow-process flow in this doc + the template itself;
+`workflow/drop_N/` for any specific N is a rendering of that template
+shape for drop N's work. See `PLAN.md` §15.9 for the per-drop flow.
+
+**`failures/` subdir at each branched level of `drop_N/`.** Never
+delete QA / plan / build artifacts. Failed QA, plan, or build content
+moves into `failures/` at its parent level so the next iteration's
+plan / QA files can learn from + count prior failures. Retention =
+forever. **Forward-only** — no retroactive backfill for pre-2026-04-19
+drops (dev directive).
+
+**Refinements-gate ownership.** Every numbered level_1 drop carries a
+STEWARD-owned refinements-gate item inside its own tree,
+`DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` (see `PLAN.md` §15.8).
+Drop-orch creates the gate at drop spin-up; STEWARD works it
+post-merge; closing the gate unblocks drop N's level_1 close. The
+gate's `workflow/drop_N/` mirror captures the dev ↔ STEWARD
+conversation that produced the decisions, so future drops can read
+the rationale trail.
+
+**MD ownership split.** Drop-orch owns `workflow/drop_N/` content
+writes on the drop branch + architecture-MD edits when scope touches
+process. STEWARD post-merge on `main/` reads `workflow/drop_N/` and
+splices into the six top-level MDs. See `PLAN.md` §15.7 + §15.9 and
+`STEWARD_ORCH_PROMPT.md` §1.3 for the canonical split.
+
 ---
 
 ## 9. Cascade Tree — Side-By-Side Example
@@ -662,8 +698,8 @@ and configuration questions in `PLAN.md` §20.10.
   adds the re-QA-on-blocker-edit invariant.
 - `main/SEMI-FORMAL-REASONING.md` — reasoning certificate spec.
   Plan-QA and build-QA twins produce certificates per that spec.
-- `workflow/example/drops/drops/WORKFLOW.md` — current 7-phase
+- `workflow/example/drops/WORKFLOW.md` — current 7-phase
   workflow-MD lifecycle. §10.1 of this doc lists the extensions.
-- `workflow/example/drops/drops/_TEMPLATE/PLAN.md` — current
+- `workflow/example/drops/_TEMPLATE/PLAN.md` — current
   template. §10.1 requires adding a droplet-shape preamble.
 - Benchmark reference: arxiv 2603.01896 (Ugare & Chandra, 2026-03-04).

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
 	"github.com/evanmschultz/tillsyn/internal/app"
@@ -27,6 +28,18 @@ func NewAppServiceAdapter(service *app.Service, auth *autentauth.Service) *AppSe
 		service: service,
 		auth:    auth,
 	}
+}
+
+// now returns the adapter's current-time reference, preferring the wrapped
+// app.Service clock when available so transport-layer lifecycle labels stay
+// aligned with the service's time perspective (including test clocks).
+func (a *AppServiceAdapter) now() time.Time {
+	if a != nil && a.service != nil {
+		if clock := a.service.Clock(); clock != nil {
+			return clock()
+		}
+	}
+	return time.Now()
 }
 
 // AuthorizeMutation resolves one authenticated caller for a mutating MCP request.
