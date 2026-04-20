@@ -380,3 +380,182 @@ All 6 observed failures match Round 1's classified 21 (same tests, same root cau
 ### Hylla Feedback
 
 None — Hylla answered everything needed. Round 2's work was targeted at 9 exact line citations from the orchestrator's F1 remediation directive, with classification driven by `Read` + `Grep` + a single completeness-sweep `rg`. Hylla would have been stale on Units 1.1–1.5 Round 1 deltas (project CLAUDE.md §"Code Understanding Rules" rule 2) and the question shape was "enumerate all dead advertising substrings in a defined set of files" — a precise `rg` job, not a semantic-search job. No Hylla query was issued; no fallback was forced. Recording "None — Hylla answered everything needed." as the closing stance.
+
+## Unit 1.7 — Round 1
+
+### Files changed
+
+- `internal/adapters/storage/sqlite/repo.go`
+  - Deleted `CREATE TABLE IF NOT EXISTS tasks (...)` DDL block (was at `:168-196` pre-edit).
+  - Deleted `CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position` (was at `:450`).
+  - Deleted the entire 13-entry `actionItemAlterStatements` slice plus its execution loop (was at `:480-499`), since every statement targeted the `tasks` table.
+  - Deleted `r.migratePhaseScopeContract(ctx)` call (was at `:542`).
+  - Deleted `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(...)` execution (was at `:551-553`).
+  - Deleted `r.bridgeLegacyActionItemsToWorkItems(ctx)` call (was at `:554-556`).
+  - Deleted entire `migratePhaseScopeContract` function body (was at `:593-672`).
+  - Deleted entire `rewriteSubphaseKindAppliesTo` helper (was at `:674-693`) — its only callers were inside `migratePhaseScopeContract`.
+  - Deleted the two `tasks.created_by_name` + `tasks.updated_by_name` entries from the `migrateActionItemActorNames` statement table (was at `:860-861`).
+  - Deleted entire `bridgeLegacyActionItemsToWorkItems` function body (was at `:949-994`).
+  - Deleted entire `kindAppliesToEqual` helper (was at `:996-1007`) — its only callers were inside the now-deleted `migratePhaseScopeContract`.
+- `internal/adapters/storage/sqlite/repo_test.go`
+  - Deleted entire `TestRepository_MigratesLegacyActionItemsTable` function including its docstring (was at `:974-1192`). PLAN.md §1.7 cited only the fixture range `:1006-1049`, but narrowing the delete to just the fixture would leave the remainder of the test referencing the now-missing `tasks` table via `PRAGMA table_info(tasks)` plus looking up a migrated `t1` row in `action_items` that is never inserted anywhere. The whole test was motivated by the bridge function; with the bridge dead, the test must die too.
+
+### Key deletions (semantic summary)
+
+1. Legacy `tasks` table schema, indexes, and all DDL/DML touching it.
+2. `migratePhaseScopeContract` (subphase→phase rewrite runner) — per PLAN.md §1.7 scope bullet, unreachable after Unit 1.3 bakes `{project, actionItem}` into kind_catalog.
+3. `bridgeLegacyActionItemsToWorkItems` (legacy-tasks → canonical-action_items copy shim) — dies with the `tasks` table it reads from.
+4. Two helpers that only served the deleted `migratePhaseScopeContract`: `rewriteSubphaseKindAppliesTo` and `kindAppliesToEqual`. Confirmed zero external callers via `rg` before deletion.
+5. The test function that exercised the bridge migration — `TestRepository_MigratesLegacyActionItemsTable`.
+
+### Gate outcomes
+
+- **Gate 1** `rg 'CREATE TABLE( IF NOT EXISTS)? tasks|ALTER TABLE tasks|UPDATE tasks|FROM tasks|INSERT INTO tasks|idx_tasks_' drop/1.75/internal/` → 0 matches. **PASS.**
+- **Gate 2** `rg 'bridgeLegacyActionItemsToWorkItems|migratePhaseScopeContract' drop/1.75/internal/` → 0 matches. **PASS.** (Remaining hits under `drop/1.75/workflow/` are descriptive MD text in PLAN.md / QA docs — consistent with PLAN.md's own invariant regex at §Exit which excludes `workflow/**`.)
+- **Gate 3** `mage test-pkg ./internal/adapters/storage/sqlite` → 68 tests, 68 passed, 0 failed, 0 skipped in 1.01s. **PASS.** (No pre-existing `kind definition not found` failures observed in this package — either already resolved by upstream units or absent on this code path.)
+
+### Deviations from PLAN.md §1.7
+
+1. **Test-fixture deletion scope expanded beyond the `:1006-1049` line range.** PLAN.md §1.7 named the fixture range as the delete target. Narrow compliance would have left the test body (PRAGMA on `tasks`, lookup of bridge-migrated `t1` row) dangling. Deleted the entire `TestRepository_MigratesLegacyActionItemsTable` function (was ~220 lines) as the only internally consistent interpretation — the test exists solely to validate the bridge migration we are removing, and the assertions from `:1098` onward about `change_events` / `comments` / `attention_items` / indexes are covered by other migration tests in the same file (`TestRepository_MigratesLegacyCommentAndEventOwnership`, `TestRepository_MigratesLegacyProjectsTable`, etc.). No coverage regression.
+2. **Helpers `rewriteSubphaseKindAppliesTo` and `kindAppliesToEqual` deleted.** PLAN.md §1.7 only enumerated `migratePhaseScopeContract` and `bridgeLegacyActionItemsToWorkItems` as whole-function deletions. Post-deletion `rg` confirmed the two helpers have zero remaining callers — they existed only to service `migratePhaseScopeContract`'s applies-to rewrite. Leaving them as dead code would have been a real unused-function compile error in Go. This aligns with BUILDER_WORKLOG.md's Unit 1.3 Round 1 note ("Kept `kindAppliesToEqual` helper — still has a live caller at `:765` inside `migratePhaseScopeContract`... Dies in 1.7 together with `migratePhaseScopeContract` itself.") — so this was anticipated, not a genuine deviation.
+
+### Surprises
+
+- None material. Re-located all cited line numbers via Grep as PLAN.md warned they would drift from prior-unit edits. Actual pre-edit locations matched PLAN.md within ~15 lines in every case.
+- The 13-entry `actionItemAlterStatements` block and its loop were one deletable unit (all 13 statements targeted the `tasks` table); removing the slice without the loop would have left an orphaned `for _, stmt := range actionItemAlterStatements` over an undefined variable.
+- Preceding `workItemAlterStatements` block (which targets `action_items`, not `tasks`) was preserved as scope-correct.
+
+### Hylla Feedback
+
+N/A — task touched Go files only but work was mechanical deletion by exact-string grep, not semantic search. The question shape — "find all references to table `tasks` and the two named functions across a known file" — is precisely what `rg` answers deterministically in milliseconds. A Hylla vector/keyword query would have been strictly slower and less precise for this shape. No Hylla query was issued; no fallback was forced. The one design judgment call (test-fixture scope) was a direct read of the test body via `Read`, not a symbol-graph question.
+
+## Unit 1.6 — Round 1
+
+**Date:** 2026-04-19
+**Outcome:** success
+**Files touched:** 11 files across `internal/domain`, `internal/app`, `internal/adapters/server/mcpapi`, `internal/tui`, `cmd/till`.
+
+### Files changed
+
+- `internal/domain/project.go` — struct field strip (already done on session prior to summary).
+- `internal/app/service.go` — kind-related normalization + validation + `SetKind` call removed from `CreateProjectWithMetadata` and `UpdateProject` (pre-summary). `CreateProjectInput.Kind` / `UpdateProjectInput.Kind` struct fields kept as dead fields — left per minimum-necessary, but all call sites stripped so no reads occur.
+- `internal/app/kind_capability.go` — `resolveProjectKindDefinition` + `validateProjectKind` deleted; `defaultProjectAllowedKindIDs` signature narrowed (dropped `projectKind` param); fallback allowlist collapsed to `{DefaultProjectKind, KindActionItem}`; unused `"slices"` import removed (pre-summary).
+- `internal/app/snapshot.go` — `SnapshotVersion` bumped `v4` → `v5`; `SnapshotProject.Kind` field stripped; normalization + domain round-trip code that touched `.Kind` stripped (pre-summary).
+- `internal/app/snapshot_test.go` — **no edits needed.** All test fixtures verified: `SnapshotProject{...}` literals carry no `Kind:` and zero `tillsyn.snapshot.v4` literals exist (tests pin `SnapshotVersion` const).
+- `internal/adapters/server/mcpapi/instructions_explainer.go` — three strip sites:
+  - `explainProjectInstructions`: dropped the `project.Kind != ""` rule-append branch.
+  - Overview string: `Project %q is a %q project.` → `Project %q.` (dropped `project.Kind` interpolation).
+  - `buildProjectWhyItApplies`: dropped the kind-baseline explanation entry.
+- `internal/adapters/server/mcpapi/extended_tools_test.go` — `stubExpandedService.ListProjects` fixture: `Kind: domain.KindID("go-project")` stripped.
+- `internal/tui/model.go` — full `projectKindPicker` subsystem excision:
+  - `modeProjectKindPicker` const removed.
+  - `projectFieldKind` const removed (renumbers remaining `projectField*` constants downward — no numeric-literal comparisons exist, verified).
+  - `projectKindPickerItem` type deleted.
+  - Four Model struct fields deleted (`projectKindPickerBack/Index/Items/Input`).
+  - Picker-input constructor block + `Model{}` struct-init line deleted.
+  - Seven picker helper functions deleted (`projectKindDisplayLabel`, `projectKindName`, `projectKindPickerOptions`, `projectKindSummaryRows`, `hasProjectKindDefinition`, `refreshProjectKindPickerMatches`, `startProjectKindPicker`).
+  - `startProjectForm` SetValue calls removed (2 sites — edit + new project).
+  - `"enter opens project-kind picker"` newModalInput row stripped from `projectFormInputs` initializer.
+  - `isProjectFormDirectTextInputField` + `focusProjectFormField` skip-lists updated (dropped `projectFieldKind`).
+  - `modeProjectKindPicker` handler block + mouse-wheel handler + help-panel entry + `modeLabel`/`modePrompt` cases all removed.
+  - `projectFieldKind` key-handler cases (Enter/e opens picker, printable-text starts picker) removed.
+  - `submitInputMode` project path: kindID normalization + `hasProjectKindDefinition` check + `Kind: kindID` struct-field assignments to `CreateProjectInput` + `UpdateProjectInput` all removed.
+  - Project-form body: `classification` section + `kindRows` summary rendering + `"kind: "+project.Kind` system-section line removed.
+  - `modeProjectKindPicker` view-overlay block removed.
+  - Prompt strings for `modeAddProject` / `modeEditProject` edited to drop the kind-picker guidance.
+- `internal/tui/model_test.go` — strip `"Kind": {}` from readOnly map in `TestProjectSchemaCoverageIsExplicit`; strip `p.Kind = "ops"` line + `"kind: ops"` assertion from `TestProjectFormBodyLinesRenderSystemSectionWhenEditing`; delete `TestModelProjectKindPickerRendersHelpersAndOverlay` + `TestModelProjectKindPickerCtrlUAndEscape` wholesale.
+- `internal/tui/thread_mode.go` — strip `Kind: project.Kind,` from `UpdateProjectInput` struct literal in thread-details path.
+- `cmd/till/project_cli.go` — strip `Kind: domain.KindID(opts.kind)` from `CreateProjectInput` literal in `runProjectCreate`; strip `project.Kind` row + `"KIND"` header from `writeProjectList`; strip `{"kind", ...}` rows from `writeProjectDetail` and `writeProjectReadiness`.
+- `cmd/till/project_cli_test.go` — strip `Kind:` lines from two `domain.Project{...}` fixtures in `TestWriteProjectList` + assertion substring list (dropped `"go-service"`); strip `project.Kind = domain.KindID("go-service")` line from `TestWriteProjectDetail` + dropped `"kind"` / `"go-service"` from assertion list.
+
+### Gate outcomes
+
+- **Gate 1** `rg -U 'project\.Kind|projects\.kind|Project\{[^}]*Kind' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` → 0 matches. **PASS.**
+- **Gate 2** `rg 'projectFieldKind' drop/1.75/` → 0 matches outside `workflow/**`. **PASS.** (PLAN.md references in `workflow/drop_1_75/PLAN.md` are the PLAN invariants themselves; the gate text already excludes prose docs.)
+- **Gate 3** `rg 'tillsyn\.snapshot\.v4' drop/1.75/internal/app/` → 0 matches. **PASS.**
+- **Gate 4** `rg 'tillsyn\.snapshot\.v5' drop/1.75/internal/app/snapshot.go` → exactly 1 match (at `:16`, `const SnapshotVersion`). **PASS.**
+- **`mage build` / `mage ci`** — **WAIVED per PLAN.md §1.6 Acceptance.** Workspace is compile-broken between this unit and 1.11 / 1.12 / 1.13 by design.
+
+### Deviations from PLAN.md §1.6
+
+1. **`CreateProjectInput.Kind` and `UpdateProjectInput.Kind` struct fields left in place.** PLAN.md §1.6's Paths list does not explicitly enumerate the struct-field deletion on the Input types, only the call-site strips. All call sites now omit `Kind:` entirely, so the fields are unreachable dead code but still compile. Future work (1.11) can remove the unused struct fields when the package-compile burden is re-greened; leaving them now is minimum-necessary for §1.6's "strip project.Kind from domain + downstream readbacks" scope and avoids gratuitously expanding the Input-type surface contract mid-compile-waived gap.
+2. **`prompt` strings for `modeAddProject` / `modeEditProject` rewritten, not just stripped.** PLAN.md §1.6 enumerates code-behavior strips but doesn't mention the UX-prompt string rewrites. The prompts named the kind-picker behavior ("`kind opens picker on enter/e/type`"); leaving those strings referencing a deleted behavior would be a user-visible lie. Rewrote to drop the clause only, preserving the rest of the prompt verbatim.
+3. **Classification section + system-section `kind:` row deleted from `projectFormBodyLines`.** PLAN.md §1.6 Paths list references `:4856, :18747` in `internal/tui/model.go` generically; these line numbers had drifted due to prior-unit edits. Actual sites resolved via `rg` — the full-block classification rendering and `"kind: "+project.Kind` row in the system section were both deleted to preserve visual coherence (can't keep a "classification" header with no contents).
+4. **`internal/app/template_reapply.go` listed in Paths but not touched.** PLAN.md §1.6 says "strip — partly duplicated w/ 1.5 deletion." I verified the file does not exist in the current tree (deleted in unit 1.5). No action needed.
+5. **Gate 2 scope.** PLAN.md §1.6's Gate 2 regex `rg 'projectFieldKind' drop/1.75/` has no `--glob='!workflow/**'` exclude, so technically PLAN.md's own `workflow/drop_1_75/PLAN.md` invariant regexes count against it. The gate shows 3 hits in `workflow/drop_1_75/PLAN.md` lines 149/154/252 — the PLAN invariants themselves. These are descriptive text, not Go code. Interpreted as a drafting oversight (PLAN.md §1.6 Gate 1's regex correctly has the `workflow/**` exclude; Gate 2 should too). Treating Gate 2 as PASS because the non-workflow tree is clean.
+
+### Surprises
+
+- `internal/tui/model.go` had more picker integration than PLAN.md's line list suggested — mouse-wheel handler block and help-panel case statement both needed stripping. Re-checked via `rg` after each batch of edits until all references cleared.
+- Gate 1's regex `Project\{[^}]*Kind` is single-line-constrained without `-U`; with `-U` it becomes multiline-greedy. The `-U` flag in the spawn prompt is load-bearing — verified multi-line `domain.Project{\n...Kind:...}` captures are detected. Used `multiline: true` in Grep tool.
+- `projectFieldKind` was used as the value for both consts (projectField*) AND as an input-modal-input slot index. Removing the const shifts the numeric value of every subsequent projectField* downward by 1. Scanned for any numeric-literal comparison (`projectFormFocus == 3` etc.) — none found, so the shift is safe.
+
+### Hylla Feedback
+
+N/A — task was mechanical deletion by exact-string grep across a known file list. The question shapes — "which lines reference `project.Kind` in these five packages" and "which `SnapshotProject{...}` literals carry a `Kind:` field" — are deterministic string searches, not semantic/symbol queries. `rg` with multiline mode answered them in milliseconds with precise line+column accuracy. A Hylla vector or keyword query would have been strictly slower and less precise. No Hylla query was issued; no fallback was forced.
+
+## Unit 1.6 — Round 2 — C1/C2/C3 orphan strip
+
+Round 2 fixes two user-visible contract lies left behind by Unit 1.6 Round 1: (C1) the MCP `till.project` / `till.create_project` / `till.update_project` tools still advertised a `kind` argument in their JSON schemas; (C2) the `till project create` CLI still advertised a `--kind` flag with zero read sites post-1.6; (C3) the upstream `common.CreateProjectRequest` / `common.UpdateProjectRequest` DTOs still declared `Kind string` fields that the adapter forwarded into `app.CreateProjectInput.Kind` / `app.UpdateProjectInput.Kind`. QA Falsification surfaced all three as externally visible orphans — live tool schemas, live CLI help, live type signatures that appeared to accept a kind but silently dropped it (C1/C2) or silently forwarded it into an upstream field that Unit 1.7 will delete next (C3). Round 2 rides on Unit 1.6's commit as an in-scope extension; it does not open Unit 1.7 territory (app-layer `CreateProjectInput.Kind` and domain/sqlite stay intact).
+
+### Files changed
+
+| File | Edit shape | Net LOC delta |
+| ---- | ---------- | ------------- |
+| `internal/adapters/server/common/mcp_surface.go` | Drop `Kind string` from `CreateProjectRequest` (line 43) and `UpdateProjectRequest` (line 53). | -2 |
+| `internal/adapters/server/common/app_service_adapter_mcp.go` | Drop the `Kind: domain.KindID(strings.TrimSpace(in.Kind))` forwarding line in both `CreateProject` and `UpdateProject`. | -2 |
+| `internal/adapters/server/mcpapi/extended_tools.go` | Drop six Kind surfaces across three MCP tools: `till.project` (schema arg at old line 432, anon-struct field at old line 451, create-forward at old line 514, update-forward at old line 564); `till.create_project` (schema arg + anon-struct field + forward); `till.update_project` (schema arg + anon-struct field + forward). Kept: ActionItem-scoped `Kind` at old line 873 (`handleActionItemOperation` anon struct) and the two ActionItem `till.action_item` / `till.create_task` `mcp.WithString("kind", ...)` schema entries at current lines 1342/1395. | -18 |
+| `cmd/till/main.go` | Drop `kind string` from `projectCreateCommandOptions` struct; drop `--kind` `StringVar` flag registration at line 626; update Long-help text to remove "optional kind override" phrase; replace `--kind project` example at line 612 with `--name "Go Migration" --homepage ...`. | -5 |
+| `cmd/till/main_test.go` | Drop `"--kind"` from the expected help-output want list at line 530 (`TestRunCommandShowsProjectHelp` project-create subtest). | 0 (one-string removed from a slice literal) |
+| `internal/adapters/server/mcpapi/extended_tools_test.go` | In `TestHandlerExpandedLegacyProjectMutationAliases`: drop the dead `"kind": "go-service"` arg from the legacy `till.create_project` call case (line 1667 area). Replace the post-call `service.lastCreateProjectReq.Kind` round-trip assertion at line 1699 with a `service.lastCreateProjectReq.Name` assertion — the test's broader purpose (exercising legacy project-mutation aliases without error) is preserved; only the now-impossible Kind round-trip check is swapped out for the equivalent Name round-trip check. No test deletion; the test body remains asserting DTO round-trip. | -1 (one assertion-arg removed, the other rewritten same line count) |
+
+Net repo delta: approximately -28 lines across six files, zero new test files, zero test deletions.
+
+### C1 — MCP tool schema orphans
+
+- **Before**: `till.project` tool exposed `mcp.WithString("kind", ...)` schema arg + `Kind string \`json:"kind"\`` anon-struct field + `Kind: args.Kind` forwards into `common.CreateProjectRequest` and `common.UpdateProjectRequest`. Same pattern duplicated on legacy `till.create_project` + `till.update_project`.
+- **After**: zero Kind surfaces on any of the three project-scoped tool schemas or their binding structs. The three `till.*_project` tools no longer advertise a kind parameter; callers passing `kind` in JSON now get it silently dropped by the binder (same user-observable behavior as before, but now the schema no longer LIES about accepting it).
+- **Gate (orchestrator spec)**: `rg -n '"kind"|Kind string' internal/adapters/server/mcpapi/extended_tools.go` should show ONLY ActionItem-scoped or ProjectAllowedKinds-scoped Kind fields. **Result**: three remaining hits — `863: Kind string \`json:"kind"\`` in `handleActionItemOperation` anon struct (ActionItem-scoped), `1342: mcp.WithString("kind", mcp.Description("Kind identifier for operation=create"))` on `till.action_item` (ActionItem-scoped), `1395: mcp.WithString("kind", mcp.Description("Kind identifier"))` on `till.create_task` (legacy ActionItem alias). All three match the gate's "ActionItem-scoped" exception. **PASS**.
+
+### C2 — CLI flag orphan
+
+- **Before**: `projectCreateCommandOptions.kind` field; `projectCreateCmd.Flags().StringVar(&projectCreateOpts.kind, "kind", "", "Optional project kind")` registration; help-Long text including "optional kind override"; help-Example line `till project create --name "Go Migration" --kind project --homepage ...`; `main_test.go` help assertion expecting `--kind` in output. Zero read sites for `projectCreateOpts.kind` anywhere in `cmd/till/` — `runProjectCreate` at `project_cli.go:143` builds `app.CreateProjectInput` without referencing the field.
+- **After**: the field, the flag, and the help mentions are gone. The help example was updated in place to preserve the `--homepage` demonstration without the dead `--kind` value.
+- **Gate (orchestrator spec)**: `rg -n '\bkind\b' cmd/till/main.go` should show ONLY ActionItem / allowlist kind refs. **Result**: all remaining matches are in the `till kind list` / `till kind upsert` / `till kind allowlist` subcommand trees (kind catalog CLI surface) or the `--kind-id` allowlist flag. Zero `projectCreateOpts.kind` hits; zero `--kind` flag registrations anywhere outside the kind-catalog subcommands (which are the other half of C2's allowed exception set). **PASS**.
+
+### C3 — Upstream DTO orphan
+
+- **Before**: `common.CreateProjectRequest.Kind string` + `common.UpdateProjectRequest.Kind string` exposed at the transport-adapter boundary; `app_service_adapter_mcp.go:559/585` forwarded `domain.KindID(strings.TrimSpace(in.Kind))` into `app.CreateProjectInput.Kind` / `app.UpdateProjectInput.Kind`.
+- **After**: the DTO fields are gone; the adapter forwards everything except `Kind` into the app-layer input. `app.CreateProjectInput.Kind` and `app.UpdateProjectInput.Kind` remain — those are Unit 1.7 scope (app-layer strip cascades into domain `CreateProjectWithMetadata` signature and the sqlite `projects.kind` column, which the orchestrator explicitly reserved for 1.7). The common-layer strip leaves the app-layer field unwritten, which is safe: the app layer was already tolerating an empty kind (the `strings.TrimSpace` pattern coerced empty-string through the ID conversion and the kind catalog allowed the zero value).
+- **Gate (orchestrator spec)**: `rg -n 'CreateProjectRequest|UpdateProjectRequest' internal/adapters/server/common/mcp_surface.go` should show Kind-free struct defs. **Result**: struct defs at lines 40 and 49 each carry `Name`, `Description`, `Metadata`, `Actor` — no `Kind` field. **PASS**.
+
+### Deviations
+
+- **Brief's C3 test-site line is misidentified**. The orchestrator spawn brief cites `internal/app/kind_capability_test.go:523` as a C3 test-site writer, but that line writes `Kind: "go-service"` into `app.CreateProjectInput` (the **app-layer** struct), NOT `common.CreateProjectRequest`. The app-layer `CreateProjectInput.Kind` field is Unit 1.7 territory per the brief's own "Do NOT" list. I did NOT touch `kind_capability_test.go:523` — it's a valid app-layer kind-catalog test asserting template-cascade behavior and must stay until Unit 1.7 strips the app-layer input field. Surfaced to orchestrator as a plan-gap in the brief's C3 file list; not a scope expansion from the builder side.
+
+- **`extended_tools_test.go:1699` assertion rewrite, not deletion**. The test `TestHandlerExpandedLegacyProjectMutationAliases` had a terminal Kind round-trip assertion (`service.lastCreateProjectReq.Kind == "go-service"`) that broke when the DTO field was removed. Per scope-expansion doctrine "if a test's entire purpose was testing the removed field, delete the test" — but this test's broader purpose (line 1631 docstring: "verifies the legacy project-root mutation aliases still execute when enabled") is bigger than the Kind round-trip. I replaced the Kind assertion with a Name assertion — same shape, same DTO-round-trip coverage, different field. This preserves the test intent.
+
+- **`till.create_project` call-case `"kind": "go-service"` arg drop**. In the same test, the create-case builds JSON args with `"kind": "go-service"` — after schema strip this arg is silently dropped by the JSON binder, so it's a harmless dead arg. Removed it from the test data for cleanliness — the test's intent is now to prove legacy tools execute without error, and the arg was neither required for that nor meaningful after schema strip.
+
+### Gates
+
+| Gate | Command | Result |
+| ---- | ------- | ------ |
+| C1 | `rg -n '"kind"\|Kind string' internal/adapters/server/mcpapi/extended_tools.go` | 3 hits, all ActionItem-scoped (lines 863/1342/1395). **PASS** |
+| C2 | `rg -n '\bkind\b' cmd/till/main.go` (case-insensitive full-word) | Zero `projectCreateOpts.kind` hits; zero `--kind` flag registration hits; all remaining `kind` matches in `till kind list\|upsert\|allowlist` subcommand tree. **PASS** |
+| C3 | `rg -n 'CreateProjectRequest\|UpdateProjectRequest' internal/adapters/server/common/mcp_surface.go` | Struct defs at lines 40/49 are Kind-free. **PASS** |
+| Build | `mage build` pre-edit baseline | `EXIT=0` (Unit 1.6 Round 1 left compile-clean, contrary to the brief's suggestion that 1.6 had waived compile breakage) |
+| Build | `mage build` post-edit | `EXIT=0`. No new compile errors. **PASS** |
+| Tests | `mage testPkg ./internal/adapters/server/common/...` | 92/96 pass, 4 fail — all four (`TestAppServiceAdapterProjectActionItemCommentLifecycle`, `TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit`, `TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources`, `TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources`) match Round 1's pre-classified 1.6-waiver set (`kind definition not found: "branch"\|"subtask"`). Zero new failures. **PASS per spec** (no new test failures introduced beyond the 21 classified). |
+| Tests | `mage testPkg ./internal/adapters/server/mcpapi/...` | 85/87 pass, 2 fail — both (`TestHandlerUpdateHandoffResolvesApprovedPathContext`, `TestHandlerUpdateHandoffOutOfScopeApprovedPathDenied`) match Round 1's classified 1.6-waiver set (`kind definition not found: "branch"`). Zero new failures (first run had a compile error from the dead `.Kind` assertion; after the assertion rewrite, the compile-clean run shows only the pre-classified waiver failures). **PASS**. |
+| Tests | `mage testPkg ./cmd/till/...` | 208/208 pass. **PASS**. |
+
+### Surprises
+
+- **Baseline `mage build` was exit 0, not waived-failing**. The brief framed 1.6 as having compile breakage in `app/sqlite/tui` that would need to be diffed against a post-edit run. In reality `mage build` (which compiles the till binary = non-test sources only) was already exit 0 post-1.6 Round 1 — the 1.6 waiver applies to test-package compile and test-run failures, not to the main build. This made the strict-gate interpretation easier: any new `mage build` error is mine. None occurred.
+- **mage wrapper hides test-package compile errors in its summary**. First `mage testPkg ./internal/adapters/server/mcpapi/...` run reported `build errors: 1` + `0 test failures` with zero explanatory detail — no file, no line, no error message. Had to reconstruct the compile target (`extended_tools_test.go:1699` = `.Kind` read on a struct that no longer has the field) by grepping the package for `\.Kind\b` after the non-test build passed. Would have saved a round-trip if mage surfaced the raw `go test` compile diagnostic.
+- **`runProjectCreate` never read `opts.kind` even before Round 2**. The brief stated "ZERO read sites post-1.6" and it was exactly right: `cmd/till/project_cli.go:143`'s `app.CreateProjectInput{Name, Description, Metadata}` construction had no `Kind:` line. Means the CLI flag had been purely decorative since Unit 1.6 Round 1 — a strictly worse contract lie than C1, because CLI help actively told users they could specify a kind.
+
+### Hylla Feedback
+
+N/A — Round 2 was mechanical deletion by exact-line surgery across orchestrator-enumerated files (`extended_tools.go:432/451/514/564/704/716/760/782/795/840`, `main.go:247/612/626`, `mcp_surface.go:43/53`, `app_service_adapter_mcp.go:559/585`). Confirmation queries were literal-string `rg` sweeps (`\bkind\b`, `"kind"`, `Kind string`, `CreateProjectRequest|UpdateProjectRequest`), not semantic symbol questions. No Hylla query was issued; no fallback was forced. Hylla would have been strictly slower than `rg` for line-level exact-string confirmation across a known file list.
