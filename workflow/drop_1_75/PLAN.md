@@ -175,7 +175,8 @@ Delete `CREATE TABLE tasks` at `:169`, `CREATE INDEX idx_tasks_project_column_po
 
 ### 1.8 — Rename `internal/domain/task.go → action_item.go`
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-19
 **Paths:** `internal/domain/task.go` (delete), `internal/domain/action_item.go` (create with identical content)
 **Packages:** `internal/domain`
 **Blocked by:** 1.1, 1.4, 1.6
@@ -188,7 +189,8 @@ File-only rename via `git mv`. No content changes. Ordered after 1.1, 1.4, 1.6 s
 
 ### 1.9 — Merge `WorkKind` block into existing `internal/domain/kind.go`
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-19
 **Paths:** `internal/domain/workitem.go` (delete `:35-44` block: `type WorkKind` + 5 constants; file is renamed `Kind` post-1.1), `internal/domain/kind.go` (absorb the block — place `type Kind string` + 5 `KindActionItem` / `KindSubtask` / etc. constants near top, distinct from existing `type KindID string`)
 **Packages:** `internal/domain`
 **Blocked by:** 1.1, 1.4, 1.6, 1.8

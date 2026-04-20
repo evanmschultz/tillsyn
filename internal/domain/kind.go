@@ -15,6 +15,18 @@ type KindID string
 // DefaultProjectKind defines the default project kind identifier.
 const DefaultProjectKind KindID = "project"
 
+// Kind represents a configurable item kind.
+type Kind string
+
+// Built-in kind defaults.
+const (
+	KindActionItem Kind = "actionItem"
+	KindSubtask    Kind = "subtask"
+	KindPhase      Kind = "phase"
+	KindDecision   Kind = "decision"
+	KindNote       Kind = "note"
+)
+
 // KindAppliesTo identifies the node types a kind can be used for.
 type KindAppliesTo string
 

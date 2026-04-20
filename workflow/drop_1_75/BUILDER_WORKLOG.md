@@ -559,3 +559,29 @@ Net repo delta: approximately -28 lines across six files, zero new test files, z
 ### Hylla Feedback
 
 N/A — Round 2 was mechanical deletion by exact-line surgery across orchestrator-enumerated files (`extended_tools.go:432/451/514/564/704/716/760/782/795/840`, `main.go:247/612/626`, `mcp_surface.go:43/53`, `app_service_adapter_mcp.go:559/585`). Confirmation queries were literal-string `rg` sweeps (`\bkind\b`, `"kind"`, `Kind string`, `CreateProjectRequest|UpdateProjectRequest`), not semantic symbol questions. No Hylla query was issued; no fallback was forced. Hylla would have been strictly slower than `rg` for line-level exact-string confirmation across a known file list.
+
+## Unit 1.8 — Round 1
+
+- **Files changed:** `internal/domain/task.go` → `internal/domain/action_item.go` (rename only, zero content changes).
+- **Key operations:** `git mv internal/domain/task.go internal/domain/action_item.go`.
+- **Gate outcomes:**
+  - `git diff --cached --stat` shows `internal/domain/{task.go => action_item.go} | 0` (pure rename, 0 line changes). **PASS**
+  - `mage test-pkg ./internal/domain` → 49/49 pass in 0.27s, 0 failures, 0 skipped. **PASS**
+  - `ls internal/domain/task.go` fails (file absent); `ls internal/domain/action_item.go` succeeds. **PASS**
+- **Deviations:** None. File-only rename as specified by §1.8.
+- **Hylla Feedback:** N/A — task touched non-Go semantic work (pure filename change; Go package resolution is file-agnostic within a package). No Hylla query was issued; `git mv` is the sanctioned tool.
+
+## Unit 1.9 — Round 1
+
+- **Files changed:**
+  - `internal/domain/workitem.go`: deleted the `Kind` block (prior lines 34-44 — doc comment, `type Kind string`, and the 5-constant `const (...)` group for `KindActionItem`/`KindSubtask`/`KindPhase`/`KindDecision`/`KindNote`).
+  - `internal/domain/kind.go`: inserted the deleted block adjacent to the existing `type KindID string` declaration, immediately after `DefaultProjectKind` (new lines 18-28). Both types stay distinct per plan P6.
+- **Key operations:** two `Edit` calls — exact-string delete from workitem.go, exact-string insert into kind.go with preserved doc comments.
+- **Gate outcomes:**
+  - `grep type Kind string internal/domain/kind.go` → 1 match (line 19). **PASS**
+  - `grep type KindID string internal/domain/kind.go` → 1 match (line 13). **PASS**
+  - `grep type Kind string\|type WorkKind internal/domain/workitem.go` → 0 matches. **PASS**
+  - `grep -c KindActionItem\|KindSubtask\|KindPhase\|KindDecision\|KindNote internal/domain/kind.go` → 5 (≥5). **PASS**
+  - `mage test-pkg ./internal/domain` → 49/49 pass in 0.25s, 0 failures, 0 skipped. **PASS**
+- **Deviations:** Placement choice — inserted `Kind` block AFTER `DefaultProjectKind` (rather than between `type KindID string` and `DefaultProjectKind`) to keep the `KindID` + `DefaultProjectKind` default grouped, then `Kind` + its 5 constants as an adjacent sibling group. Reading order: KindID-group → Kind-group → KindAppliesTo. Still matches plan P6 ("two types stay distinct, placed near top").
+- **Hylla Feedback:** N/A — task touched only 2 Go files via exact-string block move. Pre-edit file structure was already known from direct Read; grep invariants used native Grep tool against local checkout. No Hylla query was issued; no fallback was forced.
