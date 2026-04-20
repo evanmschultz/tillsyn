@@ -103,7 +103,7 @@ For semantic, high-risk, or ambiguous work:
 - **Conclusion** — the claim.
 - **Unknowns** — what remains uncertain. Routed to the orchestrator (subagents return Unknowns in their final response; orchestrator surfaces to dev).
 
-Short and inspectable. Full Section 0 spec lives in `~/.claude/CLAUDE.md` § "Semi-Formal Reasoning — Section 0 Response Shape". The Agent Spawn Contract preamble (in WORKFLOW.md) requires Section 0 from every subagent — but Section 0 stays in the orchestrator-facing response **only**, never inside `PLAN.md` / `BUILDER_WORKLOG.md` / `BUILDER_QA_*.md` / `PLAN_QA_*.md` / `CLOSEOUT.md`.
+Short and inspectable. Full Section 0 spec lives in `~/.claude/output-styles/tillsyn-flow.md § "Section 0 — SEMI-FORMAL REASONING (Pre-Body Block)"` — 5 passes for orchestrators (Planner / Builder / QA Proof / QA Falsification / Convergence), 4 passes for subagents (Proposal / QA Proof / QA Falsification / Convergence). The Agent Spawn Contract preamble (in WORKFLOW.md) requires Section 0 from every subagent — but Section 0 stays in the orchestrator-facing response **only**, never inside `PLAN.md` / `BUILDER_WORKLOG.md` / `BUILDER_QA_*.md` / `PLAN_QA_*.md` / `CLOSEOUT.md`.
 
 ## QA Discipline
 
