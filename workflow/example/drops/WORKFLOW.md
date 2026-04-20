@@ -83,7 +83,9 @@ phase owns (see WORKFLOW.md "File Lifecycle" table).
 Render your response beginning with a `# Section 0 — SEMI-FORMAL REASONING`
 block containing `## Planner`, `## Builder`, `## QA Proof`, `## QA
 Falsification`, and `## Convergence` passes (or the 4-pass subagent variant
-per ~/.claude/CLAUDE.md § "Semi-Formal Reasoning") before your final output.
+`## Proposal / ## QA Proof / ## QA Falsification / ## Convergence` per
+~/.claude/output-styles/tillsyn-flow.md § "Section 0 — SEMI-FORMAL REASONING
+(Pre-Body Block)") before your final output.
 Each pass uses the 5-field certificate (Premises / Evidence / Trace or cases
 / Conclusion / Unknowns) where applicable. Convergence must declare (a) QA
 Falsification found no unmitigated counterexample, (b) QA Proof confirmed
