@@ -289,3 +289,163 @@ Unit 1.5's core claim — workspace compile-restoration burden discharged, templ
 ### Hylla Feedback
 
 N/A — task touched files wholly within the Unit 1.1–1.5 edit window where Hylla is stale per project CLAUDE.md rule #2 ("Changed since last ingest: use `git diff`"). This QA pass verified excisions, scope-expansion boundaries, test-failure routing, and helper-relocation semantics entirely via `git diff HEAD`, `git show HEAD:`, `Grep`, `Read`, `mage build`, and `mage testPkg`. No Hylla query was issued; no fallback was forced.
+
+## Unit 1.7 — Round 1 — QA Proof
+
+**Date:** 2026-04-20
+**Target:** §1.7 (Legacy `tasks` table excision) — `internal/adapters/storage/sqlite/repo.go`, `internal/adapters/storage/sqlite/repo_test.go`.
+
+### Re-Verified Gates
+
+| Gate | Command | Builder Result | QA Re-Run |
+| ---- | ------- | -------------- | --------- |
+| 1 | `rg 'CREATE TABLE( IF NOT EXISTS)? tasks\|ALTER TABLE tasks\|UPDATE tasks\|FROM tasks\|INSERT INTO tasks\|idx_tasks_' drop/1.75/internal/` | 0 matches | 0 matches — PASS |
+| 2 | `rg 'bridgeLegacyActionItemsToWorkItems\|migratePhaseScopeContract' drop/1.75/internal/` | 0 matches | 0 matches — PASS |
+| 3 | `mage test-pkg ./internal/adapters/storage/sqlite` | 68/68 pass, 0 skip, 1.01s | 68/68 pass, 0 skip, 0.99s — PASS |
+
+All three declared §1.7 acceptance gates re-confirmed against the working tree.
+
+### Scope Bounds Verified
+
+- §1.7 Paths: `repo.go`, `repo_test.go`. `git diff --stat` on these two files: `-223` / `-220` lines, pure deletions, zero additions. Scope-correct.
+- Other modified files (`cmd/till/project_cli.go`, `internal/app/*`, `internal/domain/project.go`, `internal/tui/*`, `internal/adapters/server/mcpapi/*`) match Unit 1.6's declared scope verbatim (BUILDER_WORKLOG.md lines 440-469). Unit 1.6 + 1.7 share one uncommitted staging window — last commit `06e98a0` ("excise template_libraries from call sites") is Unit 1.5. No §1.7 bleed into non-§1.7 files.
+
+### Deviation D1 Verdict — Test Function-Wide Delete (PASS)
+
+Builder deleted the whole `TestRepository_MigratesLegacyActionItemsTable` function (220 lines) rather than just the PLAN-cited fixture range `:1006-1049`. Reviewed the full deleted test body via `git diff`:
+
+- **Assertion 1** (lines ~1053-1081 of deleted block — `PRAGMA table_info(tasks)` + `seenParentID` check): validates the ALTER-TABLE-parent_id migration on the `tasks` table. Dies with the tasks table by definition.
+- **Assertion 2** (lines ~1083-1099 of deleted block — `COUNT(*) FROM action_items WHERE id='t1'` + `GetActionItem("t1")` + kind/state checks): validates the bridge's row-copy behavior. Dies with `bridgeLegacyActionItemsToWorkItems`.
+- **Assertion 3** (`change_events` table exists + `actor_name` column): covered by `TestRepository_MigratesLegacyCommentAndEventOwnership` at `:975-1094` — that test inserts into `change_events` with an `actor_id, actor_type` legacy shape, then asserts the post-migrate `actor_name` read-back (`:1088-1092`). Equivalent direct coverage.
+- **Assertion 4** (`comments` table exists + `actor_id`, `actor_name`, `summary` columns, no `author_name`): also covered by `TestRepository_MigratesLegacyCommentAndEventOwnership` — it reads `actor_id, actor_name, summary` off `comments` post-migration for c1/c2/c3 fixtures. Equivalent direct coverage.
+- **Assertion 5** (`attention_items` table exists): indirect coverage via `TestRepository_AttentionItemRoundTrip` (`:1772`), `TestRepository_AttentionItemValidationErrors` (`:1878`), `TestRepository_AttentionItemProjectWideRoleFilterAndUpsert` (`:2012`) — all would fail on a missing table. Not a direct `sqlite_master` existence check, but functionally equivalent.
+- **Assertion 6** (`idx_comments_project_target_created_at` + `idx_attention_scope_state_created_at`): indirect coverage via the round-trip tests above (the comment-target index drives `ListCommentsByTarget` performance but not correctness — missing the index wouldn't fail the test, only slow it). Direct existence assertion is lost.
+
+**Net coverage loss:** the direct `sqlite_master WHERE name='idx_*'` existence assertions for the two indexes are no longer checked. This is low-severity — missing indexes are performance regressions, not correctness regressions, and would not have been caught by a green 68/68 test run anyway. No functional test is orphaned. Builder's rationale ("the test exists solely to validate the bridge migration we are removing") is accurate for the primary assertions and defensible for the incidental ones.
+
+### Deviation D2 Verdict — Orphan Helper Delete (PASS)
+
+- `rewriteSubphaseKindAppliesTo` — full-tree grep (`rg 'rewriteSubphaseKindAppliesTo' drop/1.75/`) returns 3 hits, all in `workflow/drop_1_75/BUILDER_WORKLOG.md` prose. Zero source-code references. Safe to delete.
+- `kindAppliesToEqual` — full-tree grep (`rg 'kindAppliesToEqual' drop/1.75/`) returns 10 hits across `PLAN.md`, `BUILDER_WORKLOG.md`, `BUILDER_QA_PROOF.md` prose only. Zero source-code references. Safe to delete.
+- D2 was explicitly anticipated in Unit 1.3 Round 1 worklog (`BUILDER_WORKLOG.md:130` — "Dies in 1.7 together with `migratePhaseScopeContract` itself"). This is planned continuation, not an unplanned expansion.
+
+### Migration-Runner Caller Sites
+
+Confirmed via `git diff internal/adapters/storage/sqlite/repo.go`:
+
+- `r.migratePhaseScopeContract(ctx)` — deletion at diff line 80 (was `repo.go:542`). Gone.
+- `r.bridgeLegacyActionItemsToWorkItems(ctx)` — deletion at diff line 92 (was `repo.go:554`). Gone.
+- Function bodies at diff lines 102-275 — fully deleted including all internal call sites (`rewriteSubphaseKindAppliesTo` invocations at diff lines 155-156, `kindAppliesToEqual` invocations at diff line 157).
+
+No orphan function-call sites remain.
+
+### Coverage
+
+PLAN.md §1.7 Acceptance does not specify coverage. Project CLAUDE.md sets 70% as a workspace-wide `mage ci` invariant, but `mage ci` is the full gate (compile-waived for §1.5-1.13 per PLAN.md §1.6 Acceptance). `mage test-pkg` does not emit a per-package coverage percentage in normal mode; the test-green signal (68/68, zero skip) is the documented §1.7 bar. Builder met PLAN contract. Coverage re-green is a §1.11/§1.12 concern per prior rounds' routing.
+
+### Overall Verdict
+
+**PASS.** All three declared §1.7 gates re-verified green. Both deviations are correctness-equivalent, PLAN-consistent continuations (D2 was anticipated explicitly in Unit 1.3's worklog; D1 is the minimal internally-consistent extension of PLAN.md's literal `:1006-1049` range to preserve compileable test). Migration-runner caller sites gone. Helpers confirmed zero-caller before delete. No scope bleed. Mage `test-pkg` green, zero skipped tests, no test-escape patterns. Unit 1.7's excision leaves the `sqlite` package functionally equivalent for all non-legacy-bridge surfaces.
+
+Low-severity note on coverage completeness: direct `sqlite_master` existence assertions for `idx_comments_project_target_created_at` + `idx_attention_scope_state_created_at` are no longer asserted post-delete. Not a blocker — the indexes remain declared in `repo.go:424, :429` and the round-trip tests would catch missing *tables* they depend on. File as a future-refinement only if deemed worth adding a one-off schema-presence test to `TestRepositoryFreshOpenProjectsSchema` at `:2388`.
+
+### Hylla Feedback
+
+N/A — Unit 1.7's subject is deletion of exact Go identifiers + exact SQL literals in exactly two files. The question shape is deterministic string-match, not semantic search; `rg` / `Grep` over a known path set is strictly faster and more precise than Hylla for this. Additionally, the code under review is within the Unit 1.1-1.7 staging window where Hylla is stale per CLAUDE.md rule #2. No Hylla query was issued; no fallback was forced.
+
+## Unit 1.6 — Round 1 — QA Proof
+
+**Date:** 2026-04-20
+**Reviewer:** go-qa-proof-agent
+**Verdict:** **PASS-WITH-NOTES**
+
+### Scope
+
+Unit 1.6 strips `projects.kind` (column already baked out of domain.Project in Unit 1.3's commit; this unit removes downstream Go-layer readbacks). PLAN.md §1.6 paths cover 5 packages: `internal/domain`, `internal/app`, `internal/adapters/server/mcpapi`, `internal/tui`, `cmd/till`. `mage build` / `mage ci` explicitly WAIVED for this unit per PLAN.md §1.6 acceptance (workspace compile-broken between 1.6 and 1.11/1.12/1.13 by design).
+
+### Gate Re-Runs (Independent Verification)
+
+All 4 gates re-run from `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1.75/` via `Grep`:
+
+- **Gate 1** `rg -U 'project\.Kind|projects\.kind|Project\{[^}]*Kind' --glob='!workflow/**'` → 1 hit at `scripts/drops-rewrite.sql:196` (SQL comment; excluded by gate's `--glob='!scripts/drops-rewrite.sql'`). **PASS.**
+- **Gate 2** `rg 'projectFieldKind'` → 3 hits, all in `workflow/drop_1_75/PLAN.md` and `workflow/drop_1_75/BUILDER_WORKLOG.md` (documentation). Source tree clean. **PASS** (with note — see D3 below; the gate regex as written in PLAN.md lacks the `--glob='!workflow/**'` exclude Gate 1 has).
+- **Gate 3** `rg 'tillsyn\.snapshot\.v4' internal/app/` → 0 matches. **PASS.**
+- **Gate 4** `rg 'tillsyn\.snapshot\.v5' internal/app/snapshot.go` → exactly 1 hit at `:16` (`const SnapshotVersion = "tillsyn.snapshot.v5"`). **PASS.**
+
+### Per-Surface Evidence
+
+**Domain (`internal/domain/project.go`):**
+- `type Project struct` (lines 11-20) reads `ID, Slug, Name, Description, Metadata, CreatedAt, UpdatedAt, ArchivedAt` only. Zero `Kind` field. Verified via Read.
+- `func NewProject(id, name, description string, now time.Time)` (line 42) — no kind arg. Verified.
+- `SetKind` method absent. `rg 'SetKind' --glob='!workflow/**'` → 0 hits.
+
+**App (`internal/app/snapshot.go`):**
+- `type SnapshotProject struct` (lines 33-42) — zero `Kind` field. Verified via Read.
+- `snapshotProjectFromDomain` (lines 1050-1061) — no `.Kind` read or write. Verified.
+- `SnapshotProject.toDomain()` (lines 1256-1271) — no `.Kind` read or write. Verified.
+- `SnapshotVersion` bumped to `tillsyn.snapshot.v5` at line 16. `Snapshot.Version` populated from constant at `:180`; validation at `:326` compares against same constant. No hardcoded `v4` anywhere in tree.
+- Remaining `.Kind` hits in snapshot.go (grep: `Kind` → lines 61, 87, 90-91, 100-103, 192, 204, 259, 265, 399-404, 445, 450+, 481-495, 903+, 983+, 1083, 1109-1115, 1294-1296, 1357-1370, etc.) are all `ActionItem.Kind` / `KindDefinition.ID` / `KindAppliesTo` / `ProjectAllowedKinds.KindIDs` — NOT `Project.Kind`. Correct.
+
+**App (`internal/app/service.go`):**
+- `CreateProjectInput.Kind` (line 231) and `UpdateProjectInput.Kind` (line 286) — **dead fields, see D1 below**.
+- `CreateProjectWithMetadata` (lines 247-279) body never reads `in.Kind`. Verified via Read.
+- `UpdateProject` (lines 294-324) body never reads `in.Kind`. Verified via Read.
+- Only `in.Kind` reads in service.go are lines 525-526 (`CreateActionItem` / `UpdateActionItem` path — ActionItemInput.Kind, not ProjectInput.Kind). Correct domain separation.
+
+**App (`internal/app/kind_capability.go`):**
+- `resolveProjectKindDefinition` absent. `rg 'resolveProjectKindDefinition|validateProjectKind' --glob='!workflow/**'` → 0 hits. Verified deleted.
+
+**MCP adapter (`internal/adapters/server/mcpapi/instructions_explainer.go`):**
+- Diff confirms 3 strip sites (rule-append branch, overview interpolation, buildProjectWhyItApplies kind-baseline entry). Per git diff --stat: 6 line delta.
+- No remaining `project.Kind` reads in `internal/adapters/server/mcpapi/`. `rg 'project\.Kind' --glob='!workflow/**'` → 0 matches.
+
+**TUI (`internal/tui/model.go`):**
+- `rg 'projectKindPicker|modeProjectKindPicker|projectFieldKind' internal/tui/` → 0 hits. Subsystem fully excised — no orphan consts, types, Model fields, handlers, view overlays, or help-panel entries.
+- Classification block deletion (D4) examined via `git diff` at `model.go:17830+`. The deleted block renders `kind:` input + `project_kinds: <summary>` list header + per-row iterations. Both depend on `project.Kind` domain field and `projectKindSummaryRows()` / `projectKindPickerOptions()` methods (deleted). Leaving the `classification` section header with no contents would render a visually-broken headerless empty block. **Intent-preserving.**
+- `modeAddProject` / `modeEditProject` prompt rewrites (D2) examined via `git diff` at `model.go:20463+`. The `kind opens picker on enter/e/type` clause was surgically removed; all other verbiage (`enter saves`, `i edits description`, `r picks root_path`, `comments opens thread`, `esc cancels`) preserved verbatim. **No UX regression beyond the intentional kind-picker removal.**
+
+**TUI (`internal/tui/thread_mode.go`):**
+- `UpdateProjectInput{...}` literal at `:561-569` no longer carries `Kind:`. Verified.
+
+**CLI (`cmd/till/project_cli.go`):**
+- `CreateProjectInput{...}` literal at `:143-146` no longer carries `Kind:`. Verified.
+- `writeProjectList` / `writeProjectDetail` / `writeProjectReadiness` have no `project.Kind` references. `rg 'project\.Kind' cmd/till/` → 0 hits.
+
+### Deviation Adjudication
+
+- **D1 (CreateProjectInput.Kind / UpdateProjectInput.Kind dead fields):** Confirmed dead in application layer — neither `CreateProjectWithMetadata` nor `UpdateProject` read the field. Two external writers still populate it (adapter layer `internal/adapters/server/common/app_service_adapter_mcp.go:559, :585` and one test fixture `internal/app/kind_capability_test.go:523`), but these writes land in a field no consumer reads. Wire-format consideration: `CreateProjectInput` / `UpdateProjectInput` are unexported-JSON-tag-free domain structs, not HTTP/MCP over-the-wire DTOs; the separate `mcpapi.CreateProjectRequest` struct carries the MCP surface contract. So no "leak as optional empty-string" concern. **Defensible for the §1.6 waiver window.** 1.11 (app package re-green) is the logical cleanup point; PLAN.md §1.6 Paths does not explicitly list these Input struct fields, so leaving them is consistent with the literal scope. **Note** (not blocker): recommend Unit 1.11's description add an explicit bullet to strip these two fields and the three call-site writes at that time.
+- **D2 (prompt string rewrites):** Verified surgical — only the kind-picker clause removed; remainder verbatim. Leaving a prompt that advertises a deleted behavior would be a user-visible lie. **Intent-preserving, in scope.**
+- **D3 (Gate 2 regex lacks workflow exclude):** Confirmed — the 3 remaining hits are all documentation prose (PLAN.md invariant rows + BUILDER_WORKLOG.md audit trail). Not source code. PLAN drafting oversight, not a builder error. **Accept; flag as a PLAN refinement candidate.**
+- **D4 (classification section + system kind: row delete wider than PLAN literal line numbers):** Verified. The deleted content is entirely dependent on `project.Kind` domain field or `projectKindPicker` methods, all of which the unit removes. The `classification` section header is purely contextual for the kind subsection; the system section's `kind: <value>` row reads the deleted domain field. **Intent-preserving.**
+- **D5 (template_reapply.go listed in PLAN but already deleted in 1.5):** Confirmed — file absent from working tree. `ls internal/app/template_reapply.go` → not found. **No action needed; flag as a PLAN refinement candidate.**
+
+### Scope-Bound Check
+
+`git status --porcelain` lists modifications to 13 Go files + 2 MD files:
+
+- **Unit 1.6 scope (per PLAN.md §1.6 Paths):** `internal/domain/project.go`, `internal/app/kind_capability.go`, `internal/app/service.go`, `internal/app/snapshot.go`, `internal/adapters/server/mcpapi/instructions_explainer.go`, `internal/adapters/server/mcpapi/extended_tools_test.go`, `internal/tui/model.go`, `internal/tui/model_test.go`, `internal/tui/thread_mode.go`, `cmd/till/project_cli.go`, `cmd/till/project_cli_test.go` — 11 files, all in-scope.
+- **Out-of-scope but present in working tree:** `internal/adapters/storage/sqlite/repo.go` (223 deletions) and `internal/adapters/storage/sqlite/repo_test.go` (220 deletions). `git diff` sample confirms these are `CREATE TABLE tasks` + related legacy-tasks-table excision — **Unit 1.7's** scope (PLAN.md §1.7 Paths: `internal/adapters/storage/sqlite/repo.go`, `repo_test.go`). Also confirms zero `project.Kind` touches in sqlite (grep → 0 matches).
+
+**Scope-bleed adjudication:** the sqlite changes are Unit 1.7 work staged alongside Unit 1.6 in the same working tree. Unit 1.6's builder did not touch sqlite (PLAN.md §1.6 explicitly forbids it by omission). Unit 1.7 QA owns verification of those changes. **Not a Unit 1.6 QA blocker** — but the dev should be aware that the pre-commit working tree mixes multiple units' deltas, so the Unit 1.6 commit must stage only the 11 in-scope Go files + the 2 MD files.
+
+### Section 0 Convergence
+
+- (a) **QA Falsification — no unmitigated counterexample.** Attacks A1 (stub Kind refs), A2 (wider form-field removal), A3 (missed golden fixture), A4 (dead field wire-leak), A5 (forbidden-file edit), A6 (gate regex weakening) — each verified clear. D1's dead fields are genuinely unread in-service; D4's wider delete is strictly domain-field-dependent; A3 confirmed via `rg 'tillsyn\.snapshot\.v4'` over the entire tree; A5 confirmed via per-file diff review.
+- (b) **QA Proof — evidence complete.** Each claim (4 gates, 5 deviations, 7 surface-level strips, 2 input-field deads, 1 scope-bleed) has direct Grep/Read/git-diff citation above.
+- (c) **Unknowns routed.** None unresolved for Unit 1.6. One refinement candidate flagged: PLAN §1.6 Gate 2 regex should gain `--glob='!workflow/**'` exclude (D3 / routed to dev as PLAN refinement). One coordination hint routed: Unit 1.11 description should explicitly list the two `CreateProjectInput.Kind` / `UpdateProjectInput.Kind` struct-field strips + the three call-site writes at `adapter_mcp.go:559, :585` + `kind_capability_test.go:523` (D1 cleanup).
+
+### Verdict
+
+**PASS-WITH-NOTES.**
+
+All 4 gates verified green. All 5 declared deviations adjudicated as defensible within PLAN.md §1.6 waiver window. `projectKindPicker` subsystem fully excised with zero orphan references. SnapshotVersion bump clean. No forbidden-file touches attributable to Unit 1.6. D1's dead fields are a legitimate scoping trade-off the PLAN paths permit — flag for Unit 1.11 explicit cleanup.
+
+**Notes (non-blocking):**
+1. Unit 1.11's description should list `CreateProjectInput.Kind` / `UpdateProjectInput.Kind` field removal + 3 call-site writes as explicit strip targets.
+2. PLAN.md §1.6 Gate 2 regex should gain `--glob='!workflow/**'` to parallel Gate 1.
+3. PLAN.md §1.6 Paths list should drop `internal/app/template_reapply.go` (D5 — already deleted in 1.5).
+4. Working tree mixes Unit 1.6 + Unit 1.7 deltas; dev must stage Unit 1.6's 11 Go files + 2 MD files as a discrete commit before reviewing Unit 1.7.
+
+### Hylla Feedback
+
+N/A — Unit 1.6's subject is exact-string removal (Go identifiers, constants, struct fields) across a finite enumerated file list. Question shapes were `which files contain 'project.Kind'`, `is there still a projectKindPicker definition`, `does CreateProjectInput still have a Kind field`. All resolved by `rg` / `Grep` / `Read` over the PLAN-listed paths. Additionally, Unit 1.6's edits are uncommitted at review time, so Hylla's committed-code index is stale per CLAUDE.md rule #2 — fallback to `git diff` + `Read` is expected and correct. No Hylla query was issued; no fallback was forced.

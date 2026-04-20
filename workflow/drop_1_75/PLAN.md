@@ -145,7 +145,8 @@ The big atomic excision. Must be one unit because MCP imports app, which imports
 
 ### 1.6 — Drop `projects.kind` column (domain Go + app + MCP + TUI + CLI)
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-19
 **Paths:** `internal/domain/project.go` (strip `Kind KindID` field from `type Project` at `:16`; delete the `Kind: DefaultProjectKind,` entry in `NewProject`'s struct literal at `:60`; delete the entire `SetKind(kind KindID, ...)` method at `:79-88`; audit every `Project{...}` struct literal sitewide to remove `Kind:` field references — per F5 the bare `:85` citation was ambiguous), `internal/app/kind_capability.go` (strip `resolveProjectKindDefinition` + callers), `internal/app/service.go` (strip project.Kind references), `internal/app/snapshot.go` (per Round-5 P1 — strip `Kind domain.KindID` field from `type SnapshotProject` at `:41`, strip the `Projects[i].Kind` normalization loop at `:395-397` which reads `domain.Project.Kind`, strip `Kind: p.Kind` from `snapshotProjectFromDomain` at `:1230-1237`, strip the `kind := domain.NormalizeKindID(p.Kind)` + `Kind: kind` lines from `SnapshotProject.toDomain` at `:1589-1603`; also bump `SnapshotVersion` from `tillsyn.snapshot.v4` to `tillsyn.snapshot.v5` at `:16` — schema-honest signal for strict consumers even though JSON round-trip is soft-compatible), `internal/app/snapshot_test.go` (update fixtures and any golden test data pinning the `tillsyn.snapshot.v4` literal to `tillsyn.snapshot.v5`), `internal/app/template_reapply.go` (strip — partly duplicated w/ 1.5 deletion), `internal/adapters/server/mcpapi/instructions_explainer.go` (strip project.Kind readback), `internal/tui/model.go` (strip `project.Kind` readbacks at `:4856, :18747` and `projectFieldKind` form input if present), `internal/tui/thread_mode.go`, `cmd/till/project_cli.go`, `cmd/till/project_cli_test.go`
 **Packages:** `internal/domain`, `internal/app`, `internal/adapters/server/mcpapi`, `internal/tui`, `cmd/till`
 **Blocked by:** 1.1, 1.2, 1.3, 1.4, 1.5
@@ -160,7 +161,8 @@ The column strip is deferred to this unit (after 1.5) because `internal/tui/mode
 
 ### 1.7 — Legacy `tasks` table excision
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-19
 **Paths:** `internal/adapters/storage/sqlite/repo.go`, `internal/adapters/storage/sqlite/repo_test.go`
 **Packages:** `internal/adapters/storage/sqlite`
 **Blocked by:** 1.1, 1.2, 1.3, 1.5

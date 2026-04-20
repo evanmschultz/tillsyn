@@ -165,35 +165,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			archived_at TEXT,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
-		`CREATE TABLE IF NOT EXISTS tasks (
-			id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			parent_id TEXT NOT NULL DEFAULT '',
-			kind TEXT NOT NULL DEFAULT 'actionItem',
-			scope TEXT NOT NULL DEFAULT 'actionItem',
-			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
-			column_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			priority TEXT NOT NULL,
-			due_at TEXT,
-			labels_json TEXT NOT NULL DEFAULT '[]',
-			metadata_json TEXT NOT NULL DEFAULT '{}',
-			created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
-			created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
-			updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
-			updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
-			updated_by_type TEXT NOT NULL DEFAULT 'user',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			started_at TEXT,
-			completed_at TEXT,
-			archived_at TEXT,
-			canceled_at TEXT,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
-		);`,
 		`CREATE TABLE IF NOT EXISTS action_items (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
@@ -447,7 +418,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_action_items_project_column_position ON action_items(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_action_items_project_parent ON action_items(project_id, parent_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_change_events_project_created_at ON change_events(project_id, created_at DESC, id DESC);`,
@@ -476,26 +446,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE attention_items ADD COLUMN target_role TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add attention_items.target_role: %w", err)
-	}
-	actionItemAlterStatements := []string{
-		`ALTER TABLE tasks ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'actionItem'`,
-		`ALTER TABLE tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'actionItem'`,
-		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
-		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
-		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
-		`ALTER TABLE tasks ADD COLUMN started_at TEXT`,
-		`ALTER TABLE tasks ADD COLUMN completed_at TEXT`,
-		`ALTER TABLE tasks ADD COLUMN canceled_at TEXT`,
-	}
-	for _, stmt := range actionItemAlterStatements {
-		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("migrate sqlite tasks: %w", err)
-		}
 	}
 	workItemAlterStatements := []string{
 		`ALTER TABLE action_items ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
@@ -539,19 +489,10 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.migrateActionItemActorNames(ctx); err != nil {
 		return err
 	}
-	if err := r.migratePhaseScopeContract(ctx); err != nil {
-		return err
-	}
 	if err := r.ensureCommentIndexes(ctx); err != nil {
 		return err
 	}
 	if err := r.migrateLegacyEmbeddingDocuments(ctx); err != nil {
-		return err
-	}
-	if _, err := r.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(project_id, parent_id)`); err != nil {
-		return fmt.Errorf("migrate sqlite actionItem parent index: %w", err)
-	}
-	if err := r.bridgeLegacyActionItemsToWorkItems(ctx); err != nil {
 		return err
 	}
 	if err := r.ensureGlobalAuthProject(ctx); err != nil {
@@ -588,108 +529,6 @@ func (r *Repository) migrateLegacyEmbeddingDocuments(ctx context.Context) error 
 		return fmt.Errorf("migrate sqlite embedding job subject types: %w", err)
 	}
 	return nil
-}
-
-// migratePhaseScopeContract rewrites legacy subphase markers into the canonical phase contract.
-func (r *Repository) migratePhaseScopeContract(ctx context.Context) error {
-	rewriteStatements := []struct {
-		name string
-		sql  string
-		args []any
-	}{
-		{name: "tasks.scope", sql: `UPDATE tasks SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
-		{name: "action_items.scope", sql: `UPDATE action_items SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
-		{name: "comments.target_type", sql: `UPDATE comments SET target_type = ? WHERE target_type = ?`, args: []any{string(domain.CommentTargetTypePhase), "subphase"}},
-		{name: "capability_leases.scope_type", sql: `UPDATE capability_leases SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.CapabilityScopePhase), "subphase"}},
-		{name: "attention_items.scope_type", sql: `UPDATE attention_items SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.ScopeLevelPhase), "subphase"}},
-		{name: "change_events.metadata_json", sql: `UPDATE change_events SET metadata_json = replace(metadata_json, '\"subphase\"', '\"phase\"') WHERE metadata_json LIKE '%\"subphase\"%'`, args: nil},
-	}
-	for _, stmt := range rewriteStatements {
-		if _, err := r.db.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
-			return fmt.Errorf("migrate phase scope contract %s: %w", stmt.name, err)
-		}
-	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE action_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.KindPhase), string(domain.KindAppliesToActionItem)); err != nil {
-		return fmt.Errorf("migrate phase scope contract action_items project phase scope: %w", err)
-	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.KindPhase), string(domain.KindAppliesToActionItem)); err != nil {
-		return fmt.Errorf("migrate phase scope contract tasks project phase scope: %w", err)
-	}
-
-	rows, err := r.db.QueryContext(ctx, `SELECT id, applies_to_json, allowed_parent_scopes_json FROM kind_catalog`)
-	if err != nil {
-		return fmt.Errorf("migrate phase scope contract query kind_catalog: %w", err)
-	}
-	defer rows.Close()
-
-	type kindRow struct {
-		id          string
-		appliesTo   []domain.KindAppliesTo
-		parentScope []domain.KindAppliesTo
-	}
-	toUpdate := make([]kindRow, 0)
-	for rows.Next() {
-		var id, appliesRaw, parentRaw string
-		if err := rows.Scan(&id, &appliesRaw, &parentRaw); err != nil {
-			return fmt.Errorf("migrate phase scope contract scan kind_catalog: %w", err)
-		}
-
-		var appliesTo []domain.KindAppliesTo
-		if err := json.Unmarshal([]byte(appliesRaw), &appliesTo); err != nil {
-			return fmt.Errorf("migrate phase scope contract decode kind applies_to %q: %w", id, err)
-		}
-		var parentScopes []domain.KindAppliesTo
-		if err := json.Unmarshal([]byte(parentRaw), &parentScopes); err != nil {
-			return fmt.Errorf("migrate phase scope contract decode kind parent scopes %q: %w", id, err)
-		}
-
-		normalizedApplies := rewriteSubphaseKindAppliesTo(appliesTo)
-		normalizedParents := rewriteSubphaseKindAppliesTo(parentScopes)
-		if kindAppliesToEqual(appliesTo, normalizedApplies) && kindAppliesToEqual(parentScopes, normalizedParents) {
-			continue
-		}
-		toUpdate = append(toUpdate, kindRow{id: id, appliesTo: normalizedApplies, parentScope: normalizedParents})
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate phase scope contract iterate kind_catalog: %w", err)
-	}
-
-	now := time.Now().UTC()
-	for _, row := range toUpdate {
-		appliesJSON, err := json.Marshal(row.appliesTo)
-		if err != nil {
-			return fmt.Errorf("migrate phase scope contract encode kind applies_to %q: %w", row.id, err)
-		}
-		parentJSON, err := json.Marshal(row.parentScope)
-		if err != nil {
-			return fmt.Errorf("migrate phase scope contract encode kind parent scopes %q: %w", row.id, err)
-		}
-		if _, err := r.db.ExecContext(ctx, `UPDATE kind_catalog SET applies_to_json = ?, allowed_parent_scopes_json = ?, updated_at = ? WHERE id = ?`, string(appliesJSON), string(parentJSON), ts(now), row.id); err != nil {
-			return fmt.Errorf("migrate phase scope contract update kind_catalog %q: %w", row.id, err)
-		}
-	}
-	return nil
-}
-
-// rewriteSubphaseKindAppliesTo replaces the removed subphase marker with phase and de-duplicates.
-func rewriteSubphaseKindAppliesTo(values []domain.KindAppliesTo) []domain.KindAppliesTo {
-	out := make([]domain.KindAppliesTo, 0, len(values))
-	seen := map[domain.KindAppliesTo]struct{}{}
-	for _, raw := range values {
-		scope := domain.NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if scope == "subphase" {
-			scope = domain.KindAppliesToPhase
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	return out
 }
 
 // migrateCommentsOwnershipTuple rewrites comments to the canonical ownership tuple columns.
@@ -857,8 +696,6 @@ func (r *Repository) migrateActionItemActorNames(ctx context.Context) error {
 		name string
 		sql  string
 	}{
-		{name: "tasks.created_by_name", sql: `UPDATE tasks SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
-		{name: "tasks.updated_by_name", sql: `UPDATE tasks SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
 		{name: "action_items.created_by_name", sql: `UPDATE action_items SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
 		{name: "action_items.updated_by_name", sql: `UPDATE action_items SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
 	}
@@ -944,66 +781,6 @@ func (r *Repository) tableHasColumn(ctx context.Context, tableName, columnName s
 		return false, err
 	}
 	return false, nil
-}
-
-// bridgeLegacyActionItemsToWorkItems copies legacy actionItem rows into canonical action_items rows.
-func (r *Repository) bridgeLegacyActionItemsToWorkItems(ctx context.Context) error {
-	// Keep migration idempotent and non-destructive so existing tasks databases remain readable.
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO action_items(
-			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
-			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
-		)
-		SELECT
-			t.id,
-			t.project_id,
-			t.parent_id,
-			t.kind,
-			t.scope,
-			t.lifecycle_state,
-			t.column_id,
-			t.position,
-			t.title,
-			t.description,
-			t.priority,
-			t.due_at,
-			t.labels_json,
-			t.metadata_json,
-			t.created_by_actor,
-			COALESCE(NULLIF(TRIM(t.created_by_name), ''), NULLIF(TRIM(t.created_by_actor), ''), 'tillsyn-user'),
-			t.updated_by_actor,
-			COALESCE(NULLIF(TRIM(t.updated_by_name), ''), NULLIF(TRIM(t.updated_by_actor), ''), COALESCE(NULLIF(TRIM(t.created_by_name), ''), NULLIF(TRIM(t.created_by_actor), ''), 'tillsyn-user')),
-			t.updated_by_type,
-			t.created_at,
-			t.updated_at,
-			t.started_at,
-			t.completed_at,
-			t.archived_at,
-			t.canceled_at
-		FROM tasks t
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM action_items wi
-			WHERE wi.id = t.id
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("bridge legacy tasks to action_items: %w", err)
-	}
-	return nil
-}
-
-// kindAppliesToEqual reports whether two applies_to slices are identical.
-func kindAppliesToEqual(a, b []domain.KindAppliesTo) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if domain.NormalizeKindAppliesTo(a[i]) != domain.NormalizeKindAppliesTo(b[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 // CreateProject creates project.
