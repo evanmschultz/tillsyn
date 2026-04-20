@@ -12,6 +12,7 @@ import (
 
 // TestRepository_TemplateLibraryBindingAndContractRoundTrip verifies template-library storage, binding, and snapshot persistence.
 func TestRepository_TemplateLibraryBindingAndContractRoundTrip(t *testing.T) {
+	t.Skip("kind_catalog collapsed to {project, actionItem} in Unit 1.3; template_library surface (and this whole file) deleted wholesale in Unit 1.5 — assertion no longer reachable.")
 	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {

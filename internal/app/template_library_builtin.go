@@ -26,9 +26,6 @@ type EnsureBuiltinTemplateLibraryInput struct {
 
 // GetBuiltinTemplateLibraryStatus returns install and drift state for one supported builtin library.
 func (s *Service) GetBuiltinTemplateLibraryStatus(ctx context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return domain.BuiltinTemplateLibraryStatus{}, err
-	}
 	spec, err := builtinTemplateLibrarySpec(strings.TrimSpace(libraryID), builtinTemplateActor{})
 	if err != nil {
 		return domain.BuiltinTemplateLibraryStatus{}, err
@@ -76,9 +73,6 @@ func (s *Service) GetBuiltinTemplateLibraryStatus(ctx context.Context, libraryID
 
 // EnsureBuiltinTemplateLibrary installs or refreshes one supported builtin library explicitly.
 func (s *Service) EnsureBuiltinTemplateLibrary(ctx context.Context, in EnsureBuiltinTemplateLibraryInput) (domain.BuiltinTemplateLibraryEnsureResult, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return domain.BuiltinTemplateLibraryEnsureResult{}, err
-	}
 	actor := builtinTemplateActor{
 		ID:   strings.TrimSpace(in.ActorID),
 		Name: strings.TrimSpace(in.ActorName),

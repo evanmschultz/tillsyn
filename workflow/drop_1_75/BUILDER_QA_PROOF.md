@@ -80,3 +80,82 @@ Builder's claim — delete the app-layer kind-catalog seeder (`ensureKindCatalog
 ## Hylla Feedback
 
 None — Hylla answered everything needed. This QA pass verified symbol deletions via `git diff HEAD` + `rg` over committed Go source (Hylla is stale for files touched after the last ingest, so `git diff` is the correct evidence source here per project CLAUDE.md rule #2). No Hylla query was attempted because the evidence demanded is lexical (has-the-identifier-disappeared-from-these-specific-files) and the diff is the authoritative record. No miss to record.
+
+## Unit 1.3 — Round 1
+
+**Verdict:** PASS
+
+## Summary
+
+Builder's claim — bake `project` + `actionItem` rows into `kind_catalog`, delete `seedDefaultKindCatalog` + `mergeKindAppliesTo`, strip `projects.kind` at both DDL sites (`:152` primary + `:588` ALTER), strip `kind` from all 6 SQL functions and their Go wrappers, add two new invariant tests, and scope-expand 9 lines in `internal/app/template_library*.go` to make gate 8 achievable — is fully supported by the evidence. All 8 acceptance gates re-ran clean. The two builder-flagged false positives (gate 4 `scanAttentionItem`-scope, gate 5 multi-line regex bleed through unsemicoloned raw-string SQL literals) are correctly classified. Scope-expansion is real (sqlite-package imports `internal/app` in 8 files), minimum-necessary (9 lines = narrowest reachable; stub-reinstatement would re-introduce deleted code), and intent-preserving (mirrors Unit 1.2's in-scope-caller treatment for files that die wholesale in Unit 1.5).
+
+## Gate-by-gate evidence
+
+- **Gate 1** `rg 'seedDefaultKindCatalog|mergeKindAppliesTo|kindAppliesToEqual' . --glob='!workflow/**'` → 3 matches, all `kindAppliesToEqual`: 1 function definition at `internal/adapters/storage/sqlite/repo.go:1237` and 2 call-site invocations on `repo.go:770` (same line, inside `migratePhaseScopeContract`). PLAN.md §1.3 gate 1 language explicitly permits these ("or only the helpers' remaining uses outside the deleted seeder"). `migratePhaseScopeContract` is scheduled for deletion in Unit 1.7. **PASS.**
+- **Gate 2** `rg "ALTER TABLE projects ADD COLUMN kind" . --glob='!workflow/**'` → 0 matches. Workflow MD mentions are specs/worklogs, not source. **PASS.**
+- **Gate 3** `rg "kind TEXT.*DEFAULT 'project'" internal/adapters/storage/sqlite/` → 0 matches. **PASS.**
+- **Gate 4** `rg 'kindRaw|NormalizeKindID\(p\.Kind\)|p\.Kind\s*=' internal/adapters/storage/sqlite/repo.go` → 3 matches, all inside `scanAttentionItem` at `:4290` (var decl), `:4306` (Scan positional), `:4329` (`item.Kind = domain.NormalizeAttentionKind(domain.AttentionKind(kindRaw))`). This is the `AttentionKind` domain concept — `kindRaw` scans an attention-item kind column, not a project kind. Zero residue against `project.Kind`. Builder's false-positive classification verified. **PASS.** (Regex could be tightened in follow-up, e.g. `p\.Kind\b\s*=` with negative lookbehind, but Go re2 doesn't support lookbehind; the PLAN regex is a best-effort lexical proxy.)
+- **Gate 5** `rg -U 'INSERT INTO projects\([^)]*kind|UPDATE projects[^;]*kind\s*=|SELECT[^;]*kind[^;]*FROM projects' internal/adapters/storage/sqlite/repo.go` → 1 match spanning from `bridgeLegacyActionItemsToWorkItems`'s raw-string `SELECT t.kind ... FROM tasks t` body (starts `:1197`) greedily through `kindAppliesToEqual` func body, past `CreateProject` / `UpdateProject` / `DeleteProject`, and ending in `GetProject`'s `FROM projects` raw-string at `:1295`. Multi-line mode + `[^;]*` with no SQL-literal-boundary discipline creates the bleed. Tighter replacement `rg -U 'SELECT[^;]*\bkind\b[^;]*FROM projects\b' repo.go` → 0 matches. Manual inspection of all 6 project-SQL sites (`INSERT INTO projects` at `:1256` + `:1349`, `UPDATE projects` at `:1269`, `SELECT ... FROM projects` at `:1294` + `:1304`) confirms zero `kind` column references. Builder's false-positive classification verified. **Functional PASS.**
+- **Gate 6** `TestRepositoryFreshOpenKindCatalog` added in `repo_test.go` (diff lines +2566 through +2605). Opens fresh in-memory DB, queries `SELECT id FROM kind_catalog ORDER BY id`, asserts exactly 2 rows with IDs `["actionItem", "project"]`. Test passes under `mage test-pkg ./internal/adapters/storage/sqlite`. **PASS.**
+- **Gate 7** `TestRepositoryFreshOpenProjectsSchema` added in `repo_test.go` (diff lines +2607 through +2644). Opens fresh in-memory DB, queries `SELECT name FROM pragma_table_info('projects')`, rejects any `kind` column, guards against 0-column false-pass via `len(columns) == 0` check. Test passes. **PASS.**
+- **Gate 8** `mage test-pkg ./internal/adapters/storage/sqlite` → 70 total tests, 69 passed, 0 failed, 1 skipped (`TestRepository_TemplateLibraryBindingAndContractRoundTrip` — documented 1.5-scheduled deletion, skip reason cross-references Unit 1.3/1.5). **PASS.**
+
+## Scope-expansion minimum-necessity check
+
+Builder stripped 3 × 3-line guard blocks (9 lines total) in files PLAN §1.2 explicitly marked "intentionally skip":
+
+- `internal/app/template_library.go:124-128` → guard removed from `UpsertTemplateLibrary`.
+- `internal/app/template_library_builtin.go:27-31` → guard removed from `GetBuiltinTemplateLibraryStatus`.
+- `internal/app/template_library_builtin.go:74-81` → guard removed from `EnsureBuiltinTemplateLibrary`.
+
+- **Is the import dependency real?** YES. `rg '"github.com/evanmschultz/tillsyn/internal/app"' internal/adapters/storage/sqlite/ -l` returns 8 files (3 production: `repo.go`, `handoff.go`, `embedding_lifecycle_adapter.go`; 5 tests). Gate 8's `mage test-pkg ./internal/adapters/storage/sqlite` requires all transitively-imported packages to compile, including `internal/app`. With Unit 1.2 having deleted `ensureKindCatalogBootstrapped`, the three dangling callers made `internal/app` uncompilable, making gate 8 unreachable. Unit 1.2's waiver covered `mage test-pkg ./internal/app` + `mage ci`, but NOT the transitive compile requirement induced by Unit 1.3's own gate 8. The planner's implicit assumption — that per-package gate isolation would let 1.2's waiver stand through 1.3 — is physically impossible given the import graph.
+- **Is a narrower fix available?** NO. The only alternatives to stripping the guards are: (a) reinstate `ensureKindCatalogBootstrapped` as a stub (reverses Unit 1.2's deletion, adds dead code, creates a follow-up delete burden in 1.5), (b) accept that gate 8 is untestable (violates PLAN acceptance). Stripping 9 lines of now-dead guards in files slated for wholesale deletion in Unit 1.5 is the minimum reachable fix.
+- **Is the PLAN §1.2 'intentionally skip' intent preserved?** YES. §1.2's intent was "don't touch these files — they die wholesale in 1.5, edits are pure churn". The edits are limited to removing 9 lines of dead-after-Unit-1.2 guard code; no new symbols, no refactors, no API surface churn. When Unit 1.5 deletes the files wholesale, the 9 lines would have been deleted anyway. This matches the same surgical pattern Unit 1.2 used for its four in-scope callers (strip the guard, leave everything else).
+- **Side effect disclosure:** stripping the 3 guards implicitly discharges Unit 1.2's `mage test-pkg ./internal/app` and `mage ci` waivers ahead of Unit 1.5's scheduled restoration. Builder explicitly did NOT run `mage test-pkg ./internal/app` from Unit 1.3 (per-package gate remains Unit 1.11's responsibility per plan). No invariant violation.
+
+## Schema-site verification
+
+- **Primary DDL at `repo.go:144-156`** (inside `migrate()`): `CREATE TABLE IF NOT EXISTS projects (id, slug, name, description, metadata_json, created_at, updated_at, archived_at)` — 8 columns, no `kind`. Confirmed via Read at `:144-156`.
+- **ALTER site at `:588-591`** (post-migrate hook range): the statement list at `:580-586` contains index creates; the subsequent `ALTER TABLE projects ADD COLUMN metadata_json` at `:593` is unrelated; the old `ALTER TABLE projects ADD COLUMN kind` is gone. Confirmed.
+- **Baked INSERTs at `:315-338`**: `CREATE TABLE IF NOT EXISTS kind_catalog` block at `:315-326` is immediately followed by two `INSERT OR IGNORE INTO kind_catalog` statements for `'project'` (`:327-332`) and `'actionItem'` (`:333-338`). Both use RFC3339-compatible `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` timestamps (parseTS-compatible). Both live in the same `stmts` slice as the DDL, so the schema migration runs them atomically. **Confirmed.**
+
+## SQL-query strip verification (6 functions)
+
+- **`CreateProject` at `:1249-1260`** — INSERT columns `(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)`, 8 `?` placeholders, 8 args. No `kind`. **Confirmed.**
+- **`UpdateProject` at `:1262-1277`** — SET `slug = ?, name = ?, description = ?, metadata_json = ?, updated_at = ?, archived_at = ?`, 6 args + id. No `kind`. **Confirmed.**
+- **`GetProject` at `:1291-1299`** — SELECT `id, slug, name, description, metadata_json, created_at, updated_at, archived_at`. No `kind`. **Confirmed.**
+- **`ListProjects` at `:1301-...`** — SELECT same 8 columns at `:1304-1305`. No `kindRaw` var, no `&kindRaw` Scan handle, no `p.Kind = domain.NormalizeKindID(...)` block. **Confirmed.**
+- **`ensureGlobalAuthProject` at `:1347-1363`** — INSERT columns `(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)` at `:1349`, 8 placeholders, 5 actual args + 3 inline literals (`''`, `'{}'`, `NULL`). No `kind`. Function preserved (self-healing auth-project bootstrap). **Confirmed.**
+- **`scanProject` at `:3865-3889`** — Scan over `&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived` (8 handles). No `kindRaw`. No `p.Kind = ...` assignment. **Confirmed.**
+
+## Test-site strip + new-test verification
+
+- **`project.SetKind("project-template", now)` call at old `:2369-2371`**: deleted. Diff shows the full 3-line `if err := project.SetKind(...); err != nil { t.Fatalf(...) }` block removed from `TestRepository_PersistsProjectKindAndActionItemScope`. **Confirmed.**
+- **`loadedProject.Kind` assertion at old `:2379-2381`**: deleted. Diff shows the 3-line `if loadedProject.Kind != domain.KindID("project-template") { t.Fatalf(...) }` block removed; `loadedProject, err := ...` rewritten to `_, err = ...` since the var is otherwise unused. **Confirmed.**
+- **`TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport` at old `:2333-2354`**: deleted wholesale (22 lines in diff). The test asserted `phase` kind presence with nested-phase parent scopes; post-collapse the `phase` row no longer exists in `kind_catalog`. Deleting this test is the unavoidable consequence of seeder deletion; builder flagged this in Deviation #3. **Correct classification.**
+- **New `TestRepositoryFreshOpenKindCatalog`** (diff +2566 through +2605): asserts exactly 2 rows, IDs `["actionItem", "project"]` in sorted order, guards against both over-seed and under-seed failure modes. **Verified by reading the test body.**
+- **New `TestRepositoryFreshOpenProjectsSchema`** (diff +2607 through +2644): queries `pragma_table_info('projects')`, rejects any column named `kind`, and guards against the 0-column false-pass (table-missing-entirely would otherwise silently satisfy the "no kind column" assertion). **Verified.**
+
+## Git diff cross-check vs worklog
+
+`git diff HEAD --stat` shows exactly 7 files modified:
+
+1. `internal/adapters/storage/sqlite/repo.go` — 161 line churn — matches worklog's edit items 1-13.
+2. `internal/adapters/storage/sqlite/repo_test.go` — 110 line churn — matches items 14-18.
+3. `internal/adapters/storage/sqlite/template_library_test.go` — 1 line add (the `t.Skip` at `:14`) — matches item 22.
+4. `internal/app/template_library.go` — 3 lines removed — matches item 19.
+5. `internal/app/template_library_builtin.go` — 6 lines removed (2 × 3-line guards) — matches items 20-21.
+6. `workflow/drop_1_75/BUILDER_WORKLOG.md` — 71 lines added — the Unit 1.3 Round 1 worklog entry.
+7. `workflow/drop_1_75/PLAN.md` — 2 lines churn — single `todo → done` flip on `### 1.3` header.
+
+No unexplained files touched. No files missed. Worklog file list matches diff exactly.
+
+## P-Findings (Proof Gaps)
+
+- None. All 8 gates PASS, all scope-expansion claims verified, schema-site + SQL-query + test-site verifications all clean.
+
+**Informational (not a 1.3 finding):** `scripts/drops-rewrite.sql:230` contains `SELECT COUNT(*) FROM projects WHERE kind <> 'project'` — an invariant check in the post-migration rewrite. This is a dev-run SQL script outside Unit 1.3's declared paths. It will break when executed against a post-1.3 schema (no `kind` column). PLAN.md §1.3 paths list only `repo.go` + `repo_test.go`, and drops-rewrite.sql appears to be planned under Unit 1.14 per §1.14 (dev-run after Unit 1.75 Go ships). Flagged for drop-orch awareness, not a Unit 1.3 defect.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed. This QA pass verified schema/SQL/test-site strips via `git diff HEAD` + `rg` + `Read` over committed Go source. The touched files are all in the Unit 1.1 + Unit 1.2 + Unit 1.3 edit window (Hylla is stale for those files per project CLAUDE.md rule #2, "Changed since last ingest: use git diff"), so lexical tools are correct. Gate 8 was verified via `mage test-pkg` rather than any Hylla query because the gate is a runtime compile + test pass, not a symbol-query. No Hylla miss to record.
