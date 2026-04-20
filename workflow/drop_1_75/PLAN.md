@@ -114,7 +114,7 @@ Delete `seedDefaultKindCatalog` at `repo.go:1231-1301` (full range including mer
 
 ### 1.4 — Template libraries + node_contract_snapshots domain excision
 
-**State:** todo
+**State:** done
 **Paths:** `internal/domain/template_library.go`, `internal/domain/template_library_test.go`, `internal/domain/template_reapply.go`, `internal/domain/builtin_template_library.go`, `internal/domain/errors.go` (remove template-library error sentinels — preserve `ErrInvalidKindTemplate` per F5 classification)
 **Packages:** `internal/domain`
 **Blocked by:** 1.1

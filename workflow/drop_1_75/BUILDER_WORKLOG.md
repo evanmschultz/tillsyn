@@ -175,3 +175,58 @@ Three scope-expansion edits beyond PLAN.md §1.3's declared `paths`:
 ### Hylla Feedback
 
 None — Hylla answered everything needed. This unit's work was anchored entirely on precise line citations from PLAN.md §1.3 + Read verification + Grep for callers of three named symbols (`seedDefaultKindCatalog`, `mergeKindAppliesTo`, `kindAppliesToEqual`). The file was Unit-1.1 + Unit-1.2 modified (Hylla is stale on those sections per project CLAUDE.md §"Code Understanding Rules" rule 2 — "Changed since last ingest: use git diff"), so `Read` + `Grep` + `LSP` were the correct tools throughout. No Hylla query was attempted, no fallback was needed. Recording "None — Hylla answered everything needed" as the closing stance.
+
+## Unit 1.4 — Round 1
+
+**Date:** 2026-04-19
+**Outcome:** success
+**Files touched:** 5 files in `internal/domain` (4 deleted, 1 edited, 1 relocation-repair into `kind.go`).
+
+### Files deleted (wholesale, via `git rm`)
+
+| File | Lines | Contents |
+| --- | --- | --- |
+| `internal/domain/template_library.go` | 786 | `TemplateLibrary`, `NodeTemplate`, `TemplateChildRule`, `ProjectTemplateBinding`, `NodeContractSnapshot`, `TemplateLibraryScope/Status`, `TemplateActorKind`, their `*Input` variants, constructors, `NormalizeTemplateLibraryID`. |
+| `internal/domain/template_library_test.go` | 113 | Unit tests for `NewTemplateLibrary` and related validators. |
+| `internal/domain/template_reapply.go` | 98 | `ProjectTemplateReapplyCandidateStatus`, `ProjectTemplateDefaultChange`, `ProjectTemplateChildRuleChange`, reapply-candidate structs. |
+| `internal/domain/builtin_template_library.go` | 39 | `BuiltinTemplateLibraryState`, `BuiltinTemplateLibraryStatus`. |
+| **Total** | **1036** | |
+
+### `internal/domain/errors.go` — sentinels removed (8)
+
+- `ErrTemplateLibraryNotFound`
+- `ErrInvalidTemplateLibrary`
+- `ErrInvalidTemplateLibraryScope`
+- `ErrInvalidTemplateStatus`
+- `ErrInvalidTemplateActorKind`
+- `ErrInvalidTemplateBinding`
+- `ErrBuiltinTemplateBootstrapRequired`
+- `ErrNodeContractForbidden`
+
+### `internal/domain/errors.go` — sentinels preserved (1)
+
+- `ErrInvalidKindTemplate` — F5-classified as naturally unreachable but kept until a refinement drop. Still referenced at 7 call sites in `internal/domain/kind.go` (lines 262, 265, 271, 274, 281, 288, 296), which ground its preservation.
+
+### Relocation repair (not listed in PLAN.md §1.4 paths)
+
+`canonicalizeActionItemToken` (helper that rewrites the lowercase `actionitem` token to canonical `actionItem` camelCase for kind-id normalization) was defined in the deleted `template_library.go` at `:274-300` despite having zero template-library semantics — it was collocated with `NormalizeTemplateLibraryID` for convenience at the Task→ActionItem rename. `internal/domain/kind.go:176` calls it from `NormalizeKindID`, which is unrelated to template-library work and must survive Unit 1.4. Deleting the helper would break `NormalizeKindID` and break the whole `internal/domain` package compile (not covered by the §1.4 workspace-compile waiver because gate 2 `mage test-pkg ./internal/domain` IS in scope for this unit). The minimum-perturbation fix is to relocate the helper into `kind.go` as a private function immediately after `NormalizeKindID`, its sole caller. The relocation is byte-identical — same function body, same comment, no semantic change. This is called out explicitly so planners for downstream units (and QA for this one) know `kind.go` saw a small append in §1.4's round.
+
+### Acceptance gate outcomes
+
+1. **Gate 1** `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate' internal/domain/` → 0 matches (ripgrep exit 1). **Pass.**
+2. **Gate 2** `mage test-pkg ./internal/domain` → 49 tests pass, 0 failures, 0 build errors (0.26s). **Pass.**
+3. **Gate 3** `rg -F 'ErrTemplateLibraryNotFound' internal/domain/errors.go` → 0 matches. **Pass.**
+4. **Gate 4** `rg 'ErrInvalidTemplate(Library|LibraryScope|Status|ActorKind|Binding)' internal/domain/errors.go` → 0 matches. **Pass.**
+5. **Gate 5** `rg 'ErrBuiltinTemplateBootstrapRequired|ErrNodeContractForbidden' internal/domain/errors.go` → 0 matches. **Pass.**
+6. **Gate 6** `rg 'ErrInvalidKindTemplate' internal/domain/errors.go` → exactly 1 match (line 25, preserved). **Pass.**
+7. **Gate 7** `mage build` / `mage ci` **waived** per PLAN.md §1.4 acceptance — workspace compile-broken between Unit 1.4 and Unit 1.5 commits by design (`internal/app`, `internal/adapters/*`, `cmd/till` still reference deleted domain types). Not run. **Honored.**
+
+### Notes
+
+- Cross-package references dying in Unit 1.5+ (`internal/app/*`, `internal/adapters/*`, `cmd/till/*`) are expected and waived per PLAN.md §1.4.
+- Per-package test-pkg gate is green; the only real domain-internal cross-file coupling (`canonicalizeActionItemToken`) was resolved by relocation rather than reported-and-blocked, since the fix was trivial and the helper has no template-library semantics.
+- No commit performed by the builder per project CLAUDE.md — orchestrator commits after QA twins.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. This unit's work was local to five files in one package with a precise PLAN.md §1.4 spec + F5 preservation callout. Evidence workflow was: `Read` PLAN.md §1.4 → `Read` `errors.go` → `Grep` for template-type refs in `internal/domain/` → `git show` on deleted files to diagnose one compile error exposed by `mage build`. Hylla would have been stale on Unit-1.1 through Unit-1.3 deltas anyway (project CLAUDE.md § "Code Understanding Rules" rule 2). No Hylla query was issued; no fallback was forced; recording "None — Hylla answered everything needed" as the closing stance.

@@ -159,3 +159,67 @@ No unexplained files touched. No files missed. Worklog file list matches diff ex
 ## Hylla Feedback
 
 None — Hylla answered everything needed. This QA pass verified schema/SQL/test-site strips via `git diff HEAD` + `rg` + `Read` over committed Go source. The touched files are all in the Unit 1.1 + Unit 1.2 + Unit 1.3 edit window (Hylla is stale for those files per project CLAUDE.md rule #2, "Changed since last ingest: use git diff"), so lexical tools are correct. Gate 8 was verified via `mage test-pkg` rather than any Hylla query because the gate is a runtime compile + test pass, not a symbol-query. No Hylla miss to record.
+
+## Unit 1.4 — Round 1
+
+**Verdict:** PASS
+
+### Summary
+
+Unit 1.4 (domain-layer `TemplateLibrary` / `TemplateReapply` / `NodeContractSnapshot` / `BuiltinTemplate` excision) is fully supported by the evidence. All 6 in-scope ripgrep gates re-run clean. `mage test-pkg ./internal/domain` is green (49/49 passing). All 4 target files are deleted. The one disclosed relocation — `canonicalizeActionItemToken` moved byte-identical from deleted `template_library.go` into `kind.go` — verifies byte-identical and remains the sole declaration in the package, with the consumer (`NormalizeKindID` at `kind.go:176`) compiling cleanly under the package test run. No stealth orphans remain. Gate 7 (`mage build` / `mage ci`) is explicitly waived by PLAN.md §1.4 and was not executed, per the orchestrator instruction. Downstream compile errors in `internal/app/**` and `internal/adapters/**` are the expected Unit 1.5 surface and are not counted as findings.
+
+### Gate Evidence
+
+1. **Gate 1** `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate' internal/domain/` → 0 matches (rg exit 1). **PASS.**
+2. **Gate 2** `mage test-pkg ./internal/domain` → `49 tests passed across 1 package`, 0 failures, 0 skipped, 0 build errors. Exit 0. **PASS.**
+3. **Gate 3** `rg -F 'ErrTemplateLibraryNotFound' internal/domain/errors.go` → 0 matches (rg exit 1). **PASS.**
+4. **Gate 4** `rg 'ErrInvalidTemplate(Library|LibraryScope|Status|ActorKind|Binding)' internal/domain/errors.go` → 0 matches (rg exit 1). **PASS.**
+5. **Gate 5** `rg 'ErrBuiltinTemplateBootstrapRequired|ErrNodeContractForbidden' internal/domain/errors.go` → 0 matches (rg exit 1). **PASS.**
+6. **Gate 6** `rg 'ErrInvalidKindTemplate' internal/domain/errors.go` → exactly 1 match (line 25, `ErrInvalidKindTemplate = errors.New("invalid kind template")`). **PASS.**
+7. **Gate 7** `mage build` / `mage ci` **waived** per PLAN.md §1.4 Acceptance bullet ("workspace compile-broken between this unit's commit and 1.5's commit by design"). Not executed. **HONORED.**
+
+### File-Deletion Verification
+
+| File | `ls` result | `git status` |
+| --- | --- | --- |
+| `internal/domain/template_library.go` | No such file or directory | `D  internal/domain/template_library.go` |
+| `internal/domain/template_library_test.go` | No such file or directory | `D  internal/domain/template_library_test.go` |
+| `internal/domain/template_reapply.go` | No such file or directory | `D  internal/domain/template_reapply.go` |
+| `internal/domain/builtin_template_library.go` | No such file or directory | `D  internal/domain/builtin_template_library.go` |
+
+All 4 files absent from working tree; all 4 staged as deletions in git index. Rerunnable: `ls internal/domain/template_library.go internal/domain/template_library_test.go internal/domain/template_reapply.go internal/domain/builtin_template_library.go` returns 4 "No such file or directory" errors; `git status --porcelain -- internal/domain/` lists 4 `D` lines for those paths.
+
+### Relocation Soundness Check (`canonicalizeActionItemToken`)
+
+- **Single declaration.** `rg -c '^func canonicalizeActionItemToken' internal/domain/*.go` → `internal/domain/kind.go:1`. Sole definition in the package.
+- **Byte-identical move (visual diff).** Dumped `git show HEAD:internal/domain/template_library.go` to `/tmp/old_tl.go` and compared the `canonicalizeActionItemToken` block (HEAD `:270-300`) against the current `internal/domain/kind.go:179-209` block segment-by-segment:
+  - Doc comment: identical 4-line block ("`canonicalizeActionItemToken` rewrites the lowercase `actionitem` token…Token boundaries are start-of-string, end-of-string, `-`, and `_`.").
+  - Signature: `func canonicalizeActionItemToken(lowered string) string` — identical.
+  - Constants `token = "actionitem"`, `canonical = "actionItem"` — identical.
+  - Control flow (early-return guard, `strings.Builder` + `Grow(len(lowered))`, for-i loop, boundary-check `leftOK`/`rightOK`, `WriteString(canonical)` / `WriteByte(lowered[i])`, final `return b.String()`) — identical statement-for-statement.
+  - No semantic change. Relocation is byte-identical per builder claim.
+- **Consumer compiles.** `internal/domain/kind.go:176` (`return KindID(canonicalizeActionItemToken(strings.ToLower(trimmed)))`) is inside `NormalizeKindID`; `mage test-pkg ./internal/domain` (Gate 2) returned 49/49 pass with 0 build errors, proving the call site compiles and the function remains callable. Test `TestNormalizeKindID` exercises this code path per the package's standing `domain_test.go` coverage.
+- **No collision with `NormalizeTemplateLibraryID`.** The old sibling caller (`NormalizeTemplateLibraryID` at HEAD `template_library.go:262-268`) died with the file. `NormalizeKindID` is now the sole consumer, matching the builder's relocation rationale.
+
+### Stealth-Orphan Sweep
+
+- Enumerated every top-level declaration in the 4 deleted files via `git show HEAD:...` — 24 exported + 14 unexported decls in `template_library.go`, 7 types in `template_reapply.go`, 3 types in `builtin_template_library.go`, 0 test decls worth checking in `template_library_test.go` (tests are self-contained).
+- `rg 'Template|NodeContractSnapshot|BuiltinTemplate|cloneProjectMetadata|cloneActionItemMetadata|normalizeTemplate|cloneNodeTemplates|cloneTemplateLibrary|cloneOptionalTemplateLibrary|newNodeTemplate|newTemplateChildRule|normalizeTemplateActorKinds|normalizeTemplateActorType|normalizeTemplateNullableTS|validTemplateLibraryScopes|validTemplateLibraryStatuses|validTemplateActorKinds' internal/domain/` returns only hits on `KindTemplate` / `KindTemplateChildSpec` / `normalizeKindTemplate` / `ErrInvalidKindTemplate` — all **intentionally preserved** `Kind*Template*` symbols in `kind.go`, distinct from the deleted `TemplateLibrary` family. Per PLAN.md §1.4 F5 classification, `ErrInvalidKindTemplate` is kept for `normalizeKindTemplate` (naturally unreachable but retained until a refinement drop). No match on any of the 24 + 14 + 7 + 3 deleted symbols — no stealth orphan.
+- `rg 'cloneProjectMetadata|cloneActionItemMetadata' internal/domain/` → 0 matches. Both helpers dead with their file.
+- `rg 'ReferencedKindIDs' internal/domain/` → 0 matches. The `TemplateLibrary.ReferencedKindIDs` method died with its receiver type.
+
+### `git diff HEAD` vs Worklog Cross-Check
+
+- Worklog §"Files deleted (wholesale, via `git rm`)" table lists 4 files with line counts 786, 113, 98, 39 (total 1036). `git diff HEAD --stat` reports: `template_library.go | 786 ----`, `template_library_test.go | 113 ----`, `template_reapply.go | 98 ----`, `builtin_template_library.go | 39 --`. **Exact match.**
+- Worklog §"errors.go — sentinels removed (8)" lists 8 error-var names. `git diff HEAD -- internal/domain/errors.go` shows a single deletion hunk removing exactly 8 `Err*` lines in the sentinel block:  `ErrInvalidTemplateLibrary`, `ErrInvalidTemplateLibraryScope`, `ErrInvalidTemplateStatus`, `ErrInvalidTemplateActorKind`, `ErrInvalidTemplateBinding`, `ErrBuiltinTemplateBootstrapRequired`, `ErrTemplateLibraryNotFound`, `ErrNodeContractForbidden`. **Exact match.**
+- Worklog §"Relocation repair" documents `canonicalizeActionItemToken` addition to `kind.go`. `git diff HEAD -- internal/domain/kind.go` shows a single insertion hunk of exactly the function + its 4-line doc comment immediately after `NormalizeKindID` at `:179`. **Exact match.**
+- `git status --porcelain -- internal/domain/` reports 6 entries (4 `D`, 2 `M` on `errors.go` + `kind.go`). Worklog §"Files touched" claims "5 files in `internal/domain` (4 deleted, 1 edited, 1 relocation-repair into `kind.go`)". The "1 edited" + "1 relocation-repair" reads as two distinct file edits (which matches `errors.go` + `kind.go`), though the "5 files" arithmetic counts the relocation as an overlap of the kind.go edit — minor cosmetic wording, not a substantive miscount. Not a finding.
+
+### Findings
+
+- **P-findings:** none.
+- **Informational:** Worklog's "5 files" count wording in §"Files touched" could be more precise (`errors.go` edit + `kind.go` edit = 2 distinct modifications; total touched paths = 6, not 5). Purely cosmetic; does not impact verdict.
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only from the Unit-1.1–1.3 edit window where Hylla is stale per project CLAUDE.md rule #2 ("Changed since last ingest: use `git diff`"). This QA pass verified excisions + relocation via `git diff HEAD`, `git show HEAD:`, `rg`, `Read`, and `mage test-pkg` over committed-since-ingest Go source. No Hylla query was issued; no fallback was forced. Recording "None — Hylla answered everything needed" as the closing stance would also be accurate — both framings agree there is no miss to record.
