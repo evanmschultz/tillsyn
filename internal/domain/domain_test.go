@@ -239,7 +239,7 @@ func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if actionItem.Kind != WorkKindActionItem {
+	if actionItem.Kind != KindActionItem {
 		t.Fatalf("expected default kind actionItem, got %q", actionItem.Kind)
 	}
 	if actionItem.LifecycleState != StateTodo {

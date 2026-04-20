@@ -638,7 +638,7 @@ func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID
 	}
 	kindID = domain.NormalizeKindID(kindID)
 	if kindID == "" {
-		kindID = domain.KindID(domain.WorkKindActionItem)
+		kindID = domain.KindID(domain.KindActionItem)
 	}
 	scope = normalizeActionItemScopeForKind(kindID, scope, parent)
 	if !domain.IsValidWorkItemAppliesTo(scope) {
@@ -692,9 +692,9 @@ func normalizeActionItemScopeForKind(kindID domain.KindID, scope domain.KindAppl
 	switch domain.NormalizeKindID(kindID) {
 	case domain.KindID(domain.KindAppliesToBranch):
 		return domain.KindAppliesToBranch
-	case domain.KindID(domain.WorkKindPhase):
+	case domain.KindID(domain.KindPhase):
 		return domain.KindAppliesToPhase
-	case domain.KindID(domain.WorkKindSubtask):
+	case domain.KindID(domain.KindSubtask):
 		return domain.KindAppliesToSubtask
 	default:
 		if parent != nil {
@@ -744,11 +744,11 @@ func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context, projectKind 
 	if len(kindIDs) == 0 {
 		kindIDs = []domain.KindID{
 			domain.DefaultProjectKind,
-			domain.KindID(domain.WorkKindActionItem),
-			domain.KindID(domain.WorkKindSubtask),
-			domain.KindID(domain.WorkKindPhase),
-			domain.KindID(domain.WorkKindDecision),
-			domain.KindID(domain.WorkKindNote),
+			domain.KindID(domain.KindActionItem),
+			domain.KindID(domain.KindSubtask),
+			domain.KindID(domain.KindPhase),
+			domain.KindID(domain.KindDecision),
+			domain.KindID(domain.KindNote),
 		}
 	}
 	projectKind = domain.NormalizeKindID(projectKind)
@@ -864,12 +864,12 @@ func normalizeKindIDList(in []domain.KindID) []domain.KindID {
 func defaultKindDefinitionInputs() []domain.KindDefinitionInput {
 	return []domain.KindDefinitionInput{
 		{ID: domain.DefaultProjectKind, DisplayName: "Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{ID: domain.KindID(domain.WorkKindActionItem), DisplayName: "ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
-		{ID: domain.KindID(domain.WorkKindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.WorkKindPhase), DisplayName: "Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
+		{ID: domain.KindID(domain.KindActionItem), DisplayName: "ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{ID: domain.KindID(domain.KindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{ID: domain.KindID(domain.KindPhase), DisplayName: "Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
 		{ID: domain.KindID("branch"), DisplayName: "Branch", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.WorkKindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{ID: domain.KindID(domain.WorkKindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{ID: domain.KindID(domain.KindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{ID: domain.KindID(domain.KindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
 	}
 }
 
@@ -913,7 +913,7 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 		if _, childErr := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      parent.ProjectID,
 			ParentID:       parent.ID,
-			Kind:           domain.WorkKind(childSpec.Kind),
+			Kind:           domain.Kind(childSpec.Kind),
 			Scope:          childScope,
 			ColumnID:       parent.ColumnID,
 			Title:          childSpec.Title,
@@ -953,7 +953,7 @@ func (s *Service) applyProjectKindTemplateSystemActions(ctx context.Context, pro
 		}
 		if _, childErr := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      project.ID,
-			Kind:           domain.WorkKind(childSpec.Kind),
+			Kind:           domain.Kind(childSpec.Kind),
 			Scope:          childScope,
 			ColumnID:       columnID,
 			Title:          childSpec.Title,

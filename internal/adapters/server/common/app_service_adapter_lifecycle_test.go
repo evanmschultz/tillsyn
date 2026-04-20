@@ -164,7 +164,7 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	child, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ParentID:  actionItem.ID,
-		Kind:      string(domain.WorkKindSubtask),
+		Kind:      string(domain.KindSubtask),
 		ColumnID:  done.ID,
 		Title:     "Child actionItem",
 		Priority:  "medium",
@@ -500,12 +500,12 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -529,7 +529,7 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 	if _, err := fixture.svc.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
@@ -550,12 +550,12 @@ func TestAppServiceAdapterProjectTemplateReapplyPreview(t *testing.T) {
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -608,12 +608,12 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -637,7 +637,7 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 	parent, err := fixture.svc.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
@@ -673,12 +673,12 @@ func TestAppServiceAdapterApproveProjectTemplateMigrations(t *testing.T) {
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,

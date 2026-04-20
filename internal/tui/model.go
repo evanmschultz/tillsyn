@@ -503,7 +503,7 @@ type activityEntry struct {
 	Summary    string
 	Target     string
 	EventID    int64
-	WorkItemID string
+	ActionItemID string
 	Operation  domain.ChangeOperation
 	ActorID    string
 	ActorName  string
@@ -823,7 +823,7 @@ type Model struct {
 	actionItemInfoComments               []domain.Comment
 	actionItemInfoCommentsError          string
 	actionItemFormParentID               string
-	actionItemFormKind                   domain.WorkKind
+	actionItemFormKind                   domain.Kind
 	actionItemFormScope                  domain.KindAppliesTo
 	actionItemFormBackMode               inputMode
 	actionItemFormBackActionItemID       string
@@ -1328,7 +1328,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		confirmArchive:                       true,
 		confirmHardDelete:                    true,
 		confirmRestore:                       false,
-		actionItemFormKind:                   domain.WorkKindActionItem,
+		actionItemFormKind:                   domain.KindActionItem,
 		actionItemFormScope:                  domain.KindAppliesToActionItem,
 		allowedLabelProject:                  map[string][]string{},
 		searchRoots:                          []string{},
@@ -3187,7 +3187,7 @@ func (m *Model) openActivityLog() tea.Cmd {
 
 // canJumpToActivityNode reports whether one activity entry references a concrete actionItem node.
 func canJumpToActivityNode(entry activityEntry) bool {
-	return strings.TrimSpace(entry.WorkItemID) != ""
+	return strings.TrimSpace(entry.ActionItemID) != ""
 }
 
 // prepareActivityJumpContext adjusts focus scope so jump targets can be selected in board view.
@@ -3212,7 +3212,7 @@ func (m *Model) prepareActivityJumpContext(actionItemID string) bool {
 
 // jumpToActivityNode navigates to the actionItem referenced by the current activity-detail entry when available.
 func (m Model) jumpToActivityNode() (tea.Model, tea.Cmd) {
-	workItemID := strings.TrimSpace(m.activityInfoItem.WorkItemID)
+	workItemID := strings.TrimSpace(m.activityInfoItem.ActionItemID)
 	if workItemID == "" {
 		m.status = "activity event has no node reference"
 		return m, nil
@@ -3277,7 +3277,7 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 	summary := fmt.Sprintf("%s %s", operationVerb, activityEntityLabel(event.Metadata))
 	target := strings.TrimSpace(event.Metadata["title"])
 	if target == "" {
-		target = strings.TrimSpace(event.WorkItemID)
+		target = strings.TrimSpace(event.ActionItemID)
 	}
 	if target == "" {
 		target = "-"
@@ -3296,7 +3296,7 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 		Summary:    summary,
 		Target:     target,
 		EventID:    event.ID,
-		WorkItemID: strings.TrimSpace(event.WorkItemID),
+		ActionItemID: strings.TrimSpace(event.ActionItemID),
 		Operation:  event.Operation,
 		ActorID:    actorID,
 		ActorName:  actorName,
@@ -5168,7 +5168,7 @@ func (m *Model) startActionItemForm(actionItem *domain.ActionItem) tea.Cmd {
 	m.pickerBack = modeNone
 	m.input = ""
 	m.actionItemFormParentID = ""
-	m.actionItemFormKind = domain.WorkKindActionItem
+	m.actionItemFormKind = domain.KindActionItem
 	m.actionItemFormScope = domain.KindAppliesToActionItem
 	m.actionItemFormResourceRefs = nil
 	m.actionItemFormSubactionItemCursor = 0
@@ -5251,14 +5251,14 @@ func (m *Model) startActionItemForm(actionItem *domain.ActionItem) tea.Cmd {
 }
 
 // newActionItemDefaultsForActiveBoardScope infers parent/kind/scope defaults from active focused scope.
-func (m Model) newActionItemDefaultsForActiveBoardScope() (string, domain.WorkKind, domain.KindAppliesTo) {
+func (m Model) newActionItemDefaultsForActiveBoardScope() (string, domain.Kind, domain.KindAppliesTo) {
 	rootID := strings.TrimSpace(m.projectionRootActionItemID)
 	if rootID == "" {
-		return "", domain.WorkKindActionItem, domain.KindAppliesToActionItem
+		return "", domain.KindActionItem, domain.KindAppliesToActionItem
 	}
 	root, ok := m.actionItemByID(rootID)
 	if !ok {
-		return "", domain.WorkKindActionItem, domain.KindAppliesToActionItem
+		return "", domain.KindActionItem, domain.KindAppliesToActionItem
 	}
 	levelByActionItemID := m.searchLevelByActionItemID([]domain.ActionItem{root})
 	level := strings.TrimSpace(levelByActionItemID[root.ID])
@@ -5267,9 +5267,9 @@ func (m Model) newActionItemDefaultsForActiveBoardScope() (string, domain.WorkKi
 	}
 	switch level {
 	case "actionItem", "subtask":
-		return root.ID, domain.WorkKindSubtask, domain.KindAppliesToSubtask
+		return root.ID, domain.KindSubtask, domain.KindAppliesToSubtask
 	default:
-		return root.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem
+		return root.ID, domain.KindActionItem, domain.KindAppliesToActionItem
 	}
 }
 
@@ -5277,7 +5277,7 @@ func (m Model) newActionItemDefaultsForActiveBoardScope() (string, domain.WorkKi
 func (m *Model) startSubactionItemForm(parent domain.ActionItem) tea.Cmd {
 	cmd := m.startActionItemForm(nil)
 	m.actionItemFormParentID = parent.ID
-	m.actionItemFormKind = domain.WorkKindSubtask
+	m.actionItemFormKind = domain.KindSubtask
 	m.actionItemFormScope = domain.KindAppliesToSubtask
 	m.refreshActionItemFormLabelSuggestions()
 	m.status = "new subtask for " + parent.Title
@@ -5287,7 +5287,7 @@ func (m *Model) startSubactionItemForm(parent domain.ActionItem) tea.Cmd {
 // startBranchForm opens the actionItem form preconfigured for a branch work item.
 func (m *Model) startBranchForm(parent *domain.ActionItem) tea.Cmd {
 	cmd := m.startActionItemForm(nil)
-	m.actionItemFormKind = domain.WorkKind("branch")
+	m.actionItemFormKind = domain.Kind("branch")
 	m.actionItemFormScope = domain.KindAppliesToBranch
 	m.actionItemFormParentID = ""
 	if parent != nil && strings.TrimSpace(parent.ID) != "" {
@@ -5304,7 +5304,7 @@ func (m *Model) startBranchForm(parent *domain.ActionItem) tea.Cmd {
 // startPhaseForm opens the actionItem form preconfigured for a phase work item.
 func (m *Model) startPhaseForm(parent *domain.ActionItem) tea.Cmd {
 	cmd := m.startActionItemForm(nil)
-	m.actionItemFormKind = domain.WorkKindPhase
+	m.actionItemFormKind = domain.KindPhase
 	m.actionItemFormScope = domain.KindAppliesToPhase
 	m.actionItemFormParentID = ""
 	if parent != nil && strings.TrimSpace(parent.ID) != "" {
@@ -8388,7 +8388,7 @@ func (m Model) loadDependencyMatches() tea.Msg {
 					ActionItem: domain.ActionItem{
 						ID:    linkedID,
 						Title: "(missing actionItem reference)",
-						Kind:  domain.WorkKindActionItem,
+						Kind:  domain.KindActionItem,
 					},
 					StateID: "missing",
 				},
@@ -9034,7 +9034,7 @@ func (m Model) labelsFromPhaseAncestors(actionItem domain.ActionItem) []string {
 			break
 		}
 		visited[current.ID] = struct{}{}
-		if current.Kind == domain.WorkKindPhase {
+		if current.Kind == domain.KindPhase {
 			for _, rawLabel := range current.Labels {
 				label := strings.TrimSpace(strings.ToLower(rawLabel))
 				if label == "" {
@@ -12170,7 +12170,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.actionItemFormTouched = nil
 			m.editingActionItemID = ""
 			m.actionItemFormParentID = ""
-			m.actionItemFormKind = domain.WorkKindActionItem
+			m.actionItemFormKind = domain.KindActionItem
 			m.actionItemFormScope = domain.KindAppliesToActionItem
 			m.actionItemFormBackMode = modeNone
 			m.actionItemFormBackActionItemID = ""
@@ -12659,7 +12659,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.actionItemFormMarkdown = nil
 		m.actionItemFormTouched = nil
 		m.actionItemFormParentID = ""
-		m.actionItemFormKind = domain.WorkKindActionItem
+		m.actionItemFormKind = domain.KindActionItem
 		m.actionItemFormScope = domain.KindAppliesToActionItem
 		m.actionItemFormBackMode = modeNone
 		m.actionItemFormBackActionItemID = ""
@@ -12766,7 +12766,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.actionItemFormTouched = nil
 		m.editingActionItemID = ""
 		m.actionItemFormParentID = ""
-		m.actionItemFormKind = domain.WorkKindActionItem
+		m.actionItemFormKind = domain.KindActionItem
 		m.actionItemFormScope = domain.KindAppliesToActionItem
 		m.actionItemFormBackMode = modeNone
 		m.actionItemFormBackActionItemID = ""
@@ -14929,7 +14929,7 @@ func (m Model) boardActionItemsForColumn(columnID string) []domain.ActionItem {
 	includeSubtasks := m.focusedScopeShowsSubtasks()
 	out := make([]domain.ActionItem, 0, len(columnActionItems))
 	for _, actionItem := range columnActionItems {
-		if actionItem.Kind == domain.WorkKindSubtask && !includeSubtasks {
+		if actionItem.Kind == domain.KindSubtask && !includeSubtasks {
 			continue
 		}
 		out = append(out, actionItem)
@@ -17214,7 +17214,7 @@ func (m Model) actionItemSystemActorLabel(actionItem domain.ActionItem, actorID 
 		return owner, actorType
 	}
 	entry := activityEntry{
-		WorkItemID: actionItem.ID,
+		ActionItemID: actionItem.ID,
 		ActorID:    actorID,
 		ActorType:  fallbackType,
 	}
@@ -17231,7 +17231,7 @@ func (m Model) findActionItemActivityActorEntry(actionItemID, actorID string, pr
 	}
 	if preferCreate {
 		for _, entry := range m.activityLog {
-			if strings.TrimSpace(entry.WorkItemID) != actionItemID {
+			if strings.TrimSpace(entry.ActionItemID) != actionItemID {
 				continue
 			}
 			if entry.Operation != domain.ChangeOperationCreate {
@@ -17245,7 +17245,7 @@ func (m Model) findActionItemActivityActorEntry(actionItemID, actorID string, pr
 	}
 	for idx := len(m.activityLog) - 1; idx >= 0; idx-- {
 		entry := m.activityLog[idx]
-		if strings.TrimSpace(entry.WorkItemID) != actionItemID {
+		if strings.TrimSpace(entry.ActionItemID) != actionItemID {
 			continue
 		}
 		if !strings.EqualFold(strings.TrimSpace(entry.ActorID), actorID) {
@@ -18007,7 +18007,7 @@ func (m Model) cardMeta(actionItem domain.ActionItem) string {
 	if m.actionItemFields.ShowPriority {
 		parts = append(parts, string(actionItem.Priority))
 	}
-	if actionItem.Kind != domain.WorkKindSubtask {
+	if actionItem.Kind != domain.KindSubtask {
 		done, total := m.subactionItemProgress(actionItem.ID)
 		if total > 0 {
 			parts = append(parts, fmt.Sprintf("%d/%d", done, total))
@@ -18310,7 +18310,7 @@ func (m *Model) syncActionItemFormViewportToFocus() {
 }
 
 // actionItemNodeLabel resolves a display-safe node type label from scope/kind context.
-func actionItemNodeLabel(scope domain.KindAppliesTo, kind domain.WorkKind) string {
+func actionItemNodeLabel(scope domain.KindAppliesTo, kind domain.Kind) string {
 	switch domain.NormalizeKindAppliesTo(scope) {
 	case domain.KindAppliesToBranch:
 		return "Branch"
@@ -19338,7 +19338,7 @@ func (m Model) subtasksForParent(parentID string) []domain.ActionItem {
 		if strings.TrimSpace(actionItem.ParentID) != parentID {
 			continue
 		}
-		if actionItem.Kind != domain.WorkKindSubtask {
+		if actionItem.Kind != domain.KindSubtask {
 			continue
 		}
 		if !m.showArchived && actionItem.ArchivedAt != nil {
@@ -21795,7 +21795,7 @@ func formatActivityTimestampLong(at time.Time) string {
 
 // activityEventTargetDetails resolves user-facing node/path labels for one activity event.
 func (m Model) activityEventTargetDetails(entry activityEntry) (string, string) {
-	if actionItem, ok := m.actionItemByID(strings.TrimSpace(entry.WorkItemID)); ok {
+	if actionItem, ok := m.actionItemByID(strings.TrimSpace(entry.ActionItemID)); ok {
 		node := fallbackText(strings.TrimSpace(actionItem.Title), "-")
 		return node, m.activityActionItemPath(actionItem)
 	}

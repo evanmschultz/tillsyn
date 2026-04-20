@@ -25,7 +25,7 @@ type ActionItem struct {
 	ID             string
 	ProjectID      string
 	ParentID       string
-	Kind           WorkKind
+	Kind           Kind
 	Scope          KindAppliesTo
 	LifecycleState LifecycleState
 	ColumnID       string
@@ -54,7 +54,7 @@ type ActionItemInput struct {
 	ID             string
 	ProjectID      string
 	ParentID       string
-	Kind           WorkKind
+	Kind           Kind
 	Scope          KindAppliesTo
 	LifecycleState LifecycleState
 	ColumnID       string
@@ -73,7 +73,7 @@ type ActionItemInput struct {
 }
 
 // DefaultActionItemScope returns the canonical default scope for one work-item kind and parent tuple.
-func DefaultActionItemScope(kind WorkKind, parentID string) KindAppliesTo {
+func DefaultActionItemScope(kind Kind, parentID string) KindAppliesTo {
 	parentID = strings.TrimSpace(parentID)
 	switch strings.TrimSpace(strings.ToLower(string(kind))) {
 	case "branch":
@@ -125,9 +125,9 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		return ActionItem{}, ErrInvalidPriority
 	}
 	if in.Kind == "" {
-		in.Kind = WorkKindActionItem
+		in.Kind = KindActionItem
 	}
-	if !isValidWorkKind(in.Kind) {
+	if !isValidKind(in.Kind) {
 		return ActionItem{}, ErrInvalidKind
 	}
 	in.Scope = NormalizeKindAppliesTo(in.Scope)

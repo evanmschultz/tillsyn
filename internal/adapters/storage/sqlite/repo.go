@@ -726,10 +726,10 @@ func (r *Repository) migratePhaseScopeContract(ctx context.Context) error {
 			return fmt.Errorf("migrate phase scope contract %s: %w", stmt.name, err)
 		}
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE action_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToActionItem)); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE action_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.KindPhase), string(domain.KindAppliesToActionItem)); err != nil {
 		return fmt.Errorf("migrate phase scope contract action_items project phase scope: %w", err)
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToActionItem)); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.KindPhase), string(domain.KindAppliesToActionItem)); err != nil {
 		return fmt.Errorf("migrate phase scope contract tasks project phase scope: %w", err)
 	}
 
@@ -1239,12 +1239,12 @@ func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
 	}
 	records := []seedRecord{
 		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{id: domain.KindID(domain.WorkKindActionItem), displayName: "ActionItem", description: "Built-in actionItem kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
-		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
+		{id: domain.KindID(domain.KindActionItem), displayName: "ActionItem", description: "Built-in actionItem kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
+		{id: domain.KindID(domain.KindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{id: domain.KindID(domain.KindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
 		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.KindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.KindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
 	}
 
 	now := time.Now().UTC()
@@ -2193,7 +2193,7 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.CreatedByActor, t.CreatedByName, t.UpdatedByType, t.UpdatedByActor, t.UpdatedByName)
 	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
-		WorkItemID: t.ID,
+		ActionItemID: t.ID,
 		Operation:  domain.ChangeOperationCreate,
 		ActorID:    actorID,
 		ActorName:  actorName,
@@ -2288,7 +2288,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.UpdatedByActor, t.UpdatedByName, t.UpdatedByType, prev.UpdatedByActor, prev.UpdatedByName)
 	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
-		WorkItemID: t.ID,
+		ActionItemID: t.ID,
 		Operation:  op,
 		ActorID:    actorID,
 		ActorName:  actorName,
@@ -2368,7 +2368,7 @@ func (r *Repository) DeleteActionItem(ctx context.Context, id string) error {
 
 	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  actionItem.ProjectID,
-		WorkItemID: actionItem.ID,
+		ActionItemID: actionItem.ID,
 		Operation:  domain.ChangeOperationDelete,
 		ActorID:    actorID,
 		ActorName:  actorName,
@@ -2722,7 +2722,7 @@ func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID stri
 			metadataRaw string
 			createdRaw  string
 		)
-		if err := rows.Scan(&event.ID, &event.ProjectID, &event.WorkItemID, &opRaw, &event.ActorID, &event.ActorName, &actorType, &metadataRaw, &createdRaw); err != nil {
+		if err := rows.Scan(&event.ID, &event.ProjectID, &event.ActionItemID, &opRaw, &event.ActorID, &event.ActorName, &actorType, &metadataRaw, &createdRaw); err != nil {
 			return nil, err
 		}
 		event.Operation = normalizeChangeOperation(opRaw)
@@ -3403,7 +3403,7 @@ func insertActionItemChangeEvent(ctx context.Context, execer execerContext, even
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		event.ProjectID,
-		event.WorkItemID,
+		event.ActionItemID,
 		string(event.Operation),
 		actorID,
 		actorName,
@@ -4055,7 +4055,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, err
 	}
 	t.Priority = domain.Priority(priority)
-	t.Kind = domain.WorkKind(kind)
+	t.Kind = domain.Kind(kind)
 	t.Scope = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeRaw))
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
@@ -4076,7 +4076,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, fmt.Errorf("decode labels_json: %w", err)
 	}
 	if strings.TrimSpace(string(t.Kind)) == "" {
-		t.Kind = domain.WorkKindActionItem
+		t.Kind = domain.KindActionItem
 	}
 	if t.Scope == "" {
 		if strings.TrimSpace(t.ParentID) == "" {

@@ -505,7 +505,7 @@ func (s *Service) applyTemplateChildRules(ctx context.Context, parent domain.Act
 		child, err := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      parent.ProjectID,
 			ParentID:       parent.ID,
-			Kind:           domain.WorkKind(childRule.ChildKindID),
+			Kind:           domain.Kind(childRule.ChildKindID),
 			Scope:          childRule.ChildScopeLevel,
 			ColumnID:       parent.ColumnID,
 			Title:          childRule.TitleTemplate,
@@ -557,7 +557,7 @@ func (s *Service) applyProjectTemplateChildRules(ctx context.Context, project do
 	for _, childRule := range nodeTemplate.ChildRules {
 		child, err := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
 			ProjectID:      project.ID,
-			Kind:           domain.WorkKind(childRule.ChildKindID),
+			Kind:           domain.Kind(childRule.ChildKindID),
 			Scope:          childRule.ChildScopeLevel,
 			ColumnID:       columnID,
 			Title:          childRule.TitleTemplate,

@@ -60,7 +60,7 @@ Atomic units of work. Each unit mutates its `state` field in place during Phase 
 
 ### 1.1 — Rename `WorkKind → Kind` + stale `WorkItem*` / `workitem` identifier references
 
-**State:** todo
+**State:** done
 **Paths:** `internal/domain/workitem.go`, `internal/domain/kind.go`, `internal/domain/task.go`, `internal/domain/template_library.go`, `internal/domain/template_reapply.go`, `internal/domain/comment.go`, `internal/domain/change_event.go`, `internal/domain/attention_level_test.go`, `internal/domain/domain_test.go`, `internal/app/*.go`, `internal/adapters/storage/sqlite/*.go`, `internal/adapters/server/mcpapi/*.go`, `internal/adapters/server/common/*.go`, `internal/adapters/server/httpapi/*.go`, `internal/tui/*.go`, `cmd/till/*.go` (any file in the 40-file surface of `rg 'WorkKind|WorkItem[^a-z]|workitem'`, excluding `drops/**`)
 **Packages:** `internal/domain`, `internal/app`, `internal/adapters/storage/sqlite`, `internal/adapters/server/mcpapi`, `internal/adapters/server/common`, `internal/adapters/server/httpapi`, `internal/tui`, `cmd/till`
 **Blocked by:** —

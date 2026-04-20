@@ -642,7 +642,7 @@ func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActio
 	actionItem, err := a.service.CreateActionItem(ctx, app.CreateActionItemInput{
 		ProjectID:      strings.TrimSpace(in.ProjectID),
 		ParentID:       strings.TrimSpace(in.ParentID),
-		Kind:           domain.WorkKind(strings.TrimSpace(in.Kind)),
+		Kind:           domain.Kind(strings.TrimSpace(in.Kind)),
 		Scope:          domain.KindAppliesTo(strings.TrimSpace(in.Scope)),
 		ColumnID:       strings.TrimSpace(in.ColumnID),
 		Title:          strings.TrimSpace(in.Title),

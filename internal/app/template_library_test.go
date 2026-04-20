@@ -43,7 +43,7 @@ func TestCreateActionItemUsesBoundTemplateLibrary(t *testing.T) {
 			{
 				ID:         "actionItem-template",
 				ScopeLevel: domain.KindAppliesToActionItem,
-				NodeKindID: domain.KindID(domain.WorkKindActionItem),
+				NodeKindID: domain.KindID(domain.KindActionItem),
 				ActionItemMetadataDefaults: &domain.ActionItemMetadata{
 					ValidationPlan: "Run template validation",
 				},
@@ -52,7 +52,7 @@ func TestCreateActionItemUsesBoundTemplateLibrary(t *testing.T) {
 						ID:                      "qa-check",
 						Position:                1,
 						ChildScopeLevel:         domain.KindAppliesToSubtask,
-						ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+						ChildKindID:             domain.KindID(domain.KindSubtask),
 						TitleTemplate:           "QA review",
 						DescriptionTemplate:     "Verify the parent actionItem output",
 						ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -80,7 +80,7 @@ func TestCreateActionItemUsesBoundTemplateLibrary(t *testing.T) {
 	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Build feature",
 		Priority:  domain.PriorityHigh,
@@ -231,7 +231,7 @@ func TestCreateProjectUsesApprovedGlobalTemplateLibrary(t *testing.T) {
 	if tasks[0].Title != "Main Branch" {
 		t.Fatalf("tasks[0].Title = %q, want Main Branch", tasks[0].Title)
 	}
-	if tasks[0].Kind != domain.WorkKind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
+	if tasks[0].Kind != domain.Kind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
 		t.Fatalf("unexpected generated root actionItem %#v", tasks[0])
 	}
 	snapshot, ok := repo.nodeContracts[tasks[0].ID]
@@ -711,7 +711,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		t.Fatalf("len(rootActionItems) = %d, want %d", got, want)
 	}
 	projectSetup := rootActionItems[0]
-	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
+	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.Kind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("project setup root = %#v, want PROJECT SETUP/project-setup-phase/phase", projectSetup)
 	}
 	projectSetupContract, ok := repo.nodeContracts[projectSetup.ID]
@@ -733,7 +733,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "MAIN DOGFOOD LANE",
 	})
@@ -746,7 +746,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		t.Fatalf("ListActionItems(branch children) error = %v", err)
 	}
 	branchChildren := make([]domain.ActionItem, 0)
-	branchPhaseKinds := map[string]domain.WorkKind{}
+	branchPhaseKinds := map[string]domain.Kind{}
 	for _, actionItem := range tasks {
 		if actionItem.ParentID != branch.ID {
 			continue
@@ -763,10 +763,10 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 	if !slices.Equal(gotBranchTitles, wantBranchTitles) {
 		t.Fatalf("branch child titles = %#v, want %#v", gotBranchTitles, wantBranchTitles)
 	}
-	if branchPhaseKinds["PLAN"] != domain.WorkKind("plan-phase") ||
-		branchPhaseKinds["BUILD"] != domain.WorkKind("build-phase") ||
-		branchPhaseKinds["CLOSEOUT"] != domain.WorkKind("closeout-phase") ||
-		branchPhaseKinds["BRANCH CLEANUP"] != domain.WorkKind("branch-cleanup-phase") {
+	if branchPhaseKinds["PLAN"] != domain.Kind("plan-phase") ||
+		branchPhaseKinds["BUILD"] != domain.Kind("build-phase") ||
+		branchPhaseKinds["CLOSEOUT"] != domain.Kind("closeout-phase") ||
+		branchPhaseKinds["BRANCH CLEANUP"] != domain.Kind("branch-cleanup-phase") {
 		t.Fatalf("branch phase kinds = %#v, want plan/build/closeout/branch-cleanup phase kinds", branchPhaseKinds)
 	}
 
@@ -788,7 +788,7 @@ func TestDefaultGoBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
 		ColumnID:  buildPhase.ColumnID,
-		Kind:      domain.WorkKind("build-actionItem"),
+		Kind:      domain.Kind("build-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "IMPLEMENT TEMPLATE UPDATE",
 	})
@@ -887,7 +887,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		t.Fatalf("len(rootActionItems) = %d, want %d", got, want)
 	}
 	projectSetup := rootActionItems[0]
-	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
+	if projectSetup.Title != "PROJECT SETUP" || projectSetup.Kind != domain.Kind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("project setup root = %#v, want PROJECT SETUP/project-setup-phase/phase", projectSetup)
 	}
 
@@ -902,7 +902,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "FRONTEND LANE",
 	})
@@ -970,7 +970,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryAppliesExpandedWorkflow(t *testing
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
 		ColumnID:  buildPhase.ColumnID,
-		Kind:      domain.WorkKind("build-actionItem"),
+		Kind:      domain.Kind("build-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "IMPLEMENT FRONTEND UPDATE",
 	})
@@ -1053,7 +1053,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "REFACTOR LANE",
 	})
@@ -1065,7 +1065,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("refactor-phase"),
+		Kind:      domain.Kind("refactor-phase"),
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "REFACTOR PHASE",
 	})
@@ -1076,7 +1076,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("dogfood-refactor-phase"),
+		Kind:      domain.Kind("dogfood-refactor-phase"),
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "DOGFOOD REFACTOR PHASE",
 	})
@@ -1131,7 +1131,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		ProjectID: project.ID,
 		ParentID:  refactorPhase.ID,
 		ColumnID:  refactorPhase.ColumnID,
-		Kind:      domain.WorkKind("refactor-actionItem"),
+		Kind:      domain.Kind("refactor-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "DECOUPLE FLOW",
 	})
@@ -1142,7 +1142,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 		ProjectID: project.ID,
 		ParentID:  dogfoodPhase.ID,
 		ColumnID:  dogfoodPhase.ColumnID,
-		Kind:      domain.WorkKind("dogfood-refactor-actionItem"),
+		Kind:      domain.Kind("dogfood-refactor-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "DOGFOOD DECOUPLE FLOW",
 	})
@@ -1184,12 +1184,12 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	}
 	refactorQA := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "QA PROOF REVIEW")
 	refactorQASnapshot := mustNodeContractSnapshot(t, repo, refactorQA.ID)
-	if refactorQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA || refactorQA.Kind != domain.WorkKind("qa-check") {
+	if refactorQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA || refactorQA.Kind != domain.Kind("qa-check") {
 		t.Fatalf("refactor QA child = %#v snapshot=%#v, want qa-check owned by qa", refactorQA, refactorQASnapshot)
 	}
 	parityValidation := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "PARITY VALIDATION IN ACTION")
 	paritySnapshot := mustNodeContractSnapshot(t, repo, parityValidation.ID)
-	if paritySnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder || parityValidation.Kind != domain.WorkKind("subtask") {
+	if paritySnapshot.ResponsibleActorKind != domain.TemplateActorKindBuilder || parityValidation.Kind != domain.Kind("subtask") {
 		t.Fatalf("parity validation child = %#v snapshot=%#v, want subtask owned by builder", parityValidation, paritySnapshot)
 	}
 	refactorMetrics := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "METRICS CAPTURE AND REPORT")
@@ -1202,7 +1202,7 @@ func TestDefaultGoBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *testin
 	}
 	dogfoodLocalActionItem := findChildActionItemByTitle(t, tasks, dogfoodActionItem.ID, "CONFIRM LOCAL USED VERSION UPDATED")
 	dogfoodLocalActionItemSnapshot := mustNodeContractSnapshot(t, repo, dogfoodLocalActionItem.ID)
-	if dogfoodLocalActionItemSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman || dogfoodLocalActionItem.Kind != domain.WorkKind("subtask") {
+	if dogfoodLocalActionItemSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman || dogfoodLocalActionItem.Kind != domain.Kind("subtask") {
 		t.Fatalf("dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", dogfoodLocalActionItem, dogfoodLocalActionItemSnapshot)
 	}
 	if !slices.Equal(dogfoodLocalActionItemSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
@@ -1253,7 +1253,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "FRONTEND REFACTOR LANE",
 	})
@@ -1265,7 +1265,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("refactor-phase"),
+		Kind:      domain.Kind("refactor-phase"),
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "FRONTEND REFACTOR PHASE",
 	})
@@ -1276,7 +1276,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("dogfood-refactor-phase"),
+		Kind:      domain.Kind("dogfood-refactor-phase"),
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "FRONTEND DOGFOOD REFACTOR PHASE",
 	})
@@ -1314,7 +1314,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		ProjectID: project.ID,
 		ParentID:  refactorPhase.ID,
 		ColumnID:  refactorPhase.ColumnID,
-		Kind:      domain.WorkKind("refactor-actionItem"),
+		Kind:      domain.Kind("refactor-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "REDUCE UI COUPLING",
 	})
@@ -1325,7 +1325,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 		ProjectID: project.ID,
 		ParentID:  dogfoodPhase.ID,
 		ColumnID:  dogfoodPhase.ColumnID,
-		Kind:      domain.WorkKind("dogfood-refactor-actionItem"),
+		Kind:      domain.Kind("dogfood-refactor-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "DOGFOOD REDUCE UI COUPLING",
 	})
@@ -1363,12 +1363,12 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 
 	visualQA := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "VISUAL QA")
 	visualQASnapshot := mustNodeContractSnapshot(t, repo, visualQA.ID)
-	if visualQA.Kind != domain.WorkKind("visual-qa") || visualQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+	if visualQA.Kind != domain.Kind("visual-qa") || visualQASnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
 		t.Fatalf("visual QA child = %#v snapshot=%#v, want visual-qa owned by qa", visualQA, visualQASnapshot)
 	}
 	a11yCheck := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "ACCESSIBILITY CHECK")
 	a11ySnapshot := mustNodeContractSnapshot(t, repo, a11yCheck.ID)
-	if a11yCheck.Kind != domain.WorkKind("a11y-check") || a11ySnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
+	if a11yCheck.Kind != domain.Kind("a11y-check") || a11ySnapshot.ResponsibleActorKind != domain.TemplateActorKindQA {
 		t.Fatalf("a11y child = %#v snapshot=%#v, want a11y-check owned by qa", a11yCheck, a11ySnapshot)
 	}
 	frontendCommit := findChildActionItemByTitle(t, tasks, refactorActionItem.ID, "COMMIT PUSH AND REINGEST")
@@ -1386,7 +1386,7 @@ func TestDefaultFrontendBuiltinTemplateLibraryGeneratesRefactorWorkflowKinds(t *
 	}
 	frontendDogfoodLocal := findChildActionItemByTitle(t, tasks, dogfoodActionItem.ID, "CONFIRM LOCAL USED VERSION UPDATED")
 	frontendDogfoodLocalSnapshot := mustNodeContractSnapshot(t, repo, frontendDogfoodLocal.ID)
-	if frontendDogfoodLocal.Kind != domain.WorkKind("subtask") || frontendDogfoodLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
+	if frontendDogfoodLocal.Kind != domain.Kind("subtask") || frontendDogfoodLocalSnapshot.ResponsibleActorKind != domain.TemplateActorKindHuman {
 		t.Fatalf("frontend dogfood local-version child = %#v snapshot=%#v, want subtask owned by human", frontendDogfoodLocal, frontendDogfoodLocalSnapshot)
 	}
 	if !slices.Equal(frontendDogfoodLocalSnapshot.CompletableByActorKinds, []domain.TemplateActorKind{domain.TemplateActorKindHuman}) {
@@ -1439,7 +1439,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		t.Fatalf("ListActionItems(project) error = %v", err)
 	}
 	projectSetup := findActionItemByTitle(t, tasks, "PROJECT SETUP")
-	if projectSetup.Kind != domain.WorkKind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
+	if projectSetup.Kind != domain.Kind("project-setup-phase") || projectSetup.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("project setup kind/scope = %q/%q, want project-setup-phase/phase", projectSetup.Kind, projectSetup.Scope)
 	}
 	if got, want := childTitles(tasks, projectSetup.ID), []string{
@@ -1467,7 +1467,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 	branch, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "MAIN WORKTREE LANE",
 	})
@@ -1529,7 +1529,7 @@ func TestEnsureBuiltinTemplateLibraryCreatesExpandedDefaultGoWorkflow(t *testing
 		ProjectID: project.ID,
 		ParentID:  buildPhase.ID,
 		ColumnID:  columns[0].ID,
-		Kind:      domain.WorkKind("build-actionItem"),
+		Kind:      domain.Kind("build-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "IMPLEMENT SHIPPED DEFAULT-GO TEMPLATE",
 	})
@@ -1609,12 +1609,12 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 		NodeTemplates: []UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -1638,7 +1638,7 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
@@ -1670,12 +1670,12 @@ func TestGetProjectTemplateReapplyPreviewReportsEligibleGeneratedNodes(t *testin
 		NodeTemplates: []UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -1744,12 +1744,12 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 		NodeTemplates: []UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -1773,7 +1773,7 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
@@ -1806,12 +1806,12 @@ func TestApproveProjectTemplateMigrationsUpdatesEligibleGeneratedNodes(t *testin
 		NodeTemplates: []UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -1892,12 +1892,12 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 		NodeTemplates: []UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -1921,7 +1921,7 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
@@ -1967,12 +1967,12 @@ func TestGetProjectTemplateReapplyPreviewMarksModifiedGeneratedNodesIneligible(t
 		NodeTemplates: []UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -2189,7 +2189,7 @@ func TestCreateActionItemFallsBackToLegacyKindTemplate(t *testing.T) {
 				{
 					Title:       "Legacy QA review",
 					Description: "Verify the implementation",
-					Kind:        domain.KindID(domain.WorkKindSubtask),
+					Kind:        domain.KindID(domain.KindSubtask),
 					AppliesTo:   domain.KindAppliesToSubtask,
 				},
 			},
@@ -2216,7 +2216,7 @@ func TestCreateActionItemFallsBackToLegacyKindTemplate(t *testing.T) {
 	parent, err := svc.CreateActionItem(ctx, CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("build-actionItem"),
+		Kind:      domain.Kind("build-actionItem"),
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement feature",
 		Priority:  domain.PriorityHigh,

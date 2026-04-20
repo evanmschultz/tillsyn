@@ -365,7 +365,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch A",
 		Priority:  domain.PriorityMedium,
@@ -426,7 +426,7 @@ func TestCreateActionItemAppliesKindTemplateActions(t *testing.T) {
 				{
 					Title:       "Template Child",
 					Description: "Auto-created child",
-					Kind:        domain.KindID(domain.WorkKindSubtask),
+					Kind:        domain.KindID(domain.KindSubtask),
 					AppliesTo:   domain.KindAppliesToSubtask,
 					Labels:      []string{"templated"},
 				},
@@ -449,7 +449,7 @@ func TestCreateActionItemAppliesKindTemplateActions(t *testing.T) {
 		ColumnID:    column.ID,
 		Title:       "Parent ActionItem",
 		Description: "Template parent",
-		Kind:        domain.WorkKind("refactor"),
+		Kind:        domain.Kind("refactor"),
 		Scope:       domain.KindAppliesToActionItem,
 	})
 	if err != nil {
@@ -471,7 +471,7 @@ func TestCreateActionItemAppliesKindTemplateActions(t *testing.T) {
 	for _, actionItem := range tasks {
 		if actionItem.ParentID == parent.ID && actionItem.Title == "Template Child" {
 			foundChild = true
-			if actionItem.Kind != domain.WorkKindSubtask {
+			if actionItem.Kind != domain.KindSubtask {
 				t.Fatalf("child kind = %q, want subtask", actionItem.Kind)
 			}
 			if actionItem.Scope != domain.KindAppliesToSubtask {
@@ -548,7 +548,7 @@ func TestCreateProjectAppliesKindTemplateDefaultsAndChildren(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("expected one template-created root actionItem, got %d", len(tasks))
 	}
-	if tasks[0].Kind != domain.WorkKind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
+	if tasks[0].Kind != domain.Kind("branch") || tasks[0].Scope != domain.KindAppliesToBranch {
 		t.Fatalf("unexpected root actionItem kind/scope %#v", tasks[0])
 	}
 }
@@ -642,7 +642,7 @@ func TestCreateActionItemCascadesChildKindTemplateDefaults(t *testing.T) {
 	if child == nil {
 		t.Fatal("expected auto-created child actionItem")
 	}
-	if child.Kind != domain.WorkKind("qa-check") {
+	if child.Kind != domain.Kind("qa-check") {
 		t.Fatalf("child kind = %q, want qa-check", child.Kind)
 	}
 	if child.Metadata.AcceptanceCriteria != "qa verifies the change" {
@@ -747,7 +747,7 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch A",
 		Priority:  domain.PriorityMedium,
@@ -759,7 +759,7 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "ActionItem A",
 		Priority:  domain.PriorityMedium,
@@ -999,7 +999,7 @@ func TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport(t *testing.T) {
 		byID[input.ID] = input
 	}
 
-	phase, ok := byID[domain.KindID(domain.WorkKindPhase)]
+	phase, ok := byID[domain.KindID(domain.KindPhase)]
 	if !ok {
 		t.Fatal("expected phase kind definition to exist")
 	}
@@ -1007,7 +1007,7 @@ func TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport(t *testing.T) {
 		t.Fatalf("expected phase applies_to to include phase, got %#v", phase.AppliesTo)
 	}
 
-	subtask, ok := byID[domain.KindID(domain.WorkKindSubtask)]
+	subtask, ok := byID[domain.KindID(domain.KindSubtask)]
 	if !ok {
 		t.Fatal("expected subtask kind definition to exist")
 	}

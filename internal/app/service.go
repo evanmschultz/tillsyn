@@ -475,7 +475,7 @@ func (s *Service) CreateColumn(ctx context.Context, projectID, name string, posi
 type CreateActionItemInput struct {
 	ProjectID      string
 	ParentID       string
-	Kind           domain.WorkKind
+	Kind           domain.Kind
 	Scope          domain.KindAppliesTo
 	ColumnID       string
 	Title          string
@@ -676,7 +676,7 @@ func (s *Service) createActionItemWithTemplates(ctx context.Context, in CreateAc
 		ID:             s.idGen(),
 		ProjectID:      in.ProjectID,
 		ParentID:       in.ParentID,
-		Kind:           domain.WorkKind(kindDef.ID),
+		Kind:           domain.Kind(kindDef.ID),
 		Scope:          scope,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,

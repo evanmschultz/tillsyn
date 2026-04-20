@@ -255,7 +255,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 		ActionItems: []SnapshotActionItem{
 			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated ActionItem", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
-			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, Kind: domain.WorkKindPhase, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, Kind: domain.KindPhase, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
 		KindDefinitions: []SnapshotKindDefinition{
 			{
@@ -402,7 +402,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	if _, ok := repo.tasks["t2"]; !ok {
 		t.Fatal("expected new actionItem t2")
 	}
-	if got := repo.tasks["phase-1"]; got.Kind != domain.WorkKindPhase || got.Scope != domain.KindAppliesToPhase {
+	if got := repo.tasks["phase-1"]; got.Kind != domain.KindPhase || got.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("expected imported phase actionItem to default to phase scope, got %#v", got)
 	}
 	if _, ok := repo.kindDefs[domain.KindID("refactor")]; !ok {
@@ -470,7 +470,7 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		},
 		ActionItems: []SnapshotActionItem{
 			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "p1", ProjectID: "p1", ParentID: "t1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c1", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+			{ID: "p1", ProjectID: "p1", ParentID: "t1", Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c1", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 		},
 	}
 	if err := svc.ImportSnapshot(context.Background(), invalidPhaseParent); err == nil || !strings.Contains(err.Error(), "invalid for phase parent scope") {
@@ -486,9 +486,9 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
 		},
 		ActionItems: []SnapshotActionItem{
-			{ID: "branch-1", ProjectID: "p2", Kind: domain.WorkKind("branch"), Scope: domain.KindAppliesToBranch, ColumnID: "c2", Position: 0, Title: "Branch", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "phase-1", ProjectID: "p2", ParentID: "branch-1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "phase-2", ProjectID: "p2", ParentID: "phase-1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 2, Title: "Nested Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+			{ID: "branch-1", ProjectID: "p2", Kind: domain.Kind("branch"), Scope: domain.KindAppliesToBranch, ColumnID: "c2", Position: 0, Title: "Branch", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+			{ID: "phase-1", ProjectID: "p2", ParentID: "branch-1", Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
+			{ID: "phase-2", ProjectID: "p2", ParentID: "phase-1", Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 2, Title: "Nested Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
 		},
 	}
 	if err := svc.ImportSnapshot(context.Background(), validNestedPhase); err != nil {

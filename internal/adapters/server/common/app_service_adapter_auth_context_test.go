@@ -74,7 +74,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 
 	branchA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		Kind:           domain.WorkKind("branch"),
+		Kind:           domain.Kind("branch"),
 		Scope:          domain.KindAppliesToBranch,
 		ColumnID:       columnID,
 		Title:          "Branch A",
@@ -87,7 +87,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	phaseA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       branchA.ID,
-		Kind:           domain.WorkKindPhase,
+		Kind:           domain.KindPhase,
 		Scope:          domain.KindAppliesToPhase,
 		ColumnID:       columnID,
 		Title:          "Phase A",
@@ -100,7 +100,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	actionItemA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       phaseA.ID,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
 		Title:          "ActionItem A",
@@ -112,7 +112,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	})
 	branchB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		Kind:           domain.WorkKind("branch"),
+		Kind:           domain.Kind("branch"),
 		Scope:          domain.KindAppliesToBranch,
 		ColumnID:       columnID,
 		Title:          "Branch B",
@@ -125,7 +125,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	actionItemB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
 		ParentID:       branchB.ID,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
 		Title:          "ActionItem B",

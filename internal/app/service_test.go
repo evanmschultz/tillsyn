@@ -1360,7 +1360,7 @@ func TestCreateActionItemCarriesHumanActorName(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:        domain.KindID(domain.WorkKindActionItem),
+		ID:        domain.KindID(domain.KindActionItem),
 		AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem},
 	}, now)
 	if err != nil {
@@ -1721,7 +1721,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  todo.ID,
 		Position:  0,
 		Title:     "Phase planning",
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
@@ -1732,7 +1732,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  todo.ID,
 		Position:  1,
 		Title:     "Phase QA",
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend"},
@@ -1743,7 +1743,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  progress.ID,
 		Position:  0,
 		Title:     "ActionItem implementation",
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
@@ -1754,7 +1754,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  progress.ID,
 		Position:  1,
 		Title:     "Archived phase note",
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Priority:  domain.PriorityLow,
 		Labels:    []string{"backend", "urgent"},
@@ -3250,8 +3250,8 @@ func TestListProjectChangeEvents(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	repo.changeEvents[project.ID] = []domain.ChangeEvent{
-		{ID: 3, ProjectID: project.ID, WorkItemID: "t1", Operation: domain.ChangeOperationUpdate},
-		{ID: 2, ProjectID: project.ID, WorkItemID: "t1", Operation: domain.ChangeOperationCreate},
+		{ID: 3, ProjectID: project.ID, ActionItemID: "t1", Operation: domain.ChangeOperationUpdate},
+		{ID: 2, ProjectID: project.ID, ActionItemID: "t1", Operation: domain.ChangeOperationCreate},
 	}
 
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
@@ -3561,22 +3561,22 @@ func TestSnapshotCommentTargetTypeForActionItemSupportsHierarchyNodes(t *testing
 	}{
 		{
 			name:       "branch kind",
-			actionItem: domain.ActionItem{Kind: domain.WorkKind(domain.KindAppliesToBranch)},
+			actionItem: domain.ActionItem{Kind: domain.Kind(domain.KindAppliesToBranch)},
 			want:       domain.CommentTargetTypeBranch,
 		},
 		{
 			name:       "branch scope fallback",
-			actionItem: domain.ActionItem{Kind: domain.WorkKindActionItem, Scope: domain.KindAppliesToBranch},
+			actionItem: domain.ActionItem{Kind: domain.KindActionItem, Scope: domain.KindAppliesToBranch},
 			want:       domain.CommentTargetTypeBranch,
 		},
 		{
 			name:       "phase kind",
-			actionItem: domain.ActionItem{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
+			actionItem: domain.ActionItem{Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase},
 			want:       domain.CommentTargetTypePhase,
 		},
 		{
 			name:       "actionItem backward compatible",
-			actionItem: domain.ActionItem{Kind: domain.WorkKindActionItem, Scope: domain.KindAppliesToActionItem},
+			actionItem: domain.ActionItem{Kind: domain.KindActionItem, Scope: domain.KindAppliesToActionItem},
 			want:       domain.CommentTargetTypeActionItem,
 		},
 	}
@@ -4062,7 +4062,7 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch A",
 		Priority:  domain.PriorityMedium,
@@ -4209,7 +4209,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch A",
 		Priority:  domain.PriorityMedium,
@@ -4221,7 +4221,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "Phase A",
 		Priority:  domain.PriorityMedium,
@@ -4233,7 +4233,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  phase.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "ActionItem A1",
 		Priority:  domain.PriorityMedium,
@@ -4289,7 +4289,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID:      project.ID,
 		ParentID:       phase.ID,
 		ColumnID:       column.ID,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		Title:          "ActionItem A2",
 		Priority:       domain.PriorityMedium,
@@ -4358,7 +4358,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
@@ -4370,7 +4370,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "Phase A",
 		Priority:  domain.PriorityMedium,
@@ -4382,7 +4382,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "Phase B",
 		Priority:  domain.PriorityMedium,
@@ -4394,7 +4394,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  phaseB.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "ActionItem B1",
 		Priority:  domain.PriorityMedium,
@@ -4435,7 +4435,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID:      project.ID,
 		ParentID:       phaseB.ID,
 		ColumnID:       column.ID,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		Title:          "ActionItem B2",
 		Priority:       domain.PriorityMedium,
@@ -4480,7 +4480,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	}
 	if err := svc.SetProjectAllowedKinds(context.Background(), SetProjectAllowedKindsInput{
 		ProjectID: project.ID,
-		KindIDs:   []domain.KindID{"refactor", domain.DefaultProjectKind, domain.KindID(domain.WorkKindActionItem), domain.KindID(domain.WorkKindSubtask)},
+		KindIDs:   []domain.KindID{"refactor", domain.DefaultProjectKind, domain.KindID(domain.KindActionItem), domain.KindID(domain.KindSubtask)},
 	}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
 	}
@@ -4488,7 +4488,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("refactor"),
+		Kind:      domain.Kind("refactor"),
 		Title:     "invalid payload",
 		Priority:  domain.PriorityMedium,
 		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
@@ -4500,7 +4500,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKind("refactor"),
+		Kind:      domain.Kind("refactor"),
 		Title:     "valid payload",
 		Priority:  domain.PriorityMedium,
 		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
@@ -4508,7 +4508,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateActionItem(valid payload) error = %v", err)
 	}
-	if created.Kind != domain.WorkKind("refactor") {
+	if created.Kind != domain.Kind("refactor") {
 		t.Fatalf("expected refactor kind, got %q", created.Kind)
 	}
 }
@@ -4546,7 +4546,7 @@ func TestReparentActionItemRejectsCycle(t *testing.T) {
 	child, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  parent.ID,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ColumnID:  column.ID,
 		Title:     "child",
 		Priority:  domain.PriorityMedium,
