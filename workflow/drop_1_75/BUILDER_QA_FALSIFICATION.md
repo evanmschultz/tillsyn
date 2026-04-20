@@ -1167,3 +1167,157 @@ Accept Units 1.10 / 1.11 / 1.12 / 1.13 as DONE. Proceed to Unit 1.14 (drops-rewr
 ### Hylla Feedback
 
 None — Hylla answered everything needed. Queries issued this round: LSP findReferences on `validateKindTemplateExpansion` (confirmed zero non-self callers). No Hylla MCP queries issued because the attack surface was predominantly structural / lexical — exact-grep for residual identifiers, `git diff --stat` for path-scope verification, `mage test-pkg` for runtime green-state, `gofumpt -d` for format invariants. Hylla's vector/keyword search would not have added precision beyond LSP findReferences for the dead-code-reachability question, and the rest of the work was not Go-semantic. Per WIKI.md policy: recording the explicit "no miss" stance.
+
+---
+
+## Unit 1.14 — Round 1 — QA Falsification — 2026-04-20
+
+**Target:** `drop/1.75/scripts/drops-rewrite.sql` (234 lines, 7 phases). Builder reports happy-path exit 0 on dev-DB copy with all 8 assertions green; rollback probe confirms PRISTINE state after deliberate CHECK failure.
+
+**Verification DB:** fresh per-attack copies of `~/.tillsyn/tillsyn.db` staged at `/tmp/qaf_a{1..8}.db`. sqlite3 3.51.0 (matches dev CLI). Pre-copy snapshot: 2 projects, 115 action_items (all `kind='task'`), 21 kind_catalog rows, 20 project_allowed_kinds rows, 5 template_% tables, tasks legacy table (0 rows), projects.kind column present.
+
+**Verdict: PASS.** 8 attacks attempted; 5 REFUTED outright on real-DB execution, 3 ACCEPTED with explicit justification tied to PLAN §1.14 run-model constraints. No unmitigated counterexample requires script change before Unit 1.15.
+
+### Attack ledger
+
+#### A1 — FK ordering on Phase 2 template DROPs — REFUTED
+
+FK graph inspected via `pragma_foreign_key_list()` on every template-cluster table. Relevant RESTRICT edges:
+- `template_node_templates.node_kind_id → kind_catalog(id) ON DELETE RESTRICT`
+- `template_child_rules.child_kind_id → kind_catalog(id) ON DELETE RESTRICT`
+- `project_template_bindings.library_id → template_libraries(id) ON DELETE RESTRICT`
+
+All other edges are CASCADE or parent-side (to `projects` / `action_items`, both retained). Script Phase 2 order:
+1. `template_child_rule_completer_kinds` (CASCADE leaves)
+2. `template_child_rule_editor_kinds` (CASCADE leaves)
+3. `template_child_rules` (CASCADE child of `template_node_templates`, RESTRICT on `kind_catalog`)
+4. `template_node_templates` (CASCADE child of `template_libraries`, RESTRICT on `kind_catalog`)
+5. `project_template_bindings` (RESTRICT on `template_libraries`, CASCADE on `projects`)
+6–9. node_contract_* cluster + `template_libraries`.
+
+Critical: `project_template_bindings` (step 5) drops **before** `template_libraries` (step 9), so the RESTRICT FK from the binding row to library_id never fires. Similarly, `template_node_templates` and `template_child_rules` drop before the Phase-3 `DELETE FROM kind_catalog`, so their RESTRICT FKs to `kind_catalog` never fire.
+
+Empirical confirmation: real-DB run with `PRAGMA foreign_keys=ON` at /tmp/qaf_a1.db exited 0, all 8 assertions green. PRAGMA default is 0 (OFF) but script sets ON at line 70 before BEGIN — ordering still works with enforcement ON. The "foreign_keys OFF by default hides a latent bug" hypothesis is disproved — enforcement was explicitly active.
+
+#### A2 — Native `ALTER TABLE projects DROP COLUMN kind` preconditions — REFUTED
+
+`projects` schema inspected via `.schema` + sqlite_master scan for every trigger/view/index/constraint touching `kind`:
+
+```
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'project',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT
+)
+```
+
+Checks against SQLite 3.35.0+ `DROP COLUMN` rejection matrix:
+- PK? No (`id` is PK, not `kind`). OK.
+- UNIQUE? No auto-index for `kind` — only `sqlite_autoindex_projects_1` (PK). OK.
+- FK FROM it? No outbound FKs on `projects`. OK.
+- Incoming FK targeting `kind`? Full sqlite_master scan for `REFERENCES projects(kind)`: zero. OK.
+- User-defined index? `SELECT type, name, sql FROM sqlite_master WHERE type='index' AND tbl_name='projects';` returns only the autoindex on PK. OK.
+- Trigger / view / CHECK / GENERATED referencing `kind`? `SELECT type, name, sql FROM sqlite_master WHERE type IN ('trigger','view');` returns ZERO triggers and ZERO views in the entire DB. OK.
+
+All preconditions clean — native DROP COLUMN is safe. Happy-path run (see A1) also empirically confirmed exit 0 with assertion 7.6 (`projects_kind_column_gone`) at expected=0, actual=0.
+
+#### A3 — Idempotency — ACCEPTED (by documented one-shot design)
+
+Probe: `sqlite3 /tmp/qaf_a3.db < scripts/drops-rewrite.sql` run 1 (exit 0) then run 2 (exit 1). Run 2 aborts at line 81 pre-flight SELECT: `Parse error near line 81: no such table: template_libraries`.
+
+Failure mode: the Phase 1 pre-flight SELECTs reference `template_libraries / template_node_templates / template_child_rules / project_template_bindings / node_contract_snapshots / tasks` by bare name (no `IF EXISTS` equivalent in SELECT). Since run 1 dropped them, run 2 fails at the pre-flight stage — BEFORE any Phase 2/3/4 DDL executes. With `.bail on` this aborts the script, leaving BEGIN-open transaction unwrapped by COMMIT, so SQLite rolls back cleanly.
+
+**Is the second-run failure destructive?** No — it fails at line 81 (Phase 1 SELECT), not after destructive DDL. The DB remains in run-1's post-collapse state. No data loss from the re-run.
+
+**Is non-idempotency a bug?** Per PLAN §1.14 + script header §Run Model (`"One-shot; once committed, historical reference only."` + `"Dev MUST back up ~/.tillsyn/tillsyn.db before running."`), idempotency is NOT a required property. The script is explicitly a one-shot migration, not a repeatable migration runner. The loud-but-safe second-run failure is acceptable behavior — a dev who accidentally re-runs it sees a clear error and no damage.
+
+**Minor note (non-blocking):** a future polish could wrap the Phase 1 SELECTs in CTEs that tolerate missing tables (e.g., `SELECT COUNT(*) FROM sqlite_master WHERE name='template_libraries'` in place of `SELECT COUNT(*) FROM template_libraries`), which would make run 2 a clean no-op. Not required for Unit 1.14 acceptance.
+
+#### A4 — Empty DB / fresh install — ACCEPTED (by documented run-model constraint)
+
+Probe: `sqlite3 /tmp/qaf_a4.db` created with minimal schema (projects, action_items, kind_catalog, project_allowed_kinds stubs; no template_* tables), script run. Exit 1 at line 81: `no such table: template_libraries`. Same loud-but-safe failure mode as A3 — Phase 1 SELECT fires before any destructive DDL, `.bail on` aborts, no COMMIT, no state change.
+
+Per PLAN §1.14 + header §Run Model, the script is intended to run on a DB that has the full pre-collapse schema — specifically, on dev's `~/.tillsyn/tillsyn.db` post-2026-04-18-cleanup. A fresh-install user would never run this script; they would get a Drop-1.75-post schema directly from `CREATE TABLE` statements in the Go migration path. Running this script on a fresh DB is out-of-scope.
+
+**Minor note (non-blocking):** the header docstring could add an explicit "do not run on a fresh DB that lacks the pre-collapse schema" caveat, but the existing "One-shot; once committed, historical reference only." + "run AFTER Drop 1.75 Go code ships" language covers the intent.
+
+#### A5 — Action items with unexpected kind values — ACCEPTED (by explicit design)
+
+Probe: `/tmp/qaf_a5.db` seeded with `UPDATE action_items SET kind='drop'/'phase'/'branch'` on three rows, then script run. Pre: `task=112, drop=1, phase=1, branch=1`. Post: `actionItem=115`. Exit 0, all assertions green.
+
+The Phase 6 statement `UPDATE action_items SET kind='actionItem', scope='actionItem';` is unconditional — every row becomes `actionItem`. Assertion 7.7 `kind NOT IN ('project','actionItem') OR kind IS NULL` passes because every row is now `actionItem`.
+
+**Information-loss analysis:** the prior kind values (`drop`/`phase`/`branch`) are overwritten. However:
+1. Script header §"What this rewrite DROPS" + script Phase 6 comment explicitly document this: "Every row becomes kind='actionItem', scope='actionItem'. Pre-drop cleanup left rows on the old 'task' default; this rewrites them in a single UPDATE."
+2. Per CLAUDE.md §"Role on description prose, not metadata (pre-Drop-2)" — role was stored in description prose pre-Drop-2, NOT in `kind`. The `kind` field held structural kind (drop/plan-task/qa-check/etc.), which is what the kind_catalog collapse explicitly eliminates. Semantic role is preserved in description prose; `metadata_json` per-row is UNTOUCHED by this script.
+3. PLAN §Notes states dev pre-purged to uniform `kind='task'` already, so in practice no rows carry `drop`/`phase`/`branch` on the real dev DB.
+4. The kind_catalog collapse to `{project, actionItem}` is the information-loss event by design; Phase 6 is just its companion on `action_items`.
+
+Accepted as intended behavior.
+
+#### A6 — `.bail on` footgun under non-CLI invocation — ACCEPTED (by documented run-model constraint)
+
+Probe: stripped `.bail on` from a copy of the script, corrupted assertion 7.1 (`'kind_catalog_rows_equals_2', 2,` → `999,`), ran on `/tmp/qaf_a6.db`. Exit 1 with `Runtime error near line 175: CHECK constraint failed: expected = actual (19)`. **DESTRUCTIVE COMMIT CONFIRMED:** post-state shows `projects_kind_col_present:0`, `template_libraries_present:0`, `tasks_present:0`, `kind_catalog_rows:2`. All Phase 2/3/4/5/6 DDL/DML committed DESPITE the CHECK failure.
+
+This is the footgun the attack anticipated: `.bail on` is a sqlite3 CLI dotcommand; the Go `modernc.org/sqlite` driver, DBeaver, TablePlus, or any other non-CLI runner would silently ignore `.bail on`. Under non-CLI invocation, a failed assertion's INSERT reverts locally but the transaction stays open, and the trailing `COMMIT;` commits everything.
+
+**Mitigation status:**
+- Script header §"Run model" (lines 44-49) explicitly constrains: *"Dev-run only. Never invoked by CI. Never called by Go code. One-shot; once committed, historical reference only."*
+- Script header §"How to run" (lines 50-53) pins the invocation: *"sqlite3 ~/.tillsyn/tillsyn.db < scripts/drops-rewrite.sql"*.
+- Builder worklog §"Surprises" #2 explicitly documents this exact failure mode and the `.bail on` dependency, with empirical verification of both paths.
+
+**Strength of mitigation:** the run-model constraint is documentation-only — nothing prevents a future contributor from running the SQL via a different tool. However: (a) the script is one-shot and lives on a drop branch that gets archived post-merge, (b) the dev explicitly pre-committed to this invocation contract, (c) adding defense-in-depth (e.g., a trigger-program RAISE that works regardless of CLI) would add complexity for marginal benefit on a one-shot script.
+
+**Accepted with fragility flag:** the `.bail on` dependency is load-bearing and documented. If Drop 1.75 decides to add a Go-side migration path in a future drop that re-uses this SQL, this attack surface becomes live and needs a RAISE-inside-trigger restructure.
+
+#### A7 — project_allowed_kinds residue — REFUTED
+
+FK inspection on `project_allowed_kinds`:
+```
+kind_id → kind_catalog(id) ON DELETE CASCADE
+project_id → projects(id) ON DELETE CASCADE
+```
+
+Both FKs are CASCADE. Pre-script `project_allowed_kinds` had 20 rows (every legacy kind_catalog entry). Post-script: 1 row (`project_id=a5e87c34..., kind_id=project`). The 19 legacy-kind allowlist rows cascaded away when `DELETE FROM kind_catalog WHERE id NOT IN ('project','actionItem')` fired in Phase 3.
+
+Assertion 8 (`kind_id NOT IN ('project','actionItem') OR kind_id IS NULL`) evaluated post-script: 0 rows. Clean.
+
+F3 Option A's "diagnostic safety net" description is accurate — under current schema the assertion is a no-op guard. If a future schema-refactor drop removes the CASCADE (or adds a kind_id value with no FK), the assertion will fire and rollback. That's the intended Option A contract per PLAN §1.14 Round-6 F3.
+
+#### A8 — Rollback under partial failure — REFUTED
+
+**A8a — CHECK-failure rollback probe.** `/tmp/qaf_a8.db` + `/tmp/a8_script.sql` with assertion 7.1 corrupted (`expected=2` → `expected=999`). Pre-state: `kind_catalog=21, templates=5 tables, tasks_present=1, projects_kind_col=1, action_items_kind_task=115`. Script run: exit 1, `Runtime error near line 176: CHECK constraint failed: expected = actual (19)`. **Post-state IDENTICAL to pre-state** — every DDL/DML statement reverted. `.bail on` aborted the CLI, COMMIT never fired, SQLite rolled back the open transaction on connection close.
+
+**A8b — Mid-script DDL-failure rollback probe.** Separate copy `/tmp/qaf_a8b.db` + injected `DROP TABLE nonexistent_synthetic_table_xyz;` after Phase 4's `ALTER TABLE projects DROP COLUMN kind;` (i.e., after Phase 2 dropped template tables, Phase 3 deleted kind_catalog rows, Phase 4 dropped the column). Script run: exit 1, `Parse error near line 144: no such table: nonexistent_synthetic_table_xyz`. **Post-rollback state IDENTICAL to pre-state** — templates restored, kind_catalog back to 21 rows, projects.kind column back, tasks table back. Transactional DDL rollback works as the builder claims.
+
+Both rollback paths confirmed on real DB copies. Rollback guarantee holds under both CHECK-assertion failures (Phase 7) and non-CHECK DDL errors at any script position.
+
+### Summary
+
+| # | Attack | Verdict | Evidence |
+| --- | --- | --- | --- |
+| A1 | FK ordering on Phase 2 drops | REFUTED | pragma_foreign_key_list scan + happy-path run exit 0 |
+| A2 | Native DROP COLUMN preconditions | REFUTED | schema scan confirms no PK/UNIQUE/FK/index/trigger/view deps |
+| A3 | Idempotency | ACCEPTED | Loud-but-safe fail at Phase 1 SELECT; one-shot by design |
+| A4 | Empty DB / fresh install | ACCEPTED | Same loud-safe Phase 1 failure mode; out-of-run-model |
+| A5 | Unexpected kind values | ACCEPTED | Unconditional unify is documented design; metadata preserved |
+| A6 | `.bail on` footgun under non-CLI | ACCEPTED (FLAG) | Destructive commit confirmed under no-bail path; run-model-constrained |
+| A7 | project_allowed_kinds residue | REFUTED | CASCADE FK clears allowlist automatically |
+| A8 | Rollback under partial failure | REFUTED | Both CHECK-fail and mid-script DDL-fail paths rolled back cleanly |
+
+### Unknowns
+
+- **A6 fragility escalation path.** If any future drop adds a Go-side migration runner that re-executes SQL from `scripts/drops-rewrite.sql`, the `.bail on` dependency becomes a live bug. Out of scope for Unit 1.14; worth raising as a refinement when/if a Go migration runner is introduced.
+- **A3/A4 minor polish.** Phase 1 pre-flight SELECTs could be rewritten as `sqlite_master`-guarded COUNTs to make the script tolerate re-runs and fresh DBs gracefully. Non-blocking for Unit 1.14 per one-shot run model.
+
+### Recommendation
+
+Accept Unit 1.14 as DONE. Script is correct on its stated invocation contract and run model. The three ACCEPTED attacks all hinge on stepping outside the documented run-model (re-run, fresh DB, non-CLI invocation) — all explicitly foreclosed by the script header's "Dev-run only. Never invoked by CI. Never called by Go code. One-shot; once committed, historical reference only." contract. No script change required before Unit 1.15.
+
+### Hylla Feedback
+
+N/A — Unit 1.14 touches only `scripts/drops-rewrite.sql` (SQL, not Go). Hylla indexes Go files only per project rule. Evidence sources used: live sqlite3 3.51.0 execution against real-dev-DB copies at `/tmp/qaf_a{1..8}.db`, `pragma_foreign_key_list` + `sqlite_master` + `.schema` for structural inspection, deliberate script corruption (assertion-value flip, stripped `.bail on`, injected nonexistent-DROP) for failure-path verification. No Hylla queries attempted; no fallbacks to report.
