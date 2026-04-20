@@ -48,7 +48,7 @@ type ProjectTemplateMigrationCandidate struct {
 	ParentID             string                                `json:"parent_id,omitempty"`
 	Title                string                                `json:"title"`
 	Scope                KindAppliesTo                         `json:"scope"`
-	Kind                 WorkKind                              `json:"kind"`
+	Kind                 Kind                              `json:"kind"`
 	LifecycleState       LifecycleState                        `json:"lifecycle_state"`
 	SourceNodeTemplateID string                                `json:"source_node_template_id,omitempty"`
 	SourceChildRuleID    string                                `json:"source_child_rule_id,omitempty"`

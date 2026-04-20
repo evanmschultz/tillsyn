@@ -672,23 +672,23 @@ func commentTargetTypeForActionItem(actionItem domain.ActionItem) (domain.Commen
 	if actionItem.Scope == domain.KindAppliesToBranch {
 		return domain.CommentTargetTypeBranch, true
 	}
-	return commentTargetTypeForWorkKind(actionItem.Kind)
+	return commentTargetTypeForKind(actionItem.Kind)
 }
 
-// commentTargetTypeForWorkKind maps work-item kinds into comment target types.
-func commentTargetTypeForWorkKind(kind domain.WorkKind) (domain.CommentTargetType, bool) {
+// commentTargetTypeForKind maps work-item kinds into comment target types.
+func commentTargetTypeForKind(kind domain.Kind) (domain.CommentTargetType, bool) {
 	switch kind {
-	case domain.WorkKind(domain.KindAppliesToBranch):
+	case domain.Kind(domain.KindAppliesToBranch):
 		return domain.CommentTargetTypeBranch, true
-	case domain.WorkKindActionItem:
+	case domain.KindActionItem:
 		return domain.CommentTargetTypeActionItem, true
-	case domain.WorkKindSubtask:
+	case domain.KindSubtask:
 		return domain.CommentTargetTypeSubtask, true
-	case domain.WorkKindPhase:
+	case domain.KindPhase:
 		return domain.CommentTargetTypePhase, true
-	case domain.WorkKindDecision:
+	case domain.KindDecision:
 		return domain.CommentTargetTypeDecision, true
-	case domain.WorkKindNote:
+	case domain.KindNote:
 		return domain.CommentTargetTypeNote, true
 	default:
 		return "", false

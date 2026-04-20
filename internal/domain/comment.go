@@ -13,11 +13,11 @@ type CommentTargetType string
 const (
 	CommentTargetTypeProject    CommentTargetType = "project"
 	CommentTargetTypeBranch     CommentTargetType = CommentTargetType(KindAppliesToBranch)
-	CommentTargetTypeActionItem CommentTargetType = CommentTargetType(WorkKindActionItem)
-	CommentTargetTypeSubtask    CommentTargetType = CommentTargetType(WorkKindSubtask)
-	CommentTargetTypePhase      CommentTargetType = CommentTargetType(WorkKindPhase)
-	CommentTargetTypeDecision   CommentTargetType = CommentTargetType(WorkKindDecision)
-	CommentTargetTypeNote       CommentTargetType = CommentTargetType(WorkKindNote)
+	CommentTargetTypeActionItem CommentTargetType = CommentTargetType(KindActionItem)
+	CommentTargetTypeSubtask    CommentTargetType = CommentTargetType(KindSubtask)
+	CommentTargetTypePhase      CommentTargetType = CommentTargetType(KindPhase)
+	CommentTargetTypeDecision   CommentTargetType = CommentTargetType(KindDecision)
+	CommentTargetTypeNote       CommentTargetType = CommentTargetType(KindNote)
 )
 
 // validCommentTargetTypes stores supported target-type values.

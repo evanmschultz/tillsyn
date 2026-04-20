@@ -2189,7 +2189,7 @@ func TestRunTemplateLibraryCommands(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "QA Pass",
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Priority:  domain.PriorityMedium,
 	}, time.Date(2026, 3, 29, 12, 58, 0, 0, time.UTC))
@@ -2288,12 +2288,12 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW",
 				DescriptionTemplate:     "Verify the original contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,
@@ -2317,7 +2317,7 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 	parent, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Implement preview",
 		Priority:  domain.PriorityMedium,
@@ -2353,12 +2353,12 @@ func TestRunTemplateProjectApproveMigrations(t *testing.T) {
 		NodeTemplates: []app.UpsertNodeTemplateInput{{
 			ID:         "actionItem-template",
 			ScopeLevel: domain.KindAppliesToActionItem,
-			NodeKindID: domain.KindID(domain.WorkKindActionItem),
+			NodeKindID: domain.KindID(domain.KindActionItem),
 			ChildRules: []app.UpsertTemplateChildRuleInput{{
 				ID:                      "qa-check",
 				Position:                1,
 				ChildScopeLevel:         domain.KindAppliesToSubtask,
-				ChildKindID:             domain.KindID(domain.WorkKindSubtask),
+				ChildKindID:             domain.KindID(domain.KindSubtask),
 				TitleTemplate:           "QA PROOF REVIEW UPDATE",
 				DescriptionTemplate:     "Verify the latest contract",
 				ResponsibleActorKind:    domain.TemplateActorKindQA,

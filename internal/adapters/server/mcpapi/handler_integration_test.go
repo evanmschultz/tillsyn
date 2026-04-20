@@ -192,7 +192,7 @@ func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, p
 
 	branch, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
-		Kind:           domain.WorkKind("branch"),
+		Kind:           domain.Kind("branch"),
 		Scope:          domain.KindAppliesToBranch,
 		ColumnID:       columnID,
 		Title:          "Branch",
@@ -208,7 +208,7 @@ func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, p
 	phase, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       branch.ID,
-		Kind:           domain.WorkKindPhase,
+		Kind:           domain.KindPhase,
 		Scope:          domain.KindAppliesToPhase,
 		ColumnID:       columnID,
 		Title:          "Phase",
@@ -224,7 +224,7 @@ func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, p
 	actionItem, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       phase.ID,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columnID,
 		Title:          "ActionItem",

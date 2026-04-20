@@ -1091,7 +1091,7 @@ func TestRepository_MigratesLegacyActionItemsTable(t *testing.T) {
 	if loaded.Title != "Legacy actionItem" || loaded.ProjectID != "p1" {
 		t.Fatalf("unexpected migrated actionItem %#v", loaded)
 	}
-	if loaded.Kind != domain.WorkKindActionItem || loaded.LifecycleState != domain.StateTodo {
+	if loaded.Kind != domain.KindActionItem || loaded.LifecycleState != domain.StateTodo {
 		t.Fatalf("expected default kind/state migration values, got kind=%q state=%q", loaded.Kind, loaded.LifecycleState)
 	}
 
@@ -1741,8 +1741,8 @@ func TestRepository_ServiceCreateActionItemPersistsHumanActorName(t *testing.T) 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d (%#v)", len(events), events)
 	}
-	if events[0].WorkItemID != created.ID {
-		t.Fatalf("expected event work item id %q, got %q", created.ID, events[0].WorkItemID)
+	if events[0].ActionItemID != created.ID {
+		t.Fatalf("expected event work item id %q, got %q", created.ID, events[0].ActionItemID)
 	}
 	if events[0].ActorID != "user-1" || events[0].ActorName != "Evan Schultz" {
 		t.Fatalf("expected human attribution user-1/Evan Schultz, got %q/%q", events[0].ActorID, events[0].ActorName)
@@ -2341,7 +2341,7 @@ func TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport(t *testing.T) {
 		_ = repo.Close()
 	})
 
-	phase, err := repo.GetKindDefinition(ctx, domain.KindID(domain.WorkKindPhase))
+	phase, err := repo.GetKindDefinition(ctx, domain.KindID(domain.KindPhase))
 	if err != nil {
 		t.Fatalf("GetKindDefinition(phase) error = %v", err)
 	}
@@ -2389,7 +2389,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Scope:     domain.KindAppliesToPhase,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Position:  0,
 		Title:     "phase",
 		Priority:  domain.PriorityMedium,
@@ -2414,7 +2414,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		ParentID:  actionItem.ID,
 		ColumnID:  column.ID,
 		Scope:     domain.KindAppliesToPhase,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Position:  1,
 		Title:     "nested phase",
 		Priority:  domain.PriorityMedium,

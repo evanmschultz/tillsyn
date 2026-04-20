@@ -150,7 +150,7 @@ func TestModelGoldenEmbeddingsStatusOutput(t *testing.T) {
 		ColumnID:  c1.ID,
 		Position:  0,
 		Title:     "Embeddings status actionItem",
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Priority:  domain.PriorityLow,
 	}, now)

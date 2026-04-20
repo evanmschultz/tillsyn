@@ -19,7 +19,7 @@ const (
 type ChangeEvent struct {
 	ID         int64
 	ProjectID  string
-	WorkItemID string
+	ActionItemID string
 	Operation  ChangeOperation
 	ActorID    string
 	ActorName  string

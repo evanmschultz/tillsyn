@@ -287,7 +287,7 @@ func (m Model) descriptionEditorPathForActionItemForm() string {
 	}
 	kind := strings.TrimSpace(string(m.actionItemFormKind))
 	if kind == "" {
-		kind = string(domain.WorkKindActionItem)
+		kind = string(domain.KindActionItem)
 	}
 	if parentID := strings.TrimSpace(m.actionItemFormParentID); parentID != "" {
 		if parent, ok := m.actionItemByID(parentID); ok {

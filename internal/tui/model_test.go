@@ -1561,7 +1561,7 @@ func TestModelProjectSearchResultsEnterOpensActionItemInfoAndPreservesBoardConte
 		ColumnID:  column.ID,
 		Position:  0,
 		Title:     "Roll out hybrid actionItem search",
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -2005,7 +2005,7 @@ func TestModelThreadModeFromActionItemInfoAndBack(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Title:     "Phase 1",
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -2622,7 +2622,7 @@ func TestModelActionItemInfoDetailsViewportScrolls(t *testing.T) {
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Kind:        domain.WorkKindActionItem,
+		Kind:        domain.KindActionItem,
 		Title:       "full page md",
 		Description: strings.Join(lines, "\n"),
 		Priority:    domain.PriorityMedium,
@@ -2697,28 +2697,28 @@ func TestModelActionItemInfoDetailsViewportScrolls(t *testing.T) {
 	}
 }
 
-// TestCommentTargetTypeForWorkKind verifies work-kind to comment-target mapping coverage.
-func TestCommentTargetTypeForWorkKind(t *testing.T) {
+// TestCommentTargetTypeForKind verifies work-kind to comment-target mapping coverage.
+func TestCommentTargetTypeForKind(t *testing.T) {
 	cases := []struct {
-		kind   domain.WorkKind
+		kind   domain.Kind
 		want   domain.CommentTargetType
 		wantOK bool
 	}{
-		{kind: domain.WorkKindActionItem, want: domain.CommentTargetTypeActionItem, wantOK: true},
-		{kind: domain.WorkKindSubtask, want: domain.CommentTargetTypeSubtask, wantOK: true},
-		{kind: domain.WorkKindPhase, want: domain.CommentTargetTypePhase, wantOK: true},
-		{kind: domain.WorkKindDecision, want: domain.CommentTargetTypeDecision, wantOK: true},
-		{kind: domain.WorkKindNote, want: domain.CommentTargetTypeNote, wantOK: true},
-		{kind: domain.WorkKind("unknown"), want: "", wantOK: false},
+		{kind: domain.KindActionItem, want: domain.CommentTargetTypeActionItem, wantOK: true},
+		{kind: domain.KindSubtask, want: domain.CommentTargetTypeSubtask, wantOK: true},
+		{kind: domain.KindPhase, want: domain.CommentTargetTypePhase, wantOK: true},
+		{kind: domain.KindDecision, want: domain.CommentTargetTypeDecision, wantOK: true},
+		{kind: domain.KindNote, want: domain.CommentTargetTypeNote, wantOK: true},
+		{kind: domain.Kind("unknown"), want: "", wantOK: false},
 	}
 
 	for _, tc := range cases {
-		got, ok := commentTargetTypeForWorkKind(tc.kind)
+		got, ok := commentTargetTypeForKind(tc.kind)
 		if ok != tc.wantOK {
-			t.Fatalf("commentTargetTypeForWorkKind(%q) ok=%t want=%t", tc.kind, ok, tc.wantOK)
+			t.Fatalf("commentTargetTypeForKind(%q) ok=%t want=%t", tc.kind, ok, tc.wantOK)
 		}
 		if got != tc.want {
-			t.Fatalf("commentTargetTypeForWorkKind(%q) target=%q want=%q", tc.kind, got, tc.want)
+			t.Fatalf("commentTargetTypeForKind(%q) target=%q want=%q", tc.kind, got, tc.want)
 		}
 	}
 }
@@ -2753,7 +2753,7 @@ func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode after executing new-subtask, got %v", m.mode)
 	}
-	if got := m.actionItemFormKind; got != domain.WorkKindSubtask {
+	if got := m.actionItemFormKind; got != domain.KindSubtask {
 		t.Fatalf("expected actionItem form kind subtask, got %q", got)
 	}
 	if got := m.actionItemFormParentID; got != parent.ID {
@@ -2916,7 +2916,7 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 		ColumnID:  c.ID,
 		Position:  0,
 		ParentID:  "",
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
@@ -2928,7 +2928,7 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 		ColumnID:  c.ID,
 		Position:  1,
 		ParentID:  branch.ID,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
@@ -2940,7 +2940,7 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 		ColumnID:  c.ID,
 		Position:  2,
 		ParentID:  phase.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "Leaf",
 		Priority:  domain.PriorityMedium,
@@ -3168,7 +3168,7 @@ func TestModelCommandPaletteBranchLifecycleGuards(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
@@ -3211,7 +3211,7 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
@@ -3229,7 +3229,7 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 
 	updated, cmd := m.executeCommandPalette("new-branch")
 	m = applyResult(t, updated, cmd)
-	if m.mode != modeAddActionItem || m.actionItemFormKind != domain.WorkKind("branch") || m.actionItemFormScope != domain.KindAppliesToBranch {
+	if m.mode != modeAddActionItem || m.actionItemFormKind != domain.Kind("branch") || m.actionItemFormScope != domain.KindAppliesToBranch {
 		t.Fatalf("expected new branch actionItem form defaults, got mode=%v kind=%q scope=%q", m.mode, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -3270,7 +3270,7 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
@@ -3318,7 +3318,7 @@ func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
@@ -3330,7 +3330,7 @@ func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected project-level new-phase to open add-actionItem mode, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected project-level phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 }
@@ -3358,7 +3358,7 @@ func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected typed new_phase to open add-actionItem mode, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected typed new_phase to create project-level phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 }
@@ -3373,7 +3373,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
@@ -3384,7 +3384,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		ParentID:  branch.ID,
 		ColumnID:  c.ID,
 		Position:  1,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
@@ -3395,7 +3395,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		ParentID:  branch.ID,
 		ColumnID:  c.ID,
 		Position:  2,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 		Title:     "Phase Leaf",
 		Priority:  domain.PriorityLow,
@@ -3405,7 +3405,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  3,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch Leaf",
 		Priority:  domain.PriorityLow,
@@ -3419,7 +3419,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode for new phase, got %v", m.mode)
 	}
-	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected project-level phase defaults when only a child row is selected, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -3434,7 +3434,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode for focused-empty new phase, got %v", m.mode)
 	}
-	if m.actionItemFormParentID != branchLeaf.ID || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != branchLeaf.ID || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected focused-empty-branch phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -3448,7 +3448,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode for project-screen new phase with selected phase row, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != "" || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected project-level phase defaults when only a phase row is selected, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -3464,7 +3464,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode for branch-screen new phase, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.actionItemFormParentID != branch.ID || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != branch.ID || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected focused-branch phase defaults even when a child phase row is selected, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -3479,7 +3479,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode for focused-empty nested new phase, got %v", m.mode)
 	}
-	if m.actionItemFormParentID != phaseLeaf.ID || m.actionItemFormKind != domain.WorkKindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
+	if m.actionItemFormParentID != phaseLeaf.ID || m.actionItemFormKind != domain.KindPhase || m.actionItemFormScope != domain.KindAppliesToPhase {
 		t.Fatalf("expected focused-empty-phase nested phase defaults, got parent=%q kind=%q scope=%q", m.actionItemFormParentID, m.actionItemFormKind, m.actionItemFormScope)
 	}
 }
@@ -3494,7 +3494,7 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
@@ -3510,7 +3510,7 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 		if next.mode != modeAddActionItem {
 			t.Fatalf("raw command %q should open add-actionItem phase form, got mode=%v status=%q", raw, next.mode, next.status)
 		}
-		if next.actionItemFormParentID != branch.ID || next.actionItemFormKind != domain.WorkKindPhase || next.actionItemFormScope != domain.KindAppliesToPhase {
+		if next.actionItemFormParentID != branch.ID || next.actionItemFormKind != domain.KindPhase || next.actionItemFormScope != domain.KindAppliesToPhase {
 			t.Fatalf("raw command %q should preserve phase defaults, got parent=%q kind=%q scope=%q", raw, next.actionItemFormParentID, next.actionItemFormKind, next.actionItemFormScope)
 		}
 	}
@@ -3526,7 +3526,7 @@ func TestModelCommandPalettePhaseCreationBlocksActionItemFocusedScreens(t *testi
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
@@ -3537,7 +3537,7 @@ func TestModelCommandPalettePhaseCreationBlocksActionItemFocusedScreens(t *testi
 		ParentID:  actionItem.ID,
 		ColumnID:  c.ID,
 		Position:  1,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 		Title:     "Subtask",
 		Priority:  domain.PriorityLow,
@@ -3955,7 +3955,7 @@ func TestModelActionItemInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
 		Position:    0,
-		Kind:        domain.WorkKindActionItem,
+		Kind:        domain.KindActionItem,
 		Title:       "ActionItem with details",
 		Description: "## full page md\n\n- line one\n- line two",
 		Priority:    domain.PriorityMedium,
@@ -4770,7 +4770,7 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 		Position:       1,
 		Title:          "Child done",
 		Priority:       domain.PriorityLow,
-		Kind:           domain.WorkKindSubtask,
+		Kind:           domain.KindSubtask,
 		ParentID:       parent.ID,
 		LifecycleState: domain.StateDone,
 	}, now)
@@ -4781,7 +4781,7 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 		Position:       2,
 		Title:          "Child todo",
 		Priority:       domain.PriorityLow,
-		Kind:           domain.WorkKindSubtask,
+		Kind:           domain.KindSubtask,
 		ParentID:       parent.ID,
 		LifecycleState: domain.StateTodo,
 	}, now)
@@ -4821,7 +4821,7 @@ func TestModelActionItemInfoShowsSubtasksAcrossColumns(t *testing.T) {
 		Position:  0,
 		Title:     "Cross-column subtask",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ParentID:  parent.ID,
 	}, now)
 
@@ -4871,7 +4871,7 @@ func TestModelActionItemInfoBackspaceMovesToParent(t *testing.T) {
 		Position:  0,
 		Title:     "Nested subtask",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ParentID:  parent.ID,
 	}, now)
 
@@ -4903,7 +4903,7 @@ func TestModelActionItemInfoEscClosesCurrentView(t *testing.T) {
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Title:     "Grandparent",
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -4912,7 +4912,7 @@ func TestModelActionItemInfoEscClosesCurrentView(t *testing.T) {
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  1,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		ParentID:  grand.ID,
 		Title:     "Parent",
 		Priority:  domain.PriorityMedium,
@@ -4922,7 +4922,7 @@ func TestModelActionItemInfoEscClosesCurrentView(t *testing.T) {
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  2,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ParentID:  parent.ID,
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
@@ -4966,7 +4966,7 @@ func TestModelActionItemInfoAllowsSubactionItemCreation(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected add-actionItem mode after actionItem-info subtask key, got %v", m.mode)
 	}
-	if got := m.actionItemFormKind; got != domain.WorkKindSubtask {
+	if got := m.actionItemFormKind; got != domain.KindSubtask {
 		t.Fatalf("expected subtask form kind, got %q", got)
 	}
 	if got := m.actionItemFormParentID; got != parent.ID {
@@ -4991,7 +4991,7 @@ func TestModelActionItemInfoEnterOpensFocusedSubtask(t *testing.T) {
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		ParentID:  parent.ID,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 		Title:     "Child",
 		Priority:  domain.PriorityMedium,
@@ -5034,7 +5034,7 @@ func TestModelActionItemInfoMovesCurrentActionItemWithBrackets(t *testing.T) {
 		Position:  1,
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ParentID:  parent.ID,
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.ActionItem{parent, child})
@@ -5088,7 +5088,7 @@ func TestModelActionItemInfoSubactionItemChecklistToggleCompletion(t *testing.T)
 		Position:  0,
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ParentID:  parent.ID,
 	}, now)
 
@@ -5237,7 +5237,7 @@ func TestModelEscClearsSubtreeFocus(t *testing.T) {
 		Position:  1,
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		ParentID:  parent.ID,
 	}, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.ActionItem{parent, child})))
@@ -5996,7 +5996,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  2,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Title:     "Platform",
 		Priority:  domain.PriorityMedium,
@@ -6668,7 +6668,7 @@ func TestModelEditActionItemKeyboardSaveAndPickerShortcuts(t *testing.T) {
 	if m.mode != modeAddActionItem {
 		t.Fatalf("expected e on subtasks section to open subtask form, got %v", m.mode)
 	}
-	if m.actionItemFormKind != domain.WorkKindSubtask {
+	if m.actionItemFormKind != domain.KindSubtask {
 		t.Fatalf("expected subtask kind from subtasks section action, got %q", m.actionItemFormKind)
 	}
 }
@@ -6740,7 +6740,7 @@ func TestModelEditActionItemSubactionItemAndResourceRowSelection(t *testing.T) {
 		ColumnID:  c.ID,
 		Position:  1,
 		ParentID:  parent.ID,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
@@ -6900,7 +6900,7 @@ func TestModelEditActionItemSubactionItemSubmitReturnsToParent(t *testing.T) {
 		ColumnID:  c.ID,
 		Position:  1,
 		ParentID:  parent.ID,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 		Title:     "Child",
 		Priority:  domain.PriorityLow,
@@ -6947,7 +6947,7 @@ func TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T)
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
 		Position:  0,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Title:     "Parent ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -6957,7 +6957,7 @@ func TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T)
 		ColumnID:  column.ID,
 		Position:  1,
 		ParentID:  parent.ID,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Title:     "Child Subtask",
 		Priority:  domain.PriorityLow,
 	}, now)
@@ -7516,7 +7516,7 @@ func TestModelActivityLogOverlay(t *testing.T) {
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationMove,
 			Metadata:   map[string]string{},
 			OccurredAt: now.Add(2 * time.Minute),
@@ -7524,7 +7524,7 @@ func TestModelActivityLogOverlay(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
@@ -7598,7 +7598,7 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-live-sync",
 			ActorName:  "Live Sync Bot",
@@ -7643,7 +7643,7 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: second.ID,
+			ActionItemID: second.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "user-owner",
 			ActorType:  domain.ActorTypeUser,
@@ -7701,7 +7701,7 @@ func TestModelNoticesSectionNavigationAndActionItemInfoAction(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
@@ -7738,8 +7738,8 @@ func TestModelNoticesSectionNavigationAndActionItemInfoAction(t *testing.T) {
 	if m.mode != modeActivityEventInfo {
 		t.Fatalf("expected enter on recent activity row to open activity event info, got %v", m.mode)
 	}
-	if m.activityInfoItem.WorkItemID != actionItem.ID {
-		t.Fatalf("expected activity event target %q, got %q", actionItem.ID, m.activityInfoItem.WorkItemID)
+	if m.activityInfoItem.ActionItemID != actionItem.ID {
+		t.Fatalf("expected activity event target %q, got %q", actionItem.ID, m.activityInfoItem.ActionItemID)
 	}
 }
 
@@ -8598,7 +8598,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 		Position:  0,
 		Title:     "Requested Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	narrowed, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -8608,7 +8608,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 		Position:  1,
 		Title:     "Narrowed Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	authRequest, err := domain.NewAuthRequest(domain.AuthRequestInput{
@@ -9068,7 +9068,7 @@ func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 		Position:  0,
 		Title:     "Planning Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project, other}, []domain.Column{column}, []domain.ActionItem{branch})))
@@ -11015,7 +11015,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 		{
 			ID:         5,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationArchive,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(5 * time.Minute),
@@ -11023,7 +11023,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 		{
 			ID:         4,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationMove,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(4 * time.Minute),
@@ -11031,7 +11031,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 		{
 			ID:         3,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(3 * time.Minute),
@@ -11039,7 +11039,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(2 * time.Minute),
@@ -11047,7 +11047,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
@@ -11110,7 +11110,7 @@ func TestModelActivityEventJumpLoadsArchivedActionItem(t *testing.T) {
 		{
 			ID:         3,
 			ProjectID:  p.ID,
-			WorkItemID: archived.ID,
+			ActionItemID: archived.ID,
 			Operation:  domain.ChangeOperationArchive,
 			ActorID:    "agent-ops",
 			ActorType:  domain.ActorTypeAgent,
@@ -11169,7 +11169,7 @@ func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: child.ID,
+			ActionItemID: child.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-sync",
 			ActorType:  domain.ActorTypeAgent,
@@ -11220,7 +11220,7 @@ func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
 		{
 			ID:         3,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationMove,
 			ActorID:    "agent-sync",
 			ActorType:  domain.ActorTypeAgent,
@@ -11362,7 +11362,7 @@ func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 		selectedProject: 0,
 		tasks:           []domain.ActionItem{branch, phase, leaf},
 		activityInfoItem: activityEntry{
-			WorkItemID: leaf.ID,
+			ActionItemID: leaf.ID,
 			Summary:    "updated node metadata",
 			Operation:  domain.ChangeOperationUpdate,
 			At:         now,
@@ -11438,7 +11438,7 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(time.Minute),
@@ -11454,7 +11454,7 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			Metadata:   map[string]string{"title": actionItem.Title},
 			OccurredAt: now.Add(2 * time.Minute),
@@ -11890,7 +11890,7 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 		ProjectID: "p1",
 		ColumnID:  c1.ID,
 		Position:  0,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -11977,7 +11977,7 @@ func TestLabelInheritanceHelpers(t *testing.T) {
 		ID:        "phase",
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Position:  0,
 		Title:     "Phase",
 		Labels:    []string{"PhaseA", "shared"},
@@ -12326,7 +12326,7 @@ func TestModelActionItemInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 		ProjectID: p.ID,
 		ColumnID:  c.ID,
 		Position:  0,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"phase-label"},
@@ -12337,7 +12337,7 @@ func TestModelActionItemInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 		ColumnID:  c.ID,
 		Position:  1,
 		ParentID:  phase.ID,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Title:     "Child ActionItem",
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -12541,7 +12541,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Position:  0,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	phase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12552,7 +12552,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Position:  0,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	nestedPhase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12563,7 +12563,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Position:  0,
 		Title:     "Nested Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	leafActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12574,7 +12574,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Position:  1,
 		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 	unrelated, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12584,7 +12584,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		Position:  1,
 		Title:     "Other",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 
@@ -12642,7 +12642,7 @@ func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 		Position:  0,
 		Title:     "Parent ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 	subA, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12653,7 +12653,7 @@ func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 		Position:  1,
 		Title:     "Subtask A",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
 	subB, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12664,7 +12664,7 @@ func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 		Position:  0,
 		Title:     "Subtask B",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
 	other, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12674,7 +12674,7 @@ func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 		Position:  2,
 		Title:     "Other Top ActionItem",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 
@@ -12719,7 +12719,7 @@ func TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds(t *
 		Position:  0,
 		Title:     "Branch Parent",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	legacySubtask, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12730,7 +12730,7 @@ func TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds(t *
 		Position:  1,
 		Title:     "Legacy Subtask Child",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
 
@@ -12769,7 +12769,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 		Position:  0,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	phase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12780,7 +12780,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 		Position:  1,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	nestedPhase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12791,7 +12791,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 		Position:  2,
 		Title:     "Nested Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12802,7 +12802,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 		Position:  3,
 		Title:     "ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 	subtask, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12813,7 +12813,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 		Position:  4,
 		Title:     "Subtask",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
 	m := loadReadyModel(t, NewModel(newFakeService(
@@ -12822,7 +12822,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 		[]domain.ActionItem{branch, phase, nestedPhase, actionItem, subtask},
 	)))
 
-	assertDefaults := func(parentID string, kind domain.WorkKind, scope domain.KindAppliesTo) {
+	assertDefaults := func(parentID string, kind domain.Kind, scope domain.KindAppliesTo) {
 		t.Helper()
 		if got := m.actionItemFormParentID; got != parentID {
 			t.Fatalf("actionItem form parent = %q, want %q", got, parentID)
@@ -12836,28 +12836,28 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults("", domain.WorkKindActionItem, domain.KindAppliesToActionItem)
+	assertDefaults("", domain.KindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m.focusActionItemByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(branch.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem)
+	assertDefaults(branch.ID, domain.KindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(phase.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem)
+	assertDefaults(phase.ID, domain.KindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(nestedPhase.ID, domain.WorkKindActionItem, domain.KindAppliesToActionItem)
+	assertDefaults(nestedPhase.ID, domain.KindActionItem, domain.KindAppliesToActionItem)
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('f'))
 	m = applyMsg(t, m, keyRune('n'))
-	assertDefaults(actionItem.ID, domain.WorkKindSubtask, domain.KindAppliesToSubtask)
+	assertDefaults(actionItem.ID, domain.KindSubtask, domain.KindAppliesToSubtask)
 }
 
 // TestModelCreateActionItemFromFocusedScopeUsesScopedParent verifies submitted create-actionItem calls carry focused defaults.
@@ -12872,7 +12872,7 @@ func TestModelCreateActionItemFromFocusedScopeUsesScopedParent(t *testing.T) {
 		Position:  0,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	phase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12883,7 +12883,7 @@ func TestModelCreateActionItemFromFocusedScopeUsesScopedParent(t *testing.T) {
 		Position:  1,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{todo}, []domain.ActionItem{branch, phase})
@@ -12902,8 +12902,8 @@ func TestModelCreateActionItemFromFocusedScopeUsesScopedParent(t *testing.T) {
 	if got := svc.lastCreateActionItem.ParentID; got != branch.ID {
 		t.Fatalf("create parent_id = %q, want %q", got, branch.ID)
 	}
-	if got := svc.lastCreateActionItem.Kind; got != domain.WorkKindActionItem {
-		t.Fatalf("create kind = %q, want %q", got, domain.WorkKindActionItem)
+	if got := svc.lastCreateActionItem.Kind; got != domain.KindActionItem {
+		t.Fatalf("create kind = %q, want %q", got, domain.KindActionItem)
 	}
 	if got := svc.lastCreateActionItem.Scope; got != domain.KindAppliesToActionItem {
 		t.Fatalf("create scope = %q, want %q", got, domain.KindAppliesToActionItem)
@@ -12922,7 +12922,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 		Position:  0,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	phase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -12933,7 +12933,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 		Position:  1,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 
@@ -12972,7 +12972,7 @@ func TestModelFocusSubtreeAllowsEmptyScope(t *testing.T) {
 		Position:  0,
 		Title:     "Leaf ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 	m := loadReadyModel(t, NewModel(newFakeService(
@@ -13005,7 +13005,7 @@ func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 		Position:  0,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	phase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -13015,7 +13015,7 @@ func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 		Position:  1,
 		Title:     "Phase",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 
@@ -13222,7 +13222,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 		Position:       0,
 		Title:          "Done ActionItem",
 		Priority:       domain.PriorityLow,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateDone,
 	}, now)
@@ -13233,7 +13233,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 		Position:  0,
 		Title:     "Blocked ActionItem",
 		Priority:  domain.PriorityHigh,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Metadata: domain.ActionItemMetadata{
 			DependsOn:     []string{"t-missing"},
@@ -13247,7 +13247,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 		Position:  0,
 		Title:     "Waiting ActionItem",
 		Priority:  domain.PriorityMedium,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 		Metadata: domain.ActionItemMetadata{
 			BlockedBy: []string{"t-not-found"},
@@ -13289,7 +13289,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Position:  0,
 		Title:     "Branch",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 	}, now)
 	phase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -13300,7 +13300,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Position:  1,
 		Title:     "Phase",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	nestedPhase, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -13311,7 +13311,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Position:  2,
 		Title:     "Nested Phase",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindPhase,
+		Kind:      domain.KindPhase,
 		Scope:     domain.KindAppliesToPhase,
 	}, now)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -13322,7 +13322,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Position:  3,
 		Title:     "ActionItem",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindActionItem,
+		Kind:      domain.KindActionItem,
 		Scope:     domain.KindAppliesToActionItem,
 	}, now)
 	subtask, _ := domain.NewActionItem(domain.ActionItemInput{
@@ -13333,7 +13333,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 		Position:  4,
 		Title:     "Subtask",
 		Priority:  domain.PriorityLow,
-		Kind:      domain.WorkKindSubtask,
+		Kind:      domain.KindSubtask,
 		Scope:     domain.KindAppliesToSubtask,
 	}, now)
 
@@ -14259,7 +14259,7 @@ func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
 		ColumnID:    column.ID,
 		Position:    0,
 		Title:       "Observe pending rows",
-		Kind:        domain.WorkKind("branch"),
+		Kind:        domain.Kind("branch"),
 		Scope:       domain.KindAppliesToBranch,
 		Description: "Open the embeddings inventory modal",
 		Priority:    domain.PriorityMedium,
@@ -14479,7 +14479,7 @@ func TestEmbeddingsStatusModalEnterOpensActionItemInfo(t *testing.T) {
 		ColumnID:  column.ID,
 		Position:  0,
 		Title:     "Roll out hybrid actionItem search",
-		Kind:      domain.WorkKind("branch"),
+		Kind:      domain.Kind("branch"),
 		Scope:     domain.KindAppliesToBranch,
 		Priority:  domain.PriorityMedium,
 	}, now)
@@ -14908,7 +14908,7 @@ func TestActionItemInfoBodyLinesRenderSystemSection(t *testing.T) {
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
 		Position:       4,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		Title:          "ActionItem",
 		Priority:       domain.PriorityMedium,
@@ -14954,7 +14954,7 @@ func TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *tes
 		ProjectID:      p.ID,
 		ColumnID:       c.ID,
 		Position:       3,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		Title:          "ActionItem",
 		Priority:       domain.PriorityMedium,
@@ -14967,7 +14967,7 @@ func TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *tes
 		{
 			ID:         1,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationCreate,
 			ActorID:    "c75a483e-6628-475e-b12d-9ee7a928a9d1",
 			ActorName:  "Evan",
@@ -14978,7 +14978,7 @@ func TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *tes
 		{
 			ID:         2,
 			ProjectID:  p.ID,
-			WorkItemID: actionItem.ID,
+			ActionItemID: actionItem.ID,
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-instance-1",
 			ActorName:  "Codex Orchestrator",
@@ -15583,7 +15583,7 @@ func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
 				ActionItemID:      "qa-1",
 				Title:             "QA PROOF REVIEW",
 				Scope:             domain.KindAppliesToActionItem,
-				Kind:              domain.WorkKindActionItem,
+				Kind:              domain.KindActionItem,
 				LifecycleState:    domain.StateTodo,
 				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
@@ -15679,7 +15679,7 @@ func TestModelTemplateMigrationReviewApproveSelectedCompletesSave(t *testing.T) 
 				ActionItemID:      "qa-1",
 				Title:             "QA PROOF REVIEW",
 				Scope:             domain.KindAppliesToActionItem,
-				Kind:              domain.WorkKindActionItem,
+				Kind:              domain.KindActionItem,
 				LifecycleState:    domain.StateTodo,
 				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,
@@ -15740,7 +15740,7 @@ func TestModelTemplateMigrationReviewSkipContinuesReapply(t *testing.T) {
 				ActionItemID:      "qa-1",
 				Title:             "QA PROOF REVIEW",
 				Scope:             domain.KindAppliesToActionItem,
-				Kind:              domain.WorkKindActionItem,
+				Kind:              domain.KindActionItem,
 				LifecycleState:    domain.StateTodo,
 				SourceChildRuleID: "qa-proof-review",
 				Status:            domain.ProjectTemplateReapplyCandidateEligible,

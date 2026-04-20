@@ -226,7 +226,7 @@ func TestCreateActionItemBlocksChildCreationUnderGeneratedNodeForWrongActorKind(
 		ParentID:       parent.ID,
 		ColumnID:       fixture.progress.ID,
 		Title:          "Builder child",
-		Kind:           domain.WorkKindSubtask,
+		Kind:           domain.KindSubtask,
 		UpdatedByActor: "builder-1",
 		UpdatedByName:  "builder-1",
 		UpdatedByType:  domain.ActorTypeAgent,
@@ -351,7 +351,7 @@ func TestMoveActionItemBlocksDoneWhenRequiredContainingContractDescendantOpen(t 
 		Title:          "Phase",
 		Priority:       domain.PriorityHigh,
 		Scope:          domain.KindAppliesToPhase,
-		Kind:           domain.WorkKindPhase,
+		Kind:           domain.KindPhase,
 		LifecycleState: domain.StateProgress,
 	})
 	actionItem := fixture.storeActionItem(t, domain.ActionItemInput{
@@ -362,7 +362,7 @@ func TestMoveActionItemBlocksDoneWhenRequiredContainingContractDescendantOpen(t 
 		Position:       1,
 		Title:          "Build actionItem",
 		Priority:       domain.PriorityMedium,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		LifecycleState: domain.StateDone,
 	})
@@ -374,7 +374,7 @@ func TestMoveActionItemBlocksDoneWhenRequiredContainingContractDescendantOpen(t 
 		Position:       2,
 		Title:          "Phase QA",
 		Priority:       domain.PriorityLow,
-		Kind:           domain.WorkKindSubtask,
+		Kind:           domain.KindSubtask,
 		Scope:          domain.KindAppliesToSubtask,
 		LifecycleState: domain.StateProgress,
 	})

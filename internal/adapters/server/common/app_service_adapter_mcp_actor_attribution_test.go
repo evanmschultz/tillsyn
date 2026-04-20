@@ -53,7 +53,7 @@ func newActorAttributionAdapterFixture(t *testing.T) (*AppServiceAdapter, *app.S
 
 	actionItem, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		Kind:           domain.WorkKindActionItem,
+		Kind:           domain.KindActionItem,
 		Scope:          domain.KindAppliesToActionItem,
 		ColumnID:       columns[0].ID,
 		Title:          "Seed ActionItem",

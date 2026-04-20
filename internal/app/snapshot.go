@@ -62,7 +62,7 @@ type SnapshotActionItem struct {
 	ID             string                    `json:"id"`
 	ProjectID      string                    `json:"project_id"`
 	ParentID       string                    `json:"parent_id,omitempty"`
-	Kind           domain.WorkKind           `json:"kind"`
+	Kind           domain.Kind           `json:"kind"`
 	Scope          domain.KindAppliesTo      `json:"scope,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
@@ -452,7 +452,7 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("tasks[%d].priority must be low|medium|high", i)
 		}
 		if strings.TrimSpace(string(t.Kind)) == "" {
-			t.Kind = domain.WorkKindActionItem
+			t.Kind = domain.KindActionItem
 			s.ActionItems[i].Kind = t.Kind
 		}
 		if t.Scope == "" {
@@ -497,7 +497,7 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
 		}
 		parent := actionItemByID[t.ParentID]
-		if t.Kind == domain.WorkKindPhase && parent.Scope != domain.KindAppliesToBranch && parent.Scope != domain.KindAppliesToPhase {
+		if t.Kind == domain.KindPhase && parent.Scope != domain.KindAppliesToBranch && parent.Scope != domain.KindAppliesToPhase {
 			return fmt.Errorf("tasks[%d].parent_id %q invalid for phase parent scope %q", i, t.ParentID, parent.Scope)
 		}
 	}
@@ -1028,15 +1028,15 @@ func (s *Service) importSnapshotHandoffs(ctx context.Context, handoffs []Snapsho
 // snapshotCommentTargetTypeForActionItem maps one work-item row to a comment target type.
 func snapshotCommentTargetTypeForActionItem(actionItem domain.ActionItem) domain.CommentTargetType {
 	switch actionItem.Kind {
-	case domain.WorkKind(domain.KindAppliesToBranch):
+	case domain.Kind(domain.KindAppliesToBranch):
 		return domain.CommentTargetTypeBranch
-	case domain.WorkKindPhase:
+	case domain.KindPhase:
 		return domain.CommentTargetTypePhase
-	case domain.WorkKindSubtask:
+	case domain.KindSubtask:
 		return domain.CommentTargetTypeSubtask
-	case domain.WorkKindDecision:
+	case domain.KindDecision:
 		return domain.CommentTargetTypeDecision
-	case domain.WorkKindNote:
+	case domain.KindNote:
 		return domain.CommentTargetTypeNote
 	default:
 		if actionItem.Scope == domain.KindAppliesToBranch {
@@ -1626,7 +1626,7 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 	}
 	kind := t.Kind
 	if kind == "" {
-		kind = domain.WorkKindActionItem
+		kind = domain.KindActionItem
 	}
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
