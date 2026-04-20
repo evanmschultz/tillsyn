@@ -65,8 +65,8 @@ Atomic units of work. Each unit mutates its `state` field in place during Phase 
 **Packages:** `internal/domain`, `internal/app`, `internal/adapters/storage/sqlite`, `internal/adapters/server/mcpapi`, `internal/adapters/server/common`, `internal/adapters/server/httpapi`, `internal/tui`, `cmd/till`
 **Blocked by:** —
 **Acceptance:**
-- `rg 'WorkKind' drop/1.75/ --glob='!drops/**'` returns 0 matches.
-- `rg 'type WorkItem |WorkItemKind|WorkItemID' drop/1.75/ --glob='!drops/**'` returns 0 matches (the table `work_items` is already `action_items`; only stale Go symbol refs die).
+- `rg 'WorkKind' drop/1.75/ --glob='!workflow/**'` returns 0 matches.
+- `rg 'type WorkItem |WorkItemKind|WorkItemID' drop/1.75/ --glob='!workflow/**'` returns 0 matches (the table `work_items` is already `action_items`; only stale Go symbol refs die).
 - `mage build` succeeds from `drop/1.75/`.
 - `mage test-pkg ./internal/domain` passes.
 
@@ -79,7 +79,7 @@ Multi-pass `rg`+`sd` sweep. Narrow regexes per identifier: `WorkKind\b → Kind`
 **Packages:** `internal/app`
 **Blocked by:** 1.1
 **Acceptance:**
-- `rg 'ensureKindCatalogBootstrapped|defaultKindDefinitionInputs|kindBootstrap' drop/1.75/ --glob='!drops/**' --glob='!internal/app/template_library*.go' --glob='!internal/app/template_contract*.go' --glob='!internal/app/template_reapply.go'` returns 0 matches (the `template_*.go` files are intentionally excluded per the "intentionally skip" clause below — they die wholesale in unit 1.5; dangling callers there are expected between 1.2 and 1.5).
+- `rg 'ensureKindCatalogBootstrapped|defaultKindDefinitionInputs|kindBootstrap' drop/1.75/ --glob='!workflow/**' --glob='!internal/app/template_library*.go' --glob='!internal/app/template_contract*.go' --glob='!internal/app/template_reapply.go'` returns 0 matches (the `template_*.go` files are intentionally excluded per the "intentionally skip" clause below — they die wholesale in unit 1.5; dangling callers there are expected between 1.2 and 1.5).
 - **`mage test-pkg ./internal/app` and `mage ci` are waived for this unit only.** The `internal/app` package is compile-broken between this unit's commit and 1.5's commit by design — callers at `internal/app/template_library.go:126`, `internal/app/template_library_builtin.go:29`, `internal/app/template_library_builtin.go:79` keep referencing `ensureKindCatalogBootstrapped` until 1.5 deletes those files wholesale. Per-unit `mage test-pkg` gate is deferred to 1.5 (see unit 1.5 Acceptance — "`mage ci` succeeds from `drop/1.75/`" is the re-green gate that discharges this waiver). Builder honors this waiver; QA does not fail the unit on app-package compile/test failure. Same pattern as the 1.4 / 1.6 waivers.
 
 Delete `ensureKindCatalogBootstrapped` at `kind_capability.go:559-589`, its `sync.Once` struct field `kindBootstrap` (declared on `Service` — builder confirms via `LSP` before deletion), and `defaultKindDefinitionInputs` at `:863-874`. Update every caller (`resolveProjectKindDefinition` at `:592-596` and similar) to skip the bootstrap call — built-in rows live in the `CREATE TABLE kind_catalog` baked inserts after 1.3 ships. **Intentionally skip** call sites inside files destined for deletion by unit 1.5 (`internal/app/template_library_builtin.go:29, :79`, `template_library.go`, `template_contract.go`, `template_reapply.go`) — 1.5's wholesale file deletion moots them, so edits here would be pure churn. The waived Acceptance bullets above are the contract side of that "intentionally skip" choice.
@@ -91,7 +91,7 @@ Delete `ensureKindCatalogBootstrapped` at `kind_capability.go:559-589`, its `syn
 **Packages:** `internal/adapters/storage/sqlite`
 **Blocked by:** 1.1, 1.2
 **Acceptance:**
-- `rg 'seedDefaultKindCatalog|mergeKindAppliesTo|kindAppliesToEqual' drop/1.75/ --glob='!drops/**'` returns 0 matches (or only the helpers' remaining uses outside the deleted seeder).
+- `rg 'seedDefaultKindCatalog|mergeKindAppliesTo|kindAppliesToEqual' drop/1.75/ --glob='!workflow/**'` returns 0 matches (or only the helpers' remaining uses outside the deleted seeder).
 - `rg "ALTER TABLE projects ADD COLUMN kind" drop/1.75/` returns 0 matches.
 - `rg "kind TEXT.*DEFAULT 'project'" drop/1.75/internal/adapters/storage/sqlite/` returns 0 matches (per F2 — the quoted-DDL column strip).
 - `rg 'kindRaw|NormalizeKindID\(p\.Kind\)|p\.Kind\s*=' drop/1.75/internal/adapters/storage/sqlite/repo.go` returns 0 matches (per Round-5 P2 — Go-wrapper strip verification).
@@ -137,7 +137,7 @@ Delete the four files; strip template_libraries `Err*` sentinels from `errors.go
 **Packages:** `internal/app`, `internal/adapters/storage/sqlite`, `internal/adapters/server/common`, `internal/adapters/server/mcpapi`, `internal/adapters/server/httpapi`, `internal/tui`, `cmd/till`
 **Blocked by:** 1.1, 1.2, 1.3, 1.4
 **Acceptance:**
-- `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate|node_contract_snapshot|template_librar|template_node_template|template_child_rule|project_template_binding' drop/1.75/ --glob='!drops/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches.
+- `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate|node_contract_snapshot|template_librar|template_node_template|template_child_rule|project_template_binding' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches.
 - `mage ci` succeeds from `drop/1.75/`. **This unit carries the workspace-compile-restoration burden** — the 1.4 waiver expects 1.5 to re-green the workspace via this check.
 - MCP tools `till.bind_project_template_library`, `till.get_template_library`, `till.upsert_template_library` absent from registered tools (verify via `rg 'till\.(bind_project_template_library|get_template_library|upsert_template_library)' internal/adapters/server/mcpapi/` returns 0). Per Round-6 P1, `ensure_builtin` was an `operation` on the unified `till.template` tool, not a standalone tool name — verify via `rg '"ensure_builtin"|"bind_project_template_library"|"get_template_library"|"upsert_template_library"' internal/adapters/server/mcpapi/` returns 0 (catches the operation-string literals on `till.template` if any residue remains).
 
@@ -150,7 +150,7 @@ The big atomic excision. Must be one unit because MCP imports app, which imports
 **Packages:** `internal/domain`, `internal/app`, `internal/adapters/server/mcpapi`, `internal/tui`, `cmd/till`
 **Blocked by:** 1.1, 1.2, 1.3, 1.4, 1.5
 **Acceptance:**
-- `rg -U 'project\.Kind|projects\.kind|Project\{[^}]*Kind' drop/1.75/ --glob='!drops/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches (`-U` enables multi-line matching so `Project{...\n...Kind:...}` struct literals are caught, not just same-line hits).
+- `rg -U 'project\.Kind|projects\.kind|Project\{[^}]*Kind' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches (`-U` enables multi-line matching so `Project{...\n...Kind:...}` struct literals are caught, not just same-line hits).
 - `rg 'projectFieldKind' drop/1.75/` returns 0 matches.
 - `rg 'tillsyn\.snapshot\.v4' drop/1.75/internal/app/` returns 0 matches (SnapshotVersion bumped to v5 per the schema-change acceptance).
 - `rg 'tillsyn\.snapshot\.v5' drop/1.75/internal/app/snapshot.go` returns exactly 1 match (the `const SnapshotVersion` line at `:16`).
@@ -289,8 +289,8 @@ Schema-only collapse replacing the current 296-line multi-phase script. Phases: 
 - `mage ci` succeeds from `drop/1.75/` (format, vet, test, build, lint — per CLAUDE.md § Build Verification).
 - `git push` + `gh run watch --exit-status` returns green on branch `drop/1.75`.
 - Coverage ≥ 70% workspace-wide.
-- `rg 'WorkKind|TemplateLibrary|template_librar|node_contract_snapshot|seedDefaultKindCatalog|ensureKindCatalogBootstrapped|bridgeLegacyActionItems|migratePhaseScopeContract|migrateTemplateLifecycle|projects\.kind|project\.Kind|FROM tasks' drop/1.75/ --glob='!drops/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches (end-state invariant).
-- Quoted-DDL guard (per F2 — catches schema substrings inside Go string literals): `rg "kind TEXT.*DEFAULT 'project'" drop/1.75/ --glob='!drops/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches.
+- `rg 'WorkKind|TemplateLibrary|template_librar|node_contract_snapshot|seedDefaultKindCatalog|ensureKindCatalogBootstrapped|bridgeLegacyActionItems|migratePhaseScopeContract|migrateTemplateLifecycle|projects\.kind|project\.Kind|FROM tasks' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches (end-state invariant).
+- Quoted-DDL guard (per F2 — catches schema substrings inside Go string literals): `rg "kind TEXT.*DEFAULT 'project'" drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches.
 
 Drop-end gate. No code edits — pure verification that the workspace is clean after all 14 prior units commit. Orchestrator runs this before any `hylla_ingest` call (ingest is drop-end only, per Phase 7 Closeout).
 
