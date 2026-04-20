@@ -138,7 +138,10 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.ActionItems) != 2 {
 		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.ActionItems))
 	}
-	if len(snapAll.KindDefinitions) != 1 {
+	// Post-collapse fake repo seeds the 5 runtime-live kinds (project, actionItem,
+	// branch, phase, subtask); this test upserts `refactor` in addition, so the
+	// exported closure contains 6 definitions.
+	if len(snapAll.KindDefinitions) != 6 {
 		t.Fatalf("expected kind definition closure in snapshot, got %#v", snapAll.KindDefinitions)
 	}
 	if len(snapAll.ProjectAllowedKinds) != 1 || snapAll.ProjectAllowedKinds[0].ProjectID != p1.ID {

@@ -36,12 +36,15 @@ type fakeRepo struct {
 
 // newFakeRepo constructs fake repo.
 //
-// Post-Unit-1.5 the app-layer kind-catalog bootstrap helper
-// (ensureKindCatalogBootstrapped) has been deleted; the SQLite schema seeds
-// {project, actionItem} via CREATE-time INSERT OR IGNORE, but this in-memory
-// fake never runs SQL migrations. Seed the two surviving kinds here so tests
-// that rely on kind lookup (CreateProject, CreateActionItem, etc.) continue
-// to resolve.
+// Post-Unit-1.5 the app-layer kind-catalog bootstrap helper has been deleted;
+// the SQLite schema seeds {project, actionItem} via CREATE-time INSERT OR
+// IGNORE, but this in-memory fake never runs SQL migrations. Seed {project,
+// actionItem} plus the runtime-live orphan kinds {branch, phase, subtask}
+// that tests exercise for nested scope lineage; the post-collapse kind_catalog
+// drops these rows but the Kind/Scope constants remain valid at runtime for
+// ActionItem placement inside the lineage. Refinement: remove orphan kinds
+// once drops-rewrite.sql rewrites their usages. See "Orphan-via-Collapse,
+// Defer to Refinement" memory rule.
 func newFakeRepo() *fakeRepo {
 	now := time.Now().UTC()
 	kindDefs := map[domain.KindID]domain.KindDefinition{
@@ -56,6 +59,27 @@ func newFakeRepo() *fakeRepo {
 			ID:          domain.KindID("actionItem"),
 			DisplayName: "ActionItem",
 			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		domain.KindID("branch"): {
+			ID:          domain.KindID("branch"),
+			DisplayName: "Branch",
+			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToBranch},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		domain.KindID("phase"): {
+			ID:          domain.KindID("phase"),
+			DisplayName: "Phase",
+			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPhase},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		domain.KindID("subtask"): {
+			ID:          domain.KindID("subtask"),
+			DisplayName: "Subtask",
+			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToSubtask},
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		},

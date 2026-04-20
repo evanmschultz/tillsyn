@@ -5787,7 +5787,7 @@ func (m Model) allowedLabelsForSelectedProject() []string {
 }
 
 // projectFormFields stores a package-level helper value.
-var projectFormFields = []string{"name", "description", "kind", "owner", "icon", "color", "homepage", "tags", "root_path"}
+var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path"}
 
 // projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
@@ -16566,7 +16566,6 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		return "new project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
-			"kind field opens the project-kind picker (enter/e; typing starts a filtered picker)",
 			"icon field is shown in path context, notices, and picker and supports emoji",
 			"root_path field: r opens directory picker",
 		}
@@ -16574,7 +16573,6 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		return "edit project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
-			"kind field opens the project-kind picker",
 			"icon field is shown in path context, notices, and picker and supports emoji",
 			"root_path field: r opens directory picker",
 			"comments row: enter or e opens the project thread on the comments panel",

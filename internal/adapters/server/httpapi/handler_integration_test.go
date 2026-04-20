@@ -111,6 +111,7 @@ func newApprovedPathAttentionFixture(t *testing.T) approvedPathAttentionFixture 
 	}, nil, app.ServiceConfig{
 		AutoCreateProjectColumns: true,
 	})
+	seedHTTPOrphanKindsForTest(t, service)
 	project, err := service.CreateProject(context.Background(), "Demo", "")
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -174,6 +175,34 @@ func firstHTTPProjectColumnIDForTest(t *testing.T, repo *sqlite.Repository, proj
 		t.Fatal("ListColumns() returned no columns, want defaults")
 	}
 	return columns[0].ID
+}
+
+// seedHTTPOrphanKindsForTest upserts branch/phase/subtask kind definitions that the
+// built-in sqlite seed omits so HTTP integration fixtures can build branch -> phase
+// -> actionItem chains without hitting ErrKindNotFound. Post-Drop-1.75 the app layer
+// no longer seeds these legacy kinds; adapter tests that still exercise them must
+// seed explicitly via the service API per the orphan-via-collapse doctrine.
+func seedHTTPOrphanKindsForTest(t *testing.T, svc *app.Service) {
+	t.Helper()
+
+	entries := []struct {
+		id        domain.KindID
+		display   string
+		appliesTo domain.KindAppliesTo
+	}{
+		{id: domain.KindID("branch"), display: "Branch", appliesTo: domain.KindAppliesToBranch},
+		{id: domain.KindID("phase"), display: "Phase", appliesTo: domain.KindAppliesToPhase},
+		{id: domain.KindID("subtask"), display: "Subtask", appliesTo: domain.KindAppliesToSubtask},
+	}
+	for _, entry := range entries {
+		if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
+			ID:          entry.id,
+			DisplayName: entry.display,
+			AppliesTo:   []domain.KindAppliesTo{entry.appliesTo},
+		}); err != nil {
+			t.Fatalf("UpsertKindDefinition(%q) error = %v", entry.id, err)
+		}
+	}
 }
 
 // createHTTPScopedActionItemChainForTest creates one branch -> phase -> actionItem chain for HTTP approved-path tests.
