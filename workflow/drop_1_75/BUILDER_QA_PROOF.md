@@ -35,3 +35,48 @@ The builder's claim — 31 Go source files renamed across 8 narrow `rg`+`sd` pas
 ## Hylla Feedback
 
 N/A — this QA pass verified a pure Go-identifier rename via `rg` / `git diff` / `mage` gates. Hylla was not consulted because the evidence demanded by the acceptance gates is lexical (ripgrep) and semantic (Go compiler via `mage build` + `mage test-pkg`). No Hylla miss to record.
+
+## Unit 1.2 — Round 1
+
+**Verdict:** PASS
+
+## Summary
+
+Builder's claim — delete the app-layer kind-catalog seeder (`ensureKindCatalogBootstrapped` + `defaultKindDefinitionInputs` + `kindBootstrap` field + orphaned `kindBootstrapState` type), drop the now-unused `"sync"` import from `kind_capability.go`, and strip the 6 in-scope guard-block callers (4 in `kind_capability.go` + 2 in `service.go`) — is fully supported by the evidence. The acceptance `rg` returns 0. The three dangling `template_library*.go` references are the documented Unit 1.5 waiver, not defects. `git diff HEAD` matches the worklog's "Files touched" list (3 Go files + 2 MD files) exactly.
+
+## Confirmed Claims
+
+- **Acceptance rg (fresh re-run):** `rg 'ensureKindCatalogBootstrapped|defaultKindDefinitionInputs|kindBootstrap' . --glob='!workflow/**' --glob='!internal/app/template_library*.go' --glob='!internal/app/template_contract*.go' --glob='!internal/app/template_reapply.go'` → 0 matches (rg exit 1). **Pass.**
+- **`ensureKindCatalogBootstrapped` definition removed:** pre-diff hunk shows the full function body at `kind_capability.go:559-589` deleted, matching the worklog's `:559-589` range claim.
+- **`defaultKindDefinitionInputs` removed:** pre-diff hunk shows the function body (returns 7 built-in kind inputs) deleted, matching the worklog's `:863-874` range claim (line numbers approximate — span deleted is 12 lines, close to the claimed 12-line span).
+- **`kindBootstrap` field removed from `Service`:** `git diff internal/app/service.go` shows `-	kindBootstrap      kindBootstrapState` struck from the struct. Builder claim of pre-removal at `:109` matches `git show HEAD:internal/app/service.go | rg kindBootstrap` → `109:	kindBootstrap      kindBootstrapState`.
+- **`kindBootstrapState` struct type removed (orphaned):** `git diff internal/app/kind_capability.go` shows the 6-line block (comment + struct with `once sync.Once`, `err error`) deleted. `rg 'kindBootstrapState' . --glob='!workflow/**' --glob='!.git/**'` → 0 matches.
+- **`"sync"` import dropped from `kind_capability.go`:** diff shows `-	"sync"` removed from the import block. `rg '\bsync\.' internal/app/kind_capability.go` → 0 matches (no remaining consumers in the file). `"sync"` import intact in `service.go` because `schemaCacheMu sync.RWMutex` still uses it (verified via `rg '\bsync\.' internal/app/service.go` → `108:	schemaCacheMu      sync.RWMutex`).
+- **In-scope callers stripped — `kind_capability.go` (4 sites):** `git show HEAD:internal/app/kind_capability.go | rg 'ensureKindCatalogBootstrapped' -n` pre-unit returned definition at `:559-560` + callers at `:99, :161, :593, :636`. Diff hunks show guard blocks stripped from `ListKindDefinitions` (pre-`:99-101`), `SetProjectAllowedKinds` (pre-`:161-163`), `resolveProjectKindDefinition` (pre-`:593-595`), `resolveActionItemKindDefinition` (pre-`:636-638`). All 4 guard blocks removed.
+- **In-scope callers stripped — `service.go` (2 sites):** pre-unit refs at `:201, :253`. Diff hunks show guard blocks stripped from `EnsureDefaultProject` (pre-`:201-203`) and `CreateProjectWithMetadata` (pre-`:253-255`). Both callers cleaned.
+- **Test deletion:** `TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport` removed from `kind_capability_test.go` (diff shows 24 lines deleted at the end of the file). `rg 'TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport' . --glob='!workflow/**'` → 0 matches.
+- **`"slices"` import retained:** `rg 'slices\.' internal/app/kind_capability_test.go` → `:63`, `:961` — both still used. Matches worklog.
+- **`service_test.go` untouched (correctly):** `git show HEAD:internal/app/service_test.go | rg 'defaultKindDefinitionInputs|kindBootstrap|ensureKindCatalogBootstrapped'` → 0 matches pre-unit. Plan listed it defensively; builder correctly identified no edits were needed. Current state also 0 matches.
+- **Waiver-documented dangling refs present and exactly 3:** `rg 'ensureKindCatalogBootstrapped' internal/app/template_library.go internal/app/template_library_builtin.go -n` →
+  - `internal/app/template_library.go:126`
+  - `internal/app/template_library_builtin.go:29`
+  - `internal/app/template_library_builtin.go:79`
+
+  All three match the plan's "intentionally skip" clause verbatim. **Not a finding** — these die wholesale in Unit 1.5 (plan §1.5 Paths list includes both files for deletion). Confirmed per PLAN.md §1.2 waiver and task description's "Intentionally skipped (per plan, NOT defects)" bullet.
+- **`mage test-pkg ./internal/app` + `mage ci` waiver honored:** worklog explicitly notes both were waived and not run. Matches plan §1.2 "mage test-pkg ./internal/app and mage ci are waived for this unit only." No violation.
+- **`git diff HEAD --stat` file coherence:** 3 Go source files (`internal/app/kind_capability.go`, `internal/app/kind_capability_test.go`, `internal/app/service.go`) + 2 MD files (`workflow/drop_1_75/BUILDER_WORKLOG.md` append, `workflow/drop_1_75/PLAN.md` state flip). Matches worklog's "Files touched" list exactly.
+- **PLAN.md state flip:** `git diff workflow/drop_1_75/PLAN.md` shows exactly one change: §1.2 `**State:** todo` → `**State:** done`. No drift.
+- **Deviation 1 (`kindBootstrapState` orphan removal):** worklog explicitly disclosed; plan's §1.2 acceptance rg includes `kindBootstrap` as a target pattern, so the struct type (which matches `kindBootstrap*`) would have been caught by the same gate anyway. Deleting it is strictly cleaner than leaving it and is covered by the gate pattern.
+- **Deviation 2 (`"sync"` import drop):** worklog explicitly disclosed; safe because the only `sync.` consumer in `kind_capability.go` was `kindBootstrapState.once sync.Once`. No remaining consumers (`rg '\bsync\.' internal/app/kind_capability.go` → 0).
+
+## Missing Evidence
+
+- None. All 6 plan-specified acceptance items (including the 3 waived-compile-failure items) have direct diff/rg evidence.
+
+## P-Findings (Proof Gaps)
+
+- None.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed. This QA pass verified symbol deletions via `git diff HEAD` + `rg` over committed Go source (Hylla is stale for files touched after the last ingest, so `git diff` is the correct evidence source here per project CLAUDE.md rule #2). No Hylla query was attempted because the evidence demanded is lexical (has-the-identifier-disappeared-from-these-specific-files) and the diff is the authoritative record. No miss to record.

@@ -991,27 +991,3 @@ func TestKindCapabilityHelpers(t *testing.T) {
 	}
 }
 
-// TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport verifies built-in defaults include nested phase support.
-func TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport(t *testing.T) {
-	inputs := defaultKindDefinitionInputs()
-	byID := map[domain.KindID]domain.KindDefinitionInput{}
-	for _, input := range inputs {
-		byID[input.ID] = input
-	}
-
-	phase, ok := byID[domain.KindID(domain.KindPhase)]
-	if !ok {
-		t.Fatal("expected phase kind definition to exist")
-	}
-	if !slices.Contains(phase.AppliesTo, domain.KindAppliesToPhase) {
-		t.Fatalf("expected phase applies_to to include phase, got %#v", phase.AppliesTo)
-	}
-
-	subtask, ok := byID[domain.KindID(domain.KindSubtask)]
-	if !ok {
-		t.Fatal("expected subtask kind definition to exist")
-	}
-	if !slices.Contains(subtask.AllowedParentScopes, domain.KindAppliesToPhase) {
-		t.Fatalf("expected subtask parent scopes to include phase, got %#v", subtask.AllowedParentScopes)
-	}
-}

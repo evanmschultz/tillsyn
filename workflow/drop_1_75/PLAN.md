@@ -74,7 +74,7 @@ Multi-pass `rg`+`sd` sweep. Narrow regexes per identifier: `WorkKind\b → Kind`
 
 ### 1.2 — Delete app-layer kind-catalog seeder
 
-**State:** todo
+**State:** done
 **Paths:** `internal/app/kind_capability.go`, `internal/app/kind_capability_test.go`, `internal/app/service.go` (remove `kindBootstrap` struct field if declared there), `internal/app/service_test.go`
 **Packages:** `internal/app`
 **Blocked by:** 1.1
