@@ -11,7 +11,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -82,12 +81,6 @@ type schemaCacheEntry struct {
 	validator *jsonSchemaValidator
 }
 
-// kindBootstrapState tracks one-time bootstrap initialization.
-type kindBootstrapState struct {
-	once sync.Once
-	err  error
-}
-
 // defaultCapabilityLeaseTTL defines default lease expiration behavior.
 const (
 	defaultCapabilityLeaseTTL = 24 * time.Hour
@@ -96,9 +89,6 @@ const (
 
 // ListKindDefinitions lists catalog entries with deterministic ordering.
 func (s *Service) ListKindDefinitions(ctx context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return nil, err
-	}
 	kinds, err := s.repo.ListKindDefinitions(ctx, includeArchived)
 	if err != nil {
 		return nil, err
@@ -156,9 +146,6 @@ func (s *Service) SetProjectAllowedKinds(ctx context.Context, in SetProjectAllow
 		return domain.ErrInvalidID
 	}
 	if _, err := s.repo.GetProject(ctx, projectID); err != nil {
-		return err
-	}
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
 		return err
 	}
 	kindIDs := normalizeKindIDList(in.KindIDs)
@@ -556,43 +543,8 @@ func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectI
 	return nil
 }
 
-// ensureKindCatalogBootstrapped seeds built-in kind definitions when catalog is empty.
-func (s *Service) ensureKindCatalogBootstrapped(ctx context.Context) error {
-	s.kindBootstrap.once.Do(func() {
-		kinds, err := s.repo.ListKindDefinitions(ctx, true)
-		if err != nil {
-			s.kindBootstrap.err = err
-			return
-		}
-		existing := make(map[domain.KindID]struct{}, len(kinds))
-		for _, kind := range kinds {
-			existing[kind.ID] = struct{}{}
-		}
-		now := s.clock()
-		for _, in := range defaultKindDefinitionInputs() {
-			if _, ok := existing[in.ID]; ok {
-				continue
-			}
-			kind, buildErr := domain.NewKindDefinition(in, now)
-			if buildErr != nil {
-				s.kindBootstrap.err = buildErr
-				return
-			}
-			if createErr := s.repo.CreateKindDefinition(ctx, kind); createErr != nil {
-				s.kindBootstrap.err = createErr
-				return
-			}
-			existing[kind.ID] = struct{}{}
-		}
-	})
-	return s.kindBootstrap.err
-}
-
 // resolveProjectKindDefinition resolves one project kind definition and allowlist constraints.
 func (s *Service) resolveProjectKindDefinition(ctx context.Context, projectID string, kindID domain.KindID) (domain.KindDefinition, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return domain.KindDefinition{}, err
-	}
 	kindID = domain.NormalizeKindID(kindID)
 	if kindID == "" {
 		kindID = domain.DefaultProjectKind
@@ -633,9 +585,6 @@ func (s *Service) validateProjectKind(ctx context.Context, projectID string, kin
 
 // resolveActionItemKindDefinition resolves one work-item kind definition and scope constraints.
 func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem) (domain.KindDefinition, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return domain.KindDefinition{}, err
-	}
 	kindID = domain.NormalizeKindID(kindID)
 	if kindID == "" {
 		kindID = domain.KindID(domain.KindActionItem)
@@ -858,19 +807,6 @@ func normalizeKindIDList(in []domain.KindID) []domain.KindID {
 		return out[i] < out[j]
 	})
 	return out
-}
-
-// defaultKindDefinitionInputs returns built-in kind definitions for first boot.
-func defaultKindDefinitionInputs() []domain.KindDefinitionInput {
-	return []domain.KindDefinitionInput{
-		{ID: domain.DefaultProjectKind, DisplayName: "Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{ID: domain.KindID(domain.KindActionItem), DisplayName: "ActionItem", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
-		{ID: domain.KindID(domain.KindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.KindPhase), DisplayName: "Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
-		{ID: domain.KindID("branch"), DisplayName: "Branch", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.KindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{ID: domain.KindID(domain.KindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-	}
 }
 
 // mergeActionItemMetadataWithKindTemplate applies actionItem-template defaults for one kind at create time.

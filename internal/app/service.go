@@ -106,7 +106,6 @@ type Service struct {
 	handoffRepo        HandoffRepository
 	schemaCache        map[string]schemaCacheEntry
 	schemaCacheMu      sync.RWMutex
-	kindBootstrap      kindBootstrapState
 	embeddingGenerator EmbeddingGenerator
 	searchIndex        EmbeddingSearchIndex
 	embeddingLifecycle EmbeddingLifecycleStore
@@ -198,9 +197,6 @@ func (s *Service) Clock() Clock {
 
 // EnsureDefaultProject ensures default project.
 func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return domain.Project{}, err
-	}
 	projects, err := s.repo.ListProjects(ctx, false)
 	if err != nil {
 		return domain.Project{}, err
@@ -250,9 +246,6 @@ func (s *Service) CreateProject(ctx context.Context, name, description string) (
 
 // CreateProjectWithMetadata creates project with metadata.
 func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjectInput) (domain.Project, error) {
-	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
-		return domain.Project{}, err
-	}
 	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	now := s.clock()
 	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
