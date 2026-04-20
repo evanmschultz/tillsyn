@@ -990,4 +990,3 @@ func TestKindCapabilityHelpers(t *testing.T) {
 		t.Fatalf("KindPayload = %s, want {\"key\":\"value\"}", string(meta.KindPayload))
 	}
 }
-

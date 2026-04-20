@@ -67,7 +67,7 @@ func enforceMutationApprovedPathPolicy(sessionMetadata map[string]string, action
 // global-admin operation rather than a project-scoped workflow mutation.
 func mutationActionRequiresGlobalApprovedPath(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "create_project", "upsert_kind_definition", "upsert_template_library", "bind_project_template_library":
+	case "create_project", "upsert_kind_definition":
 		return true
 	default:
 		return false

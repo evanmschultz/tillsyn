@@ -513,3 +513,183 @@ This is a pre-existing test-coverage gap, NOT introduced by Unit 1.4. The reloca
 ## Hylla Feedback
 
 N/A — task touched non-Go content (PLAN.md, worklog MDs) and Go files inside the Unit-1.1–1.3 edit window where Hylla is stale per project CLAUDE.md rule #2 ("Changed since last ingest: use `git diff`"). Verification evidence was `git diff HEAD` + `git show HEAD:<path>` + `Read` + `Grep` + a fresh `mage testPkg` rerun. No Hylla query was attempted and none was needed — byte-identity verification, sentinel-removal verification, and waiver-scope cross-reference are all lexical / diff-bound operations that Hylla can't out-perform on stale-since-ingest files. Recording "None — Hylla answered everything needed" as the closing stance.
+
+## Unit 1.5 — Round 1 — QA Falsification
+
+**Verdict:** PASS-WITH-ACCEPTED-RISK (plus 2 non-blocking findings routed to `§1.5-related-cleanup` follow-up; plus 1 DEFER-TO-LATER-UNIT finding aimed at §1.11/§1.12/§1.13 planners)
+
+## Summary
+
+Ran 11 targeted attacks against the Unit 1.5 template-library / node-contract-snapshot excision across 7 packages. Zero CONFIRMED blocking counterexamples against the unit's stated objective ("workspace-compile restoration burden — the 1.4 waiver discharge"). `mage build` succeeds, `mage ci` produces 0 build errors across 20 packages, the three §1.5 acceptance regexes (Gate 1/2/3) all return 0 matches on Go files, all 21 remaining test failures classify cleanly into §1.11 / §1.12 Paths as documented. Two non-blocking findings surfaced: (F1) nine dead string literals in `internal/adapters/server/common/app_service_adapter_mcp.go` + `internal/adapters/server/mcpapi/instructions_tool.go` + `internal/tui/model.go` advertising removed template-library functionality — not caught by Gate 1 regex because they use `template-library` (dash) not `template_librar` (underscore); these are live MCP/TUI introspection surfaces, not doc files. (F2) one previously-flagged scope-expansion into `cmd/till/project_cli_test.go` (already documented in Round 1 §1.4 F3) — builder applied the minimum-necessary strip cleanly, no further action needed. One DEFER observation (F3): the §1.11/§1.12/§1.13 planners must handle the 21 routed test failures as already Paths'd — orchestrator attention not needed.
+
+## Attacks Attempted
+
+### A1 — Gate 2 test-failure mis-routing (REFUTED)
+
+Cross-referenced every one of the 21 test failures surfaced by fresh `mage ci` rerun against §1.11 / §1.12 Paths:
+
+**§1.11 Paths** (`internal/app/kind_capability_test.go`, `internal/app/service_test.go`, `internal/app/snapshot_test.go`, `internal/app/helper_coverage_test.go`):
+- kind_capability_test.go: 7 failures (TestServiceSetAndListProjectAllowedKindsValidation, TestServiceEnforceMutationGuardBranches, TestCreateActionItemAppliesKindTemplateActions, TestCreateProjectAppliesKindTemplateDefaultsAndChildren, TestCreateActionItemCascadesChildKindTemplateDefaults, TestCreateActionItemRejectsRecursiveTemplateBeforePersistence, TestIssueCapabilityLeaseParentDelegationPolicy) — ALL in Paths. ✓
+- service_test.go: 5 failures (TestIssueCapabilityLeaseDistinctIdentitiesBranchScope, TestScopedLeaseAllowsLineageMutations, TestScopedLeaseRejectsSiblingMutations, TestCreateActionItemKindPayloadValidation, TestReparentActionItemRejectsCycle) — ALL in Paths. ✓
+- snapshot_test.go: 1 failure (TestExportSnapshotIncludesExpectedData) — in Paths. ✓
+
+**§1.12 Paths** (`internal/adapters/storage/sqlite/*_test.go`, `internal/adapters/server/{mcpapi,httpapi,common}/*_test.go`):
+- mcpapi/handler_integration_test.go: 2 failures (TestHandlerUpdateHandoffResolvesApprovedPathContext, TestHandlerUpdateHandoffOutOfScopeApprovedPathDenied) — in Paths. ✓
+- httpapi/handler_integration_test.go: 2 failures (TestHandlerResolveAttentionItemApprovedPath, TestHandlerResolveAttentionItemOutOfScopeApprovedPathDenied) — in Paths. ✓
+- common/app_service_adapter_auth_context_test.go: 3 failures (TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources, TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit, TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources) — in Paths. ✓
+- common/app_service_adapter_lifecycle_test.go: 1 failure (TestAppServiceAdapterProjectActionItemCommentLifecycle) — in Paths. ✓
+
+Total: 7+5+1+2+2+3+1 = 21. Classification tight. Worklog's routing table matches fresh `mage ci` output exactly. No counterexample — every failure is owned by a later unit's Paths.
+
+### A2 — `help.go` compat-docstring restore smells like hedging (REFUTED — FLAG IS LIVE)
+
+Traced `--template-json` end-to-end post-§1.5:
+
+- `cmd/till/main.go:850` — `kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.templateJSON, "template-json", "", "Optional kind template JSON")`.
+- `cmd/till/main.go:851` — `mustMarkFlagHidden(kindUpsertCmd, "template-json")`.
+- `cmd/till/main.go:2581` — `template, err := parseOptionalKindTemplateJSON(opts.templateJSON)` — flag value is consumed.
+- `cmd/till/main.go:2593` — `Template: template` — passed into `UpsertKindDefinition`.
+- `cmd/till/main.go:2926-2937` — `parseOptionalKindTemplateJSON` unmarshals raw JSON into `domain.KindTemplate`; `mage build` confirms `domain.KindTemplate` still exists (§1.4 F5 preservation).
+
+The hidden flag is functional end-to-end. `TestRunSubcommandHelp/kind_upsert` at `cmd/till/main_test.go:623-625` asserts `"compatibility-only"` appears in the help output. `TestRunKindAndAllowlistCommands` at `main_test.go:1812` literally exercises `--template-json "{}"`. Builder's help-text restore is necessary to keep these tests passing — not hedging, not a bug-in-disguise. The docstring is truthful.
+
+### A3 — `service_test.go` `newFakeRepo` seeding masks bugs (REFUTED)
+
+Tracked every remaining caller of the deleted `ensureKindCatalogBootstrapped`:
+
+- `git grep -n "ensureKindCatalogBootstrapped" -- internal/ cmd/` → 1 hit, a comment-only reference in `internal/app/service_test.go:40` explaining why the seed block exists.
+- Zero production callers.
+
+The seeding replaces the EFFECT of the deleted bootstrap (kind_catalog has `{project, actionItem}` at test time) not a CALL. The real sqlite repo seeds via `CREATE TABLE kind_catalog` + inline `INSERT OR IGNORE` (§1.3) at every DB open — orthogonal code path. The fake-repo seeding is the in-memory equivalent; no production code path is bypassed or masked.
+
+Seed block at `service_test.go:45-76` constructs minimal `domain.KindDefinition` records with `AppliesTo: [project]` / `AppliesTo: [actionItem]`, `CreatedAt: time.Now().UTC()`, `UpdatedAt: time.Now().UTC()` — matches post-collapse catalog shape exactly. No counterexample.
+
+### A4 — Scope-expansion into `cmd/till/project_cli_test.go` (REFUTED — MINIMUM NECESSARY)
+
+`git diff c84d281 -- cmd/till/project_cli_test.go`:
+- Deleted `TestRunProjectCreateUsesTemplateLibrary` function (~100 lines) that constructed `app.UpsertTemplateLibraryInput` with `domain.TemplateLibraryScopeGlobal`, `domain.TemplateLibraryStatusApproved`, `domain.TemplateActorKindBuilder`, `domain.TemplateActorKind`, `domain.TemplateActorKindHuman` — all types removed in §1.4.
+- Removed 5 unused imports that the deleted test was the sole consumer of: `context`, `path/filepath`, `internal/adapters/storage/sqlite`, `internal/config`, `github.com/google/uuid`.
+
+Verified no other test in `project_cli_test.go` uses these imports — Go's unused-import error is a hard build failure, so stripping them is forced by the test deletion. This is a single indivisible unit of work. Already previewed by §1.4 Round 1 F3 (F3 routed as DEFER-TO-LATER-UNIT to §1.5 planner OR scope-expansion). Builder took the scope-expansion path — matches the §1.3 pattern. No over-reach.
+
+### A5 — Deletion completeness sweep (REFUTED for symbols; FLAGS F1 for string literals)
+
+Exhaustive case-insensitive grep across the repo excluding workflow + drops-rewrite.sql:
+
+**Code-identifier sweep (§1.5 Gate 1 regex):** `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate|node_contract_snapshot|template_librar|template_node_template|template_child_rule|project_template_binding' --glob='*.go'` → 0 matches. Gate 1 clean. ✓
+
+**Extended symbol sweep:** `rg 'TemplateLibrary|NodeContractSnapshot|ProjectTemplateBinding|TemplateActorKind' --glob='*.go' --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` → 0 matches.
+
+**Dash-form string-literal sweep** (NOT covered by Gate 1 regex — `template_librar` with underscore does not match `template-library` with dash): `rg -nI 'template-library\|"template library"' --glob='*.go'` found:
+
+- `internal/adapters/server/common/app_service_adapter_mcp.go:33` — `"Kind catalog plus template-library-driven generated follow-up work and node-contract snapshots"` — live `WhatTillsynIs` capability string served via MCP introspection.
+- `internal/adapters/server/mcpapi/instructions_tool.go:330, 358, 359, 385, 386, 401` — six instances across `AGENTS.md` / `README.md` / `SKILL.md` advice blocks advertising "template-library workflows", "template-library changes", "template-library examples", "template-library-driven features". Served as MCP `till.instructions` tool output.
+- `internal/tui/model.go:16851, 16861` — hardcoded help-text strings inside `modeAddProject` / `modeEditProject` describing a "template library field opens the approved-library picker" UI that was removed (per §1.5 F7 confirming no TemplateLibrary readbacks).
+
+Total: 9 dead string literals across 3 live user-facing surfaces. Classified as F1 below.
+
+### A6 — `go.mod` diagnostics false positive (REFUTED — ORCHESTRATOR SPAWN PROMPT WAS WRONG)
+
+Spawn prompt claimed "New go.mod diagnostics post-builder-return: `github.com/charmbracelet/x/exp/golden` missing, `golang.org/x/exp` missing; chroma / glamour / douceur unused."
+
+Evidence:
+- `git diff c84d281 -- go.mod` → EMPTY. go.mod unchanged.
+- `git grep -nI "charmbracelet/glamour"` → 12 hits across `internal/tui/markdown_renderer.go`, `file_viewer_mode.go`, `file_viewer_renderer.go`, `model.go`. Glamour is heavily used by TUI — not orphaned.
+- `git grep -nI "charmbracelet/x/exp/golden"` → 3 hits in `third_party/teatest_v2/teatest.go:16` + `go.mod`/`go.sum`. Used by teatest.
+- `mage ci` completed `gofumpt` + `go vet` + `go test -cover` with 0 build errors sitewide.
+
+The spawn prompt's diagnostic was a gopls-cache artifact, not a real build defect. No counterexample against the builder.
+
+### A7 — §1.4 waiver discharge verification (REFUTED — WORKSPACE COMPILES)
+
+Ran `mage build` → `[SUCCESS] Built till from ./cmd/till`. Then re-ran `mage ci` → "0 build errors across 20 packages" in the test summary (only 21 test failures, all in §1.11/§1.12 Paths per A1).
+
+Sample package-level verification (via `mage ci` coverage pass): all 20 packages produced `[PKG PASS]` for compile or `[PKG FAIL]` with coverage-% (not build-error) detail. Every package compiles. §1.4 waiver DISCHARGED.
+
+### A8 — YAGNI / over-deletion of §1.6+ dependencies (REFUTED)
+
+Verified symbols §1.6+ needs still exist:
+- `resolveProjectKindDefinition` — still at `kind_capability.go:547`. §1.6 Paths: "strip `resolveProjectKindDefinition` + callers" — §1.6 will delete it, needs it present first.
+- `resolveActionItemKindDefinition` — still at `kind_capability.go:587`. Used by `CreateActionItem`.
+- `initializeProjectAllowedKinds` — still at `kind_capability.go:711`, `library *domain.TemplateLibrary` param correctly stripped (per §1.5 F2 Round-6 directive).
+- `templateDerivedProjectAllowedKindIDs` — DELETED. Per §1.5 F2 directive: "if the functions become trivial after the parameter removal, delete them and their callers instead of keeping stub shells". Correct disposition.
+- `domain.KindTemplate` — PRESERVED (§1.4 F5). Still referenced at `cmd/till/main.go:2927, 2932`. ✓
+- `ErrInvalidKindTemplate` — PRESERVED (§1.4 F5). Still at `internal/domain/errors.go:25` with 7 call-sites in `kind.go`. ✓
+
+No over-deletion. §1.6+ prerequisites intact.
+
+### A9 — Orphan-via-collapse classification (REFUTED)
+
+Per `feedback_orphan_via_collapse_defer_refinement.md`: catalog/enum collapse should leave orphan-downstream vocabularies alone, deferring cleanup to refinement. Unit 1.5 does NOT violate — it excises an entire feature surface (template_libraries + node_contract_snapshots), not vocabulary rows. This is direct subsystem excision, same pattern as §1.4.
+
+Zero dead code left inside `internal/app` / `internal/adapters/server/*` under deleted type names — final `git grep -n "TemplateLibrary|NodeContractSnapshot|ProjectTemplateBinding|TemplateActorKind" --glob='*.go'` returns 0 matches. The 9 dash-form string literals (F1) are user-facing copy, not code; they describe features that no longer exist, but the code itself doesn't reference the deleted types.
+
+### A10 — `ensureActionItemCompletionBlockersClear` relocation is a semantic-preserving collapse (REFUTED)
+
+`git diff c84d281 -- internal/app/mutation_guard.go` shows NEW functions `currentMutationActorType` + `ensureActionItemCompletionBlockersClear` added to this file. These were NOT in §1.5 Paths for `mutation_guard.go`.
+
+Baseline location: `git grep -n "^func currentMutationActorType" c84d281 -- internal/app/` → `c84d281:internal/app/template_contract.go:22`. Same for `ensureActionItemCompletionBlockersClear` at `template_contract.go:74`.
+
+The functions were defined in `template_contract.go` (deleted wholesale per §1.5 Paths) but CALLED from `service.go` at 9 call sites. Deleting `template_contract.go` wholesale without relocating them would break compile. Forced relocation, same pattern as §1.4's `canonicalizeActionItemToken` relocation (template_library.go → kind.go).
+
+**However, the relocated `ensureActionItemCompletionBlockersClear` is NOT byte-identical to the original** — the original (template_contract.go:74-125, 51 lines) walked children + descendants, loaded `nodeContractSnapshotForActionItem` per child, checked `RequiredForParentDone` + `RequiredForContainingDone` via `appendBlocker`, then finally ran `CompletionCriteriaUnmet`. The new version (mutation_guard.go:22-47, 25 lines) keeps ONLY the `CompletionCriteriaUnmet` tail.
+
+This collapse is SEMANTICALLY CORRECT: `nodeContractSnapshotForActionItem` depends on `NodeContractSnapshot` which was deleted. The node-contract enforcement path has no data to operate on post-§1.4. The remaining behavior (completion_criteria on active non-archived children) is the only enforcement that survives the template excision. Caller semantics at `service.go:667` (inside `MoveActionItem` → `StateDone` transition) preserves completion-blocker enforcement at the state-transition grain, just without the dead node-contract branch.
+
+Not documented in the worklog, but not a bug. Recorded under F2 below so §1.11 planner knows the behavior-surface changed.
+
+### A11 — `cli_render.go` + `mutation_guard.go` + `change_event.go` + ports.go scope creep (REFUTED — FORCED BY DELETIONS)
+
+Non-Paths files touched in diff:
+- `cmd/till/cli_render.go` — deleted 9 `case "template.library.*"` + `case "template.builtin.*"` + `case "template.project.*"` + `case "template.contract.*"` branches from `commandProgressLabel`. All reference removed MCP tool operations. Forced by CLI surface removal.
+- `internal/app/mutation_guard.go` — relocation target for `currentMutationActorType` + `ensureActionItemCompletionBlockersClear` (per A10) + deletion of `withInternalTemplateMutation` + `internalTemplateMutationAllowed` + `internalTemplateMutationContextKey` (context helpers only used by deleted template_contract code paths). Forced by template_contract.go deletion.
+- `internal/domain/change_event.go` — gofumpt whitespace realignment only (struct field alignment). No semantic change. Byproduct of `mage format` on adjacent edits.
+- `internal/app/ports.go` — IS in §1.5 Paths (confirmed).
+- `internal/adapters/server/common/app_service_adapter.go` — IS in §1.5 Paths (confirmed).
+
+Scope-creep into cli_render.go + mutation_guard.go + change_event.go is forced-by-deletion. None of it is discretionary. No counterexample.
+
+## F-Findings (Falsification Findings)
+
+### F1 — Dead string literals advertising removed template-library functionality
+
+- **Severity:** EDITORIAL / DEFER-TO-REFINEMENT-DROP (non-blocking for §1.5)
+- **Where:**
+  - `internal/adapters/server/common/app_service_adapter_mcp.go:33` — live MCP `WhatTillsynIs` capability string mentions "template-library-driven generated follow-up work and node-contract snapshots".
+  - `internal/adapters/server/mcpapi/instructions_tool.go:330, 358, 359, 385, 386, 401` — six instances in `till.instructions` tool output advertising "template library" / "template-library" / "template-bound" workflows.
+  - `internal/tui/model.go:16851, 16861` — two hardcoded help strings in `modeAddProject` / `modeEditProject` describing removed "template library field" UI.
+- **Counterexample status:** NOT a §1.5 blocker — §1.5 Gate 1 acceptance regex uses `template_librar` (underscore) which does not match `template-library` (dash). Worklog explicitly scoped non-Go-code copy to "doc-scrub is a different drop per the 'pure-collapse, no doc churn' scope boundary." However, these are LIVE Go-source string literals in `internal/` not MD docs — they're served back to orchestrators through MCP introspection and to users through TUI help text. Calling them "docs" stretches the scope-boundary rule.
+- **Proposed fix:** (a) Strip the 9 string literals in a follow-up refinement drop (`drop 2+` vocabulary scrub), OR (b) add them to §1.11 / §1.12 / §1.13 Paths explicitly during the planner's re-review (these surfaces are in `internal/adapters/server/common`, `internal/adapters/server/mcpapi`, `internal/tui` — already in §1.11/§1.12/§1.13 packages). Recommend (b) — they're in Paths already; just add the string-strip task.
+- **Do not block §1.5.** Gate 1 acceptance is met against its literal wording.
+
+### F2 — `ensureActionItemCompletionBlockersClear` relocation is not byte-identical to baseline
+
+- **Severity:** EDITORIAL / UNDOCUMENTED-BUT-CORRECT (non-blocking)
+- **Where:** Original at `template_contract.go:74-125` (51 lines, walks children + descendants, loads node-contract snapshots, enforces `RequiredForParentDone` / `RequiredForContainingDone`, appends blockers via `appendBlocker`, finally runs `CompletionCriteriaUnmet`). New at `mutation_guard.go:22-47` (25 lines, enforces `CompletionCriteriaUnmet` on active non-archived children only).
+- **What:** Builder worklog describes this as part of the "template-contract deletion" but does not flag that the function's INTERNAL BEHAVIOR collapsed (not just the relocation). The relocated form is semantically correct — `NodeContractSnapshot` is deleted, so the node-contract enforcement branch has no data to operate on — but the worklog's Sub-Pass E (§1.5 Round 1) mentions only "stripped template service fields + bindings" without flagging this specific behavior collapse.
+- **Counterexample status:** NOT a bug — the collapse is forced by §1.4's `NodeContractSnapshot` type deletion. The completion-criteria enforcement path at `service.go:667` (MoveActionItem → StateDone) still fires; only the dead node-contract branch is gone.
+- **Proposed fix:** Add one sentence to Sub-Pass E in BUILDER_WORKLOG.md Unit 1.5 Round 1: "`ensureActionItemCompletionBlockersClear` retains only its `CompletionCriteriaUnmet` tail; node-contract enforcement branch removed alongside `NodeContractSnapshot` type deletion."
+- **Do not block §1.5.** Behavior-preserving collapse; worklog text improvement only.
+
+### F3 — Test failures route cleanly to §1.11 / §1.12 / §1.13 Paths (INFORMATIONAL)
+
+- **Severity:** INFORMATIONAL (no action needed for §1.5)
+- **What:** All 21 test failures are in files already listed in §1.11 / §1.12 / §1.13 Paths. No orchestrator rework needed; the planner's Paths decomposition correctly anticipated the test-site work. This finding is recorded so §1.11/§1.12/§1.13 builders know their Paths contain live test breakage expected to be resolved by their unit.
+- **Counterexample status:** None — this is the plan working as designed.
+- **Proposed fix:** None. Proceed to §1.6 or §1.11 per orchestrator decision.
+
+## Classification
+
+| Finding | Classification                          | Blocks 1.5? |
+| ------- | --------------------------------------- | ----------- |
+| F1      | EDITORIAL / DEFER-TO-REFINEMENT-DROP    | No          |
+| F2      | EDITORIAL / UNDOCUMENTED-BUT-CORRECT    | No          |
+| F3      | INFORMATIONAL                           | No          |
+
+**Do not block Unit 1.5.** All three findings are non-blocking. §1.5's stated objective — discharge §1.4's workspace-compile waiver via `mage ci` success — is met: 0 build errors, 20/20 packages compile, three Gate regexes return 0 matches on Go files. The 21 remaining test failures are correctly owned by §1.11 / §1.12 / §1.13 per their existing Paths lists.
+
+Accepted-risk: F1's nine dead string literals remain in live MCP/TUI surfaces. §1.5's acceptance wording ("pure-collapse, no doc churn") reads ambiguously against live-Go-source introspection strings; builder's interpretation (strip type/symbol refs only, leave string copy for a later vocabulary scrub) is defensible but creates a minor user-facing lie-in-docstring surface until a refinement drop. Flagged for the orchestrator to decide whether to fold into §1.11/§1.12/§1.13 Paths or defer to a dedicated vocabulary drop.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed. This falsification pass verified template-library excision via `git diff c84d281` + `Read` + `Grep` over committed + uncommitted Go source, plus a fresh `mage ci` rerun for gate 4 / failure-routing verification. Hylla is stale for files edited after the last ingest (project CLAUDE.md §Code Understanding Rules rule 2) — every touched file in §1.5 is post-c84d281 so lexical tools + `git show c84d281:<path>` for pre-diff context are the authoritative evidence. No Hylla query was issued; none was needed. The falsification shape here is "does the post-deletion state leave any symbol/string residue that breaks the gate or advertises removed functionality," not "where else in committed code does X appear" — the former is diff-bound, the latter is Hylla's sweet spot. No miss to record.

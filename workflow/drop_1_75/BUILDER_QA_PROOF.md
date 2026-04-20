@@ -223,3 +223,69 @@ All 4 files absent from working tree; all 4 staged as deletions in git index. Re
 ### Hylla Feedback
 
 N/A — task touched non-Go files only from the Unit-1.1–1.3 edit window where Hylla is stale per project CLAUDE.md rule #2 ("Changed since last ingest: use `git diff`"). This QA pass verified excisions + relocation via `git diff HEAD`, `git show HEAD:`, `rg`, `Read`, and `mage test-pkg` over committed-since-ingest Go source. No Hylla query was issued; no fallback was forced. Recording "None — Hylla answered everything needed" as the closing stance would also be accurate — both framings agree there is no miss to record.
+
+## Unit 1.5 — Round 1 — QA Proof
+
+**Verdict:** PASS-WITH-NOTES
+
+### Summary
+
+Unit 1.5's core claim — workspace compile-restoration burden discharged, template_library call-site excision complete across all 7 packages in §1.5 Paths — is fully supported by the committed + staged evidence. `mage build` succeeds clean (Unit 1.4 waiver discharged). Zero dangling TemplateLibrary/TemplateReapply/NodeContractSnapshot/BuiltinTemplate references in any Go source file. All 21 test failures are reproducible, correctly classified, and correctly routed to Units 1.11 (13 in `internal/app`) / 1.12 (8 across `mcpapi`/`httpapi`/`common`). Scope-expansion edits (help.go restore, service_test.go fakeRepo seeding, project_cli_test.go imports) are all minimum-necessary to discharge §1.5's gate. Two informational findings: (a) the builder's worklog understates one substantive transformation — `ensureActionItemCompletionBlockersClear` was **simplified** (not just relocated) from 53 LOC with node-contract blocker collection to 16 LOC with only `CompletionCriteriaUnmet` checks; this is correct-by-construction after NodeContractSnapshot deletion but worth documenting; (b) one scope-expansion file (`cmd/till/cli_render.go` orphan case-label strip) was edited but not mentioned in the worklog.
+
+### Confirmed Claims
+
+- **Gate 1 (fresh re-run):** `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate' drop/1.75/ --glob='*.go'` → 0 files found. **Pass.**
+- **Gate 1 extended (repo identifiers):** `rg 'template_librar|node_contract_snapshot|project_template_binding|template_node_template|template_child_rule' drop/1.75/ --glob='*.go'` → 0 files found. **Pass.**
+- **Gate 2 (MCP tool deregistration):** `rg 'till\.bind_project_template_library|till\.get_template_library|till\.upsert_template_library|till\.ensure_builtin|"ensure_builtin"' drop/1.75/internal/adapters/server/mcpapi/` → 0 files found. **Pass.**
+- **Gate 4 (`mage ci` — PARTIAL, per builder):** Verified by decomposition:
+  - `mage build` → `[SUCCESS] Built till from ./cmd/till`, exit 0. **Unit 1.4 compile waiver is DISCHARGED — zero build errors sitewide.**
+  - `mage testPkg ./internal/app` → 179 tests, 166 passed, **13 failed**, 0 skipped. All 13 failures cite `kind definition not found: "subtask" | "branch" | "phase"`.
+  - `mage testPkg ./internal/adapters/server/mcpapi` → 87 tests, 85 passed, **2 failed** (`kind definition not found: "branch"`).
+  - `mage testPkg ./internal/adapters/server/httpapi` → **2 failed** (kind-not-found variants).
+  - `mage testPkg ./internal/adapters/server/common` → 96 tests, 92 passed, **4 failed** (`kind definition not found: "branch"`).
+  - Total: 13 + 2 + 2 + 4 = **21 failures — exact match with builder's claim.**
+- **21-failure routing (sampled by `Grep func <name>`):**
+  - 7 in `internal/app/kind_capability_test.go` → §1.11 Paths (PLAN.md:217). ✓
+  - 5 in `internal/app/service_test.go` → §1.11 Paths. ✓
+  - 1 in `internal/app/snapshot_test.go` → §1.11 Paths. ✓
+  - 2 in `internal/adapters/server/mcpapi/handler_integration_test.go` → §1.12 Paths (PLAN.md:231). ✓
+  - 2 in `internal/adapters/server/httpapi/handler_integration_test.go` → §1.12 Paths. ✓
+  - 3 in `internal/adapters/server/common/app_service_adapter_auth_context_test.go` → §1.12 Paths. ✓
+  - 1 in `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` → §1.12 Paths. ✓
+  - **All 21 lie in §1.11 or §1.12 Paths. None are §1.5's responsibility.**
+- **help.go restoration (`--template-json` compatibility-only guidance):** The hidden flag still exists at `cmd/till/main.go:850-851` (`kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.templateJSON, "template-json", ...)` + `mustMarkFlagHidden(kindUpsertCmd, "template-json")`). Parser `parseOptionalKindTemplateJSON` at `main.go:2927` still consumes it and returns `domain.KindTemplate`. Restored help text at `help.go:130-131` truthfully reflects runtime state. Test `cmd/till/main_test.go:625` asserts `"compatibility-only"` is present in the long-form help output — the restoration makes this test pass without re-enabling any deleted code path. **Legitimate §1.5 scope** (needed to make `mage testPkg ./cmd/till` compile + test-pass).
+- **service_test.go fakeRepo seeding:** `internal/app/service_test.go:45-76` (`newFakeRepo`) now seeds `{project, actionItem}` into `kindDefs`. This mirrors the real sqlite schema bootstrap at `internal/adapters/storage/sqlite/repo.go` (Unit 1.3's baked `INSERT OR IGNORE INTO kind_catalog` after `CREATE TABLE`). The docstring at `:38-44` accurately explains the invariant: `ensureKindCatalogBootstrapped` (deleted Unit 1.2) used to perform this seed at service-first-use; the in-memory fake never runs SQL migrations, so it needs an equivalent compile-time seed. **Not masking real bootstrap behavior** — real DBs still bootstrap via Unit 1.3's baked rows. The 13 app-package failures listed above hit this seed and STILL fail (because they try to create items with `"subtask"` / `"phase"` kinds that the seed intentionally doesn't carry), confirming the seed is narrow and not suppressing the §1.11-owned test-site issues. **Legitimate invariant-preserving fix.**
+- **project_cli_test.go scope-expansion (5 unused imports):** Unstaged-layer diff strips `context`, `path/filepath`, `sqlite`, `config`, `uuid` imports. These became orphans because the staged-layer diff deleted `TestRunProjectCreateUsesTemplateLibrary` (which exercised `app.UpsertTemplateLibraryInput{...}` via sqlite-backed fixtures) — a template-library test whose body is legitimately §1.5 territory. Stripping only the orphan imports (not the full file) is the minimum-necessary fix. `project_cli_test.go` IS listed in §1.6 Paths (line 149) and §1.13 Paths (line 244) for Project.Kind strips and Kind-test-fixture work respectively; Unit 1.5's edits are import-strip-only and **do not pre-empt** later units' substantive edits. **Legitimate minimum-necessary scope-expansion** per the orchestrator directive.
+- **go.mod/go.sum state:** `git status go.mod go.sum` → clean (no changes). `Grep` of live Go source confirms `chroma` (in `internal/tui/gitdiff/highlighter.go`, `internal/tui/file_viewer_renderer.go`), `glamour` (in `internal/tui/markdown_renderer.go`), `douceur` (transitive), `x/exp/golden` (in `third_party/teatest_v2/teatest.go`), and `golang.org/x/exp` (transitive) are still live-referenced by production code. The "go.mod diagnostics" mentioned in the spawn prompt are **not reflected in on-disk `go.mod`** — they appear to be a transient gopls/IDE state, not a real `go mod tidy` divergence. **No go.mod churn needed for §1.5.**
+- **Wholesale file deletions verified:** `git status --short` confirms D marks on `cmd/till/template_cli.go`, `cmd/till/template_builtin_cli_test.go`, `internal/app/template_{library,library_builtin,library_builtin_spec,library_test,contract,contract_test,reapply}.go`, `internal/adapters/storage/sqlite/template_library_test.go`. All match §1.5 Paths.
+- **Snapshot struct field strip:** `internal/app/snapshot.go` diff (lines 17-33 of diff): `TemplateLibraries []domain.TemplateLibrary`, `ProjectBindings []domain.ProjectTemplateBinding`, `NodeContracts []domain.NodeContractSnapshot` fields all removed from `type Snapshot struct`. Matches §1.5 Paths directive ("strip `TemplateLibraries` field + `snapshotTemplateLibraryFromDomain` + `upsertTemplateLibrary` + `normalizeSnapshotTemplateLibrary` sections").
+- **Repository interface strip:** `internal/app/ports.go` diff removes 9 lines. Matches §1.5 Paths directive ("strip the 9 `TemplateLibrary*` / `NodeContractSnapshot*` / `ProjectTemplateBinding*` methods").
+
+### Informational Findings
+
+- **I-1 (undisclosed simplification):** `ensureActionItemCompletionBlockersClear` relocated from deleted `internal/app/template_contract.go:74-125` (53 LOC, collected node-contract blockers from children + descendants, sorted + joined via `; `) to `internal/app/mutation_guard.go:22-38` (16 LOC, only retains the `actionItem.CompletionCriteriaUnmet(activeChildren)` check). The transformation is **correct-by-construction** — `NodeContractSnapshot` is deleted, so the blocker-collection branch was unreachable — and is invariant-preserving for the surviving `CompletionCriteriaUnmet` code path. **Builder's worklog understates this**: §1.5 worklog mentions "stripped template service fields + bindings" but does not call out the 53→16 LOC simplification of a method still used by `service.go:667`. This is **not a correctness finding** (the simplified version is what the code must be post-NodeContractSnapshot-deletion), but it's a worklog-completeness gap. **Route:** no action required; flagging for future worklog discipline.
+- **I-2 (undocumented scope-expansion file):** `cmd/till/cli_render.go` had 9 orphan case labels stripped from `commandProgressLabel` (`template.library.list`, `template.library.show`, `template.library.upsert`, `template.builtin.status`, `template.builtin.ensure`, `template.project.bind`, `template.project.binding`, `template.project.preview`, `template.contract.show`). File is NOT in §1.5 Paths and is NOT mentioned in the worklog. The edit is legitimate scope-expansion — the CLI template commands were deleted wholesale in §1.5, so their `commandProgressLabel` branches are unreachable. **Not a correctness finding** (the strip matches reality); **worklog disclosure gap** only. **Route:** no action required.
+- **I-3 (Gate 1 doc-file residuals):** Builder's worklog notes non-Go `TemplateLibrary` / etc. refs remain in `AGENT_CASCADE_DESIGN.md`, `CLAUDE.md`, `DROP_1_75_ORCH_PROMPT.md`, `README.md`. Verified — `rg 'TemplateLibrary' drop/1.75/ --glob='*.md'` returns hits in those four files. The "pure-collapse, no doc churn" scope-boundary reading is defensible; doc scrubs are a separate concern from the Go-collapse work. **No §1.5 finding.** **Route:** consider a doc-scrub refinement drop or a Unit 1.15 acceptance-gate clarification.
+
+### Attack Surface Verdicts
+
+- **Gate 2 PARTIAL acceptability:** **PASS.** All 21 failures reproducibly hit files that PLAN.md explicitly assigns to §1.11 / §1.12 Paths. Failure signatures (`kind definition not found: "branch" | "phase" | "subtask"`) are the exact shape Unit 1.3 engineered via its catalog-collapse (deleting those rows from `kind_catalog`). Routing is accurate; no mis-classified failure belongs to §1.5.
+- **help.go restore:** **PASS.** Hidden `--template-json` flag is live; restored guidance is truthful; test `main_test.go:625` requires it.
+- **service_test.go fakeRepo seeding:** **PASS.** Intent-preserving invariant fix mirroring real sqlite bootstrap; 13 residual app-package failures still surface `kind definition not found` errors for other kinds, proving the seed doesn't suppress real test issues.
+- **Scope-expansion for project_cli_test.go:** **PASS.** Import-strip-only; test-body deletion happened in staged layer and was legitimately §1.5 scope (template-library test).
+- **go.mod diagnostics:** **PASS.** `go.mod` is clean on-disk; all flagged packages are live-referenced from production code. Diagnostic signal is orch-side/transient, not a real tidy divergence. **No action needed in §1.5.**
+- **Completeness:** **PASS.** Zero dangling template_library/NodeContractSnapshot/BuiltinTemplate refs across all `.go` files in `drop/1.75/`.
+- **Unit 1.4 waiver discharge claim:** **PASS.** `mage build` runs clean with exit 0.
+
+### Overall Verdict
+
+**PASS-WITH-NOTES.** Unit 1.5's declared objective (workspace compile-restoration) is fully discharged. The "21 failures out-of-scope" routing is audit-clean. Two informational findings (I-1, I-2) are worklog-completeness gaps, not correctness defects — neither blocks §1.5 `done` state. §1.11 and §1.12 inherit the 21 failures as planned; no plan rework needed.
+
+### Route to Later Units
+
+- **Unit 1.11** (app test-site updates): owns 13 failures — 7 in `kind_capability_test.go`, 5 in `service_test.go`, 1 in `snapshot_test.go`. All `kind definition not found: "subtask" | "phase" | "branch"` variants. Also owns coverage restoration (`internal/app` at 69.3%, threshold 70%).
+- **Unit 1.12** (adapter + MCP test-site updates): owns 8 failures — 2 in `mcpapi/handler_integration_test.go`, 2 in `httpapi/handler_integration_test.go`, 3 in `common/app_service_adapter_auth_context_test.go`, 1 in `common/app_service_adapter_lifecycle_test.go`. Also owns coverage restoration (`internal/adapters/server/common` at 62.7%).
+
+### Hylla Feedback
+
+N/A — task touched files wholly within the Unit 1.1–1.5 edit window where Hylla is stale per project CLAUDE.md rule #2 ("Changed since last ingest: use `git diff`"). This QA pass verified excisions, scope-expansion boundaries, test-failure routing, and helper-relocation semantics entirely via `git diff HEAD`, `git show HEAD:`, `Grep`, `Read`, `mage build`, and `mage testPkg`. No Hylla query was issued; no fallback was forced.

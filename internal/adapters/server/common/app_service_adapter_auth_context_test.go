@@ -669,7 +669,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit(t *testing.T)
 
 	fixture := newAuthScopeFixtureForTest(t)
 	globalSessionID, globalSessionSecret := mustIssueApprovedPathSessionForTest(t, fixture.auth, "global")
-	projectSessionID, projectSessionSecret := mustIssueApprovedPathSessionForTest(t, fixture.auth, "project/"+fixture.projectID)
 
 	cases := []struct {
 		name          string
@@ -693,35 +692,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit(t *testing.T)
 					"scope_id":   domain.AuthRequestGlobalProjectID,
 				},
 			},
-		},
-		{
-			name:          "global approval may bind project template library",
-			sessionID:     globalSessionID,
-			sessionSecret: globalSessionSecret,
-			req: MutationAuthorizationRequest{
-				Action:       "bind_project_template_library",
-				Namespace:    "tillsyn",
-				ResourceType: "project",
-				ResourceID:   fixture.projectID,
-				Context: map[string]string{
-					"project_id": fixture.projectID,
-				},
-			},
-		},
-		{
-			name:          "project approval may not bind project template library",
-			sessionID:     projectSessionID,
-			sessionSecret: projectSessionSecret,
-			req: MutationAuthorizationRequest{
-				Action:       "bind_project_template_library",
-				Namespace:    "tillsyn",
-				ResourceType: "project",
-				ResourceID:   fixture.projectID,
-				Context: map[string]string{
-					"project_id": fixture.projectID,
-				},
-			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name:          "global approval may not issue in-project lease",
