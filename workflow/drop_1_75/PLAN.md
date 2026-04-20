@@ -205,7 +205,8 @@ Moves the renamed block from `workitem.go:35-44` (post-1.1 it reads `type Kind s
 
 ### 1.10 — Domain test updates
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-20
 **Paths:** `internal/domain/domain_test.go`, `internal/domain/attention_level_test.go`
 **Packages:** `internal/domain`
 **Blocked by:** 1.1, 1.4, 1.6, 1.8, 1.9
@@ -217,7 +218,8 @@ Domain tests trail the domain-package unit chain to pick up the last stable stat
 
 ### 1.11 — App test updates
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-20
 **Paths:** `internal/app/kind_capability_test.go`, `internal/app/service_test.go`, `internal/app/snapshot_test.go` (per Round-5 P1 — strip any `SnapshotProject.Kind` / `domain.Project{...Kind:}` / `domain.KindID("project-template")` round-trip assertions that reference the deleted fields), `internal/app/helper_coverage_test.go`
 **Packages:** `internal/app`
 **Blocked by:** 1.2, 1.5, 1.6
@@ -231,7 +233,8 @@ Per P10: `search_embeddings_test.go` and `embedding_runtime_test.go` are **not**
 
 ### 1.12 — Adapter + MCP test updates
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-20
 **Paths:** `internal/adapters/storage/sqlite/repo_test.go` (any residual `Project.Kind` / `SetKind` test-site references other than `:2368-2381`, which was migrated into unit 1.3 per Round-5 P2 — 1.3's own test-pkg gate required the strip), `internal/adapters/storage/sqlite/embedding_jobs_test.go`, `internal/adapters/storage/sqlite/embedding_lifecycle_adapter_test.go`, `internal/adapters/storage/sqlite/handoff_test.go`, `internal/adapters/server/mcpapi/handler_integration_test.go`, `internal/adapters/server/mcpapi/extended_tools_test.go` (also strips `Project.Kind` test-site reference at `:98` per unit 1.6 waiver discharge), `internal/adapters/server/mcpapi/instructions_tool_test.go`, `internal/adapters/server/httpapi/handler_integration_test.go`, `internal/adapters/server/common/app_service_adapter_mcp_actor_attribution_test.go`, `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`, `internal/adapters/server/common/app_service_adapter_auth_context_test.go`
 **Packages:** `internal/adapters/storage/sqlite`, `internal/adapters/server/mcpapi`, `internal/adapters/server/httpapi`, `internal/adapters/server/common`
 **Blocked by:** 1.3, 1.5, 1.6, 1.7
@@ -244,7 +247,8 @@ Per P10: `search_embeddings_test.go` and `embedding_runtime_test.go` are **not**
 
 ### 1.13 — TUI + CLI test updates
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-20
 **Paths:** `internal/tui/model_test.go` (also strips `Project.Kind` / `SetKind` test-site references at `:15199-15207` per unit 1.6 waiver discharge), `internal/tui/thread_mode_test.go`, `internal/tui/model_teatest_test.go`, `internal/tui/description_editor_mode.go` (strip dead WorkKind refs if any), `cmd/till/main_test.go`, `cmd/till/project_cli_test.go` (also strips any residual `Project.Kind` test-site references per unit 1.6 waiver discharge — unit 1.6 already touches `project_cli_test.go` for production-side readbacks, this unit closes out the test-fixture side)
 **Packages:** `internal/tui`, `cmd/till`
 **Blocked by:** 1.5, 1.6

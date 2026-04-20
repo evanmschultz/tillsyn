@@ -39,11 +39,40 @@ func newCommonLifecycleFixture(t *testing.T) commonLifecycleFixture {
 		nextID++
 		return fmt.Sprintf("common-id-%d", nextID)
 	}, func() time.Time { return now }, app.ServiceConfig{})
+	seedOrphanKindsForTest(t, svc)
 	return commonLifecycleFixture{
 		adapter: NewAppServiceAdapter(svc, nil),
 		repo:    repo,
 		svc:     svc,
 		now:     now,
+	}
+}
+
+// seedOrphanKindsForTest upserts the branch/phase/subtask kind definitions that
+// the built-in sqlite seed omits so adapter-layer fixtures can create non-actionItem
+// work items without hitting ErrKindNotFound. Post-Drop-1.75 the app layer no
+// longer seeds these legacy kinds; adapter tests that still exercise them must
+// seed explicitly via the service API per the orphan-via-collapse doctrine.
+func seedOrphanKindsForTest(t *testing.T, svc *app.Service) {
+	t.Helper()
+
+	entries := []struct {
+		id        domain.KindID
+		display   string
+		appliesTo domain.KindAppliesTo
+	}{
+		{id: domain.KindID("branch"), display: "Branch", appliesTo: domain.KindAppliesToBranch},
+		{id: domain.KindID("phase"), display: "Phase", appliesTo: domain.KindAppliesToPhase},
+		{id: domain.KindID("subtask"), display: "Subtask", appliesTo: domain.KindAppliesToSubtask},
+	}
+	for _, entry := range entries {
+		if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
+			ID:          entry.id,
+			DisplayName: entry.display,
+			AppliesTo:   []domain.KindAppliesTo{entry.appliesTo},
+		}); err != nil {
+			t.Fatalf("UpsertKindDefinition(%q) error = %v", entry.id, err)
+		}
 	}
 }
 

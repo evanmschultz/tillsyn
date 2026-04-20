@@ -585,3 +585,227 @@ N/A — Round 2 was mechanical deletion by exact-line surgery across orchestrato
   - `mage test-pkg ./internal/domain` → 49/49 pass in 0.25s, 0 failures, 0 skipped. **PASS**
 - **Deviations:** Placement choice — inserted `Kind` block AFTER `DefaultProjectKind` (rather than between `type KindID string` and `DefaultProjectKind`) to keep the `KindID` + `DefaultProjectKind` default grouped, then `Kind` + its 5 constants as an adjacent sibling group. Reading order: KindID-group → Kind-group → KindAppliesTo. Still matches plan P6 ("two types stay distinct, placed near top").
 - **Hylla Feedback:** N/A — task touched only 2 Go files via exact-string block move. Pre-edit file structure was already known from direct Read; grep invariants used native Grep tool against local checkout. No Hylla query was issued; no fallback was forced.
+
+## Unit 1.10 — Round 1
+
+- **Files touched:** NONE. No edits required — upstream units had already cleaned both scoped test files.
+  - `internal/domain/domain_test.go` (576 lines): inspected, already clean.
+  - `internal/domain/attention_level_test.go` (139 lines): inspected, already clean.
+- **Symbols stripped:** None (none present). Target strip set per §1.10 was `WorkKind*`, `TemplateLibrary*`, `project.Kind`, `SetKind`. All four already absent at start-of-round. The `WorkKind → Kind` identifier rename was absorbed sitewide in commit `dff1953` (pre-0db335e), which included both target files; `TemplateLibrary*` strips landed in `c84d281`/`06e98a0`; `projects.kind` column drop + `project.Kind` field removal landed in `93283b1`; `Task → ActionItem` rename (`cea41c0`) swept `SetKind` off anything domain-test-side. By the time 1.4/1.6/1.8/1.9 closed (state prior to 1.10 spawn), the two test files were already at their terminal content for this drop.
+- **Verification evidence (run at spawn, exit codes captured):**
+  - `rg 'WorkKind|TemplateLibrary|project\.Kind|SetKind' internal/domain/` via Grep tool → "No matches found" (package-wide, broader than the acceptance regex). **PASS**
+  - `rg 'WorkKind|TemplateLibrary|project\.Kind' internal/domain/*_test.go` (exact PLAN.md acceptance command) → exit=1, zero matches. **PASS**
+  - Widened case-insensitive sweep for `workKind|work_kind|template_librar|Set.{0,5}Kind|KindID\("[^"]*"\)` against both target files → 0 matches. **PASS** (no lowercased/variant stragglers; no residual `domain.KindID("project-template")` round-trip fixtures).
+- **Test count before/after:** 49/49 pass, 0 skipped, 0 failed, both before and after. No test added or removed — no production-side change motivated a new test, and the acceptance gate (no skipped tests) is already met.
+- **Mage verdict:** `mage test-pkg ./internal/domain` → `[SUCCESS] All tests passed — 49 tests passed across 1 package` in 0.00s wall. Zero skipped; zero failed; zero packages skipped. **PASS**
+- **Deviations:** No edits performed — zero-work round. Unit 1.10 was a no-op because upstream unit chain 1.1/1.4/1.6/1.8/1.9 fully absorbed the target strips at the two scoped paths before 1.10 fired. Deletion question (per discipline line: "If a test genuinely must be deleted...") is moot — nothing to delete, nothing to edit. PLAN.md §1.10 `State: todo → done` + `Closed: 2026-04-20` flipped directly; no intermediate `in_progress` entry in worklog because the round performed no code mutation.
+- **Surprises:** One — expected at least a few trailing fixtures given the discipline line "any stragglers from upstream 1.4/1.6 strips that left test fixtures dangling," but Grep returned clean on first invocation. The phrasing implies a discovered-residue expectation that didn't materialize. Worth noting for future drop-planner calibration: when upstream rename/excise units touch test files in the same package as their production edits (as 1.4's `WorkKind → Kind` did), there is no straggler to clean up in the trailing test-only unit.
+- **Hylla Feedback:** N/A — task touched only test files for grep-invariant verification; no Go semantic query issued. Native Grep + Read were the sanctioned tools for this kind of absence-verification work. No Hylla miss logged because no Hylla query was attempted — the task shape (prove symbols absent in two specific files) does not benefit from Hylla's committed-code search.
+
+## Unit 1.13 — Round 1
+
+**Date:** 2026-04-20
+**Outcome:** success
+**Scope:** `internal/tui`, `cmd/till` test-compile restoration + unit 1.6 production-file drift repair.
+
+### Baseline state at spawn
+
+The grep-invariant `rg 'WorkKind|TemplateLibrary|project\.Kind|projectFieldKind|SetKind' internal/tui/ cmd/till/` returned **0 matches** at spawn. Unit 1.6 + 1.6 Round 2 had already stripped every enumerated symbol from the target test files (`model_test.go`, `thread_mode_test.go`, `model_teatest_test.go`, `main_test.go`, `project_cli_test.go`). Unit 1.6's worklog line 466 records the specific test-site strips (`p.Kind = "ops"` assertion, `"kind: ops"` render check, two picker-coverage tests wholesale deleted from `model_test.go`; two `Kind:` fixture lines + `"go-service"` assertion substring pruned from `project_cli_test.go`; `--kind` expectation pruned from `main_test.go`).
+
+### Pre-edit mage verdict
+
+Baseline mage verdicts before any 1.13 edit:
+
+- `mage testPkg ./internal/tui` → **2 test failures** (`TestModelProjectIconEmojiSupport` `model_test.go:4145`, `TestProjectFormSavesRootPathOnCreate` `model_test.go:7007`). Both read the expected icon / root-path values as `""` after `SetValue`.
+- `mage testPkg ./cmd/till` → 208/208 pass.
+- `mage testGolden` → 7/7 pass.
+
+The two `internal/tui` failures were Unit 1.6 production-file drift the test suite exposed. Unit 1.6 deleted the `projectFieldKind` const (shifting every later `projectField*` const downward by 1) but left the sibling `projectFormFields` **string array** at `internal/tui/model.go:5790` with `"kind"` still at index 2. `projectFormValues()` zips the two together via `for idx, key := range projectFormFields`, so every `projectFormInputs[projectFieldIcon=3]` write now landed under `vals["owner"]` instead of `vals["icon"]` in the submit-time values map. `submitInputMode` then fed `metadata.Icon = vals["icon"]` — reading the unset slot — producing `""`. Same displacement affected root_path (shifted RootPath from old index 8 to new index 7, but the array still had name/description/kind/owner/icon/color/homepage/tags/root_path giving root_path index 8 where the input array only has 8 live slots 0-7). The failures are the test suite doing its job — catching Unit 1.6's array/const desynchronization that the compiler couldn't see because both sides use plain int indices.
+
+### Files touched
+
+Single production file, two strip sites:
+
+- **`internal/tui/model.go:5790`** — `projectFormFields` array: removed the `"kind"` entry so indices realign with the post-1.6 `projectField*` consts.
+
+  Before: `var projectFormFields = []string{"name", "description", "kind", "owner", "icon", "color", "homepage", "tags", "root_path"}`
+  After:  `var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path"}`
+
+- **`internal/tui/model.go:16569, :16577`** — two help-panel strings for `modeAddProject` / `modeEditProject` that still advertised a kind-picker field to the user. Deleted the two `"kind field opens the project-kind picker..."` lines. The surrounding help block preserves the other field hints verbatim.
+
+No test files edited. No `description_editor_mode.go` edit (grep confirmed zero dead refs). No `.golden` regeneration.
+
+### Symbols stripped
+
+- `"kind"` (string key) from `projectFormFields` initializer — 1 occurrence.
+- `"kind field opens the project-kind picker..."` user-facing help strings — 2 occurrences.
+
+All are Unit 1.6 drift, not test-site strips. The actual Unit 1.13 test-site scope was fully discharged by Unit 1.6 upstream before spawn.
+
+### Test counts before / after
+
+| Package | Before | After |
+| ------- | ------ | ----- |
+| `internal/tui` | 352 pass / 2 fail / 0 skip (354 total) | 354 pass / 0 fail / 0 skip (354 total) |
+| `cmd/till` | 208 pass / 0 fail / 0 skip | 208 pass / 0 fail / 0 skip |
+| `testGolden` | 7 pass / 0 fail | 7 pass / 0 fail |
+
+Test count unchanged — fix was production code, no test added or removed.
+
+### Golden regeneration
+
+**Not performed.** `mage testGolden` was green both pre-edit and post-edit. The two production strings I deleted (`"kind field opens the project-kind picker..."`) are **help-panel** strings, surfaced only in the inline-help overlay that the focused golden suite does not capture. Confirmed green on a clean re-run. No drift, no regeneration.
+
+### Grep invariant verification
+
+```
+$ rg 'WorkKind|TemplateLibrary|project\.Kind|projectFieldKind|SetKind' internal/tui/ cmd/till/
+EXIT=1 (zero matches)
+```
+
+**PASS** — matches PLAN.md §1.13 acceptance clause 4 verbatim.
+
+### Mage verdicts (final)
+
+- `mage testPkg ./internal/tui` → `[SUCCESS] All tests passed — 354 tests passed across 1 package` in 5.27s. **PASS**
+- `mage testPkg ./cmd/till` → `[SUCCESS] All tests passed — 208 tests passed across 1 package` in 7.43s. **PASS**
+- `mage testGolden` → `[SUCCESS] All tests passed — 7 tests passed across 1 package` in 0.49s. **PASS**
+
+### Deviations from PLAN.md §1.13
+
+1. **No test-file edits.** PLAN.md §1.13 Paths list enumerates five test files (`model_test.go`, `thread_mode_test.go`, `model_teatest_test.go`, `main_test.go`, `project_cli_test.go`) but Unit 1.6 + 1.6 Round 2 already stripped every scoped symbol before 1.13 fired. Grep-invariant returned 0 matches on spawn. No test-site edits were needed to discharge §1.13's acceptance gates.
+2. **Production-file edit in a test-focused unit.** The plan's "strip dead WorkKind refs if any" clause for `description_editor_mode.go` was a conditional — I used the same spirit to discharge Unit 1.6's production-file drift in `model.go` because both `mage testPkg ./internal/tui` failures traced back to that drift, and §1.13's acceptance gate explicitly requires that target to pass as part of the "unit 1.6 workspace-compile-restoration burden" clause. The drift repair is in-lane (`internal/tui/` only) and narrowly scoped (two strip sites in one file). Not a scope expansion — unit 1.6 left the `projectFormFields` array desynchronized with its const group; unit 1.13 is the test gate that exposed it.
+3. **`description_editor_mode.go` not edited.** Grep confirmed zero `WorkKind|TemplateLibrary|project\.Kind|projectFieldKind|SetKind` refs in the file. Plan's "edit only if dead refs exist" branch resolved to the skip path.
+
+### Surprises
+
+1. **Unit 1.6 array/const desync was caught only by test gate, not compile gate.** `projectFormFields` is a `[]string` and `projectFieldKind` was a nameless `iota` const — Go's compiler cannot statically link a string array to an int-valued const group. The only invariant binding them is implicit (same order, same cardinality). Unit 1.6's const strip broke this invariant silently; only `TestModelProjectIconEmojiSupport` and `TestProjectFormSavesRootPathOnCreate`'s write-then-readback semantics caught the shift at runtime. For future collapse work on index-linked parallel structures, worth noting that no static analysis will catch this kind of drift — only behavior-driven tests.
+2. **`projectFormFields` had 9 entries vs `projectFormInputs` 8 slots, pre-fix.** The array-length mismatch was not itself a panic (the `for idx, key := range projectFormFields` loop has an `if idx >= len(m.projectFormInputs) { break }` guard at `:5796-5798`) — it silently dropped `"root_path"` from the values map entirely. So `TestProjectFormSavesRootPathOnCreate`'s specific failure (got `""` for root path) was the array walking past the end of inputs; `TestModelProjectIconEmojiSupport`'s failure (got `""` for icon) was the index displacement writing under the wrong key. Two distinct failure modes from one array shift.
+3. **Help strings were production drift unit 1.6 Round 1 also missed.** Round 1's worklog at line 465 says "Prompt strings for `modeAddProject` / `modeEditProject` edited to drop the kind-picker guidance." That referred to the `modePrompt` block (elsewhere in the file). The `modeInlineHelp` block at `:16565-16581` was a separate help-rendering surface that Round 1 did not touch. Unit 1.13 closes out both.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. No Hylla queries issued this round. Every question the round asked was either (a) exact-symbol grep ("does `projectFormFields` have a `"kind"` entry?"), (b) production-file-local structural reasoning from `Read` on `model.go` at known line ranges, or (c) runtime-semantic ("do these 354 tests pass?") which only `mage testPkg` can answer. Hylla's committed-code search is not the right tool for any of those shapes. Recording the explicit "no miss" stance per WIKI.md policy; the Go-only indexing scope is not relevant here because the work was entirely within Go files that *were* indexed — just not in a way Hylla could usefully answer more precisely than `Grep` + `Read`.
+
+## Unit 1.11 Round 2 — `internal/app` test remediation
+
+**Date:** 2026-04-20
+**Scope:** Close out the two residual `internal/app` test failures left by Round 1's API-limit-interrupted session. Round 1 had completed ~90% of §1.11 including the `newFakeRepo()` seed expansion and the four template-coupled test deletions per F5 classification; two stale sites remained.
+
+### Residual failures on spawn
+
+1. `TestCreateActionItemRejectsRecursiveTemplateBeforePersistence` (`internal/app/kind_capability_test.go:505-552`) — Round 1 added the F5-classification note comment at `:407-417` stating four tests were deleted (including this one), but the function body itself (`:504-552`) was not actually removed. Runtime effect: the recursion-check production code *had* been deleted, so the test asserted `errors.Is(err, domain.ErrInvalidKindTemplate)` against a now-nil error. Fail mode: `CreateActionItem(loop) error = <nil>, want ErrInvalidKindTemplate`.
+2. `TestExportSnapshotIncludesExpectedData` (`internal/app/snapshot_test.go:141`) — expected `len(snapAll.KindDefinitions) == 1` (the single `refactor` kind the test upserts). After Round 1's `newFakeRepo()` seed expansion (project + actionItem + branch + phase + subtask), the exported closure contained 6 kind definitions. Fail mode: `expected kind definition closure in snapshot, got [actionItem branch phase project refactor subtask]`.
+
+### Fixes applied
+
+- **`internal/app/kind_capability_test.go`** — deleted the entire `TestCreateActionItemRejectsRecursiveTemplateBeforePersistence` declaration (godoc + function body, lines 504-552, 49 lines). The F5 note comment at `:407-417` documenting *why* the four tests were deleted was preserved — it remains an accurate post-hoc marker. The imports (`context`, `errors`, `time`, `domain`) remain in use by the surviving tests in the file, no import cleanup needed.
+- **`internal/app/snapshot_test.go`** — updated the hardcoded `len(snapAll.KindDefinitions) != 1` assertion to `!= 6` with a 3-line explanatory comment citing the fake-repo seed + in-test `refactor` upsert. This is the minimum-necessary fix: the assertion is a hardcoded literal, not derived from a constant or helper, so only the literal changes. The surrounding `ProjectAllowedKinds` and `Comments` assertions are unaffected — their closure shapes were unchanged by the seed expansion.
+
+### Files touched
+
+| File | Change | Lines |
+| ---- | ------ | ----- |
+| `internal/app/kind_capability_test.go` | deleted `TestCreateActionItemRejectsRecursiveTemplateBeforePersistence` godoc + body | -49 |
+| `internal/app/snapshot_test.go` | `len == 1` → `len == 6` + explanatory comment | +3 / -1 |
+
+No production-code edits. No other test-file edits.
+
+### Mage verdicts (final)
+
+- `mage test-pkg ./internal/app` → **PASS.** `176/176` tests pass across 1 package in 1.27s. `0` failures, `0` skipped.
+
+### Grep invariant verification
+
+```
+$ rg 'WorkKind|TemplateLibrary|ensureKindCatalogBootstrapped|SnapshotProject\{[^}]*Kind|SetKind' internal/app/*_test.go
+EXIT=1 (zero matches)
+```
+
+**PASS** — matches PLAN.md §1.11 acceptance clause 3 verbatim.
+
+### Deviations from task brief
+
+None. The two prescribed fixes were each minimum-necessary edits to discharge the residual failures. No scope expansion, no sibling-package edits (stayed within `internal/app/`), no production-file edits.
+
+### Surprises
+
+1. **Round 1's F5 comment block was load-bearing but incomplete.** The comment at `kind_capability_test.go:407-417` explicitly lists `TestCreateActionItemRejectsRecursiveTemplateBeforePersistence` among the four "deleted" tests. A reader trusting the comment without reading the rest of the file would miss that the body was never actually removed. This is a mild discipline lesson for future multi-deletion passes: comment + code must be edited atomically, or a fresh read of the declaration range must confirm the deletion actually landed.
+2. **The snapshot expected-count drift was a pure consequence of the seed fix.** Round 1's `newFakeRepo()` expansion from `{}` to the 5-kind seed was necessary to unblock the majority of `internal/app` test failures (coverage gap noted in §1.5 Round 4 QA findings). The snapshot test's hardcoded `!= 1` never got a matching update in Round 1 because the test only upserts 1 kind explicitly (`refactor`) — the other 5 come from the seed, invisible at the test body's surface. Not a bug in Round 1's reasoning, just a missed downstream update.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. No Hylla queries issued this round. All questions were either (a) test-file symbol location (`Grep` on `TestCreateActionItem...`), (b) hardcoded-literal location (`Read` of snapshot_test.go around the failure line), or (c) fake-repo seed contents (`Grep` + `Read` of service_test.go). These shapes do not benefit from Hylla — the queries are exact-symbol or exact-line structural reads, not semantic search. Recording the explicit "no miss" stance per WIKI.md policy.
+
+---
+
+## Unit 1.12 Round 1 — Adapter fixture orphan-kind seeding
+
+**Date:** 2026-04-20
+**Scope:** Close out §1.12 by seeding the orphan `branch` / `phase` / `subtask` kind definitions in the adapter-layer test fixtures that still exercise the pre-collapse branch→phase→actionItem hierarchy. The grep invariant (`WorkKind|TemplateLibrary|...|SetKind`) was already clean on spawn (upstream units absorbed every symbol-strip site); the only remaining failure mode was `domain.ErrKindNotFound: "branch"` / `... "subtask"` at `service.CreateActionItem` call sites in fixture setup, because the built-in sqlite seed now emits only `project + actionItem` (per §1.2 collapse) and the app layer no longer auto-seeds legacy kinds.
+
+### Diagnosis
+
+`internal/adapters/storage/sqlite/repo.go:286-309` — schema bootstrap inserts exactly two `kind_catalog` rows (`project`, `actionItem`). `internal/app/kind_capability.go:616-639` `resolveProjectAllowedKinds` falls back to the full catalog when a project has no explicit allowlist, so adding more kinds to the catalog before `CreateProject` is transparently picked up. Seeding via `svc.UpsertKindDefinition(ctx, app.CreateKindDefinitionInput{ID, DisplayName, AppliesTo})` with `AppliesTo: [KindAppliesToBranch|Phase|Subtask]` matches the `fakeRepo` seed shape at `internal/app/service_test.go:48-100` exactly.
+
+### Files touched
+
+| File | Change |
+| ---- | ------ |
+| `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` | Added private helper `seedOrphanKindsForTest` (upserts branch/phase/subtask kinds); call inserted in `newCommonLifecycleFixture` between service construction and return. |
+| `internal/adapters/server/common/app_service_adapter_auth_context_test.go` | Added `seedOrphanKindsForTest(t, svc)` call in `newAuthScopeFixtureForTest` between service construction and `svc.CreateProject`. Reuses the helper defined in the lifecycle test file (same package). |
+| `internal/adapters/server/httpapi/handler_integration_test.go` | Added private helper `seedHTTPOrphanKindsForTest` (same three-kind seed pattern); call inserted in `newApprovedPathAttentionFixture` between service construction and `service.CreateProject`. |
+| `internal/adapters/server/mcpapi/handler_integration_test.go` | Added private helper `seedMCPOrphanKindsForTest` (same three-kind seed pattern); call inserted in `newApprovedPathHandoffFixture` between service construction and `service.CreateProject`. |
+
+No production-code edits. No sibling-package edits beyond `internal/adapters/server/{common,httpapi,mcpapi}`. `internal/adapters/storage/sqlite` untouched (was already 68/68 green on spawn).
+
+### Orphan-seed pattern used
+
+**Helper-level seeding** for all four fixtures — not inline. Justification:
+
+- The four affected fixtures are all purely test-wiring constructors; their only consumers are tests that depend on the resulting hierarchy. Seeding orphan kinds is additive (extends `kind_catalog` from 2 rows to 5) and flows through `resolveProjectAllowedKinds`' fallback-to-catalog path, so it cannot flip any other test's expectations about which kinds *may* be used. No test in these packages asserts on the catalog size or the allowlist membership.
+- Inline per-test seeding would duplicate the same 3-kind boilerplate across 7 tests (1 lifecycle + 3 auth_context + 2 httpapi + 2 mcpapi = 8 tests, but the 2 tests in each of httpapi/mcpapi share a fixture, and the 3 in auth_context share a fixture, so inline means duplicating 3 of the 4 seed sites per-test-body).
+
+Per-package helper (not shared across packages) matches existing fixture idiom — each of these test files already has package-private `mustCreateActionItemForTest` / `firstHTTPProjectColumnIDForTest` / `firstMCPProjectColumnIDForTest` helpers. Sharing a cross-package helper would require a new test-support package, which is scope-expansion beyond §1.12.
+
+### Test counts (before / after)
+
+| Package | Before (spawn state) | After | Delta |
+| ------- | -------------------- | ----- | ----- |
+| `internal/adapters/storage/sqlite` | 68/68 pass | 68/68 pass | 0 (already green, verified) |
+| `internal/adapters/server/common` | 1 fail (lifecycle subtask) + 3 fail (auth_context branch) out of 123 | 123/123 pass | +4 pass |
+| `internal/adapters/server/httpapi` | 2 fail (attention approved-path branch) out of 56 | 56/56 pass | +2 pass |
+| `internal/adapters/server/mcpapi` | 2 fail (handoff approved-path branch) out of 87 | 87/87 pass | +2 pass |
+
+**Total:** 8 previously-failing tests now pass; no tests newly failing or newly skipped.
+
+### Mage verdicts (final)
+
+- `mage test-pkg ./internal/adapters/storage/sqlite` → **PASS.** 68/68, 0 failures, 0 skipped.
+- `mage test-pkg ./internal/adapters/server/common` → **PASS.** 123/123, 0 failures, 0 skipped.
+- `mage test-pkg ./internal/adapters/server/httpapi` → **PASS.** 56/56, 0 failures, 0 skipped.
+- `mage test-pkg ./internal/adapters/server/mcpapi` → **PASS.** 87/87, 0 failures, 0 skipped.
+
+### Grep invariant verification
+
+```
+$ rg 'WorkKind|TemplateLibrary|template_librar|bridgeLegacyActionItems|seedDefaultKindCatalog|FROM tasks|projects\.kind|project\.Kind|SetKind' internal/adapters/ --glob='*_test.go'
+EXIT=1 (zero matches)
+```
+
+**PASS** — matches PLAN.md §1.12 acceptance clause 5 verbatim.
+
+### Deviations from task brief
+
+None. The task brief anticipated "inline per-test seeding IF a broader helper seeding would change the test semantics for other tests in the file" — helper-level seeding was safe per the analysis above, so helper-level was the chosen path.
+
+### Surprises
+
+1. **Prompt mentioned `kind_capability_test.go` as a candidate "reference fake-repo shape"; confirmed `newFakeRepo` at `internal/app/service_test.go:48-100` already contains exactly the seed shape we needed.** The fake-repo at that site was expanded in §1.11 Round 1 to include `project/actionItem/branch/phase/subtask` precisely for the same orphan-coverage reason. This unit is the adapter-layer mirror: the sqlite-backed repo schema bootstrap wasn't similarly widened in §1.2 because the architectural target (post-collapse `kind_catalog`) is a two-row catalog, and `drops-rewrite.sql` (§1.14) handles runtime migration. Test fixtures that still exercise pre-collapse hierarchies seed explicitly per the orphan-via-collapse doctrine — exactly what this unit implements.
+2. **`resolveProjectAllowedKinds` fallback is the key invariant making helper-level seeding safe.** With no explicit `project_allowed_kinds` row set, the project implicitly allows *every* kind in `kind_catalog`. Adding kinds to the catalog before `CreateProject` therefore adds them to the project's effective allowlist without touching any allowlist API. If a future test asserts on explicit `SetProjectAllowedKinds` behavior, that test must predicate its own allowlist; the fixture's catalog seeding won't conflict.
+3. **One package (`sqlite`) was already green on spawn** per the task brief. Verified with a sanity `mage test-pkg` as instructed. Confirms §1.12 acceptance clause 1 is already satisfied by prior unit work; this round's contribution is the remaining three packages.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. No Hylla queries issued this round. All queries were exact-symbol structural reads (test-file fixture helpers, `UpsertKindDefinition` signature, `KindDefinition` struct shape, sqlite schema bootstrap, `resolveProjectAllowedKinds` fallback logic) — shapes that are faster via `Grep` + `Read` than via Hylla vector/keyword search. Recording the explicit "no miss" stance per WIKI.md policy.
+

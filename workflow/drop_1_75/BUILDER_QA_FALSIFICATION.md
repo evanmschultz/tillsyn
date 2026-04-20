@@ -997,3 +997,173 @@ Accept Unit 1.8 as DONE. No counterexample, no respawn needed.
 ### Hylla Feedback
 
 None — Hylla answered everything needed. The one query issued (`hylla_search_keyword query='task.go'`) correctly returned an empty result — expected for a filename-literal negative-confirmation probe (Hylla doesn't index filenames as content tokens). The follow-up semantic query (`NewActionItem`) returned the `enrichment still running` status, which is the principled response for a mid-reingest artifact. The attack surface for a zero-content file-rename unit is largely lexical/filesystem (Grep, Glob, git diff) + mage build/test, not semantic (who-calls-X) — Hylla was not the primary evidence source by design, not a miss.
+
+## Units 1.10-1.13 — Combined QA Falsification — 2026-04-20
+
+**Verdict:** PASS — no unmitigated counterexample. All eight attacks refuted or accepted with justification. One pre-existing `gofumpt` format drift flagged as a warning for Unit 1.15 (drop-end `mage ci` gate); NOT introduced by 1.10-1.13 and NOT blocking for these units.
+
+### Attack matrix
+
+| # | Attack | Verdict |
+| --- | --- | --- |
+| A1 | Orphan-seed vs production-code mismatch | ACCEPTED (doctrine) |
+| A2 | Deleted template-coupled test coverage | REFUTED |
+| A3 | `TestExportSnapshotIncludesExpectedData` count stability | REFUTED |
+| A4 | 1.13 production drift scope-expansion | REFUTED |
+| A5 | Skipped tests in `./internal/domain` / `./internal/app` | REFUTED |
+| A6 | `mage ci` / `gofumpt` sanity at intermediate state | ACCEPTED-WITH-WARNING |
+| A7 | Paths outside plan-declared scope | REFUTED |
+| A8 | F5-classification correctness | REFUTED |
+
+### A1 — Orphan-seed vs production-code mismatch (ACCEPTED)
+
+**Evidence.** `internal/adapters/storage/sqlite/repo.go:286-309` bootstraps `kind_catalog` with exactly two rows — `project` + `actionItem`. Both `INSERT OR IGNORE INTO kind_catalog(...)` statements live inside the `CREATE TABLE IF NOT EXISTS kind_catalog` migration block; no other production-code site inserts catalog rows post-§1.2 collapse.
+
+Test fixtures that now require more kinds:
+
+- `internal/app/service_test.go:48-100` — `newFakeRepo()` seeds 5 kinds (`project`, `actionItem`, `branch`, `phase`, `subtask`). Comment at :40-47 explicitly cites the orphan-via-collapse doctrine and the runtime-live classification.
+- `internal/adapters/server/common/app_service_adapter_lifecycle_test.go:56+` — `seedOrphanKindsForTest` upserts `branch`/`phase`/`subtask`.
+- `internal/adapters/server/common/app_service_adapter_auth_context_test.go:61` — reuses `seedOrphanKindsForTest`.
+- `internal/adapters/server/httpapi/handler_integration_test.go:185+` — `seedHTTPOrphanKindsForTest`.
+- `internal/adapters/server/mcpapi/handler_integration_test.go:195+` — `seedMCPOrphanKindsForTest`.
+
+**Counterexample attempt.** Does any **production** code path invoke `CreateActionItem(Kind='branch'|'phase'|'subtask')` at runtime? Grep for non-test call sites:
+
+```
+rg 'Kind:\s*domain\.(KindBranch|KindPhase|KindSubtask|Kind\("branch"\)|Kind\("phase"\)|Kind\("subtask"\))' --glob='!*_test.go' drop/1.75/internal/ drop/1.75/cmd/
+```
+
+Returns zero production-code hits with a `Kind: <non-actionItem>` struct-literal in CreateActionItem-reachable paths. The TUI code at `internal/tui/model.go:4897, :4924` (`m.actionItemFormKind = domain.KindSubtask` / `domain.KindPhase`) sets a form-field default for the in-TUI "add subtask/phase" menu, but those menu items themselves are orphan UI per the F5 doctrine — post-collapse no row has `kind='phase'/'subtask'` so the menu never renders a parent of the right scope to offer those create options.
+
+The `capabilityScopeTypeForActionItem` function at `internal/app/kind_capability.go:395+` reads `actionItem.Scope` (not `Kind`), so the Branch-branch at `:414-415` only fires if a stored row has `Scope: domain.KindAppliesToBranch`. Post-drops-rewrite.sql (§1.14 UPDATE sets every row to `kind='actionItem', scope='actionItem'`) no such row exists. The auth-path-branch-quirk (CLAUDE.md) is about the auth URL-path scope vocabulary — orthogonal to action_item Kind/Scope.
+
+**Verdict.** Test/prod divergence is documented, classified, and safe. ACCEPTED per orphan-via-collapse doctrine. No counterexample.
+
+**Editorial note.** If a future code path ever does `CreateActionItem(Kind='branch'...)` against a production DB, it will error with `ErrKindNotFound` — the tests would continue to pass (seeded fixture) while production fails. Recommend Unit 1.14/drops-rewrite or a refinement drop either delete the TUI orphan-kind menu items or widen the production seed if the auth-path-branch-quirk needs a real Branch actionItem.
+
+### A2 — Deleted template-coupled test coverage (REFUTED)
+
+**Evidence.** Four tests deleted in Unit 1.11:
+
+- `TestCreateActionItemAppliesKindTemplateActions`
+- `TestCreateProjectAppliesKindTemplateDefaultsAndChildren`
+- `TestCreateActionItemCascadesChildKindTemplateDefaults`
+- `TestCreateActionItemRejectsRecursiveTemplateBeforePersistence`
+
+Per the comment block at `internal/app/kind_capability_test.go:407-417`, all four tested `AutoCreateChildren`, `ProjectMetadataDefaults`, and `validateKindTemplateExpansion` — the three orphan KindTemplate code paths per F5.
+
+`validateKindTemplateExpansion` caller analysis via LSP findReferences at `internal/app/kind_capability.go:765` returned **two references in one file — both self-recursive** (line 765 declaration, line 793 recursive call inside the function body). Zero production callers. The function is exclusively reachable through its own recursion, which only fires if some caller starts it — and no such caller exists.
+
+`kind.Template.AutoCreateChildren` grep across `internal/app` returns only the orphan `validateKindTemplateExpansion` body and the deletion-comment. No CreateActionItem / CreateProject production path walks `AutoCreateChildren`.
+
+`kind.Template.ProjectMetadataDefaults` grep across `internal/app` returns zero production hits (only the deletion-comment). The field still exists on `KindTemplate` (kind.go:73) and is normalized in `normalizeKindTemplate` (kind.go:329), but no service method consumes it.
+
+**Surviving test.** `TestCreateActionItemKindMergesCompletionChecklist` (`kind_capability_test.go:419+`) exercises the live merge path: `mergeActionItemMetadataWithKindTemplate` at `kind_capability.go:747-755` handles `ActionItemMetadataDefaults` + `CompletionChecklist`, and this test verifies the CompletionChecklist flows into the created ActionItem's metadata.
+
+`TestMergeProjectMetadataDefaults` at `internal/domain/domain_test.go:427+` directly tests `MergeProjectMetadata` primitive — still covered.
+
+**Verdict.** Zero live-code coverage lost. All 4 deletions target orphan code per the F5 classification. REFUTED.
+
+### A3 — `TestExportSnapshotIncludesExpectedData` count stability (REFUTED)
+
+**Evidence.** `internal/app/snapshot_test.go:144` asserts `len(snapAll.KindDefinitions) != 6`. Derivation: `newFakeRepo()` seeds 5 kinds (project + actionItem + branch + phase + subtask); the test body upserts `refactor` (one more); the snapshot export closure reports the union = 6. Comment at :141-143 documents the derivation.
+
+Fake-repo isolation: `newFakeRepo()` constructs a fresh map per call (`service_test.go:48+`); no shared mutable state across tests. The test instantiates its own repo at `snapshot_test.go:74` — any other test mutating a different repo cannot affect this count.
+
+Stability-against-other-mutations: within the test body, the only mutation that adds kinds is the explicit `UpsertKindDefinition(refactor)` call. Any future mutation added to the test would need to add a corresponding assertion-update — standard test-maintenance discipline.
+
+Production vs test divergence: in production, `kind_catalog` has only 2 rows (project + actionItem), so `ExportSnapshot(all=true)` on a real DB would return 2 KindDefinitions, not 6. **This test is a unit test on the closure-walking machinery, not on production catalog contents.** The machinery being tested is live production code; the input (5-kind seed + 1 upsert) is test-controlled.
+
+**Verdict.** Count is locally stable and correctly documents its derivation. REFUTED.
+
+**Editorial note.** The hardcoded `!= 6` literal could be made derivation-aware (`!= 1 + len(repo.kindDefs)`) for robustness against future seed changes — editorial refinement, not a counterexample.
+
+### A4 — 1.13 production drift scope-expansion (REFUTED)
+
+**Evidence.** `git diff internal/tui/model.go` shows exactly 3 strip sites:
+
+- `:5790` — removed `"kind"` from `projectFormFields = []string{...}`.
+- `:16569` — removed `"kind field opens the project-kind picker ..."` help string for `modeAddProject`.
+- `:16577` — removed `"kind field opens the project-kind picker"` help string for `modeEditProject`.
+
+Matches the 3 sites the builder reported.
+
+**Residual-reference scan.** `rg '"kind"' drop/1.75/internal/tui/` returns zero. `rg 'projectField(Kind|Tags|Icon|...)' drop/1.75/internal/tui/` returns zero `projectFieldKind`. Array/const alignment at `:205-213` (iota block, 9 entries) vs `:5790` array (8 entries — Comments=8 is edit-only, rendered separately at :17552-17557). Alignment correct.
+
+**Golden behavior.** `mage testGolden` PASS pre- and post-edit (worklog line 671). Help-panel strings live in the overlay that the focused golden suite does not capture. No drift.
+
+**Out-of-scope file touch.** The only production-code file touched by 1.13 is `internal/tui/model.go`, which is declared in Unit 1.6 Paths (line 150). Unit 1.13 inherits the "workspace-compile-restoration burden" per PLAN.md §1.13 Acceptance clauses 1 + "this unit carries..." marker — re-touching model.go to close out 1.6 residue is contractually permitted.
+
+**README.md drift.** `README.md:279, :371` still describe the template library / project-kind picker as live features. This is out-of-scope for Unit 1.13 (its Paths are `internal/tui/`, `cmd/till/` test files + model.go drift). Not a 1.13 counterexample — but flagged as a drop-wide editorial finding against the documentation drift.
+
+**Verdict.** Scope is within contract. REFUTED.
+
+### A5 — Skipped tests (REFUTED)
+
+**Evidence.** `mage test-pkg ./internal/domain` → `49 passed / 0 skipped`. `mage test-pkg ./internal/app` → `176 passed / 0 skipped`. Units 1.10 / 1.11 acceptance "passes with NO skipped tests" met.
+
+**Verdict.** REFUTED.
+
+### A6 — `mage ci` / `gofumpt` sanity at intermediate state (ACCEPTED-WITH-WARNING)
+
+**Evidence.** `mage ci` fails at the formatting stage:
+
+```
+Error: gofumpt required for:
+internal/tui/model.go
+internal/tui/model_test.go
+```
+
+20-line diff in `internal/tui/model.go`, 11-line diff in `internal/tui/model_test.go`.
+
+**Root cause analysis.** `git stash` + re-run `gofumpt -d` against stashed-out tree → 20-line drift still present. The drift is **pre-existing in the HEAD commit chain (pre-1.10-1.13)** — specifically, struct-field alignment in `labelPicker*` fields tightened when earlier commits shrank adjacent struct fields (likely commit `06e98a0` template library excision or `93283b1` projects.kind strip) and those commits did not re-run gofumpt.
+
+**Impact on 1.10-1.13.** Zero. 1.10-1.13 acceptance is per-package `mage test-pkg` (all green). `mage ci` is Unit 1.15's drop-end gate per PLAN.md line 297. The drift blocks 1.15 but does not retroactively invalidate 1.10-1.13.
+
+**Verdict.** ACCEPTED-WITH-WARNING. Orchestrator must route the gofumpt repair through Unit 1.15's builder (or insert a pre-1.14 format-fix unit). Builder's final run of `mage format` + `mage ci` at 1.15 will surface and resolve.
+
+### A7 — Paths outside plan-declared scope (REFUTED)
+
+**Evidence.** `git diff --stat` lists 8 code files touched:
+
+- `internal/adapters/server/common/app_service_adapter_auth_context_test.go` — Unit 1.12 Path ✓
+- `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` — Unit 1.12 Path ✓
+- `internal/adapters/server/httpapi/handler_integration_test.go` — Unit 1.12 Path ✓
+- `internal/adapters/server/mcpapi/handler_integration_test.go` — Unit 1.12 Path ✓
+- `internal/app/kind_capability_test.go` — Unit 1.11 Path ✓
+- `internal/app/service_test.go` — Unit 1.11 Path (referenced in Round 1 seed expansion) ✓
+- `internal/app/snapshot_test.go` — Unit 1.11 Path ✓
+- `internal/tui/model.go` — Unit 1.6 Path (re-touched by 1.13 per waiver-discharge) ✓
+
+All touched files are within declared Paths. Unit 1.10's declared Paths (`domain_test.go`, `attention_level_test.go`) show zero edits — matches worklog "no-op unit."
+
+**Verdict.** REFUTED.
+
+### A8 — F5-classification correctness (REFUTED)
+
+Covered under A2. F5 (PLAN.md line 52-53) classifies `KindDefinition.Template` / `KindTemplate` / `validateKindTemplateExpansion` / `normalizeKindTemplate` / `ErrInvalidKindTemplate` as **naturally unreachable post-collapse** because `kind_catalog` bakes empty `auto_create_children` for both surviving rows. Verified: no production caller of `validateKindTemplateExpansion`; no production consumer of `AutoCreateChildren` or `ProjectMetadataDefaults`; live merge path (`CompletionChecklist` + `ActionItemMetadataDefaults`) covered by surviving test.
+
+**Verdict.** REFUTED.
+
+### Per-unit verdicts
+
+| Unit | Verdict | Notes |
+| --- | --- | --- |
+| 1.10 | PASS | No-op unit. Target strips already absorbed upstream. 49/49 tests pass, 0 skipped. |
+| 1.11 | PASS | Test-site updates + 4 orphan-test deletions correctly classified per F5. 176/176 app tests pass. |
+| 1.12 | PASS | Adapter fixtures seed runtime-live orphan kinds (branch/phase/subtask) per orphan-via-collapse doctrine. sqlite 68/68, common 123/123, httpapi 56/56, mcpapi 87/87 — all green. |
+| 1.13 | PASS | Test-file scope fully discharged upstream. Production drift repair in `internal/tui/model.go` (3 strip sites, 1 file) is within the unit's explicit "workspace-compile-restoration burden" clause. tui 354/354, cmd/till 208/208, testGolden 7/7 — all green. |
+
+### Unknowns
+
+- **Unit 1.15 gofumpt drift** (A6). Pre-existing drift in `internal/tui/model.go` + `model_test.go` will block `mage ci`. Orchestrator must route `mage format` through Unit 1.15's builder.
+- **README.md template-library references** (A4 editorial). `README.md:279, :371` still describe the deleted project-kind picker + template library as live features. Out-of-scope for 1.10-1.13 but a drop-wide documentation finding.
+- **Long-term orphan-kind TUI menus** (A1 editorial). `internal/tui/model.go:4897, :4924` set `m.actionItemFormKind = domain.KindSubtask` / `domain.KindPhase` for menu defaults. These paths are dead in a post-drops-rewrite DB (no parent rows carry `branch`/`phase` scope to trigger the menus), but the orphan code remains per F5. Deferred to refinement drop.
+
+### Recommendation
+
+Accept Units 1.10 / 1.11 / 1.12 / 1.13 as DONE. Proceed to Unit 1.14 (drops-rewrite.sql). Surface the gofumpt drift warning to the builder who spawns for Unit 1.15 so `mage format` runs before the `mage ci` gate.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Queries issued this round: LSP findReferences on `validateKindTemplateExpansion` (confirmed zero non-self callers). No Hylla MCP queries issued because the attack surface was predominantly structural / lexical — exact-grep for residual identifiers, `git diff --stat` for path-scope verification, `mage test-pkg` for runtime green-state, `gofumpt -d` for format invariants. Hylla's vector/keyword search would not have added precision beyond LSP findReferences for the dead-code-reachability question, and the rest of the work was not Go-semantic. Per WIKI.md policy: recording the explicit "no miss" stance.

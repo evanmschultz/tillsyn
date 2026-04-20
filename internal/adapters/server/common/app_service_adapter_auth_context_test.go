@@ -58,6 +58,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		AutoCreateProjectColumns: true,
 		RequireAgentLease:        &requireAgentLease,
 	})
+	seedOrphanKindsForTest(t, svc)
 
 	project, err := svc.CreateProject(context.Background(), "Demo", "")
 	if err != nil {
