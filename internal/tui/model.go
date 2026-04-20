@@ -852,11 +852,11 @@ type Model struct {
 	// additions stay bounded (synthesis §5.2 / Drop 1.5 P3-A acceptance criteria).
 	pickerCore filePickerCore
 
-	labelPickerBack        inputMode
-	labelPickerIndex       int
-	labelPickerItems       []labelPickerItem
-	labelPickerAllItems    []labelPickerItem
-	labelPickerInput       textinput.Model
+	labelPickerBack     inputMode
+	labelPickerIndex    int
+	labelPickerItems    []labelPickerItem
+	labelPickerAllItems []labelPickerItem
+	labelPickerInput    textinput.Model
 
 	dependencyBack              inputMode
 	dependencyOwnerActionItemID string

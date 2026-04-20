@@ -14975,7 +14975,6 @@ func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
 	}
 }
 
-
 // TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight verifies transient global status text cannot shrink shared full-page bodies.
 func TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight(t *testing.T) {
 	m := NewModel(newFakeService(nil, nil, nil))
