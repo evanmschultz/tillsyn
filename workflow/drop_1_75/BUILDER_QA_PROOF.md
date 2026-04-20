@@ -449,3 +449,77 @@ All 4 gates verified green. All 5 declared deviations adjudicated as defensible 
 ### Hylla Feedback
 
 N/A — Unit 1.6's subject is exact-string removal (Go identifiers, constants, struct fields) across a finite enumerated file list. Question shapes were `which files contain 'project.Kind'`, `is there still a projectKindPicker definition`, `does CreateProjectInput still have a Kind field`. All resolved by `rg` / `Grep` / `Read` over the PLAN-listed paths. Additionally, Unit 1.6's edits are uncommitted at review time, so Hylla's committed-code index is stale per CLAUDE.md rule #2 — fallback to `git diff` + `Read` is expected and correct. No Hylla query was issued; no fallback was forced.
+
+## Unit 1.9 — Round 1 — QA Proof — 2026-04-20
+
+**Verdict:** PASS
+
+## Summary
+
+The builder's claim — 11 lines (`type Kind string` + 5-constant block with godoc) moved from `internal/domain/workitem.go` to `internal/domain/kind.go` — is fully supported by the evidence. All 6 proof-completeness checks pass. The placement deviation (block landed at `kind.go:18-28` after `DefaultProjectKind` at line 16, rather than between `KindID` at line 13 and `DefaultProjectKind` at line 16 as the plan literally directed) is assessed as a correct interpretation of plan intent — builder's placement preserves the idiomatic Go "type followed by its own constants" adjacency pattern that the surrounding file already follows three times (`KindID`+`DefaultProjectKind`, `Kind`+5-const-block, `KindAppliesTo`+5-const-block). The plan's literal instruction would have split `KindID` from its own `DefaultProjectKind`. No remediation needed; flag as a minor PLAN-authoring imprecision, not a builder error.
+
+## Confirmed Claims
+
+- **Check 1 (kind.go contents):** `internal/domain/kind.go:19` contains exactly one `type Kind string` declaration; lines 22-28 contain exactly one const block with `KindActionItem Kind = "actionItem"`, `KindSubtask Kind = "subtask"`, `KindPhase Kind = "phase"`, `KindDecision Kind = "decision"`, `KindNote Kind = "note"`. Values intact, types tagged correctly. **PASS**
+- **Check 2 (workitem.go absence):** `internal/domain/workitem.go` lines 1-100 contain no `type Kind string` declaration and no `KindActionItem`/`KindSubtask`/`KindPhase`/`KindDecision`/`KindNote` constants. `git diff internal/domain/workitem.go` confirms a 12-line deletion (original lines 34-44: doc comment + type + const block). **PASS**
+- **Check 3 (package-wide uniqueness):** `Grep 'type Kind string' *.go` across entire drop returns exactly 1 hit at `internal/domain/kind.go:19`. `Grep 'KindActionItem\s*Kind\s*=|KindSubtask\s*Kind\s*=|KindPhase\s*Kind\s*=|KindDecision\s*Kind\s*=|KindNote\s*Kind\s*='` returns exactly 5 hits, all at `internal/domain/kind.go:23-27`. Zero duplicate declarations anywhere in Go tree. **PASS**
+- **Check 4 (domain tests):** `mage test-pkg ./internal/domain` → `[PKG PASS] github.com/evanmschultz/tillsyn/internal/domain (0.00s)`, 49 tests, 49 passed, 0 failed, 0 skipped, 1 package. Exit 0. **PASS**
+- **Check 5 (downstream build):** `mage build` → `[SUCCESS] Built till from ./cmd/till`, exit 0. No compilation breakage in any downstream package referencing `domain.Kind` or the 5 constants. **PASS**
+- **Check 6 (godoc preservation):** `git diff internal/domain/kind.go` shows the added block has doc comment `// Kind represents a configurable item kind.` and `// Built-in kind defaults.` byte-identical to the pre-move version in `git show HEAD:internal/domain/workitem.go | head -50` (lines 34-35 of HEAD). Constant declarations within the block retain gofmt-aligned tab spacing. **PASS**
+
+## Placement Deviation Assessment
+
+Plan directed placement **between** `KindID` (line 13) and `DefaultProjectKind` (line 16). Builder placed **after** `DefaultProjectKind`, at lines 18-28.
+
+Analysis:
+- Plan's literal instruction would split `KindID` (the type) from `DefaultProjectKind` (the only constant of that type). That is anti-idiomatic — every surrounding block in `kind.go` pairs a type immediately with its related constants (lines 12-16 `KindID`+`DefaultProjectKind`; lines 30-40 `KindAppliesTo`+5-const-block; lines 47-55 same pattern for ContextImportance equivalent in workitem.go would be the norm).
+- Builder's placement preserves the type+constants adjacency idiom and produces a clean cadence: `KindID → DefaultProjectKind → Kind → KindActionItem-block → KindAppliesTo → KindAppliesTo-block`.
+- Godoc output ordering: Go's `godoc` sorts types and their associated constants by declaration order within the file but groups constants under their declared type; placement inside the same file does not affect the rendered doc for package `domain`.
+- Readability: Builder's placement reads cleanly top-to-bottom as three paired type+constants groupings.
+
+Verdict on deviation: **acceptable, objectively better than literal plan text**. No remediation.
+
+**Notes (non-blocking):**
+1. PLAN.md §1.9 Paths line (line 194) describes placement as "near top, distinct from existing `type KindID string`" — this wording is consistent with builder's placement. The more specific "between KindID and DefaultProjectKind" framing (if it exists in round notes) is the minor imprecision; builder correctly followed the spirit.
+2. No Unit 1.9 commit yet — working tree has Unit 1.9 deltas (`kind.go`, `workitem.go`) plus the staged rename `task.go → action_item.go` likely from Unit 1.8. Dev will stage Unit 1.9's 2 Go files as a discrete commit before advancing.
+
+### Hylla Feedback
+
+N/A — Unit 1.9's subject is an exact file-to-file move of 11 lines within the same package. Evidence needs were: (a) verify presence/absence in two specific files, (b) verify uniqueness sitewide, (c) verify godoc preservation via `git show HEAD`, (d) verify compile+test green via mage. All resolved by `Read` / `Grep` / `Bash git diff` / `Bash mage`. Additionally, Unit 1.9's edits are uncommitted at review time, so Hylla's committed-code index is stale per CLAUDE.md rule #2 — fallback to `git diff` + `Read` is expected and correct. No Hylla query was issued; no fallback was forced.
+
+## Unit 1.8 — Round 1 — QA Proof — 2026-04-20
+
+**Verdict:** PASS
+
+**Summary:** Pure `git mv internal/domain/task.go internal/domain/action_item.go` with zero content change. `similarity index 100%`, blob hashes byte-identical, `mage test-pkg ./internal/domain` green (49/49), `mage build` green, no stale `task.go` references. All 6 PLAN §1.8 proof-completeness checks satisfied with concrete evidence.
+
+### Confirmed Claims
+
+- **Check 1 (rename semantics):** `git status` → `renamed:    internal/domain/task.go -> internal/domain/action_item.go` under "Changes to be committed". Staged as a git rename, not a delete+add. Git rename detection confirmed by both porcelain output and `git diff --cached --stat` showing `internal/domain/{task.go => action_item.go} | 0` (zero line changes).
+- **Check 2 (byte-identical content):** `git diff --cached -- internal/domain/action_item.go internal/domain/task.go` emits only `similarity index 100%` + `rename from`/`rename to` headers — no `@@` content hunks. Strongest-possible cross-check: `git hash-object internal/domain/action_item.go` = `0fb8f3f55368426519802bdd726fe2ce2539d289`; `git rev-parse HEAD:internal/domain/task.go` = `0fb8f3f55368426519802bdd726fe2ce2539d289`. Blob hashes match byte-for-byte. Line-count parity: both 384 lines.
+- **Check 3 (`mage test-pkg ./internal/domain` green):** Output shows `tests: 49 / passed: 49 / failed: 0 / skipped: 0`, `[SUCCESS] All tests passed`, `[PKG PASS] github.com/evanmschultz/tillsyn/internal/domain`. Matches PLAN §1.8 "49/49 pass" expectation exactly.
+- **Check 4 (`mage build` green):** Output `[RUNNING] Building till from ./cmd/till` → `[SUCCESS] Built till from ./cmd/till`. Full downstream link succeeds — no compilation breakage from the rename.
+- **Check 5 (no stale `task.go` references in Go source):** `Grep` for `task.go` across `*.go` files project-wide returns zero matches. No test fixture, log message, embedded asset path, or comment still references the old filename.
+- **Check 6 (package decl + exported symbols intact):** Head of `internal/domain/action_item.go` shows `package domain` on line 1 and exports `Priority` + constants `PriorityLow`/`PriorityMedium`/`PriorityHigh`, `ActionItem` struct (with full field list), and `ActionItemInput` struct. All expected exports present. Blob-hash identity (Check 2) guarantees every other symbol in the file is unchanged as well.
+
+### Scope Hygiene
+
+- **Unit 1.8 staged delta is isolated to the rename.** `git diff --cached` at the Unit 1.8 scope shows only the rename header; no content modifications staged under this unit.
+- **Working tree contains unstaged sibling modifications** (`internal/domain/kind.go`, `internal/domain/workitem.go`, `workflow/drop_1_75/BUILDER_WORKLOG.md`, `workflow/drop_1_75/PLAN.md`) — these belong to Unit 1.9 (`Merge WorkKind block into kind.go`) per PLAN §1.9 and are out of scope for this review. `mage test-pkg` and `mage build` passing in the presence of those unstaged edits is additional defense-in-depth: the rename holds up even with 1.9 in-flight.
+- **No forbidden-file touches attributable to Unit 1.8.** The rename is the only staged change.
+
+### Falsification Attempts (All Mitigated)
+
+- *Could git's similarity index misreport a content change as 100% identical?* → Refuted by direct blob-hash identity (`0fb8f3f5...`), which is independent of the similarity heuristic.
+- *Could downstream packages break from the rename?* → Refuted by `mage build` success. Go resolves by package path, not filename; `package domain` is preserved (per file head), so zero linkage breakage is expected.
+- *Could `mage test-pkg` be green because tests were skipped?* → Refuted; output explicitly reports `skipped: 0`.
+- *Could the rename be delete+add disguised?* → Refuted; both `git status` (`renamed:`) and `git diff --cached` (`similarity index 100%`, `rename from`/`rename to`) tag rename semantics explicitly.
+- *Could unstaged 1.9 edits be masking a regression?* → Accepted but non-blocking. Verdict scope is the Unit 1.8 staged rename; the 1.9 sibling work runs under its own QA pass.
+
+### Notes (non-blocking)
+
+None. PLAN §1.8's three acceptance gates (`ls internal/domain/task.go` fails, `ls internal/domain/action_item.go` succeeds, `mage test-pkg ./internal/domain` passes) are all satisfied, plus the four additional proof-completeness checks the spawn prompt layered on (byte-identical content, mage build, no stale references, symbol preservation).
+
+### Hylla Feedback
+
+N/A — Unit 1.8 is a pure file rename; Hylla's committed-code index predates the rename and would describe the symbols under the old filename regardless. Question shapes were `does git recognize this as a rename`, `is the content byte-identical`, `does the package still compile and test green`, `are there stale filename references`. All resolved by `git status` / `git diff` / `git hash-object` / `git rev-parse` / `mage` / `Grep`. No Hylla query was issued; no fallback was forced.

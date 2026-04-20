@@ -873,3 +873,127 @@ Accept Unit 1.7 as DONE. F1 is refinement-drop material, not blocking. No respaw
 ## Hylla Feedback
 
 N/A — Unit 1.7's falsification surface is entirely lexical (SQL-identifier grep across a known file set) and structural (call-site counting via `git show HEAD` + `Grep`). Hylla's sweet spot is "where else in committed code does symbol X appear" — but Hylla is stale for files edited after last ingest (every file in Unit 1.7 is post-ingest), so `git grep` + working-tree `Grep` are the authoritative evidence for residue checks. The pre-delete call-site enumeration used `git show HEAD:` + `Grep` as the ground truth rather than a semantic Hylla query, because the question was "how many call sites does the current-HEAD `repo.go` file contain" — a purely lexical question inside one file. No Hylla query was issued; no fallback was forced; no miss to record.
+
+## Unit 1.9 — Round 1 — QA Falsification — 2026-04-20
+
+**Verdict:** PASS
+
+### Summary
+
+Attempted eight falsification attacks against the `type Kind string` + 5 constants move from `internal/domain/workitem.go` to `internal/domain/kind.go`. All eight REFUTED. The move is a zero-semantic-change package-internal relocation: same package (`domain`), identical RHS string literals, no `iota`, no `go:generate`, no `doc.go`, placement deviation (after `DefaultProjectKind` rather than between `type KindID` and its default) is cosmetically acceptable and godoc-clean. `mage test-pkg ./internal/domain` green (49 tests passing). `mage build` green. No counterexample.
+
+### Attacks
+
+**Attack 1 — Duplicate declaration across `internal/domain/`.** `Grep 'type Kind string' internal/domain/` returns exactly one hit: `kind.go:19`. No shim, no legacy file redeclaring the type. `Grep '\b(KindActionItem|KindSubtask|KindPhase|KindDecision|KindNote)\b' internal/domain/` returns declarations only at `kind.go:23-27`; all other hits are consumers (`action_item.go:128`, `comment.go:16-20`, `domain_test.go:242`) — no duplicate constant declaration. REFUTED.
+
+**Attack 2 — Name shadowing.** `kind.go` contains `KindDefinition` (struct with `ID`, `DisplayName`, `AppliesTo`, etc. — NO field named `Kind`), `KindTemplateChildSpec` (HAS `Kind KindID` field at line 63), `KindTemplate`, `KindAppliesTo`. The struct field `KindTemplateChildSpec.Kind` is of type `KindID`, not `Kind` — no field-type collision, and field-scope shadowing of a package-level type does not occur in Go (struct fields live in the struct's scope, package types live in the package scope). No conflict with the new top-level `type Kind string`. REFUTED.
+
+**Attack 3 — `iota` / init-order.** `Grep '\biota\b' internal/domain/` returns zero matches across the entire package. `kind.go:23-27` shows all five constants declared with explicit string literals (`"actionItem"`, `"subtask"`, `"phase"`, `"decision"`, `"note"`) — no iota, no positional dependency. Move is value-identical. REFUTED.
+
+**Attack 4 — `doc.go` / `go:generate` side effects.** `Glob internal/domain/doc.go` returns no files. `Grep 'go:generate' internal/domain/` returns zero matches. No stringer generation, no enumerated-type registration, no package-level init ordering that could trip on declaration-order changes. REFUTED.
+
+**Attack 5 — Cross-package consumer resolution.** `Grep 'domain\.(Kind|KindActionItem|KindSubtask|KindPhase|KindDecision|KindNote)\b'` returns 50+ call-sites across `internal/tui/thread_mode.go` (7 sites at 678-690), `internal/tui/description_editor_mode.go:290`, `internal/tui/model_test.go` (33 sites), plus all same-package consumers (`action_item.go:128`, `comment.go:16-20`, `domain_test.go:242`). Spot-checked 5 sites: `thread_mode.go:682 domain.KindActionItem`, `thread_mode.go:684 domain.KindSubtask`, `model_test.go:2466 Kind: domain.KindActionItem`, `description_editor_mode.go:290 string(domain.KindActionItem)`, `comment.go:16 CommentTargetType(KindActionItem)`. All resolve against the relocated declaration. `mage build` green — aggregate compile-check pass. REFUTED.
+
+**Attack 6 — Godoc comment preservation.** `git diff internal/domain/kind.go internal/domain/workitem.go` shows the moved block preserves the two godoc comments verbatim: `// Kind represents a configurable item kind.` (above `type Kind string`) and `// Built-in kind defaults.` (above the const block). No prose dropped, no sentence reworded. REFUTED.
+
+**Attack 7 — Placement deviation godoc impact.** `go doc github.com/evanmschultz/tillsyn/internal/domain Kind` output: `type Kind string / Kind represents a configurable item kind. / const KindActionItem Kind = "actionItem" ...`. Go's doc tool groups by declared type, not by file position or by lexical neighbor — the `Kind` type and its constants render as a self-contained unit regardless of whether they sit before, after, or between other types in the file. The placement after `DefaultProjectKind` (a `KindID` value, not a `KindID` type member) is godoc-neutral because `godoc` traverses by type declaration, and `KindID` + `Kind` are separate types with separate doc entries. No godoc "Kind appears to be a member of KindID family" surprise. REFUTED.
+
+**Attack 8 — Test-only dependencies.** Same-package consumers in `internal/domain/` (`action_item.go`, `comment.go`, `domain_test.go`, `workitem.go`, `workitem_test.go`) resolve against the relocated type without any import change — Go's package scope is flat, and file position within a package is irrelevant to symbol resolution. `mage test-pkg ./internal/domain` ran 49 tests, all passing, confirming no same-package test-file breakage. `isValidKind(kind Kind)` at `workitem.go:184` still compiles and resolves against the relocated `type Kind` (called from `action_item.go:130`). REFUTED.
+
+### Verdict Table
+
+| Attack                               | Status  |
+| ------------------------------------ | ------- |
+| 1. Duplicate declaration             | REFUTED |
+| 2. Name shadowing                    | REFUTED |
+| 3. `iota` / init-order               | REFUTED |
+| 4. `doc.go` / `go:generate`          | REFUTED |
+| 5. Cross-package consumers           | REFUTED |
+| 6. Godoc comment preservation        | REFUTED |
+| 7. Placement deviation godoc impact  | REFUTED |
+| 8. Test-only dependencies            | REFUTED |
+
+### Unknowns
+
+None material. All eight attacks produced no counterexample; the move is a pure package-internal relocation verified by compile (mage build) + test (mage test-pkg) + godoc render.
+
+### Recommendation
+
+Accept Unit 1.9 as DONE. No counterexample, no residue, no respawn. The placement deviation is aesthetically defensible (groups both kind-related types in the file whose name is `kind.go`) and godoc-neutral.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed. Actually, no Hylla query was issued: the falsification surface is purely lexical (file-local grep across `internal/domain/`) + compile/test verification (mage) + godoc render. Hylla is stale for files edited in this drop branch (post last-ingest), so `git diff`, `Grep`, `Read`, and `go doc` are the authoritative evidence sources for a package-internal relocation. No fallback was forced; no miss to record.
+
+## Unit 1.8 — Round 1 — QA Falsification — 2026-04-20
+
+**Verdict:** PASS
+
+### Summary
+
+Attempted seven structural attacks against the `git mv internal/domain/task.go internal/domain/action_item.go` zero-content rename. Every attack either REFUTED with evidence or explicitly ACCEPTED with justification (stale Hylla, deferred to drop-end reingest per project invariant). Staged diff confirmed pure rename: `internal/domain/{task.go => action_item.go} | 0` (0 insertions, 0 deletions). `mage build` green. `mage test-pkg ./internal/domain` green (49/49). No CONFIRMED counterexample.
+
+### Attack 1 — Stale path references to `task.go`
+
+- **Query:** `Grep 'task\.go' drop/1.75/ --glob='!workflow/**'` returns 0 matches. With `workflow/**` included, 11 hits — all in `workflow/drop_1_75/PLAN.md`, `BUILDER_WORKLOG.md`, `BUILDER_QA_PROOF.md`, and earlier entries in this `BUILDER_QA_FALSIFICATION.md`. All are legitimate prose describing the rename itself (plan text, worklog history, QA proof narrative referencing pre-rename line numbers).
+- **Verdict:** REFUTED. Zero production-code, magefile, CI config, or non-workflow MD reference to the old filename.
+
+### Attack 2 — Build tag / embed / generate directive mismatch
+
+- **Query:** `Grep '//go:(embed|generate|build).*task\.go' drop/1.75` returns 0. `Grep 'task\.go' magefile.go` returns 0. `Grep 'task\.go' .github` returns 0.
+- **Verdict:** REFUTED. No `//go:embed`, `//go:generate`, `//go:build` directive, magefile file-list code, or GitHub Actions step references the old filename.
+
+### Attack 3 — Golden fixture / snapshot dependency
+
+- **Query:** Enumerated `testdata/` + `.golden` files under `internal/` via `Glob`: 11 golden/testdata files total. `Grep 'task\.go' internal/tui/testdata` returns 0. `Grep 'task\.go|action_item\.go' internal/tui/gitdiff/testdata` returns 0.
+- **Verdict:** REFUTED. No golden fixture or snapshot file serializes the old filename. PLAN §1.1 already noted the 4 TUI goldens don't reference the dying surface — same applies here.
+
+### Attack 4 — Hylla stale artifact reference
+
+- **Query:** `hylla_search_keyword query='task.go' artifact_ref='github.com/evanmschultz/tillsyn@main'` returns 0 results. Follow-up `NewActionItem` query returned `enrichment still running for github.com/evanmschultz/tillsyn@main` — the artifact is currently reingesting.
+- **Verdict:** ACCEPTED (not a blocker). Project invariant (`CLAUDE.md` §Drop Closeout + Hylla Baseline) is that Hylla reingest happens drop-end only, from remote, after `gh run watch --exit-status` green. The drop/1.75 branch has not been pushed and reingested — any stale Hylla node referencing the old path is the expected pre-drop-end state, not a rename defect. Stale Hylla is resolved by drop-end reingest; no action required for this unit.
+
+### Attack 5 — Case-sensitivity / cross-platform rename risk
+
+- **Query:** `Glob 'internal/**/[Aa]ction[Ii]tem*.go'` returns 0 matches (no camelCase variant). `Glob 'internal/**/[Aa]ction_[Ii]tem*.go'` returns exactly one match: `internal/domain/action_item.go`.
+- **Verdict:** REFUTED. No case-variant collision exists anywhere in the tree. macOS APFS (project's dev + CI platform per `.github/workflows/ci.yml` matrix: `macos-latest`) is case-insensitive by default — would surface a collision as a single Glob hit under wrong casing; none present. Linux (not in CI matrix but relevant for hypothetical portability) is moot when no variant exists.
+
+### Attack 6 — Download-side CI cache keyed on file list
+
+- **Query:** `Read .github/workflows/ci.yml` — `setup-go@v6` with `cache: true` (lines 24-27, 45-48). `Grep 'cache|key' ci.yml -i` returns only those two `cache: true` lines. No custom `actions/cache@` step with a `key:` that hashes file paths. The `release-snapshot-check` job uses `git ls-files --error-unmatch magefile.go cmd/till/main.go cmd/till/main_test.go` — no `task.go` in that required-file list.
+- **Verdict:** REFUTED. `setup-go@v6`'s default cache key hashes `go.sum`, not the Go source file list. No file-path-keyed custom cache. No CI step enumerates `task.go` or `action_item.go` by name. Cache rehydrates fine.
+
+### Attack 7 — Missing test coverage for renamed file's exported symbols
+
+- **Query:** `Grep '^(type|func|const|var)\s+[A-Z]\w+' internal/domain/action_item.go` lists the exported symbols: `Priority` type, `PriorityLow/Medium/High` constants, `ActionItem` struct, `ActionItemInput` struct, `DefaultActionItemScope` func, `NewActionItem` func. `Grep 'NewActionItem|ActionItemInput|DefaultActionItemScope' internal/domain` returns 2 files: `action_item.go` itself and `domain_test.go`. Within `domain_test.go`: 20 hits including `TestNewActionItemDefaultsAndLabels` at line 126, `TestNewActionItemValidation` at line 152.
+- **Verdict:** REFUTED. The renamed file's exported symbols are exercised by `domain_test.go`. `mage test-pkg ./internal/domain` green (49/49) confirms the tests run against the new filename without issue — Go compiles packages by package, not by file, so a filename change is invisible to the test binary.
+
+### Additional sanity checks
+
+- `git diff --cached --stat` shows `internal/domain/{task.go => action_item.go} | 0` (pure rename, zero content delta).
+- `Grep 'runtime\.Caller|debug\.Stack|runtime\.Stack' internal` returns 0 files. No source-path-capturing runtime code that could embed the old filename in runtime output.
+- Unstaged modifications present (`kind.go`, `workitem.go`, `BUILDER_WORKLOG.md`, `PLAN.md`, `BUILDER_QA_PROOF.md`) are NOT part of Unit 1.8 — they belong to the `WorkKind`-constants-move work (Unit 1.9, just appended above). Unit 1.8's isolated staged commit is the zero-content rename, evaluated in isolation here.
+
+### Verdict Table
+
+| Attack                                     | Status   |
+| ------------------------------------------ | -------- |
+| 1. Stale path references to `task.go`      | REFUTED  |
+| 2. Build tag / embed / generate directives | REFUTED  |
+| 3. Golden fixture / snapshot dependency    | REFUTED  |
+| 4. Hylla stale artifact reference          | ACCEPTED |
+| 5. Case-sensitivity / cross-platform       | REFUTED  |
+| 6. CI cache keyed on file list             | REFUTED  |
+| 7. Missing test coverage                   | REFUTED  |
+
+### Unknowns
+
+None material. All seven attacks either produced no counterexample or produced an explicitly accepted one (Hylla staleness, resolved at drop-end reingest).
+
+### Recommendation
+
+Accept Unit 1.8 as DONE. No counterexample, no respawn needed.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. The one query issued (`hylla_search_keyword query='task.go'`) correctly returned an empty result — expected for a filename-literal negative-confirmation probe (Hylla doesn't index filenames as content tokens). The follow-up semantic query (`NewActionItem`) returned the `enrichment still running` status, which is the principled response for a mid-reingest artifact. The attack surface for a zero-content file-rename unit is largely lexical/filesystem (Grep, Glob, git diff) + mage build/test, not semantic (who-calls-X) — Hylla was not the primary evidence source by design, not a miss.

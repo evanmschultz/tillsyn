@@ -31,18 +31,6 @@ const (
 	ActorTypeSystem ActorType = "system"
 )
 
-// Kind represents a configurable item kind.
-type Kind string
-
-// Built-in kind defaults.
-const (
-	KindActionItem Kind = "actionItem"
-	KindSubtask    Kind = "subtask"
-	KindPhase      Kind = "phase"
-	KindDecision   Kind = "decision"
-	KindNote       Kind = "note"
-)
-
 // ContextType classifies planning context snippets attached to an item.
 type ContextType string
 
