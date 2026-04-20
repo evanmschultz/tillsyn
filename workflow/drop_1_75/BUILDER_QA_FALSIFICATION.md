@@ -190,3 +190,170 @@ Safe to delete. The deletion is actually forced — once the `kindBootstrap` fie
 ## Hylla Feedback
 
 N/A — this falsification pass verified a pure app-layer symbol deletion via `git diff HEAD` + `rg` over committed Go source. Hylla is stale for files edited after the last ingest (per project CLAUDE.md rule #2), so the authoritative evidence for this unit is the diff itself plus post-diff `rg` sweeps. No Hylla query was attempted and none was needed — the deletion's blast radius is lexical (who-references-these-identifiers), not semantic (what-does-this-function-mean). `rg` is the right tool shape. No miss to record.
+
+## Unit 1.3 — Round 1
+
+**Verdict:** PASS
+
+## Summary
+
+Ran 13 targeted attacks against the `projects.kind` strip + `kind_catalog` bake + seeder deletion + scope-expansion claim. Zero CONFIRMED counterexamples. Fresh rerun of `mage test-pkg ./internal/adapters/storage/sqlite` is still green (69 pass / 1 skip). The INSERT statements are schema-complete (10 columns match 10 values), the `ensureGlobalAuthProject` INSERT is well-formed (5 placeholders = 5 args, 8 columns = 5 placeholders + 3 inline literals), the baked rows sort correctly (`actionItem` before `project` in ASCII), the `pragma_table_info` assertion uses exact-match (`c == "kind"`) against SQLite's declared-lowercase name, the stripped guards in `template_library*.go` had no behavior beyond bootstrap gating, and every listed attack surface routes either to "mitigated here" or "owned by a later unit." The one pre-existing DB concern (orphaned `kind` column from a past `ALTER TABLE` run) is harmless because NOT NULL is satisfied by the declared DEFAULT and no code path reads it; `scripts/drops-rewrite.sql` owns the physical column drop per §1.14. Scope-expansion is the minimum reachable fix — it's physically impossible to run `mage test-pkg ./internal/adapters/storage/sqlite` with `internal/app` in a compile-broken state because sqlite imports app in 8 files.
+
+## Attacks Attempted
+
+### A1 — Migration round-trip on pre-existing DB with `kind` column (REFUTED)
+
+Scenario: user has pre-1.3 `tillsyn.db` where `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'` already ran. Post-1.3 code opens it.
+
+- `CREATE TABLE IF NOT EXISTS projects` — no-op (table exists).
+- `ALTER TABLE projects ADD COLUMN metadata_json` at `repo.go:593` still fires under `isDuplicateColumnErr` guard — safe idempotent.
+- The physical `kind` column remains. No code path reads it: post-1.3 SELECTs in `CreateProject` / `UpdateProject` / `GetProject` / `ListProjects` / `scanProject` / `ensureGlobalAuthProject` all omit it (verified via direct read of `repo.go:1249-1363` and `:3865-3889`).
+- `CreateProject` INSERT: `INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)` — 8 columns, 8 placeholders. When the table also physically has `kind TEXT NOT NULL DEFAULT 'project'`, SQLite fills it from the column DEFAULT. NOT NULL satisfied. Insert succeeds.
+- Orphaned column stays as dead weight until `scripts/drops-rewrite.sql` §1.14 runs `ALTER TABLE projects DROP COLUMN kind`.
+
+Not a defect. Documented path.
+
+### A2 — Pre-existing DB with 7 legacy `kind_catalog` rows (REFUTED — OUT OF SCOPE)
+
+Scenario: user has pre-collapse DB with rows `{project, actionItem, subtask, phase, branch, decision, note}` (7 rows from old seeder).
+
+- `CREATE TABLE IF NOT EXISTS kind_catalog` — no-op.
+- Baked `INSERT OR IGNORE INTO kind_catalog` for `project` + `actionItem` — IGNORED (rows already present).
+- Result: user has 7 rows, not 2. `TestRepositoryFreshOpenKindCatalog` is a fresh-open test (`OpenInMemory()`) so it only exercises the baked-two-row path.
+
+Handled by §1.14 — `DELETE FROM kind_catalog WHERE id NOT IN ('project', 'actionItem')` collapses the set. No code in Unit 1.3 requires exactly 2 rows at runtime (only the test does, and the test only uses in-memory). Not a Unit 1.3 defect.
+
+### A3 — INSERT OR IGNORE re-fire semantics (REFUTED)
+
+`migrate()` runs on every `OpenRepository` call. The `stmts` slice contains `CREATE TABLE IF NOT EXISTS kind_catalog` immediately followed by two `INSERT OR IGNORE INTO kind_catalog` statements. Every DB open re-runs them.
+
+- First open: `CREATE TABLE` creates table, INSERTs add rows with `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` timestamps.
+- Subsequent opens: `CREATE TABLE IF NOT EXISTS` → no-op. `INSERT OR IGNORE` → primary-key conflict on `id='project'` / `id='actionItem'` → row ignored, existing row untouched. Timestamps stay frozen to first-open.
+
+Behavior is idempotent and timestamp-stable. Not a defect.
+
+### A4 — Row-ordering in `TestRepositoryFreshOpenKindCatalog` (REFUTED)
+
+Test at `repo_test.go:2567-2605` uses `SELECT id FROM kind_catalog ORDER BY id` and expects `want := []string{"actionItem", "project"}`. ASCII: `'a' (0x61) < 'p' (0x70)`, so `actionItem` sorts before `project`. `ORDER BY id` in SQLite on TEXT columns uses the BINARY collation by default — strict byte order. Test expectation matches actual sort order regardless of INSERT order (builder inserted project first, actionItem second).
+
+### A5 — `pragma_table_info` case-sensitivity / normalization (REFUTED)
+
+Test at `repo_test.go:2636-2640` does `if c == "kind"`. SQLite's `pragma_table_info('projects')` returns column names as declared in the CREATE TABLE statement. The column was declared lowercase `kind TEXT NOT NULL DEFAULT 'project'`. SQLite preserves declared case. No case-folding, no Unicode normalization — pure byte comparison via Go's `==` on `string`. The assertion would still catch a hypothetical `KIND` or `Kind` column declaration. There is also a `len(columns) == 0` guard at `:2641-2643` blocking the table-missing false-pass. Assertion is robust.
+
+### A6 — Scope-expansion guard strip: runtime-behavior change? (REFUTED)
+
+Read post-strip `template_library.go:124-128` + `template_library_builtin.go:27-31, 74-81`. Each post-strip block proceeds directly from the receiver signature into the method body. The pre-strip guard was uniformly `if err := s.ensureKindCatalogBootstrapped(ctx); err != nil { return ..., err }` — pure invocation wrapper. The method did ONE thing: lazily seed kind_catalog rows. Post-1.3, those rows live in DDL. So the guard is functionally equivalent to a no-op for the post-baked state. No runtime-behavior change. Post-strip files compile (`mage test-pkg ./internal/adapters/storage/sqlite` transitively compiled all of `internal/app`).
+
+### A7 — `mage ci` waiver-discharge claim (REFUTED — CORRECTLY SCOPED)
+
+Worklog Deviation #3: "Unit 1.2's waiver is functionally discharged ahead of schedule." The claim that is actually being made:
+
+- `internal/app` now compiles (3 guard-sites stripped, no dangling `ensureKindCatalogBootstrapped` callers).
+- This implicitly satisfies Unit 1.2's `mage test-pkg ./internal/app` compile precondition.
+- Builder explicitly did NOT claim `mage ci` runs green — that gate is 1.5's charge (restoring workspace compile) and 1.15's charge (whole-drop verification).
+
+Claim is scoped to "the transitive compile through sqlite works" (proven by gate 8 passing). Not an overclaim. No counterexample.
+
+### A8 — `kind_catalog` INSERT schema-column constraint satisfaction (REFUTED)
+
+`kind_catalog` DDL at `repo.go:315-326` has 10 columns:
+1. `id TEXT PRIMARY KEY`
+2. `display_name TEXT NOT NULL`
+3. `description_markdown TEXT NOT NULL DEFAULT ''`
+4. `applies_to_json TEXT NOT NULL DEFAULT '[]'`
+5. `allowed_parent_scopes_json TEXT NOT NULL DEFAULT '[]'`
+6. `payload_schema_json TEXT NOT NULL DEFAULT ''`
+7. `template_json TEXT NOT NULL DEFAULT '{}'`
+8. `created_at TEXT NOT NULL`
+9. `updated_at TEXT NOT NULL`
+10. `archived_at TEXT` (nullable)
+
+Baked INSERT at `:327-332` (project) and `:333-338` (actionItem) list 10 columns and 10 VALUES each. Manually mapped:
+- `id`: 'project' / 'actionItem' — NOT NULL satisfied.
+- `display_name`: 'Project' / 'ActionItem' — NOT NULL satisfied.
+- `description_markdown`: 'Built-in project kind' / 'Built-in actionItem kind' — NOT NULL.
+- `applies_to_json`: '["project"]' / '["actionItem"]' — NOT NULL.
+- `allowed_parent_scopes_json`: '[]' — NOT NULL.
+- `payload_schema_json`: '' — NOT NULL (empty string is NOT NULL).
+- `template_json`: '{}' — NOT NULL.
+- `created_at` / `updated_at`: `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` — NOT NULL.
+- `archived_at`: NULL — nullable, fine.
+
+All NOT NULL constraints satisfied. No silent suppression via `OR IGNORE`. Verified by the passing `TestRepositoryFreshOpenKindCatalog` test (insert succeeded, row retrievable).
+
+### A9 — Seeder-caller side effects (REFUTED)
+
+Pre-diff `repo.go:671-673` (via `git show HEAD`) shows the seeder caller was a single 3-line `if err := r.seedDefaultKindCatalog(ctx); err != nil { return err }`. No adjacent side effects packaged with it. Immediate context:
+
+```
+bridgeLegacyActionItemsToWorkItems()
+seedDefaultKindCatalog()      ← deleted
+ensureGlobalAuthProject()
+migrateFailedColumn()
+```
+
+The surrounding migration calls are independent. Deletion removes only the seeder invocation — `ensureGlobalAuthProject` still runs, `bridgeLegacyActionItemsToWorkItems` still runs, `migrateFailedColumn` still runs. No collateral migration step deleted.
+
+### A10 — Test-site false-green from deleting `TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport` (REFUTED)
+
+Test asserted that the seeder produced a `phase` kind with nested-phase parent-scope support. Both the seeder AND the `phase` kind are gone post-1.3. The assertion is literally unsatisfiable — there is no `phase` row to query. Preserving the test would require either (a) re-seeding the legacy kinds (reverts the collapse), or (b) rewriting the assertion against a non-existent row (guaranteed fail). Builder's deletion is the only coherent response. The "phase" domain concept itself is planned for domain-layer deletion in §1.9. No functional regression — the property being tested has no meaningful referent post-collapse.
+
+### A11 — `ensureGlobalAuthProject` INSERT arity (REFUTED)
+
+Read `repo.go:1347-1363`. SQL:
+```
+INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
+VALUES (?, ?, ?, '', '{}', ?, ?, NULL)
+ON CONFLICT(id) DO NOTHING
+```
+
+- 8 columns.
+- 5 `?` placeholders + 3 inline literals ('', '{}', NULL) = 8 values total.
+- 5 Go args passed: `AuthRequestGlobalProjectID`, `globalAuthProjectSlug`, `globalAuthProjectName`, `globalAuthProjectCreatedAt`, `globalAuthProjectCreatedAt`.
+
+Arity matches (5 placeholders = 5 args). Column-to-value mapping:
+- `id` ← `AuthRequestGlobalProjectID` (TEXT)
+- `slug` ← `globalAuthProjectSlug` (TEXT)
+- `name` ← `globalAuthProjectName` (TEXT)
+- `description` ← '' (TEXT)
+- `metadata_json` ← '{}' (TEXT)
+- `created_at` ← `globalAuthProjectCreatedAt` (TEXT)
+- `updated_at` ← `globalAuthProjectCreatedAt` (TEXT)
+- `archived_at` ← NULL (TEXT nullable)
+
+All types align. `ON CONFLICT(id) DO NOTHING` handles the self-healing repeat-open case. Valid INSERT.
+
+### A12 — `scripts/drops-rewrite.sql:230` stale `projects.kind` ref (REFUTED — OWNED BY §1.14)
+
+Line 230 is `(SELECT COUNT(*) FROM projects WHERE kind <> 'project')` inside an assertion block. This script is the CURRENT pre-rewrite version — §1.14 replaces the entire file wholesale. The file is outside Unit 1.3's declared paths (`repo.go` + `repo_test.go` only). There is no execution path in Drop 1.75 where the current (stale) script runs against a post-1.3 schema:
+
+- Drop phase order: units 1.1-1.13 (Go) → unit 1.14 (rewrite SQL) → unit 1.15 (mage ci + push) → dev applies NEW rewrite to real DB.
+- Current dev DB still physically has `kind` column (pre-1.3 state) — the stale script would run fine against it IF it ran today, but no workflow step calls for that.
+
+Classified EDITORIAL-ONLY / DEFER-TO-UNIT-1.14. Matches proof twin's informational-only classification.
+
+### A13 — Regex-bleed alternate forms (REFUTED)
+
+Reran with tighter bounds that proof twin might have missed:
+
+- `rg -U 'SELECT[^;]*\bkind\b[^;]*FROM projects\b' repo.go` → 0 matches (the one greedy-bleed match from gate 5 requires `FROM tasks` as the FROM clause to intersect with `t.kind` and hit "FROM" bookends).
+- `rg -U 'INSERT INTO projects\([^)]*\bkind\b[^)]*\)' repo.go` (word-boundary on `kind`) → 0 matches. Confirms no `INSERT INTO projects(...kind...)` residue.
+- `rg -U 'UPDATE projects[^;]*\bkind\b\s*=' repo.go` → 0 matches. Confirms no `UPDATE projects ... kind = ...` residue.
+- Same 3 regexes on `kindRaw|NormalizeKindID\(p\.Kind\)|p\.Kind\s*=` — still only `scanAttentionItem` matches (lines 4290, 4306, 4329). `scanAttentionItem` scans the `AttentionKind` domain, not `projects.kind`.
+- Case-insensitive probe: `rg -i 'projects\.kind|p\.kind\b'` across `internal/` (excluding tests, workflow) → 0 matches. No overlooked casing.
+
+Every tighter regex variant that might catch a real residue returns zero. Only the builder-documented false-positives remain.
+
+## F-Findings (Falsification Findings)
+
+- **None.** 13 attacks attempted, 0 CONFIRMED counterexamples. All attacks REFUTED with concrete evidence.
+
+## Classification
+
+- No F-findings to classify. Unit 1.3 is **PASS**.
+
+**Do not block Unit 1.3.** Proceed to Unit 1.4.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed. This falsification pass verified schema/SQL/test-site strips and INSERT arity via `git diff HEAD` + `Read` + `Grep` over committed Go source, plus a rerun of `mage test-pkg ./internal/adapters/storage/sqlite` for gate 8 fresh-eyes verification. Hylla is stale for files edited after the last ingest (project CLAUDE.md rule #2) — all Unit 1.3 edits are post-ingest, so lexical tools + `git show HEAD:...` for pre-diff context are the authoritative evidence. No Hylla query was attempted; none was needed. The falsification shape here is "does the diff produce any counterexample state," not "where else in committed code does X appear" — the former is diff-bound, the latter is Hylla's sweet spot. No miss to record.

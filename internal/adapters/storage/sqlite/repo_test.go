@@ -2330,29 +2330,6 @@ func TestRepository_AttentionItemProjectWideRoleFilterAndUpsert(t *testing.T) {
 	}
 }
 
-// TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport verifies seeded defaults include nested phase support.
-func TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport(t *testing.T) {
-	ctx := context.Background()
-	repo, err := OpenInMemory()
-	if err != nil {
-		t.Fatalf("OpenInMemory() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	phase, err := repo.GetKindDefinition(ctx, domain.KindID(domain.KindPhase))
-	if err != nil {
-		t.Fatalf("GetKindDefinition(phase) error = %v", err)
-	}
-	if !phase.AppliesToScope(domain.KindAppliesToPhase) {
-		t.Fatalf("expected phase kind to apply to phase, got %#v", phase.AppliesTo)
-	}
-	if !phase.AllowsParentScope(domain.KindAppliesToPhase) {
-		t.Fatalf("expected phase kind parent scopes to include phase, got %#v", phase.AllowedParentScopes)
-	}
-}
-
 // TestRepository_PersistsProjectKindAndActionItemScope verifies new kind/scope columns round-trip.
 func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	ctx := context.Background()
@@ -2366,18 +2343,12 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-scope", "Scope", "", now)
-	if err := project.SetKind("project-template", now); err != nil {
-		t.Fatalf("SetKind() error = %v", err)
-	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
-	loadedProject, err := repo.GetProject(ctx, project.ID)
+	_, err = repo.GetProject(ctx, project.ID)
 	if err != nil {
 		t.Fatalf("GetProject() error = %v", err)
-	}
-	if loadedProject.Kind != domain.KindID("project-template") {
-		t.Fatalf("expected persisted project kind, got %q", loadedProject.Kind)
 	}
 
 	column, _ := domain.NewColumn("c-scope", project.ID, "To Do", 0, 0, now)
@@ -2590,5 +2561,84 @@ func TestRepositoryAuthRequestScanErrors(t *testing.T) {
 	}
 	if _, err := repo.ListAuthRequests(ctx, domain.AuthRequestListFilter{ProjectID: project.ID}); err == nil {
 		t.Fatal("ListAuthRequests() error = nil, want scan decode error")
+	}
+}
+
+// TestRepositoryFreshOpenKindCatalog verifies that a fresh DB open bakes exactly two kind_catalog rows.
+func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	rows, err := repo.db.QueryContext(ctx, `SELECT id FROM kind_catalog ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query kind_catalog error = %v", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan kind_catalog id error = %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate kind_catalog error = %v", err)
+	}
+
+	want := []string{"actionItem", "project"}
+	if len(ids) != len(want) {
+		t.Fatalf("kind_catalog rows = %d (%v), want %d (%v)", len(ids), ids, len(want), want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("kind_catalog row %d = %q, want %q (all ids: %v)", i, ids[i], want[i], ids)
+		}
+	}
+}
+
+// TestRepositoryFreshOpenProjectsSchema verifies that a fresh DB open produces a projects table with no kind column.
+func TestRepositoryFreshOpenProjectsSchema(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	rows, err := repo.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('projects')`)
+	if err != nil {
+		t.Fatalf("query pragma_table_info error = %v", err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan pragma_table_info error = %v", err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate pragma_table_info error = %v", err)
+	}
+
+	for _, c := range columns {
+		if c == "kind" {
+			t.Fatalf("projects table still contains 'kind' column (all columns: %v)", columns)
+		}
+	}
+	if len(columns) == 0 {
+		t.Fatalf("pragma_table_info('projects') returned 0 columns — table missing?")
 	}
 }

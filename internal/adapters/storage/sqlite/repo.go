@@ -149,7 +149,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			slug TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			kind TEXT NOT NULL DEFAULT 'project',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -324,6 +323,18 @@ func (r *Repository) migrate(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'project', 'Project', 'Built-in project kind', '["project"]', '[]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'actionItem', 'ActionItem', 'Built-in actionItem kind', '["actionItem"]', '[]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS project_allowed_kinds (
 			project_id TEXT NOT NULL,
@@ -585,9 +596,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE attention_items ADD COLUMN target_role TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add attention_items.target_role: %w", err)
 	}
-	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'`); err != nil && !isDuplicateColumnErr(err) {
-		return fmt.Errorf("migrate sqlite add projects.kind: %w", err)
-	}
 	actionItemAlterStatements := []string{
 		`ALTER TABLE tasks ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'actionItem'`,
@@ -666,9 +674,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate sqlite actionItem parent index: %w", err)
 	}
 	if err := r.bridgeLegacyActionItemsToWorkItems(ctx); err != nil {
-		return err
-	}
-	if err := r.seedDefaultKindCatalog(ctx); err != nil {
 		return err
 	}
 	if err := r.ensureGlobalAuthProject(ctx); err != nil {
@@ -1228,107 +1233,6 @@ func (r *Repository) bridgeLegacyActionItemsToWorkItems(ctx context.Context) err
 	return nil
 }
 
-// seedDefaultKindCatalog inserts built-in kind catalog entries when absent.
-func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
-	type seedRecord struct {
-		id          domain.KindID
-		displayName string
-		description string
-		appliesTo   []domain.KindAppliesTo
-		parentScope []domain.KindAppliesTo
-	}
-	records := []seedRecord{
-		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{id: domain.KindID(domain.KindActionItem), displayName: "ActionItem", description: "Built-in actionItem kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
-		{id: domain.KindID(domain.KindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.KindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
-		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.KindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{id: domain.KindID(domain.KindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-	}
-
-	now := time.Now().UTC()
-	for _, record := range records {
-		appliesJSON, err := json.Marshal(record.appliesTo)
-		if err != nil {
-			return fmt.Errorf("encode kind applies_to for %q: %w", record.id, err)
-		}
-		parentJSON, err := json.Marshal(record.parentScope)
-		if err != nil {
-			return fmt.Errorf("encode kind parent scopes for %q: %w", record.id, err)
-		}
-		templateJSON, err := json.Marshal(domain.KindTemplate{})
-		if err != nil {
-			return fmt.Errorf("encode kind template for %q: %w", record.id, err)
-		}
-		_, err = r.db.ExecContext(ctx, `
-			INSERT OR IGNORE INTO kind_catalog(
-				id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-		`, string(record.id), record.displayName, record.description, string(appliesJSON), string(parentJSON), "", string(templateJSON), ts(now), ts(now))
-		if err != nil {
-			return fmt.Errorf("seed kind_catalog %q: %w", record.id, err)
-		}
-
-		existing, err := r.GetKindDefinition(ctx, record.id)
-		if err != nil {
-			return fmt.Errorf("load seeded kind_catalog %q: %w", record.id, err)
-		}
-		mergedApplies := mergeKindAppliesTo(existing.AppliesTo, record.appliesTo)
-		mergedParentScopes := mergeKindAppliesTo(existing.AllowedParentScopes, record.parentScope)
-		if kindAppliesToEqual(existing.AppliesTo, mergedApplies) && kindAppliesToEqual(existing.AllowedParentScopes, mergedParentScopes) {
-			continue
-		}
-
-		appliesJSON, err = json.Marshal(mergedApplies)
-		if err != nil {
-			return fmt.Errorf("encode merged kind applies_to for %q: %w", record.id, err)
-		}
-		parentJSON, err = json.Marshal(mergedParentScopes)
-		if err != nil {
-			return fmt.Errorf("encode merged kind parent scopes for %q: %w", record.id, err)
-		}
-		if _, err = r.db.ExecContext(ctx, `
-			UPDATE kind_catalog
-			SET applies_to_json = ?, allowed_parent_scopes_json = ?, updated_at = ?
-			WHERE id = ?
-		`, string(appliesJSON), string(parentJSON), ts(now), string(record.id)); err != nil {
-			return fmt.Errorf("update seeded kind_catalog %q: %w", record.id, err)
-		}
-	}
-	return nil
-}
-
-// mergeKindAppliesTo appends required values into existing values without duplicates.
-func mergeKindAppliesTo(existing, required []domain.KindAppliesTo) []domain.KindAppliesTo {
-	out := make([]domain.KindAppliesTo, 0, len(existing)+len(required))
-	seen := map[domain.KindAppliesTo]struct{}{}
-	for _, raw := range existing {
-		scope := domain.NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	for _, raw := range required {
-		scope := domain.NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	return out
-}
-
 // kindAppliesToEqual reports whether two applies_to slices are identical.
 func kindAppliesToEqual(a, b []domain.KindAppliesTo) bool {
 	if len(a) != len(b) {
@@ -1348,14 +1252,10 @@ func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error 
 	if err != nil {
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
-	kindID := domain.NormalizeKindID(p.Kind)
-	if kindID == "" {
-		kindID = domain.DefaultProjectKind
-	}
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.ID, p.Slug, p.Name, p.Description, string(kindID), string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
+		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.ID, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
 	return err
 }
 
@@ -1365,15 +1265,11 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	if err != nil {
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
-	kindID := domain.NormalizeKindID(p.Kind)
-	if kindID == "" {
-		kindID = domain.DefaultProjectKind
-	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE projects
-		SET slug = ?, name = ?, description = ?, kind = ?, metadata_json = ?, updated_at = ?, archived_at = ?
+		SET slug = ?, name = ?, description = ?, metadata_json = ?, updated_at = ?, archived_at = ?
 		WHERE id = ?
-	`, p.Slug, p.Name, p.Description, string(kindID), string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
+	`, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
 	if err != nil {
 		return err
 	}
@@ -1395,7 +1291,7 @@ func (r *Repository) DeleteProject(ctx context.Context, id string) error {
 // GetProject returns project.
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 		WHERE id = ?
 	`, id)
@@ -1405,7 +1301,7 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 // ListProjects lists projects.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
-		SELECT id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 	`
 	if !includeArchived {
@@ -1425,18 +1321,13 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 	for rows.Next() {
 		var (
 			p           domain.Project
-			kindRaw     string
 			metadataRaw string
 			createdRaw  string
 			updatedRaw  string
 			archived    sql.NullString
 		)
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &kindRaw, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 			return nil, err
-		}
-		p.Kind = domain.NormalizeKindID(domain.KindID(kindRaw))
-		if p.Kind == "" {
-			p.Kind = domain.DefaultProjectKind
 		}
 		if strings.TrimSpace(metadataRaw) == "" {
 			metadataRaw = "{}"
@@ -1455,14 +1346,13 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 // ensureGlobalAuthProject creates the hidden project row that backs global auth requests and notifications.
 func (r *Repository) ensureGlobalAuthProject(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, '', ?, '{}', ?, ?, NULL)
+		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, '', '{}', ?, ?, NULL)
 		ON CONFLICT(id) DO NOTHING
 	`,
 		domain.AuthRequestGlobalProjectID,
 		globalAuthProjectSlug,
 		globalAuthProjectName,
-		string(domain.DefaultProjectKind),
 		globalAuthProjectCreatedAt,
 		globalAuthProjectCreatedAt,
 	)
@@ -3975,21 +3865,16 @@ func loadNodeContractActorKinds(ctx context.Context, q queryRowser, table, nodeI
 func scanProject(s scanner) (domain.Project, error) {
 	var (
 		p           domain.Project
-		kindRaw     string
 		metadataRaw string
 		createdRaw  string
 		updatedRaw  string
 		archived    sql.NullString
 	)
-	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &kindRaw, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Project{}, app.ErrNotFound
 		}
 		return domain.Project{}, err
-	}
-	p.Kind = domain.NormalizeKindID(domain.KindID(kindRaw))
-	if p.Kind == "" {
-		p.Kind = domain.DefaultProjectKind
 	}
 	if strings.TrimSpace(metadataRaw) == "" {
 		metadataRaw = "{}"

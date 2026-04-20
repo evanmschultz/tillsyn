@@ -86,7 +86,7 @@ Delete `ensureKindCatalogBootstrapped` at `kind_capability.go:559-589`, its `syn
 
 ### 1.3 — Bake kind_catalog rows + delete SQLite seeder + strip projects.kind schema (DDL + SQL queries + Go wrappers)
 
-**State:** todo
+**State:** done
 **Paths:** `internal/adapters/storage/sqlite/repo.go`, `internal/adapters/storage/sqlite/repo_test.go`
 **Packages:** `internal/adapters/storage/sqlite`
 **Blocked by:** 1.1, 1.2
