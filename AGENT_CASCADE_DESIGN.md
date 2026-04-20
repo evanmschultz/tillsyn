@@ -415,6 +415,35 @@ plan / QA files can learn from + count prior failures. Retention =
 forever. **Forward-only** — no retroactive backfill for pre-2026-04-19
 drops (dev directive).
 
+**`_BLOCKERS.toml` at each branched planner dir.** Every dir with
+more than one immediate child (sub-drop or droplet) carries a
+`_BLOCKERS.toml` file declaring `blocked_by` between those immediate
+children. Scope is **immediate children only** — cross-level blockers
+ride on the parent-close-waits-for-child rule, not on
+`_BLOCKERS.toml`. TOML chosen because tillsyn already stacks on
+`pelletier/go-toml/v2`, the strict parser catches typos before they
+rot, and `[[blockers]]` array-of-tables reads cleanly at a glance.
+**Today (pre-runtime-dispatcher) this file is a coordination hint —
+the orchestrator and planner consult it; discipline is
+human/LLM-enforced.** **Tillsyn Drop 1 promotes `paths` /
+`packages` to first-class `ActionItem` domain fields, enabling
+structured blocker semantics (`blocked_by` is already a coordination
+primitive pre-Drop-1).** **Tillsyn Drop 4 ships the runtime
+dispatcher, which hard-refuses `in_progress` transitions while any
+`blocked_by` entry is still unresolved — preventing work from
+starting on items whose blockers have not cleared.** At that point
+`_BLOCKERS.toml` becomes the one-shot migration source: each
+`[[blockers]]` row loads directly into the target
+`ActionItem.blocked_by`. **Migration is two-step:** (1) regenerate
+the TOML from `PLAN.md` inline bullets so the two are guaranteed in
+sync; (2) then load the TOML into the runtime. Never import the
+TOML directly without the sync step — stale TOML could install a
+regression the moment runtime enforcement turns on. The file
+mirrors the inline `Blocked by:` bullets in each droplet's
+`PLAN.md` row — `PLAN.md` is truth; `_BLOCKERS.toml` is the
+aggregate view. If they disagree, regenerate the TOML from
+`PLAN.md`.
+
 **Refinements-gate ownership.** Every numbered level_1 drop carries a
 STEWARD-owned refinements-gate item inside its own tree,
 `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` (see `PLAN.md` §15.8).
