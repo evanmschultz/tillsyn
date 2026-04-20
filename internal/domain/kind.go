@@ -176,6 +176,38 @@ func NormalizeKindID(id KindID) KindID {
 	return KindID(canonicalizeActionItemToken(strings.ToLower(trimmed)))
 }
 
+// canonicalizeActionItemToken rewrites the lowercase "actionitem" token
+// back to the canonical "actionItem" camelCase form, preserving all
+// other segments of the identifier untouched. Token boundaries are
+// start-of-string, end-of-string, `-`, and `_`.
+func canonicalizeActionItemToken(lowered string) string {
+	const (
+		token     = "actionitem"
+		canonical = "actionItem"
+	)
+	if !strings.Contains(lowered, token) {
+		return lowered
+	}
+	var b strings.Builder
+	b.Grow(len(lowered))
+	i := 0
+	for i < len(lowered) {
+		if i+len(token) <= len(lowered) && lowered[i:i+len(token)] == token {
+			leftOK := i == 0 || lowered[i-1] == '-' || lowered[i-1] == '_'
+			rightIdx := i + len(token)
+			rightOK := rightIdx == len(lowered) || lowered[rightIdx] == '-' || lowered[rightIdx] == '_'
+			if leftOK && rightOK {
+				b.WriteString(canonical)
+				i += len(token)
+				continue
+			}
+		}
+		b.WriteByte(lowered[i])
+		i++
+	}
+	return b.String()
+}
+
 // NormalizeKindAppliesTo canonicalizes applies_to values. Inputs are matched
 // case-insensitively against the supported set and returned in their
 // canonical camelCase form (e.g. "actionItem"); unknown values are returned

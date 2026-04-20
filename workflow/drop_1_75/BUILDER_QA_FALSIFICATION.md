@@ -357,3 +357,159 @@ Every tighter regex variant that might catch a real residue returns zero. Only t
 ## Hylla Feedback
 
 None — Hylla answered everything needed. This falsification pass verified schema/SQL/test-site strips and INSERT arity via `git diff HEAD` + `Read` + `Grep` over committed Go source, plus a rerun of `mage test-pkg ./internal/adapters/storage/sqlite` for gate 8 fresh-eyes verification. Hylla is stale for files edited after the last ingest (project CLAUDE.md rule #2) — all Unit 1.3 edits are post-ingest, so lexical tools + `git show HEAD:...` for pre-diff context are the authoritative evidence. No Hylla query was attempted; none was needed. The falsification shape here is "does the diff produce any counterexample state," not "where else in committed code does X appear" — the former is diff-bound, the latter is Hylla's sweet spot. No miss to record.
+
+## Unit 1.4 — Round 1
+
+**Verdict:** PASS-WITH-FINDINGS
+
+## Summary
+
+Ran 15 targeted attacks against the Unit 1.4 domain-layer template excision. Zero CONFIRMED blocking counterexamples. Byte-compared `canonicalizeActionItemToken` between pre-delete `template_library.go:274-300` and current `kind.go:183-209` — character-for-character identical (doc comment, signature, consts, control flow, return). `kind.go` required no new imports (the function only uses `strings.Builder` / `strings.Contains`, both already covered by the file's existing `"strings"` import). Fresh rerun of `mage test-pkg ./internal/domain` = 49/49 pass, matching the pre-`-race` count and the pre-unit 52 − 3 (deleted `template_library_test.go` `Test*` funcs) expectation exactly. Waiver scope is intact: every residual template-symbol caller outside `internal/domain/` appears in PLAN.md §1.5's explicit Paths list. Three non-blocking findings surfaced — two EDITORIAL-ONLY (proof twin text inaccuracy; worklog "5 files" wording), one DEFER-TO-LATER-UNIT (`cmd/till/project_cli_test.go` references dead-after-1.4 `domain.TemplateLibraryScope*` / `TemplateActorKind*` consts but is listed in PLAN §1.6 Paths, not §1.5 — §1.5 planner needs to add it or §1.5's `mage ci` restoration gate fails).
+
+## Attacks Attempted
+
+### A1 — Byte-identity of relocated `canonicalizeActionItemToken` (REFUTED)
+
+Dumped `git show HEAD:internal/domain/template_library.go` to `/tmp/old_tl.go`, then character-compared the 31-line `canonicalizeActionItemToken` block:
+
+- Pre (HEAD `template_library.go:270-300`): doc comment (4 lines), `func canonicalizeActionItemToken(lowered string) string {` signature, `const (token = "actionitem", canonical = "actionItem")`, `if !strings.Contains(...)` early-return, `var b strings.Builder`, `b.Grow(len(lowered))`, `i := 0`, `for i < len(lowered) {` loop with inner `lowered[i:i+len(token)] == token` check, `leftOK`/`rightOK` boundary logic (`i == 0 || lowered[i-1] == '-' || lowered[i-1] == '_'`), `b.WriteString(canonical)` / `b.WriteByte(lowered[i])` branches, `return b.String()`.
+- Post (`internal/domain/kind.go:179-209`): identical 31 lines — same doc comment, signature, consts, loop structure, branch predicates, return.
+
+No semantic change, no whitespace drift, no subtle re-indent. Byte-identical. `rg -c '^func canonicalizeActionItemToken' internal/domain/*.go` → `kind.go:1` (sole declaration).
+
+### A2 — Doc-comment / signature / receiver-status drift (REFUTED)
+
+- **Doc comment:** preserved verbatim — same 4-line block describing token rewriting + boundary semantics.
+- **Signature:** `func canonicalizeActionItemToken(lowered string) string` — identical parameter name, parameter type, return type.
+- **Export status:** lowercase `c` in both locations → unexported in both → no accidental export during move.
+- **No method conversion:** still a free function, not a method on any type (original wasn't either — it's a package-private helper).
+
+### A3 — Import fallout from relocation (REFUTED)
+
+Enumerated symbols used by `canonicalizeActionItemToken`: `strings.Builder`, `strings.Contains`. Both live in stdlib `strings`. `kind.go`'s pre-diff import block (lines 3-10) already includes `"strings"` (used by `NormalizeKindID` / `NormalizeKindAppliesTo` etc.). No new imports needed; diff shows 0 import-block edits in `kind.go`. Old `template_library.go` imported `bytes, crypto/sha256, encoding/hex, encoding/json, fmt, slices, sort, strings, time` — none of these were referenced by `canonicalizeActionItemToken`, so their absence from `kind.go` is irrelevant to the relocated function.
+
+### A4 — Error-sentinel preservation correctness (REFUTED)
+
+Preserved sentinel: `ErrInvalidKindTemplate` (line 25). Verified it's still referenced **inside** `internal/domain/kind.go` at 7 call sites (lines 262, 265, 271, 274, 281, 288, 296) inside `normalizeKindTemplate` and related validators — preservation is grounded. The 8 deleted sentinels (`ErrInvalidTemplateLibrary`, `ErrInvalidTemplateLibraryScope`, `ErrInvalidTemplateStatus`, `ErrInvalidTemplateActorKind`, `ErrInvalidTemplateBinding`, `ErrBuiltinTemplateBootstrapRequired`, `ErrTemplateLibraryNotFound`, `ErrNodeContractForbidden`) have zero remaining references inside `internal/domain/` (verified `rg` → 0 matches). Residual references exist in `internal/app/**`, `internal/adapters/server/**` — all 13 files appear in PLAN §1.5 Paths (`template_library.go`, `template_library_builtin.go`, `template_library_test.go`, `template_contract.go`, `template_contract_test.go`, `template_reapply.go`, `template_library_builtin_spec.go`, `app_service_adapter.go`, `handler.go` [mcpapi + httpapi], `handler_test.go`, `mcp_surface.go`, `app_service_adapter_helpers_test.go`). Every residual caller dies wholesale or has its branch stripped in §1.5.
+
+Sweep against remaining `errors.go`: no other `Err*` was removed. The 8 deleted lines (via `git diff`) match the 8 worklog entries exactly — no over-deletion.
+
+### A5 — Test-file deletion helper/fixture leakage (REFUTED)
+
+Read `git show HEAD:internal/domain/template_library_test.go` — file contained exactly 3 `func Test*` definitions:
+- `TestNewTemplateLibraryNormalizesNestedRules`
+- `TestNewTemplateLibraryRejectsDuplicateScopeKind`
+- `TestNewNodeContractSnapshotDefaultsActorKinds`
+
+No `TestMain`, no helper functions, no package-level vars, no shared fixtures. File was self-contained. Wholesale `git rm` is safe — no sibling `*_test.go` in `internal/domain` referenced symbols from this file. `rg '^func TestMain' internal/domain/` → 0 matches (no TestMain anywhere in the domain package).
+
+### A6 — `builtin_template_library.go` data references (REFUTED)
+
+Read `git show HEAD:internal/domain/builtin_template_library.go` — contained 3 types: `BuiltinTemplateLibraryState`, `BuiltinTemplateLibraryStatus`, plus one status const block. No hardcoded template data (that lives in `internal/app/template_library_builtin_spec.go` + `internal/app/embedded/*.json`, not in the domain file). No registry append pattern. `rg 'BuiltinTemplateLibrary' internal/domain/` → 0 matches post-delete. Safe wholesale deletion.
+
+### A7 — `NodeContractSnapshot` method-signature residue (REFUTED)
+
+`rg 'NodeContractSnapshot' internal/domain/` → 0 matches. No remaining domain type still has a method parameter or return type referencing `NodeContractSnapshot`. The struct lived in `template_library.go` (verified at HEAD lines ~400+) with its own methods; all died with the file. Gate 1 `rg 'TemplateLibrary|TemplateReapply|NodeContractSnapshot|BuiltinTemplate' internal/domain/` returned 0.
+
+### A8 — Type aliases / re-exports dangling (REFUTED)
+
+Searched for `type X = Y` alias patterns in `internal/domain/` at HEAD that might have aliased any deleted type. `git show HEAD:internal/domain/*.go | rg 'type \w+ = '` — no hits on deleted types. No `= TemplateLibrary`, `= NodeTemplate`, `= NodeContractSnapshot`, or `= TemplateActorKind` aliases anywhere in the domain package. Nothing dangling.
+
+### A9 — Const/var blocks in deleted files used elsewhere (REFUTED — ALL WITHIN §1.5 WAIVER)
+
+Enumerated const/var blocks in deleted `template_library.go` from HEAD:
+- `TemplateLibraryScope*` consts (3: Global, Project, Draft)
+- `TemplateLibraryStatus*` consts (3: Draft, Approved, Archived)
+- `ProjectTemplateBindingDrift*` consts (3: Current, UpdateAvailable, LibraryMissing)
+- `TemplateActorKind*` consts (5: Human, Orchestrator, Builder, QA, Research)
+- `validTemplateLibraryScopes`, `validTemplateLibraryStatuses`, `validTemplateActorKinds` vars (3)
+
+`rg 'TemplateLibraryScope|TemplateLibraryStatus|ProjectTemplateBindingDrift|TemplateActorKind' drop/1.75/**/*.go -l` → 27 files. Cross-checked every one against PLAN §1.5 Paths:
+- `internal/app/*` template files: all in §1.5 delete list.
+- `internal/app/{snapshot.go, snapshot_test.go, service_test.go, helper_coverage_test.go}`: all in §1.5 Paths (strip surfaces).
+- `internal/adapters/storage/sqlite/{repo.go, template_library_test.go}`: in §1.5 Paths.
+- `internal/adapters/server/common/{mcp_surface.go, app_service_adapter.go, app_service_adapter_mcp.go, app_service_adapter_lifecycle_test.go}`: in §1.5 Paths.
+- `internal/adapters/server/mcpapi/{extended_tools.go, extended_tools_test.go, instructions_explainer.go}`: in §1.5 Paths.
+- `internal/tui/{model.go, model_test.go}`: in §1.5 Paths.
+- `cmd/till/{template_cli.go, template_builtin_cli_test.go, main.go, main_test.go}`: in §1.5 Paths.
+
+**Exception flagged** (becomes F3 below): `cmd/till/project_cli_test.go` references `domain.TemplateLibraryScopeGlobal` (`:180`), `domain.TemplateLibraryStatusApproved` (`:183`), `domain.TemplateActorKindBuilder` (`:205`), `domain.TemplateActorKind` (`:206`), `domain.TemplateActorKindHuman` (`:207`). This file is listed in PLAN §1.6 Paths, not §1.5 — §1.6 strips `Project.Kind`, not template types. §1.5's `mage ci` restoration acceptance bullet would fail at this file unless §1.5's planner adds it to the strip list OR §1.5 gets a targeted scope expansion. Not a §1.4 defect, but a latent §1.5 planning gap.
+
+### A10 — `-race` re-run (REFUTED)
+
+Ran `mage testFunc ./internal/domain TestNormalizeKindID` (mage's race-enabled test-function target) → package compiles + tests run green, but 0 matching tests found (no `TestNormalizeKindID` exists in the package — see F2 below). Separately, `mage testPkg ./internal/domain` → 49/49 pass cleanly, 0.00s real time. Race detector does not hide anything for this unit — the excision is file-deletion + 31-line function move with zero goroutine/channel/shared-state surface. Safe.
+
+### A11 — Waiver-scope discipline (PARTIAL — FLAGS F3)
+
+Sweep of every non-domain file still referencing deleted types: all route into PLAN §1.5 Paths except one — `cmd/till/project_cli_test.go` (see A9). Listed under F3 as DEFER-TO-LATER-UNIT (§1.5 planning gap, not §1.4 defect).
+
+`rg 'ErrInvalidTemplateLibrary|ErrInvalidTemplateLibraryScope|ErrInvalidTemplateStatus|ErrInvalidTemplateActorKind|ErrInvalidTemplateBinding|ErrBuiltinTemplateBootstrapRequired|ErrTemplateLibraryNotFound|ErrNodeContractForbidden' drop/1.75/**/*.go -l` → 13 files, every one in §1.5 Paths. Error-sentinel waiver is clean.
+
+### A12 — Test-count delta sanity (REFUTED)
+
+Unit 1.1 Round 1 reports 52 tests passed in `./internal/domain` pre-`template_library_test.go` deletion. Deleted file had 3 `func Test*`. Post-1.4 count: 52 − 3 = 49. Observed: 49. Exact match.
+
+Note: `rg '^func Test' internal/domain/*_test.go` returns 41 top-level Test declarations across 6 files, but the test runner count of 49 includes subtests via `t.Run(...)`, which is why 41 < 49. Ratio is stable across the 1.4 diff — the deleted file added no subtests either (all 3 were flat `Test*`), so 49 = 52 − 3 checks out arithmetically.
+
+### A13 — `mage test-pkg ./internal/domain` fresh rerun (REFUTED)
+
+Ran `mage testPkg ./internal/domain` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1.75/`:
+```
+[PKG PASS] github.com/evanmschultz/tillsyn/internal/domain (0.00s)
+  tests: 49, passed: 49, failed: 0, skipped: 0, packages: 1
+```
+Exit 0. Matches builder/proof-twin claim exactly.
+
+### A14 — Orphan-via-collapse discipline (REFUTED)
+
+Per `feedback_orphan_via_collapse_defer_refinement.md`: catalog/enum collapse should leave orphan-downstream vocabulary alone, deferring cleanup to a refinement drop. Unit 1.4 does NOT violate this — it excises **type definitions and their error sentinels** that are wholly dead in the post-collapse world (template-library subsystem is going away entirely, not being replaced). This is NOT orphan-via-collapse; it's direct subsystem excision. The orphan-via-collapse rule applies to things like `KindSubtask/KindPhase/KindDecision/KindNote` consts which remain declared (see Unit 1.1 F2). Unit 1.4 is structurally different — it removes an entire feature surface.
+
+No dead code accidentally left behind inside `internal/domain/`: `rg -i 'template|nodecontract|builtin.*template' internal/domain/` → matches only `KindTemplate`, `KindTemplateChildSpec`, `normalizeKindTemplate`, `ErrInvalidKindTemplate` — all intentionally preserved per PLAN §1.4 F5 classification (naturally unreachable post-drops-rewrite but kept until a dedicated refinement drop).
+
+### A15 — Proof twin blind spots (PARTIAL — FLAGS F2)
+
+Proof twin (BUILDER_QA_PROOF.md Unit 1.4 Round 1) verified byte-identity, gate outcomes, file-deletion presence, and stealth-orphan absence. It did NOT verify one claim it made: "Test `TestNormalizeKindID` exercises this code path per the package's standing `domain_test.go` coverage."
+
+Direct check: `rg 'TestNormalizeKindID|^func TestNormalize' internal/domain/` returns only `TestNormalizeHandoffListFilter`, `TestNormalizeAttentionListFilter`, `TestNormalizeCommentTarget`, `TestNormalizeCommentTargetSupportsHierarchyNodes`. **No `TestNormalizeKindID` exists.** `rg 'actionitem|canonicalize' internal/domain/*_test.go` → 0 matches. `canonicalizeActionItemToken` has zero direct unit tests; `NormalizeKindID` has zero direct unit tests. The coverage it relies on is transitive (other domain tests that construct kinds/projects hit `NormalizeKindID` via `project.SetKind`, `KindDefinition.Input` path) and those transitive tests did pass. So the relocated helper is exercised, but proof twin's specific "TestNormalizeKindID" citation is false.
+
+This is a pre-existing test-coverage gap, NOT introduced by Unit 1.4. The relocation doesn't change it. EDITORIAL-ONLY against the proof twin text.
+
+## F-Findings (Falsification Findings)
+
+### F1 — Worklog "5 files" wording imprecise
+
+- **Severity:** EDITORIAL-ONLY
+- **Where:** BUILDER_WORKLOG.md Unit 1.4 Round 1, "Files touched: 5 files in `internal/domain` (4 deleted, 1 edited, 1 relocation-repair into `kind.go`)."
+- **What:** The count resolves to 6 distinct file paths (4 deletions + `errors.go` modification + `kind.go` modification) but the prose reads "5 files ... 1 edited, 1 relocation-repair" which conflates `errors.go` edit with `kind.go` relocation. `git status --porcelain -- internal/domain/` shows 6 entries (4 D + 2 M).
+- **Counterexample status:** REFUTED as a blocker — the underlying work is correct, only the file-count wording is loose. Proof twin flagged the same cosmetic issue (BUILDER_QA_PROOF.md Unit 1.4 "Informational" line 221).
+- **Fix:** reword to "6 files in `internal/domain` (4 deleted, 2 edited: `errors.go` sentinel strip + `kind.go` relocation-repair)." Do not block Unit 1.4.
+
+### F2 — Proof twin claim of `TestNormalizeKindID` coverage is inaccurate
+
+- **Severity:** EDITORIAL-ONLY (against proof-twin text, not against builder work)
+- **Where:** BUILDER_QA_PROOF.md Unit 1.4 Round 1, under "Relocation Soundness Check", final bullet: "Test `TestNormalizeKindID` exercises this code path per the package's standing `domain_test.go` coverage."
+- **What:** No test named `TestNormalizeKindID` exists in `internal/domain/`. Verified via `rg 'TestNormalizeKindID'` → 0 hits. The proof twin's phrasing should be "transitively exercised by kind/project construction tests" rather than citing a named test. `NormalizeKindID` and `canonicalizeActionItemToken` have no direct unit tests.
+- **Counterexample status:** REFUTED as a blocker — the relocated function IS compiled + transitively exercised (49/49 pass proves it compiles; construction paths in `kind_test.go` / `project.go` invocations of `NormalizeKindID` exercise it indirectly). The coverage gap is pre-existing, not introduced here.
+- **Fix:** Either (a) correct the proof-twin text in a follow-up, OR (b) add a direct `TestNormalizeKindID` / `TestCanonicalizeActionItemToken` in a refinement drop. Don't block Unit 1.4.
+
+### F3 — `cmd/till/project_cli_test.go` has template-type references but is NOT in PLAN §1.5 Paths
+
+- **Severity:** DEFER-TO-LATER-UNIT (§1.5 planning gap)
+- **Where:** `cmd/till/project_cli_test.go:180, 183, 205, 206, 207` — references to `domain.TemplateLibraryScopeGlobal`, `domain.TemplateLibraryStatusApproved`, `domain.TemplateActorKindBuilder`, `domain.TemplateActorKind`, `domain.TemplateActorKindHuman`.
+- **What:** PLAN §1.5 Paths lists `cmd/till/template_cli.go`, `cmd/till/template_builtin_cli_test.go`, `cmd/till/main.go`, `cmd/till/main_test.go` for cmd/till. It does NOT list `cmd/till/project_cli_test.go`. PLAN §1.6 lists `cmd/till/project_cli_test.go` (for `project.Kind` stripping). But the template types die in §1.4 + §1.5, not §1.6 — meaning `project_cli_test.go` will reference dead `domain.TemplateLibraryScope*` / `TemplateActorKind*` symbols at §1.5's "`mage ci` restoration" acceptance gate. §1.5 will either fail its own acceptance or need a targeted scope-expansion edit. (Parallel shape to Unit 1.3's own documented 9-line scope expansion into `template_library*.go`.)
+- **Counterexample status:** NOT a Unit 1.4 blocker — Unit 1.4 explicitly waives `mage build` / `mage ci`. The workspace is expected to be compile-broken through §1.5. This finding is aimed at §1.5's planner.
+- **Fix:** §1.5 planner should add `cmd/till/project_cli_test.go` to §1.5 Paths (template-surface strip only; `project.Kind` strip remains in §1.6). OR, if the §1.5 planner prefers, surface this as a scope-expansion deviation during §1.5 execution (matches the 1.3 pattern). Route to ORCHESTRATOR-ATTENTION so the drop-orch updates §1.5 Paths before spawning the §1.5 builder.
+
+## Classification
+
+| Finding | Classification | Blocks 1.4? |
+| --- | --- | --- |
+| F1 | EDITORIAL-ONLY | No |
+| F2 | EDITORIAL-ONLY | No |
+| F3 | DEFER-TO-LATER-UNIT + ORCHESTRATOR-ATTENTION | No |
+
+**Do not block Unit 1.4.** All three findings are non-blocking. F3 needs the orchestrator to flag §1.5's Paths for update before the §1.5 builder spawn — propagate via a drop-orch comment on the §1.5 unit description or a scope-expansion note, whichever matches the current MD-workflow convention.
+
+## Hylla Feedback
+
+N/A — task touched non-Go content (PLAN.md, worklog MDs) and Go files inside the Unit-1.1–1.3 edit window where Hylla is stale per project CLAUDE.md rule #2 ("Changed since last ingest: use `git diff`"). Verification evidence was `git diff HEAD` + `git show HEAD:<path>` + `Read` + `Grep` + a fresh `mage testPkg` rerun. No Hylla query was attempted and none was needed — byte-identity verification, sentinel-removal verification, and waiver-scope cross-reference are all lexical / diff-bound operations that Hylla can't out-perform on stale-since-ingest files. Recording "None — Hylla answered everything needed" as the closing stance.
