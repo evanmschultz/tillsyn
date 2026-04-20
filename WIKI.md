@@ -12,7 +12,7 @@ Hylla-specific ergonomic guidance lives in `HYLLA_WIKI.md`. Cascade architecture
 ## Update Discipline
 
 - **Read this file at session start and after every compaction.** `CLAUDE.md` is auto-loaded; this wiki is **not** — read it deliberately before substantive orchestration.
-- **Update at the end of every drop**, inside the `DROP <N> END — LEDGER UPDATE` actionItem. If lessons from the drop change a best practice, rewrite the affected section **in place** — don't append `2026-04-XX update:` notes. Full audit trail lives in `REFINEMENTS.md` + `HYLLA_REFINEMENTS.md` + git history.
+- **Update at the end of every drop**, inside the drop's `CLOSEOUT.md` + direct `main/WIKI.md` splice on the drop branch per `main/workflow/example/drops/WORKFLOW.md § "Phase 7 — Closeout"`. If lessons from the drop change a best practice, rewrite the affected section **in place** — don't append `2026-04-XX update:` notes. Full audit trail lives in `REFINEMENTS.md` + `HYLLA_REFINEMENTS.md` + git history.
 - Keep sections short and inspectable. If a section grows past ~30 lines, either split it or cut guidance that's no longer load-bearing.
 - One-liner mirror per drop goes into `WIKI_CHANGELOG.md` so adopters can scan what changed.
 
@@ -44,17 +44,16 @@ Levels name depth from the project root down. **The project is level 0.** The fi
 
 Dotted addresses (`0.1.5.2`, `tillsyn-0.1.5.2`) are **read-only shorthand** — the TUI and logs use them for quick reference. **Mutations always take UUIDs**, never dotted addresses. Treat the dotted address the way you'd treat a breadcrumb path in a UI: fine for reading, never for writing.
 
-## Tillsyn Is the System of Record
+## Coordination Model
 
-**Every action lives in Tillsyn.** This is the non-negotiable rule.
+Per-drop work lives in MD drop directories under `main/workflow/drop_N/`, stamped from `main/workflow/example/drops/_TEMPLATE/`. The per-drop lifecycle is canonical in `main/workflow/example/drops/WORKFLOW.md` (Phases 1–7: plan, plan-QA, discuss + cleanup, build, build-QA, verify, closeout). Tillsyn still owns orchestrator auth, project lookup, and cross-orch coordination (`till.handoff`, `till.attention_item`); per-drop work artifacts live in MD.
 
-- Every piece of work gets a Tillsyn drop **before it starts**. Not retroactive.
-- When work starts on a drop, move it to `in_progress` **immediately**. No `todo` items left while someone is working on them.
-- **Do not use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput`.** They are in-session-only and evaporate on compaction or restart, leaving the session blind to its own procedural state. If a turn needs finer procedural granularity, decompose the work into **child Tillsyn drops** rather than bolting on a parallel in-session tracker.
-- No markdown worklogs. No sticky notes. No "I'll track this in chat" handwave.
-- If it's not in Tillsyn, it didn't happen.
+- Every drop gets its directory **before the planner runs** — not retroactive. Per-drop state lives in the drop's `PLAN.md` header; project-level tree state lives in project-root `PLAN.md`.
+- **Do not use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput`.** They are in-session-only and evaporate on compaction or restart, leaving the session blind to its own procedural state. If a turn needs finer procedural granularity, decompose the work into **child droplets inside the drop's `PLAN.md`** rather than bolting on a parallel in-session tracker.
+- No ad-hoc markdown worklogs outside the drop directory. No sticky notes. No "I'll track this in chat" handwave.
+- Post-Drop-2, the cascade target moves work-state into Tillsyn as the system of record (with templates, `child_rules`, role gating). Until then, MD drop dirs are the work-state substrate.
 
-External adopters: this rule generalizes. Any client (Claude, Codex, a CLI user) that uses Tillsyn for coordination must funnel all work state through Tillsyn. Client-local trackers drift; Tillsyn is durable.
+External adopters: the pattern generalizes. Work-state substrate (MD today, Tillsyn post-cascade) must be durable — in-session trackers drift and evaporate.
 
 ## Drop Decomposition Rules
 
@@ -131,11 +130,11 @@ Until the cascade dispatcher ships (Drop 4+), the parent orchestrator session ru
 
 **No batched commits. No deferred pushes. No skipped QA. No skipped CI watch.**
 
-Hylla reingest is **drop-end only** — once per drop, inside the `DROP <N> END — LEDGER UPDATE` actionItem, full enrichment from remote, only after CI green. Subagents never call `hylla_ingest`.
+Hylla reingest is **drop-end only** — once per drop, inside `CLOSEOUT.md` per `main/workflow/example/drops/WORKFLOW.md § "Phase 7 — Closeout"`, full enrichment from remote, only after CI green. Drop-orch runs it. Subagents and STEWARD never call `hylla_ingest`.
 
 ## End-Of-Drop Findings Log
 
-Every drop ends with two always-on deliverables inside the `DROP <N> END — LEDGER UPDATE` actionItem:
+Every drop ends with two always-on deliverables inside the drop's `CLOSEOUT.md`:
 
 ### 1. Usage Findings — What Went Well, What Hurt
 
@@ -243,30 +242,29 @@ The **Unknowns** field is load-bearing for Tillsyn adopters specifically: it giv
 
 ## Drop-End Closeout Checklist
 
-Every drop's final actionItem is `DROP <N> END — LEDGER UPDATE`. Orchestrator-role-gated. `blocked_by` every other drop in the tree. Drop-orch closes this actionItem pre-merge on the drop branch; STEWARD handles post-merge splice into top-level MDs on `main`.
+Drop-close is drop-orch-owned end-to-end per `main/workflow/example/drops/WORKFLOW.md § "Phase 7 — Closeout"`. STEWARD does NOT splice MDs and is only pulled in on merge conflicts, DISCUSSIONS-to-drop handoffs, or local worktree cleanup post-merge.
 
 **Drop-orch steps (pre-merge, on the drop branch):**
 
-1. All sibling drops `done`. `git status --porcelain` clean.
+1. All sibling droplets `done`. `git status --porcelain` clean.
 2. All commits on remote. CI green (`gh run watch --exit-status`).
-3. Aggregate per-subagent `## Hylla Feedback` sections into `workflow/drop_N/DROP_END_LEDGER_UPDATE/hylla_findings.md` (or equivalent per `workflow/example/drops/_TEMPLATE/`).
-4. Aggregate usage findings into `workflow/drop_N/DROP_END_LEDGER_UPDATE/refinements.md` / `hylla_refinements.md`.
-5. If this is an external adopter: write the cross-project improvement prompt into `workflow/drop_N/DROP_END_LEDGER_UPDATE/` and route it to the Tillsyn team.
+3. Aggregate per-subagent `## Hylla Feedback` sections from `BUILDER_WORKLOG.md` into `CLOSEOUT.md § "Code-Understanding Index Feedback Aggregation"` per `workflow/example/drops/_TEMPLATE/CLOSEOUT.md`.
+4. Aggregate usage findings into `CLOSEOUT.md § "Refinements"`.
+5. If this is an external adopter: write the cross-project improvement prompt into the drop dir and route it to the Tillsyn team.
 6. `hylla_ingest` — full enrichment, from remote, after CI green (Go projects only; Hylla indexes Go today).
-7. Write the drop's ledger entry to `workflow/drop_N/DROP_END_LEDGER_UPDATE/ledger_entry.md`.
-8. Write the drop's one-liner to `workflow/drop_N/DROP_END_LEDGER_UPDATE/wiki_changelog_entry.md`.
-9. Flag any wiki sections that shipped behavior changes, staged in `workflow/drop_N/DROP_END_LEDGER_UPDATE/wiki_delta.md` for STEWARD to apply to `main/WIKI.md`.
-10. Rebase onto `origin/main`, resolve conflicts (Go via builder subagent using `git diff`; MDs directly). `mage ci` green locally.
-11. Force-push. CI green. Open PR. Dev-approved merge.
-12. Drop-orch post-merge: delete remote + local branch refs. Post `till.handoff` to `@STEWARD` naming `main/workflow/drop_N/`. Close `DROP <N> END — LEDGER UPDATE`.
+7. Write the drop's ledger entry into `CLOSEOUT.md § "Ledger Entry"`, then append a `## Drop N — <Title>` block directly to `main/LEDGER.md` on the drop branch.
+8. Write the drop's one-liner into `CLOSEOUT.md § "Wiki Changelog"`, then append the line to `main/WIKI_CHANGELOG.md` on the drop branch.
+9. If any best-practice shifted, edit `main/WIKI.md` in place on the drop branch; list the headings touched in `CLOSEOUT.md § "WIKI.md Updates"`.
+10. Splice Hylla findings + refinements content into `main/HYLLA_FEEDBACK.md` / `main/REFINEMENTS.md` / `main/HYLLA_REFINEMENTS.md` on the drop branch.
+11. Rebase onto `origin/main`, resolve conflicts (Go via builder subagent using `git diff`; MDs directly). `mage ci` green locally.
+12. Force-push. CI green. Open PR. Dev-approved merge.
+13. Post-merge: delete remote + local branch refs. Post `till.handoff` to `@STEWARD` for local worktree cleanup (+ any STEWARD-self refinement handoff surfaced in the drop-end refinements discussion). Mark drop complete.
 
-**STEWARD post-merge (on `main/`):**
+**STEWARD post-merge (on `main/`), conflict-bound only:**
 
-1. Reads `main/workflow/drop_N/DROP_END_LEDGER_UPDATE/`, discusses with dev.
-2. Splices content into `main/LEDGER.md`, `main/WIKI_CHANGELOG.md`, `main/HYLLA_FEEDBACK.md`, `main/REFINEMENTS.md`, `main/HYLLA_REFINEMENTS.md`, and `main/WIKI.md` (for any flagged deltas).
-3. Commits docs-only with single-line conventional-commits, pushes.
-4. Works drop N's refinements-gate (`PLAN.md` §15.8).
-5. Closes level_2 findings drops + drop N's level_1.
+- **Merge conflict on top-level MD** — drop-orch signals via `till.handoff`; STEWARD resolves in-place (both drops' entries co-exist, ordered by close date), hands back.
+- **Local worktree cleanup** — `git worktree remove` for the merged drop's worktree from `main/` (STEWARD's `pwd`). Drop-orch owns branch deletion, STEWARD only the worktree directory. `main/workflow/drop_N/` is never deleted — permanent audit record.
+- **STEWARD-self refinement** — if drop-orch's drop-end refinements discussion surfaces a STEWARD-scope change (prompt edit, scope adjustment, memory update), drop-orch hands it off via `till.handoff`; STEWARD edits `STEWARD_ORCH_PROMPT.md` / memory on `main`.
 6. `git worktree remove drop/N`.
 
 ## Related Files
