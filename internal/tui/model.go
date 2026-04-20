@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"image/color"
 	"os"
@@ -41,18 +40,12 @@ type Service interface {
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
 	ResolveAttentionItem(context.Context, app.ResolveAttentionItemInput) (domain.AttentionItem, error)
-	ListTemplateLibraries(context.Context, app.ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error)
 	ListAuthRequests(context.Context, domain.AuthRequestListFilter) ([]domain.AuthRequest, error)
 	ListAuthSessions(context.Context, app.AuthSessionFilter) ([]app.AuthSession, error)
 	ListCapabilityLeases(context.Context, app.ListCapabilityLeasesInput) ([]domain.CapabilityLease, error)
 	ListHandoffs(context.Context, app.ListHandoffsInput) ([]domain.Handoff, error)
-	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
-	GetBuiltinTemplateLibraryStatus(context.Context, string) (domain.BuiltinTemplateLibraryStatus, error)
-	GetProjectTemplateReapplyPreview(context.Context, string) (domain.ProjectTemplateReapplyPreview, error)
-	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 	GetAuthRequest(context.Context, string) (domain.AuthRequest, error)
 	ApproveAuthRequest(context.Context, app.ApproveAuthRequestInput) (app.ApprovedAuthRequestResult, error)
-	ApproveProjectTemplateMigrations(context.Context, app.ApproveProjectTemplateMigrationsInput) (domain.ProjectTemplateMigrationApprovalResult, error)
 	DenyAuthRequest(context.Context, app.DenyAuthRequestInput) (domain.AuthRequest, error)
 	RevokeAuthSession(context.Context, string, string) (app.AuthSession, error)
 	RevokeCapabilityLease(context.Context, app.RevokeCapabilityLeaseInput) (domain.CapabilityLease, error)
@@ -65,8 +58,6 @@ type Service interface {
 	SearchActionItems(context.Context, app.SearchActionItemsFilter) (app.SearchActionItemMatchesResult, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
 	UpdateProject(context.Context, app.UpdateProjectInput) (domain.Project, error)
-	BindProjectTemplateLibrary(context.Context, app.BindProjectTemplateLibraryInput) (domain.ProjectTemplateBinding, error)
-	UnbindProjectTemplateLibrary(context.Context, app.UnbindProjectTemplateLibraryInput) error
 	ArchiveProject(context.Context, string) (domain.Project, error)
 	RestoreProject(context.Context, string) (domain.Project, error)
 	DeleteProject(context.Context, string) error
@@ -129,13 +120,11 @@ const (
 	modeResourcePicker
 	modeLabelPicker
 	modeProjectKindPicker
-	modeTemplateLibraryPicker
 	modePathsRoots
 	modeLabelsConfig
 	modeHighlightColor
 	modeBootstrapSettings
 	modeDependencyInspector
-	modeTemplateMigrationReview
 	modeDescriptionEditor
 	modeThread
 	modeDiff
@@ -222,7 +211,6 @@ const (
 	projectFieldColor
 	projectFieldHomepage
 	projectFieldTags
-	projectFieldTemplateLibrary
 	projectFieldRootPath
 	projectFieldComments
 )
@@ -365,13 +353,6 @@ type labelPickerItem struct {
 	Source string
 }
 
-// templateLibraryPickerItem describes one approved template-library selection row.
-type templateLibraryPickerItem struct {
-	LibraryID string
-	Name      string
-	Clear     bool
-}
-
 // projectKindPickerItem describes one project-kind selection row.
 type projectKindPickerItem struct {
 	KindID      domain.KindID
@@ -390,18 +371,6 @@ type labelInheritanceSources struct {
 type dependencyCandidate struct {
 	Match app.ActionItemMatch
 	Path  string
-}
-
-// pendingProjectTemplateReview stores one staged project save that is waiting on TUI migration review.
-type pendingProjectTemplateReview struct {
-	ProjectID                string
-	Name                     string
-	Description              string
-	Kind                     domain.KindID
-	Metadata                 domain.ProjectMetadata
-	RootPath                 string
-	TemplateLibraryID        string
-	CurrentTemplateLibraryID string
 }
 
 // confirmAction describes a pending confirmation action.
@@ -499,16 +468,16 @@ type authInventorySectionData struct {
 
 // activityEntry describes one recorded user action for the in-app activity log.
 type activityEntry struct {
-	At         time.Time
-	Summary    string
-	Target     string
-	EventID    int64
+	At           time.Time
+	Summary      string
+	Target       string
+	EventID      int64
 	ActionItemID string
-	Operation  domain.ChangeOperation
-	ActorID    string
-	ActorName  string
-	ActorType  domain.ActorType
-	Metadata   map[string]string
+	Operation    domain.ChangeOperation
+	ActorID      string
+	ActorName    string
+	ActorType    domain.ActorType
+	Metadata     map[string]string
 }
 
 // noticesSectionID identifies one focusable list section in the notices panel.
@@ -790,16 +759,7 @@ type Model struct {
 	projectFormInputs                    []textinput.Model
 	projectFormFocus                     int
 	projectFormDescription               string
-	templateMigrationReviewPreview       *domain.ProjectTemplateReapplyPreview
-	templateMigrationReviewDraft         *pendingProjectTemplateReview
-	templateMigrationReviewLoading       bool
-	templateMigrationReviewIndex         int
-	templateMigrationReviewPicked        map[string]struct{}
 	kindDefinitions                      []domain.KindDefinition
-	templateLibraries                    []domain.TemplateLibrary
-	builtinTemplateStatuses              map[string]domain.BuiltinTemplateLibraryStatus
-	currentProjectTemplateBinding        *domain.ProjectTemplateBinding
-	actionItemNodeContracts              map[string]domain.NodeContractSnapshot
 	descriptionEditorBack                inputMode
 	descriptionEditorTarget              descriptionEditorTarget
 	descriptionEditorActionItemFormField int
@@ -900,19 +860,15 @@ type Model struct {
 	// additions stay bounded (synthesis §5.2 / Drop 1.5 P3-A acceptance criteria).
 	pickerCore filePickerCore
 
-	labelPickerBack            inputMode
-	labelPickerIndex           int
-	labelPickerItems           []labelPickerItem
-	labelPickerAllItems        []labelPickerItem
-	labelPickerInput           textinput.Model
-	projectKindPickerBack      inputMode
-	projectKindPickerIndex     int
-	projectKindPickerItems     []projectKindPickerItem
-	projectKindPickerInput     textinput.Model
-	templateLibraryPickerBack  inputMode
-	templateLibraryPickerIndex int
-	templateLibraryPickerItems []templateLibraryPickerItem
-	templateLibraryPickerInput textinput.Model
+	labelPickerBack        inputMode
+	labelPickerIndex       int
+	labelPickerItems       []labelPickerItem
+	labelPickerAllItems    []labelPickerItem
+	labelPickerInput       textinput.Model
+	projectKindPickerBack  inputMode
+	projectKindPickerIndex int
+	projectKindPickerItems []projectKindPickerItem
+	projectKindPickerInput textinput.Model
 
 	dependencyBack              inputMode
 	dependencyOwnerActionItemID string
@@ -986,10 +942,6 @@ type loadedMsg struct {
 	columns                   []domain.Column
 	tasks                     []domain.ActionItem
 	kindDefinitions           []domain.KindDefinition
-	templateLibraries         []domain.TemplateLibrary
-	builtinTemplateStatuses   map[string]domain.BuiltinTemplateLibraryStatus
-	projectTemplateBinding    *domain.ProjectTemplateBinding
-	actionItemNodeContracts   map[string]domain.NodeContractSnapshot
 	searchRequestedMode       app.SearchMode
 	searchEffectiveMode       app.SearchMode
 	searchFallbackReason      string
@@ -1146,13 +1098,6 @@ type bootstrapSettingsSavedMsg struct {
 	err    error
 }
 
-// projectTemplateReviewLoadedMsg carries the staged reapply preview used by the TUI migration-review surface.
-type projectTemplateReviewLoadedMsg struct {
-	draft   pendingProjectTemplateReview
-	preview domain.ProjectTemplateReapplyPreview
-	err     error
-}
-
 // threadLoadedMsg carries comments loaded for one thread target.
 type threadLoadedMsg struct {
 	target   domain.CommentTarget
@@ -1265,11 +1210,6 @@ func NewModel(svc Service, opts ...Option) Model {
 	projectKindPickerInput.Placeholder = "type to fuzzy-find project kinds"
 	projectKindPickerInput.CharLimit = 120
 	configureTextInputClipboardBindings(&projectKindPickerInput)
-	templateLibraryPickerInput := textinput.New()
-	templateLibraryPickerInput.Prompt = "filter: "
-	templateLibraryPickerInput.Placeholder = "type to fuzzy-find approved template libraries"
-	templateLibraryPickerInput.CharLimit = 120
-	configureTextInputClipboardBindings(&templateLibraryPickerInput)
 	embeddingsSpinner := spinner.New(
 		spinner.WithSpinner(spinner.Dot),
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)),
@@ -1304,7 +1244,6 @@ func NewModel(svc Service, opts ...Option) Model {
 		duePickerTimeInput:                   duePickerTimeInput,
 		labelPickerInput:                     labelPickerInput,
 		projectKindPickerInput:               projectKindPickerInput,
-		templateLibraryPickerInput:           templateLibraryPickerInput,
 		embeddingsSpinner:                    embeddingsSpinner,
 		searchMode:                           app.SearchModeHybrid,
 		searchStates:                         []string{"todo", "progress", "done"},
@@ -1333,8 +1272,6 @@ func NewModel(svc Service, opts ...Option) Model {
 		allowedLabelProject:                  map[string][]string{},
 		searchRoots:                          []string{},
 		projectRoots:                         map[string]string{},
-		templateMigrationReviewPicked:        map[string]struct{}{},
-		builtinTemplateStatuses:              map[string]domain.BuiltinTemplateLibraryStatus{},
 		identityDisplayName:                  "tillsyn-user",
 		identityActorID:                      "tillsyn-user",
 		identityDefaultActorType:             string(domain.ActorTypeUser),
@@ -1420,29 +1357,6 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	m.columns = msg.columns
 	m.tasks = msg.tasks
 	m.kindDefinitions = append([]domain.KindDefinition(nil), msg.kindDefinitions...)
-	m.templateLibraries = append([]domain.TemplateLibrary(nil), msg.templateLibraries...)
-	if msg.builtinTemplateStatuses != nil {
-		m.builtinTemplateStatuses = make(map[string]domain.BuiltinTemplateLibraryStatus, len(msg.builtinTemplateStatuses))
-		for libraryID, status := range msg.builtinTemplateStatuses {
-			m.builtinTemplateStatuses[libraryID] = status
-		}
-	} else {
-		m.builtinTemplateStatuses = map[string]domain.BuiltinTemplateLibraryStatus{}
-	}
-	if msg.projectTemplateBinding != nil {
-		binding := *msg.projectTemplateBinding
-		m.currentProjectTemplateBinding = &binding
-	} else {
-		m.currentProjectTemplateBinding = nil
-	}
-	if msg.actionItemNodeContracts != nil {
-		m.actionItemNodeContracts = make(map[string]domain.NodeContractSnapshot, len(msg.actionItemNodeContracts))
-		for actionItemID, snapshot := range msg.actionItemNodeContracts {
-			m.actionItemNodeContracts[actionItemID] = snapshot
-		}
-	} else {
-		m.actionItemNodeContracts = map[string]domain.NodeContractSnapshot{}
-	}
 	m.searchRequestedMode = msg.searchRequestedMode
 	m.searchEffectiveMode = msg.searchEffectiveMode
 	m.searchFallbackReason = msg.searchFallbackReason
@@ -1468,9 +1382,6 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.projectPickerIndex = 0
 		m.columns = nil
 		m.tasks = nil
-		m.builtinTemplateStatuses = map[string]domain.BuiltinTemplateLibraryStatus{}
-		m.currentProjectTemplateBinding = nil
-		m.actionItemNodeContracts = map[string]domain.NodeContractSnapshot{}
 		m.activityLog = []activityEntry{}
 		m.attentionItems = []domain.AttentionItem{}
 		m.noticesCoordination = noticesCoordinationSummary{}
@@ -1828,36 +1739,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmd, m.loadData)
 		}
 		return m, m.loadData
-
-	case projectTemplateReviewLoadedMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.mode = modeEditProject
-			m.status = "template reapply review unavailable"
-			m.templateMigrationReviewLoading = false
-			m.templateMigrationReviewPreview = nil
-			m.templateMigrationReviewDraft = nil
-			m.templateMigrationReviewPicked = map[string]struct{}{}
-			m.templateMigrationReviewIndex = 0
-			return m, nil
-		}
-		m.err = nil
-		m.templateMigrationReviewLoading = false
-		m.mode = modeTemplateMigrationReview
-		m.templateMigrationReviewDraft = &msg.draft
-		preview := msg.preview
-		m.templateMigrationReviewPreview = &preview
-		m.templateMigrationReviewIndex = 0
-		m.templateMigrationReviewPicked = map[string]struct{}{}
-		if !preview.ReviewRequired && len(preview.MigrationCandidates) == 0 {
-			return m.applyProjectTemplateReviewDecision(false, false)
-		}
-		if preview.EligibleMigrationCount > 0 {
-			m.status = "review template migrations"
-		} else {
-			m.status = "review template drift"
-		}
-		return m, nil
 
 	case actionMsg:
 		if msg.err != nil {
@@ -2582,27 +2463,11 @@ func (m Model) loadData() tea.Msg {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
 		return loadedMsg{err: err}
 	}
-	templateLibraries, err := m.svc.ListTemplateLibraries(context.Background(), app.ListTemplateLibrariesInput{
-		Scope:  domain.TemplateLibraryScopeGlobal,
-		Status: domain.TemplateLibraryStatusApproved,
-	})
-	if err != nil {
-		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
-		return loadedMsg{err: err}
-	}
 	if len(projects) == 0 {
-		builtinTemplateStatuses, statusErr := m.loadBuiltinTemplateStatuses(templateLibraries)
-		if statusErr != nil {
-			m.traceLoadDataStage("total", totalStartedAt, statusErr, "project_count", 0, "column_count", 0, "task_count", 0)
-			return loadedMsg{err: statusErr}
-		}
 		m.traceLoadDataStage("total", totalStartedAt, nil, "project_count", 0, "column_count", 0, "task_count", 0)
 		return loadedMsg{
-			projects:                projects,
-			kindDefinitions:         kindDefinitions,
-			templateLibraries:       templateLibraries,
-			builtinTemplateStatuses: builtinTemplateStatuses,
-			actionItemNodeContracts: map[string]domain.NodeContractSnapshot{},
+			projects:        projects,
+			kindDefinitions: kindDefinitions,
 		}
 	}
 
@@ -2616,22 +2481,6 @@ func (m Model) loadData() tea.Msg {
 		}
 	}
 	projectID := projects[projectIdx].ID
-	var projectTemplateBinding *domain.ProjectTemplateBinding
-	binding, err := m.svc.GetProjectTemplateBinding(context.Background(), projectID)
-	switch {
-	case err == nil:
-		projectTemplateBinding = &binding
-	case errors.Is(err, app.ErrNotFound):
-		projectTemplateBinding = nil
-	default:
-		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
-		return loadedMsg{err: err}
-	}
-	builtinTemplateStatuses, err := m.loadBuiltinTemplateStatuses(templateLibraries)
-	if err != nil {
-		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", 0, "task_count", 0)
-		return loadedMsg{err: err}
-	}
 	columnsStartedAt := time.Now()
 	columns, err := m.svc.ListColumns(context.Background(), projectID, false)
 	m.traceLoadDataStage("columns", columnsStartedAt, err, "project_id", projectID, "count", len(columns))
@@ -2690,19 +2539,6 @@ func (m Model) loadData() tea.Msg {
 	if err != nil {
 		m.traceLoadDataStage("total", totalStartedAt, err, "project_count", len(projects), "column_count", len(columns), "task_count", 0)
 		return loadedMsg{err: err}
-	}
-	actionItemNodeContracts := make(map[string]domain.NodeContractSnapshot, len(tasks))
-	for _, actionItem := range tasks {
-		snapshot, snapshotErr := m.svc.GetNodeContractSnapshot(context.Background(), actionItem.ID)
-		switch {
-		case snapshotErr == nil:
-			actionItemNodeContracts[actionItem.ID] = snapshot
-		case errors.Is(snapshotErr, app.ErrNotFound):
-			continue
-		default:
-			m.traceLoadDataStage("total", totalStartedAt, snapshotErr, "project_count", len(projects), "column_count", len(columns), "task_count", len(tasks))
-			return loadedMsg{err: snapshotErr}
-		}
 	}
 	rollupStartedAt := time.Now()
 	rollup, err := m.svc.GetProjectDependencyRollup(context.Background(), projectID)
@@ -2876,10 +2712,6 @@ func (m Model) loadData() tea.Msg {
 		columns:                   columns,
 		tasks:                     tasks,
 		kindDefinitions:           kindDefinitions,
-		templateLibraries:         templateLibraries,
-		builtinTemplateStatuses:   builtinTemplateStatuses,
-		projectTemplateBinding:    projectTemplateBinding,
-		actionItemNodeContracts:   actionItemNodeContracts,
 		searchRequestedMode:       searchRequestedMode,
 		searchEffectiveMode:       searchEffectiveMode,
 		searchFallbackReason:      searchFallbackReason,
@@ -3292,16 +3124,16 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 		actorType = domain.ActorTypeUser
 	}
 	return activityEntry{
-		At:         event.OccurredAt.UTC(),
-		Summary:    summary,
-		Target:     target,
-		EventID:    event.ID,
+		At:           event.OccurredAt.UTC(),
+		Summary:      summary,
+		Target:       target,
+		EventID:      event.ID,
 		ActionItemID: strings.TrimSpace(event.ActionItemID),
-		Operation:  event.Operation,
-		ActorID:    actorID,
-		ActorName:  actorName,
-		ActorType:  actorType,
-		Metadata:   copyActivityMetadata(event.Metadata),
+		Operation:    event.Operation,
+		ActorID:      actorID,
+		ActorName:    actorName,
+		ActorType:    actorType,
+		Metadata:     copyActivityMetadata(event.Metadata),
 	}
 }
 
@@ -4921,7 +4753,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		newModalInput("", "accent color (e.g. 62)", "", 32),
 		newModalInput("", "https://...", "", 200),
 		newModalInput("", "csv tags", "", 200),
-		newModalInput("", "enter opens approved template-library picker", "", 160),
 		newModalInput("", "project root path (optional)", "", 512),
 	}
 	m.editingProjectID = ""
@@ -4944,9 +4775,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		if slug := strings.TrimSpace(strings.ToLower(project.Slug)); slug != "" {
 			m.projectFormInputs[projectFieldRootPath].SetValue(strings.TrimSpace(m.projectRoots[slug]))
 		}
-		if binding, ok := m.activeProjectTemplateBinding(project.ID); ok {
-			m.projectFormInputs[projectFieldTemplateLibrary].SetValue(binding.LibraryID)
-		}
 	} else {
 		m.mode = modeAddProject
 		m.status = "new project"
@@ -4955,18 +4783,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	}
 	m.syncProjectFormDescriptionDisplay()
 	return m.focusProjectFormField(0)
-}
-
-// clearProjectTemplateMigrationReview resets staged TUI migration-review state.
-func (m *Model) clearProjectTemplateMigrationReview() {
-	if m == nil {
-		return
-	}
-	m.templateMigrationReviewPreview = nil
-	m.templateMigrationReviewDraft = nil
-	m.templateMigrationReviewLoading = false
-	m.templateMigrationReviewIndex = 0
-	m.templateMigrationReviewPicked = map[string]struct{}{}
 }
 
 // resetProjectFormState clears staged project-form state after save/cancel.
@@ -4978,184 +4794,6 @@ func (m *Model) resetProjectFormState() {
 	m.projectFormFocus = 0
 	m.projectFormDescription = ""
 	m.editingProjectID = ""
-}
-
-// startProjectTemplateMigrationReview loads one drift preview before finalizing an edit-project reapply.
-func (m *Model) startProjectTemplateMigrationReview(draft pendingProjectTemplateReview) tea.Cmd {
-	if m == nil {
-		return nil
-	}
-	m.mode = modeTemplateMigrationReview
-	m.templateMigrationReviewLoading = true
-	m.templateMigrationReviewDraft = &draft
-	m.templateMigrationReviewPreview = nil
-	m.templateMigrationReviewIndex = 0
-	m.templateMigrationReviewPicked = map[string]struct{}{}
-	m.status = "loading template reapply review..."
-	return func() tea.Msg {
-		preview, err := m.svc.GetProjectTemplateReapplyPreview(context.Background(), draft.ProjectID)
-		return projectTemplateReviewLoadedMsg{
-			draft:   draft,
-			preview: preview,
-			err:     err,
-		}
-	}
-}
-
-// templateMigrationReviewCandidates returns the staged preview candidates for the active review surface.
-func (m Model) templateMigrationReviewCandidates() []domain.ProjectTemplateMigrationCandidate {
-	if m.templateMigrationReviewPreview == nil {
-		return nil
-	}
-	return m.templateMigrationReviewPreview.MigrationCandidates
-}
-
-// selectedTemplateMigrationReviewCandidate returns the currently highlighted migration-review candidate.
-func (m Model) selectedTemplateMigrationReviewCandidate() (domain.ProjectTemplateMigrationCandidate, bool) {
-	candidates := m.templateMigrationReviewCandidates()
-	if len(candidates) == 0 {
-		return domain.ProjectTemplateMigrationCandidate{}, false
-	}
-	idx := clamp(m.templateMigrationReviewIndex, 0, len(candidates)-1)
-	return candidates[idx], true
-}
-
-// templateMigrationSelectionIDs returns selected eligible candidate ids in stable preview order.
-func (m Model) templateMigrationSelectionIDs() []string {
-	candidates := m.templateMigrationReviewCandidates()
-	if len(candidates) == 0 || len(m.templateMigrationReviewPicked) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(m.templateMigrationReviewPicked))
-	for _, candidate := range candidates {
-		actionItemID := strings.TrimSpace(candidate.ActionItemID)
-		if actionItemID == "" {
-			continue
-		}
-		if _, ok := m.templateMigrationReviewPicked[actionItemID]; ok {
-			out = append(out, actionItemID)
-		}
-	}
-	return out
-}
-
-// toggleTemplateMigrationSelection toggles one eligible candidate in the staged migration-review selection.
-func (m *Model) toggleTemplateMigrationSelection(actionItemID string) {
-	if m == nil {
-		return
-	}
-	actionItemID = strings.TrimSpace(actionItemID)
-	if actionItemID == "" {
-		return
-	}
-	if m.templateMigrationReviewPicked == nil {
-		m.templateMigrationReviewPicked = map[string]struct{}{}
-	}
-	if _, ok := m.templateMigrationReviewPicked[actionItemID]; ok {
-		delete(m.templateMigrationReviewPicked, actionItemID)
-		return
-	}
-	m.templateMigrationReviewPicked[actionItemID] = struct{}{}
-}
-
-// applyProjectTemplateReviewDecision finalizes one staged project edit after the operator reviews template drift.
-func (m Model) applyProjectTemplateReviewDecision(approveAll, approveSelected bool) (tea.Model, tea.Cmd) {
-	draft := m.templateMigrationReviewDraft
-	if draft == nil {
-		m.status = "template reapply review unavailable"
-		return m, nil
-	}
-	selectedActionItemIDs := m.templateMigrationSelectionIDs()
-	if approveSelected && len(selectedActionItemIDs) == 0 {
-		m.status = "select one or more eligible nodes, approve all, or skip"
-		return m, nil
-	}
-	applyMigrationApproval := approveAll || approveSelected
-	approvalInput := app.ApproveProjectTemplateMigrationsInput{
-		ProjectID:      draft.ProjectID,
-		ApproveAll:     approveAll,
-		ActionItemIDs:  selectedActionItemIDs,
-		ApprovedBy:     m.threadActorID(),
-		ApprovedByName: m.threadActorName(),
-		ApprovedByType: m.threadActorType(),
-	}
-	staged := *draft
-	m.mode = modeNone
-	m.resetProjectFormState()
-	m.clearProjectTemplateMigrationReview()
-	m.status = "saving project..."
-	return m, func() tea.Msg {
-		project, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
-			ProjectID:     staged.ProjectID,
-			Name:          staged.Name,
-			Description:   staged.Description,
-			Kind:          staged.Kind,
-			Metadata:      staged.Metadata,
-			UpdatedBy:     m.threadActorID(),
-			UpdatedByName: m.threadActorName(),
-			UpdatedType:   m.threadActorType(),
-		})
-		if err != nil {
-			return actionMsg{err: err}
-		}
-		appliedCount := 0
-		if applyMigrationApproval {
-			result, err := m.svc.ApproveProjectTemplateMigrations(context.Background(), approvalInput)
-			if err != nil {
-				return actionMsg{err: err}
-			}
-			appliedCount = result.AppliedCount
-		}
-		switch {
-		case staged.TemplateLibraryID == "" && staged.CurrentTemplateLibraryID != "":
-			if err := m.svc.UnbindProjectTemplateLibrary(context.Background(), app.UnbindProjectTemplateLibraryInput{
-				ProjectID: project.ID,
-			}); err != nil {
-				return actionMsg{err: err}
-			}
-		case staged.TemplateLibraryID != "" && staged.TemplateLibraryID != staged.CurrentTemplateLibraryID:
-			if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
-				ProjectID:        project.ID,
-				LibraryID:        staged.TemplateLibraryID,
-				BoundByActorID:   m.threadActorID(),
-				BoundByActorName: m.threadActorName(),
-				BoundByActorType: m.threadActorType(),
-			}); err != nil {
-				return actionMsg{err: err}
-			}
-		case staged.TemplateLibraryID != "":
-			if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
-				ProjectID:        project.ID,
-				LibraryID:        staged.TemplateLibraryID,
-				BoundByActorID:   m.threadActorID(),
-				BoundByActorName: m.threadActorName(),
-				BoundByActorType: m.threadActorType(),
-			}); err != nil {
-				return actionMsg{err: err}
-			}
-		}
-		if m.saveProjectRoot != nil {
-			if err := m.saveProjectRoot(project.Slug, staged.RootPath); err != nil {
-				return actionMsg{err: err}
-			}
-		}
-		status := "project updated"
-		switch {
-		case approveAll:
-			status = fmt.Sprintf("project updated • approved all eligible migrations (%d applied)", appliedCount)
-		case approveSelected:
-			status = fmt.Sprintf("project updated • approved %d template migrations", appliedCount)
-		case staged.TemplateLibraryID != "" && staged.TemplateLibraryID == staged.CurrentTemplateLibraryID:
-			status = "project updated • existing-node migrations skipped"
-		}
-		return actionMsg{
-			status:          status,
-			reload:          true,
-			projectID:       project.ID,
-			projectRootSlug: project.Slug,
-			projectRootPath: staged.RootPath,
-		}
-	}
 }
 
 // startActionItemForm starts actionItem form.
@@ -5446,7 +5084,7 @@ func isActionItemFormDirectTextInputField(field int) bool {
 
 // isProjectFormDirectTextInputField reports whether the focused project-form field should consume printable text directly.
 func isProjectFormDirectTextInputField(field int) bool {
-	return field != projectFieldDescription && field != projectFieldKind && field != projectFieldTemplateLibrary && field != projectFieldComments
+	return field != projectFieldDescription && field != projectFieldKind && field != projectFieldComments
 }
 
 // actionItemFormFocusPosition resolves one form-focus field position within the current visual order.
@@ -5627,7 +5265,7 @@ func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	for i := range m.projectFormInputs {
 		m.projectFormInputs[i].Blur()
 	}
-	if idx == projectFieldDescription || idx == projectFieldKind || idx == projectFieldTemplateLibrary || idx == projectFieldComments {
+	if idx == projectFieldDescription || idx == projectFieldKind || idx == projectFieldComments {
 		return nil
 	}
 	return m.projectFormInputs[idx].Focus()
@@ -6170,7 +5808,7 @@ func (m Model) allowedLabelsForSelectedProject() []string {
 }
 
 // projectFormFields stores a package-level helper value.
-var projectFormFields = []string{"name", "description", "kind", "owner", "icon", "color", "homepage", "tags", "template_library_id", "root_path"}
+var projectFormFields = []string{"name", "description", "kind", "owner", "icon", "color", "homepage", "tags", "root_path"}
 
 // projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
@@ -6334,314 +5972,6 @@ func (m *Model) startProjectKindPicker(seed string) tea.Cmd {
 		m.status = "project kind picker"
 	}
 	return m.projectKindPickerInput.Focus()
-}
-
-// inferProjectKindFromTemplateLibrary returns one unique project-scope kind when a selected library implies exactly one.
-func (m Model) inferProjectKindFromTemplateLibrary(libraryID string) (domain.KindID, bool) {
-	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
-	if libraryID == "" {
-		return "", false
-	}
-	seen := map[domain.KindID]struct{}{}
-	candidates := make([]domain.KindID, 0, 1)
-	for _, library := range m.templateLibraries {
-		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
-			continue
-		}
-		for _, nodeTemplate := range library.NodeTemplates {
-			if nodeTemplate.ScopeLevel != domain.KindAppliesToProject {
-				continue
-			}
-			kindID := domain.NormalizeKindID(nodeTemplate.NodeKindID)
-			if kindID == "" {
-				continue
-			}
-			if _, ok := seen[kindID]; ok {
-				continue
-			}
-			seen[kindID] = struct{}{}
-			candidates = append(candidates, kindID)
-		}
-		break
-	}
-	if len(candidates) != 1 {
-		return "", false
-	}
-	return candidates[0], true
-}
-
-// activeProjectTemplateBinding returns the loaded active binding for one project when available.
-func (m Model) activeProjectTemplateBinding(projectID string) (domain.ProjectTemplateBinding, bool) {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" || m.currentProjectTemplateBinding == nil {
-		return domain.ProjectTemplateBinding{}, false
-	}
-	if strings.TrimSpace(m.currentProjectTemplateBinding.ProjectID) != projectID {
-		return domain.ProjectTemplateBinding{}, false
-	}
-	return *m.currentProjectTemplateBinding, true
-}
-
-// builtinTemplateStatus returns one loaded builtin lifecycle status by library id when available.
-func (m Model) builtinTemplateStatus(libraryID string) (domain.BuiltinTemplateLibraryStatus, bool) {
-	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
-	if libraryID == "" || len(m.builtinTemplateStatuses) == 0 {
-		return domain.BuiltinTemplateLibraryStatus{}, false
-	}
-	status, ok := m.builtinTemplateStatuses[libraryID]
-	if !ok {
-		return domain.BuiltinTemplateLibraryStatus{}, false
-	}
-	return status, true
-}
-
-// hasApprovedTemplateLibrary reports whether the given global approved template library is currently visible to the TUI.
-func (m Model) hasApprovedTemplateLibrary(libraryID string) bool {
-	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
-	if libraryID == "" {
-		return false
-	}
-	for _, library := range m.templateLibraries {
-		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
-			continue
-		}
-		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-// templateLibrarySummaryRows returns readable approved-library rows for project-form rendering.
-func (m Model) templateLibrarySummaryRows(limit int) []string {
-	if limit <= 0 {
-		limit = len(m.templateLibraries)
-	}
-	rows := make([]string, 0, min(limit, len(m.templateLibraries)))
-	for _, library := range m.templateLibraries {
-		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
-			continue
-		}
-		rows = append(rows, m.templateLibraryDisplayLabel(library.ID, library.Name))
-		if len(rows) >= limit {
-			break
-		}
-	}
-	return rows
-}
-
-// loadBuiltinTemplateStatuses resolves builtin lifecycle status for visible approved builtin-managed libraries.
-func (m Model) loadBuiltinTemplateStatuses(templateLibraries []domain.TemplateLibrary) (map[string]domain.BuiltinTemplateLibraryStatus, error) {
-	statuses := map[string]domain.BuiltinTemplateLibraryStatus{}
-	for _, library := range templateLibraries {
-		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved || !library.BuiltinManaged {
-			continue
-		}
-		libraryID := domain.NormalizeTemplateLibraryID(library.ID)
-		if libraryID == "" {
-			continue
-		}
-		if _, ok := statuses[libraryID]; ok {
-			continue
-		}
-		status, err := m.svc.GetBuiltinTemplateLibraryStatus(context.Background(), libraryID)
-		if err != nil {
-			return nil, err
-		}
-		statuses[libraryID] = status
-	}
-	return statuses, nil
-}
-
-// builtinTemplateStatusSummary renders one compact builtin lifecycle summary for TUI hints.
-func (m Model) builtinTemplateStatusSummary(status domain.BuiltinTemplateLibraryStatus) string {
-	if status.LibraryID == "" {
-		return "-"
-	}
-	parts := []string{"state:" + fallbackText(strings.TrimSpace(string(status.State)), "-")}
-	if version := strings.TrimSpace(status.BuiltinVersion); version != "" {
-		parts = append(parts, "version:"+version)
-	}
-	if status.InstalledRevision > 0 {
-		parts = append(parts, fmt.Sprintf("installed_rev:%d", status.InstalledRevision))
-	}
-	return strings.Join(parts, " • ")
-}
-
-// templateLibraryDisplayLabel returns one stable id/name label for project-form and picker rows.
-func (m Model) templateLibraryDisplayLabel(libraryID, libraryName string) string {
-	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
-	libraryName = strings.TrimSpace(libraryName)
-	if libraryID == "" {
-		return "(none)"
-	}
-	if libraryName == "" || strings.EqualFold(libraryName, libraryID) {
-		return libraryID
-	}
-	return fmt.Sprintf("%s — %s", libraryID, libraryName)
-}
-
-// templateLibraryName returns the currently loaded approved-library name for one id when available.
-func (m Model) templateLibraryName(libraryID string) string {
-	libraryID = domain.NormalizeTemplateLibraryID(libraryID)
-	if libraryID == "" {
-		return ""
-	}
-	for _, library := range m.templateLibraries {
-		if domain.NormalizeTemplateLibraryID(library.ID) != libraryID {
-			continue
-		}
-		return strings.TrimSpace(library.Name)
-	}
-	return ""
-}
-
-func (m Model) templateBindingSummary(binding domain.ProjectTemplateBinding) string {
-	label := m.templateLibraryDisplayLabel(binding.LibraryID, firstNonEmptyTrimmed(binding.LibraryName, m.templateLibraryName(binding.LibraryID)))
-	if binding.LibraryID == "" {
-		return "-"
-	}
-	parts := []string{label}
-	if binding.BoundRevision > 0 {
-		parts = append(parts, fmt.Sprintf("rev:%d", binding.BoundRevision))
-	}
-	if drift := strings.TrimSpace(binding.DriftStatus); drift != "" {
-		parts = append(parts, "drift:"+drift)
-	}
-	if binding.LatestRevision > 0 && binding.LatestRevision != binding.BoundRevision {
-		parts = append(parts, fmt.Sprintf("latest:%d", binding.LatestRevision))
-	}
-	return strings.Join(parts, " • ")
-}
-
-// approvedTemplateLibraryPickerItems builds the ordered approved-library rows for the project form picker.
-func (m Model) approvedTemplateLibraryPickerItems() []templateLibraryPickerItem {
-	items := []templateLibraryPickerItem{{
-		Name:  "(none)",
-		Clear: true,
-	}}
-	for _, library := range m.templateLibraries {
-		if library.Scope != domain.TemplateLibraryScopeGlobal || library.Status != domain.TemplateLibraryStatusApproved {
-			continue
-		}
-		items = append(items, templateLibraryPickerItem{
-			LibraryID: domain.NormalizeTemplateLibraryID(library.ID),
-			Name:      strings.TrimSpace(library.Name),
-		})
-	}
-	sort.SliceStable(items[1:], func(i, j int) bool {
-		left := items[i+1]
-		right := items[j+1]
-		leftLabel := m.templateLibraryDisplayLabel(left.LibraryID, left.Name)
-		rightLabel := m.templateLibraryDisplayLabel(right.LibraryID, right.Name)
-		return leftLabel < rightLabel
-	})
-	return items
-}
-
-// refreshTemplateLibraryPickerMatches refreshes fuzzy-filtered approved-library picker rows.
-func (m *Model) refreshTemplateLibraryPickerMatches() {
-	if m == nil {
-		return
-	}
-	allItems := m.approvedTemplateLibraryPickerItems()
-	query := strings.TrimSpace(m.templateLibraryPickerInput.Value())
-	if query == "" {
-		m.templateLibraryPickerItems = allItems
-		m.templateLibraryPickerIndex = clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)
-		return
-	}
-
-	type scoredTemplateLibrary struct {
-		item  templateLibraryPickerItem
-		score int
-	}
-	scored := make([]scoredTemplateLibrary, 0, len(allItems))
-	for _, item := range allItems {
-		score, ok := bestFuzzyScore(
-			query,
-			item.LibraryID,
-			item.Name,
-			m.templateLibraryDisplayLabel(item.LibraryID, item.Name),
-			"none clear remove unbind template library",
-		)
-		if !ok {
-			continue
-		}
-		scored = append(scored, scoredTemplateLibrary{
-			item:  item,
-			score: score,
-		})
-	}
-	sort.SliceStable(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
-		}
-		left := m.templateLibraryDisplayLabel(scored[i].item.LibraryID, scored[i].item.Name)
-		right := m.templateLibraryDisplayLabel(scored[j].item.LibraryID, scored[j].item.Name)
-		return left < right
-	})
-	m.templateLibraryPickerItems = make([]templateLibraryPickerItem, 0, len(scored))
-	for _, entry := range scored {
-		m.templateLibraryPickerItems = append(m.templateLibraryPickerItems, entry.item)
-	}
-	m.templateLibraryPickerIndex = clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)
-}
-
-// startTemplateLibraryPicker opens the project template-library picker with optional initial filter text.
-func (m *Model) startTemplateLibraryPicker(seed string) tea.Cmd {
-	if m == nil {
-		return nil
-	}
-	m.templateLibraryPickerBack = m.mode
-	m.mode = modeTemplateLibraryPicker
-	m.templateLibraryPickerInput.SetValue(strings.TrimSpace(seed))
-	m.templateLibraryPickerInput.CursorEnd()
-	m.refreshTemplateLibraryPickerMatches()
-	current := domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value())
-	m.templateLibraryPickerIndex = 0
-	if current != "" && strings.TrimSpace(seed) == "" {
-		for idx, item := range m.templateLibraryPickerItems {
-			if item.LibraryID == current {
-				m.templateLibraryPickerIndex = idx
-				break
-			}
-		}
-	}
-	if current == "" && strings.TrimSpace(seed) == "" {
-		for idx, item := range m.templateLibraryPickerItems {
-			if item.Clear {
-				m.templateLibraryPickerIndex = idx
-				break
-			}
-		}
-	}
-	if len(m.templateLibraryPickerItems) == 0 {
-		m.status = "no approved template libraries"
-	} else {
-		m.status = "template library picker"
-	}
-	return m.templateLibraryPickerInput.Focus()
-}
-
-// templateActorKindsText renders actor-kind slices for readable TUI inspection output.
-func templateActorKindsText(kinds []domain.TemplateActorKind) string {
-	if len(kinds) == 0 {
-		return "-"
-	}
-	parts := make([]string, 0, len(kinds))
-	for _, kind := range kinds {
-		value := strings.TrimSpace(string(kind))
-		if value == "" {
-			continue
-		}
-		parts = append(parts, value)
-	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return strings.Join(parts, ", ")
 }
 
 // descriptionFormDisplayValue summarizes markdown description content for compact form rows.
@@ -12020,91 +11350,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == modeTemplateLibraryPicker {
-		if handled, status := applyClipboardShortcutToInput(msg, &m.templateLibraryPickerInput); handled {
-			m.status = status
-			m.templateLibraryPickerIndex = 0
-			m.refreshTemplateLibraryPickerMatches()
-			return m, nil
-		}
-		switch msg.String() {
-		case "esc":
-			m.mode = m.templateLibraryPickerBack
-			m.templateLibraryPickerInput.Blur()
-			m.status = "template library picker cancelled"
-			if m.mode == modeAddProject || m.mode == modeEditProject {
-				return m, m.focusProjectFormField(projectFieldTemplateLibrary)
-			}
-			return m, nil
-		case "ctrl+u":
-			m.templateLibraryPickerInput.SetValue("")
-			m.templateLibraryPickerInput.CursorEnd()
-			m.templateLibraryPickerIndex = 0
-			m.refreshTemplateLibraryPickerMatches()
-			return m, nil
-		case "j", "down":
-			if m.templateLibraryPickerIndex < len(m.templateLibraryPickerItems)-1 {
-				m.templateLibraryPickerIndex++
-			}
-			return m, nil
-		case "k", "up":
-			if m.templateLibraryPickerIndex > 0 {
-				m.templateLibraryPickerIndex--
-			}
-			return m, nil
-		case "enter":
-			if len(m.projectFormInputs) <= projectFieldTemplateLibrary {
-				m.mode = m.templateLibraryPickerBack
-				m.templateLibraryPickerInput.Blur()
-				return m, m.focusProjectFormField(projectFieldTemplateLibrary)
-			}
-			if len(m.templateLibraryPickerItems) == 0 {
-				m.mode = m.templateLibraryPickerBack
-				m.templateLibraryPickerInput.Blur()
-				m.status = "no approved template libraries"
-				return m, m.focusProjectFormField(projectFieldTemplateLibrary)
-			}
-			item := m.templateLibraryPickerItems[clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)]
-			if item.Clear {
-				m.projectFormInputs[projectFieldTemplateLibrary].SetValue("")
-				m.status = "template library cleared"
-			} else {
-				m.projectFormInputs[projectFieldTemplateLibrary].SetValue(item.LibraryID)
-				currentProjectKind := domain.NormalizeKindID(domain.KindID(m.projectFormInputs[projectFieldKind].Value()))
-				if (currentProjectKind == "" || currentProjectKind == domain.DefaultProjectKind) && len(m.projectFormInputs) > projectFieldKind {
-					if inferredKind, ok := m.inferProjectKindFromTemplateLibrary(item.LibraryID); ok {
-						m.projectFormInputs[projectFieldKind].SetValue(string(inferredKind))
-					}
-				}
-				m.status = "template library selected"
-			}
-			m.mode = m.templateLibraryPickerBack
-			m.templateLibraryPickerInput.Blur()
-			return m, m.focusProjectFormField(projectFieldTemplateLibrary + 1)
-		default:
-			if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
-				var cmd tea.Cmd
-				before := m.templateLibraryPickerInput.Value()
-				m.templateLibraryPickerInput, cmd = m.templateLibraryPickerInput.Update(msg)
-				_ = scrubTextInputTerminalArtifacts(&m.templateLibraryPickerInput)
-				if m.templateLibraryPickerInput.Value() != before {
-					m.templateLibraryPickerIndex = 0
-					m.refreshTemplateLibraryPickerMatches()
-				}
-				return m, cmd
-			}
-			var cmd tea.Cmd
-			before := m.templateLibraryPickerInput.Value()
-			m.templateLibraryPickerInput, cmd = m.templateLibraryPickerInput.Update(msg)
-			_ = scrubTextInputTerminalArtifacts(&m.templateLibraryPickerInput)
-			if m.templateLibraryPickerInput.Value() != before {
-				m.templateLibraryPickerIndex = 0
-				m.refreshTemplateLibraryPickerMatches()
-			}
-			return m, cmd
-		}
-	}
-
 	if m.mode == modePathsRoots {
 		if handled, status := applyClipboardShortcutToInput(msg, &m.pathsRootInput); handled {
 			m.status = status
@@ -12261,15 +11506,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
 			m.resetProjectFormState()
-			m.clearProjectTemplateMigrationReview()
 			m.status = "cancelled"
 			return m, nil
 		case msg.String() == "ctrl+r" && m.projectFormFocus == projectFieldRootPath:
 			return m, m.startResourcePicker("", m.mode)
 		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldKind:
 			return m, m.startProjectKindPicker("")
-		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldTemplateLibrary:
-			return m, m.startTemplateLibraryPicker("")
 		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldComments:
 			next, cmd := m.startProjectThread(modeEditProject)
 			if model, ok := next.(Model); ok {
@@ -12299,12 +11541,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.projectFormFocus == projectFieldTemplateLibrary {
-				if isPrintableFormTextKey(msg) {
-					return m, m.startTemplateLibraryPicker(msg.Text)
-				}
-				return m, nil
-			}
 			if m.projectFormFocus == projectFieldComments {
 				return m, nil
 			}
@@ -12315,88 +11551,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.projectFormInputs[m.projectFormFocus], cmd = m.projectFormInputs[m.projectFormFocus].Update(msg)
 			_ = scrubTextInputTerminalArtifacts(&m.projectFormInputs[m.projectFormFocus])
 			return m, cmd
-		}
-	}
-
-	if m.mode == modeTemplateMigrationReview {
-		if m.templateMigrationReviewLoading {
-			switch {
-			case msg.Code == tea.KeyEscape || msg.String() == "esc":
-				m.mode = modeEditProject
-				m.templateMigrationReviewLoading = false
-				m.templateMigrationReviewPreview = nil
-				m.templateMigrationReviewDraft = nil
-				m.templateMigrationReviewPicked = map[string]struct{}{}
-				m.templateMigrationReviewIndex = 0
-				m.status = "template reapply review cancelled"
-				return m, nil
-			default:
-				return m, nil
-			}
-		}
-		switch {
-		case msg.Code == tea.KeyEscape || msg.String() == "esc":
-			m.mode = modeEditProject
-			m.clearProjectTemplateMigrationReview()
-			m.status = "template reapply review cancelled"
-			return m, nil
-		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown" || msg.String() == "ctrl+d":
-			m.actionItemInfoBody.ScrollDown(max(1, m.actionItemInfoBody.Height()/2))
-			return m, nil
-		case msg.Code == tea.KeyPgUp || msg.String() == "pgup" || msg.String() == "ctrl+u":
-			m.actionItemInfoBody.ScrollUp(max(1, m.actionItemInfoBody.Height()/2))
-			return m, nil
-		case msg.String() == "home":
-			m.actionItemInfoBody.GotoTop()
-			return m, nil
-		case msg.String() == "end":
-			m.actionItemInfoBody.GotoBottom()
-			return m, nil
-		case msg.String() == "j" || msg.String() == "down":
-			if len(m.templateMigrationReviewCandidates()) == 0 {
-				m.actionItemInfoBody.ScrollDown(1)
-				return m, nil
-			}
-			if m.templateMigrationReviewIndex < len(m.templateMigrationReviewCandidates())-1 {
-				m.templateMigrationReviewIndex++
-			}
-			m.actionItemInfoBody.ScrollDown(1)
-			return m, nil
-		case msg.String() == "k" || msg.String() == "up":
-			if len(m.templateMigrationReviewCandidates()) == 0 {
-				m.actionItemInfoBody.ScrollUp(1)
-				return m, nil
-			}
-			if m.templateMigrationReviewIndex > 0 {
-				m.templateMigrationReviewIndex--
-			}
-			m.actionItemInfoBody.ScrollUp(1)
-			return m, nil
-		case msg.String() == " " || msg.String() == "space" || msg.Code == tea.KeyEnter || msg.String() == "enter":
-			candidate, ok := m.selectedTemplateMigrationReviewCandidate()
-			if !ok {
-				m.status = "no migration candidates"
-				return m, nil
-			}
-			if candidate.Status != domain.ProjectTemplateReapplyCandidateEligible {
-				m.status = firstNonEmptyTrimmed(candidate.Reason, "candidate is not eligible")
-				return m, nil
-			}
-			m.toggleTemplateMigrationSelection(candidate.ActionItemID)
-			if _, ok := m.templateMigrationReviewPicked[strings.TrimSpace(candidate.ActionItemID)]; ok {
-				m.status = "migration selected"
-			} else {
-				m.status = "migration unselected"
-			}
-			return m, nil
-		case msg.String() == "a":
-			return m.applyProjectTemplateReviewDecision(false, true)
-		case msg.String() == "A" || msg.String() == "shift+a":
-			return m.applyProjectTemplateReviewDecision(true, false)
-		case msg.String() == "s":
-			return m.applyProjectTemplateReviewDecision(false, false)
-		default:
-			return m, nil
 		}
 	}
 
@@ -12891,11 +12045,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.status = "project kind not found: " + string(kindID)
 			return m, nil
 		}
-		templateLibraryID := domain.NormalizeTemplateLibraryID(vals["template_library_id"])
-		if templateLibraryID != "" && !m.hasApprovedTemplateLibrary(templateLibraryID) {
-			m.status = "approved template library not found: " + templateLibraryID
-			return m, nil
-		}
 		rootPath, err := normalizeProjectRootPathInput(vals["root_path"])
 		if err != nil {
 			m.status = err.Error()
@@ -12910,12 +12059,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		description := vals["description"]
 		projectID := m.editingProjectID
-		currentTemplateLibraryID := ""
-		currentTemplateLibraryDrift := ""
-		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
-			currentTemplateLibraryID = binding.LibraryID
-			currentTemplateLibraryDrift = strings.TrimSpace(binding.DriftStatus)
-		}
 		projectOp := "update"
 		if isAdd || projectID == "" {
 			projectOp = "create"
@@ -12925,17 +12068,15 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		if isAdd || projectID == "" {
 			m.mode = modeNone
 			m.resetProjectFormState()
-			m.clearProjectTemplateMigrationReview()
 			return m, func() tea.Msg {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
-					Name:              name,
-					Description:       description,
-					Kind:              kindID,
-					TemplateLibraryID: templateLibraryID,
-					Metadata:          metadata,
-					UpdatedBy:         m.threadActorID(),
-					UpdatedByName:     m.threadActorName(),
-					UpdatedType:       m.threadActorType(),
+					Name:          name,
+					Description:   description,
+					Kind:          kindID,
+					Metadata:      metadata,
+					UpdatedBy:     m.threadActorID(),
+					UpdatedByName: m.threadActorName(),
+					UpdatedType:   m.threadActorType(),
 				})
 				if err != nil {
 					return actionMsg{err: err}
@@ -12954,24 +12095,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if templateLibraryID != "" &&
-			templateLibraryID == currentTemplateLibraryID &&
-			currentTemplateLibraryDrift == domain.ProjectTemplateBindingDriftUpdateAvailable {
-			draft := pendingProjectTemplateReview{
-				ProjectID:                projectID,
-				Name:                     name,
-				Description:              description,
-				Kind:                     kindID,
-				Metadata:                 metadata,
-				RootPath:                 rootPath,
-				TemplateLibraryID:        templateLibraryID,
-				CurrentTemplateLibraryID: currentTemplateLibraryID,
-			}
-			return m, m.startProjectTemplateMigrationReview(draft)
-		}
 		m.mode = modeNone
 		m.resetProjectFormState()
-		m.clearProjectTemplateMigrationReview()
 		return m, func() tea.Msg {
 			project, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
 				ProjectID:     projectID,
@@ -12985,24 +12110,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			})
 			if err != nil {
 				return actionMsg{err: err}
-			}
-			switch {
-			case templateLibraryID == "" && currentTemplateLibraryID != "":
-				if err := m.svc.UnbindProjectTemplateLibrary(context.Background(), app.UnbindProjectTemplateLibraryInput{
-					ProjectID: project.ID,
-				}); err != nil {
-					return actionMsg{err: err}
-				}
-			case templateLibraryID != "" && (templateLibraryID != currentTemplateLibraryID || currentTemplateLibraryDrift == domain.ProjectTemplateBindingDriftUpdateAvailable):
-				if _, err := m.svc.BindProjectTemplateLibrary(context.Background(), app.BindProjectTemplateLibraryInput{
-					ProjectID:        project.ID,
-					LibraryID:        templateLibraryID,
-					BoundByActorID:   m.threadActorID(),
-					BoundByActorName: m.threadActorName(),
-					BoundByActorType: m.threadActorType(),
-				}); err != nil {
-					return actionMsg{err: err}
-				}
 			}
 			if m.saveProjectRoot != nil {
 				if err := m.saveProjectRoot(project.Slug, rootPath); err != nil {
@@ -14302,15 +13409,6 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.mode == modeTemplateMigrationReview {
-		switch msg.Button {
-		case tea.MouseWheelUp:
-			m.actionItemInfoBody.ScrollUp(3)
-		case tea.MouseWheelDown:
-			m.actionItemInfoBody.ScrollDown(3)
-		}
-		return m, nil
-	}
 	if m.mode == modeAuthInventory {
 		switch msg.Button {
 		case tea.MouseWheelUp:
@@ -14371,21 +13469,6 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		case tea.MouseWheelDown:
 			if m.projectKindPickerIndex < len(m.projectKindPickerItems)-1 {
 				m.projectKindPickerIndex++
-			}
-		default:
-			return m, nil
-		}
-		return m, nil
-	}
-	if m.mode == modeTemplateLibraryPicker {
-		switch msg.Button {
-		case tea.MouseWheelUp:
-			if m.templateLibraryPickerIndex > 0 {
-				m.templateLibraryPickerIndex--
-			}
-		case tea.MouseWheelDown:
-			if m.templateLibraryPickerIndex < len(m.templateLibraryPickerItems)-1 {
-				m.templateLibraryPickerIndex++
 			}
 		default:
 			return m, nil
@@ -17215,8 +16298,8 @@ func (m Model) actionItemSystemActorLabel(actionItem domain.ActionItem, actorID 
 	}
 	entry := activityEntry{
 		ActionItemID: actionItem.ID,
-		ActorID:    actorID,
-		ActorType:  fallbackType,
+		ActorID:      actorID,
+		ActorType:    fallbackType,
 	}
 	actorType, owner := m.displayActivityOwner(entry)
 	return owner, actorType
@@ -17765,18 +16848,14 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"description field opens full markdown editor (enter or i)",
 			"kind field opens the project-kind picker (enter/e; typing starts a filtered picker)",
 			"icon field is shown in path context, notices, and picker and supports emoji",
-			"template library field opens the approved-library picker (enter/e; typing starts a filtered picker) and seeds allowed kinds from the selected library",
-			"confirm with the dev whether extra generic kinds should be allowed after template selection",
 			"root_path field: r opens directory picker",
 		}
 	case modeEditProject:
 		return "edit project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
 			"description field opens full markdown editor (enter or i)",
-			"kind field opens the project-kind picker; changing it updates template matching for future work",
+			"kind field opens the project-kind picker",
 			"icon field is shown in path context, notices, and picker and supports emoji",
-			"template library field opens the approved-library picker; choose (none) to clear the active project binding",
-			"rebinding should include an explicit generic-kind decision with the dev; template-only is the safe default",
 			"root_path field: r opens directory picker",
 			"comments row: enter or e opens the project thread on the comments panel",
 		}
@@ -17785,13 +16864,6 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"type to fuzzy-filter project kinds",
 			"j/k moves selection; enter chooses the highlighted kind",
 			"the selected kind is sent on project create/update",
-			"ctrl+u clears the picker filter; esc closes the picker",
-		}
-	case modeTemplateLibraryPicker:
-		return "template library picker", []string{
-			"type to fuzzy-filter approved global template libraries",
-			"j/k moves selection; enter chooses the highlighted library",
-			"the (none) row clears project-level template binding",
 			"ctrl+u clears the picker filter; esc closes the picker",
 		}
 	case modeDescriptionEditor:
@@ -18784,52 +17856,6 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	renderProjectInput("color", projectFieldColor)
 	renderProjectInput("homepage", projectFieldHomepage)
 	renderProjectInput("tags", projectFieldTags)
-	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("template workflow"))
-	renderProjectInput("template_library", projectFieldTemplateLibrary)
-	selectedLibraryID := domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value())
-	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
-		if binding, ok := m.activeProjectTemplateBinding(projectID); ok {
-			lines = append(lines, hintStyle.Render("active_binding: "+m.templateBindingSummary(binding)))
-			if selectedLibraryID == "" {
-				selectedLibraryID = domain.NormalizeTemplateLibraryID(binding.LibraryID)
-			}
-			if domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value()) == domain.NormalizeTemplateLibraryID(binding.LibraryID) &&
-				strings.TrimSpace(binding.DriftStatus) == domain.ProjectTemplateBindingDriftUpdateAvailable {
-				lines = append(lines, hintStyle.Render("save opens migration review before rebinding future generated work; existing nodes need approve/skip"))
-			}
-		} else {
-			lines = append(lines, hintStyle.Render("active_binding: -"))
-		}
-	}
-	if status, ok := m.builtinTemplateStatus(selectedLibraryID); ok {
-		lines = append(lines, hintStyle.Render("shipped_builtin: "+m.builtinTemplateStatusSummary(status)))
-		if status.State == domain.BuiltinTemplateLibraryStateUpdateAvailable {
-			lines = append(lines, hintStyle.Render("run ensure builtin before rebinding projects to the newer shipped template"))
-		}
-	}
-	if selectedLibraryID == "" {
-		lines = append(lines, hintStyle.Render("template_policy: no library selected; the project starts with the broader catalog allowlist"))
-	} else {
-		lines = append(lines, hintStyle.Render("template_policy: selected library seeds allowed kinds from its node templates and child rules"))
-		lines = append(lines, hintStyle.Render("decide with the dev whether any extra generic kinds should be explicitly allowed after setup"))
-	}
-	if m.projectFormFocus == projectFieldTemplateLibrary {
-		lines = append(lines, hintStyle.Render("enter/e opens picker; type to start a filtered picker; choose (none) to clear"))
-		lines = append(lines, hintStyle.Render("template-only is the safe default; use kind allowlist controls later to opt generic kinds in intentionally"))
-	}
-	libraryRows := m.templateLibrarySummaryRows(5)
-	if len(libraryRows) == 0 {
-		lines = append(lines, hintStyle.Render("approved_global_libraries: (none; create via CLI/MCP first)"))
-	} else {
-		lines = append(lines, hintStyle.Render("approved_global_libraries:"))
-		for _, row := range libraryRows {
-			lines = append(lines, hintStyle.Render("  - "+row))
-		}
-		if len(m.templateLibraries) > len(libraryRows) {
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("  +%d more", len(m.templateLibraries)-len(libraryRows))))
-		}
-	}
 	renderProjectInput("root_path", projectFieldRootPath)
 	if m.mode == modeEditProject && len(m.projectFormInputs) > projectFieldComments {
 		lines = append(lines, "")
@@ -18859,141 +17885,6 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 		}
 	}
 
-	return resolveViewportFocus(lines)
-}
-
-// templateMigrationReviewBodyLines renders the dedicated pre-bind migration-review surface for drifted project templates.
-func (m Model) templateMigrationReviewBodyLines(contentWidth int, hintStyle, accentStyle lipgloss.Style) ([]string, int) {
-	lines := []string{}
-	if m.templateMigrationReviewLoading {
-		lines = append(lines,
-			accentStyle.Render("loading drift preview"),
-			hintStyle.Render("checking project defaults, changed child rules, and eligible generated nodes..."),
-		)
-		return lines, -1
-	}
-	preview := m.templateMigrationReviewPreview
-	if preview == nil {
-		lines = append(lines,
-			accentStyle.Render("template reapply review unavailable"),
-			hintStyle.Render("press esc to return to project edit"),
-		)
-		return lines, -1
-	}
-
-	lines = append(lines, accentStyle.Render("template drift"))
-	lines = append(lines, hintStyle.Render(fmt.Sprintf(
-		"library: %s • bound revision: %d • latest revision: %d • drift: %s",
-		firstNonEmptyTrimmed(preview.LibraryName, preview.LibraryID, "-"),
-		preview.BoundRevision,
-		preview.LatestRevision,
-		firstNonEmptyTrimmed(preview.DriftStatus, "-"),
-	)))
-	lines = append(lines, hintStyle.Render("future generated work will adopt the latest approved revision after you continue"))
-	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render("review summary"))
-	lines = append(lines, hintStyle.Render(fmt.Sprintf(
-		"default changes: %d • changed child rules: %d • eligible nodes: %d • ineligible nodes: %d",
-		len(preview.ProjectDefaultChanges),
-		len(preview.ChildRuleChanges),
-		preview.EligibleMigrationCount,
-		preview.IneligibleMigrationCount,
-	)))
-	lines = append(lines, hintStyle.Render(fmt.Sprintf("selected for approval: %d", len(m.templateMigrationSelectionIDs()))))
-
-	if len(preview.ProjectDefaultChanges) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, accentStyle.Render("project default changes"))
-		limit := min(5, len(preview.ProjectDefaultChanges))
-		for idx := 0; idx < limit; idx++ {
-			change := preview.ProjectDefaultChanges[idx]
-			lines = append(lines, hintStyle.Render(fmt.Sprintf(
-				"- %s: %s -> %s",
-				change.Field,
-				truncate(firstNonEmptyTrimmed(change.Previous, "-"), max(12, contentWidth/3)),
-				truncate(firstNonEmptyTrimmed(change.Current, "-"), max(12, contentWidth/3)),
-			)))
-		}
-		if len(preview.ProjectDefaultChanges) > limit {
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more default changes", len(preview.ProjectDefaultChanges)-limit)))
-		}
-	}
-
-	if len(preview.ChildRuleChanges) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, accentStyle.Render("changed child rules"))
-		limit := min(5, len(preview.ChildRuleChanges))
-		for idx := 0; idx < limit; idx++ {
-			change := preview.ChildRuleChanges[idx]
-			lines = append(lines, hintStyle.Render(fmt.Sprintf(
-				"- %s / %s • %s",
-				firstNonEmptyTrimmed(change.NodeTemplateName, change.NodeTemplateID, "-"),
-				firstNonEmptyTrimmed(change.ChildRuleID, "-"),
-				firstNonEmptyTrimmed(strings.Join(change.ChangeKinds, ", "), "details changed"),
-			)))
-		}
-		if len(preview.ChildRuleChanges) > limit {
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d more changed child rules", len(preview.ChildRuleChanges)-limit)))
-		}
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render("existing-node migrations"))
-	if len(preview.MigrationCandidates) == 0 {
-		lines = append(lines, hintStyle.Render("(no existing generated nodes need migration review)"))
-		lines = append(lines, hintStyle.Render("s continues and reapplies only for future generated work"))
-		return resolveViewportFocus(lines)
-	}
-
-	start, end := windowBounds(len(preview.MigrationCandidates), m.templateMigrationReviewIndex, 7)
-	for idx := start; idx < end; idx++ {
-		candidate := preview.MigrationCandidates[idx]
-		cursor := "  "
-		if idx == m.templateMigrationReviewIndex {
-			cursor = "> "
-		}
-		check := "[ ]"
-		switch candidate.Status {
-		case domain.ProjectTemplateReapplyCandidateEligible:
-			if _, ok := m.templateMigrationReviewPicked[strings.TrimSpace(candidate.ActionItemID)]; ok {
-				check = "[x]"
-			}
-		default:
-			check = "[-]"
-		}
-		stateText := lifecycleStateLabel(candidate.LifecycleState)
-		if stateText == "-" {
-			stateText = firstNonEmptyTrimmed(string(candidate.LifecycleState), "-")
-		}
-		row := fmt.Sprintf(
-			"%s%s %s • %s • %s • %s",
-			cursor,
-			check,
-			truncate(firstNonEmptyTrimmed(candidate.Title, candidate.ActionItemID), max(20, contentWidth-36)),
-			firstNonEmptyTrimmed(string(candidate.Scope), "-"),
-			firstNonEmptyTrimmed(string(candidate.Kind), "-"),
-			stateText,
-		)
-		if idx == m.templateMigrationReviewIndex {
-			row = markViewportFocus(row)
-			row = accentStyle.Render(row)
-		}
-		lines = append(lines, row)
-		meta := []string{
-			"rule: " + firstNonEmptyTrimmed(candidate.SourceChildRuleID, "-"),
-			"changes: " + firstNonEmptyTrimmed(strings.Join(candidate.ChangeKinds, ", "), "-"),
-		}
-		if candidate.Status != domain.ProjectTemplateReapplyCandidateEligible {
-			meta = append(meta, "blocked: "+firstNonEmptyTrimmed(candidate.Reason, "ineligible"))
-		}
-		lines = append(lines, hintStyle.Render("   "+truncate(strings.Join(meta, " • "), max(24, contentWidth))))
-	}
-	if len(preview.MigrationCandidates) > end-start {
-		lines = append(lines, hintStyle.Render(fmt.Sprintf("showing %d-%d of %d", start+1, end, len(preview.MigrationCandidates))))
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("space/enter toggle • a approve selected • A approve all • s skip existing nodes • esc return to edit"))
 	return resolveViewportFocus(lines)
 }
 
@@ -19062,35 +17953,6 @@ func (m Model) actionItemInfoBodyLines(actionItem domain.ActionItem, boxWidth, c
 		blockedReason = "-"
 	}
 	lines = append(lines, hintStyle.Render("blocked_reason: "+blockedReason))
-
-	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("template contract:"))
-	projectLibraryID := "-"
-	if binding, ok := m.activeProjectTemplateBinding(actionItem.ProjectID); ok {
-		projectLibraryID = binding.LibraryID
-		lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
-		if binding.BoundRevision > 0 {
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("project_library_revision: %d", binding.BoundRevision)))
-		}
-		if drift := strings.TrimSpace(binding.DriftStatus); drift != "" {
-			lines = append(lines, hintStyle.Render("project_library_drift: "+drift))
-		}
-	} else {
-		lines = append(lines, hintStyle.Render("project_library: "+projectLibraryID))
-	}
-	if snapshot, ok := m.actionItemNodeContracts[actionItem.ID]; ok {
-		lines = append(lines, hintStyle.Render("source_library: "+fallbackText(strings.TrimSpace(snapshot.SourceLibraryID), "-")))
-		lines = append(lines, hintStyle.Render("source_node_template: "+fallbackText(strings.TrimSpace(snapshot.SourceNodeTemplateID), "-")))
-		lines = append(lines, hintStyle.Render("source_child_rule: "+fallbackText(strings.TrimSpace(snapshot.SourceChildRuleID), "-")))
-		lines = append(lines, hintStyle.Render("responsible_actor_kind: "+fallbackText(strings.TrimSpace(string(snapshot.ResponsibleActorKind)), "-")))
-		lines = append(lines, hintStyle.Render("editable_by: "+templateActorKindsText(snapshot.EditableByActorKinds)))
-		lines = append(lines, hintStyle.Render("completable_by: "+templateActorKindsText(snapshot.CompletableByActorKinds)))
-		lines = append(lines, hintStyle.Render(fmt.Sprintf("required_for_parent_done: %t", snapshot.RequiredForParentDone)))
-		lines = append(lines, hintStyle.Render(fmt.Sprintf("required_for_containing_done: %t", snapshot.RequiredForContainingDone)))
-		lines = append(lines, hintStyle.Render("generated_by: "+fallbackText(strings.TrimSpace(snapshot.CreatedByActorID), "-")))
-	} else {
-		lines = append(lines, hintStyle.Render("generated_contract: none"))
-	}
 
 	lines = append(lines, "")
 	lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d):", len(m.actionItemInfoComments))))
@@ -19722,7 +18584,7 @@ func (m Model) renderActionItemDetails(accent, muted, dim color.Color) string {
 // isFullPageNodeMode reports whether the current mode should render as a full-page node surface.
 func isFullPageNodeMode(mode inputMode) bool {
 	switch mode {
-	case modeActionItemInfo, modeAddActionItem, modeEditActionItem, modeAddProject, modeEditProject, modeTemplateMigrationReview:
+	case modeActionItemInfo, modeAddActionItem, modeEditActionItem, modeAddProject, modeEditProject:
 		return true
 	default:
 		return false
@@ -19763,16 +18625,6 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("i", "edit desc"),
 			helpBinding("r", "pick path"),
 			helpBinding("esc", "cancel"),
-			helpBinding("?", "help"),
-		}
-		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
-	case modeTemplateMigrationReview:
-		short := []key.Binding{
-			helpBinding("space", "toggle"),
-			helpBinding("a", "approve sel"),
-			helpBinding("A", "approve all"),
-			helpBinding("s", "skip"),
-			helpBinding("esc", "back"),
 			helpBinding("?", "help"),
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
@@ -20102,20 +18954,6 @@ func (m Model) renderFullPageNodeModeView() tea.View {
 		bodyViewport.SetYOffset(prevYOffset)
 		ensureViewportLineVisible(&bodyViewport, focusLine)
 		surface := renderNodeModalViewport(accent, muted, metrics.boxWidth, title, "", fullPageScrollStatus(bodyViewport), bodyViewport)
-		return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
-	case modeTemplateMigrationReview:
-		metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, "Template Migration Review", "review drift before reapply", fullPageScrollStatus(m.actionItemInfoBody))
-		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		accentStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-		bodyLines, focusLine := m.templateMigrationReviewBodyLines(metrics.contentWidth, hintStyle, accentStyle)
-		bodyViewport := m.actionItemInfoBody
-		prevYOffset := bodyViewport.YOffset()
-		bodyViewport.SetWidth(metrics.contentWidth)
-		bodyViewport.SetHeight(max(1, metrics.bodyHeight))
-		bodyViewport.SetContent(strings.Join(bodyLines, "\n"))
-		bodyViewport.SetYOffset(prevYOffset)
-		ensureViewportLineVisible(&bodyViewport, focusLine)
-		surface := renderNodeModalViewport(accent, muted, metrics.boxWidth, "Template Migration Review", "review drift before reapply", fullPageScrollStatus(bodyViewport), bodyViewport)
 		return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 	default:
 		return tea.NewView("")
@@ -20598,72 +19436,6 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 					cursor = "> "
 				}
 				lines = append(lines, cursor+m.projectKindDisplayLabel(item.KindID, item.DisplayName))
-			}
-		}
-		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter choose • ctrl+u clear • esc close"))
-		return style.Render(strings.Join(lines, "\n"))
-
-	case modeTemplateLibraryPicker:
-		style := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1)
-		if maxWidth > 0 {
-			style = style.Width(clamp(maxWidth, 42, 92))
-		}
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		filterInput := m.templateLibraryPickerInput
-		filterInput.SetWidth(max(18, min(60, maxWidth-24)))
-		currentLibraryLabel := "(none)"
-		if current := domain.NormalizeTemplateLibraryID(m.projectFormInputs[projectFieldTemplateLibrary].Value()); current != "" {
-			currentLibraryLabel = m.templateLibraryDisplayLabel(current, m.templateLibraryName(current))
-		}
-		lines := []string{
-			titleStyle.Render("Template Library"),
-			filterInput.View(),
-			hintStyle.Render("current: " + currentLibraryLabel),
-		}
-		if len(m.templateLibraryPickerItems) == 0 {
-			lines = append(lines, hintStyle.Render("(no matching approved template libraries)"))
-		} else {
-			start, end := windowBounds(len(m.templateLibraryPickerItems), m.templateLibraryPickerIndex, 12)
-			for idx := start; idx < end; idx++ {
-				item := m.templateLibraryPickerItems[idx]
-				cursor := "  "
-				if idx == m.templateLibraryPickerIndex {
-					cursor = "> "
-				}
-				if item.Clear {
-					lines = append(lines, cursor+"(none) remove project template binding")
-					continue
-				}
-				label := m.templateLibraryDisplayLabel(item.LibraryID, item.Name)
-				if status, ok := m.builtinTemplateStatus(item.LibraryID); ok && status.State == domain.BuiltinTemplateLibraryStateUpdateAvailable {
-					label += " • shipped update available"
-				}
-				lines = append(lines, cursor+label)
-			}
-		}
-		if len(m.templateLibraryPickerItems) > 0 {
-			detailItem := m.templateLibraryPickerItems[clamp(m.templateLibraryPickerIndex, 0, len(m.templateLibraryPickerItems)-1)]
-			if detailItem.Clear {
-				for _, item := range m.templateLibraryPickerItems {
-					if item.Clear {
-						continue
-					}
-					detailItem = item
-					break
-				}
-			}
-			if !detailItem.Clear {
-				if status, ok := m.builtinTemplateStatus(detailItem.LibraryID); ok {
-					lines = append(lines, "")
-					lines = append(lines, hintStyle.Render("shipped_builtin: "+m.builtinTemplateStatusSummary(status)))
-					if status.State == domain.BuiltinTemplateLibraryStateUpdateAvailable {
-						lines = append(lines, hintStyle.Render("run ensure builtin before rebinding projects to the newer shipped template"))
-					}
-				}
 			}
 		}
 		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter choose • ctrl+u clear • esc close"))
@@ -21650,8 +20422,6 @@ func (m Model) modeLabel() string {
 		return "labels"
 	case modeProjectKindPicker:
 		return "project-kinds"
-	case modeTemplateLibraryPicker:
-		return "template-libraries"
 	case modePathsRoots:
 		return "paths/roots"
 	case modeLabelsConfig:
@@ -21662,8 +20432,6 @@ func (m Model) modeLabel() string {
 		return "bootstrap"
 	case modeDependencyInspector:
 		return "deps"
-	case modeTemplateMigrationReview:
-		return "template-migration-review"
 	case modeDescriptionEditor:
 		return "description-editor"
 	case modeThread:
@@ -21695,9 +20463,9 @@ func (m Model) modePrompt() string {
 	case modeActionItemInfo:
 		return "actionItem info: enter opens selected subtask, d details preview, arrows or j/k scroll, pgup/pgdown/home/end jump, e edit, s new subtask, c thread, [ / ] move, space toggles subtask complete, backspace parent, esc back"
 	case modeAddProject:
-		return "new project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, esc cancels"
+		return "new project: enter saves, i edits description, kind opens picker on enter/e/type, r picks root_path, esc cancels"
 	case modeEditProject:
-		return "edit project: enter saves, i edits description, kind/template library open pickers on enter/e/type, r picks root_path, comments opens thread, esc cancels"
+		return "edit project: enter saves, i edits description, kind opens picker on enter/e/type, r picks root_path, comments opens thread, esc cancels"
 	case modeSearchResults:
 		return "search results: j/k select, enter jump, esc close"
 	case modeEmbeddingsStatus:
@@ -21733,8 +20501,6 @@ func (m Model) modePrompt() string {
 		return "label picker: type fuzzy filter, j/k select, enter add label, ctrl+u clear, esc cancel"
 	case modeProjectKindPicker:
 		return "project kind picker: type fuzzy filter, j/k select, enter choose, ctrl+u clear filter, esc cancel"
-	case modeTemplateLibraryPicker:
-		return "template library picker: type fuzzy filter, j/k select, enter choose, ctrl+u clear filter, esc cancel"
 	case modePathsRoots:
 		return "paths/roots: enter save, r browse dirs, esc cancel"
 	case modeLabelsConfig:
@@ -21745,8 +20511,6 @@ func (m Model) modePrompt() string {
 		return "bootstrap settings: tab focus, r browse/add default path, d clear path, enter save"
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
-	case modeTemplateMigrationReview:
-		return "template migration review: space selects, a approves selected, A approves all, s skips existing nodes, esc returns to edit"
 	case modeDescriptionEditor:
 		return "description editor: tab preview/edit, ctrl+s saves current draft, esc cancel"
 	case modeThread:

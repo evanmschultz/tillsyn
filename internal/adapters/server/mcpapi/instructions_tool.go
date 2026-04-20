@@ -26,11 +26,10 @@ type instructionsToolFocus string
 
 // instructionsToolFocus values identify the supported explanation targets.
 const (
-	instructionsToolFocusTopic    instructionsToolFocus = "topic"
-	instructionsToolFocusProject  instructionsToolFocus = "project"
-	instructionsToolFocusTemplate instructionsToolFocus = "template"
-	instructionsToolFocusKind     instructionsToolFocus = "kind"
-	instructionsToolFocusNode     instructionsToolFocus = "node"
+	instructionsToolFocusTopic   instructionsToolFocus = "topic"
+	instructionsToolFocusProject instructionsToolFocus = "project"
+	instructionsToolFocusKind    instructionsToolFocus = "kind"
+	instructionsToolFocusNode    instructionsToolFocus = "node"
 )
 
 // instructionsToolRequest stores one till.get_instructions request after MCP argument normalization.
@@ -39,7 +38,6 @@ type instructionsToolRequest struct {
 	Focus                  string
 	Topic                  string
 	ProjectID              string
-	TemplateLibraryID      string
 	KindID                 string
 	NodeID                 string
 	IncludeEvidence        bool
@@ -61,14 +59,13 @@ type instructionsToolDoc struct {
 
 // instructionsToolResolvedScope stores the runtime scope resolved for one scoped explanation.
 type instructionsToolResolvedScope struct {
-	ProjectID         string   `json:"project_id,omitempty"`
-	TemplateLibraryID string   `json:"template_library_id,omitempty"`
-	KindID            string   `json:"kind_id,omitempty"`
-	KindDisplayName   string   `json:"kind_display_name,omitempty"`
-	NodeID            string   `json:"node_id,omitempty"`
-	NodeScopeType     string   `json:"node_scope_type,omitempty"`
-	NodeTitle         string   `json:"node_title,omitempty"`
-	Lineage           []string `json:"lineage,omitempty"`
+	ProjectID       string   `json:"project_id,omitempty"`
+	KindID          string   `json:"kind_id,omitempty"`
+	KindDisplayName string   `json:"kind_display_name,omitempty"`
+	NodeID          string   `json:"node_id,omitempty"`
+	NodeScopeType   string   `json:"node_scope_type,omitempty"`
+	NodeTitle       string   `json:"node_title,omitempty"`
+	Lineage         []string `json:"lineage,omitempty"`
 }
 
 // instructionsToolRelatedTool stores one follow-up tool recommendation.
@@ -118,15 +115,14 @@ func registerInstructionsTool(srv *mcpserver.MCPServer, services instructionsExp
 	srv.AddTool(
 		mcp.NewTool(
 			"till.get_instructions",
-			mcp.WithDescription("Return embedded markdown docs plus scoped guidance about till workflow policy, project rules, template contracts, kind usage, and concrete node expectations."),
+			mcp.WithDescription("Return embedded markdown docs plus scoped guidance about till workflow policy, project rules, kind usage, and concrete node expectations."),
 			mcp.WithString("mode", mcp.Description("Optional response mode. Defaults to docs for plain doc lookups and explain for scoped runtime lookups."), mcp.Enum("docs", "explain", "hybrid")),
-			mcp.WithString("focus", mcp.Description("Optional scoped explanation focus. Use topic|project|template|kind|node when you want instructions tied to one concrete runtime scope."), mcp.Enum("topic", "project", "template", "kind", "node")),
-			mcp.WithString("topic", mcp.Description("Optional topic focus (for example: dogfooding, agents, workflows, coordination, auth, templates, recovery)")),
+			mcp.WithString("focus", mcp.Description("Optional scoped explanation focus. Use topic|project|kind|node when you want instructions tied to one concrete runtime scope."), mcp.Enum("topic", "project", "kind", "node")),
+			mcp.WithString("topic", mcp.Description("Optional topic focus (for example: dogfooding, agents, workflows, coordination, auth, recovery)")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier for project-scoped explanation and policy resolution")),
-			mcp.WithString("template_library_id", mcp.Description("Optional template library identifier for template-scoped explanation")),
 			mcp.WithString("kind_id", mcp.Description("Optional kind identifier for kind-scoped explanation")),
 			mcp.WithString("node_id", mcp.Description("Optional work-item identifier for branch|phase|actionItem|subtask explanation")),
-			mcp.WithBoolean("include_evidence", mcp.Description("Include concrete runtime policy evidence such as standards markdown, actionItem metadata, and node-contract source details when available")),
+			mcp.WithBoolean("include_evidence", mcp.Description("Include concrete runtime policy evidence such as standards markdown and actionItem metadata when available")),
 			mcp.WithArray("doc_names", mcp.Description("Optional markdown file-name filter list (for example: README.md, AGENTS.md)"), mcp.WithStringItems()),
 			mcp.WithBoolean("include_markdown", mcp.Description("Include markdown content in docs payload (default true)")),
 			mcp.WithBoolean("include_recommendations", mcp.Description("Include settings and md-file guidance recommendations (default true)")),
@@ -143,7 +139,6 @@ func registerInstructionsTool(srv *mcpserver.MCPServer, services instructionsExp
 				Focus:                  req.GetString("focus", ""),
 				Topic:                  req.GetString("topic", ""),
 				ProjectID:              req.GetString("project_id", ""),
-				TemplateLibraryID:      req.GetString("template_library_id", ""),
 				KindID:                 req.GetString("kind_id", ""),
 				NodeID:                 req.GetString("node_id", ""),
 				IncludeEvidence:        req.GetBool("include_evidence", false),
@@ -229,13 +224,12 @@ func buildInstructionsToolResponse(ctx context.Context, services instructionsExp
 
 	if mode != instructionsToolModeDocs {
 		explanation, err := explainInstructionsScope(ctx, services, instructionsExplainRequest{
-			Focus:             focus,
-			Topic:             strings.TrimSpace(req.Topic),
-			ProjectID:         strings.TrimSpace(req.ProjectID),
-			TemplateLibraryID: strings.TrimSpace(req.TemplateLibraryID),
-			KindID:            strings.TrimSpace(req.KindID),
-			NodeID:            strings.TrimSpace(req.NodeID),
-			IncludeEvidence:   req.IncludeEvidence,
+			Focus:           focus,
+			Topic:           strings.TrimSpace(req.Topic),
+			ProjectID:       strings.TrimSpace(req.ProjectID),
+			KindID:          strings.TrimSpace(req.KindID),
+			NodeID:          strings.TrimSpace(req.NodeID),
+			IncludeEvidence: req.IncludeEvidence,
 		})
 		if err != nil {
 			return instructionsToolResponse{}, err
@@ -259,7 +253,6 @@ func normalizeInstructionsToolModeAndFocus(req instructionsToolRequest) (instruc
 	mode := instructionsToolMode(strings.TrimSpace(strings.ToLower(req.Mode)))
 	focus := instructionsToolFocus(strings.TrimSpace(strings.ToLower(req.Focus)))
 	hasSelectors := strings.TrimSpace(req.ProjectID) != "" ||
-		strings.TrimSpace(req.TemplateLibraryID) != "" ||
 		strings.TrimSpace(req.KindID) != "" ||
 		strings.TrimSpace(req.NodeID) != ""
 
@@ -280,8 +273,6 @@ func normalizeInstructionsToolModeAndFocus(req instructionsToolRequest) (instruc
 		switch {
 		case strings.TrimSpace(req.NodeID) != "":
 			focus = instructionsToolFocusNode
-		case strings.TrimSpace(req.TemplateLibraryID) != "":
-			focus = instructionsToolFocusTemplate
 		case strings.TrimSpace(req.KindID) != "":
 			focus = instructionsToolFocusKind
 		case strings.TrimSpace(req.ProjectID) != "":
@@ -291,13 +282,13 @@ func normalizeInstructionsToolModeAndFocus(req instructionsToolRequest) (instruc
 		}
 	}
 	switch focus {
-	case instructionsToolFocusTopic, instructionsToolFocusProject, instructionsToolFocusTemplate, instructionsToolFocusKind, instructionsToolFocusNode:
+	case instructionsToolFocusTopic, instructionsToolFocusProject, instructionsToolFocusKind, instructionsToolFocusNode:
 	default:
 		return "", "", fmt.Errorf("invalid_request: unsupported focus %q", req.Focus)
 	}
 
 	if mode == instructionsToolModeDocs && focus != instructionsToolFocusTopic && hasSelectors {
-		return "", "", fmt.Errorf("invalid_request: mode=docs cannot use project_id/template_library_id/kind_id/node_id without explain or hybrid mode")
+		return "", "", fmt.Errorf("invalid_request: mode=docs cannot use project_id/kind_id/node_id without explain or hybrid mode")
 	}
 	return mode, focus, nil
 }
@@ -315,7 +306,7 @@ func buildInstructionsDocsSummary(topic string) string {
 func recommendedInstructionSettings() []string {
 	return []string{
 		"Use till.get_instructions when instructions are missing, stale, or ambiguous; skip redundant calls when AGENTS.md/README guidance is already sufficient for the current step.",
-		"Use focus plus project_id/template_library_id/kind_id/node_id when you need rules for one concrete project, template, branch, phase, actionItem, or generated node instead of a generic docs-only answer.",
+		"Use focus plus project_id/kind_id/node_id when you need rules for one concrete project, branch, phase, actionItem, or generated node instead of a generic docs-only answer.",
 		"Use doc_names to scope context (for example README.md and AGENTS.md) instead of loading every doc on each step.",
 		"Use include_markdown=false for quick inventory checks; enable it when drafting or validating policy text.",
 		"Set max_chars_per_doc to keep responses bounded in long docs such as README.md or AGENTS.md.",
@@ -335,9 +326,6 @@ func recommendedInstructionSettings() []string {
 		"When documenting or using delegated auth, treat builder/qa/research child requests as an explicit acting-session flow: orchestrators request child auth with acting_session_id and acting_auth_context_id, requester ownership stays bound to the acting session, and child scope must remain within the acting approved path.",
 		"Treat orchestrator cleanup as part of the workflow contract: child auth sessions, stale leases, pending requests, and stale coordination rows should be cleaned up truthfully when a run ends.",
 		"Use the role model consistently: orchestrator plans/routes/delegates/cleans up, builder implements, qa verifies and closes or returns work, and research inspects code/runtime state, compiles findings, and can use local MCP tools plus Context7 to gather evidence.",
-		"When template libraries are active, explain the actual scoped rule sources: project standards_markdown, template descriptions, child rules, branch/phase/actionItem metadata, and node-contract snapshots.",
-		"When creating or reconfiguring a project, have the orchestrator confirm with the dev which template library should govern the project, whether the project should stay template-only, and which generic kinds, if any, are explicitly allowed.",
-		"When project setup or template refresh work compares Hylla-backed repo state with the installed DB template/binding state, the orchestrator must ask the dev before applying DB-mutating updates such as builtin ensure or template reapply.",
 		"When documenting default-go or similar workflow contracts, distinguish project-only setup from the normal branch/work lifecycle and keep PLAN before BUILD explicit.",
 		"State explicitly that no implementation, cleanup, QA, parity-check, or repair work should happen without an explicit actionItem or subtask at the correct level.",
 		"State explicitly that failing tests, CI, or QA require a new follow-up actionItem or subtask before repair work begins, including after a previously completed item needs more fixes, and say that Tillsyn does not auto-create that repair item today.",
@@ -345,7 +333,6 @@ func recommendedInstructionSettings() []string {
 		"When documenting the shipped default templates, call out refactor-phase, dogfood-refactor-phase, refactor-actionItem, and dogfood-refactor-actionItem as first-class kinds and explain their metrics expectations truthfully.",
 		"When documenting refactor metrics, say that builders update the slice actionItem description with git-diff deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings after QA or validation, that orchestrators roll those values up to the parent phase description plus the report artifact, and that Tillsyn does not auto-verify every metric field or rollup total today.",
 		"Use depends_on, blocked_by, and blocked_reason to express real prerequisite order between tasks/phases today; do not rely on visual board position alone to tell agents what must finish first.",
-		"When explaining template libraries, prefer concrete child_rules examples such as a build actionItem that auto-generates one or more required QA subtasks owned by qa.",
 		"When proposing policy changes, include concrete suggestions for AGENTS.md, CLAUDE.md, and any relevant SKILL.md files so builder/qa/research/orchestrator expectations stay synchronized.",
 		"When workflow policy changes, update AGENTS.md, any tracked CLAUDE.md, and the relevant README/bootstrap/instruction surfaces in the same change instead of letting client guidance drift.",
 		"Treat recommendations as proposal input and confirm AGENTS.md/CLAUDE.md policy updates with the user before editing.",
@@ -364,8 +351,6 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Dogfooding policy: reporting format for findings, blockers, and recovery steps.",
 			"Authoring policy: actionItem/project details and comment summaries/bodies must be written as markdown.",
 			"Maintenance policy: when workflow rules change, update AGENTS.md together with any tracked CLAUDE.md plus README/bootstrap/instruction surfaces so client guidance stays aligned.",
-			"Template policy: which actor kinds may draft, approve, bind, or apply template-library changes, and when human approval is mandatory.",
-			"Project template policy: how project creation chooses a governing template library, whether generic kinds are allowed, and how allowed-kinds should track that decision.",
 			"Workflow truthfulness policy: no implementation, cleanup, QA, parity-check, or repair work happens without an explicit actionItem or subtask, and failing tests/CI/QA require a new follow-up item before repair that the orchestrator or human must create explicitly because Tillsyn does not auto-create it today.",
 			"Default workflow policy: phase-level push-and-reingest confirmation belongs in the baseline shipped workflow, and refactor or dogfood-refactor kinds should describe their metrics expectations explicitly.",
 			"Refactor metrics policy: builders update slice actionItem descriptions with git-diff deltas, before/after repo and Hylla counts, timing windows, and cleanup/security findings, and orchestrators roll those totals up into the parent phase description plus the report artifact; Tillsyn generates those checkpoints but does not auto-verify every field or rollup total today.",
@@ -391,9 +376,6 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Document that AGENTS.md and any tracked CLAUDE.md are durable client-policy files to update when workflow guidance changes, not live actionItem ledgers.",
 			"Document that routed comment mentions belong in the viewer-scoped Comments notifications section, while open handoffs are the primary Action Required rows.",
 			"Call out the supported role mentions explicitly: @human, @dev, @builder, @qa, @orchestrator, and @research, with @dev normalized to builder.",
-			"Canonical template-library examples covering inspect, bind, contract lookup, and JSON transport for CLI/MCP authoring against the SQLite-backed source of truth.",
-			"Document project-creation template policy explicitly: choose the governing template library up front, explain that template-bound projects can restrict allowed kinds to library-defined node kinds, and show how generic kinds are intentionally opted in.",
-			"At least one readable child_rules example that shows multi-role follow-up work and truthful completion gates, such as a build actionItem auto-generating multiple QA subtasks.",
 			"Document the preferred workflow order for default-go style work: project setup when needed, then PLAN, BUILD, CLOSEOUT, and BRANCH CLEANUP.",
 			"Document the no-hidden-work rule explicitly: implementation, cleanup, QA, parity-check, and repair work all require explicit tasks or subtasks.",
 			"Document the failure-repair rule explicitly: failing tests, CI, or QA require a new follow-up item before repair work begins, including after a previously completed item needs more fixes, and explain that Tillsyn does not auto-create that item today.",
@@ -407,9 +389,9 @@ func recommendedMDFileGuidance() map[string][]string {
 			"Troubleshooting section for common MCP/TUI issues and recovery commands.",
 		},
 		"SKILL.md": {
-			"State which till actor kinds and template-library workflows the skill assumes or modifies.",
+			"State which till actor kinds the skill assumes or modifies.",
 			"Describe when the skill should recommend AGENTS.md or CLAUDE.md updates so human/operator policy stays aligned with runtime behavior.",
-			"Call out the child_rules or blocker model directly when the skill relies on generated QA/research/builder follow-up work.",
+			"Call out the blocker model directly when the skill relies on QA/research/builder follow-up work.",
 			"Keep examples concrete and readable enough for human operators to audit quickly in TUI/CLI-oriented workflows.",
 		},
 		"MCP_DOGFOODING_WORKSHEET.md": {

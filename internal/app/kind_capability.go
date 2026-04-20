@@ -707,29 +707,11 @@ func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context, projectKind 
 	return normalizeKindIDList(kindIDs), nil
 }
 
-// templateDerivedProjectAllowedKindIDs returns the template-scoped allowlist for one project.
-func templateDerivedProjectAllowedKindIDs(projectKind domain.KindID, library *domain.TemplateLibrary) []domain.KindID {
-	if library == nil {
-		return nil
-	}
-	kindIDs := make([]domain.KindID, 0, len(library.NodeTemplates)+1)
-	kindIDs = append(kindIDs, library.ReferencedKindIDs()...)
-	projectKind = domain.NormalizeKindID(projectKind)
-	if projectKind != "" {
-		kindIDs = append(kindIDs, projectKind)
-	}
-	return normalizeKindIDList(kindIDs)
-}
-
 // initializeProjectAllowedKinds assigns default allowlist entries for a new project.
-func (s *Service) initializeProjectAllowedKinds(ctx context.Context, project domain.Project, library *domain.TemplateLibrary) error {
-	kindIDs := templateDerivedProjectAllowedKindIDs(project.Kind, library)
-	if len(kindIDs) == 0 {
-		var err error
-		kindIDs, err = s.defaultProjectAllowedKindIDs(ctx, project.Kind)
-		if err != nil {
-			return err
-		}
+func (s *Service) initializeProjectAllowedKinds(ctx context.Context, project domain.Project) error {
+	kindIDs, err := s.defaultProjectAllowedKindIDs(ctx, project.Kind)
+	if err != nil {
+		return err
 	}
 	return s.repo.SetProjectAllowedKinds(ctx, project.ID, kindIDs)
 }
@@ -828,87 +810,6 @@ func mergeActionItemMetadataWithKindTemplate(base domain.ActionItemMetadata, kin
 	return merged, nil
 }
 
-// applyKindTemplateSystemActions auto-creates child work for one newly created actionItem.
-func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent domain.ActionItem, kind domain.KindDefinition, depth int) error {
-	if len(kind.Template.AutoCreateChildren) == 0 {
-		return nil
-	}
-	if depth > maxKindTemplateApplyDepth {
-		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidKindTemplate)
-	}
-
-	for _, childSpec := range kind.Template.AutoCreateChildren {
-		childScope := childSpec.AppliesTo
-		if childScope == "" {
-			childScope = domain.KindAppliesToSubtask
-		}
-		childMetadata, buildErr := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
-		if buildErr != nil {
-			return buildErr
-		}
-		if _, childErr := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
-			ProjectID:      parent.ProjectID,
-			ParentID:       parent.ID,
-			Kind:           domain.Kind(childSpec.Kind),
-			Scope:          childScope,
-			ColumnID:       parent.ColumnID,
-			Title:          childSpec.Title,
-			Description:    childSpec.Description,
-			Priority:       domain.PriorityMedium,
-			Labels:         childSpec.Labels,
-			Metadata:       childMetadata,
-			CreatedByActor: templateSystemActorID,
-			CreatedByName:  templateSystemActorName,
-			UpdatedByActor: templateSystemActorID,
-			UpdatedByName:  templateSystemActorName,
-			UpdatedByType:  domain.ActorTypeSystem,
-		}, depth); childErr != nil {
-			return childErr
-		}
-	}
-	return nil
-}
-
-// applyProjectKindTemplateSystemActions auto-creates root work from one project kind template.
-func (s *Service) applyProjectKindTemplateSystemActions(ctx context.Context, project domain.Project, kind domain.KindDefinition, depth int) error {
-	if len(kind.Template.AutoCreateChildren) == 0 {
-		return nil
-	}
-	columnID, err := s.ensureTemplateRootColumn(ctx, project.ID, s.clock())
-	if err != nil {
-		return err
-	}
-	for _, childSpec := range kind.Template.AutoCreateChildren {
-		childScope := childSpec.AppliesTo
-		if childScope == "" {
-			childScope = domain.KindAppliesToActionItem
-		}
-		childMetadata, buildErr := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
-		if buildErr != nil {
-			return buildErr
-		}
-		if _, childErr := s.createActionItemWithTemplates(withInternalTemplateMutation(ctx), CreateActionItemInput{
-			ProjectID:      project.ID,
-			Kind:           domain.Kind(childSpec.Kind),
-			Scope:          childScope,
-			ColumnID:       columnID,
-			Title:          childSpec.Title,
-			Description:    childSpec.Description,
-			Priority:       domain.PriorityMedium,
-			Labels:         childSpec.Labels,
-			Metadata:       childMetadata,
-			CreatedByActor: templateSystemActorID,
-			CreatedByName:  templateSystemActorName,
-			UpdatedByActor: templateSystemActorID,
-			UpdatedByName:  templateSystemActorName,
-			UpdatedByType:  domain.ActorTypeSystem,
-		}, depth); childErr != nil {
-			return childErr
-		}
-	}
-	return nil
-}
-
 // validateKindTemplateExpansion preflights nested template children before persistence.
 func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.ActionItem, defaultChildScope domain.KindAppliesTo, depth int) error {
 	if depth > maxKindTemplateApplyDepth {
@@ -943,33 +844,6 @@ func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID s
 		}
 	}
 	return nil
-}
-
-// ensureTemplateRootColumn returns one usable root column for project-template children.
-func (s *Service) ensureTemplateRootColumn(ctx context.Context, projectID string, now time.Time) (string, error) {
-	columns, err := s.repo.ListColumns(ctx, projectID, false)
-	if err != nil {
-		return "", err
-	}
-	if len(columns) == 0 {
-		if err := s.createDefaultColumns(ctx, projectID, now); err != nil {
-			return "", err
-		}
-		columns, err = s.repo.ListColumns(ctx, projectID, false)
-		if err != nil {
-			return "", err
-		}
-	}
-	if len(columns) == 0 {
-		return "", fmt.Errorf("template root column is required")
-	}
-	sort.SliceStable(columns, func(i, j int) bool {
-		if columns[i].Position == columns[j].Position {
-			return columns[i].ID < columns[j].ID
-		}
-		return columns[i].Position < columns[j].Position
-	})
-	return columns[0].ID, nil
 }
 
 // nextActionItemPosition calculates the next append position for a project column.

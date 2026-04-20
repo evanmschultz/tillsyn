@@ -26,9 +26,6 @@ type fakeRepo struct {
 	changeEvents          map[string][]domain.ChangeEvent
 	kindDefs              map[domain.KindID]domain.KindDefinition
 	projectAllowedKinds   map[string][]domain.KindID
-	templateLibraries     map[string]domain.TemplateLibrary
-	projectBindings       map[string]domain.ProjectTemplateBinding
-	nodeContracts         map[string]domain.NodeContractSnapshot
 	capabilityLeases      map[string]domain.CapabilityLease
 	createProjectActor    MutationActor
 	updateProjectActor    MutationActor
@@ -38,7 +35,31 @@ type fakeRepo struct {
 }
 
 // newFakeRepo constructs fake repo.
+//
+// Post-Unit-1.5 the app-layer kind-catalog bootstrap helper
+// (ensureKindCatalogBootstrapped) has been deleted; the SQLite schema seeds
+// {project, actionItem} via CREATE-time INSERT OR IGNORE, but this in-memory
+// fake never runs SQL migrations. Seed the two surviving kinds here so tests
+// that rely on kind lookup (CreateProject, CreateActionItem, etc.) continue
+// to resolve.
 func newFakeRepo() *fakeRepo {
+	now := time.Now().UTC()
+	kindDefs := map[domain.KindID]domain.KindDefinition{
+		domain.KindID("project"): {
+			ID:          domain.KindID("project"),
+			DisplayName: "Project",
+			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		domain.KindID("actionItem"): {
+			ID:          domain.KindID("actionItem"),
+			DisplayName: "ActionItem",
+			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	}
 	return &fakeRepo{
 		projects:            map[string]domain.Project{},
 		columns:             map[string]domain.Column{},
@@ -48,11 +69,8 @@ func newFakeRepo() *fakeRepo {
 		authRequests:        map[string]domain.AuthRequest{},
 		handoffs:            map[string]domain.Handoff{},
 		changeEvents:        map[string][]domain.ChangeEvent{},
-		kindDefs:            map[domain.KindID]domain.KindDefinition{},
+		kindDefs:            kindDefs,
 		projectAllowedKinds: map[string][]domain.KindID{},
-		templateLibraries:   map[string]domain.TemplateLibrary{},
-		projectBindings:     map[string]domain.ProjectTemplateBinding{},
-		nodeContracts:       map[string]domain.NodeContractSnapshot{},
 		capabilityLeases:    map[string]domain.CapabilityLease{},
 	}
 }
@@ -517,86 +535,6 @@ func (f *fakeRepo) ListKindDefinitions(_ context.Context, includeArchived bool) 
 		out = append(out, kind)
 	}
 	return out, nil
-}
-
-// UpsertTemplateLibrary stores one template library.
-func (f *fakeRepo) UpsertTemplateLibrary(_ context.Context, library domain.TemplateLibrary) error {
-	f.templateLibraries[library.ID] = library
-	return nil
-}
-
-// GetTemplateLibrary returns one template library by ID.
-func (f *fakeRepo) GetTemplateLibrary(_ context.Context, libraryID string) (domain.TemplateLibrary, error) {
-	library, ok := f.templateLibraries[domain.NormalizeTemplateLibraryID(libraryID)]
-	if !ok {
-		return domain.TemplateLibrary{}, ErrNotFound
-	}
-	return library, nil
-}
-
-// ListTemplateLibraries lists template libraries.
-func (f *fakeRepo) ListTemplateLibraries(_ context.Context, filter domain.TemplateLibraryFilter) ([]domain.TemplateLibrary, error) {
-	out := make([]domain.TemplateLibrary, 0, len(f.templateLibraries))
-	for _, library := range f.templateLibraries {
-		if scope := domain.NormalizeTemplateLibraryScope(filter.Scope); scope != "" && library.Scope != scope {
-			continue
-		}
-		if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" && library.ProjectID != projectID {
-			continue
-		}
-		if status := domain.NormalizeTemplateLibraryStatus(filter.Status); status != "" && library.Status != status {
-			continue
-		}
-		out = append(out, library)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
-
-// UpsertProjectTemplateBinding stores one active project binding.
-func (f *fakeRepo) UpsertProjectTemplateBinding(_ context.Context, binding domain.ProjectTemplateBinding) error {
-	f.projectBindings[strings.TrimSpace(binding.ProjectID)] = binding
-	return nil
-}
-
-// GetProjectTemplateBinding returns one active project binding.
-func (f *fakeRepo) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
-	binding, ok := f.projectBindings[strings.TrimSpace(projectID)]
-	if !ok {
-		return domain.ProjectTemplateBinding{}, ErrNotFound
-	}
-	return binding, nil
-}
-
-// DeleteProjectTemplateBinding removes one active project binding.
-func (f *fakeRepo) DeleteProjectTemplateBinding(_ context.Context, projectID string) error {
-	projectID = strings.TrimSpace(projectID)
-	if _, ok := f.projectBindings[projectID]; !ok {
-		return ErrNotFound
-	}
-	delete(f.projectBindings, projectID)
-	return nil
-}
-
-// CreateNodeContractSnapshot stores one node-contract snapshot.
-func (f *fakeRepo) CreateNodeContractSnapshot(_ context.Context, snapshot domain.NodeContractSnapshot) error {
-	f.nodeContracts[strings.TrimSpace(snapshot.NodeID)] = snapshot
-	return nil
-}
-
-// UpdateNodeContractSnapshot stores one node-contract snapshot update.
-func (f *fakeRepo) UpdateNodeContractSnapshot(_ context.Context, snapshot domain.NodeContractSnapshot) error {
-	f.nodeContracts[strings.TrimSpace(snapshot.NodeID)] = snapshot
-	return nil
-}
-
-// GetNodeContractSnapshot returns one node-contract snapshot.
-func (f *fakeRepo) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
-	snapshot, ok := f.nodeContracts[strings.TrimSpace(nodeID)]
-	if !ok {
-		return domain.NodeContractSnapshot{}, ErrNotFound
-	}
-	return snapshot, nil
 }
 
 // CreateColumn creates column.

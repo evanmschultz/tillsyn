@@ -11,9 +11,6 @@ import (
 // ErrBootstrapRequired reports that no project data exists and guided bootstrap is required.
 var ErrBootstrapRequired = errors.New("bootstrap is required")
 
-// ErrBuiltinTemplateBootstrapRequired reports that builtin template operations hit a runtime DB missing prerequisite kinds.
-var ErrBuiltinTemplateBootstrapRequired = errors.New("builtin template bootstrap is required")
-
 // ErrGuardrailViolation reports fail-closed lease/scope/completion guardrail failures.
 var ErrGuardrailViolation = errors.New("guardrail violation")
 
@@ -41,12 +38,11 @@ type ActorLeaseTuple struct {
 
 // CreateProjectRequest stores transport input for project creation.
 type CreateProjectRequest struct {
-	Name              string
-	Description       string
-	Kind              string
-	TemplateLibraryID string
-	Metadata          domain.ProjectMetadata
-	Actor             ActorLeaseTuple
+	Name        string
+	Description string
+	Kind        string
+	Metadata    domain.ProjectMetadata
+	Actor       ActorLeaseTuple
 }
 
 // UpdateProjectRequest stores transport input for project updates.
@@ -249,75 +245,6 @@ type UpsertKindDefinitionRequest struct {
 type SetProjectAllowedKindsRequest struct {
 	ProjectID string
 	KindIDs   []string
-}
-
-// ListTemplateLibrariesRequest stores transport input for template-library listing.
-type ListTemplateLibrariesRequest struct {
-	Scope     domain.TemplateLibraryScope  `json:"scope,omitempty"`
-	ProjectID string                       `json:"project_id,omitempty"`
-	Status    domain.TemplateLibraryStatus `json:"status,omitempty"`
-}
-
-// UpsertTemplateChildRuleRequest stores transport input for one nested template child rule.
-type UpsertTemplateChildRuleRequest struct {
-	ID                        string                     `json:"id,omitempty"`
-	Position                  int                        `json:"position"`
-	ChildScopeLevel           domain.KindAppliesTo       `json:"child_scope_level"`
-	ChildKindID               domain.KindID              `json:"child_kind_id"`
-	TitleTemplate             string                     `json:"title_template"`
-	DescriptionTemplate       string                     `json:"description_template,omitempty"`
-	ResponsibleActorKind      domain.TemplateActorKind   `json:"responsible_actor_kind"`
-	EditableByActorKinds      []domain.TemplateActorKind `json:"editable_by_actor_kinds,omitempty"`
-	CompletableByActorKinds   []domain.TemplateActorKind `json:"completable_by_actor_kinds,omitempty"`
-	OrchestratorMayComplete   bool                       `json:"orchestrator_may_complete,omitempty"`
-	RequiredForParentDone     bool                       `json:"required_for_parent_done,omitempty"`
-	RequiredForContainingDone bool                       `json:"required_for_containing_done,omitempty"`
-}
-
-// UpsertNodeTemplateRequest stores transport input for one nested node template.
-type UpsertNodeTemplateRequest struct {
-	ID                         string                           `json:"id,omitempty"`
-	ScopeLevel                 domain.KindAppliesTo             `json:"scope_level"`
-	NodeKindID                 domain.KindID                    `json:"node_kind_id"`
-	DisplayName                string                           `json:"display_name"`
-	DescriptionMarkdown        string                           `json:"description_markdown,omitempty"`
-	ProjectMetadataDefaults    *domain.ProjectMetadata          `json:"project_metadata_defaults,omitempty"`
-	ActionItemMetadataDefaults *domain.ActionItemMetadata       `json:"task_metadata_defaults,omitempty"`
-	ChildRules                 []UpsertTemplateChildRuleRequest `json:"child_rules,omitempty"`
-}
-
-// UpsertTemplateLibraryRequest stores transport input for one template-library upsert.
-type UpsertTemplateLibraryRequest struct {
-	ID              string                       `json:"id,omitempty"`
-	Scope           domain.TemplateLibraryScope  `json:"scope"`
-	ProjectID       string                       `json:"project_id,omitempty"`
-	Name            string                       `json:"name"`
-	Description     string                       `json:"description,omitempty"`
-	Status          domain.TemplateLibraryStatus `json:"status"`
-	SourceLibraryID string                       `json:"source_library_id,omitempty"`
-	BuiltinManaged  bool                         `json:"builtin_managed,omitempty"`
-	BuiltinSource   string                       `json:"builtin_source,omitempty"`
-	BuiltinVersion  string                       `json:"builtin_version,omitempty"`
-	NodeTemplates   []UpsertNodeTemplateRequest  `json:"node_templates,omitempty"`
-}
-
-// EnsureBuiltinTemplateLibraryRequest stores transport input for one explicit builtin install or refresh.
-type EnsureBuiltinTemplateLibraryRequest struct {
-	LibraryID string `json:"library_id,omitempty"`
-}
-
-// BindProjectTemplateLibraryRequest stores transport input for project-to-library binding.
-type BindProjectTemplateLibraryRequest struct {
-	ProjectID string `json:"project_id"`
-	LibraryID string `json:"library_id"`
-}
-
-// ApproveProjectTemplateMigrationsRequest stores transport input for one explicit existing-node migration approval request.
-type ApproveProjectTemplateMigrationsRequest struct {
-	ProjectID     string   `json:"project_id"`
-	ActionItemIDs []string `json:"action_item_ids,omitempty"`
-	ApproveAll    bool     `json:"approve_all,omitempty"`
-	Actor         ActorLeaseTuple
 }
 
 // IssueCapabilityLeaseRequest stores transport input for lease issuance.
@@ -654,20 +581,6 @@ type KindCatalogService interface {
 	UpsertKindDefinition(context.Context, UpsertKindDefinitionRequest) (domain.KindDefinition, error)
 	SetProjectAllowedKinds(context.Context, SetProjectAllowedKindsRequest) error
 	ListProjectAllowedKinds(context.Context, string) ([]string, error)
-}
-
-// TemplateLibraryService exposes template-library and node-contract inspection plus project binding operations.
-type TemplateLibraryService interface {
-	ListTemplateLibraries(context.Context, ListTemplateLibrariesRequest) ([]domain.TemplateLibrary, error)
-	GetTemplateLibrary(context.Context, string) (domain.TemplateLibrary, error)
-	GetBuiltinTemplateLibraryStatus(context.Context, string) (domain.BuiltinTemplateLibraryStatus, error)
-	EnsureBuiltinTemplateLibrary(context.Context, EnsureBuiltinTemplateLibraryRequest) (domain.BuiltinTemplateLibraryEnsureResult, error)
-	UpsertTemplateLibrary(context.Context, UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error)
-	BindProjectTemplateLibrary(context.Context, BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error)
-	GetProjectTemplateBinding(context.Context, string) (domain.ProjectTemplateBinding, error)
-	GetProjectTemplateReapplyPreview(context.Context, string) (domain.ProjectTemplateReapplyPreview, error)
-	ApproveProjectTemplateMigrations(context.Context, ApproveProjectTemplateMigrationsRequest) (domain.ProjectTemplateMigrationApprovalResult, error)
-	GetNodeContractSnapshot(context.Context, string) (domain.NodeContractSnapshot, error)
 }
 
 // CapabilityLeaseService exposes lease issuance and lifecycle operations.

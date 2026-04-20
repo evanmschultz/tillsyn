@@ -114,24 +114,6 @@ func commandProgressLabel(command string) string {
 		return "Loading kind allowlist"
 	case "kind.allowlist.set":
 		return "Updating kind allowlist"
-	case "template.library.list":
-		return "Listing template libraries"
-	case "template.library.show":
-		return "Loading template library"
-	case "template.library.upsert":
-		return "Upserting template library"
-	case "template.builtin.status":
-		return "Loading builtin template status"
-	case "template.builtin.ensure":
-		return "Ensuring builtin template"
-	case "template.project.bind":
-		return "Binding project template"
-	case "template.project.binding":
-		return "Loading project template binding"
-	case "template.project.preview":
-		return "Loading project template reapply preview"
-	case "template.contract.show":
-		return "Loading template contract"
 	case "lease.list":
 		return "Listing leases"
 	case "lease.issue":

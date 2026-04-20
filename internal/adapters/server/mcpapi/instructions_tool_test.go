@@ -20,7 +20,6 @@ func newInstructionsTestServices() instructionsExplainServices {
 		projects:  service,
 		tasks:     service,
 		kinds:     service,
-		templates: service,
 	}
 }
 
@@ -50,39 +49,8 @@ func TestBuildInstructionsToolResponseDocsMode(t *testing.T) {
 	}
 }
 
-// TestBuildInstructionsToolResponseExplainTemplate verifies template explanations are synthesized from runtime state.
-func TestBuildInstructionsToolResponseExplainTemplate(t *testing.T) {
-	t.Parallel()
-
-	resp, err := buildInstructionsToolResponse(context.Background(), newInstructionsTestServices(), instructionsToolRequest{
-		Focus:                  "template",
-		ProjectID:              "p1",
-		IncludeEvidence:        true,
-		IncludeMarkdown:        false,
-		IncludeRecommendations: false,
-	})
-	if err != nil {
-		t.Fatalf("buildInstructionsToolResponse() error = %v", err)
-	}
-	if resp.Mode != string(instructionsToolModeExplain) {
-		t.Fatalf("Mode = %q, want %q", resp.Mode, instructionsToolModeExplain)
-	}
-	if resp.Explanation == nil {
-		t.Fatal("Explanation nil, want template explanation")
-	}
-	if got := resp.ResolvedScope.TemplateLibraryID; got != "go-defaults" {
-		t.Fatalf("ResolvedScope.TemplateLibraryID = %q, want go-defaults", got)
-	}
-	if !strings.Contains(strings.ToLower(resp.Explanation.Overview), "template library") {
-		t.Fatalf("Overview = %q, want template-library summary", resp.Explanation.Overview)
-	}
-	if len(resp.Explanation.Evidence) == 0 {
-		t.Fatal("Evidence empty, want template description evidence")
-	}
-}
-
-// TestBuildInstructionsToolResponseExplainProjectHighlightsTemplatePolicy verifies project explanations call out template-only policy and generic-kind exceptions.
-func TestBuildInstructionsToolResponseExplainProjectHighlightsTemplatePolicy(t *testing.T) {
+// TestBuildInstructionsToolResponseExplainProjectHighlightsCoordinationPolicy verifies project explanations surface the project-scoped coordination contract.
+func TestBuildInstructionsToolResponseExplainProjectHighlightsCoordinationPolicy(t *testing.T) {
 	t.Parallel()
 
 	resp, err := buildInstructionsToolResponse(context.Background(), newInstructionsTestServices(), instructionsToolRequest{
@@ -98,16 +66,12 @@ func TestBuildInstructionsToolResponseExplainProjectHighlightsTemplatePolicy(t *
 	if resp.Explanation == nil {
 		t.Fatal("Explanation nil, want project explanation")
 	}
-	rules := strings.ToLower(strings.Join(resp.Explanation.ScopedRules, " | "))
-	if !strings.Contains(rules, "additional non-template kinds") {
-		t.Fatalf("ScopedRules = %q, want generic-kind exception guidance", rules)
-	}
 	workflow := strings.ToLower(strings.Join(resp.Explanation.WorkflowContract, " | "))
-	if !strings.Contains(workflow, "which template library governs the project") {
-		t.Fatalf("WorkflowContract = %q, want project-creation template discussion guidance", workflow)
+	if !strings.Contains(workflow, "project-scoped approved sessions") {
+		t.Fatalf("WorkflowContract = %q, want project-scoped session guidance", workflow)
 	}
-	if !strings.Contains(workflow, "set_allowed_kinds") {
-		t.Fatalf("WorkflowContract = %q, want allowlist adjustment guidance", workflow)
+	if !strings.Contains(workflow, "till.comment") || !strings.Contains(workflow, "till.handoff") {
+		t.Fatalf("WorkflowContract = %q, want till.comment/till.handoff coordination guidance", workflow)
 	}
 }
 
@@ -156,7 +120,6 @@ func TestBuildInstructionsToolResponseExplainKind(t *testing.T) {
 		Focus:                  "kind",
 		KindID:                 "actionItem",
 		ProjectID:              "p1",
-		TemplateLibraryID:      "go-defaults",
 		IncludeEvidence:        true,
 		IncludeMarkdown:        false,
 		IncludeRecommendations: false,
@@ -170,9 +133,6 @@ func TestBuildInstructionsToolResponseExplainKind(t *testing.T) {
 	scopedRules := strings.ToLower(strings.Join(resp.Explanation.ScopedRules, " | "))
 	if !strings.Contains(scopedRules, "project \"p1\" currently allows kind") {
 		t.Fatalf("ScopedRules = %q, want project allowlist guidance", scopedRules)
-	}
-	if !strings.Contains(scopedRules, "library \"go-defaults\"") {
-		t.Fatalf("ScopedRules = %q, want template-library context", scopedRules)
 	}
 }
 
@@ -201,8 +161,8 @@ func TestBuildInstructionsToolResponseExplainNode(t *testing.T) {
 		t.Fatalf("ScopedRules = %q, want validation plan guidance", scopedRules)
 	}
 	workflow := strings.ToLower(strings.Join(resp.Explanation.WorkflowContract, " | "))
-	if !strings.Contains(workflow, "responsible actor kind") {
-		t.Fatalf("WorkflowContract = %q, want responsible actor guidance", workflow)
+	if !strings.Contains(workflow, "depends_on") || !strings.Contains(workflow, "blocked_by") {
+		t.Fatalf("WorkflowContract = %q, want dependency/blocked_by sequencing guidance", workflow)
 	}
 	if len(resp.Explanation.Evidence) == 0 {
 		t.Fatal("Evidence empty, want node policy evidence")

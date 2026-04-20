@@ -422,16 +422,6 @@ func mapHTTPError(err error) httpErrorMapping {
 				Hint:    "Create the first project before calling capture_state.",
 			},
 		}
-	case errors.Is(err, common.ErrBuiltinTemplateBootstrapRequired):
-		return httpErrorMapping{
-			Class:      "bootstrap",
-			StatusCode: http.StatusConflict,
-			APIError: APIError{
-				Code:    "builtin_template_bootstrap_required",
-				Message: err.Error(),
-				Hint:    "Call till.template(operation=get_builtin_status) first, confirm you are on the intended stable or dev runtime DB, then bootstrap the missing kind definitions before ensure_builtin.",
-			},
-		}
 	case errors.Is(err, common.ErrGuardrailViolation):
 		return httpErrorMapping{
 			Class:      "guardrail",

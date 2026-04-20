@@ -37,15 +37,8 @@ type fakeService struct {
 	capabilityLeases        []domain.CapabilityLease
 	handoffs                []domain.Handoff
 	kindDefinitions         []domain.KindDefinition
-	templateLibraries       []domain.TemplateLibrary
-	builtinTemplateStatuses map[string]domain.BuiltinTemplateLibraryStatus
-	projectBindings         map[string]domain.ProjectTemplateBinding
-	projectReapplyPreviews  map[string]domain.ProjectTemplateReapplyPreview
-	nodeContracts           map[string]domain.NodeContractSnapshot
 	lastCreateProject       app.CreateProjectInput
 	lastUpdateProject       app.UpdateProjectInput
-	lastBindProjectTemplate app.BindProjectTemplateLibraryInput
-	lastApproveMigrations   app.ApproveProjectTemplateMigrationsInput
 	lastAuthRequestFilter   domain.AuthRequestListFilter
 	lastAuthSessionFilter   app.AuthSessionFilter
 	lastCapabilityLeases    app.ListCapabilityLeasesInput
@@ -95,10 +88,6 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		comments:                map[string][]domain.Comment{},
 		authRequests:            map[string]domain.AuthRequest{},
 		authSessions:            []app.AuthSession{},
-		builtinTemplateStatuses: map[string]domain.BuiltinTemplateLibraryStatus{},
-		projectBindings:         map[string]domain.ProjectTemplateBinding{},
-		projectReapplyPreviews:  map[string]domain.ProjectTemplateReapplyPreview{},
-		nodeContracts:           map[string]domain.NodeContractSnapshot{},
 		rollups:                 map[string]domain.DependencyRollup{},
 		changeEvents:            map[string][]domain.ChangeEvent{},
 		attentionErrByProject:   map[string]error{},
@@ -120,63 +109,6 @@ func (f *fakeService) ListKindDefinitions(_ context.Context, includeArchived boo
 		out = append(out, kind)
 	}
 	return out, nil
-}
-
-// ListTemplateLibraries returns approved template libraries visible to the TUI.
-func (f *fakeService) ListTemplateLibraries(_ context.Context, in app.ListTemplateLibrariesInput) ([]domain.TemplateLibrary, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	out := make([]domain.TemplateLibrary, 0, len(f.templateLibraries))
-	for _, library := range f.templateLibraries {
-		if scope := domain.NormalizeTemplateLibraryScope(in.Scope); scope != "" && library.Scope != scope {
-			continue
-		}
-		if projectID := strings.TrimSpace(in.ProjectID); projectID != "" && strings.TrimSpace(library.ProjectID) != projectID {
-			continue
-		}
-		if status := domain.NormalizeTemplateLibraryStatus(in.Status); status != "" && library.Status != status {
-			continue
-		}
-		out = append(out, library)
-	}
-	return out, nil
-}
-
-// GetProjectTemplateBinding returns one active project template binding when present.
-func (f *fakeService) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
-	binding, ok := f.projectBindings[strings.TrimSpace(projectID)]
-	if !ok {
-		return domain.ProjectTemplateBinding{}, app.ErrNotFound
-	}
-	return binding, nil
-}
-
-// GetBuiltinTemplateLibraryStatus returns one builtin template lifecycle view when present.
-func (f *fakeService) GetBuiltinTemplateLibraryStatus(_ context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
-	status, ok := f.builtinTemplateStatuses[domain.NormalizeTemplateLibraryID(libraryID)]
-	if !ok {
-		return domain.BuiltinTemplateLibraryStatus{}, app.ErrNotFound
-	}
-	return status, nil
-}
-
-// GetProjectTemplateReapplyPreview returns one staged project drift preview when present.
-func (f *fakeService) GetProjectTemplateReapplyPreview(_ context.Context, projectID string) (domain.ProjectTemplateReapplyPreview, error) {
-	preview, ok := f.projectReapplyPreviews[strings.TrimSpace(projectID)]
-	if !ok {
-		return domain.ProjectTemplateReapplyPreview{}, app.ErrNotFound
-	}
-	return preview, nil
-}
-
-// GetNodeContractSnapshot returns one generated-node contract snapshot when present.
-func (f *fakeService) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
-	snapshot, ok := f.nodeContracts[strings.TrimSpace(nodeID)]
-	if !ok {
-		return domain.NodeContractSnapshot{}, app.ErrNotFound
-	}
-	return snapshot, nil
 }
 
 // ListProjects lists projects.
@@ -244,67 +176,6 @@ func (f *fakeService) CreateComment(_ context.Context, in app.CreateCommentInput
 	key := commentThreadKey(comment.ProjectID, comment.TargetType, comment.TargetID)
 	f.comments[key] = append(f.comments[key], comment)
 	return comment, nil
-}
-
-// ApproveProjectTemplateMigrations records one explicit migration-approval request.
-func (f *fakeService) ApproveProjectTemplateMigrations(_ context.Context, in app.ApproveProjectTemplateMigrationsInput) (domain.ProjectTemplateMigrationApprovalResult, error) {
-	if f.err != nil {
-		return domain.ProjectTemplateMigrationApprovalResult{}, f.err
-	}
-	f.lastApproveMigrations = in
-	preview, ok := f.projectReapplyPreviews[strings.TrimSpace(in.ProjectID)]
-	if !ok {
-		return domain.ProjectTemplateMigrationApprovalResult{}, app.ErrNotFound
-	}
-	selected := map[string]struct{}{}
-	if in.ApproveAll {
-		for _, candidate := range preview.MigrationCandidates {
-			if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
-				selected[strings.TrimSpace(candidate.ActionItemID)] = struct{}{}
-			}
-		}
-	} else {
-		for _, actionItemID := range in.ActionItemIDs {
-			selected[strings.TrimSpace(actionItemID)] = struct{}{}
-		}
-	}
-	approvals := make([]domain.ProjectTemplateMigrationApproval, 0, len(selected))
-	remaining := make([]domain.ProjectTemplateMigrationCandidate, 0, len(preview.MigrationCandidates))
-	remainingEligible := 0
-	remainingIneligible := 0
-	for _, candidate := range preview.MigrationCandidates {
-		actionItemID := strings.TrimSpace(candidate.ActionItemID)
-		if candidate.Status == domain.ProjectTemplateReapplyCandidateEligible {
-			if _, ok := selected[actionItemID]; ok {
-				approvals = append(approvals, domain.ProjectTemplateMigrationApproval{
-					ActionItemID: actionItemID,
-					Title:        candidate.Title,
-					ChangeKinds:  append([]string(nil), candidate.ChangeKinds...),
-					NewTitle:     candidate.Title + " REVIEW",
-				})
-				continue
-			}
-			remainingEligible++
-		} else {
-			remainingIneligible++
-		}
-		remaining = append(remaining, candidate)
-	}
-	preview.MigrationCandidates = remaining
-	preview.EligibleMigrationCount = remainingEligible
-	preview.IneligibleMigrationCount = remainingIneligible
-	f.projectReapplyPreviews[strings.TrimSpace(in.ProjectID)] = preview
-	return domain.ProjectTemplateMigrationApprovalResult{
-		ProjectID:                preview.ProjectID,
-		LibraryID:                preview.LibraryID,
-		LibraryName:              preview.LibraryName,
-		DriftStatus:              preview.DriftStatus,
-		ApprovedAll:              in.ApproveAll,
-		Approvals:                approvals,
-		AppliedCount:             len(approvals),
-		RemainingEligibleCount:   remainingEligible,
-		RemainingIneligibleCount: remainingIneligible,
-	}, nil
 }
 
 // ListCommentsByTarget lists comments for one concrete comment target.
@@ -964,12 +835,6 @@ func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.Create
 	if _, ok := f.tasks[project.ID]; !ok {
 		f.tasks[project.ID] = []domain.ActionItem{}
 	}
-	if libraryID := domain.NormalizeTemplateLibraryID(in.TemplateLibraryID); libraryID != "" {
-		f.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-			ProjectID: project.ID,
-			LibraryID: libraryID,
-		}
-	}
 	return project, nil
 }
 
@@ -986,30 +851,6 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 		return f.projects[idx], nil
 	}
 	return domain.Project{}, app.ErrNotFound
-}
-
-// BindProjectTemplateLibrary sets one active project binding.
-func (f *fakeService) BindProjectTemplateLibrary(_ context.Context, in app.BindProjectTemplateLibraryInput) (domain.ProjectTemplateBinding, error) {
-	f.lastBindProjectTemplate = in
-	binding := domain.ProjectTemplateBinding{
-		ProjectID:        strings.TrimSpace(in.ProjectID),
-		LibraryID:        domain.NormalizeTemplateLibraryID(in.LibraryID),
-		BoundByActorID:   strings.TrimSpace(in.BoundByActorID),
-		BoundByActorName: strings.TrimSpace(in.BoundByActorName),
-		BoundByActorType: in.BoundByActorType,
-	}
-	f.projectBindings[binding.ProjectID] = binding
-	return binding, nil
-}
-
-// UnbindProjectTemplateLibrary removes one active project binding.
-func (f *fakeService) UnbindProjectTemplateLibrary(_ context.Context, in app.UnbindProjectTemplateLibraryInput) error {
-	projectID := strings.TrimSpace(in.ProjectID)
-	if _, ok := f.projectBindings[projectID]; !ok {
-		return app.ErrNotFound
-	}
-	delete(f.projectBindings, projectID)
-	return nil
 }
 
 // ArchiveProject archives one project.
@@ -7514,20 +7355,20 @@ func TestModelActivityLogOverlay(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         2,
-			ProjectID:  p.ID,
+			ID:           2,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationMove,
-			Metadata:   map[string]string{},
-			OccurredAt: now.Add(2 * time.Minute),
+			Operation:    domain.ChangeOperationMove,
+			Metadata:     map[string]string{},
+			OccurredAt:   now.Add(2 * time.Minute),
 		},
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationCreate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(time.Minute),
+			Operation:    domain.ChangeOperationCreate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -7596,13 +7437,13 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			ActorID:    "agent-live-sync",
-			ActorName:  "Live Sync Bot",
-			ActorType:  domain.ActorTypeAgent,
+			Operation:    domain.ChangeOperationUpdate,
+			ActorID:      "agent-live-sync",
+			ActorName:    "Live Sync Bot",
+			ActorType:    domain.ActorTypeAgent,
 			Metadata: map[string]string{
 				"title":      actionItem.Title,
 				"item_scope": "phase",
@@ -7641,14 +7482,14 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{first, second})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         2,
-			ProjectID:  p.ID,
+			ID:           2,
+			ProjectID:    p.ID,
 			ActionItemID: second.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			ActorID:    "user-owner",
-			ActorType:  domain.ActorTypeUser,
-			Metadata:   map[string]string{"title": second.Title},
-			OccurredAt: now.Add(2 * time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			ActorID:      "user-owner",
+			ActorType:    domain.ActorTypeUser,
+			Metadata:     map[string]string{"title": second.Title},
+			OccurredAt:   now.Add(2 * time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -7699,12 +7540,12 @@ func TestModelNoticesSectionNavigationAndActionItemInfoAction(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -11013,44 +10854,44 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 			OccurredAt: now.Add(6 * time.Minute),
 		},
 		{
-			ID:         5,
-			ProjectID:  p.ID,
+			ID:           5,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationArchive,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(5 * time.Minute),
+			Operation:    domain.ChangeOperationArchive,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(5 * time.Minute),
 		},
 		{
-			ID:         4,
-			ProjectID:  p.ID,
+			ID:           4,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationMove,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(4 * time.Minute),
+			Operation:    domain.ChangeOperationMove,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(4 * time.Minute),
 		},
 		{
-			ID:         3,
-			ProjectID:  p.ID,
+			ID:           3,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(3 * time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(3 * time.Minute),
 		},
 		{
-			ID:         2,
-			ProjectID:  p.ID,
+			ID:           2,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationCreate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(2 * time.Minute),
+			Operation:    domain.ChangeOperationCreate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(2 * time.Minute),
 		},
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -11108,14 +10949,14 @@ func TestModelActivityEventJumpLoadsArchivedActionItem(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{active, archived})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         3,
-			ProjectID:  p.ID,
+			ID:           3,
+			ProjectID:    p.ID,
 			ActionItemID: archived.ID,
-			Operation:  domain.ChangeOperationArchive,
-			ActorID:    "agent-ops",
-			ActorType:  domain.ActorTypeAgent,
-			Metadata:   map[string]string{"title": archived.Title},
-			OccurredAt: archivedAt,
+			Operation:    domain.ChangeOperationArchive,
+			ActorID:      "agent-ops",
+			ActorType:    domain.ActorTypeAgent,
+			Metadata:     map[string]string{"title": archived.Title},
+			OccurredAt:   archivedAt,
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -11167,14 +11008,14 @@ func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{branch, child})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: child.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			ActorID:    "agent-sync",
-			ActorType:  domain.ActorTypeAgent,
-			Metadata:   map[string]string{"title": child.Title},
-			OccurredAt: now.Add(2 * time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			ActorID:      "agent-sync",
+			ActorType:    domain.ActorTypeAgent,
+			Metadata:     map[string]string{"title": child.Title},
+			OccurredAt:   now.Add(2 * time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -11218,12 +11059,12 @@ func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{todo, doing, done}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         3,
-			ProjectID:  p.ID,
+			ID:           3,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationMove,
-			ActorID:    "agent-sync",
-			ActorType:  domain.ActorTypeAgent,
+			Operation:    domain.ChangeOperationMove,
+			ActorID:      "agent-sync",
+			ActorType:    domain.ActorTypeAgent,
 			Metadata: map[string]string{
 				"from_column_id": todo.ID,
 				"from_position":  "1",
@@ -11363,9 +11204,9 @@ func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 		tasks:           []domain.ActionItem{branch, phase, leaf},
 		activityInfoItem: activityEntry{
 			ActionItemID: leaf.ID,
-			Summary:    "updated node metadata",
-			Operation:  domain.ChangeOperationUpdate,
-			At:         now,
+			Summary:      "updated node metadata",
+			Operation:    domain.ChangeOperationUpdate,
+			At:           now,
 		},
 	}
 
@@ -11436,12 +11277,12 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationCreate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(time.Minute),
+			Operation:    domain.ChangeOperationCreate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
@@ -11452,12 +11293,12 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 
 	svc.changeEvents[p.ID] = append([]domain.ChangeEvent{
 		{
-			ID:         2,
-			ProjectID:  p.ID,
+			ID:           2,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			Metadata:   map[string]string{"title": actionItem.Title},
-			OccurredAt: now.Add(2 * time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			Metadata:     map[string]string{"title": actionItem.Title},
+			OccurredAt:   now.Add(2 * time.Minute),
 		},
 	}, svc.changeEvents[p.ID]...)
 
@@ -14843,21 +14684,6 @@ func mustNewKindDefinitionForTest(id domain.KindID, displayName string, appliesT
 	return kind
 }
 
-// mustNewApprovedTemplateLibrary constructs one approved global template library for tests.
-func mustNewApprovedTemplateLibrary(t *testing.T, id, name string, now time.Time) domain.TemplateLibrary {
-	t.Helper()
-	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-		ID:     id,
-		Scope:  domain.TemplateLibraryScopeGlobal,
-		Name:   name,
-		Status: domain.TemplateLibraryStatusApproved,
-	}, now)
-	if err != nil {
-		t.Fatalf("NewTemplateLibrary() error = %v", err)
-	}
-	return library
-}
-
 // TestNormalizeAttachmentPathWithinRoot verifies root-bound attachment validation behavior.
 func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
 	root := t.TempDir()
@@ -14965,26 +14791,26 @@ func TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *tes
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.ActionItem{actionItem})
 	svc.changeEvents[p.ID] = []domain.ChangeEvent{
 		{
-			ID:         1,
-			ProjectID:  p.ID,
+			ID:           1,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationCreate,
-			ActorID:    "c75a483e-6628-475e-b12d-9ee7a928a9d1",
-			ActorName:  "Evan",
-			ActorType:  domain.ActorTypeUser,
-			Metadata:   map[string]string{"title": actionItem.Title, "item_scope": "actionItem"},
-			OccurredAt: now,
+			Operation:    domain.ChangeOperationCreate,
+			ActorID:      "c75a483e-6628-475e-b12d-9ee7a928a9d1",
+			ActorName:    "Evan",
+			ActorType:    domain.ActorTypeUser,
+			Metadata:     map[string]string{"title": actionItem.Title, "item_scope": "actionItem"},
+			OccurredAt:   now,
 		},
 		{
-			ID:         2,
-			ProjectID:  p.ID,
+			ID:           2,
+			ProjectID:    p.ID,
 			ActionItemID: actionItem.ID,
-			Operation:  domain.ChangeOperationUpdate,
-			ActorID:    "agent-instance-1",
-			ActorName:  "Codex Orchestrator",
-			ActorType:  domain.ActorTypeAgent,
-			Metadata:   map[string]string{"title": actionItem.Title, "item_scope": "actionItem"},
-			OccurredAt: now.Add(2 * time.Minute),
+			Operation:    domain.ChangeOperationUpdate,
+			ActorID:      "agent-instance-1",
+			ActorName:    "Codex Orchestrator",
+			ActorType:    domain.ActorTypeAgent,
+			Metadata:     map[string]string{"title": actionItem.Title, "item_scope": "actionItem"},
+			OccurredAt:   now.Add(2 * time.Minute),
 		},
 	}
 
@@ -15152,102 +14978,6 @@ func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
 	}
 }
 
-// TestModelAddProjectPersistsTemplateLibraryBinding verifies the project form passes template-library binding input through create flow.
-func TestModelAddProjectPersistsTemplateLibraryBinding(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.kindDefinitions = append(svc.kindDefinitions, mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}))
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('N'))
-	if m.mode != modeAddProject {
-		t.Fatalf("expected add-project mode, got %v", m.mode)
-	}
-	m.projectFormInputs[projectFieldName].SetValue("Go Service")
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
-	m = applyMsg(t, m, keyRune('g'))
-	if m.mode != modeProjectKindPicker {
-		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if got := m.projectFormInputs[projectFieldKind].Value(); got != "go-service" {
-		t.Fatalf("project form kind = %q, want %q", got, "go-service")
-	}
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
-	m = applyMsg(t, m, keyRune('g'))
-	if m.mode != modeTemplateLibraryPicker {
-		t.Fatalf("expected template-library picker mode, got %v", m.mode)
-	}
-	if got := m.templateLibraryPickerInput.Value(); got != "g" {
-		t.Fatalf("template-library picker filter = %q, want %q", got, "g")
-	}
-	if len(m.templateLibraryPickerItems) == 0 || m.templateLibraryPickerItems[0].LibraryID != "go-defaults" {
-		t.Fatalf("expected go-defaults as the top template-library picker row, got %#v", m.templateLibraryPickerItems)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
-		t.Fatalf("project form template library = %q, want %q", got, "go-defaults")
-	}
-	if m.projectFormFocus != projectFieldRootPath {
-		t.Fatalf("project form focus = %d, want root-path field", m.projectFormFocus)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	if got := svc.lastCreateProject.TemplateLibraryID; got != "go-defaults" {
-		t.Fatalf("CreateProjectWithMetadata() template library = %q, want go-defaults", got)
-	}
-	if got := string(svc.lastCreateProject.Kind); got != "go-service" {
-		t.Fatalf("CreateProjectWithMetadata() kind = %q, want go-service", got)
-	}
-	if binding, ok := svc.projectBindings["p-new"]; !ok || binding.LibraryID != "go-defaults" {
-		t.Fatalf("expected created project binding to go-defaults, got %#v", svc.projectBindings)
-	}
-}
-
-// TestModelAddProjectInfersKindFromTemplateLibrary verifies template-library selection auto-seeds the project kind when one unique project kind exists.
-func TestModelAddProjectInfersKindFromTemplateLibrary(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 10, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-		ID:     "go-defaults",
-		Scope:  domain.TemplateLibraryScopeGlobal,
-		Name:   "Go Defaults",
-		Status: domain.TemplateLibraryStatusApproved,
-		NodeTemplates: []domain.NodeTemplateInput{{
-			ID:          "project-template",
-			ScopeLevel:  domain.KindAppliesToProject,
-			NodeKindID:  "go-service",
-			DisplayName: "Go Service Project",
-		}},
-	}, now)
-	if err != nil {
-		t.Fatalf("NewTemplateLibrary() error = %v", err)
-	}
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.kindDefinitions = append(svc.kindDefinitions, mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}))
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('N'))
-	m.projectFormInputs[projectFieldName].SetValue("Go Service")
-	if got := m.projectFormInputs[projectFieldKind].Value(); got != string(domain.DefaultProjectKind) {
-		t.Fatalf("default project form kind = %q, want %q", got, domain.DefaultProjectKind)
-	}
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
-	m = applyMsg(t, m, keyRune('g'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
-		t.Fatalf("project form template library = %q, want go-defaults", got)
-	}
-	if got := m.projectFormInputs[projectFieldKind].Value(); got != "go-service" {
-		t.Fatalf("project form kind = %q, want auto-seeded go-service", got)
-	}
-}
-
 // TestModelProjectKindPickerRendersHelpersAndOverlay verifies project-kind helper rows and picker rendering stay human-readable.
 func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
 	now := time.Date(2026, 3, 30, 12, 20, 0, 0, time.UTC)
@@ -15346,482 +15076,6 @@ func TestModelProjectKindPickerCtrlUAndEscape(t *testing.T) {
 	}
 	if got := m.status; got != "project kind picker cancelled" {
 		t.Fatalf("status = %q, want project kind picker cancelled", got)
-	}
-}
-
-// TestProjectFormBodyLinesExplainTemplatePolicy verifies the project form explains template-derived allowlists and generic-kind decisions.
-func TestProjectFormBodyLinesExplainTemplatePolicy(t *testing.T) {
-	now := time.Date(2026, 4, 11, 11, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	m := loadReadyModel(t, NewModel(svc))
-
-	_ = m.startProjectForm(nil)
-	m.projectFormInputs[projectFieldTemplateLibrary].SetValue("go-defaults")
-	lines, _ := m.projectFormBodyLines(90, lipgloss.NewStyle(), lipgloss.Color("62"))
-	rendered := strings.Join(lines, "\n")
-	for _, want := range []string{
-		"template_policy: selected library seeds allowed kinds from its node templates and child rules",
-		"decide with the dev whether any extra generic kinds should be explicitly allowed after setup",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected project form template guidance %q, got\n%s", want, rendered)
-		}
-	}
-}
-
-// TestModelProjectAndTemplatePickersMouseWheel verifies wheel scrolling moves selection inside picker overlays.
-func TestModelProjectAndTemplatePickersMouseWheel(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 27, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.kindDefinitions = append(svc.kindDefinitions,
-		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-	)
-	svc.templateLibraries = []domain.TemplateLibrary{
-		mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now),
-		mustNewApprovedTemplateLibrary(t, "ops-defaults", "Ops Defaults", now.Add(time.Minute)),
-	}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('N'))
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeProjectKindPicker {
-		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
-	}
-	if got := m.projectKindPickerIndex; got != 2 {
-		t.Fatalf("expected current project kind to be preselected, got index %d", got)
-	}
-	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if got := m.projectKindPickerIndex; got != 1 {
-		t.Fatalf("expected mouse wheel up to move project kind selection, got %d", got)
-	}
-	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if got := m.projectKindPickerIndex; got != 2 {
-		t.Fatalf("expected mouse wheel down to restore project kind selection, got %d", got)
-	}
-
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTemplateLibraryPicker {
-		t.Fatalf("expected template-library picker mode, got %v", m.mode)
-	}
-	if got := m.templateLibraryPickerIndex; got != 0 {
-		t.Fatalf("expected template-library picker to start at first row, got %d", got)
-	}
-	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if got := m.templateLibraryPickerIndex; got != 1 {
-		t.Fatalf("expected mouse wheel down to move template-library selection, got %d", got)
-	}
-}
-
-// TestModelEditProjectClearsTemplateLibraryBinding verifies blank template-library input unbinds the current project.
-func TestModelEditProjectClearsTemplateLibraryBinding(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID: project.ID,
-		LibraryID: library.ID,
-	}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('M'))
-	if m.mode != modeEditProject {
-		t.Fatalf("expected edit-project mode, got %v", m.mode)
-	}
-	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "go-defaults" {
-		t.Fatalf("expected project form to seed template library id, got %q", got)
-	}
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
-	lines, _ := m.projectFormBodyLines(72, lipgloss.NewStyle(), lipgloss.Color("62"))
-	rendered := strings.Join(lines, "\n")
-	if !strings.Contains(rendered, "approved_global_libraries:") || !strings.Contains(rendered, "go-defaults") || !strings.Contains(rendered, "enter/e opens picker") {
-		t.Fatalf("expected project form to render template-library hints, got\n%s", rendered)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTemplateLibraryPicker {
-		t.Fatalf("expected template-library picker mode, got %v", m.mode)
-	}
-	m = applyMsg(t, m, keyRune('k'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if got := m.projectFormInputs[projectFieldTemplateLibrary].Value(); got != "" {
-		t.Fatalf("expected template library cleared via picker, got %q", got)
-	}
-	if m.projectFormFocus != projectFieldRootPath {
-		t.Fatalf("project form focus = %d, want root-path field", m.projectFormFocus)
-	}
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	if _, ok := svc.projectBindings[project.ID]; ok {
-		t.Fatalf("expected project binding removed, got %#v", svc.projectBindings[project.ID])
-	}
-}
-
-// TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary verifies save treats drift on the same selected library as an intentional reapply.
-func TestModelEditProjectSameLibraryWithDriftRebindsTemplateLibrary(t *testing.T) {
-	now := time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID:      project.ID,
-		LibraryID:      library.ID,
-		LibraryName:    library.Name,
-		BoundRevision:  2,
-		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
-		LatestRevision: 3,
-	}
-	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
-		ProjectID:      project.ID,
-		LibraryID:      library.ID,
-		LibraryName:    library.Name,
-		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
-		BoundRevision:  2,
-		LatestRevision: 3,
-	}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('M'))
-	if m.mode != modeEditProject {
-		t.Fatalf("expected edit-project mode, got %v", m.mode)
-	}
-	lines, _ := m.projectFormBodyLines(96, lipgloss.NewStyle(), lipgloss.Color("62"))
-	rendered := strings.Join(lines, "\n")
-	if !strings.Contains(rendered, "save opens migration review before rebinding future generated work") {
-		t.Fatalf("expected reapply hint in project form, got\n%s", rendered)
-	}
-
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
-		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
-	}
-	if got := svc.lastBindProjectTemplate.LibraryID; got != library.ID {
-		t.Fatalf("BindProjectTemplateLibrary() library = %q, want %q", got, library.ID)
-	}
-}
-
-// TestModelEditProjectShowsBuiltinTemplateUpdateStatus verifies project edit distinguishes shipped builtin updates from project binding drift.
-func TestModelEditProjectShowsBuiltinTemplateUpdateStatus(t *testing.T) {
-	now := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
-	library.BuiltinManaged = true
-	library.BuiltinVersion = "2026-04-12.1"
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID:     project.ID,
-		LibraryID:     library.ID,
-		LibraryName:   library.Name,
-		BoundRevision: 2,
-		DriftStatus:   domain.ProjectTemplateBindingDriftCurrent,
-	}
-	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
-		LibraryID:         library.ID,
-		Name:              library.Name,
-		BuiltinVersion:    "2026-04-12.1",
-		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
-		Installed:         true,
-		InstalledRevision: 2,
-	}
-
-	m := loadReadyModel(t, NewModel(svc))
-	m = applyMsg(t, m, keyRune('M'))
-	if m.mode != modeEditProject {
-		t.Fatalf("expected edit-project mode, got %v", m.mode)
-	}
-	lines, _ := m.projectFormBodyLines(96, lipgloss.NewStyle(), lipgloss.Color("62"))
-	rendered := strings.Join(lines, "\n")
-
-	for _, want := range []string{
-		"active_binding: default-go — Default Go • rev:2 • drift:current",
-		"shipped_builtin: state:update_available • version:2026-04-12.1 • installed_rev:2",
-		"run ensure builtin before rebinding projects to the newer shipped template",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected project form to contain %q, got\n%s", want, rendered)
-		}
-	}
-}
-
-// TestModelEditProjectDriftedTemplateOpensMigrationReview verifies drifted same-library saves open the TUI review step before rebinding.
-func TestModelEditProjectDriftedTemplateOpensMigrationReview(t *testing.T) {
-	now := time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID:      project.ID,
-		LibraryID:      library.ID,
-		LibraryName:    library.Name,
-		BoundRevision:  2,
-		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
-		LatestRevision: 3,
-	}
-	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
-		ProjectID:              project.ID,
-		LibraryID:              library.ID,
-		LibraryName:            library.Name,
-		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
-		BoundRevision:          2,
-		LatestRevision:         3,
-		ReviewRequired:         true,
-		EligibleMigrationCount: 1,
-		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
-			{
-				ActionItemID:      "qa-1",
-				Title:             "QA PROOF REVIEW",
-				Scope:             domain.KindAppliesToActionItem,
-				Kind:              domain.KindActionItem,
-				LifecycleState:    domain.StateTodo,
-				SourceChildRuleID: "qa-proof-review",
-				Status:            domain.ProjectTemplateReapplyCandidateEligible,
-				ChangeKinds:       []string{"title", "description"},
-			},
-		},
-	}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('M'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	if m.mode != modeTemplateMigrationReview {
-		t.Fatalf("expected template migration review mode, got %v", m.mode)
-	}
-	lines, _ := m.templateMigrationReviewBodyLines(96, lipgloss.NewStyle(), lipgloss.NewStyle().Bold(true))
-	rendered := strings.Join(lines, "\n")
-	for _, want := range []string{
-		"template drift",
-		"existing-node migrations",
-		"QA PROOF REVIEW",
-		"approve selected",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected migration review to contain %q, got\n%s", want, rendered)
-		}
-	}
-}
-
-// TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus verifies the template picker surfaces shipped builtin update availability.
-func TestTemplateLibraryPickerShowsBuiltinTemplateUpdateStatus(t *testing.T) {
-	now := time.Date(2026, 4, 3, 10, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "default-go", "Default Go", now)
-	library.BuiltinManaged = true
-	library.BuiltinVersion = "2026-04-12.1"
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.builtinTemplateStatuses[library.ID] = domain.BuiltinTemplateLibraryStatus{
-		LibraryID:         library.ID,
-		Name:              library.Name,
-		BuiltinVersion:    "2026-04-12.1",
-		State:             domain.BuiltinTemplateLibraryStateUpdateAvailable,
-		Installed:         true,
-		InstalledRevision: 2,
-	}
-
-	m := loadReadyModel(t, NewModel(svc))
-	m = applyMsg(t, m, keyRune('N'))
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldTemplateLibrary))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeTemplateLibraryPicker {
-		t.Fatalf("expected template-library picker mode, got %v", m.mode)
-	}
-	overlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 90)
-	for _, want := range []string{
-		"default-go — Default Go • shipped update available",
-		"shipped_builtin: state:update_available • version:2026-04-12.1 • installed_rev:2",
-		"run ensure builtin before rebinding projects to the newer shipped template",
-	} {
-		if !strings.Contains(overlay, want) {
-			t.Fatalf("expected template-library picker overlay to contain %q, got\n%s", want, overlay)
-		}
-	}
-}
-
-// TestModelTemplateMigrationReviewApproveSelectedCompletesSave verifies review approval applies migrations before rebinding.
-func TestModelTemplateMigrationReviewApproveSelectedCompletesSave(t *testing.T) {
-	now := time.Date(2026, 4, 1, 15, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID:      project.ID,
-		LibraryID:      library.ID,
-		LibraryName:    library.Name,
-		BoundRevision:  2,
-		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
-		LatestRevision: 3,
-	}
-	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
-		ProjectID:              project.ID,
-		LibraryID:              library.ID,
-		LibraryName:            library.Name,
-		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
-		BoundRevision:          2,
-		LatestRevision:         3,
-		ReviewRequired:         true,
-		EligibleMigrationCount: 1,
-		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
-			{
-				ActionItemID:      "qa-1",
-				Title:             "QA PROOF REVIEW",
-				Scope:             domain.KindAppliesToActionItem,
-				Kind:              domain.KindActionItem,
-				LifecycleState:    domain.StateTodo,
-				SourceChildRuleID: "qa-proof-review",
-				Status:            domain.ProjectTemplateReapplyCandidateEligible,
-				ChangeKinds:       []string{"title", "description"},
-			},
-		},
-	}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('M'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = applyMsg(t, m, keyRune(' '))
-	m = applyMsg(t, m, keyRune('a'))
-
-	if got := svc.lastUpdateProject.ProjectID; got != project.ID {
-		t.Fatalf("UpdateProject() project = %q, want %q", got, project.ID)
-	}
-	if got := svc.lastApproveMigrations.ProjectID; got != project.ID {
-		t.Fatalf("ApproveProjectTemplateMigrations() project = %q, want %q", got, project.ID)
-	}
-	if got := svc.lastApproveMigrations.ActionItemIDs; !reflect.DeepEqual(got, []string{"qa-1"}) {
-		t.Fatalf("ApproveProjectTemplateMigrations() action_item_ids = %#v, want [qa-1]", got)
-	}
-	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
-		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
-	}
-	if got := svc.lastBindProjectTemplate.LibraryID; got != library.ID {
-		t.Fatalf("BindProjectTemplateLibrary() library = %q, want %q", got, library.ID)
-	}
-}
-
-// TestModelTemplateMigrationReviewSkipContinuesReapply verifies the TUI can continue without approving existing-node migrations.
-func TestModelTemplateMigrationReviewSkipContinuesReapply(t *testing.T) {
-	now := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	library := mustNewApprovedTemplateLibrary(t, "go-defaults", "Go Defaults", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.templateLibraries = []domain.TemplateLibrary{library}
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID:      project.ID,
-		LibraryID:      library.ID,
-		LibraryName:    library.Name,
-		BoundRevision:  2,
-		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
-		LatestRevision: 3,
-	}
-	svc.projectReapplyPreviews[project.ID] = domain.ProjectTemplateReapplyPreview{
-		ProjectID:              project.ID,
-		LibraryID:              library.ID,
-		LibraryName:            library.Name,
-		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
-		BoundRevision:          2,
-		LatestRevision:         3,
-		ReviewRequired:         true,
-		EligibleMigrationCount: 1,
-		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{
-			{
-				ActionItemID:      "qa-1",
-				Title:             "QA PROOF REVIEW",
-				Scope:             domain.KindAppliesToActionItem,
-				Kind:              domain.KindActionItem,
-				LifecycleState:    domain.StateTodo,
-				SourceChildRuleID: "qa-proof-review",
-				Status:            domain.ProjectTemplateReapplyCandidateEligible,
-				ChangeKinds:       []string{"title"},
-			},
-		},
-	}
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('M'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = applyMsg(t, m, keyRune('s'))
-
-	if got := svc.lastApproveMigrations.ProjectID; got != "" {
-		t.Fatalf("ApproveProjectTemplateMigrations() project = %q, want empty on skip", got)
-	}
-	if got := svc.lastBindProjectTemplate.ProjectID; got != project.ID {
-		t.Fatalf("BindProjectTemplateLibrary() project = %q, want %q", got, project.ID)
-	}
-	if !strings.Contains(m.status, "existing-node migrations skipped") {
-		t.Fatalf("expected skip status, got %q", m.status)
-	}
-}
-
-// TestActionItemInfoBodyLinesRenderTemplateContractSection verifies actionItem-info exposes project binding and generated-node contract details.
-func TestActionItemInfoBodyLinesRenderTemplateContractSection(t *testing.T) {
-	now := time.Date(2026, 3, 30, 13, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
-		ID:        "actionItem-1",
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Position:  0,
-		Title:     "Build feature",
-		Priority:  domain.PriorityMedium,
-	}, now)
-	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
-	svc.projectBindings[project.ID] = domain.ProjectTemplateBinding{
-		ProjectID:      project.ID,
-		LibraryID:      "go-defaults",
-		LibraryName:    "Go Defaults",
-		BoundRevision:  2,
-		DriftStatus:    domain.ProjectTemplateBindingDriftUpdateAvailable,
-		LatestRevision: 3,
-	}
-	svc.nodeContracts[actionItem.ID] = domain.NodeContractSnapshot{
-		NodeID:                    actionItem.ID,
-		ProjectID:                 project.ID,
-		SourceLibraryID:           "go-defaults",
-		SourceNodeTemplateID:      "build-template",
-		SourceChildRuleID:         "qa-proof-review",
-		CreatedByActorID:          "tillsyn-system-template",
-		ResponsibleActorKind:      domain.TemplateActorKindBuilder,
-		EditableByActorKinds:      []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
-		CompletableByActorKinds:   []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
-		RequiredForParentDone:     true,
-		RequiredForContainingDone: true,
-	}
-	m := loadReadyModel(t, NewModel(svc))
-	lines := m.actionItemInfoBodyLines(actionItem, actionItemInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth())), 72, lipgloss.NewStyle())
-	rendered := strings.Join(lines, "\n")
-
-	for _, want := range []string{
-		"template contract:",
-		"project_library: go-defaults",
-		"project_library_revision: 2",
-		"project_library_drift: update_available",
-		"source_library: go-defaults",
-		"source_node_template: build-template",
-		"source_child_rule: qa-proof-review",
-		"responsible_actor_kind: builder",
-		"editable_by: builder",
-		"completable_by: builder, human",
-		"required_for_parent_done: true",
-		"required_for_containing_done: true",
-		"generated_by: tillsyn-system-template",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("expected actionItem info template-contract section to contain %q, got\n%s", want, rendered)
-		}
 	}
 }
 
