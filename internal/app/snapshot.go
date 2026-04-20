@@ -13,7 +13,7 @@ import (
 )
 
 // SnapshotVersion defines the canonical snapshot schema version.
-const SnapshotVersion = "tillsyn.snapshot.v4"
+const SnapshotVersion = "tillsyn.snapshot.v5"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
@@ -35,7 +35,6 @@ type SnapshotProject struct {
 	Slug        string                 `json:"slug"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	Kind        domain.KindID          `json:"kind,omitempty"`
 	Metadata    domain.ProjectMetadata `json:"metadata"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
@@ -341,10 +340,6 @@ func (s *Snapshot) Validate() error {
 		}
 		if _, exists := projectIDs[p.ID]; exists {
 			return fmt.Errorf("duplicate project id: %q", p.ID)
-		}
-		if domain.NormalizeKindID(p.Kind) == "" {
-			p.Kind = domain.DefaultProjectKind
-			s.Projects[i].Kind = p.Kind
 		}
 		projectIDs[p.ID] = struct{}{}
 	}
@@ -1058,7 +1053,6 @@ func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 		Slug:        p.Slug,
 		Name:        p.Name,
 		Description: p.Description,
-		Kind:        p.Kind,
 		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
@@ -1264,16 +1258,11 @@ func (p SnapshotProject) toDomain() domain.Project {
 	if slug == "" {
 		slug = fallbackSlug(p.Name)
 	}
-	kind := domain.NormalizeKindID(p.Kind)
-	if kind == "" {
-		kind = domain.DefaultProjectKind
-	}
 	return domain.Project{
 		ID:          strings.TrimSpace(p.ID),
 		Slug:        slug,
 		Name:        strings.TrimSpace(p.Name),
 		Description: strings.TrimSpace(p.Description),
-		Kind:        kind,
 		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),

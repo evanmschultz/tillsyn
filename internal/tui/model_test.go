@@ -14913,7 +14913,6 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 	readOnly := map[string]struct{}{
 		"ID":         {},
 		"Slug":       {},
-		"Kind":       {},
 		"CreatedAt":  {},
 		"UpdatedAt":  {},
 		"ArchivedAt": {},
@@ -14939,7 +14938,6 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
 	now := time.Date(2026, 3, 13, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
-	p.Kind = "ops"
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, nil, nil)))
 	_ = m.startProjectForm(&p)
 	lines, _ := m.projectFormBodyLines(72, lipgloss.NewStyle(), lipgloss.Color("62"))
@@ -14949,7 +14947,6 @@ func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
 		"system:",
 		"id: p1",
 		"slug: inbox",
-		"kind: ops",
 		"created_at:",
 		"updated_at:",
 	} {
@@ -14978,106 +14975,6 @@ func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
 	}
 }
 
-// TestModelProjectKindPickerRendersHelpersAndOverlay verifies project-kind helper rows and picker rendering stay human-readable.
-func TestModelProjectKindPickerRendersHelpersAndOverlay(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 20, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.kindDefinitions = append(svc.kindDefinitions,
-		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-		mustNewKindDefinitionForTest("build-actionItem", "Build ActionItem", []domain.KindAppliesTo{domain.KindAppliesToActionItem}),
-	)
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('N'))
-	lines, _ := m.projectFormBodyLines(84, lipgloss.NewStyle(), lipgloss.Color("62"))
-	rendered := strings.Join(lines, "\n")
-	if !strings.Contains(rendered, "classification") || !strings.Contains(rendered, "project_kinds:") || !strings.Contains(rendered, "go-service — Go Service") {
-		t.Fatalf("expected project form to render kind hints, got\n%s", rendered)
-	}
-	if strings.Contains(rendered, "build-actionItem") {
-		t.Fatalf("expected project-only kind hints, got\n%s", rendered)
-	}
-	if got := m.projectKindName("go-service"); got != "Go Service" {
-		t.Fatalf("projectKindName(go-service) = %q, want Go Service", got)
-	}
-	if got := m.projectKindDisplayLabel("go-service", "Go Service"); got != "go-service — Go Service" {
-		t.Fatalf("projectKindDisplayLabel() = %q, want go-service — Go Service", got)
-	}
-	if rows := m.projectKindSummaryRows(2); len(rows) != 2 || rows[0] != "go-service — Go Service" {
-		t.Fatalf("projectKindSummaryRows(2) = %#v, want go-service first", rows)
-	}
-	if !m.hasProjectKindDefinition("go-service") {
-		t.Fatalf("expected go-service to be selectable")
-	}
-	if m.hasProjectKindDefinition("build-actionItem") {
-		t.Fatalf("expected build-actionItem to be excluded from project picker")
-	}
-
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.mode != modeProjectKindPicker {
-		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
-	}
-	if got := m.modeLabel(); got != "project-kinds" {
-		t.Fatalf("modeLabel() = %q, want project-kinds", got)
-	}
-	if got := m.modePrompt(); !strings.Contains(got, "project kind picker") {
-		t.Fatalf("modePrompt() = %q, want project kind picker guidance", got)
-	}
-	overlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 72)
-	if !strings.Contains(overlay, "Project Kind") || !strings.Contains(overlay, "current: project") || !strings.Contains(overlay, "go-service — Go Service") {
-		t.Fatalf("expected project-kind overlay details, got\n%s", overlay)
-	}
-	if strings.Contains(overlay, "filter: filter:") {
-		t.Fatalf("expected project-kind overlay to avoid duplicate filter label, got\n%s", overlay)
-	}
-}
-
-// TestModelProjectKindPickerCtrlUAndEscape verifies filter clearing and cancel flow for the project-kind picker.
-func TestModelProjectKindPickerCtrlUAndEscape(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 25, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	svc := newFakeService([]domain.Project{project}, nil, nil)
-	svc.kindDefinitions = append(svc.kindDefinitions,
-		mustNewKindDefinitionForTest("go-service", "Go Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-		mustNewKindDefinitionForTest("ops-service", "Operations Service", []domain.KindAppliesTo{domain.KindAppliesToProject}),
-	)
-	m := loadReadyModel(t, NewModel(svc))
-
-	m = applyMsg(t, m, keyRune('N'))
-	m = applyResult(t, m, m.focusProjectFormField(projectFieldKind))
-	m = applyMsg(t, m, keyRune('o'))
-	if m.mode != modeProjectKindPicker {
-		t.Fatalf("expected project-kind picker mode, got %v", m.mode)
-	}
-	if got := strings.TrimSpace(m.projectKindPickerInput.Value()); got != "o" {
-		t.Fatalf("project kind picker filter = %q, want o", got)
-	}
-	if len(m.projectKindPickerItems) == 0 || m.projectKindPickerItems[0].KindID != "ops-service" {
-		t.Fatalf("expected ops-service as filtered picker row, got %#v", m.projectKindPickerItems)
-	}
-
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	if got := strings.TrimSpace(m.projectKindPickerInput.Value()); got != "" {
-		t.Fatalf("expected ctrl+u to clear project kind filter, got %q", got)
-	}
-	if len(m.projectKindPickerItems) < 2 {
-		t.Fatalf("expected cleared picker to restore all rows, got %#v", m.projectKindPickerItems)
-	}
-
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.mode != modeAddProject {
-		t.Fatalf("expected esc to return add-project mode, got %v", m.mode)
-	}
-	if m.projectFormFocus != projectFieldKind {
-		t.Fatalf("expected focus to return to kind field, got %d", m.projectFormFocus)
-	}
-	if got := m.status; got != "project kind picker cancelled" {
-		t.Fatalf("status = %q, want project kind picker cancelled", got)
-	}
-}
 
 // TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight verifies transient global status text cannot shrink shared full-page bodies.
 func TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight(t *testing.T) {

@@ -244,7 +244,6 @@ type projectListCommandOptions struct {
 type projectCreateCommandOptions struct {
 	name              string
 	description       string
-	kind              string
 	metadataJSON      string
 	owner             string
 	icon              string
@@ -596,8 +595,8 @@ add a new one.
 		Use:   "create [name]",
 		Short: "Create one project",
 		Long: strings.TrimSpace(`
-Create one project with a required name, optional description, optional kind
-override, and optional metadata defaults from flags or --metadata-json.
+Create one project with a required name, optional description, and optional
+metadata defaults from flags or --metadata-json.
 
 The name may be passed either as --name or as one positional argument.
 
@@ -609,7 +608,7 @@ bridge after creation.
 			"  till project create --name Inbox --description \"Local execution inbox\" \\",
 			"    --owner \"Platform\" --tag dogfood",
 			"  till project create Inbox",
-			"  till project create --name \"Go Migration\" --kind project --homepage https://example.invalid",
+			"  till project create --name \"Go Migration\" --homepage https://example.invalid",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -623,7 +622,6 @@ bridge after creation.
 	}
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.name, "name", "", "Project name")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.description, "description", "", "Optional project description")
-	projectCreateCmd.Flags().StringVar(&projectCreateOpts.kind, "kind", "", "Optional project kind")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.metadataJSON, "metadata-json", "", "Optional project metadata JSON")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.owner, "owner", "", "Optional project owner")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.icon, "icon", "", "Optional project icon")

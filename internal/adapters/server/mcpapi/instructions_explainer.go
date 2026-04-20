@@ -167,9 +167,6 @@ func explainProjectInstructions(ctx context.Context, services instructionsExplai
 	if standards := strings.TrimSpace(project.Metadata.StandardsMarkdown); standards != "" {
 		rules = append(rules, "Project standards are defined in standards_markdown and should be treated as scoped execution policy for this project.")
 	}
-	if project.Kind != "" {
-		rules = append(rules, fmt.Sprintf("Project kind is %q and should be used as the base interpretation for project-level workflow expectations.", project.Kind))
-	}
 	if len(allowedKinds) > 0 {
 		rules = append(rules, fmt.Sprintf("Allowed kinds in this project are constrained to: %s.", strings.Join(allowedKinds, ", ")))
 	}
@@ -209,7 +206,7 @@ func explainProjectInstructions(ctx context.Context, services instructionsExplai
 		},
 		Explanation: instructionsToolExplanation{
 			Title:             project.Name,
-			Overview:          fmt.Sprintf("Project %q is a %q project.", project.Name, project.Kind),
+			Overview:          fmt.Sprintf("Project %q.", project.Name),
 			WhyItApplies:      buildProjectWhyItApplies(project),
 			ScopedRules:       rules,
 			WorkflowContract:  workflow,
@@ -617,7 +614,6 @@ func collectNodeGaps(project domain.Project, actionItem domain.ActionItem, kindF
 func buildProjectWhyItApplies(project domain.Project) []string {
 	return []string{
 		fmt.Sprintf("Project metadata and standards_markdown are the canonical project-local rule source for %q.", project.Name),
-		fmt.Sprintf("Project kind %q defines the baseline interpretation for project setup and allowed workflow shape.", project.Kind),
 	}
 }
 

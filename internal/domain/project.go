@@ -13,7 +13,6 @@ type Project struct {
 	Slug        string
 	Name        string
 	Description string
-	Kind        KindID
 	Metadata    ProjectMetadata
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -57,7 +56,6 @@ func NewProject(id, name, description string, now time.Time) (Project, error) {
 		Slug:        slug,
 		Name:        name,
 		Description: strings.TrimSpace(description),
-		Kind:        DefaultProjectKind,
 		Metadata:    ProjectMetadata{},
 		CreatedAt:   now.UTC(),
 		UpdatedAt:   now.UTC(),
@@ -72,17 +70,6 @@ func (p *Project) Rename(name string, now time.Time) error {
 	}
 	p.Name = name
 	p.Slug = normalizeSlug(name)
-	p.UpdatedAt = now.UTC()
-	return nil
-}
-
-// SetKind sets the project kind identifier.
-func (p *Project) SetKind(kind KindID, now time.Time) error {
-	kind = NormalizeKindID(kind)
-	if kind == "" {
-		return ErrInvalidKindID
-	}
-	p.Kind = kind
 	p.UpdatedAt = now.UTC()
 	return nil
 }

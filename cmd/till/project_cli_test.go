@@ -16,14 +16,12 @@ func TestWriteProjectList(t *testing.T) {
 		{
 			ID:          "p2",
 			Name:        "Beta",
-			Kind:        domain.KindID("project"),
 			Metadata:    domain.ProjectMetadata{Owner: "team-b"},
 			Description: "Second project",
 		},
 		{
 			ID:          "p1",
 			Name:        "Alpha",
-			Kind:        domain.KindID("go-service"),
 			Metadata:    domain.ProjectMetadata{Owner: "team-a"},
 			Description: "First\nproject",
 		},
@@ -33,7 +31,7 @@ func TestWriteProjectList(t *testing.T) {
 		t.Fatalf("writeProjectList() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Projects", "NAME", "ID", "OWNER", "Alpha", "p1", "go-service", "team-a", "Beta", "p2", "team-b"} {
+	for _, want := range []string{"Projects", "NAME", "ID", "OWNER", "Alpha", "p1", "team-a", "Beta", "p2", "team-b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project list output, got %q", want, got)
 		}
@@ -71,7 +69,6 @@ func TestWriteProjectDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProject() error = %v", err)
 	}
-	project.Kind = domain.KindID("go-service")
 	project.Metadata.Owner = "team-a"
 	project.Metadata.Tags = []string{"go", "cli"}
 
@@ -80,7 +77,7 @@ func TestWriteProjectDetail(t *testing.T) {
 		t.Fatalf("writeProjectDetail() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Project", "name", "Alpha", "id", "p1", "slug", "alpha", "kind", "go-service", "description", "First project", "owner", "team-a", "tags", "go, cli"} {
+	for _, want := range []string{"Project", "name", "Alpha", "id", "p1", "slug", "alpha", "description", "First project", "owner", "team-a", "tags", "go, cli"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project detail output, got %q", want, got)
 		}

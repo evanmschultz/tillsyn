@@ -562,7 +562,6 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 				ProjectID:     project.ID,
 				Name:          project.Name,
 				Description:   description,
-				Kind:          project.Kind,
 				Metadata:      project.Metadata,
 				UpdatedBy:     actorID,
 				UpdatedByName: actorName,

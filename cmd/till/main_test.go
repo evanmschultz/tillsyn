@@ -527,7 +527,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "project create",
 			args: []string{"project", "create", "--help"},
-			want: []string{"till project create", "--name", "--kind", "--metadata-json", "one positional argument"},
+			want: []string{"till project create", "--name", "--metadata-json", "one positional argument"},
 		},
 		{
 			name: "project show",
