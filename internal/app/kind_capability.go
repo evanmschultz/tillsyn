@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -543,46 +542,6 @@ func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectI
 	return nil
 }
 
-// resolveProjectKindDefinition resolves one project kind definition and allowlist constraints.
-func (s *Service) resolveProjectKindDefinition(ctx context.Context, projectID string, kindID domain.KindID) (domain.KindDefinition, error) {
-	kindID = domain.NormalizeKindID(kindID)
-	if kindID == "" {
-		kindID = domain.DefaultProjectKind
-	}
-	kind, err := s.repo.GetKindDefinition(ctx, kindID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return domain.KindDefinition{}, fmt.Errorf("%w: %q", domain.ErrKindNotFound, kindID)
-		}
-		return domain.KindDefinition{}, err
-	}
-	if !kind.AppliesToScope(domain.KindAppliesToProject) {
-		return domain.KindDefinition{}, fmt.Errorf("%w: %q does not apply to project", domain.ErrKindNotAllowed, kind.ID)
-	}
-	if strings.TrimSpace(projectID) != "" {
-		allowed, allowErr := s.resolveProjectAllowedKinds(ctx, projectID)
-		if allowErr != nil {
-			return domain.KindDefinition{}, allowErr
-		}
-		if _, ok := allowed[kind.ID]; !ok {
-			return domain.KindDefinition{}, fmt.Errorf("%w: %q", domain.ErrKindNotAllowed, kind.ID)
-		}
-	}
-	return kind, nil
-}
-
-// validateProjectKind validates project kind and metadata payload constraints.
-func (s *Service) validateProjectKind(ctx context.Context, projectID string, kindID domain.KindID, payload json.RawMessage) error {
-	kind, err := s.resolveProjectKindDefinition(ctx, projectID, kindID)
-	if err != nil {
-		return err
-	}
-	if err := s.validateKindPayload(kind, payload); err != nil {
-		return err
-	}
-	return nil
-}
-
 // resolveActionItemKindDefinition resolves one work-item kind definition and scope constraints.
 func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem) (domain.KindDefinition, error) {
 	kindID = domain.NormalizeKindID(kindID)
@@ -681,7 +640,7 @@ func (s *Service) resolveProjectAllowedKinds(ctx context.Context, projectID stri
 }
 
 // defaultProjectAllowedKindIDs returns the catalog-wide default allowlist for one project.
-func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context, projectKind domain.KindID) ([]domain.KindID, error) {
+func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context) ([]domain.KindID, error) {
 	kinds, err := s.repo.ListKindDefinitions(ctx, false)
 	if err != nil {
 		return nil, err
@@ -694,22 +653,14 @@ func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context, projectKind 
 		kindIDs = []domain.KindID{
 			domain.DefaultProjectKind,
 			domain.KindID(domain.KindActionItem),
-			domain.KindID(domain.KindSubtask),
-			domain.KindID(domain.KindPhase),
-			domain.KindID(domain.KindDecision),
-			domain.KindID(domain.KindNote),
 		}
-	}
-	projectKind = domain.NormalizeKindID(projectKind)
-	if projectKind != "" && !slices.Contains(kindIDs, projectKind) {
-		kindIDs = append(kindIDs, projectKind)
 	}
 	return normalizeKindIDList(kindIDs), nil
 }
 
 // initializeProjectAllowedKinds assigns default allowlist entries for a new project.
 func (s *Service) initializeProjectAllowedKinds(ctx context.Context, project domain.Project) error {
-	kindIDs, err := s.defaultProjectAllowedKindIDs(ctx, project.Kind)
+	kindIDs, err := s.defaultProjectAllowedKindIDs(ctx)
 	if err != nil {
 		return err
 	}

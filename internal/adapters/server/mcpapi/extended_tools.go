@@ -429,7 +429,6 @@ func registerProjectTools(
 			mcp.WithNumber("limit", mcp.Description("Maximum rows to return for operation=list_change_events")),
 			mcp.WithString("name", mcp.Description("Project name. Required for operation=create|update")),
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
-			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithArray("kind_ids", mcp.Description("Allowed kind id list for operation=set_allowed_kinds."), mcp.WithStringItems()),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("session_id", mcp.Description("Required for mutating operations. "+mcpMutationSessionDescription)),
@@ -448,7 +447,6 @@ func registerProjectTools(
 				Limit           int                    `json:"limit"`
 				Name            string                 `json:"name"`
 				Description     string                 `json:"description"`
-				Kind            string                 `json:"kind"`
 				KindIDs         []string               `json:"kind_ids"`
 				Metadata        domain.ProjectMetadata `json:"metadata"`
 				SessionID       string                 `json:"session_id"`
@@ -511,7 +509,6 @@ func registerProjectTools(
 				project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
 					Name:        args.Name,
 					Description: args.Description,
-					Kind:        args.Kind,
 					Metadata:    args.Metadata,
 					Actor:       actor,
 				})
@@ -561,7 +558,6 @@ func registerProjectTools(
 					ProjectID:   args.ProjectID,
 					Name:        args.Name,
 					Description: args.Description,
-					Kind:        args.Kind,
 					Metadata:    args.Metadata,
 					Actor:       actor,
 				})
@@ -701,7 +697,6 @@ func registerProjectTools(
 				mcp.WithDescription("Create one project."),
 				mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
 				mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
-				mcp.WithString("kind", mcp.Description("Project kind id")),
 				mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -713,7 +708,6 @@ func registerProjectTools(
 				var args struct {
 					Name            string                 `json:"name"`
 					Description     string                 `json:"description"`
-					Kind            string                 `json:"kind"`
 					Metadata        domain.ProjectMetadata `json:"metadata"`
 					SessionID       string                 `json:"session_id"`
 					SessionSecret   string                 `json:"session_secret"`
@@ -757,7 +751,6 @@ func registerProjectTools(
 				project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
 					Name:        args.Name,
 					Description: args.Description,
-					Kind:        args.Kind,
 					Metadata:    args.Metadata,
 					Actor:       actor,
 				})
@@ -779,7 +772,6 @@ func registerProjectTools(
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
 				mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
-				mcp.WithString("kind", mcp.Description("Project kind id")),
 				mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
@@ -792,7 +784,6 @@ func registerProjectTools(
 					ProjectID       string                 `json:"project_id"`
 					Name            string                 `json:"name"`
 					Description     string                 `json:"description"`
-					Kind            string                 `json:"kind"`
 					Metadata        domain.ProjectMetadata `json:"metadata"`
 					SessionID       string                 `json:"session_id"`
 					SessionSecret   string                 `json:"session_secret"`
@@ -837,7 +828,6 @@ func registerProjectTools(
 					ProjectID:   args.ProjectID,
 					Name:        args.Name,
 					Description: args.Description,
-					Kind:        args.Kind,
 					Metadata:    args.Metadata,
 					Actor:       actor,
 				})

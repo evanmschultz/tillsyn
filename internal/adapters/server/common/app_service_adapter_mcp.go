@@ -556,7 +556,6 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 	project, err := a.service.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
 		Name:          strings.TrimSpace(in.Name),
 		Description:   strings.TrimSpace(in.Description),
-		Kind:          domain.KindID(strings.TrimSpace(in.Kind)),
 		Metadata:      in.Metadata,
 		UpdatedBy:     actorID,
 		UpdatedByName: actorName,
@@ -582,7 +581,6 @@ func (a *AppServiceAdapter) UpdateProject(ctx context.Context, in UpdateProjectR
 		ProjectID:     strings.TrimSpace(in.ProjectID),
 		Name:          strings.TrimSpace(in.Name),
 		Description:   strings.TrimSpace(in.Description),
-		Kind:          domain.KindID(strings.TrimSpace(in.Kind)),
 		Metadata:      in.Metadata,
 		UpdatedBy:     actorID,
 		UpdatedByName: actorName,

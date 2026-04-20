@@ -251,18 +251,7 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err != nil {
 		return domain.Project{}, err
 	}
-	kindID := domain.NormalizeKindID(in.Kind)
-	if kindID == "" {
-		kindID = domain.DefaultProjectKind
-	}
-	if err := project.SetKind(kindID, now); err != nil {
-		return domain.Project{}, err
-	}
-	kindDef, err := s.resolveProjectKindDefinition(ctx, "", project.Kind)
-	if err != nil {
-		return domain.Project{}, err
-	}
-	mergedMetadata, err := domain.MergeProjectMetadata(in.Metadata, kindDef.Template.ProjectMetadataDefaults)
+	mergedMetadata, err := domain.MergeProjectMetadata(in.Metadata, nil)
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -270,9 +259,6 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 		mergedMetadata.Owner = strings.TrimSpace(resolvedActor.ActorName)
 	}
 	if err := project.UpdateDetails(project.Name, project.Description, mergedMetadata, now); err != nil {
-		return domain.Project{}, err
-	}
-	if err := s.validateKindPayload(kindDef, project.Metadata.KindPayload); err != nil {
 		return domain.Project{}, err
 	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
@@ -318,20 +304,7 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	if err := s.enforceMutationGuard(ctx, project.ID, actorType, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); err != nil {
 		return domain.Project{}, err
 	}
-	nextKind := project.Kind
-	if nextKind == "" {
-		nextKind = domain.DefaultProjectKind
-	}
-	if kind := domain.NormalizeKindID(in.Kind); kind != "" {
-		nextKind = kind
-	}
-	if err := project.SetKind(nextKind, s.clock()); err != nil {
-		return domain.Project{}, err
-	}
 	if err := project.UpdateDetails(in.Name, in.Description, in.Metadata, s.clock()); err != nil {
-		return domain.Project{}, err
-	}
-	if err := s.validateProjectKind(ctx, project.ID, project.Kind, project.Metadata.KindPayload); err != nil {
 		return domain.Project{}, err
 	}
 	if err := s.repo.UpdateProject(ctx, project); err != nil {

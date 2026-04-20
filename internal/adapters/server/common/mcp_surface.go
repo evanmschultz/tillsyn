@@ -40,7 +40,6 @@ type ActorLeaseTuple struct {
 type CreateProjectRequest struct {
 	Name        string
 	Description string
-	Kind        string
 	Metadata    domain.ProjectMetadata
 	Actor       ActorLeaseTuple
 }
@@ -50,7 +49,6 @@ type UpdateProjectRequest struct {
 	ProjectID   string
 	Name        string
 	Description string
-	Kind        string
 	Metadata    domain.ProjectMetadata
 	Actor       ActorLeaseTuple
 }

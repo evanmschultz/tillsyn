@@ -85,7 +85,6 @@ func (s *stubExpandedService) ListProjects(_ context.Context, includeArchived bo
 			ID:        "p1",
 			Slug:      "proj-1",
 			Name:      "Project One",
-			Kind:      domain.KindID("go-project"),
 			Metadata:  domain.ProjectMetadata{StandardsMarkdown: "Use MCP tools first.\nRun TDD-style changes and finish with mage ci."},
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -1665,7 +1664,6 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 			tool: "till.create_project",
 			args: mergeArgs(validSessionArgs(), map[string]any{
 				"name":              "Project One",
-				"kind":              "go-service",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
 			}),
@@ -1697,8 +1695,8 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 		}
 	}
 
-	if got := service.lastCreateProjectReq.Kind; got != "go-service" {
-		t.Fatalf("legacy create_project kind = %q, want go-service", got)
+	if got := service.lastCreateProjectReq.Name; got != "Project One" {
+		t.Fatalf("legacy create_project name = %q, want Project One", got)
 	}
 }
 

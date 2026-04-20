@@ -119,7 +119,6 @@ const (
 	modeActivityEventInfo
 	modeResourcePicker
 	modeLabelPicker
-	modeProjectKindPicker
 	modePathsRoots
 	modeLabelsConfig
 	modeHighlightColor
@@ -205,7 +204,6 @@ const (
 const (
 	projectFieldName = iota
 	projectFieldDescription
-	projectFieldKind
 	projectFieldOwner
 	projectFieldIcon
 	projectFieldColor
@@ -351,12 +349,6 @@ type resourcePickerEntry struct {
 type labelPickerItem struct {
 	Label  string
 	Source string
-}
-
-// projectKindPickerItem describes one project-kind selection row.
-type projectKindPickerItem struct {
-	KindID      domain.KindID
-	DisplayName string
 }
 
 // labelInheritanceSources groups inherited labels by source precedence.
@@ -865,10 +857,6 @@ type Model struct {
 	labelPickerItems       []labelPickerItem
 	labelPickerAllItems    []labelPickerItem
 	labelPickerInput       textinput.Model
-	projectKindPickerBack  inputMode
-	projectKindPickerIndex int
-	projectKindPickerItems []projectKindPickerItem
-	projectKindPickerInput textinput.Model
 
 	dependencyBack              inputMode
 	dependencyOwnerActionItemID string
@@ -1205,11 +1193,6 @@ func NewModel(svc Service, opts ...Option) Model {
 	labelPickerInput.Placeholder = "type to fuzzy-find labels"
 	labelPickerInput.CharLimit = 120
 	configureTextInputClipboardBindings(&labelPickerInput)
-	projectKindPickerInput := textinput.New()
-	projectKindPickerInput.Prompt = "filter: "
-	projectKindPickerInput.Placeholder = "type to fuzzy-find project kinds"
-	projectKindPickerInput.CharLimit = 120
-	configureTextInputClipboardBindings(&projectKindPickerInput)
 	embeddingsSpinner := spinner.New(
 		spinner.WithSpinner(spinner.Dot),
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)),
@@ -1243,7 +1226,6 @@ func NewModel(svc Service, opts ...Option) Model {
 		duePickerDateInput:                   duePickerDateInput,
 		duePickerTimeInput:                   duePickerTimeInput,
 		labelPickerInput:                     labelPickerInput,
-		projectKindPickerInput:               projectKindPickerInput,
 		embeddingsSpinner:                    embeddingsSpinner,
 		searchMode:                           app.SearchModeHybrid,
 		searchStates:                         []string{"todo", "progress", "done"},
@@ -4747,7 +4729,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	m.projectFormInputs = []textinput.Model{
 		newModalInput("", "project name", "", 120),
 		newModalInput("", "enter opens markdown description editor", "", 240),
-		newModalInput("", "enter opens project-kind picker", "", 120),
 		newModalInput("", "owner/team", "", 120),
 		newModalInput("", "icon / emoji", "", 64),
 		newModalInput("", "accent color (e.g. 62)", "", 32),
@@ -4764,7 +4745,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		m.editingProjectID = project.ID
 		m.projectFormInputs[projectFieldName].SetValue(project.Name)
 		m.projectFormDescription = project.Description
-		m.projectFormInputs[projectFieldKind].SetValue(string(project.Kind))
 		m.projectFormInputs[projectFieldOwner].SetValue(firstNonEmptyTrimmed(project.Metadata.Owner, m.identityDisplayName))
 		m.projectFormInputs[projectFieldIcon].SetValue(project.Metadata.Icon)
 		m.projectFormInputs[projectFieldColor].SetValue(project.Metadata.Color)
@@ -4778,7 +4758,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	} else {
 		m.mode = modeAddProject
 		m.status = "new project"
-		m.projectFormInputs[projectFieldKind].SetValue(string(domain.DefaultProjectKind))
 		m.projectFormInputs[projectFieldOwner].SetValue(strings.TrimSpace(m.identityDisplayName))
 	}
 	m.syncProjectFormDescriptionDisplay()
@@ -5084,7 +5063,7 @@ func isActionItemFormDirectTextInputField(field int) bool {
 
 // isProjectFormDirectTextInputField reports whether the focused project-form field should consume printable text directly.
 func isProjectFormDirectTextInputField(field int) bool {
-	return field != projectFieldDescription && field != projectFieldKind && field != projectFieldComments
+	return field != projectFieldDescription && field != projectFieldComments
 }
 
 // actionItemFormFocusPosition resolves one form-focus field position within the current visual order.
@@ -5265,7 +5244,7 @@ func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	for i := range m.projectFormInputs {
 		m.projectFormInputs[i].Blur()
 	}
-	if idx == projectFieldDescription || idx == projectFieldKind || idx == projectFieldComments {
+	if idx == projectFieldDescription || idx == projectFieldComments {
 		return nil
 	}
 	return m.projectFormInputs[idx].Focus()
@@ -5821,157 +5800,6 @@ func (m Model) projectFormValues() map[string]string {
 	}
 	out["description"] = sanitizeFormFieldValue(m.projectFormDescription)
 	return out
-}
-
-// projectKindDisplayLabel returns one stable id/name label for project-kind rows.
-func (m Model) projectKindDisplayLabel(kindID domain.KindID, displayName string) string {
-	kindID = domain.NormalizeKindID(kindID)
-	displayName = strings.TrimSpace(displayName)
-	if kindID == "" {
-		return string(domain.DefaultProjectKind)
-	}
-	if displayName == "" || strings.EqualFold(displayName, string(kindID)) {
-		return string(kindID)
-	}
-	return fmt.Sprintf("%s — %s", kindID, displayName)
-}
-
-// projectKindName returns the currently loaded kind display name for one id when available.
-func (m Model) projectKindName(kindID domain.KindID) string {
-	kindID = domain.NormalizeKindID(kindID)
-	if kindID == "" {
-		return ""
-	}
-	for _, kind := range m.kindDefinitions {
-		if domain.NormalizeKindID(kind.ID) != kindID {
-			continue
-		}
-		return strings.TrimSpace(kind.DisplayName)
-	}
-	return ""
-}
-
-// projectKindPickerOptions returns project-applicable kinds sorted for picker rendering.
-func (m Model) projectKindPickerOptions() []projectKindPickerItem {
-	items := make([]projectKindPickerItem, 0, len(m.kindDefinitions))
-	for _, kind := range m.kindDefinitions {
-		if kind.ArchivedAt != nil {
-			continue
-		}
-		if !kind.AppliesToScope(domain.KindAppliesToProject) {
-			continue
-		}
-		items = append(items, projectKindPickerItem{
-			KindID:      domain.NormalizeKindID(kind.ID),
-			DisplayName: strings.TrimSpace(kind.DisplayName),
-		})
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		left := m.projectKindDisplayLabel(items[i].KindID, items[i].DisplayName)
-		right := m.projectKindDisplayLabel(items[j].KindID, items[j].DisplayName)
-		return left < right
-	})
-	return items
-}
-
-// projectKindSummaryRows returns readable project-kind rows for project-form rendering.
-func (m Model) projectKindSummaryRows(limit int) []string {
-	options := m.projectKindPickerOptions()
-	if limit <= 0 {
-		limit = len(options)
-	}
-	rows := make([]string, 0, min(limit, len(options)))
-	for _, item := range options {
-		rows = append(rows, m.projectKindDisplayLabel(item.KindID, item.DisplayName))
-		if len(rows) >= limit {
-			break
-		}
-	}
-	return rows
-}
-
-// hasProjectKindDefinition reports whether the given kind id is currently selectable in the project form.
-func (m Model) hasProjectKindDefinition(kindID domain.KindID) bool {
-	kindID = domain.NormalizeKindID(kindID)
-	if kindID == "" {
-		return false
-	}
-	for _, item := range m.projectKindPickerOptions() {
-		if item.KindID == kindID {
-			return true
-		}
-	}
-	return false
-}
-
-// refreshProjectKindPickerMatches refreshes fuzzy-filtered project-kind picker rows.
-func (m *Model) refreshProjectKindPickerMatches() {
-	if m == nil {
-		return
-	}
-	allItems := m.projectKindPickerOptions()
-	query := strings.TrimSpace(m.projectKindPickerInput.Value())
-	if query == "" {
-		m.projectKindPickerItems = allItems
-		m.projectKindPickerIndex = clamp(m.projectKindPickerIndex, 0, len(m.projectKindPickerItems)-1)
-		return
-	}
-	type scoredProjectKind struct {
-		item  projectKindPickerItem
-		score int
-	}
-	scored := make([]scoredProjectKind, 0, len(allItems))
-	for _, item := range allItems {
-		score, ok := bestFuzzyScore(query, string(item.KindID), item.DisplayName, m.projectKindDisplayLabel(item.KindID, item.DisplayName))
-		if !ok {
-			continue
-		}
-		scored = append(scored, scoredProjectKind{
-			item:  item,
-			score: score,
-		})
-	}
-	sort.SliceStable(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
-		}
-		left := m.projectKindDisplayLabel(scored[i].item.KindID, scored[i].item.DisplayName)
-		right := m.projectKindDisplayLabel(scored[j].item.KindID, scored[j].item.DisplayName)
-		return left < right
-	})
-	m.projectKindPickerItems = make([]projectKindPickerItem, 0, len(scored))
-	for _, entry := range scored {
-		m.projectKindPickerItems = append(m.projectKindPickerItems, entry.item)
-	}
-	m.projectKindPickerIndex = clamp(m.projectKindPickerIndex, 0, len(m.projectKindPickerItems)-1)
-}
-
-// startProjectKindPicker opens the project-kind picker with optional initial filter text.
-func (m *Model) startProjectKindPicker(seed string) tea.Cmd {
-	if m == nil {
-		return nil
-	}
-	m.projectKindPickerBack = m.mode
-	m.mode = modeProjectKindPicker
-	m.projectKindPickerInput.SetValue(strings.TrimSpace(seed))
-	m.projectKindPickerInput.CursorEnd()
-	m.refreshProjectKindPickerMatches()
-	current := domain.NormalizeKindID(domain.KindID(m.projectFormInputs[projectFieldKind].Value()))
-	m.projectKindPickerIndex = 0
-	if current != "" && strings.TrimSpace(seed) == "" {
-		for idx, item := range m.projectKindPickerItems {
-			if item.KindID == current {
-				m.projectKindPickerIndex = idx
-				break
-			}
-		}
-	}
-	if len(m.projectKindPickerItems) == 0 {
-		m.status = "no project kinds available"
-	} else {
-		m.status = "project kind picker"
-	}
-	return m.projectKindPickerInput.Focus()
 }
 
 // descriptionFormDisplayValue summarizes markdown description content for compact form rows.
@@ -11276,80 +11104,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == modeProjectKindPicker {
-		if handled, status := applyClipboardShortcutToInput(msg, &m.projectKindPickerInput); handled {
-			m.status = status
-			m.projectKindPickerIndex = 0
-			m.refreshProjectKindPickerMatches()
-			return m, nil
-		}
-		switch msg.String() {
-		case "esc":
-			m.mode = m.projectKindPickerBack
-			m.projectKindPickerInput.Blur()
-			m.status = "project kind picker cancelled"
-			if m.mode == modeAddProject || m.mode == modeEditProject {
-				return m, m.focusProjectFormField(projectFieldKind)
-			}
-			return m, nil
-		case "ctrl+u":
-			m.projectKindPickerInput.SetValue("")
-			m.projectKindPickerInput.CursorEnd()
-			m.projectKindPickerIndex = 0
-			m.refreshProjectKindPickerMatches()
-			return m, nil
-		case "j", "down":
-			if m.projectKindPickerIndex < len(m.projectKindPickerItems)-1 {
-				m.projectKindPickerIndex++
-			}
-			return m, nil
-		case "k", "up":
-			if m.projectKindPickerIndex > 0 {
-				m.projectKindPickerIndex--
-			}
-			return m, nil
-		case "enter":
-			if len(m.projectFormInputs) <= projectFieldKind {
-				m.mode = m.projectKindPickerBack
-				m.projectKindPickerInput.Blur()
-				return m, m.focusProjectFormField(projectFieldKind)
-			}
-			if len(m.projectKindPickerItems) == 0 {
-				m.mode = m.projectKindPickerBack
-				m.projectKindPickerInput.Blur()
-				m.status = "no project kinds available"
-				return m, m.focusProjectFormField(projectFieldKind)
-			}
-			item := m.projectKindPickerItems[clamp(m.projectKindPickerIndex, 0, len(m.projectKindPickerItems)-1)]
-			m.projectFormInputs[projectFieldKind].SetValue(string(item.KindID))
-			m.mode = m.projectKindPickerBack
-			m.projectKindPickerInput.Blur()
-			m.status = "project kind selected"
-			return m, m.focusProjectFormField(projectFieldKind + 1)
-		default:
-			if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
-				var cmd tea.Cmd
-				before := m.projectKindPickerInput.Value()
-				m.projectKindPickerInput, cmd = m.projectKindPickerInput.Update(msg)
-				_ = scrubTextInputTerminalArtifacts(&m.projectKindPickerInput)
-				if m.projectKindPickerInput.Value() != before {
-					m.projectKindPickerIndex = 0
-					m.refreshProjectKindPickerMatches()
-				}
-				return m, cmd
-			}
-			var cmd tea.Cmd
-			before := m.projectKindPickerInput.Value()
-			m.projectKindPickerInput, cmd = m.projectKindPickerInput.Update(msg)
-			_ = scrubTextInputTerminalArtifacts(&m.projectKindPickerInput)
-			if m.projectKindPickerInput.Value() != before {
-				m.projectKindPickerIndex = 0
-				m.refreshProjectKindPickerMatches()
-			}
-			return m, cmd
-		}
-	}
-
 	if m.mode == modePathsRoots {
 		if handled, status := applyClipboardShortcutToInput(msg, &m.pathsRootInput); handled {
 			m.status = status
@@ -11510,8 +11264,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.String() == "ctrl+r" && m.projectFormFocus == projectFieldRootPath:
 			return m, m.startResourcePicker("", m.mode)
-		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldKind:
-			return m, m.startProjectKindPicker("")
 		case (msg.String() == "e" || msg.Code == tea.KeyEnter || msg.String() == "enter") && m.projectFormFocus == projectFieldComments:
 			next, cmd := m.startProjectThread(modeEditProject)
 			if model, ok := next.(Model); ok {
@@ -11534,12 +11286,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			if m.projectFormFocus == projectFieldDescription {
 				return m, m.startProjectDescriptionEditor(msg)
-			}
-			if m.projectFormFocus == projectFieldKind {
-				if isPrintableFormTextKey(msg) {
-					return m, m.startProjectKindPicker(msg.Text)
-				}
-				return m, nil
 			}
 			if m.projectFormFocus == projectFieldComments {
 				return m, nil
@@ -12036,15 +11782,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.status = "project name required"
 			return m, nil
 		}
-		kindID := domain.NormalizeKindID(domain.KindID(vals["kind"]))
-		if kindID == "" {
-			m.status = "project kind required"
-			return m, nil
-		}
-		if !m.hasProjectKindDefinition(kindID) {
-			m.status = "project kind not found: " + string(kindID)
-			return m, nil
-		}
 		rootPath, err := normalizeProjectRootPathInput(vals["root_path"])
 		if err != nil {
 			m.status = err.Error()
@@ -12072,7 +11809,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
 					Name:          name,
 					Description:   description,
-					Kind:          kindID,
 					Metadata:      metadata,
 					UpdatedBy:     m.threadActorID(),
 					UpdatedByName: m.threadActorName(),
@@ -12102,7 +11838,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				ProjectID:     projectID,
 				Name:          name,
 				Description:   description,
-				Kind:          kindID,
 				Metadata:      metadata,
 				UpdatedBy:     m.threadActorID(),
 				UpdatedByName: m.threadActorName(),
@@ -13457,21 +13192,6 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			if m.projectPickerIndex < len(m.projects)-1 {
 				m.projectPickerIndex++
 			}
-		}
-		return m, nil
-	}
-	if m.mode == modeProjectKindPicker {
-		switch msg.Button {
-		case tea.MouseWheelUp:
-			if m.projectKindPickerIndex > 0 {
-				m.projectKindPickerIndex--
-			}
-		case tea.MouseWheelDown:
-			if m.projectKindPickerIndex < len(m.projectKindPickerItems)-1 {
-				m.projectKindPickerIndex++
-			}
-		default:
-			return m, nil
 		}
 		return m, nil
 	}
@@ -16859,13 +16579,6 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"root_path field: r opens directory picker",
 			"comments row: enter or e opens the project thread on the comments panel",
 		}
-	case modeProjectKindPicker:
-		return "project kind picker", []string{
-			"type to fuzzy-filter project kinds",
-			"j/k moves selection; enter chooses the highlighted kind",
-			"the selected kind is sent on project create/update",
-			"ctrl+u clears the picker filter; esc closes the picker",
-		}
 	case modeDescriptionEditor:
 		return "description editor", []string{
 			"tab toggles edit and preview layouts",
@@ -17831,25 +17544,6 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("classification"))
-	renderProjectInput("kind", projectFieldKind)
-	if m.projectFormFocus == projectFieldKind {
-		lines = append(lines, hintStyle.Render("enter/e opens picker; type to start a filtered picker"))
-	}
-	kindRows := m.projectKindSummaryRows(5)
-	if len(kindRows) == 0 {
-		lines = append(lines, hintStyle.Render("project_kinds: (none available)"))
-	} else {
-		lines = append(lines, hintStyle.Render("project_kinds:"))
-		for _, row := range kindRows {
-			lines = append(lines, hintStyle.Render("  - "+row))
-		}
-		if len(m.projectKindPickerOptions()) > len(kindRows) {
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("  +%d more", len(m.projectKindPickerOptions())-len(kindRows))))
-		}
-	}
-
-	lines = append(lines, "")
 	lines = append(lines, hintStyle.Render("metadata"))
 	renderProjectInput("owner", projectFieldOwner)
 	renderProjectInput("icon", projectFieldIcon)
@@ -17875,7 +17569,6 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 			lines = append(lines, hintStyle.Render("system:"))
 			lines = append(lines, hintStyle.Render("id: "+project.ID))
 			lines = append(lines, hintStyle.Render("slug: "+project.Slug))
-			lines = append(lines, hintStyle.Render("kind: "+string(project.Kind)))
 			lines = append(lines, hintStyle.Render("created_at: "+project.CreatedAt.In(time.Local).Format(time.RFC3339)))
 			lines = append(lines, hintStyle.Render("updated_at: "+project.UpdatedAt.In(time.Local).Format(time.RFC3339)))
 			if project.ArchivedAt != nil {
@@ -19404,43 +19097,6 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter add label • ctrl+u clear • esc close"))
 		return style.Render(strings.Join(lines, "\n"))
 
-	case modeProjectKindPicker:
-		style := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1)
-		if maxWidth > 0 {
-			style = style.Width(clamp(maxWidth, 42, 92))
-		}
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		filterInput := m.projectKindPickerInput
-		filterInput.SetWidth(max(18, min(60, maxWidth-24)))
-		currentKindLabel := string(domain.DefaultProjectKind)
-		if current := domain.NormalizeKindID(domain.KindID(m.projectFormInputs[projectFieldKind].Value())); current != "" {
-			currentKindLabel = m.projectKindDisplayLabel(current, m.projectKindName(current))
-		}
-		lines := []string{
-			titleStyle.Render("Project Kind"),
-			filterInput.View(),
-			hintStyle.Render("current: " + currentKindLabel),
-		}
-		if len(m.projectKindPickerItems) == 0 {
-			lines = append(lines, hintStyle.Render("(no matching project kinds)"))
-		} else {
-			start, end := windowBounds(len(m.projectKindPickerItems), m.projectKindPickerIndex, 12)
-			for idx := start; idx < end; idx++ {
-				item := m.projectKindPickerItems[idx]
-				cursor := "  "
-				if idx == m.projectKindPickerIndex {
-					cursor = "> "
-				}
-				lines = append(lines, cursor+m.projectKindDisplayLabel(item.KindID, item.DisplayName))
-			}
-		}
-		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter choose • ctrl+u clear • esc close"))
-		return style.Render(strings.Join(lines, "\n"))
-
 	case modeDuePicker:
 		style := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -20420,8 +20076,6 @@ func (m Model) modeLabel() string {
 		return "resources"
 	case modeLabelPicker:
 		return "labels"
-	case modeProjectKindPicker:
-		return "project-kinds"
 	case modePathsRoots:
 		return "paths/roots"
 	case modeLabelsConfig:
@@ -20463,9 +20117,9 @@ func (m Model) modePrompt() string {
 	case modeActionItemInfo:
 		return "actionItem info: enter opens selected subtask, d details preview, arrows or j/k scroll, pgup/pgdown/home/end jump, e edit, s new subtask, c thread, [ / ] move, space toggles subtask complete, backspace parent, esc back"
 	case modeAddProject:
-		return "new project: enter saves, i edits description, kind opens picker on enter/e/type, r picks root_path, esc cancels"
+		return "new project: enter saves, i edits description, r picks root_path, esc cancels"
 	case modeEditProject:
-		return "edit project: enter saves, i edits description, kind opens picker on enter/e/type, r picks root_path, comments opens thread, esc cancels"
+		return "edit project: enter saves, i edits description, r picks root_path, comments opens thread, esc cancels"
 	case modeSearchResults:
 		return "search results: j/k select, enter jump, esc close"
 	case modeEmbeddingsStatus:
@@ -20499,8 +20153,6 @@ func (m Model) modePrompt() string {
 		return "resource picker: type fuzzy filter, arrows navigate, enter select, ctrl+a choose/attach current, esc cancel"
 	case modeLabelPicker:
 		return "label picker: type fuzzy filter, j/k select, enter add label, ctrl+u clear, esc cancel"
-	case modeProjectKindPicker:
-		return "project kind picker: type fuzzy filter, j/k select, enter choose, ctrl+u clear filter, esc cancel"
 	case modePathsRoots:
 		return "paths/roots: enter save, r browse dirs, esc cancel"
 	case modeLabelsConfig:
