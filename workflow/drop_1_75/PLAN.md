@@ -260,7 +260,8 @@ Per P10: `search_embeddings_test.go` and `embedding_runtime_test.go` are **not**
 
 ### 1.14 — `scripts/drops-rewrite.sql` rewrite
 
-**State:** todo
+**State:** done
+**Closed:** 2026-04-20
 **Paths:** `scripts/drops-rewrite.sql`
 **Packages:** — (non-Go)
 **Blocked by:** 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13

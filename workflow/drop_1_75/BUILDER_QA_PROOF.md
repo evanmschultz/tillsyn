@@ -592,3 +592,149 @@ N/A — Unit 1.8 is a pure file rename; Hylla's committed-code index predates th
 ### Hylla Feedback
 
 None — Hylla answered everything needed. This combined QA review issued zero Hylla queries. Every question the review asked was one of: (a) does a current-tree file contain a forbidden symbol (`rg` / `Grep` — the PLAN acceptance clauses are phrased as `rg` commands, so `Grep` is the native-parity tool), (b) do mage gates pass right now (only `mage` can answer, not Hylla), (c) does the PLAN.md state read done/closed (`Read` of the non-Go PLAN file — Hylla is Go-only per WIKI), (d) are worklog rounds present (`Grep` on the non-Go BUILDER_WORKLOG file). No Hylla miss logged because no Hylla query would have served these shapes better than the fallback tool. Recording explicit "no miss" stance per WIKI policy.
+
+---
+
+## Unit 1.14 — Round 1 — QA Proof — 2026-04-20
+
+**Verdict:** PASS.
+
+**Scope.** PLAN §1.14 — rewrite of `drop/1.75/scripts/drops-rewrite.sql` from the inherited 296-line main-branch script to a tight 7-phase kind-collapse migration, with 8 end-state assertions, rollback-safe guards, and native SQLite `DROP COLUMN`. Builder reported success with one explicit deviation from PLAN prose: SQLite rejects `SELECT RAISE(ROLLBACK, ...)` at top level (parser error — `RAISE()` only legal inside triggers), so the working guard is the CHECK-on-TEMP-TABLE idiom paired with `.bail on`. Deviation accepted: PLAN wording was incorrect about SQLite grammar; the idiom used achieves the same rollback invariant and is empirically verified below.
+
+### Check 1 — Script file present, approximately 234 lines
+
+- `wc -l drop/1.75/scripts/drops-rewrite.sql` returned `234` (matches builder claim exactly).
+- File read confirms header comment block + 7-phase body + COMMIT + END comment.
+
+PASS.
+
+### Check 2 — All 7 phases present in stated order
+
+`Grep -n` for phase banners:
+
+| Phase | Line | Label |
+|-------|------|-------|
+| 1 | 75 | pre-flight counts (informational; printed by sqlite3) |
+| 2 | 90 | DROP TABLE the template cluster (9 tables) |
+| 3 | 121 | clean the kind catalog |
+| 4 | 130 | drop `kind` column from projects |
+| 5 | 144 | drop legacy `tasks` table |
+| 6 | 149 | unify action_items kind + scope |
+| 7 | 157 | assertion block — 8 end-state invariants |
+
+Phases appear in strict ascending order. Phase 2 correctly sequenced **before** Phase 3 (kind_catalog DELETE) per the Round-5 editorial contract — template_* / node_contract_* / project_template_bindings tables drop first, eliminating the RESTRICT FKs to kind_catalog before the catalog-row delete cascades through `project_allowed_kinds`.
+
+PASS.
+
+### Check 3 — 8 assertions encoded, including both `OR ... IS NULL` arms
+
+- `Grep -c "INSERT INTO drop_1_75_assertions"` returned **8** — matches PLAN §1.14 acceptance list 1:1.
+- `Grep` for `OR .* IS NULL` returned two hits inside the assertion INSERTs: line 209 (`WHERE kind NOT IN ('project','actionItem') OR kind IS NULL`) and line 217 (`WHERE kind_id NOT IN ('project','actionItem') OR kind_id IS NULL`). These correspond to Round-5 O2 (action_items.kind NULL-safe check) and Round-6 F3 Option A (project_allowed_kinds.kind_id NULL-safe check).
+- Cross-reference with PLAN §1.14 acceptance clauses 1–8 (lines 271–278 of PLAN.md) — each clause's query shape appears verbatim as the `(SELECT ...)` body of the matching assertion INSERT.
+
+PASS.
+
+### Check 4 — Native `DROP COLUMN`, not a 12-step rebuild
+
+- Line 141: `ALTER TABLE projects DROP COLUMN kind;` — bare native form, no wrapper.
+- Negative grep for `CREATE TABLE projects_new`, `INSERT INTO projects_new`, `DROP TABLE projects;` returned **zero** matches.
+- Negative grep for `PRAGMA foreign_keys = OFF` returned **one** hit at line 137, which is inside a comment explicitly documenting the *absence* of the wrapper ("No PRAGMA foreign_keys = OFF/ON wrapper: PRAGMA foreign_keys inside an open BEGIN TRANSACTION is a silent no-op per SQLite docs"). The comment is explanatory, not executable. No OFF/ON wrapper exists in actual SQL statements.
+
+PASS.
+
+### Check 5 — `.bail on` directive present
+
+Line 68: `.bail on` appears as the first non-comment directive, before `PRAGMA foreign_keys = ON;` and `BEGIN TRANSACTION`. Required for CLI rollback semantics — without it, sqlite3 CLI continues past a CHECK-constraint error and the trailing COMMIT commits every statement that ran before the failure (builder empirically verified this during Round 1 development).
+
+PASS.
+
+### Check 6 — Single-transaction boundary
+
+- `BEGIN TRANSACTION` appears exactly once at line 72.
+- `COMMIT` appears exactly once at line 230.
+- No nested BEGIN, no intermediate COMMIT, no ROLLBACK statement. Every DDL + DML statement between line 72 and line 230 lives inside one transaction. On CHECK-constraint failure + `.bail on` abort, the BEGIN-open transaction is left un-COMMITted and SQLite rolls it back when the connection closes.
+
+PASS.
+
+### Check 7 — Re-run verification against fresh copy of `~/.tillsyn/tillsyn.db`
+
+Ran: `rm -f /tmp/verify_drop_1_75_qa.db && cp ~/.tillsyn/tillsyn.db /tmp/verify_drop_1_75_qa.db && sqlite3 /tmp/verify_drop_1_75_qa.db < scripts/drops-rewrite.sql`
+
+**Exit code:** `0`.
+
+**Script output diagnostics (pre-flight counts):** projects=2, action_items=115, kind_catalog=21, project_allowed_kinds=20, template_libraries=2, template_node_templates=16, template_child_rules=74, project_template_bindings=0, node_contract_snapshots=0, tasks_legacy=0, projects_kind_col=1 — matches builder's Round 1 snapshot exactly.
+
+**Script-emitted assertion rows (all `expected|actual` equal):**
+
+- `assert:kind_catalog_rows_equals_2|2|2`
+- `assert:template_percent_tables_gone|0|0`
+- `assert:node_contract_percent_tables_gone|0|0`
+- `assert:project_template_bindings_gone|0|0`
+- `assert:tasks_table_gone|0|0`
+- `assert:projects_kind_column_gone|0|0`
+- `assert:action_items_kinds_canonical|0|0`
+- `assert:project_allowed_kinds_canonical|0|0`
+
+**Independent re-run of the 8 PLAN §1.14 acceptance queries** against the post-script DB (separate `sqlite3` invocation, not the script's own echo):
+
+| # | PLAN Query | Expected | Observed |
+|---|------------|----------|----------|
+| 1 | `SELECT COUNT(*) FROM kind_catalog` | 2 | **2** |
+| 2 | `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'template_%'` | 0 | **0** |
+| 3 | `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'node_contract_%'` | 0 | **0** |
+| 4 | `SELECT COUNT(*) FROM sqlite_master WHERE name = 'project_template_bindings'` | 0 | **0** |
+| 5 | `SELECT COUNT(*) FROM sqlite_master WHERE name = 'tasks'` | 0 | **0** |
+| 6 | `SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'kind'` | 0 | **0** |
+| 7 | `SELECT COUNT(*) FROM action_items WHERE kind NOT IN ('project','actionItem') OR kind IS NULL` | 0 | **0** |
+| 8 | `SELECT COUNT(*) FROM project_allowed_kinds WHERE kind_id NOT IN ('project','actionItem') OR kind_id IS NULL` | 0 | **0** |
+
+**Schema confirmation** — post-script `sqlite_master.sql` for `projects` is a 9-column table (`id, slug, name, description, metadata_json, created_at, updated_at, archived_at`) with **no `kind` column**. This confirms Phase 4's native DROP COLUMN actually mutated the schema (not just the script's assertion echo).
+
+**kind_catalog content** — exactly `{actionItem, project}`, matching the Phase 3 `NOT IN ('project', 'actionItem')` retention set.
+
+**Cleanup:** `rm -f /tmp/verify_drop_1_75_qa.db` — verified removed.
+
+PASS. Verification exactly reproduces builder's Round 1 observation.
+
+### Check 8 — PLAN.md §1.14 state lines
+
+PLAN.md lines 263–264 (§1.14 header at line 261):
+
+- `**State:** done`
+- `**Closed:** 2026-04-20`
+
+Both lines present, in the expected position under the §1.14 header, before the `### 1.15` header at line 291.
+
+PASS.
+
+### Deviation review — CHECK-on-TEMP-TABLE vs `SELECT RAISE(ROLLBACK, ...)`
+
+Builder flagged that PLAN §1.14 acceptance clause 9 says "Rollback on assertion failure (via `BEGIN TRANSACTION` + `SELECT RAISE(ROLLBACK, ...)` guards)." This wording is incorrect — `RAISE()` is only legal inside a trigger program, and `sqlite3` rejects top-level `SELECT RAISE(...)` with a parser error. The implemented idiom (CHECK-on-TEMP-TABLE + `.bail on`) achieves the same observable invariant: any assertion failure prevents COMMIT and SQLite rolls the transaction back. Builder documented the deviation explicitly (script header comment lines 24–31, worklog Surprises #1 and #2) and verified the rollback path empirically (deliberate-failure probe: exit 1, DB pristine post-rollback — templates restored, tasks restored, projects.kind restored).
+
+This is a forced engineering correction to a spec inaccuracy, not a spec violation. Not a finding. Flag for PLAN §1.14 editorial touch-up if that unit is revisited, but the migration script is correct.
+
+### 1. Findings
+
+- None. All 8 proof-completeness checks pass with concrete evidence.
+
+### 2. Missing Evidence
+
+- None.
+
+### 3. Summary
+
+**PASS.** The Round 1 rewrite of `drop/1.75/scripts/drops-rewrite.sql` satisfies every PLAN §1.14 clause:
+- 234-line 7-phase script with phases correctly ordered (template drop → kind_catalog delete → projects.kind drop → tasks drop → action_items unify → assertions).
+- All 8 assertions encoded in Phase 7, both NULL-safe arms present.
+- Native `ALTER TABLE projects DROP COLUMN kind` (no 12-step rebuild, no PRAGMA foreign_keys OFF wrapper).
+- `.bail on` + `BEGIN TRANSACTION` / `COMMIT` pair give correct rollback semantics under the sqlite3 CLI.
+- Independent re-run against a fresh copy of `~/.tillsyn/tillsyn.db` reproduced exit=0, all 8 assertions green with matching `expected|actual` pairs, post-script schema matches expectations (projects.kind column gone, kind_catalog reduced to `{actionItem, project}`, templates/tasks tables gone).
+- PLAN.md §1.14 `**State:** done` / `**Closed:** 2026-04-20` lines present.
+
+Only deviation from PLAN prose — CHECK-on-TEMP-TABLE idiom vs the spec's incorrect `SELECT RAISE(ROLLBACK, ...)` phrasing — is a forced correction for a SQLite grammar constraint, documented by builder, empirically rollback-verified. Not a finding.
+
+Orchestrator is clear to advance to Unit 1.15 (drop-end `mage ci` + push + CI watch) pending the QA Falsification sibling pass.
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only (`scripts/drops-rewrite.sql` + `PLAN.md` + `BUILDER_WORKLOG.md`). Hylla is Go-only per WIKI / project rule. Every question this review asked — SQL grammar, file line count, phase ordering, PLAN state lines, live sqlite3 behavior against dev DB — was shape-matched to `Read` / `Grep` / `Bash(sqlite3)`. No Hylla query would have served any of these shapes better than the fallback tool. Recording explicit N/A per WIKI policy.

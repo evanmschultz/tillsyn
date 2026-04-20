@@ -809,3 +809,68 @@ None. The task brief anticipated "inline per-test seeding IF a broader helper se
 
 None — Hylla answered everything needed. No Hylla queries issued this round. All queries were exact-symbol structural reads (test-file fixture helpers, `UpsertKindDefinition` signature, `KindDefinition` struct shape, sqlite schema bootstrap, `resolveProjectAllowedKinds` fallback logic) — shapes that are faster via `Grep` + `Read` than via Hylla vector/keyword search. Recording the explicit "no miss" stance per WIKI.md policy.
 
+## Unit 1.14 — Round 1
+
+**Date:** 2026-04-20
+**Outcome:** success
+**Files touched:** `drop/1.75/scripts/drops-rewrite.sql` (rewrite).
+
+### Input file state
+
+- `drop/1.75/scripts/drops-rewrite.sql` pre-edit: 296 lines, 13 phases (the inherited main-branch multi-phase script — same content as `main/scripts/drops-rewrite.sql`). Targeted pre-collapse schema: `work_items` table, legacy doomed-project deletes (TILLSYN-OLD, HYLLA_OLD), Sjal unbind, role hydration via `metadata.role`, kind collapse to `drop`/`task`, project.kind normalization.
+- Inherited phases are obsolete for Drop 1.75: dev pre-drop cleanup (2026-04-18) already purged doomed projects and left `action_items` (renamed from `work_items` on that date) at uniform `kind='task', scope='task'`. Drop 1.75 target kind is `actionItem`, not `drop`.
+- `main/scripts/drops-rewrite.sql`: 296 lines, identical content. Drop 1.75's rewrite lives only in `drop/1.75/scripts/drops-rewrite.sql` (the drop branch), not in `main/`.
+
+### Output file state
+
+- `drop/1.75/scripts/drops-rewrite.sql` post-edit: 234 lines, 7 phases (pre-flight counts → template cluster drop → kind_catalog cleanup → `ALTER TABLE projects DROP COLUMN kind` → `DROP TABLE tasks` → `UPDATE action_items` → assertion block). All Round-5 O1/O2, Round-6 F3, Round-7 F1/F2 decisions encoded per PLAN §1.14.
+- Net reduction ~62 lines. Removed inherited phases: legacy-project deletes, Sjal unbind, `drop` kind seed, role hydration (8 subphases 6a-6h), project.kind normalization. Added: 7-phase structure, Phase 2 ordered-by-FK template drop (9 tables), Phase 4 native SQLite `DROP COLUMN` (Round-7 F2), expanded CHECK-on-TEMP-TABLE assertion block (8 invariants, SQL 3-valued-logic-safe predicates).
+- Sibling `drop/1.75/scripts/rename-task-to-actionitem.sql` untouched (already-shipped pre-Drop-1.75 table rename; not this unit's scope).
+
+### Verification DB used
+
+`cp ~/.tillsyn/tillsyn.db /tmp/verify_drop_1_75.db` — the **real dev DB copy**. No synthetic fixture needed; dev DB was accessible. Pre-script snapshot:
+
+- projects: 2
+- action_items: 115 (all `kind='task', scope='task'`)
+- kind_catalog: 21 rows (every legacy kind plus `actionItem` already present from pre-Drop-1.75 rename)
+- project_allowed_kinds: 20 rows (one per kind_catalog row except `actionItem`)
+- template_libraries: 2, template_node_templates: 16, template_child_rules: 74
+- tasks (legacy empty table): 0 rows, present
+- projects.kind column: present
+
+### 8 acceptance assertions observed (post-script run)
+
+All matched PLAN §1.14 expected values against the dev DB copy:
+
+| # | Query | Expected | Observed |
+|---|-------|----------|----------|
+| A1 | `SELECT COUNT(*) FROM kind_catalog` | 2 | **2** |
+| A2 | `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'template_%'` | 0 | **0** |
+| A3 | `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'node_contract_%'` | 0 | **0** |
+| A4 | `SELECT COUNT(*) FROM sqlite_master WHERE name = 'project_template_bindings'` | 0 | **0** |
+| A5 | `SELECT COUNT(*) FROM sqlite_master WHERE name = 'tasks'` | 0 | **0** |
+| A6 | `SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'kind'` | 0 | **0** |
+| A7 | `SELECT COUNT(*) FROM action_items WHERE kind NOT IN ('project','actionItem') OR kind IS NULL` | 0 | **0** |
+| A8 | `SELECT COUNT(*) FROM project_allowed_kinds WHERE kind_id NOT IN ('project','actionItem') OR kind_id IS NULL` | 0 | **0** |
+
+Script exit code 0 on the happy path. Diagnostic post-state: 115 action_items all at `actionItem/actionItem`, kind_catalog = `{actionItem, project}`, the one surviving allowlist row is tillsyn's `project` entry (the `go-project` row CASCADE-deleted via `project_allowed_kinds.kind_id → kind_catalog(id) ON DELETE CASCADE` when `go-project` was deleted from kind_catalog; `actionItem` was never in project_allowed_kinds and so has no entry for tillsyn).
+
+### Rollback semantics verified
+
+Second run with a deliberately-corrupted expected value (`expected=999` for the kind_catalog count assertion) in a side-loaded variant of the script confirmed end-to-end rollback:
+
+- sqlite3 reported `Runtime error near line 31: CHECK constraint failed: expected = actual (19)`, exit 1.
+- Post-rollback DB state: PRISTINE. templates present (5 rows in sqlite_master), tasks present, projects.kind present, action_items all still at `kind='task'`, kind_catalog still 21 rows, project_allowed_kinds still 20 rows. Every DDL and DML statement that executed before the failure was reverted.
+
+### Surprises
+
+1. **`RAISE(ROLLBACK, ...)` at top level is a SQLite parse error.** PLAN §1.14 Acceptance phrased the guard as "`BEGIN TRANSACTION` + `SELECT RAISE(ROLLBACK, ...)` guards". First implementation followed that phrasing literally and sqlite3 rejected it with `Parse error near line N: RAISE() may only be used within a trigger-program` on 8 separate lines. `RAISE()` is only legal inside a trigger body, not in top-level statements. Switched to the CHECK-on-TEMP-TABLE idiom from the prior main-branch script — each assertion is a labeled row in `drop_1_75_assertions (label, expected, actual, CHECK(expected = actual))`; a mismatched INSERT raises the CHECK-constraint error. PLAN comment should be updated to reflect the working idiom — the TEMP TABLE CHECK is what the prior script used and what works.
+2. **`.bail on` is required for rollback to work under sqlite3 CLI.** Initial CHECK-on-TEMP-TABLE implementation also failed rollback: sqlite3 CLI default behavior is to continue past a CHECK-constraint error — the failed INSERT is reverted but the transaction stays open, so the trailing `COMMIT` commits every DDL/DML statement that ran before the failure. Confirmed empirically: without `.bail on`, post-rollback DB showed `tasks` table gone + action_items flipped to `actionItem` despite the CHECK firing. Adding `.bail on` at the top of the script makes the CLI abort on the first error, leaving the transaction unwrapped-by-COMMIT, and SQLite rolls it back when the connection closes. Explicitly verified both paths (bail-on happy path: exit 0, all assertions pass; bail-on failure path: exit 1, DB pristine).
+3. **F3 Option A assertion is a no-op guard under the current schema.** `project_allowed_kinds.kind_id → kind_catalog(id) ON DELETE CASCADE` means the Phase 3 `DELETE FROM kind_catalog` CASCADE-clears every allowlist row pointing at a deleted legacy kind. The assertion only fires under future schema drift (someone removes the CASCADE, or adds a kind_id value not FK'd). PLAN §1.14 already describes it as "diagnostic-first"; this worklog entry records the empirical confirmation.
+4. **DDL-in-transaction works fine in SQLite.** Contra some historical docs about older SQLite versions, `BEGIN TRANSACTION` → multi-DROP-TABLE + ALTER TABLE DROP COLUMN + DML → COMMIT works correctly in SQLite 3.51.0, and ROLLBACK reverts DDL changes too (verified by the deliberate-failure probe above — dropped `template_%` tables and `tasks` table were restored after rollback).
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only (`scripts/drops-rewrite.sql`). Hylla indexes Go only today per the project rule.
+
