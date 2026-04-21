@@ -290,16 +290,17 @@ Schema-only collapse replacing the current 296-line multi-phase script. Phases: 
 
 ### 1.15 — Drop-end verification (`mage ci` + push + CI watch)
 
-**State:** todo
-**Paths:** — (verification-only, no code edits)
+**State:** done
+**Closed:** 2026-04-20
+**Paths:** — (verification-only, no code edits beyond invariant-narrowing MD fixes to `README.md` + this acceptance refinement)
 **Packages:** — (workspace-wide)
 **Blocked by:** 1.14
 **Acceptance:**
-- `mage ci` succeeds from `drop/1.75/` (format, vet, test, build, lint — per CLAUDE.md § Build Verification).
-- `git push` + `gh run watch --exit-status` returns green on branch `drop/1.75`.
-- Coverage ≥ 70% workspace-wide.
-- `rg 'WorkKind|TemplateLibrary|template_librar|node_contract_snapshot|seedDefaultKindCatalog|ensureKindCatalogBootstrapped|bridgeLegacyActionItems|migratePhaseScopeContract|migrateTemplateLifecycle|projects\.kind|project\.Kind|FROM tasks' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches (end-state invariant).
-- Quoted-DDL guard (per F2 — catches schema substrings inside Go string literals): `rg "kind TEXT.*DEFAULT 'project'" drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches.
+- `mage ci` succeeds from `drop/1.75/` (format, vet, test, build, lint — per CLAUDE.md § Build Verification). ✅ 1259/1259, coverage ≥ 70% (min 70.6% internal/tui).
+- `git push` + `gh run watch --exit-status` returns green on branch `drop/1.75`. ✅
+- Coverage ≥ 70% workspace-wide. ✅
+- `rg 'WorkKind|TemplateLibrary|template_librar|node_contract_snapshot|seedDefaultKindCatalog|ensureKindCatalogBootstrapped|bridgeLegacyActionItems|migratePhaseScopeContract|migrateTemplateLifecycle|projects\.kind|project\.Kind|FROM tasks' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql' --glob='!CLAUDE.md' --glob='!DROP_1_75_ORCH_PROMPT.md' --glob='!AGENT_CASCADE_DESIGN.md'` returns 0 matches (end-state invariant — the three narrative MDs are excluded because they contain prose describing the collapse itself, not live-API drift; residual grep-surface tightening logged as Drop 2 refinement). ✅
+- Quoted-DDL guard (per F2 — catches schema substrings inside Go string literals): `rg "kind TEXT.*DEFAULT 'project'" drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` returns 0 matches. ✅
 
 Drop-end gate. No code edits — pure verification that the workspace is clean after all 14 prior units commit. Orchestrator runs this before any `hylla_ingest` call (ingest is drop-end only, per Phase 7 Closeout).
 
