@@ -874,3 +874,107 @@ Second run with a deliberately-corrupted expected value (`expected=999` for the 
 
 N/A — task touched non-Go files only (`scripts/drops-rewrite.sql`). Hylla indexes Go only today per the project rule.
 
+## Unit 1.15 — Drop-end verification — Round 1 (2026-04-20)
+
+**Status at round close:** STOPPED pre-push, routing back to orchestrator. `mage ci` PASSED but PLAN §1.15 invariant grep bullet #1 FAILED with 6 matches in 4 top-level MDs. The failure is MD documentation drift, not Go code drift; resolving it expands scope past the "verification-only, no code edits" Paths field for this unit. Orchestrator decision needed.
+
+### Gofumpt drift fix
+
+`mage format .` surfaced exactly the pre-flight drift flagged by Units 1.10–1.13 QA Falsification:
+
+- `internal/tui/model.go` — struct-field-alignment drift in the `Model` struct (lines 855–859, the `labelPicker*` block). 10 lines touched, 5+/5−.
+- `internal/tui/model_test.go` — double blank line before `TestFullPageSurfaceMetricsIgnoreGlobalStatusHeight` collapsed to single blank (1 line, 0+/1−).
+
+Pure whitespace / alignment. Staged both files and committed as the pre-authorized single format commit:
+
+```
+9589c97 style(drop-1-75): apply gofumpt drift fix
+```
+
+### `mage ci` verdict — green
+
+Ran `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/drop/1.75/`. Each stage passed:
+
+- **Sources**: tracked sources verified.
+- **Formatting**: gofumpt clean post-fix.
+- **Coverage**: 1259 tests across 20 packages, 0 failures, 0 skipped. Minimum package coverage threshold 70.0% met.
+
+  | Package                                                   | Cover |
+  |-----------------------------------------------------------|-------|
+  | internal/adapters/embeddings/fantasy                       | 90.6% |
+  | internal/buildinfo                                         | 100.0% |
+  | internal/config                                            | 76.8% |
+  | internal/platform                                          | 78.0% |
+  | internal/tui/gitdiff                                       | 85.1% |
+  | internal/adapters/server/httpapi                           | 88.4% |
+  | internal/adapters/server/common                            | 73.0% |
+  | internal/adapters/auth/autentauth                          | 73.0% |
+  | internal/adapters/storage/sqlite                           | 75.0% |
+  | internal/domain                                            | 78.2% |
+  | internal/app                                               | 71.2% |
+  | internal/adapters/livewait/localipc                        | 79.4% |
+  | internal/adapters/server/mcpapi                            | 72.4% |
+  | cmd/till                                                   | 76.6% |
+  | internal/tui                                               | 70.6% |
+
+  Lowest: `internal/tui` at 70.6% — above the 70% floor. Highest: `internal/buildinfo` at 100.0%.
+
+- **Build**: `./till` binary compiled cleanly from `./cmd/till`.
+
+Exit 0.
+
+### End-state invariant greps — FAILED grep #1, PASSED grep #2
+
+**Grep #2 (F2 quoted-DDL guard):** `kind TEXT.*DEFAULT 'project'` in `drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` → **0 matches**. PASS.
+
+**Grep #1 (code symbol + schema invariant):** `WorkKind|TemplateLibrary|template_librar|node_contract_snapshot|seedDefaultKindCatalog|ensureKindCatalogBootstrapped|bridgeLegacyActionItems|migratePhaseScopeContract|migrateTemplateLifecycle|projects\.kind|project\.Kind|FROM tasks` in `drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql'` → **6 matches across 4 files**. FAIL per the literal "0 matches" acceptance.
+
+| File | Line | Match | Nature |
+|------|------|-------|--------|
+| CLAUDE.md | 28 | `template_libraries` (prose) | Meta-reference: describes the collapse itself |
+| DROP_1_75_ORCH_PROMPT.md | 22 | `template_libraries` (prose) | Meta-reference: drop-orch brief describing scope |
+| AGENT_CASCADE_DESIGN.md | 603 | `template_libraries` (drop-catalog row) | Meta-reference: drop-catalog description |
+| README.md | 267 | `template_library_id` (MCP arg example) | Stale live-API doc |
+| README.md | 354 | `template_library_id=` (CLI/MCP call example) | Stale live-API doc |
+| README.md | 392 | `template_library_id` (focus-scope example) | Stale live-API doc |
+
+Zero Go code matches (confirmed via `rg 'template_library_id' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql' --glob='!README.md'` → no matches). The 3 README.md hits are genuine documentation drift left behind by earlier Drop 1.75 excision units (they describe the `template_library_id` MCP/CLI argument as though live). The 3 other MD hits describe the collapse itself and may be intentional narrative prose.
+
+### Decision point — routed back to orchestrator
+
+The invariant grep's literal zero-tolerance fails. Fixing it requires MD edits in 4 top-level docs (CLAUDE.md, README.md, DROP_1_75_ORCH_PROMPT.md, AGENT_CASCADE_DESIGN.md) that fall outside Unit 1.15's `Paths: —` scope ("verification-only, no code edits"). Per spawn discipline — "If `mage ci` fails in a way that would require a new build-task, STOP and route back to orchestrator — do NOT expand scope" — I interpret "MD doc cleanup of 4 root-level architecture files" as scope expansion past this unit's brief. Routing back.
+
+**No push attempted.** `git push` + `gh run watch --exit-status` deferred until the grep bullet is resolved (whether by MD edit in a follow-up unit or by a PLAN.md acceptance-bullet refinement excluding top-level MDs).
+
+**PLAN.md §1.15 state:** left at `in_progress`. Not flipped to `done` because drop-end verification is not complete.
+
+**Commits this round:** 1 (`9589c97 style(drop-1-75): apply gofumpt drift fix`).
+**Push SHA:** N/A (no push).
+**CI run URL:** N/A (no push).
+**`gh run watch` exit status:** N/A (not invoked).
+
+### Hylla Feedback
+
+N/A — unit touched zero Go files (format fix was pure whitespace applied by `mage format`; verification is grep- and mage-driven). Hylla indexes Go only today.
+
+## Unit 1.15 — Round 2 (orchestrator-driven)
+
+**Orchestrator decision (Option A):** after QA/triage presented the 6-hit breakdown, dev approved splitting the verdict — fix the 3 README.md live-API drift hits directly, preserve the 3 narrative meta-references (CLAUDE.md:28 "Pre-Drop-1.75 Creation Rule" section, DROP_1_75_ORCH_PROMPT.md:22 drop-orch brief, AGENT_CASCADE_DESIGN.md:603 drop-catalog row), refine the §1.15 invariant grep to exclude those three narrative files, and log invariant surface-tightening as a Drop 2 refinement.
+
+**Orchestrator edits (MD-only, per `feedback_orchestrator_no_build.md` allowance):**
+- `README.md:267` — removed `, template_library_id` from scoped-explanation arg list. Also removed `template|` from the adjacent `focus=` enumeration since the `template` focus value is no longer a live scope post-1.75.
+- `README.md:354` — removed `, template_library_id="go-defaults"` from the `till.project(operation=create, ...)` example.
+- `README.md:392` — removed `, template_library_id` from scoped-rules arg list. Also removed `template|` from the `focus=` enumeration.
+- `PLAN.md §1.15` — invariant grep acceptance line updated with `--glob='!CLAUDE.md' --glob='!DROP_1_75_ORCH_PROMPT.md' --glob='!AGENT_CASCADE_DESIGN.md'`, with comment explaining the narrative-exclusion rationale.
+
+**Post-edit invariant re-run (refined):** `rg '...|template_librar|...|project\.Kind|FROM tasks' drop/1.75/ --glob='!workflow/**' --glob='!scripts/drops-rewrite.sql' --glob='!CLAUDE.md' --glob='!DROP_1_75_ORCH_PROMPT.md' --glob='!AGENT_CASCADE_DESIGN.md'` → **0 matches**. PASS.
+
+**Broader README template-library prose (not fixed this round):** README.md lines 273-366 contain an extensive "Template-library operator examples" section describing `till template ...` CLI commands, `till.template` MCP operations, and template-binding lifecycle prose that is all dead post-1.75. Out of scope for this invariant fix; logged as a Drop 2 refinement alongside the grep-surface tightening.
+
+**PLAN.md §1.15 state:** flipped to `done` + `Closed: 2026-04-20`. Drop-end verification complete after push + CI watch.
+
+**Commits this round (to be made next):** 1 — README.md + PLAN.md + BUILDER_WORKLOG.md combined ("docs(drop-1-75): remove stale template_library_id from README; refine §1.15 invariant").
+
+**Hylla Feedback:** N/A — orchestrator MD-only round, no Go code touched.
+
+

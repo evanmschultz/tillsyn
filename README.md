@@ -264,7 +264,7 @@ Current auth note:
 - Bootstrap/instructions status:
   - `till.get_instructions(topic=bootstrap)` is now the canonical richer bootstrap explanation surface.
   - `till.get_bootstrap_guide` remains the dedicated lightweight compatibility wrapper on the frozen MCP family.
-  - the current scoped explanation surface already accepts optional `project_id`, `template_library_id`, `kind_id`, and `node_id` plus `focus=project|template|kind|node|topic`.
+  - the current scoped explanation surface already accepts optional `project_id`, `kind_id`, and `node_id` plus `focus=project|kind|node|topic`.
   - project scope now explains project standards, allowed kinds, template binding, and project-local workflow expectations.
   - template scope now explains node-template descriptions, child rules, responsible actor kinds, blocker rules, and migration/reapply context.
   - branch/phase/actionItem/subtask scope now explains the concrete node's description plus metadata fields such as objective, implementation notes, acceptance criteria, definition of done, and validation plan, together with any stored node-contract snapshot.
@@ -351,7 +351,7 @@ Template-library operator examples:
   - and the remaining follow-through has shifted from missing TUI reapply UX to broader dogfood hardening and live parity on the refreshed runtime.
 - CLI examples:
   - `till project create --name "Go Service" --kind go-service --template-library-id go-defaults`
-  - `till.project(operation=create, name="Go Service", kind="go-service", template_library_id="go-defaults", ...)`
+  - `till.project(operation=create, name="Go Service", kind="go-service", ...)`
   - `till template library list --scope global --status approved`
   - `till template builtin status --library-id default-go`
   - `till template builtin ensure --library-id default-go`
@@ -389,7 +389,7 @@ Instruction-tool usage guidance:
 - Descriptions/details and comment summary/body fields are markdown-first authoring surfaces.
 - Keep active execution state in Tillsyn itself; markdown docs are for durable policy/documentation, not live coordination or worklogs.
 - When agent workflow policy changes, update `AGENTS.md`, any tracked `CLAUDE.md`, and the bootstrap/instructions docs together.
-- Use `focus=project|template|kind|node` with `project_id`, `template_library_id`, `kind_id`, or `node_id` when you need scoped rules for a real runtime object instead of generic doc guidance.
+- Use `focus=project|kind|node` with `project_id`, `kind_id`, or `node_id` when you need scoped rules for a real runtime object instead of generic doc guidance.
 - For actionItem sequencing today, use `depends_on`, `blocked_by`, and `blocked_reason` to express prerequisite order and keep downstream work from starting too early; visual reordering can remain a later enhancement but should not replace explicit dependency intent.
 
 Roadmap-only in the active wave (explicitly deferred):
