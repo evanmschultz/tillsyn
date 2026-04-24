@@ -19,6 +19,7 @@ drops/
 │   └── CLOSEOUT.md
 ├── DROP_N_<NAME>/
 │   ├── PLAN.md                     # durable
+│   ├── _BLOCKERS.toml              # durable — sibling blocked_by ledger (only at dirs with >1 immediate child)
 │   ├── PLAN_QA_PROOF.md            # transient — git rm between rounds
 │   ├── PLAN_QA_FALSIFICATION.md    # transient — git rm between rounds
 │   ├── BUILDER_WORKLOG.md          # durable
@@ -34,6 +35,7 @@ drops/
 | File | Lifecycle | Owner |
 |---|---|---|
 | `PLAN.md` | **durable** — refined across plan-QA rounds; final at close | planner subagent edits, orch + builder + QA read |
+| `_BLOCKERS.toml` | **durable** — present only at dirs with >1 immediate child; mirrors inline `Blocked by:` bullets from `PLAN.md` | planner subagent writes, orch + builder + QA read |
 | `PLAN_QA_PROOF.md` | **transient** — `git rm` between plan-QA rounds | qa-proof subagent writes |
 | `PLAN_QA_FALSIFICATION.md` | **transient** — `git rm` between plan-QA rounds | qa-falsification subagent writes |
 | `BUILDER_WORKLOG.md` | **durable** — append `## Droplet N.M — Round K` per build attempt | builder subagent appends |
@@ -52,6 +54,32 @@ When a planner decides a droplet is not yet atomic (too many files, too many pac
 Naming: dotted levels (`DROP_1.2.3_<NAME>`). Maximum nesting: unlimited in principle; 3–4 levels in practice before the planner should reconsider whether the parent drop's scope is right-sized.
 
 A parent drop cannot close while any sub-drop is incomplete.
+
+### `_BLOCKERS.toml` — Sibling Blocker Ledger
+
+Every dir with more than one immediate child (sub-drops OR droplets) carries a `_BLOCKERS.toml` file. Scope: **immediate children of this dir only** — cross-level blockers ride on the parent-close-waits-for-child rule, not on this file.
+
+Shape:
+
+```toml
+# _BLOCKERS.toml — drops/DROP_N_<NAME>/
+# Immediate-children sibling blocker ledger.
+
+[[blockers]]
+node = "1.3"                 # droplet ID (or sub-drop dir name)
+blocked_by = ["1.1", "1.2"]
+reason = "file foo.go written by 1.1, test harness set up by 1.2"
+```
+
+**Today this file is a coordination hint.** The planner writes it; orch and build-QA read it to check the dispatch graph at a glance; humans and LLMs enforce the discipline. The file mirrors the inline `Blocked by:` bullets in each droplet's `PLAN.md` row — if the two disagree, `PLAN.md` is truth and `_BLOCKERS.toml` is stale (regenerate from `PLAN.md`).
+
+**In MD-folder-only mode (no coordination runtime), `_BLOCKERS.toml` is always a coordination hint.** Discipline is human/LLM-enforced — the planner populates it, orch and build-QA consult it, dev adjudicates conflicts. No runtime blocks `in_progress` transitions for you.
+
+**When this project sits alongside a coordination runtime** (in the tillsyn-native flavor: Tillsyn Drop 1 promotes `paths` / `packages` to first-class `ActionItem` domain fields; Tillsyn Drop 4 ships the dispatcher that hard-refuses `in_progress` transitions while any `blocked_by` entry is still unresolved), `_BLOCKERS.toml` becomes the one-shot migration source at migration time: each `[[blockers]]` row loads into the runtime `blocked_by` field. **Migration is two-step:** (1) regenerate the TOML from `PLAN.md` inline bullets so the two are guaranteed in sync, (2) then load into the runtime. Never import the TOML directly without the sync step — stale TOML could install a regression the moment runtime enforcement turns on.
+
+**Format choice.** TOML (not YAML, not MD): strict parser catches typos early, `[[blockers]]` array-of-tables is readable without indent anxiety, and — for projects that sit alongside a Go coordination runtime — the `pelletier/go-toml/v2` dependency is already in the stack.
+
+**Cross-subtree leaf-level ordering is NOT expressible in `_BLOCKERS.toml`.** When a leaf in sub-tree A needs to wait on a specific leaf in sub-tree B, the common-ancestor `_BLOCKERS.toml` can only name immediate children (the sub-trees themselves, not leaves inside). When this arises, the planner escalates the dependency to the nearest-common-ancestor-immediate-children pair — a coarser block with a larger blast radius — or refactors package boundaries so the leaf-level dependency becomes same-subtree. YAGNI for rare cross-subtree leaf cases; if they show up often, that's signal the decomposition wants reshaping.
 
 ## Phase Order
 
@@ -116,7 +144,7 @@ If `~/.claude/agents/*.md` change in a way that conflicts with the override (e.g
 3. Planner decides: decompose into **droplets** directly OR decompose into **sub-drops** that will themselves be planned.
    - **Droplets**: fills `## Planner` section in the drop's `PLAN.md` with droplets (`N.1`, `N.2`, …), each with `paths`, `packages`, `acceptance`, `blocked_by`, `state: todo`.
    - **Sub-drops**: fills `## Planner` section with sub-drop container rows (`N.1`, `N.2`, …), each with a stub directory reference. Orch then loops Phase 1 for each sub-drop, spawning a sub-planner per sub-drop. Sub-planners run in parallel when their scope doesn't overlap.
-4. Planner returns control. Orch commits the plan (`docs(drop-N): planner decompose into K droplets` or `... into K sub-drops`).
+4. Planner returns control. Orch commits the plan (`docs(drop-N): planner decompose into K droplets` or `... into K sub-drops`). **If the planner emitted ≤1 immediate child at this dir** (single droplet, or single sub-drop), **orch `git rm`s the template-stamped `_BLOCKERS.toml`** in the same commit — the sibling-blocker ledger is present only at dirs with >1 immediate child (see § "`_BLOCKERS.toml` — Sibling Blocker Ledger"). Multi-child dirs: orch leaves the file in place for the planner to populate (or planner has already populated it inline with the plan).
 5. **Droplets sharing a package MUST have explicit `blocked_by`** between them. A package is one compile unit; parallel builders on the same package trip over each other's test runs. Plan QA (Phase 2) attacks missing blockers.
 6. Move to Phase 2.
 
@@ -126,7 +154,7 @@ If `~/.claude/agents/*.md` change in a way that conflicts with the override (e.g
 
 1. Orch spawns a QA proof agent and a QA falsification agent **in parallel** with the preamble from § "Agent Spawn Contract" + plan-QA appendix from § "Per-Role Spawn Appendices". Each reads the drop's `PLAN.md`, `CLAUDE.md`, project-root `PLAN.md`, this file. Each writes its own file:
    - QA proof → `PLAN_QA_PROOF.md` with verdict (`pass` / `fail`) + findings
-   - QA falsification → `PLAN_QA_FALSIFICATION.md` with verdict + counterexamples
+   - QA falsification → `PLAN_QA_FALSIFICATION.md` with verdict + counterexamples. Required attacks include: missing `blocked_by` between droplets sharing a file or package; cycles in `blocked_by`; `_BLOCKERS.toml` / `PLAN.md` drift — every `Blocked by:` bullet in `PLAN.md` must have a matching `[[blockers]]` row and vice-versa (`PLAN.md` is truth; stale TOML must regenerate from `PLAN.md`).
 2. Disjoint files, no merge race. Both subagents return verdicts to orch via the `Agent` tool result.
 3. Orch commits both QA outputs (`docs(drop-N): plan qa round K`).
 4. **Global L1 sweep** (cascade depth ≥ 3): when a deep planner tree closes plan-QA at its local node, the level-1 planner is re-QA'd with the full descendant tree in scope. This catches cross-subtree contradictions (e.g. two sub-planners under different L1 siblings both claiming ownership of the same file). If global sweep fails, the L1 plan is revised — downstream planners may or may not need re-running depending on whether the revision touches their scope.

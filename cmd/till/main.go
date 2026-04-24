@@ -137,61 +137,6 @@ type kindAllowlistCommandOptions struct {
 	kindIDs   []string
 }
 
-// templateLibraryListCommandOptions stores template library list flag values.
-type templateLibraryListCommandOptions struct {
-	scope     string
-	projectID string
-	status    string
-}
-
-// templateLibraryShowCommandOptions stores template library show flag values.
-type templateLibraryShowCommandOptions struct {
-	libraryID string
-}
-
-// templateLibraryUpsertCommandOptions stores template library upsert flag values.
-type templateLibraryUpsertCommandOptions struct {
-	specJSON string
-}
-
-// templateBuiltinStatusCommandOptions stores builtin template status flag values.
-type templateBuiltinStatusCommandOptions struct {
-	libraryID string
-}
-
-// templateBuiltinEnsureCommandOptions stores builtin template ensure flag values.
-type templateBuiltinEnsureCommandOptions struct {
-	libraryID string
-}
-
-// templateProjectBindCommandOptions stores template project bind flag values.
-type templateProjectBindCommandOptions struct {
-	projectID string
-	libraryID string
-}
-
-// templateProjectBindingCommandOptions stores template project binding lookup values.
-type templateProjectBindingCommandOptions struct {
-	projectID string
-}
-
-// templateProjectPreviewCommandOptions stores project template reapply preview lookup values.
-type templateProjectPreviewCommandOptions struct {
-	projectID string
-}
-
-// templateProjectApproveMigrationsCommandOptions stores existing-node migration approval flag values.
-type templateProjectApproveMigrationsCommandOptions struct {
-	projectID     string
-	actionItemIDs []string
-	approveAll    bool
-}
-
-// templateContractShowCommandOptions stores node-contract lookup values.
-type templateContractShowCommandOptions struct {
-	nodeID string
-}
-
 // leaseListCommandOptions stores capability lease list flag values.
 type leaseListCommandOptions struct {
 	projectID      string
@@ -299,8 +244,6 @@ type projectListCommandOptions struct {
 type projectCreateCommandOptions struct {
 	name              string
 	description       string
-	kind              string
-	templateLibraryID string
 	metadataJSON      string
 	owner             string
 	icon              string
@@ -474,16 +417,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	kindListOpts := kindListCommandOptions{}
 	kindUpsertOpts := kindUpsertCommandOptions{}
 	kindAllowlistOpts := kindAllowlistCommandOptions{}
-	templateLibraryListOpts := templateLibraryListCommandOptions{}
-	templateLibraryShowOpts := templateLibraryShowCommandOptions{}
-	templateLibraryUpsertOpts := templateLibraryUpsertCommandOptions{}
-	templateBuiltinStatusOpts := templateBuiltinStatusCommandOptions{libraryID: "default-go"}
-	templateBuiltinEnsureOpts := templateBuiltinEnsureCommandOptions{libraryID: "default-go"}
-	templateProjectBindOpts := templateProjectBindCommandOptions{}
-	templateProjectBindingOpts := templateProjectBindingCommandOptions{}
-	templateProjectPreviewOpts := templateProjectPreviewCommandOptions{}
-	templateProjectApproveMigrationsOpts := templateProjectApproveMigrationsCommandOptions{}
-	templateContractShowOpts := templateContractShowCommandOptions{}
 	leaseListOpts := leaseListCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
 	leaseIssueOpts := leaseIssueCommandOptions{scopeType: string(domain.CapabilityScopeProject), role: string(domain.CapabilityRoleBuilder), requestedTTL: 8 * time.Hour}
 	leaseHeartbeatOpts := leaseHeartbeatCommandOptions{}
@@ -496,7 +429,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, templateLibraryListOpts, templateLibraryShowOpts, templateLibraryUpsertOpts, templateBuiltinStatusOpts, templateBuiltinEnsureOpts, templateProjectBindOpts, templateProjectBindingOpts, templateProjectPreviewOpts, templateProjectApproveMigrationsOpts, templateContractShowOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -507,14 +440,13 @@ Run Tillsyn as an interactive local-first planning workspace, an stdio MCP
 runtime, or an HTTP API + streamable MCP service.
 
 Use the bare till command to open the TUI. Use subcommands when you need stable
-operator flows for projects, auth/session lifecycle, leases, handoffs,
-template-library contracts, snapshot transport, or embeddings operations.
+operator flows for projects, auth/session lifecycle, leases, handoffs, snapshot
+transport, or embeddings operations.
 `),
 		Example: strings.Join([]string{
 			"  till",
 			"  till project list",
 			"  till project create --name Inbox",
-			"  till template library list --scope global --status approved",
 			"  till embeddings status --cross-project",
 			"  till mcp",
 			"  till serve --http 127.0.0.1:4848",
@@ -663,17 +595,10 @@ add a new one.
 		Use:   "create [name]",
 		Short: "Create one project",
 		Long: strings.TrimSpace(`
-Create one project with a required name, optional description, optional kind
-override, optional approved global template library binding, and optional
+Create one project with a required name, optional description, and optional
 metadata defaults from flags or --metadata-json.
 
 The name may be passed either as --name or as one positional argument.
-
-If a template library is selected, project setup seeds the allowlist from the
-node kinds referenced by that library plus the project kind. Confirm with the
-dev which template library should govern the project and whether any extra
-generic kinds should be opted in afterward with till kind allowlist set or
-till.project(operation=set_allowed_kinds).
 
 Next step: use till project list to confirm the new record, or till project
 discover --project-id PROJECT_ID to inspect the collaboration-readiness
@@ -683,8 +608,7 @@ bridge after creation.
 			"  till project create --name Inbox --description \"Local execution inbox\" \\",
 			"    --owner \"Platform\" --tag dogfood",
 			"  till project create Inbox",
-			"  till project create --name \"Go Migration\" --kind project --homepage https://example.invalid",
-			"  till project create --name \"Go Service\" --template-library-id LIBRARY_ID",
+			"  till project create --name \"Go Migration\" --homepage https://example.invalid",
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -698,8 +622,6 @@ bridge after creation.
 	}
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.name, "name", "", "Project name")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.description, "description", "", "Optional project description")
-	projectCreateCmd.Flags().StringVar(&projectCreateOpts.kind, "kind", "", "Optional project kind")
-	projectCreateCmd.Flags().StringVar(&projectCreateOpts.templateLibraryID, "template-library-id", "", "Optional approved global template library to bind during project creation; when set, allowed kinds seed from the library's referenced node kinds")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.metadataJSON, "metadata-json", "", "Optional project metadata JSON")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.owner, "owner", "", "Optional project owner")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.icon, "icon", "", "Optional project icon")
@@ -867,9 +789,7 @@ overview, attention overview, and follow-up pointers.
 		Use:   "kind",
 		Short: "Inspect and update kind definitions and allowlists",
 		Long: strings.TrimSpace(`
-Inspect kind definitions and project allowlists. Template-library workflow
-contracts now live under the dedicated template commands rather than the kind
-registry path.
+Inspect kind definitions and project allowlists.
 `),
 		Example: strings.Join([]string{
 			"  till kind list",
@@ -884,8 +804,8 @@ registry path.
 		Long: strings.TrimSpace(`
 List every stored kind definition in deterministic order.
 
-Use this to discover valid kind ids before project creation, actionItem creation, or
-template authoring. Add --include-archived when auditing historical kinds.
+Use this to discover valid kind ids before project creation or actionItem
+creation. Add --include-archived when auditing historical kinds.
 `),
 		Example: strings.Join([]string{
 			"  till kind list",
@@ -904,9 +824,9 @@ template authoring. Add --include-archived when auditing historical kinds.
 Create or update one kind definition in the kind registry.
 
 Use this for structural kind metadata such as id, display name, applies-to
-scope, parent-scope rules, and optional payload schema. Template-library
-workflow contracts do not live here anymore. The hidden '--template-json' flag
-remains compatibility-only and should not be used for new work.
+scope, parent-scope rules, and optional payload schema. The hidden
+'--template-json' flag remains compatibility-only and should not be used for
+new work.
 `),
 		Example: strings.Join([]string{
 			"  till kind upsert --id research-actionItem --display-name \"Research ActionItem\" --applies-to actionItem",
@@ -937,9 +857,7 @@ remains compatibility-only and should not be used for new work.
 Inspect or replace the explicit kind allowlist for one project.
 
 Use this when a project should permit only a curated subset of registered kinds
-instead of every globally known kind definition. After choosing a template
-library, use this to keep the project template-only or to explicitly allow a
-small set of generic kinds on top of the template-defined workflow.
+instead of every globally known kind definition.
 `),
 		Example: strings.Join([]string{
 			"  till kind allowlist list --project-id PROJECT_ID",
@@ -953,10 +871,8 @@ small set of generic kinds on top of the template-defined workflow.
 		Long: strings.TrimSpace(`
 List the explicit kind allowlist for one project.
 
-Use this before changing template libraries or project-scoped workflow rules so
-you know which node kinds are currently permitted inside the project, including
-whether the project currently allows extra generic kinds beyond a bound
-template library.
+Use this before changing project-scoped workflow rules so you know which node
+kinds are currently permitted inside the project.
 `),
 		Example: "  till kind allowlist list --project-id PROJECT_ID",
 		Args:    cobra.NoArgs,
@@ -973,9 +889,8 @@ Replace the explicit kind allowlist for one project with the provided set of
 kind ids.
 
 This is a replace operation, not an additive patch. Re-supply the full desired
-allowlist each time. Use it after project creation or template binding when you
-need to keep a project limited to template-defined node kinds or deliberately
-opt specific generic kinds back in.
+allowlist each time. Use it after project creation when you need to keep a
+project limited to a curated set of node kinds.
 `),
 		Example: strings.Join([]string{
 			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-actionItem --kind-id qa-check",
@@ -990,272 +905,6 @@ opt specific generic kinds back in.
 	kindAllowlistSetCmd.Flags().StringSliceVar(&kindAllowlistOpts.kindIDs, "kind-id", nil, "Allowed kind identifier")
 	kindAllowlistCmd.AddCommand(kindAllowlistListCmd, kindAllowlistSetCmd)
 	kindCmd.AddCommand(kindListCmd, kindUpsertCmd, kindAllowlistCmd)
-
-	templateCmd := &cobra.Command{
-		Use:   "template",
-		Short: "Inspect and bind SQLite-backed template libraries",
-		Long: strings.TrimSpace(`
-Inspect SQLite-backed template libraries, bind approved libraries to projects,
-and inspect generated node-contract snapshots. JSON is the stable CLI/MCP
-transport for template-library specs while SQLite remains the source of truth.
-`),
-		Example: strings.Join([]string{
-			"  till template library list --scope global --status approved",
-			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
-			"  till template contract show --node-id TASK_ID",
-		}, "\n"),
-		Args: cobra.NoArgs,
-	}
-	templateLibraryCmd := &cobra.Command{
-		Use:   "library",
-		Short: "Inspect and upsert template libraries",
-		Long: strings.TrimSpace(`
-Inspect template-library inventory and upsert library specs through the stable
-JSON transport seam.
-
-Use this command group for library-level operations. Project binding lives under
-'till template project' and generated-node contract inspection lives under
-'till template contract'.
-`),
-		Example: strings.Join([]string{
-			"  till template library list --scope global --status approved",
-			"  till template library show --library-id LIBRARY_ID",
-			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",...}'",
-		}, "\n"),
-		Args: cobra.NoArgs,
-	}
-	templateLibraryListCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List template libraries",
-		Long: strings.TrimSpace(`
-List template libraries in deterministic order with optional scope, project, and
-status filters.
-
-Use this to discover candidate libraries before binding one to a project or
-inspecting it in detail.
-`),
-		Example: strings.Join([]string{
-			"  till template library list",
-			"  till template library list --scope global --status approved",
-			"  till template library list --scope project --project-id PROJECT_ID",
-		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.library.list")
-		},
-	}
-	templateLibraryListCmd.Flags().StringVar(&templateLibraryListOpts.scope, "scope", "", "Optional scope filter (global|project|draft)")
-	templateLibraryListCmd.Flags().StringVar(&templateLibraryListOpts.projectID, "project-id", "", "Optional project identifier filter")
-	templateLibraryListCmd.Flags().StringVar(&templateLibraryListOpts.status, "status", "", "Optional status filter (draft|approved|archived)")
-	templateLibraryShowCmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show one template library",
-		Long: strings.TrimSpace(`
-Show one template library with its node templates and child-rule contract table.
-
-Use this when you need to audit what generated work, actor ownership, and
-completion blockers a library will apply.
-`),
-		Example: "  till template library show --library-id LIBRARY_ID",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.library.show")
-		},
-	}
-	templateLibraryShowCmd.Flags().StringVar(&templateLibraryShowOpts.libraryID, "library-id", "", "Template library identifier")
-	templateLibraryUpsertCmd := &cobra.Command{
-		Use:   "upsert",
-		Short: "Create or update one template library from JSON",
-		Long: strings.TrimSpace(`
-Create or update one template library from a JSON object. This is a temporary
-operator seam; SQLite remains the source of truth and richer TUI authoring is
-planned separately.
-`),
-		Example: strings.Join([]string{
-			"  till template library upsert --spec-json \\",
-			"    '{\"id\":\"LIBRARY_ID\",\"scope\":\"global\",\"name\":\"Go Defaults\",\"status\":\"approved\",\"node_templates\":[]}'",
-			"  till template library upsert --spec-json \"$(cat /tmp/template-library.json)\"",
-		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.library.upsert")
-		},
-	}
-	templateLibraryUpsertCmd.Flags().StringVar(&templateLibraryUpsertOpts.specJSON, "spec-json", "", "Template library JSON object")
-	mustMarkFlagRequired(templateLibraryUpsertCmd, "spec-json")
-	templateLibraryCmd.AddCommand(templateLibraryListCmd, templateLibraryShowCmd, templateLibraryUpsertCmd)
-
-	templateBuiltinCmd := &cobra.Command{
-		Use:   "builtin",
-		Short: "Inspect and refresh builtin template libraries",
-		Long: strings.TrimSpace(`
-Inspect builtin-managed template library lifecycle state and explicitly install
-or refresh the locked builtin definition when the runtime contract changes.
-`),
-		Example: strings.Join([]string{
-			"  till template builtin status",
-			"  till template builtin ensure --library-id default-go",
-			"  till template builtin ensure --library-id default-frontend",
-		}, "\n"),
-		Args: cobra.NoArgs,
-	}
-	templateBuiltinStatusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show builtin template install and drift state",
-		Long: strings.TrimSpace(`
-Show whether the selected builtin template library is installed, current, or
-behind the builtin contract embedded in this build.
-
-Run this before builtin ensure so you can see the required and missing kind
-definitions for the active runtime DB.
-`),
-		Example: "  till template builtin status --library-id default-go",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.builtin.status")
-		},
-	}
-	templateBuiltinStatusCmd.Flags().StringVar(&templateBuiltinStatusOpts.libraryID, "library-id", "default-go", "Builtin template library identifier")
-	templateBuiltinEnsureCmd := &cobra.Command{
-		Use:   "ensure",
-		Short: "Install or refresh one builtin template library",
-		Long: strings.TrimSpace(`
-Install the selected builtin template library when missing or refresh it
-explicitly when the embedded builtin contract changed.
-
-Run builtin status first. If required kinds are still missing, the active
-runtime DB is missing builtin prerequisite kinds or you are on the wrong
-stable/dev runtime; that does not mean the builtin template library itself is
-missing.
-`),
-		Example: "  till template builtin ensure --library-id default-go",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.builtin.ensure")
-		},
-	}
-	templateBuiltinEnsureCmd.Flags().StringVar(&templateBuiltinEnsureOpts.libraryID, "library-id", "default-go", "Builtin template library identifier")
-	templateBuiltinCmd.AddCommand(templateBuiltinStatusCmd, templateBuiltinEnsureCmd)
-
-	templateProjectCmd := &cobra.Command{
-		Use:   "project",
-		Short: "Bind projects to template libraries",
-		Long: strings.TrimSpace(`
-Bind projects to approved template libraries and inspect the currently active
-binding or reapply preview for one project.
-`),
-		Example: strings.Join([]string{
-			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
-			"  till template project binding --project-id PROJECT_ID",
-			"  till template project preview --project-id PROJECT_ID",
-		}, "\n"),
-		Args: cobra.NoArgs,
-	}
-	templateProjectBindCmd := &cobra.Command{
-		Use:   "bind",
-		Short: "Bind one project to one approved template library",
-		Long: strings.TrimSpace(`
-Bind one project to one approved template library.
-
-Use this after reviewing a library with 'till template library show' so the
-project will resolve future generated work from that library.
-`),
-		Example: "  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.project.bind")
-		},
-	}
-	templateProjectBindCmd.Flags().StringVar(&templateProjectBindOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectBindCmd.Flags().StringVar(&templateProjectBindOpts.libraryID, "library-id", "", "Template library identifier")
-	templateProjectBindingCmd := &cobra.Command{
-		Use:   "binding",
-		Short: "Show one project's active template-library binding",
-		Long: strings.TrimSpace(`
-Show the currently active template-library binding for one project.
-
-Use this to confirm which library is in force before creating new generated
-work or comparing project behavior with the global library inventory.
-`),
-		Example: "  till template project binding --project-id PROJECT_ID",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.project.binding")
-		},
-	}
-	templateProjectBindingCmd.Flags().StringVar(&templateProjectBindingOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectPreviewCmd := &cobra.Command{
-		Use:   "preview",
-		Short: "Show one project's explicit template reapply preview",
-		Long: strings.TrimSpace(`
-Show the bound-versus-latest template drift for one project plus conservative
-migration-review candidates for existing generated nodes.
-
-Use this before rebinding the same library revision intentionally so the dev can
-review what changed without silently rewriting live work.
-`),
-		Example: "  till template project preview --project-id PROJECT_ID",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.project.preview")
-		},
-	}
-	templateProjectPreviewCmd.Flags().StringVar(&templateProjectPreviewOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectApproveMigrationsCmd := &cobra.Command{
-		Use:   "approve-migrations",
-		Short: "Approve existing-node template migrations for one project",
-		Long: strings.TrimSpace(`
-Approve selected or all eligible existing generated-node migrations for one
-project against the latest approved template library revision.
-
-Use this after previewing drift so the dev can explicitly adopt changed child
-rule contracts for already-generated nodes without silently rewriting work.
-`),
-		Example: strings.Join([]string{
-			"  till template project approve-migrations --project-id PROJECT_ID --actionItem-id TASK_ID",
-			"  till template project approve-migrations --project-id PROJECT_ID --all",
-		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.project.approve-migrations")
-		},
-	}
-	templateProjectApproveMigrationsCmd.Flags().StringVar(&templateProjectApproveMigrationsOpts.projectID, "project-id", "", "Project identifier")
-	templateProjectApproveMigrationsCmd.Flags().StringArrayVar(&templateProjectApproveMigrationsOpts.actionItemIDs, "actionItem-id", nil, "Eligible generated node id to migrate (repeatable)")
-	templateProjectApproveMigrationsCmd.Flags().BoolVar(&templateProjectApproveMigrationsOpts.approveAll, "all", false, "Approve all eligible migration candidates")
-	templateProjectCmd.AddCommand(templateProjectBindCmd, templateProjectBindingCmd, templateProjectPreviewCmd, templateProjectApproveMigrationsCmd)
-
-	templateContractCmd := &cobra.Command{
-		Use:   "contract",
-		Short: "Inspect generated node-contract snapshots",
-		Long: strings.TrimSpace(`
-Inspect stored generated-node contract snapshots.
-
-These snapshots are the truthful runtime record of who owns a generated node,
-who may edit or complete it, and whether it blocks parent or containing-scope
-completion.
-`),
-		Example: "  till template contract show --node-id TASK_ID",
-		Args:    cobra.NoArgs,
-	}
-	templateContractShowCmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show one generated node-contract snapshot",
-		Long: strings.TrimSpace(`
-Show one generated node-contract snapshot by node id.
-
-Use this to confirm the stored workflow contract on an already-generated node
-instead of re-reading the source library and guessing how old work was resolved.
-`),
-		Example: "  till template contract show --node-id TASK_ID",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "template.contract.show")
-		},
-	}
-	templateContractShowCmd.Flags().StringVar(&templateContractShowOpts.nodeID, "node-id", "", "Generated node identifier")
-	templateContractCmd.AddCommand(templateContractShowCmd)
-	templateCmd.AddCommand(templateLibraryCmd, templateBuiltinCmd, templateProjectCmd, templateContractCmd)
 
 	leaseCmd := &cobra.Command{
 		Use:   "lease",
@@ -1898,8 +1547,7 @@ as a positional argument.
 		Use:   "export",
 		Short: "Export a snapshot JSON payload",
 		Long: strings.TrimSpace(`
-Export a snapshot JSON payload for projects, work graph state, and template
-library contract data.
+Export a snapshot JSON payload for projects and work graph state.
 
 Use this for backup, migration, debugging, or moving one local state bundle
 between machines or worktrees.
@@ -1923,8 +1571,7 @@ between machines or worktrees.
 		Long: strings.TrimSpace(`
 Import a snapshot JSON payload back into the runtime store.
 
-Use this to restore or transfer projects, work items, template libraries,
-bindings, and generated-node contract snapshots from a prior export.
+Use this to restore or transfer projects and work items from a prior export.
 `),
 		Example: strings.Join([]string{
 			"  till import --in snapshot.json",
@@ -2010,7 +1657,7 @@ default development config file restored quickly.
 			return runInitDevConfig(stdout, rootOpts)
 		},
 	}
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, templateCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
@@ -2125,7 +1772,7 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 
 // ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	if command == "" || command == "serve" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "template" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" {
+	if command == "" || command == "serve" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" {
 		if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
 			return fmt.Errorf("create config directory: %w", err)
 		}
@@ -2330,16 +1977,6 @@ func executeCommandFlow(
 	kindListOpts kindListCommandOptions,
 	kindUpsertOpts kindUpsertCommandOptions,
 	kindAllowlistOpts kindAllowlistCommandOptions,
-	templateLibraryListOpts templateLibraryListCommandOptions,
-	templateLibraryShowOpts templateLibraryShowCommandOptions,
-	templateLibraryUpsertOpts templateLibraryUpsertCommandOptions,
-	templateBuiltinStatusOpts templateBuiltinStatusCommandOptions,
-	templateBuiltinEnsureOpts templateBuiltinEnsureCommandOptions,
-	templateProjectBindOpts templateProjectBindCommandOptions,
-	templateProjectBindingOpts templateProjectBindingCommandOptions,
-	templateProjectPreviewOpts templateProjectPreviewCommandOptions,
-	templateProjectApproveMigrationsOpts templateProjectApproveMigrationsCommandOptions,
-	templateContractShowOpts templateContractShowCommandOptions,
 	leaseListOpts leaseListCommandOptions,
 	leaseIssueOpts leaseIssueCommandOptions,
 	leaseHeartbeatOpts leaseHeartbeatCommandOptions,
@@ -2684,46 +2321,6 @@ func executeCommandFlow(
 		return runOneShotCommand("kind.allowlist.set", "kind allowlist set", func() error {
 			return runKindAllowlistSet(ctx, svc, cfg, kindAllowlistOpts, stdout)
 		})
-	case "template.library.list":
-		return runOneShotCommand("template.library.list", "template library list", func() error {
-			return runTemplateLibraryList(ctx, svc, templateLibraryListOpts, stdout)
-		})
-	case "template.library.show":
-		return runOneShotCommand("template.library.show", "template library show", func() error {
-			return runTemplateLibraryShow(ctx, svc, templateLibraryShowOpts, stdout)
-		})
-	case "template.library.upsert":
-		return runOneShotCommand("template.library.upsert", "template library upsert", func() error {
-			return runTemplateLibraryUpsert(ctx, svc, cfg, templateLibraryUpsertOpts, stdout)
-		})
-	case "template.builtin.status":
-		return runOneShotCommand("template.builtin.status", "template builtin status", func() error {
-			return runTemplateBuiltinStatus(ctx, svc, templateBuiltinStatusOpts, stdout)
-		})
-	case "template.builtin.ensure":
-		return runOneShotCommand("template.builtin.ensure", "template builtin ensure", func() error {
-			return runTemplateBuiltinEnsure(ctx, svc, cfg, templateBuiltinEnsureOpts, stdout)
-		})
-	case "template.project.bind":
-		return runOneShotCommand("template.project.bind", "template project bind", func() error {
-			return runTemplateProjectBind(ctx, svc, cfg, templateProjectBindOpts, stdout)
-		})
-	case "template.project.binding":
-		return runOneShotCommand("template.project.binding", "template project binding", func() error {
-			return runTemplateProjectBinding(ctx, svc, templateProjectBindingOpts, stdout)
-		})
-	case "template.project.preview":
-		return runOneShotCommand("template.project.preview", "template project preview", func() error {
-			return runTemplateProjectPreview(ctx, svc, templateProjectPreviewOpts, stdout)
-		})
-	case "template.project.approve-migrations":
-		return runOneShotCommand("template.project.approve-migrations", "template project approve-migrations", func() error {
-			return runTemplateProjectApproveMigrations(ctx, svc, cfg, templateProjectApproveMigrationsOpts, stdout)
-		})
-	case "template.contract.show":
-		return runOneShotCommand("template.contract.show", "template contract show", func() error {
-			return runTemplateContractShow(ctx, svc, templateContractShowOpts, stdout)
-		})
 	case "lease.list":
 		return runOneShotCommand("lease.list", "lease list", func() error {
 			return runLeaseList(ctx, svc, leaseListOpts, stdout)
@@ -3047,232 +2644,6 @@ func runKindAllowlistSet(ctx context.Context, svc *app.Service, cfg config.Confi
 	})
 }
 
-// runTemplateLibraryList lists template libraries and writes them in a human-readable operator view.
-func runTemplateLibraryList(ctx context.Context, svc *app.Service, opts templateLibraryListCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	libraries, err := svc.ListTemplateLibraries(ctx, app.ListTemplateLibrariesInput{
-		Scope:     domain.TemplateLibraryScope(strings.TrimSpace(opts.scope)),
-		ProjectID: strings.TrimSpace(opts.projectID),
-		Status:    domain.TemplateLibraryStatus(strings.TrimSpace(opts.status)),
-	})
-	if err != nil {
-		return fmt.Errorf("list template libraries: %w", err)
-	}
-	return writeTemplateLibraryList(stdout, libraries)
-}
-
-// runTemplateLibraryShow loads one template library and writes it in a human-readable operator view.
-func runTemplateLibraryShow(ctx context.Context, svc *app.Service, opts templateLibraryShowCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	libraryID := strings.TrimSpace(opts.libraryID)
-	if libraryID == "" {
-		return fmt.Errorf("--library-id is required")
-	}
-	library, err := svc.GetTemplateLibrary(ctx, libraryID)
-	if err != nil {
-		return fmt.Errorf("get template library: %w", err)
-	}
-	return writeTemplateLibraryDetail(stdout, library)
-}
-
-// runTemplateLibraryUpsert creates or updates one template library from the JSON CLI transport and writes a human-readable result.
-func runTemplateLibraryUpsert(ctx context.Context, svc *app.Service, cfg config.Config, opts templateLibraryUpsertCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	spec, err := parseTemplateLibrarySpecJSON(opts.specJSON)
-	if err != nil {
-		return err
-	}
-	ctx = cliMutationContext(ctx, cfg)
-	nodeTemplates := make([]app.UpsertNodeTemplateInput, 0, len(spec.NodeTemplates))
-	for _, nodeTemplate := range spec.NodeTemplates {
-		childRules := make([]app.UpsertTemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
-		for _, childRule := range nodeTemplate.ChildRules {
-			childRules = append(childRules, app.UpsertTemplateChildRuleInput{
-				ID:                        strings.TrimSpace(childRule.ID),
-				Position:                  childRule.Position,
-				ChildScopeLevel:           childRule.ChildScopeLevel,
-				ChildKindID:               childRule.ChildKindID,
-				TitleTemplate:             strings.TrimSpace(childRule.TitleTemplate),
-				DescriptionTemplate:       strings.TrimSpace(childRule.DescriptionTemplate),
-				ResponsibleActorKind:      childRule.ResponsibleActorKind,
-				EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
-				CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
-				OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
-				RequiredForParentDone:     childRule.RequiredForParentDone,
-				RequiredForContainingDone: childRule.RequiredForContainingDone,
-			})
-		}
-		nodeTemplates = append(nodeTemplates, app.UpsertNodeTemplateInput{
-			ID:                         strings.TrimSpace(nodeTemplate.ID),
-			ScopeLevel:                 nodeTemplate.ScopeLevel,
-			NodeKindID:                 nodeTemplate.NodeKindID,
-			DisplayName:                strings.TrimSpace(nodeTemplate.DisplayName),
-			DescriptionMarkdown:        strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
-			ProjectMetadataDefaults:    nodeTemplate.ProjectMetadataDefaults,
-			ActionItemMetadataDefaults: nodeTemplate.ActionItemMetadataDefaults,
-			ChildRules:                 childRules,
-		})
-	}
-	library, err := svc.UpsertTemplateLibrary(ctx, app.UpsertTemplateLibraryInput{
-		ID:              strings.TrimSpace(spec.ID),
-		Scope:           spec.Scope,
-		ProjectID:       strings.TrimSpace(spec.ProjectID),
-		Name:            strings.TrimSpace(spec.Name),
-		Description:     strings.TrimSpace(spec.Description),
-		Status:          spec.Status,
-		SourceLibraryID: strings.TrimSpace(spec.SourceLibraryID),
-		BuiltinManaged:  spec.BuiltinManaged,
-		BuiltinSource:   strings.TrimSpace(spec.BuiltinSource),
-		BuiltinVersion:  strings.TrimSpace(spec.BuiltinVersion),
-		NodeTemplates:   nodeTemplates,
-	})
-	if err != nil {
-		return fmt.Errorf("upsert template library: %w", err)
-	}
-	return writeTemplateLibraryDetail(stdout, library)
-}
-
-// runTemplateBuiltinStatus loads one builtin template lifecycle status view and writes a human-readable result.
-func runTemplateBuiltinStatus(ctx context.Context, svc *app.Service, opts templateBuiltinStatusCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	status, err := svc.GetBuiltinTemplateLibraryStatus(ctx, strings.TrimSpace(opts.libraryID))
-	if err != nil {
-		return fmt.Errorf("get builtin template status: %w", err)
-	}
-	return writeBuiltinTemplateLibraryStatusDetail(stdout, status)
-}
-
-// runTemplateBuiltinEnsure installs or refreshes one builtin template library explicitly and writes a human-readable result.
-func runTemplateBuiltinEnsure(ctx context.Context, svc *app.Service, cfg config.Config, opts templateBuiltinEnsureCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	ctx = cliMutationContext(ctx, cfg)
-	result, err := svc.EnsureBuiltinTemplateLibrary(ctx, app.EnsureBuiltinTemplateLibraryInput{
-		LibraryID: strings.TrimSpace(opts.libraryID),
-		ActorID:   cliMutationActorID(cfg),
-		ActorName: strings.TrimSpace(cfg.Identity.DisplayName),
-		ActorType: cliMutationActorType(cfg),
-	})
-	if err != nil {
-		return fmt.Errorf("ensure builtin template library: %w", err)
-	}
-	return writeBuiltinTemplateLibraryEnsureDetail(stdout, result)
-}
-
-// runTemplateProjectBind binds one project to one approved template library and writes a human-readable operator view.
-func runTemplateProjectBind(ctx context.Context, svc *app.Service, cfg config.Config, opts templateProjectBindCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	ctx = cliMutationContext(ctx, cfg)
-	projectID := strings.TrimSpace(opts.projectID)
-	if err := requireProjectID("template project bind", projectID); err != nil {
-		return err
-	}
-	libraryID := strings.TrimSpace(opts.libraryID)
-	if libraryID == "" {
-		return fmt.Errorf("--library-id is required")
-	}
-	binding, err := svc.BindProjectTemplateLibrary(ctx, app.BindProjectTemplateLibraryInput{
-		ProjectID:        projectID,
-		LibraryID:        libraryID,
-		BoundByActorID:   cliMutationActorID(cfg),
-		BoundByActorName: strings.TrimSpace(cfg.Identity.DisplayName),
-		BoundByActorType: cliMutationActorType(cfg),
-	})
-	if err != nil {
-		return fmt.Errorf("bind project template library: %w", err)
-	}
-	return writeProjectTemplateBindingDetail(stdout, binding)
-}
-
-// runTemplateProjectBinding loads one project's active template-library binding and writes a human-readable operator view.
-func runTemplateProjectBinding(ctx context.Context, svc *app.Service, opts templateProjectBindingCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	projectID := strings.TrimSpace(opts.projectID)
-	if err := requireProjectID("template project binding", projectID); err != nil {
-		return err
-	}
-	binding, err := svc.GetProjectTemplateBinding(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("get project template binding: %w", err)
-	}
-	return writeProjectTemplateBindingDetail(stdout, binding)
-}
-
-// runTemplateProjectPreview loads one project's explicit template reapply preview and writes it in a human-readable operator view.
-func runTemplateProjectPreview(ctx context.Context, svc *app.Service, opts templateProjectPreviewCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	projectID := strings.TrimSpace(opts.projectID)
-	if err := requireProjectID("template project preview", projectID); err != nil {
-		return err
-	}
-	preview, err := svc.GetProjectTemplateReapplyPreview(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("get project template reapply preview: %w", err)
-	}
-	return writeProjectTemplateReapplyPreviewDetail(stdout, preview)
-}
-
-// runTemplateProjectApproveMigrations approves selected or all eligible existing-node template migrations.
-func runTemplateProjectApproveMigrations(ctx context.Context, svc *app.Service, cfg config.Config, opts templateProjectApproveMigrationsCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	ctx = cliMutationContext(ctx, cfg)
-	projectID := strings.TrimSpace(opts.projectID)
-	if err := requireProjectID("template project approve-migrations", projectID); err != nil {
-		return err
-	}
-	if opts.approveAll && len(opts.actionItemIDs) > 0 {
-		return fmt.Errorf("--actionItem-id and --all cannot be combined")
-	}
-	if !opts.approveAll && len(opts.actionItemIDs) == 0 {
-		return fmt.Errorf("--actionItem-id or --all is required")
-	}
-	result, err := svc.ApproveProjectTemplateMigrations(ctx, app.ApproveProjectTemplateMigrationsInput{
-		ProjectID:      projectID,
-		ActionItemIDs:  append([]string(nil), opts.actionItemIDs...),
-		ApproveAll:     opts.approveAll,
-		ApprovedBy:     cliMutationActorID(cfg),
-		ApprovedByName: strings.TrimSpace(cfg.Identity.DisplayName),
-		ApprovedByType: cliMutationActorType(cfg),
-	})
-	if err != nil {
-		return fmt.Errorf("approve project template migrations: %w", err)
-	}
-	return writeProjectTemplateMigrationApprovalResultDetail(stdout, result)
-}
-
-// runTemplateContractShow loads one generated-node contract snapshot and writes it in a human-readable operator view.
-func runTemplateContractShow(ctx context.Context, svc *app.Service, opts templateContractShowCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	nodeID := strings.TrimSpace(opts.nodeID)
-	if nodeID == "" {
-		return fmt.Errorf("--node-id is required")
-	}
-	snapshot, err := svc.GetNodeContractSnapshot(ctx, nodeID)
-	if err != nil {
-		return fmt.Errorf("get node contract snapshot: %w", err)
-	}
-	return writeNodeContractSnapshotDetail(stdout, snapshot)
-}
-
 // runLeaseList lists capability leases and writes them in a human-readable operator view.
 func runLeaseList(ctx context.Context, svc *app.Service, opts leaseListCommandOptions, stdout io.Writer) error {
 	if svc == nil {
@@ -3561,19 +2932,6 @@ func parseOptionalKindTemplateJSON(raw string) (domain.KindTemplate, error) {
 		return domain.KindTemplate{}, fmt.Errorf("parse --template-json: %w", err)
 	}
 	return template, nil
-}
-
-// parseTemplateLibrarySpecJSON parses one template-library JSON transport spec.
-func parseTemplateLibrarySpecJSON(raw string) (servercommon.UpsertTemplateLibraryRequest, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return servercommon.UpsertTemplateLibraryRequest{}, fmt.Errorf("--spec-json is required")
-	}
-	var spec servercommon.UpsertTemplateLibraryRequest
-	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
-		return servercommon.UpsertTemplateLibraryRequest{}, fmt.Errorf("parse --spec-json: %w", err)
-	}
-	return spec, nil
 }
 
 // cliMutationContext attaches a deterministic CLI mutation actor to context.

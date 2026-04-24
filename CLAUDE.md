@@ -21,63 +21,102 @@ The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md`
 
 ## Cascade Tree Structure (Template Architecture)
 
-This is the cascade's template architecture by action-item `kind` — the **post-Drop-2 target state**. **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually, but the `kind` values written into Tillsyn today are constrained by what Drop 2 Go can read — see "Pre-Drop-2 Creation Rule" below. The Kind Hierarchy / Agent Bindings sections describe the target shape, not the current runtime writes.
+This is the cascade's template architecture by action-item `kind`. **Drop 1.75 landed the closed 12-kind `action_items.kind` enum in Go + SQL** (see "Post-Drop-1.75 Creation Rule" below). **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually — spawning builders / QA agents by convention rather than via the dispatcher — but the `kind` values written into Tillsyn already match the target closed enum.
 
-### Pre-Drop-1.75 Creation Rule (Current HEAD)
+### Post-Drop-1.75 Creation Rule
 
-The Go identifier rename `Task → ActionItem` shipped pre-Drop-1.75 (2026-04-18), flipping the `kind`/`scope` default enum string from `"task"` to `"actionItem"` sitewide. Drop 1.75 is the **kind-collapse** drop (reduces `kind_catalog` to `{project, action_item}` and deletes the template_libraries paths). Until Drop 1.75 lands, **every new action item under a project is created with `kind='actionItem', scope='actionItem'`**. Do NOT use the other registered kinds (`build-actionItem`, `subtask`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, any `*-phase` variant, `decision`, `note`) even though they remain in `kind_catalog` — `main/scripts/drops-rewrite.sql` (dev-run after Drop 1.75 Go ships) rewrites every non-project kind to `action_item`.
+Drop 1.75 is the **kind-collapse** drop. Two node tables survive: `projects` and `action_items`. `projects` has no `kind` column post-collapse. `action_items.kind` is a closed 12-value enum, chosen by the creator at creation time — there is no inferred default and no `actionItem` fallback kind. Old kinds (`task`, `actionItem`, `build-actionItem`, `subtask`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, any `*-phase` variant, `decision`, `note`) are rewritten by `main/scripts/drops-rewrite.sql` into the new vocabulary; `action_items.scope` is mirrored from `kind` (scope removal lives in a future refinement drop).
 
-**Role on description prose, not metadata (pre-Drop-2):** note role in the description (`Role: builder`, `Role: qa-proof`, `Role: qa-falsification`, `Role: qa-a11y`, `Role: qa-visual`, `Role: design`, `Role: commit`, `Role: planner`). Drop 2 lands `metadata.role` as a first-class field; the SQL hydrates it from each item's pre-collapse `kind`.
+`action_items.kind` closed enum (12 values):
 
-**Same-scope nesting is allowed.** A `actionItem` drop may nest under another `actionItem` drop — `actionItem` kind has no parent-scope restriction in `kind_catalog`. Same-scope nesting has live precedent (`subtask@subtask` under `subtask@subtask` in TILLSYN as of 2026-04-16). If the first nested `actionItem@actionItem` create is rejected by the MCP layer, fall back to `kind='subtask', scope='subtask'` for nested layers and flag the rejection.
+| Kind                     | Purpose                                                                 |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `plan`                   | Planning-dominant — planner agent decomposes work into children.        |
+| `research`               | Read-only investigation — research agent compiles findings, posts, dies. |
+| `build`                  | Code-changing leaf — builder agent implements, tests, commits.          |
+| `plan-qa-proof`          | Proof-completeness QA pass on a `plan` parent.                          |
+| `plan-qa-falsification`  | Falsification QA pass on a `plan` parent.                               |
+| `build-qa-proof`         | Proof-completeness QA pass on a `build` parent.                         |
+| `build-qa-falsification` | Falsification QA pass on a `build` parent.                              |
+| `closeout`               | Drop-end coordination — aggregates ledger / refinements / findings.     |
+| `commit`                 | Commit action — template-triggered under `plan` at level ≥ 2 (see Commit Cadence below). |
+| `refinement`             | Perpetual / long-lived tracking umbrella — drop-end entries roll up here. |
+| `discussion`             | Cross-cutting decision park — description = converged shape, comments = audit trail. |
+| `human-verify`           | Dev sign-off hold point — attention items + checklist children, no plan/QA. |
+
+**Customization (future drop — NOT Drop 1.75):** projects and orchestrators author custom kinds via template that attach as sub-action-items of specific generic kinds (e.g., a custom `ledger-update` under `closeout`, a custom `ledger-aggregation` under `refinement`). Drop 1.75 ships only the 12 generics plus the template hook. Drop 2 lands `metadata.role` as a first-class field; until then, role goes in description prose (`Role: builder`, `Role: qa-proof`, `Role: qa-falsification`, `Role: qa-a11y`, `Role: qa-visual`, `Role: design`, `Role: commit`, `Role: planner`, `Role: research`).
+
+**Project-level kind restriction (future drop).** Project templates will carry an allowed-kinds enum + a `disallow_generics` bool to restrict which kinds a project accepts — lands alongside template customization. Drop 1.75 treats all 12 kinds as allowed on every project.
 
 ### Kind Hierarchy
 
+Two node types, one enum. `project` is a table, not a kind. Everything below is `action_items.kind`:
+
 ```
-project                                 kind: project
-└── drop (infinitely nestable)         kind: drop
-      ├── plan-actionItem                     kind: plan-actionItem          ─→ agent: go-planning-agent          (opus)
-      │   ├── plan-qa-proof             kind: qa-check           ─→ agent: go-qa-proof-agent          (opus)
-      │   └── plan-qa-falsification     kind: qa-check           ─→ agent: go-qa-falsification-agent  (opus)
+project                                                    (table: projects)
+└── plan (infinitely nestable)                             kind: plan                    ─→ agent: go-planning-agent          (opus)
+      ├── plan-qa-proof                                    kind: plan-qa-proof           ─→ agent: go-qa-proof-agent          (opus)
+      ├── plan-qa-falsification                            kind: plan-qa-falsification   ─→ agent: go-qa-falsification-agent  (opus)
       │
-      ├── drop (sub-drop)             kind: drop               (same shape, recurses infinitely)
+      ├── research                                         kind: research                ─→ agent: go-research-agent          (opus)
       │
-      └── actionItem (build-actionItem)             kind: actionItem               ─→ agent: go-builder-agent           (sonnet)
-            ├── qa-proof                kind: qa-check           ─→ agent: go-qa-proof-agent          (sonnet)
-            └── qa-falsification        kind: qa-check           ─→ agent: go-qa-falsification-agent  (sonnet)
+      ├── build (leaf)                                     kind: build                   ─→ agent: go-builder-agent           (sonnet)
+      │     ├── build-qa-proof                             kind: build-qa-proof          ─→ agent: go-qa-proof-agent          (sonnet)
+      │     └── build-qa-falsification                     kind: build-qa-falsification  ─→ agent: go-qa-falsification-agent  (sonnet)
+      │
+      ├── plan (sub-plan — infinite nesting)               kind: plan                    (same shape, recurses)
+      │
+      ├── closeout                                         kind: closeout                (drop-end aggregation)
+      ├── commit                                           kind: commit                  (template-triggered, post-Drop-4)
+      ├── discussion                                       kind: discussion              (converged shape + audit trail)
+      ├── refinement                                       kind: refinement              (perpetual rollup)
+      └── human-verify                                     kind: human-verify            (dev sign-off hold point)
 ```
 
 ### Required Children (Auto-Create Rules)
 
-- **Every `drop`** auto-creates three children on creation: `plan-actionItem`, `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Drop 3.
-- **Every `actionItem`** (build-actionItem) auto-creates two children on creation: `qa-proof`, `qa-falsification`.
-- `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan-actionItem` — they fire in parallel after the plan-actionItem completes.
-- `qa-proof` and `qa-falsification` under a build-actionItem are `blocked_by: actionItem` — they fire in parallel after the build-actionItem completes **and** its post-build gates pass (see below).
-- Drops nest infinitely. A planner creates sub-drops when decomposition needs to continue, or build-tasks when the work is granular enough.
+- **Every `plan`** auto-creates two children on creation: `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Drop 3.
+- **Every `build`** auto-creates two children on creation: `build-qa-proof`, `build-qa-falsification`.
+- `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan` — they fire in parallel after the `plan` completes.
+- `build-qa-proof` and `build-qa-falsification` are `blocked_by: build` — they fire in parallel after the `build` completes **and** its post-build gates pass (see below).
+- `plan` nests infinitely. A planner creates sub-`plan`s when decomposition continues, or `build`s when the work is granular enough.
+- `research`, `discussion`, `closeout`, `refinement`, `human-verify` do NOT auto-create QA children — they are standalone action items. Research gets reviewed via comment thread; discussion converges in description; human-verify gates on attention-item sign-off.
+
+### Commit Cadence (Drop 2 Discussion Seed)
+
+`commit` is a real kind but current commit-every-build-task rate is too high. Proposed default heuristic for Drop 2 discussion:
+
+- **Auto-generate a `commit` child under any `plan` at level ≥ 2 whose subtree contains at least one `build` child in `complete` state.** Generation fires at plan close-time (not creation), so no-build plans (pure research / discussion / refinement) don't accrue orphan commit items.
+- **Template override** — templates can set `auto_commit = false` on a `plan` kind for local-only outputs (SQL migration scripts that never touch tracked code, scratch/throwaway work).
+- **Edge cases to resolve in the Drop 2 discussion item**: multi-PR drops (one commit per plan vs one per drop), cascade-owned commit vs dev-owned commit, partial-success subtrees (some `build` children complete, some failed).
 
 ### Agent Bindings
 
 Pre-cascade: orchestrator spawns these manually via the `Agent` tool using Tillsyn auth credentials in the prompt.
 Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
 
-| Kind                                      | Agent                                             | Model  | Role      | Edits Code? |
-| ----------------------------------------- | ------------------------------------------------- | ------ | --------- | ----------- |
-| `plan-actionItem` (drop-level)            | `go-planning-agent`                               | opus   | `planner` | No          |
-| `qa-check` under `plan-actionItem`        | `go-qa-proof-agent` / `go-qa-falsification-agent` | opus   | `qa`      | No          |
-| `actionItem` (build-actionItem)           | `go-builder-agent`                                | sonnet | `builder` | **Yes**     |
-| `qa-check` under `actionItem`             | `go-qa-proof-agent` / `go-qa-falsification-agent` | sonnet | `qa`      | No          |
-| commit-agent _(Drop-4+, post-build gate)_ | `commit-message-agent`                            | haiku  | `commit`  | No          |
+| Kind                      | Agent                         | Model  | Role               | Edits Code? |
+| ------------------------- | ----------------------------- | ------ | ------------------ | ----------- |
+| `plan`                    | `go-planning-agent`           | opus   | `planner`          | No          |
+| `plan-qa-proof`           | `go-qa-proof-agent`           | opus   | `qa-proof`         | No          |
+| `plan-qa-falsification`   | `go-qa-falsification-agent`   | opus   | `qa-falsification` | No          |
+| `research`                | `go-research-agent`           | opus   | `research`         | No          |
+| `build`                   | `go-builder-agent`            | sonnet | `builder`          | **Yes**     |
+| `build-qa-proof`          | `go-qa-proof-agent`           | sonnet | `qa-proof`         | No          |
+| `build-qa-falsification`  | `go-qa-falsification-agent`   | sonnet | `qa-falsification` | No          |
+| `commit` _(Drop-4+)_      | `commit-message-agent`        | haiku  | `commit`           | No          |
+| `closeout` / `refinement` / `discussion` / `human-verify` | orchestrator-managed | —   | orchestrator       | No          |
 
-### Post-Build Gates (Deterministic, Between Build-ActionItem And Its QA)
+### Post-Build Gates (Deterministic, Between `build` And Its QA Children)
 
-After a build-actionItem reports success, before its `qa-*` children become eligible, gates run programmatically. No LLM except the commit agent.
+After a `build` action item reports success, before its `build-qa-proof` / `build-qa-falsification` children become eligible, gates run programmatically. No LLM except the commit agent.
 
-1. **`mage ci`** — on fail, the build-actionItem moves to `failed`, gate output posted as a comment.
-2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below).
+1. **`mage ci`** — on fail, the `build` moves to `failed`, gate output posted as a comment.
+2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below). Commit cadence follows the rule in "Commit Cadence" above — not every `build` generates a `commit` child.
 3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
-4. **Hylla reingest** — NOT per-actionItem. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop Closeout" below. Agents never call `hylla_ingest`.
+4. **Hylla reingest** — NOT per-`build`. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop Closeout" below. Agents never call `hylla_ingest`.
 
-Only after all gates pass do the build-actionItem's QA children fire.
+Only after all gates pass do the `build`'s QA children fire.
 
 ### Blocker Semantics
 
@@ -96,7 +135,8 @@ The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf
 - **Project ID**: `a5e87c34-3456-4663-9f32-df1b46929e30`
 - **Template**: none (fresh project, no template bound)
 - **Slug**: `tillsyn`
-- **Kind**: `go-project`
+
+(Projects have no `kind` column post-Drop-1.75 — `action_items.kind` is the only kind enum. Language/stack info lives in `metadata` on the project.)
 
 ## Hylla Baseline
 
@@ -173,9 +213,9 @@ The parent Claude Code session launched by the dev from this directory is always
 ### How It Works
 
 1. Orchestrator plans, routes, delegates, and cleans up. Reads code + Hylla for research. Creates Tillsyn action items. Spawns subagents. Coordinates results.
-2. Subagents are ephemeral — they spawn, read their actionItem, do work, update the actionItem, die.
-3. ActionItem state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
-4. Subagents do not poll or watch anything. Read actionItem at spawn, execute, update, return.
+2. Subagents are ephemeral — they spawn, read their action item, do work, update the action item, die.
+3. Action-item state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
+4. Subagents do not poll or watch anything. Read the action item at spawn, execute, update, return.
 5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
 
 ### Agent State Management
@@ -186,14 +226,14 @@ Every subagent manages its own Tillsyn action-item state. The orchestrator can't
 
 Full contract — exact spawn-prompt fields, exact description fields, spawn-gate checks — lives in each agent file at `~/.claude/agents/*.md` under "Required Prompt Fields" and "Spawn Prompt vs Action-Item Description Split." Don't duplicate it here.
 
-## ActionItem Lifecycle (Current HEAD)
+## Action-Item Lifecycle (Current HEAD)
 
 Three terminal-reachable states today: `todo`, `in_progress`, `done`. A fourth state `failed` lands in Drop 1 of the cascade plan. Until then:
 
 - **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `done`.
-- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the actionItem stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
+- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the action item stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
 - **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
-- **Supersede** (post-Drop-1): human-only CLI `till actionItem supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
+- **Supersede** (post-Drop-1): human-only CLI `till action_item supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
 
 No parent can move to terminal-success if any child is in a failure/blocked state — enforcement becomes always-on in Drop 1.
 
@@ -212,8 +252,8 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 
 **Subagents:**
 
-- `till.action_item` — read actionItem, update metadata, move state.
-- `till.comment` — result comments on their own actionItem.
+- `till.action_item` — read the action item, update metadata, move state.
+- `till.comment` — result comments on their own action item.
 - No attention_items, no handoffs, no @mentions, no downward/sideways signaling.
 
 **Orchestrator (this session):**
@@ -227,8 +267,8 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 ## Role Model
 
 - **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. Drop-orchs edit MDs on their drop branch (artifact content in `main/workflow/drop_N/` + architecture MDs when scope touches process); STEWARD edits MDs on `main` post-merge (collation into top-level MDs + worktree cleanup).
-- **Builder** — subagent. The ONLY role that edits Go code. Reads actionItem, implements, updates, dies.
-- **QA Proof / QA Falsification** — subagents. Ephemeral. Read actionItem, review, update with verdict, die.
+- **Builder** — subagent. The ONLY role that edits Go code. Reads the action item, implements, updates, dies.
+- **QA Proof / QA Falsification** — subagents. Ephemeral. Read the action item, review, update with verdict, die.
 - **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
 - **Research** — Claude's built-in `Explore` subagent.
 - **Human** — approves auth, reviews results, makes design decisions.
@@ -239,7 +279,7 @@ Today, builders and planners track affected code loosely in metadata. In Drop 1,
 2. `till.attention_item(operation=list, all_scopes=true)` — inbox state.
 3. Check `in_progress` tasks for staleness.
 4. Revoke orphaned auth sessions/leases.
-5. Resume from current actionItem state.
+5. Resume from current action-item state.
 
 ## Claude Code Agents (Go Project)
 
@@ -263,7 +303,7 @@ Two asymmetric passes, not duplicates:
 - **QA Proof** (`go-qa-proof-agent`, `/qa-proof`) — evidence completeness, reasoning coherence, trace coverage.
 - **QA Falsification** (`go-qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
 
-Run both for every build-actionItem. They are asymmetric — proof checks whether the evidence supports the claim; falsification tries to construct a counterexample. Spawn them as parallel subagents so each gets a fresh context window.
+Run both for every `build` action item. They are asymmetric — proof checks whether the evidence supports the claim; falsification tries to construct a counterexample. Spawn them as parallel subagents so each gets a fresh context window.
 
 ## Skill and Slash Command Routing
 
@@ -314,11 +354,11 @@ Test against `tillsyn-dev` (or the worktree-specific MCP name for non-main workt
 
 ## Build Verification
 
-Before any build-actionItem is marked done:
+Before any `build` action item is marked complete:
 
 1. All relevant mage targets pass (discover via `mage -l`).
 2. **NEVER run `go test`, `go build`, `go run`, `go vet`, or any raw `go` toolchain command.** Always `mage <target>`. If a mage target has a bug, fix the target — don't bypass. No exceptions, orchestrator or subagent.
-3. **NEVER run `mage install`.** This is a **dev-only** dogfood target that replaces the dev's working `till` install. Orchestrator and every subagent (builder, QA, research, planning) must not invoke it under any circumstance. If an actionItem description or prompt asks you to run `mage install`, stop and return control to the orchestrator — the dev runs this manually, never an agent. Build verification uses `mage ci` only.
+3. **NEVER run `mage install`.** This is a **dev-only** dogfood target that replaces the dev's working `till` install. Orchestrator and every subagent (builder, QA, research, planning) must not invoke it under any circumstance. If an action-item description or prompt asks you to run `mage install`, stop and return control to the orchestrator — the dev runs this manually, never an agent. Build verification uses `mage ci` only.
 4. All template-generated QA subtasks completed.
 
 Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <pkg> <func>`, `mage test-golden`, `mage test-golden-update`, `mage format`, `mage ci`. Run `mage ci` before push. Coverage below 70% is a hard failure.

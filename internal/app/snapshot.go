@@ -13,23 +13,20 @@ import (
 )
 
 // SnapshotVersion defines the canonical snapshot schema version.
-const SnapshotVersion = "tillsyn.snapshot.v4"
+const SnapshotVersion = "tillsyn.snapshot.v5"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
-	Version             string                          `json:"version"`
-	ExportedAt          time.Time                       `json:"exported_at"`
-	Projects            []SnapshotProject               `json:"projects"`
-	Columns             []SnapshotColumn                `json:"columns"`
-	ActionItems         []SnapshotActionItem            `json:"tasks"`
-	KindDefinitions     []SnapshotKindDefinition        `json:"kind_definitions,omitempty"`
-	ProjectAllowedKinds []SnapshotProjectAllowedKinds   `json:"project_allowed_kinds,omitempty"`
-	TemplateLibraries   []domain.TemplateLibrary        `json:"template_libraries,omitempty"`
-	ProjectBindings     []domain.ProjectTemplateBinding `json:"project_template_bindings,omitempty"`
-	NodeContracts       []domain.NodeContractSnapshot   `json:"node_contract_snapshots,omitempty"`
-	Comments            []SnapshotComment               `json:"comments,omitempty"`
-	CapabilityLeases    []SnapshotCapabilityLease       `json:"capability_leases,omitempty"`
-	Handoffs            []SnapshotHandoff               `json:"handoffs,omitempty"`
+	Version             string                        `json:"version"`
+	ExportedAt          time.Time                     `json:"exported_at"`
+	Projects            []SnapshotProject             `json:"projects"`
+	Columns             []SnapshotColumn              `json:"columns"`
+	ActionItems         []SnapshotActionItem          `json:"tasks"`
+	KindDefinitions     []SnapshotKindDefinition      `json:"kind_definitions,omitempty"`
+	ProjectAllowedKinds []SnapshotProjectAllowedKinds `json:"project_allowed_kinds,omitempty"`
+	Comments            []SnapshotComment             `json:"comments,omitempty"`
+	CapabilityLeases    []SnapshotCapabilityLease     `json:"capability_leases,omitempty"`
+	Handoffs            []SnapshotHandoff             `json:"handoffs,omitempty"`
 }
 
 // SnapshotProject represents snapshot project data used by this package.
@@ -38,7 +35,6 @@ type SnapshotProject struct {
 	Slug        string                 `json:"slug"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	Kind        domain.KindID          `json:"kind,omitempty"`
 	Metadata    domain.ProjectMetadata `json:"metadata"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
@@ -62,7 +58,7 @@ type SnapshotActionItem struct {
 	ID             string                    `json:"id"`
 	ProjectID      string                    `json:"project_id"`
 	ParentID       string                    `json:"parent_id,omitempty"`
-	Kind           domain.WorkKind           `json:"kind"`
+	Kind           domain.Kind               `json:"kind"`
 	Scope          domain.KindAppliesTo      `json:"scope,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
@@ -174,10 +170,6 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	templateLibraries, err := s.repo.ListTemplateLibraries(ctx, domain.TemplateLibraryFilter{})
-	if err != nil {
-		return Snapshot{}, err
-	}
 
 	projects, err := s.repo.ListProjects(ctx, includeArchived)
 	if err != nil {
@@ -192,18 +184,12 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 		ActionItems:         make([]SnapshotActionItem, 0),
 		KindDefinitions:     make([]SnapshotKindDefinition, 0, len(kindDefinitions)),
 		ProjectAllowedKinds: make([]SnapshotProjectAllowedKinds, 0, len(projects)),
-		TemplateLibraries:   make([]domain.TemplateLibrary, 0, len(templateLibraries)),
-		ProjectBindings:     make([]domain.ProjectTemplateBinding, 0, len(projects)),
-		NodeContracts:       make([]domain.NodeContractSnapshot, 0),
 		Comments:            make([]SnapshotComment, 0),
 		CapabilityLeases:    make([]SnapshotCapabilityLease, 0),
 		Handoffs:            make([]SnapshotHandoff, 0),
 	}
 	for _, kind := range kindDefinitions {
 		snap.KindDefinitions = append(snap.KindDefinitions, snapshotKindDefinitionFromDomain(kind))
-	}
-	for _, library := range templateLibraries {
-		snap.TemplateLibraries = append(snap.TemplateLibraries, snapshotTemplateLibraryFromDomain(library))
 	}
 	for _, project := range projects {
 		snap.Projects = append(snap.Projects, snapshotProjectFromDomain(project))
@@ -217,14 +203,6 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 				ProjectID: project.ID,
 				KindIDs:   append([]domain.KindID(nil), allowedKinds...),
 			})
-		}
-		binding, getErr := s.repo.GetProjectTemplateBinding(ctx, project.ID)
-		switch {
-		case getErr == nil:
-			snap.ProjectBindings = append(snap.ProjectBindings, snapshotProjectTemplateBindingFromDomain(binding))
-		case errors.Is(getErr, ErrNotFound):
-		default:
-			return Snapshot{}, getErr
 		}
 
 		columns, listErr := s.repo.ListColumns(ctx, project.ID, includeArchived)
@@ -241,14 +219,6 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 		}
 		for _, actionItem := range tasks {
 			snap.ActionItems = append(snap.ActionItems, snapshotActionItemFromDomain(actionItem))
-			nodeContract, getErr := s.repo.GetNodeContractSnapshot(ctx, actionItem.ID)
-			switch {
-			case getErr == nil:
-				snap.NodeContracts = append(snap.NodeContracts, snapshotNodeContractFromDomain(nodeContract))
-			case errors.Is(getErr, ErrNotFound):
-			default:
-				return Snapshot{}, getErr
-			}
 		}
 
 		comments, listErr := s.commentsForProjectSnapshot(ctx, project, tasks)
@@ -291,18 +261,8 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 			return err
 		}
 	}
-	for _, library := range snap.TemplateLibraries {
-		if err := s.upsertTemplateLibrary(ctx, library); err != nil {
-			return err
-		}
-	}
 	for _, allow := range snap.ProjectAllowedKinds {
 		if err := s.repo.SetProjectAllowedKinds(ctx, strings.TrimSpace(allow.ProjectID), append([]domain.KindID(nil), allow.KindIDs...)); err != nil {
-			return err
-		}
-	}
-	for _, binding := range snap.ProjectBindings {
-		if err := s.repo.UpsertProjectTemplateBinding(ctx, binding); err != nil {
 			return err
 		}
 	}
@@ -348,17 +308,6 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 			return err
 		}
 	}
-	for _, nodeContract := range snap.NodeContracts {
-		if _, err := s.repo.GetNodeContractSnapshot(ctx, strings.TrimSpace(nodeContract.NodeID)); err == nil {
-			continue
-		} else if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if err := s.repo.CreateNodeContractSnapshot(ctx, nodeContract); err != nil {
-			return err
-		}
-	}
-
 	if err := s.importSnapshotComments(ctx, snap.Comments); err != nil {
 		return err
 	}
@@ -391,10 +340,6 @@ func (s *Snapshot) Validate() error {
 		}
 		if _, exists := projectIDs[p.ID]; exists {
 			return fmt.Errorf("duplicate project id: %q", p.ID)
-		}
-		if domain.NormalizeKindID(p.Kind) == "" {
-			p.Kind = domain.DefaultProjectKind
-			s.Projects[i].Kind = p.Kind
 		}
 		projectIDs[p.ID] = struct{}{}
 	}
@@ -452,15 +397,19 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("tasks[%d].priority must be low|medium|high", i)
 		}
 		if strings.TrimSpace(string(t.Kind)) == "" {
-			t.Kind = domain.WorkKindActionItem
+			// Snapshot imports tolerate legacy rows with empty kind by falling
+			// back to KindPlan, which is the lightest-weight member of the
+			// 12-value Kind enum. Domain creation rejects empty kind; this
+			// fallback keeps importers forward-compatible with older exports.
+			t.Kind = domain.KindPlan
 			s.ActionItems[i].Kind = t.Kind
 		}
 		if t.Scope == "" {
-			t.Scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+			t.Scope = domain.DefaultActionItemScope(t.Kind)
 			s.ActionItems[i].Scope = t.Scope
 		}
 		if !domain.IsValidWorkItemAppliesTo(t.Scope) {
-			return fmt.Errorf("tasks[%d].scope must be branch|phase|actionItem|subtask", i)
+			return fmt.Errorf("tasks[%d].scope must be a member of the 12-value Kind enum", i)
 		}
 		if t.LifecycleState == "" {
 			t.LifecycleState = domain.StateTodo
@@ -496,10 +445,10 @@ func (s *Snapshot) Validate() error {
 		if _, exists := actionItemIDs[t.ParentID]; !exists {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
 		}
-		parent := actionItemByID[t.ParentID]
-		if t.Kind == domain.WorkKindPhase && parent.Scope != domain.KindAppliesToBranch && parent.Scope != domain.KindAppliesToPhase {
-			return fmt.Errorf("tasks[%d].parent_id %q invalid for phase parent scope %q", i, t.ParentID, parent.Scope)
-		}
+		// Parent-kind constraints are enforced by domain.AllowedParentKinds at
+		// action-item creation. Snapshot validation no longer special-cases the
+		// legacy KindPhase hierarchy because the 12-value Kind enum removed it.
+		_ = actionItemByID[t.ParentID]
 	}
 
 	kindIDs := map[domain.KindID]struct{}{}
@@ -550,73 +499,6 @@ func (s *Snapshot) Validate() error {
 		s.ProjectAllowedKinds[i].KindIDs = normalizedKinds
 		allowlistByProject[projectID] = struct{}{}
 	}
-	libraryIDs := map[string]struct{}{}
-	for i, library := range s.TemplateLibraries {
-		normalized, err := normalizeSnapshotTemplateLibrary(library)
-		if err != nil {
-			return fmt.Errorf("template_libraries[%d] invalid: %w", i, err)
-		}
-		if _, exists := libraryIDs[normalized.ID]; exists {
-			return fmt.Errorf("duplicate template library id: %q", normalized.ID)
-		}
-		if normalized.Scope != domain.TemplateLibraryScopeGlobal {
-			if _, ok := projectIDs[normalized.ProjectID]; !ok {
-				return fmt.Errorf("template_libraries[%d] references unknown project_id %q", i, normalized.ProjectID)
-			}
-		}
-		for _, nodeTemplate := range normalized.NodeTemplates {
-			if _, ok := kindIDs[nodeTemplate.NodeKindID]; !ok {
-				return fmt.Errorf("template_libraries[%d] references unknown node_kind_id %q", i, nodeTemplate.NodeKindID)
-			}
-			for _, childRule := range nodeTemplate.ChildRules {
-				if _, ok := kindIDs[childRule.ChildKindID]; !ok {
-					return fmt.Errorf("template_libraries[%d] references unknown child_kind_id %q", i, childRule.ChildKindID)
-				}
-			}
-		}
-		s.TemplateLibraries[i] = normalized
-		libraryIDs[normalized.ID] = struct{}{}
-	}
-	bindingProjects := map[string]struct{}{}
-	for i, binding := range s.ProjectBindings {
-		normalized, err := normalizeSnapshotProjectTemplateBinding(binding)
-		if err != nil {
-			return fmt.Errorf("project_template_bindings[%d] invalid: %w", i, err)
-		}
-		if _, ok := projectIDs[normalized.ProjectID]; !ok {
-			return fmt.Errorf("project_template_bindings[%d] references unknown project_id %q", i, normalized.ProjectID)
-		}
-		if _, ok := libraryIDs[domain.NormalizeTemplateLibraryID(normalized.LibraryID)]; !ok {
-			return fmt.Errorf("project_template_bindings[%d] references unknown library_id %q", i, normalized.LibraryID)
-		}
-		if _, exists := bindingProjects[normalized.ProjectID]; exists {
-			return fmt.Errorf("duplicate project_template_bindings project_id: %q", normalized.ProjectID)
-		}
-		s.ProjectBindings[i] = normalized
-		bindingProjects[normalized.ProjectID] = struct{}{}
-	}
-	nodeContractIDs := map[string]struct{}{}
-	for i, nodeContract := range s.NodeContracts {
-		normalized, err := normalizeSnapshotNodeContract(nodeContract)
-		if err != nil {
-			return fmt.Errorf("node_contract_snapshots[%d] invalid: %w", i, err)
-		}
-		if _, ok := projectIDs[normalized.ProjectID]; !ok {
-			return fmt.Errorf("node_contract_snapshots[%d] references unknown project_id %q", i, normalized.ProjectID)
-		}
-		if _, ok := actionItemIDs[normalized.NodeID]; !ok {
-			return fmt.Errorf("node_contract_snapshots[%d] references unknown node_id %q", i, normalized.NodeID)
-		}
-		if _, ok := libraryIDs[domain.NormalizeTemplateLibraryID(normalized.SourceLibraryID)]; !ok {
-			return fmt.Errorf("node_contract_snapshots[%d] references unknown source_library_id %q", i, normalized.SourceLibraryID)
-		}
-		if _, exists := nodeContractIDs[normalized.NodeID]; exists {
-			return fmt.Errorf("duplicate node_contract_snapshots node_id: %q", normalized.NodeID)
-		}
-		s.NodeContracts[i] = normalized
-		nodeContractIDs[normalized.NodeID] = struct{}{}
-	}
-
 	commentKeys := map[string]struct{}{}
 	for i, c := range s.Comments {
 		commentID := strings.TrimSpace(c.ID)
@@ -848,11 +730,6 @@ func (s *Service) upsertKindDefinition(ctx context.Context, kind domain.KindDefi
 	return s.repo.CreateKindDefinition(ctx, kind)
 }
 
-// upsertTemplateLibrary upserts one template-library row and nested rules.
-func (s *Service) upsertTemplateLibrary(ctx context.Context, library domain.TemplateLibrary) error {
-	return s.repo.UpsertTemplateLibrary(ctx, library)
-}
-
 // commentsForProjectSnapshot collects project and actionItem-scoped comments for snapshot export.
 func (s *Service) commentsForProjectSnapshot(ctx context.Context, project domain.Project, tasks []domain.ActionItem) ([]SnapshotComment, error) {
 	targets := []domain.CommentTarget{{
@@ -1025,45 +902,20 @@ func (s *Service) importSnapshotHandoffs(ctx context.Context, handoffs []Snapsho
 	return nil
 }
 
-// snapshotCommentTargetTypeForActionItem maps one work-item row to a comment target type.
+// snapshotCommentTargetTypeForActionItem maps one work-item row to a comment
+// target type. Comments now address the action item as a whole, regardless of
+// which of the 12 kinds the row carries.
 func snapshotCommentTargetTypeForActionItem(actionItem domain.ActionItem) domain.CommentTargetType {
-	switch actionItem.Kind {
-	case domain.WorkKind(domain.KindAppliesToBranch):
-		return domain.CommentTargetTypeBranch
-	case domain.WorkKindPhase:
-		return domain.CommentTargetTypePhase
-	case domain.WorkKindSubtask:
-		return domain.CommentTargetTypeSubtask
-	case domain.WorkKindDecision:
-		return domain.CommentTargetTypeDecision
-	case domain.WorkKindNote:
-		return domain.CommentTargetTypeNote
-	default:
-		if actionItem.Scope == domain.KindAppliesToBranch {
-			return domain.CommentTargetTypeBranch
-		}
-		if actionItem.Scope == domain.KindAppliesToSubtask {
-			return domain.CommentTargetTypeSubtask
-		}
-		if actionItem.Scope == domain.KindAppliesToPhase {
-			return domain.CommentTargetTypePhase
-		}
-		return domain.CommentTargetTypeActionItem
-	}
+	_ = actionItem
+	return domain.CommentTargetTypeActionItem
 }
 
-// snapshotCapabilityScopeTypeForActionItem maps one work-item row to a capability scope type.
+// snapshotCapabilityScopeTypeForActionItem maps one work-item row to a
+// capability scope type. Scope mirrors kind in the 12-value enum, so every
+// action-item row resolves to CapabilityScopeActionItem.
 func snapshotCapabilityScopeTypeForActionItem(actionItem domain.ActionItem) domain.CapabilityScopeType {
-	switch actionItem.Scope {
-	case domain.KindAppliesToBranch:
-		return domain.CapabilityScopeBranch
-	case domain.KindAppliesToPhase:
-		return domain.CapabilityScopePhase
-	case domain.KindAppliesToSubtask:
-		return domain.CapabilityScopeSubtask
-	default:
-		return domain.CapabilityScopeActionItem
-	}
+	_ = actionItem
+	return domain.CapabilityScopeActionItem
 }
 
 // isSupportedActorType validates snapshot actor types for comments.
@@ -1116,23 +968,6 @@ func (s *Snapshot) sort() {
 	})
 	sort.Slice(s.ProjectAllowedKinds, func(i, j int) bool {
 		return s.ProjectAllowedKinds[i].ProjectID < s.ProjectAllowedKinds[j].ProjectID
-	})
-	sort.Slice(s.TemplateLibraries, func(i, j int) bool {
-		a := s.TemplateLibraries[i]
-		b := s.TemplateLibraries[j]
-		if a.Scope == b.Scope {
-			if a.ProjectID == b.ProjectID {
-				return a.ID < b.ID
-			}
-			return a.ProjectID < b.ProjectID
-		}
-		return a.Scope < b.Scope
-	})
-	sort.Slice(s.ProjectBindings, func(i, j int) bool {
-		return s.ProjectBindings[i].ProjectID < s.ProjectBindings[j].ProjectID
-	})
-	sort.Slice(s.NodeContracts, func(i, j int) bool {
-		return s.NodeContracts[i].NodeID < s.NodeContracts[j].NodeID
 	})
 	sort.Slice(s.Comments, func(i, j int) bool {
 		a := s.Comments[i]
@@ -1190,41 +1025,6 @@ func (s *Snapshot) sort() {
 	})
 }
 
-// snapshotTemplateLibraryFromDomain deep-copies one template library into snapshot form.
-func snapshotTemplateLibraryFromDomain(library domain.TemplateLibrary) domain.TemplateLibrary {
-	out := library
-	out.NodeTemplates = make([]domain.NodeTemplate, 0, len(library.NodeTemplates))
-	for _, nodeTemplate := range library.NodeTemplates {
-		copied := nodeTemplate
-		if nodeTemplate.ProjectMetadataDefaults != nil {
-			projectMetadata := *nodeTemplate.ProjectMetadataDefaults
-			copied.ProjectMetadataDefaults = &projectMetadata
-		}
-		if nodeTemplate.ActionItemMetadataDefaults != nil {
-			actionItemMetadata := *nodeTemplate.ActionItemMetadataDefaults
-			copied.ActionItemMetadataDefaults = &actionItemMetadata
-		}
-		copied.ChildRules = append([]domain.TemplateChildRule(nil), nodeTemplate.ChildRules...)
-		out.NodeTemplates = append(out.NodeTemplates, copied)
-	}
-	return out
-}
-
-// snapshotProjectTemplateBindingFromDomain copies one project binding into snapshot form.
-func snapshotProjectTemplateBindingFromDomain(binding domain.ProjectTemplateBinding) domain.ProjectTemplateBinding {
-	out := binding
-	out.BoundLibrarySnapshot = cloneOptionalSnapshotTemplateLibrary(binding.BoundLibrarySnapshot)
-	return out
-}
-
-// snapshotNodeContractFromDomain copies one node-contract snapshot into snapshot form.
-func snapshotNodeContractFromDomain(nodeContract domain.NodeContractSnapshot) domain.NodeContractSnapshot {
-	out := nodeContract
-	out.EditableByActorKinds = append([]domain.TemplateActorKind(nil), nodeContract.EditableByActorKinds...)
-	out.CompletableByActorKinds = append([]domain.TemplateActorKind(nil), nodeContract.CompletableByActorKinds...)
-	return out
-}
-
 // snapshotProjectFromDomain handles snapshot project from domain.
 func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 	return SnapshotProject{
@@ -1232,7 +1032,6 @@ func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 		Slug:        p.Slug,
 		Name:        p.Name,
 		Description: p.Description,
-		Kind:        p.Kind,
 		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
@@ -1283,154 +1082,6 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		ArchivedAt:     copyTimePtr(t.ArchivedAt),
 		CanceledAt:     copyTimePtr(t.CanceledAt),
 	}
-}
-
-// normalizeSnapshotTemplateLibrary validates and normalizes one imported template library.
-func normalizeSnapshotTemplateLibrary(library domain.TemplateLibrary) (domain.TemplateLibrary, error) {
-	if library.CreatedAt.IsZero() || library.UpdatedAt.IsZero() {
-		return domain.TemplateLibrary{}, fmt.Errorf("timestamps are required")
-	}
-	input := domain.TemplateLibraryInput{
-		ID:                  library.ID,
-		Scope:               library.Scope,
-		ProjectID:           library.ProjectID,
-		Name:                library.Name,
-		Description:         library.Description,
-		Status:              library.Status,
-		SourceLibraryID:     library.SourceLibraryID,
-		BuiltinManaged:      library.BuiltinManaged,
-		BuiltinSource:       library.BuiltinSource,
-		BuiltinVersion:      library.BuiltinVersion,
-		Revision:            max(library.Revision, 1),
-		RevisionDigest:      library.RevisionDigest,
-		CreatedByActorID:    library.CreatedByActorID,
-		CreatedByActorName:  library.CreatedByActorName,
-		CreatedByActorType:  library.CreatedByActorType,
-		ApprovedByActorID:   library.ApprovedByActorID,
-		ApprovedByActorName: library.ApprovedByActorName,
-		ApprovedByActorType: library.ApprovedByActorType,
-		ApprovedAt:          cloneTimePtr(library.ApprovedAt),
-		NodeTemplates:       make([]domain.NodeTemplateInput, 0, len(library.NodeTemplates)),
-	}
-	for _, nodeTemplate := range library.NodeTemplates {
-		templateInput := domain.NodeTemplateInput{
-			ID:                  nodeTemplate.ID,
-			ScopeLevel:          nodeTemplate.ScopeLevel,
-			NodeKindID:          nodeTemplate.NodeKindID,
-			DisplayName:         nodeTemplate.DisplayName,
-			DescriptionMarkdown: nodeTemplate.DescriptionMarkdown,
-			ChildRules:          make([]domain.TemplateChildRuleInput, 0, len(nodeTemplate.ChildRules)),
-		}
-		if nodeTemplate.ProjectMetadataDefaults != nil {
-			projectMetadata := *nodeTemplate.ProjectMetadataDefaults
-			templateInput.ProjectMetadataDefaults = &projectMetadata
-		}
-		if nodeTemplate.ActionItemMetadataDefaults != nil {
-			actionItemMetadata := *nodeTemplate.ActionItemMetadataDefaults
-			templateInput.ActionItemMetadataDefaults = &actionItemMetadata
-		}
-		for _, childRule := range nodeTemplate.ChildRules {
-			templateInput.ChildRules = append(templateInput.ChildRules, domain.TemplateChildRuleInput{
-				ID:                        childRule.ID,
-				Position:                  childRule.Position,
-				ChildScopeLevel:           childRule.ChildScopeLevel,
-				ChildKindID:               childRule.ChildKindID,
-				TitleTemplate:             childRule.TitleTemplate,
-				DescriptionTemplate:       childRule.DescriptionTemplate,
-				ResponsibleActorKind:      childRule.ResponsibleActorKind,
-				EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
-				CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
-				OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
-				RequiredForParentDone:     childRule.RequiredForParentDone,
-				RequiredForContainingDone: childRule.RequiredForContainingDone,
-			})
-		}
-		input.NodeTemplates = append(input.NodeTemplates, templateInput)
-	}
-	normalized, err := domain.NewTemplateLibrary(input, library.CreatedAt)
-	if err != nil {
-		return domain.TemplateLibrary{}, err
-	}
-	normalized.CreatedAt = library.CreatedAt.UTC()
-	normalized.UpdatedAt = library.UpdatedAt.UTC()
-	normalized.ApprovedAt = cloneTimePtr(library.ApprovedAt)
-	normalized.Revision = max(library.Revision, 1)
-	if strings.TrimSpace(normalized.RevisionDigest) == "" {
-		normalized.RevisionDigest = normalized.RevisionFingerprint()
-	}
-	return normalized, nil
-}
-
-// normalizeSnapshotProjectTemplateBinding validates and normalizes one imported project binding.
-func normalizeSnapshotProjectTemplateBinding(binding domain.ProjectTemplateBinding) (domain.ProjectTemplateBinding, error) {
-	if binding.BoundAt.IsZero() {
-		return domain.ProjectTemplateBinding{}, fmt.Errorf("bound_at is required")
-	}
-	normalized, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
-		ProjectID:             binding.ProjectID,
-		LibraryID:             binding.LibraryID,
-		LibraryName:           binding.LibraryName,
-		BoundRevision:         max(binding.BoundRevision, 1),
-		BoundRevisionDigest:   binding.BoundRevisionDigest,
-		BoundLibraryUpdatedAt: cloneTimePtr(&binding.BoundLibraryUpdatedAt),
-		BoundByActorID:        binding.BoundByActorID,
-		BoundByActorName:      binding.BoundByActorName,
-		BoundByActorType:      binding.BoundByActorType,
-		BoundLibrarySnapshot:  cloneOptionalSnapshotTemplateLibrary(binding.BoundLibrarySnapshot),
-	}, binding.BoundAt)
-	if err != nil {
-		return domain.ProjectTemplateBinding{}, err
-	}
-	normalized.BoundAt = binding.BoundAt.UTC()
-	normalized.DriftStatus = strings.TrimSpace(binding.DriftStatus)
-	normalized.LatestRevision = max(binding.LatestRevision, 0)
-	normalized.LatestRevisionDigest = strings.TrimSpace(binding.LatestRevisionDigest)
-	normalized.LatestLibraryUpdatedAt = cloneTimePtr(binding.LatestLibraryUpdatedAt)
-	return normalized, nil
-}
-
-func cloneOptionalSnapshotTemplateLibrary(in *domain.TemplateLibrary) *domain.TemplateLibrary {
-	if in == nil {
-		return nil
-	}
-	cloned := snapshotTemplateLibraryFromDomain(*in)
-	return &cloned
-}
-
-// normalizeSnapshotNodeContract validates and normalizes one imported node-contract snapshot.
-func normalizeSnapshotNodeContract(nodeContract domain.NodeContractSnapshot) (domain.NodeContractSnapshot, error) {
-	if nodeContract.CreatedAt.IsZero() {
-		return domain.NodeContractSnapshot{}, fmt.Errorf("created_at is required")
-	}
-	normalized, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
-		NodeID:                    nodeContract.NodeID,
-		ProjectID:                 nodeContract.ProjectID,
-		SourceLibraryID:           nodeContract.SourceLibraryID,
-		SourceNodeTemplateID:      nodeContract.SourceNodeTemplateID,
-		SourceChildRuleID:         nodeContract.SourceChildRuleID,
-		CreatedByActorID:          nodeContract.CreatedByActorID,
-		CreatedByActorType:        nodeContract.CreatedByActorType,
-		ResponsibleActorKind:      nodeContract.ResponsibleActorKind,
-		EditableByActorKinds:      append([]domain.TemplateActorKind(nil), nodeContract.EditableByActorKinds...),
-		CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), nodeContract.CompletableByActorKinds...),
-		OrchestratorMayComplete:   nodeContract.OrchestratorMayComplete,
-		RequiredForParentDone:     nodeContract.RequiredForParentDone,
-		RequiredForContainingDone: nodeContract.RequiredForContainingDone,
-	}, nodeContract.CreatedAt)
-	if err != nil {
-		return domain.NodeContractSnapshot{}, err
-	}
-	normalized.CreatedAt = nodeContract.CreatedAt.UTC()
-	return normalized, nil
-}
-
-// cloneTimePtr returns a detached copy of one time pointer.
-func cloneTimePtr(ts *time.Time) *time.Time {
-	if ts == nil {
-		return nil
-	}
-	cloned := ts.UTC()
-	return &cloned
 }
 
 // snapshotKindDefinitionFromDomain converts one kind definition to snapshot payload form.
@@ -1546,11 +1197,9 @@ func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []Snapshot
 		if projectID == "" || scopeID == "" {
 			continue
 		}
-		scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-		if scopeType == "" {
-			scopeType = domain.ScopeLevelActionItem
-		}
-		out[snapshotHandoffScopeKey(projectID, scopeType, scopeID)] = struct{}{}
+		// Scope mirrors kind in the 12-value enum, so every action-item
+		// handoff scope lives at ScopeLevelActionItem.
+		out[snapshotHandoffScopeKey(projectID, domain.ScopeLevelActionItem, scopeID)] = struct{}{}
 	}
 	return out
 }
@@ -1562,11 +1211,9 @@ func snapshotAvailableDomainHandoffScopes(projectID string, tasks []domain.Actio
 		snapshotHandoffScopeKey(projectID, domain.ScopeLevelProject, projectID): {},
 	}
 	for _, actionItem := range tasks {
-		scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-		if scopeType == "" {
-			scopeType = domain.ScopeLevelActionItem
-		}
-		out[snapshotHandoffScopeKey(projectID, scopeType, actionItem.ID)] = struct{}{}
+		// Scope mirrors kind in the 12-value enum, so every action-item
+		// handoff scope lives at ScopeLevelActionItem.
+		out[snapshotHandoffScopeKey(projectID, domain.ScopeLevelActionItem, actionItem.ID)] = struct{}{}
 	}
 	return out
 }
@@ -1586,16 +1233,11 @@ func (p SnapshotProject) toDomain() domain.Project {
 	if slug == "" {
 		slug = fallbackSlug(p.Name)
 	}
-	kind := domain.NormalizeKindID(p.Kind)
-	if kind == "" {
-		kind = domain.DefaultProjectKind
-	}
 	return domain.Project{
 		ID:          strings.TrimSpace(p.ID),
 		Slug:        slug,
 		Name:        strings.TrimSpace(p.Name),
 		Description: strings.TrimSpace(p.Description),
-		Kind:        kind,
 		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
@@ -1626,11 +1268,13 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 	}
 	kind := t.Kind
 	if kind == "" {
-		kind = domain.WorkKindActionItem
+		// Legacy rows with empty kind fall back to KindPlan so imports remain
+		// forward-compatible with the strict 12-value Kind enum.
+		kind = domain.KindPlan
 	}
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultActionItemScope(kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(kind)
 	}
 	updatedType := t.UpdatedByType
 	if updatedType == "" {

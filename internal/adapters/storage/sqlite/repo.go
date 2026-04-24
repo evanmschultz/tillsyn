@@ -149,7 +149,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			slug TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			kind TEXT NOT NULL DEFAULT 'project',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -165,35 +164,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			archived_at TEXT,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS tasks (
-			id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			parent_id TEXT NOT NULL DEFAULT '',
-			kind TEXT NOT NULL DEFAULT 'actionItem',
-			scope TEXT NOT NULL DEFAULT 'actionItem',
-			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
-			column_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			priority TEXT NOT NULL,
-			due_at TEXT,
-			labels_json TEXT NOT NULL DEFAULT '[]',
-			metadata_json TEXT NOT NULL DEFAULT '{}',
-			created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
-			created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
-			updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user',
-			updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user',
-			updated_by_type TEXT NOT NULL DEFAULT 'user',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			started_at TEXT,
-			completed_at TEXT,
-			archived_at TEXT,
-			canceled_at TEXT,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS action_items (
 			id TEXT PRIMARY KEY,
@@ -325,6 +295,84 @@ func (r *Repository) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
 		);`,
+		// Seed the 12-value Kind enum into the kind catalog at boot. Scope
+		// mirrors kind (applies_to_json = ["<kind-id>"]), and the parent-scope
+		// list encodes the domain.AllowedParentKinds rule: build-qa-proof /
+		// build-qa-falsification nest under build; every other non-plan kind
+		// nests under plan; plan itself nests under plan (and accepts a
+		// project-root placement through an empty parent).
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'plan', 'Plan', 'Planning-dominant action item', '["plan"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'research', 'Research', 'Read-only investigation action item', '["research"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'build', 'Build', 'Code-changing leaf action item', '["build"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'plan-qa-proof', 'Plan QA Proof', 'Proof-completeness QA pass on a plan parent', '["plan-qa-proof"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'plan-qa-falsification', 'Plan QA Falsification', 'Falsification QA pass on a plan parent', '["plan-qa-falsification"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'build-qa-proof', 'Build QA Proof', 'Proof-completeness QA pass on a build parent', '["build-qa-proof"]', '["build"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'build-qa-falsification', 'Build QA Falsification', 'Falsification QA pass on a build parent', '["build-qa-falsification"]', '["build"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'closeout', 'Closeout', 'Drop-end coordination action item', '["closeout"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'commit', 'Commit', 'Commit action item', '["commit"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'refinement', 'Refinement', 'Long-lived tracking umbrella', '["refinement"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'discussion', 'Discussion', 'Cross-cutting decision park', '["discussion"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'human-verify', 'Human Verify', 'Dev sign-off hold point', '["human-verify"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS project_allowed_kinds (
 			project_id TEXT NOT NULL,
 			kind_id TEXT NOT NULL,
@@ -332,125 +380,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			PRIMARY KEY(project_id, kind_id),
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 			FOREIGN KEY(kind_id) REFERENCES kind_catalog(id) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS template_libraries (
-			id TEXT PRIMARY KEY,
-			scope TEXT NOT NULL,
-			project_id TEXT,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL,
-			source_library_id TEXT,
-			builtin_managed INTEGER NOT NULL DEFAULT 0,
-			builtin_source TEXT NOT NULL DEFAULT '',
-			builtin_version TEXT NOT NULL DEFAULT '',
-			revision INTEGER NOT NULL DEFAULT 1,
-			revision_digest TEXT NOT NULL DEFAULT '',
-			created_by_actor_id TEXT NOT NULL DEFAULT '',
-			created_by_actor_name TEXT NOT NULL DEFAULT '',
-			created_by_actor_type TEXT NOT NULL DEFAULT 'user',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			approved_by_actor_id TEXT NOT NULL DEFAULT '',
-			approved_by_actor_name TEXT NOT NULL DEFAULT '',
-			approved_by_actor_type TEXT NOT NULL DEFAULT '',
-			approved_at TEXT,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_template_libraries_scope_status ON template_libraries(scope, status, name, id);`,
-		`CREATE INDEX IF NOT EXISTS idx_template_libraries_project ON template_libraries(project_id, status, name, id);`,
-		`CREATE TABLE IF NOT EXISTS template_node_templates (
-			library_id TEXT NOT NULL,
-			id TEXT NOT NULL,
-			scope_level TEXT NOT NULL,
-			node_kind_id TEXT NOT NULL,
-			display_name TEXT NOT NULL,
-			description_markdown TEXT NOT NULL DEFAULT '',
-			project_metadata_defaults_json TEXT NOT NULL DEFAULT '',
-			task_metadata_defaults_json TEXT NOT NULL DEFAULT '',
-			PRIMARY KEY(library_id, id),
-			UNIQUE(library_id, scope_level, node_kind_id),
-			FOREIGN KEY(library_id) REFERENCES template_libraries(id) ON DELETE CASCADE,
-			FOREIGN KEY(node_kind_id) REFERENCES kind_catalog(id) ON DELETE RESTRICT
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_template_node_templates_library ON template_node_templates(library_id, scope_level, node_kind_id, id);`,
-		`CREATE TABLE IF NOT EXISTS template_child_rules (
-			library_id TEXT NOT NULL,
-			node_template_id TEXT NOT NULL,
-			id TEXT NOT NULL,
-			position INTEGER NOT NULL DEFAULT 0,
-			child_scope_level TEXT NOT NULL,
-			child_kind_id TEXT NOT NULL,
-			title_template TEXT NOT NULL,
-			description_template TEXT NOT NULL DEFAULT '',
-			responsible_actor_kind TEXT NOT NULL,
-			orchestrator_may_complete INTEGER NOT NULL DEFAULT 0,
-			required_for_parent_done INTEGER NOT NULL DEFAULT 0,
-			required_for_containing_done INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY(library_id, node_template_id, id),
-			FOREIGN KEY(library_id, node_template_id) REFERENCES template_node_templates(library_id, id) ON DELETE CASCADE,
-			FOREIGN KEY(child_kind_id) REFERENCES kind_catalog(id) ON DELETE RESTRICT
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_template_child_rules_template ON template_child_rules(library_id, node_template_id, position, id);`,
-		`CREATE TABLE IF NOT EXISTS template_child_rule_editor_kinds (
-			library_id TEXT NOT NULL,
-			node_template_id TEXT NOT NULL,
-			child_rule_id TEXT NOT NULL,
-			actor_kind TEXT NOT NULL,
-			PRIMARY KEY(library_id, node_template_id, child_rule_id, actor_kind),
-			FOREIGN KEY(library_id, node_template_id, child_rule_id) REFERENCES template_child_rules(library_id, node_template_id, id) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS template_child_rule_completer_kinds (
-			library_id TEXT NOT NULL,
-			node_template_id TEXT NOT NULL,
-			child_rule_id TEXT NOT NULL,
-			actor_kind TEXT NOT NULL,
-			PRIMARY KEY(library_id, node_template_id, child_rule_id, actor_kind),
-			FOREIGN KEY(library_id, node_template_id, child_rule_id) REFERENCES template_child_rules(library_id, node_template_id, id) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS project_template_bindings (
-			project_id TEXT PRIMARY KEY,
-			library_id TEXT NOT NULL,
-			library_name TEXT NOT NULL DEFAULT '',
-			bound_revision INTEGER NOT NULL DEFAULT 1,
-			bound_revision_digest TEXT NOT NULL DEFAULT '',
-			bound_library_updated_at TEXT NOT NULL DEFAULT '',
-			bound_library_snapshot_json TEXT NOT NULL DEFAULT '',
-			bound_by_actor_id TEXT NOT NULL DEFAULT '',
-			bound_by_actor_name TEXT NOT NULL DEFAULT '',
-			bound_by_actor_type TEXT NOT NULL DEFAULT 'user',
-			bound_at TEXT NOT NULL,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-			FOREIGN KEY(library_id) REFERENCES template_libraries(id) ON DELETE RESTRICT
-		);`,
-		`CREATE TABLE IF NOT EXISTS node_contract_snapshots (
-			node_id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			source_library_id TEXT NOT NULL,
-			source_node_template_id TEXT NOT NULL,
-			source_child_rule_id TEXT NOT NULL,
-			created_by_actor_id TEXT NOT NULL DEFAULT '',
-			created_by_actor_type TEXT NOT NULL DEFAULT 'system',
-			responsible_actor_kind TEXT NOT NULL,
-			orchestrator_may_complete INTEGER NOT NULL DEFAULT 0,
-			required_for_parent_done INTEGER NOT NULL DEFAULT 0,
-			required_for_containing_done INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY(node_id) REFERENCES action_items(id) ON DELETE CASCADE,
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_node_contract_snapshots_project ON node_contract_snapshots(project_id, created_at, node_id);`,
-		`CREATE TABLE IF NOT EXISTS node_contract_editor_kinds (
-			node_id TEXT NOT NULL,
-			actor_kind TEXT NOT NULL,
-			PRIMARY KEY(node_id, actor_kind),
-			FOREIGN KEY(node_id) REFERENCES node_contract_snapshots(node_id) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS node_contract_completer_kinds (
-			node_id TEXT NOT NULL,
-			actor_kind TEXT NOT NULL,
-			PRIMARY KEY(node_id, actor_kind),
-			FOREIGN KEY(node_id) REFERENCES node_contract_snapshots(node_id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS capability_leases (
 			instance_id TEXT PRIMARY KEY,
@@ -555,7 +484,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_action_items_project_column_position ON action_items(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_action_items_project_parent ON action_items(project_id, parent_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_change_events_project_created_at ON change_events(project_id, created_at DESC, id DESC);`,
@@ -584,29 +512,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE attention_items ADD COLUMN target_role TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add attention_items.target_role: %w", err)
-	}
-	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'`); err != nil && !isDuplicateColumnErr(err) {
-		return fmt.Errorf("migrate sqlite add projects.kind: %w", err)
-	}
-	actionItemAlterStatements := []string{
-		`ALTER TABLE tasks ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'actionItem'`,
-		`ALTER TABLE tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'actionItem'`,
-		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
-		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
-		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN created_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_name TEXT NOT NULL DEFAULT 'tillsyn-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
-		`ALTER TABLE tasks ADD COLUMN started_at TEXT`,
-		`ALTER TABLE tasks ADD COLUMN completed_at TEXT`,
-		`ALTER TABLE tasks ADD COLUMN canceled_at TEXT`,
-	}
-	for _, stmt := range actionItemAlterStatements {
-		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("migrate sqlite tasks: %w", err)
-		}
 	}
 	workItemAlterStatements := []string{
 		`ALTER TABLE action_items ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
@@ -647,28 +552,13 @@ func (r *Repository) migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate sqlite auth_requests: %w", err)
 		}
 	}
-	if err := r.migrateTemplateLifecycle(ctx); err != nil {
-		return err
-	}
 	if err := r.migrateActionItemActorNames(ctx); err != nil {
-		return err
-	}
-	if err := r.migratePhaseScopeContract(ctx); err != nil {
 		return err
 	}
 	if err := r.ensureCommentIndexes(ctx); err != nil {
 		return err
 	}
 	if err := r.migrateLegacyEmbeddingDocuments(ctx); err != nil {
-		return err
-	}
-	if _, err := r.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(project_id, parent_id)`); err != nil {
-		return fmt.Errorf("migrate sqlite actionItem parent index: %w", err)
-	}
-	if err := r.bridgeLegacyActionItemsToWorkItems(ctx); err != nil {
-		return err
-	}
-	if err := r.seedDefaultKindCatalog(ctx); err != nil {
 		return err
 	}
 	if err := r.ensureGlobalAuthProject(ctx); err != nil {
@@ -705,108 +595,6 @@ func (r *Repository) migrateLegacyEmbeddingDocuments(ctx context.Context) error 
 		return fmt.Errorf("migrate sqlite embedding job subject types: %w", err)
 	}
 	return nil
-}
-
-// migratePhaseScopeContract rewrites legacy subphase markers into the canonical phase contract.
-func (r *Repository) migratePhaseScopeContract(ctx context.Context) error {
-	rewriteStatements := []struct {
-		name string
-		sql  string
-		args []any
-	}{
-		{name: "tasks.scope", sql: `UPDATE tasks SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
-		{name: "action_items.scope", sql: `UPDATE action_items SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
-		{name: "comments.target_type", sql: `UPDATE comments SET target_type = ? WHERE target_type = ?`, args: []any{string(domain.CommentTargetTypePhase), "subphase"}},
-		{name: "capability_leases.scope_type", sql: `UPDATE capability_leases SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.CapabilityScopePhase), "subphase"}},
-		{name: "attention_items.scope_type", sql: `UPDATE attention_items SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.ScopeLevelPhase), "subphase"}},
-		{name: "change_events.metadata_json", sql: `UPDATE change_events SET metadata_json = replace(metadata_json, '\"subphase\"', '\"phase\"') WHERE metadata_json LIKE '%\"subphase\"%'`, args: nil},
-	}
-	for _, stmt := range rewriteStatements {
-		if _, err := r.db.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
-			return fmt.Errorf("migrate phase scope contract %s: %w", stmt.name, err)
-		}
-	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE action_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToActionItem)); err != nil {
-		return fmt.Errorf("migrate phase scope contract action_items project phase scope: %w", err)
-	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToActionItem)); err != nil {
-		return fmt.Errorf("migrate phase scope contract tasks project phase scope: %w", err)
-	}
-
-	rows, err := r.db.QueryContext(ctx, `SELECT id, applies_to_json, allowed_parent_scopes_json FROM kind_catalog`)
-	if err != nil {
-		return fmt.Errorf("migrate phase scope contract query kind_catalog: %w", err)
-	}
-	defer rows.Close()
-
-	type kindRow struct {
-		id          string
-		appliesTo   []domain.KindAppliesTo
-		parentScope []domain.KindAppliesTo
-	}
-	toUpdate := make([]kindRow, 0)
-	for rows.Next() {
-		var id, appliesRaw, parentRaw string
-		if err := rows.Scan(&id, &appliesRaw, &parentRaw); err != nil {
-			return fmt.Errorf("migrate phase scope contract scan kind_catalog: %w", err)
-		}
-
-		var appliesTo []domain.KindAppliesTo
-		if err := json.Unmarshal([]byte(appliesRaw), &appliesTo); err != nil {
-			return fmt.Errorf("migrate phase scope contract decode kind applies_to %q: %w", id, err)
-		}
-		var parentScopes []domain.KindAppliesTo
-		if err := json.Unmarshal([]byte(parentRaw), &parentScopes); err != nil {
-			return fmt.Errorf("migrate phase scope contract decode kind parent scopes %q: %w", id, err)
-		}
-
-		normalizedApplies := rewriteSubphaseKindAppliesTo(appliesTo)
-		normalizedParents := rewriteSubphaseKindAppliesTo(parentScopes)
-		if kindAppliesToEqual(appliesTo, normalizedApplies) && kindAppliesToEqual(parentScopes, normalizedParents) {
-			continue
-		}
-		toUpdate = append(toUpdate, kindRow{id: id, appliesTo: normalizedApplies, parentScope: normalizedParents})
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate phase scope contract iterate kind_catalog: %w", err)
-	}
-
-	now := time.Now().UTC()
-	for _, row := range toUpdate {
-		appliesJSON, err := json.Marshal(row.appliesTo)
-		if err != nil {
-			return fmt.Errorf("migrate phase scope contract encode kind applies_to %q: %w", row.id, err)
-		}
-		parentJSON, err := json.Marshal(row.parentScope)
-		if err != nil {
-			return fmt.Errorf("migrate phase scope contract encode kind parent scopes %q: %w", row.id, err)
-		}
-		if _, err := r.db.ExecContext(ctx, `UPDATE kind_catalog SET applies_to_json = ?, allowed_parent_scopes_json = ?, updated_at = ? WHERE id = ?`, string(appliesJSON), string(parentJSON), ts(now), row.id); err != nil {
-			return fmt.Errorf("migrate phase scope contract update kind_catalog %q: %w", row.id, err)
-		}
-	}
-	return nil
-}
-
-// rewriteSubphaseKindAppliesTo replaces the removed subphase marker with phase and de-duplicates.
-func rewriteSubphaseKindAppliesTo(values []domain.KindAppliesTo) []domain.KindAppliesTo {
-	out := make([]domain.KindAppliesTo, 0, len(values))
-	seen := map[domain.KindAppliesTo]struct{}{}
-	for _, raw := range values {
-		scope := domain.NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if scope == "subphase" {
-			scope = domain.KindAppliesToPhase
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	return out
 }
 
 // migrateCommentsOwnershipTuple rewrites comments to the canonical ownership tuple columns.
@@ -974,8 +762,6 @@ func (r *Repository) migrateActionItemActorNames(ctx context.Context) error {
 		name string
 		sql  string
 	}{
-		{name: "tasks.created_by_name", sql: `UPDATE tasks SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
-		{name: "tasks.updated_by_name", sql: `UPDATE tasks SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
 		{name: "action_items.created_by_name", sql: `UPDATE action_items SET created_by_name = COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user') WHERE NULLIF(TRIM(created_by_name), '') IS NULL`},
 		{name: "action_items.updated_by_name", sql: `UPDATE action_items SET updated_by_name = COALESCE(NULLIF(TRIM(updated_by_actor), ''), NULLIF(TRIM(created_by_name), ''), COALESCE(NULLIF(TRIM(created_by_actor), ''), 'tillsyn-user')) WHERE NULLIF(TRIM(updated_by_name), '') IS NULL`},
 	}
@@ -1027,128 +813,10 @@ func (r *Repository) migrateFailedColumn(ctx context.Context) error {
 	return nil
 }
 
-func (r *Repository) migrateTemplateLifecycle(ctx context.Context) error {
-	alterStatements := []string{
-		`ALTER TABLE template_libraries ADD COLUMN builtin_managed INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE template_libraries ADD COLUMN builtin_source TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE template_libraries ADD COLUMN builtin_version TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE template_libraries ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`,
-		`ALTER TABLE template_libraries ADD COLUMN revision_digest TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE project_template_bindings ADD COLUMN library_name TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE project_template_bindings ADD COLUMN bound_revision INTEGER NOT NULL DEFAULT 1`,
-		`ALTER TABLE project_template_bindings ADD COLUMN bound_revision_digest TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE project_template_bindings ADD COLUMN bound_library_updated_at TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE project_template_bindings ADD COLUMN bound_library_snapshot_json TEXT NOT NULL DEFAULT ''`,
-	}
-	for _, stmt := range alterStatements {
-		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("migrate sqlite template lifecycle: %w", err)
-		}
-	}
-	if err := r.backfillTemplateLibraryRevisions(ctx); err != nil {
-		return err
-	}
-	if err := r.backfillProjectTemplateBindingSnapshots(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *Repository) backfillTemplateLibraryRevisions(ctx context.Context) error {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM template_libraries ORDER BY id ASC`)
-	if err != nil {
-		return fmt.Errorf("migrate sqlite list template libraries for revision backfill: %w", err)
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return fmt.Errorf("migrate sqlite scan template library id: %w", err)
-		}
-		ids = append(ids, domain.NormalizeTemplateLibraryID(id))
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate sqlite iterate template library ids: %w", err)
-	}
-	for _, id := range ids {
-		library, err := r.GetTemplateLibrary(ctx, id)
-		if err != nil {
-			return fmt.Errorf("migrate sqlite load template library %q: %w", id, err)
-		}
-		revision := max(library.Revision, 1)
-		digest := strings.TrimSpace(library.RevisionDigest)
-		if digest == "" {
-			digest = library.RevisionFingerprint()
-		}
-		if digest == "" {
-			return fmt.Errorf("migrate sqlite compute template library digest for %q", id)
-		}
-		if _, err := r.db.ExecContext(ctx, `
-			UPDATE template_libraries
-			SET revision = ?, revision_digest = ?
-			WHERE id = ?
-		`, revision, digest, id); err != nil {
-			return fmt.Errorf("migrate sqlite backfill template library revision for %q: %w", id, err)
-		}
-	}
-	return nil
-}
-
-func (r *Repository) backfillProjectTemplateBindingSnapshots(ctx context.Context) error {
-	rows, err := r.db.QueryContext(ctx, `SELECT project_id FROM project_template_bindings ORDER BY project_id ASC`)
-	if err != nil {
-		return fmt.Errorf("migrate sqlite list project template bindings for snapshot backfill: %w", err)
-	}
-	defer rows.Close()
-
-	var projectIDs []string
-	for rows.Next() {
-		var projectID string
-		if err := rows.Scan(&projectID); err != nil {
-			return fmt.Errorf("migrate sqlite scan project binding id: %w", err)
-		}
-		projectIDs = append(projectIDs, strings.TrimSpace(projectID))
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate sqlite iterate project template binding ids: %w", err)
-	}
-	for _, projectID := range projectIDs {
-		binding, err := r.GetProjectTemplateBinding(ctx, projectID)
-		if err != nil {
-			return fmt.Errorf("migrate sqlite load project template binding for %q: %w", projectID, err)
-		}
-		library, err := r.GetTemplateLibrary(ctx, binding.LibraryID)
-		if err != nil {
-			return fmt.Errorf("migrate sqlite load bound template library %q for project %q: %w", binding.LibraryID, projectID, err)
-		}
-		if binding.LibraryName == "" {
-			binding.LibraryName = library.Name
-		}
-		if binding.BoundRevision == 0 {
-			binding.BoundRevision = max(library.Revision, 1)
-		}
-		if binding.BoundRevisionDigest == "" {
-			binding.BoundRevisionDigest = library.RevisionDigest
-		}
-		if binding.BoundLibraryUpdatedAt.IsZero() {
-			binding.BoundLibraryUpdatedAt = library.UpdatedAt.UTC()
-		}
-		if binding.BoundLibrarySnapshot == nil {
-			binding.BoundLibrarySnapshot = &library
-		}
-		if err := r.UpsertProjectTemplateBinding(ctx, binding); err != nil {
-			return fmt.Errorf("migrate sqlite backfill project template binding snapshot for %q: %w", projectID, err)
-		}
-	}
-	return nil
-}
-
 // tableHasColumn reports whether one table currently contains a named column.
 func (r *Repository) tableHasColumn(ctx context.Context, tableName, columnName string) (bool, error) {
 	switch strings.TrimSpace(tableName) {
-	case "comments", "change_events", "template_libraries", "project_template_bindings":
+	case "comments", "change_events":
 	default:
 		return false, fmt.Errorf("unsupported sqlite table for schema introspection %q", tableName)
 	}
@@ -1181,181 +849,16 @@ func (r *Repository) tableHasColumn(ctx context.Context, tableName, columnName s
 	return false, nil
 }
 
-// bridgeLegacyActionItemsToWorkItems copies legacy actionItem rows into canonical action_items rows.
-func (r *Repository) bridgeLegacyActionItemsToWorkItems(ctx context.Context) error {
-	// Keep migration idempotent and non-destructive so existing tasks databases remain readable.
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO action_items(
-			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
-			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
-		)
-		SELECT
-			t.id,
-			t.project_id,
-			t.parent_id,
-			t.kind,
-			t.scope,
-			t.lifecycle_state,
-			t.column_id,
-			t.position,
-			t.title,
-			t.description,
-			t.priority,
-			t.due_at,
-			t.labels_json,
-			t.metadata_json,
-			t.created_by_actor,
-			COALESCE(NULLIF(TRIM(t.created_by_name), ''), NULLIF(TRIM(t.created_by_actor), ''), 'tillsyn-user'),
-			t.updated_by_actor,
-			COALESCE(NULLIF(TRIM(t.updated_by_name), ''), NULLIF(TRIM(t.updated_by_actor), ''), COALESCE(NULLIF(TRIM(t.created_by_name), ''), NULLIF(TRIM(t.created_by_actor), ''), 'tillsyn-user')),
-			t.updated_by_type,
-			t.created_at,
-			t.updated_at,
-			t.started_at,
-			t.completed_at,
-			t.archived_at,
-			t.canceled_at
-		FROM tasks t
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM action_items wi
-			WHERE wi.id = t.id
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("bridge legacy tasks to action_items: %w", err)
-	}
-	return nil
-}
-
-// seedDefaultKindCatalog inserts built-in kind catalog entries when absent.
-func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
-	type seedRecord struct {
-		id          domain.KindID
-		displayName string
-		description string
-		appliesTo   []domain.KindAppliesTo
-		parentScope []domain.KindAppliesTo
-	}
-	records := []seedRecord{
-		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
-		{id: domain.KindID(domain.WorkKindActionItem), displayName: "ActionItem", description: "Built-in actionItem kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem}},
-		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
-		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
-	}
-
-	now := time.Now().UTC()
-	for _, record := range records {
-		appliesJSON, err := json.Marshal(record.appliesTo)
-		if err != nil {
-			return fmt.Errorf("encode kind applies_to for %q: %w", record.id, err)
-		}
-		parentJSON, err := json.Marshal(record.parentScope)
-		if err != nil {
-			return fmt.Errorf("encode kind parent scopes for %q: %w", record.id, err)
-		}
-		templateJSON, err := json.Marshal(domain.KindTemplate{})
-		if err != nil {
-			return fmt.Errorf("encode kind template for %q: %w", record.id, err)
-		}
-		_, err = r.db.ExecContext(ctx, `
-			INSERT OR IGNORE INTO kind_catalog(
-				id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-		`, string(record.id), record.displayName, record.description, string(appliesJSON), string(parentJSON), "", string(templateJSON), ts(now), ts(now))
-		if err != nil {
-			return fmt.Errorf("seed kind_catalog %q: %w", record.id, err)
-		}
-
-		existing, err := r.GetKindDefinition(ctx, record.id)
-		if err != nil {
-			return fmt.Errorf("load seeded kind_catalog %q: %w", record.id, err)
-		}
-		mergedApplies := mergeKindAppliesTo(existing.AppliesTo, record.appliesTo)
-		mergedParentScopes := mergeKindAppliesTo(existing.AllowedParentScopes, record.parentScope)
-		if kindAppliesToEqual(existing.AppliesTo, mergedApplies) && kindAppliesToEqual(existing.AllowedParentScopes, mergedParentScopes) {
-			continue
-		}
-
-		appliesJSON, err = json.Marshal(mergedApplies)
-		if err != nil {
-			return fmt.Errorf("encode merged kind applies_to for %q: %w", record.id, err)
-		}
-		parentJSON, err = json.Marshal(mergedParentScopes)
-		if err != nil {
-			return fmt.Errorf("encode merged kind parent scopes for %q: %w", record.id, err)
-		}
-		if _, err = r.db.ExecContext(ctx, `
-			UPDATE kind_catalog
-			SET applies_to_json = ?, allowed_parent_scopes_json = ?, updated_at = ?
-			WHERE id = ?
-		`, string(appliesJSON), string(parentJSON), ts(now), string(record.id)); err != nil {
-			return fmt.Errorf("update seeded kind_catalog %q: %w", record.id, err)
-		}
-	}
-	return nil
-}
-
-// mergeKindAppliesTo appends required values into existing values without duplicates.
-func mergeKindAppliesTo(existing, required []domain.KindAppliesTo) []domain.KindAppliesTo {
-	out := make([]domain.KindAppliesTo, 0, len(existing)+len(required))
-	seen := map[domain.KindAppliesTo]struct{}{}
-	for _, raw := range existing {
-		scope := domain.NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	for _, raw := range required {
-		scope := domain.NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	return out
-}
-
-// kindAppliesToEqual reports whether two applies_to slices are identical.
-func kindAppliesToEqual(a, b []domain.KindAppliesTo) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if domain.NormalizeKindAppliesTo(a[i]) != domain.NormalizeKindAppliesTo(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 // CreateProject creates project.
 func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error {
 	metaJSON, err := json.Marshal(p.Metadata)
 	if err != nil {
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
-	kindID := domain.NormalizeKindID(p.Kind)
-	if kindID == "" {
-		kindID = domain.DefaultProjectKind
-	}
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.ID, p.Slug, p.Name, p.Description, string(kindID), string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
+		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.ID, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
 	return err
 }
 
@@ -1365,15 +868,11 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	if err != nil {
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
-	kindID := domain.NormalizeKindID(p.Kind)
-	if kindID == "" {
-		kindID = domain.DefaultProjectKind
-	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE projects
-		SET slug = ?, name = ?, description = ?, kind = ?, metadata_json = ?, updated_at = ?, archived_at = ?
+		SET slug = ?, name = ?, description = ?, metadata_json = ?, updated_at = ?, archived_at = ?
 		WHERE id = ?
-	`, p.Slug, p.Name, p.Description, string(kindID), string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
+	`, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
 	if err != nil {
 		return err
 	}
@@ -1395,7 +894,7 @@ func (r *Repository) DeleteProject(ctx context.Context, id string) error {
 // GetProject returns project.
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 		WHERE id = ?
 	`, id)
@@ -1405,7 +904,7 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 // ListProjects lists projects.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
-		SELECT id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 	`
 	if !includeArchived {
@@ -1425,18 +924,13 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 	for rows.Next() {
 		var (
 			p           domain.Project
-			kindRaw     string
 			metadataRaw string
 			createdRaw  string
 			updatedRaw  string
 			archived    sql.NullString
 		)
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &kindRaw, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 			return nil, err
-		}
-		p.Kind = domain.NormalizeKindID(domain.KindID(kindRaw))
-		if p.Kind == "" {
-			p.Kind = domain.DefaultProjectKind
 		}
 		if strings.TrimSpace(metadataRaw) == "" {
 			metadataRaw = "{}"
@@ -1455,14 +949,13 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 // ensureGlobalAuthProject creates the hidden project row that backs global auth requests and notifications.
 func (r *Repository) ensureGlobalAuthProject(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, '', ?, '{}', ?, ?, NULL)
+		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, '', '{}', ?, ?, NULL)
 		ON CONFLICT(id) DO NOTHING
 	`,
 		domain.AuthRequestGlobalProjectID,
 		globalAuthProjectSlug,
 		globalAuthProjectName,
-		string(domain.DefaultProjectKind),
 		globalAuthProjectCreatedAt,
 		globalAuthProjectCreatedAt,
 	)
@@ -1655,419 +1148,6 @@ func (r *Repository) ListKindDefinitions(ctx context.Context, includeArchived bo
 	return out, rows.Err()
 }
 
-// UpsertTemplateLibrary creates or replaces one template library and all nested rules.
-func (r *Repository) UpsertTemplateLibrary(ctx context.Context, library domain.TemplateLibrary) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO template_libraries(
-			id, scope, project_id, name, description, status, source_library_id,
-			builtin_managed, builtin_source, builtin_version, revision, revision_digest,
-			created_by_actor_id, created_by_actor_name, created_by_actor_type,
-			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
-			approved_by_actor_type, approved_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			scope = excluded.scope,
-			project_id = excluded.project_id,
-			name = excluded.name,
-			description = excluded.description,
-			status = excluded.status,
-			source_library_id = excluded.source_library_id,
-			builtin_managed = excluded.builtin_managed,
-			builtin_source = excluded.builtin_source,
-			builtin_version = excluded.builtin_version,
-			revision = excluded.revision,
-			revision_digest = excluded.revision_digest,
-			created_by_actor_id = excluded.created_by_actor_id,
-			created_by_actor_name = excluded.created_by_actor_name,
-			created_by_actor_type = excluded.created_by_actor_type,
-			created_at = excluded.created_at,
-			updated_at = excluded.updated_at,
-			approved_by_actor_id = excluded.approved_by_actor_id,
-			approved_by_actor_name = excluded.approved_by_actor_name,
-			approved_by_actor_type = excluded.approved_by_actor_type,
-			approved_at = excluded.approved_at
-	`,
-		library.ID,
-		string(domain.NormalizeTemplateLibraryScope(library.Scope)),
-		nullableString(library.ProjectID),
-		strings.TrimSpace(library.Name),
-		strings.TrimSpace(library.Description),
-		string(domain.NormalizeTemplateLibraryStatus(library.Status)),
-		nullableString(library.SourceLibraryID),
-		boolToInt(library.BuiltinManaged),
-		strings.TrimSpace(library.BuiltinSource),
-		strings.TrimSpace(library.BuiltinVersion),
-		max(library.Revision, 1),
-		strings.TrimSpace(library.RevisionDigest),
-		strings.TrimSpace(library.CreatedByActorID),
-		strings.TrimSpace(library.CreatedByActorName),
-		normalizeOptionalActorType(library.CreatedByActorType),
-		ts(library.CreatedAt),
-		ts(library.UpdatedAt),
-		strings.TrimSpace(library.ApprovedByActorID),
-		strings.TrimSpace(library.ApprovedByActorName),
-		normalizeOptionalActorType(library.ApprovedByActorType),
-		nullableTS(library.ApprovedAt),
-	)
-	if err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM template_node_templates WHERE library_id = ?`, library.ID); err != nil {
-		return err
-	}
-	for _, nodeTemplate := range library.NodeTemplates {
-		projectDefaultsJSON, err := marshalTemplateProjectMetadata(nodeTemplate.ProjectMetadataDefaults)
-		if err != nil {
-			return err
-		}
-		actionItemDefaultsJSON, err := marshalTemplateActionItemMetadata(nodeTemplate.ActionItemMetadataDefaults)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO template_node_templates(
-				library_id, id, scope_level, node_kind_id, display_name, description_markdown,
-				project_metadata_defaults_json, task_metadata_defaults_json
-			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`,
-			library.ID,
-			nodeTemplate.ID,
-			string(domain.NormalizeKindAppliesTo(nodeTemplate.ScopeLevel)),
-			string(domain.NormalizeKindID(nodeTemplate.NodeKindID)),
-			strings.TrimSpace(nodeTemplate.DisplayName),
-			strings.TrimSpace(nodeTemplate.DescriptionMarkdown),
-			projectDefaultsJSON,
-			actionItemDefaultsJSON,
-		)
-		if err != nil {
-			return err
-		}
-		for _, childRule := range nodeTemplate.ChildRules {
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO template_child_rules(
-					library_id, node_template_id, id, position, child_scope_level, child_kind_id,
-					title_template, description_template, responsible_actor_kind, orchestrator_may_complete,
-					required_for_parent_done, required_for_containing_done
-				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`,
-				library.ID,
-				nodeTemplate.ID,
-				childRule.ID,
-				childRule.Position,
-				string(domain.NormalizeKindAppliesTo(childRule.ChildScopeLevel)),
-				string(domain.NormalizeKindID(childRule.ChildKindID)),
-				strings.TrimSpace(childRule.TitleTemplate),
-				strings.TrimSpace(childRule.DescriptionTemplate),
-				string(domain.NormalizeTemplateActorKind(childRule.ResponsibleActorKind)),
-				boolToInt(childRule.OrchestratorMayComplete),
-				boolToInt(childRule.RequiredForParentDone),
-				boolToInt(childRule.RequiredForContainingDone),
-			)
-			if err != nil {
-				return err
-			}
-			if err = insertTemplateActorKinds(ctx, tx, "template_child_rule_editor_kinds", library.ID, nodeTemplate.ID, childRule.ID, childRule.EditableByActorKinds); err != nil {
-				return err
-			}
-			if err = insertTemplateActorKinds(ctx, tx, "template_child_rule_completer_kinds", library.ID, nodeTemplate.ID, childRule.ID, childRule.CompletableByActorKinds); err != nil {
-				return err
-			}
-		}
-	}
-
-	err = tx.Commit()
-	return err
-}
-
-// GetTemplateLibrary loads one template library and all nested rules.
-func (r *Repository) GetTemplateLibrary(ctx context.Context, libraryID string) (domain.TemplateLibrary, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT
-			id, scope, project_id, name, description, status, source_library_id,
-			builtin_managed, builtin_source, builtin_version, revision, revision_digest,
-			created_by_actor_id, created_by_actor_name, created_by_actor_type,
-			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
-			approved_by_actor_type, approved_at
-		FROM template_libraries
-		WHERE id = ?
-	`, domain.NormalizeTemplateLibraryID(libraryID))
-	library, err := scanTemplateLibrary(row)
-	if err != nil {
-		return domain.TemplateLibrary{}, err
-	}
-	nodeTemplates, err := loadTemplateNodeTemplates(ctx, r.db, library.ID)
-	if err != nil {
-		return domain.TemplateLibrary{}, err
-	}
-	library.NodeTemplates = nodeTemplates
-	return library, nil
-}
-
-// ListTemplateLibraries lists template libraries with optional filters.
-func (r *Repository) ListTemplateLibraries(ctx context.Context, filter domain.TemplateLibraryFilter) ([]domain.TemplateLibrary, error) {
-	query := `
-		SELECT
-			id, scope, project_id, name, description, status, source_library_id,
-			builtin_managed, builtin_source, builtin_version, revision, revision_digest,
-			created_by_actor_id, created_by_actor_name, created_by_actor_type,
-			created_at, updated_at, approved_by_actor_id, approved_by_actor_name,
-			approved_by_actor_type, approved_at
-		FROM template_libraries
-		WHERE 1 = 1
-	`
-	args := make([]any, 0, 3)
-	if scope := domain.NormalizeTemplateLibraryScope(filter.Scope); scope != "" {
-		query += ` AND scope = ?`
-		args = append(args, string(scope))
-	}
-	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
-		query += ` AND project_id = ?`
-		args = append(args, projectID)
-	}
-	if status := domain.NormalizeTemplateLibraryStatus(filter.Status); status != "" {
-		query += ` AND status = ?`
-		args = append(args, string(status))
-	}
-	query += ` ORDER BY scope ASC, project_id ASC, name ASC, id ASC`
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]domain.TemplateLibrary, 0)
-	for rows.Next() {
-		library, err := scanTemplateLibrary(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, library)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for idx := range out {
-		out[idx].NodeTemplates, err = loadTemplateNodeTemplates(ctx, r.db, out[idx].ID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-// UpsertProjectTemplateBinding sets the active template-library binding for one project.
-func (r *Repository) UpsertProjectTemplateBinding(ctx context.Context, binding domain.ProjectTemplateBinding) error {
-	boundLibrarySnapshotJSON, err := marshalTemplateLibrarySnapshot(binding.BoundLibrarySnapshot)
-	if err != nil {
-		return err
-	}
-	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO project_template_bindings(
-			project_id, library_id, library_name, bound_revision, bound_revision_digest, bound_library_updated_at,
-			bound_library_snapshot_json, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(project_id) DO UPDATE SET
-			library_id = excluded.library_id,
-			library_name = excluded.library_name,
-			bound_revision = excluded.bound_revision,
-			bound_revision_digest = excluded.bound_revision_digest,
-			bound_library_updated_at = excluded.bound_library_updated_at,
-			bound_library_snapshot_json = excluded.bound_library_snapshot_json,
-			bound_by_actor_id = excluded.bound_by_actor_id,
-			bound_by_actor_name = excluded.bound_by_actor_name,
-			bound_by_actor_type = excluded.bound_by_actor_type,
-			bound_at = excluded.bound_at
-	`,
-		strings.TrimSpace(binding.ProjectID),
-		domain.NormalizeTemplateLibraryID(binding.LibraryID),
-		strings.TrimSpace(binding.LibraryName),
-		max(binding.BoundRevision, 1),
-		strings.TrimSpace(binding.BoundRevisionDigest),
-		ts(binding.BoundLibraryUpdatedAt),
-		boundLibrarySnapshotJSON,
-		strings.TrimSpace(binding.BoundByActorID),
-		strings.TrimSpace(binding.BoundByActorName),
-		normalizeOptionalActorType(binding.BoundByActorType),
-		ts(binding.BoundAt),
-	)
-	return err
-}
-
-// GetProjectTemplateBinding loads one project's active template-library binding.
-func (r *Repository) GetProjectTemplateBinding(ctx context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT project_id, library_id, library_name, bound_revision, bound_revision_digest, bound_library_updated_at,
-			bound_library_snapshot_json, bound_by_actor_id, bound_by_actor_name, bound_by_actor_type, bound_at
-		FROM project_template_bindings
-		WHERE project_id = ?
-	`, strings.TrimSpace(projectID))
-	return scanProjectTemplateBinding(row)
-}
-
-// DeleteProjectTemplateBinding removes one project's active template-library binding.
-func (r *Repository) DeleteProjectTemplateBinding(ctx context.Context, projectID string) error {
-	result, err := r.db.ExecContext(ctx, `
-		DELETE FROM project_template_bindings
-		WHERE project_id = ?
-	`, strings.TrimSpace(projectID))
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return app.ErrNotFound
-	}
-	return nil
-}
-
-// CreateNodeContractSnapshot persists one generated-node contract snapshot.
-func (r *Repository) CreateNodeContractSnapshot(ctx context.Context, snapshot domain.NodeContractSnapshot) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO node_contract_snapshots(
-			node_id, project_id, source_library_id, source_node_template_id, source_child_rule_id,
-			created_by_actor_id, created_by_actor_type, responsible_actor_kind, orchestrator_may_complete,
-			required_for_parent_done, required_for_containing_done, created_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		strings.TrimSpace(snapshot.NodeID),
-		strings.TrimSpace(snapshot.ProjectID),
-		domain.NormalizeTemplateLibraryID(snapshot.SourceLibraryID),
-		domain.NormalizeTemplateLibraryID(snapshot.SourceNodeTemplateID),
-		domain.NormalizeTemplateLibraryID(snapshot.SourceChildRuleID),
-		strings.TrimSpace(snapshot.CreatedByActorID),
-		normalizeOptionalActorType(snapshot.CreatedByActorType),
-		string(domain.NormalizeTemplateActorKind(snapshot.ResponsibleActorKind)),
-		boolToInt(snapshot.OrchestratorMayComplete),
-		boolToInt(snapshot.RequiredForParentDone),
-		boolToInt(snapshot.RequiredForContainingDone),
-		ts(snapshot.CreatedAt),
-	)
-	if err != nil {
-		return err
-	}
-	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_editor_kinds", snapshot.NodeID, snapshot.EditableByActorKinds); err != nil {
-		return err
-	}
-	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_completer_kinds", snapshot.NodeID, snapshot.CompletableByActorKinds); err != nil {
-		return err
-	}
-
-	err = tx.Commit()
-	return err
-}
-
-// GetNodeContractSnapshot loads one generated-node contract snapshot.
-func (r *Repository) GetNodeContractSnapshot(ctx context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT
-			node_id, project_id, source_library_id, source_node_template_id, source_child_rule_id,
-			created_by_actor_id, created_by_actor_type, responsible_actor_kind, orchestrator_may_complete,
-			required_for_parent_done, required_for_containing_done, created_at
-		FROM node_contract_snapshots
-		WHERE node_id = ?
-	`, strings.TrimSpace(nodeID))
-	snapshot, err := scanNodeContractSnapshot(row)
-	if err != nil {
-		return domain.NodeContractSnapshot{}, err
-	}
-	snapshot.EditableByActorKinds, err = loadNodeContractActorKinds(ctx, r.db, "node_contract_editor_kinds", snapshot.NodeID)
-	if err != nil {
-		return domain.NodeContractSnapshot{}, err
-	}
-	snapshot.CompletableByActorKinds, err = loadNodeContractActorKinds(ctx, r.db, "node_contract_completer_kinds", snapshot.NodeID)
-	if err != nil {
-		return domain.NodeContractSnapshot{}, err
-	}
-	return snapshot, nil
-}
-
-// UpdateNodeContractSnapshot upserts one generated-node contract snapshot and replaces the actor-kind allowlists.
-func (r *Repository) UpdateNodeContractSnapshot(ctx context.Context, snapshot domain.NodeContractSnapshot) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO node_contract_snapshots(
-			node_id, project_id, source_library_id, source_node_template_id, source_child_rule_id,
-			created_by_actor_id, created_by_actor_type, responsible_actor_kind, orchestrator_may_complete,
-			required_for_parent_done, required_for_containing_done, created_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			project_id = excluded.project_id,
-			source_library_id = excluded.source_library_id,
-			source_node_template_id = excluded.source_node_template_id,
-			source_child_rule_id = excluded.source_child_rule_id,
-			created_by_actor_id = excluded.created_by_actor_id,
-			created_by_actor_type = excluded.created_by_actor_type,
-			responsible_actor_kind = excluded.responsible_actor_kind,
-			orchestrator_may_complete = excluded.orchestrator_may_complete,
-			required_for_parent_done = excluded.required_for_parent_done,
-			required_for_containing_done = excluded.required_for_containing_done,
-			created_at = excluded.created_at
-	`,
-		strings.TrimSpace(snapshot.NodeID),
-		strings.TrimSpace(snapshot.ProjectID),
-		domain.NormalizeTemplateLibraryID(snapshot.SourceLibraryID),
-		domain.NormalizeTemplateLibraryID(snapshot.SourceNodeTemplateID),
-		domain.NormalizeTemplateLibraryID(snapshot.SourceChildRuleID),
-		strings.TrimSpace(snapshot.CreatedByActorID),
-		normalizeOptionalActorType(snapshot.CreatedByActorType),
-		string(domain.NormalizeTemplateActorKind(snapshot.ResponsibleActorKind)),
-		boolToInt(snapshot.OrchestratorMayComplete),
-		boolToInt(snapshot.RequiredForParentDone),
-		boolToInt(snapshot.RequiredForContainingDone),
-		ts(snapshot.CreatedAt),
-	)
-	if err != nil {
-		return err
-	}
-	for _, table := range []string{"node_contract_editor_kinds", "node_contract_completer_kinds"} {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE node_id = ?`, strings.TrimSpace(snapshot.NodeID)); err != nil {
-			return err
-		}
-	}
-	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_editor_kinds", snapshot.NodeID, snapshot.EditableByActorKinds); err != nil {
-		return err
-	}
-	if err = insertNodeContractActorKinds(ctx, tx, "node_contract_completer_kinds", snapshot.NodeID, snapshot.CompletableByActorKinds); err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
 // CreateColumn creates column.
 func (r *Repository) CreateColumn(ctx context.Context, c domain.Column) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -2140,7 +1220,7 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(t.Kind)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2192,12 +1272,12 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.CreatedByActor, t.CreatedByName, t.UpdatedByType, t.UpdatedByActor, t.UpdatedByName)
 	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
-		ProjectID:  t.ProjectID,
-		WorkItemID: t.ID,
-		Operation:  domain.ChangeOperationCreate,
-		ActorID:    actorID,
-		ActorName:  actorName,
-		ActorType:  actorType,
+		ProjectID:    t.ProjectID,
+		ActionItemID: t.ID,
+		Operation:    domain.ChangeOperationCreate,
+		ActorID:      actorID,
+		ActorName:    actorName,
+		ActorType:    actorType,
 		Metadata: map[string]string{
 			"column_id":  t.ColumnID,
 			"position":   strconv.Itoa(t.Position),
@@ -2228,7 +1308,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(t.Kind)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2287,14 +1367,14 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 	metadata["item_scope"] = string(scope)
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, t.UpdatedByActor, t.UpdatedByName, t.UpdatedByType, prev.UpdatedByActor, prev.UpdatedByName)
 	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
-		ProjectID:  t.ProjectID,
-		WorkItemID: t.ID,
-		Operation:  op,
-		ActorID:    actorID,
-		ActorName:  actorName,
-		ActorType:  actorType,
-		Metadata:   metadata,
-		OccurredAt: t.UpdatedAt,
+		ProjectID:    t.ProjectID,
+		ActionItemID: t.ID,
+		Operation:    op,
+		ActorID:      actorID,
+		ActorName:    actorName,
+		ActorType:    actorType,
+		Metadata:     metadata,
+		OccurredAt:   t.UpdatedAt,
 	})
 	if err != nil {
 		return err
@@ -2367,12 +1447,12 @@ func (r *Repository) DeleteActionItem(ctx context.Context, id string) error {
 	actorID, actorName, actorType := resolveChangeEventActor(ctx, actionItem.UpdatedByActor, actionItem.UpdatedByName, actionItem.UpdatedByType, actionItem.CreatedByActor, actionItem.CreatedByName)
 
 	err = insertActionItemChangeEvent(ctx, tx, domain.ChangeEvent{
-		ProjectID:  actionItem.ProjectID,
-		WorkItemID: actionItem.ID,
-		Operation:  domain.ChangeOperationDelete,
-		ActorID:    actorID,
-		ActorName:  actorName,
-		ActorType:  actorType,
+		ProjectID:    actionItem.ProjectID,
+		ActionItemID: actionItem.ID,
+		Operation:    domain.ChangeOperationDelete,
+		ActorID:      actorID,
+		ActorName:    actorName,
+		ActorType:    actorType,
 		Metadata: map[string]string{
 			"column_id":  actionItem.ColumnID,
 			"position":   strconv.Itoa(actionItem.Position),
@@ -2722,7 +1802,7 @@ func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID stri
 			metadataRaw string
 			createdRaw  string
 		)
-		if err := rows.Scan(&event.ID, &event.ProjectID, &event.WorkItemID, &opRaw, &event.ActorID, &event.ActorName, &actorType, &metadataRaw, &createdRaw); err != nil {
+		if err := rows.Scan(&event.ID, &event.ProjectID, &event.ActionItemID, &opRaw, &event.ActorID, &event.ActorName, &actorType, &metadataRaw, &createdRaw); err != nil {
 			return nil, err
 		}
 		event.Operation = normalizeChangeOperation(opRaw)
@@ -3403,7 +2483,7 @@ func insertActionItemChangeEvent(ctx context.Context, execer execerContext, even
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		event.ProjectID,
-		event.WorkItemID,
+		event.ActionItemID,
 		string(event.Operation),
 		actorID,
 		actorName,
@@ -3627,369 +2707,20 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-// marshalTemplateProjectMetadata encodes optional project-metadata defaults for template storage.
-func marshalTemplateProjectMetadata(defaults *domain.ProjectMetadata) (string, error) {
-	if defaults == nil {
-		return "", nil
-	}
-	raw, err := json.Marshal(defaults)
-	if err != nil {
-		return "", fmt.Errorf("encode template project metadata defaults: %w", err)
-	}
-	return string(raw), nil
-}
-
-// marshalTemplateActionItemMetadata encodes optional actionItem-metadata defaults for template storage.
-func marshalTemplateActionItemMetadata(defaults *domain.ActionItemMetadata) (string, error) {
-	if defaults == nil {
-		return "", nil
-	}
-	raw, err := json.Marshal(defaults)
-	if err != nil {
-		return "", fmt.Errorf("encode template actionItem metadata defaults: %w", err)
-	}
-	return string(raw), nil
-}
-
-func marshalTemplateLibrarySnapshot(library *domain.TemplateLibrary) (string, error) {
-	if library == nil {
-		return "", nil
-	}
-	raw, err := json.Marshal(library)
-	if err != nil {
-		return "", fmt.Errorf("encode template library snapshot: %w", err)
-	}
-	return string(raw), nil
-}
-
-func unmarshalTemplateLibrarySnapshot(raw string) *domain.TemplateLibrary {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var library domain.TemplateLibrary
-	if err := json.Unmarshal([]byte(raw), &library); err != nil {
-		return nil
-	}
-	normalized, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-		ID:                  library.ID,
-		Scope:               library.Scope,
-		ProjectID:           library.ProjectID,
-		Name:                library.Name,
-		Description:         library.Description,
-		Status:              library.Status,
-		SourceLibraryID:     library.SourceLibraryID,
-		BuiltinManaged:      library.BuiltinManaged,
-		BuiltinSource:       library.BuiltinSource,
-		BuiltinVersion:      library.BuiltinVersion,
-		Revision:            max(library.Revision, 1),
-		RevisionDigest:      library.RevisionDigest,
-		CreatedByActorID:    library.CreatedByActorID,
-		CreatedByActorName:  library.CreatedByActorName,
-		CreatedByActorType:  library.CreatedByActorType,
-		ApprovedByActorID:   library.ApprovedByActorID,
-		ApprovedByActorName: library.ApprovedByActorName,
-		ApprovedByActorType: library.ApprovedByActorType,
-		ApprovedAt:          library.ApprovedAt,
-		NodeTemplates:       nodeTemplateInputsFromDomain(library.NodeTemplates),
-	}, library.UpdatedAt)
-	if err != nil {
-		return nil
-	}
-	normalized.CreatedAt = library.CreatedAt.UTC()
-	normalized.UpdatedAt = library.UpdatedAt.UTC()
-	normalized.Revision = max(library.Revision, 1)
-	if strings.TrimSpace(normalized.RevisionDigest) == "" {
-		normalized.RevisionDigest = normalized.RevisionFingerprint()
-	}
-	return &normalized
-}
-
-func nodeTemplateInputsFromDomain(in []domain.NodeTemplate) []domain.NodeTemplateInput {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]domain.NodeTemplateInput, 0, len(in))
-	for _, nodeTemplate := range in {
-		input := domain.NodeTemplateInput{
-			ID:                  nodeTemplate.ID,
-			ScopeLevel:          nodeTemplate.ScopeLevel,
-			NodeKindID:          nodeTemplate.NodeKindID,
-			DisplayName:         nodeTemplate.DisplayName,
-			DescriptionMarkdown: nodeTemplate.DescriptionMarkdown,
-		}
-		if nodeTemplate.ProjectMetadataDefaults != nil {
-			projectDefaults := *nodeTemplate.ProjectMetadataDefaults
-			input.ProjectMetadataDefaults = &projectDefaults
-		}
-		if nodeTemplate.ActionItemMetadataDefaults != nil {
-			actionItemDefaults := *nodeTemplate.ActionItemMetadataDefaults
-			input.ActionItemMetadataDefaults = &actionItemDefaults
-		}
-		if len(nodeTemplate.ChildRules) > 0 {
-			input.ChildRules = make([]domain.TemplateChildRuleInput, 0, len(nodeTemplate.ChildRules))
-			for _, childRule := range nodeTemplate.ChildRules {
-				input.ChildRules = append(input.ChildRules, domain.TemplateChildRuleInput{
-					ID:                        childRule.ID,
-					Position:                  childRule.Position,
-					ChildScopeLevel:           childRule.ChildScopeLevel,
-					ChildKindID:               childRule.ChildKindID,
-					TitleTemplate:             childRule.TitleTemplate,
-					DescriptionTemplate:       childRule.DescriptionTemplate,
-					ResponsibleActorKind:      childRule.ResponsibleActorKind,
-					EditableByActorKinds:      append([]domain.TemplateActorKind(nil), childRule.EditableByActorKinds...),
-					CompletableByActorKinds:   append([]domain.TemplateActorKind(nil), childRule.CompletableByActorKinds...),
-					OrchestratorMayComplete:   childRule.OrchestratorMayComplete,
-					RequiredForParentDone:     childRule.RequiredForParentDone,
-					RequiredForContainingDone: childRule.RequiredForContainingDone,
-				})
-			}
-		}
-		out = append(out, input)
-	}
-	return out
-}
-
-// insertTemplateActorKinds persists one template child-rule actor-kind list.
-func insertTemplateActorKinds(ctx context.Context, execer execerContext, table, libraryID, nodeTemplateID, childRuleID string, actorKinds []domain.TemplateActorKind) error {
-	for _, actorKind := range actorKinds {
-		normalized := domain.NormalizeTemplateActorKind(actorKind)
-		if normalized == "" {
-			continue
-		}
-		if _, err := execer.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s(library_id, node_template_id, child_rule_id, actor_kind)
-			VALUES (?, ?, ?, ?)
-		`, table), libraryID, nodeTemplateID, childRuleID, string(normalized)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// insertNodeContractActorKinds persists one node-contract actor-kind list.
-func insertNodeContractActorKinds(ctx context.Context, execer execerContext, table, nodeID string, actorKinds []domain.TemplateActorKind) error {
-	for _, actorKind := range actorKinds {
-		normalized := domain.NormalizeTemplateActorKind(actorKind)
-		if normalized == "" {
-			continue
-		}
-		if _, err := execer.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s(node_id, actor_kind)
-			VALUES (?, ?)
-		`, table), strings.TrimSpace(nodeID), string(normalized)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// loadTemplateNodeTemplates loads one library's node templates and nested child rules.
-func loadTemplateNodeTemplates(ctx context.Context, q queryRowser, libraryID string) ([]domain.NodeTemplate, error) {
-	rows, err := q.QueryContext(ctx, `
-		SELECT
-			id, scope_level, node_kind_id, display_name, description_markdown,
-			project_metadata_defaults_json, task_metadata_defaults_json
-		FROM template_node_templates
-		WHERE library_id = ?
-		ORDER BY scope_level ASC, node_kind_id ASC, id ASC
-	`, domain.NormalizeTemplateLibraryID(libraryID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]domain.NodeTemplate, 0)
-	for rows.Next() {
-		var (
-			nodeTemplate          domain.NodeTemplate
-			scopeLevelRaw         string
-			nodeKindIDRaw         string
-			projectDefaultsRaw    string
-			actionItemDefaultsRaw string
-		)
-		if err := rows.Scan(
-			&nodeTemplate.ID,
-			&scopeLevelRaw,
-			&nodeKindIDRaw,
-			&nodeTemplate.DisplayName,
-			&nodeTemplate.DescriptionMarkdown,
-			&projectDefaultsRaw,
-			&actionItemDefaultsRaw,
-		); err != nil {
-			return nil, err
-		}
-		nodeTemplate.LibraryID = domain.NormalizeTemplateLibraryID(libraryID)
-		nodeTemplate.ScopeLevel = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeLevelRaw))
-		nodeTemplate.NodeKindID = domain.NormalizeKindID(domain.KindID(nodeKindIDRaw))
-		if strings.TrimSpace(projectDefaultsRaw) != "" {
-			var projectDefaults domain.ProjectMetadata
-			if err := json.Unmarshal([]byte(projectDefaultsRaw), &projectDefaults); err != nil {
-				return nil, fmt.Errorf("decode template project_metadata_defaults_json: %w", err)
-			}
-			nodeTemplate.ProjectMetadataDefaults = &projectDefaults
-		}
-		if strings.TrimSpace(actionItemDefaultsRaw) != "" {
-			var actionItemDefaults domain.ActionItemMetadata
-			if err := json.Unmarshal([]byte(actionItemDefaultsRaw), &actionItemDefaults); err != nil {
-				return nil, fmt.Errorf("decode template task_metadata_defaults_json: %w", err)
-			}
-			nodeTemplate.ActionItemMetadataDefaults = &actionItemDefaults
-		}
-		out = append(out, nodeTemplate)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for idx := range out {
-		out[idx].ChildRules, err = loadTemplateChildRules(ctx, q, libraryID, out[idx].ID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-// loadTemplateChildRules loads one node template's child rules and actor lists.
-func loadTemplateChildRules(ctx context.Context, q queryRowser, libraryID, nodeTemplateID string) ([]domain.TemplateChildRule, error) {
-	rows, err := q.QueryContext(ctx, `
-		SELECT
-			id, position, child_scope_level, child_kind_id, title_template, description_template,
-			responsible_actor_kind, orchestrator_may_complete, required_for_parent_done, required_for_containing_done
-		FROM template_child_rules
-		WHERE library_id = ? AND node_template_id = ?
-		ORDER BY position ASC, id ASC
-	`, domain.NormalizeTemplateLibraryID(libraryID), domain.NormalizeTemplateLibraryID(nodeTemplateID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]domain.TemplateChildRule, 0)
-	for rows.Next() {
-		var (
-			childRule             domain.TemplateChildRule
-			childScopeLevelRaw    string
-			childKindIDRaw        string
-			responsibleActorRaw   string
-			orchestratorMayRaw    int
-			requiredParentRaw     int
-			requiredContainingRaw int
-		)
-		if err := rows.Scan(
-			&childRule.ID,
-			&childRule.Position,
-			&childScopeLevelRaw,
-			&childKindIDRaw,
-			&childRule.TitleTemplate,
-			&childRule.DescriptionTemplate,
-			&responsibleActorRaw,
-			&orchestratorMayRaw,
-			&requiredParentRaw,
-			&requiredContainingRaw,
-		); err != nil {
-			return nil, err
-		}
-		childRule.NodeTemplateID = domain.NormalizeTemplateLibraryID(nodeTemplateID)
-		childRule.ChildScopeLevel = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(childScopeLevelRaw))
-		childRule.ChildKindID = domain.NormalizeKindID(domain.KindID(childKindIDRaw))
-		childRule.ResponsibleActorKind = domain.NormalizeTemplateActorKind(domain.TemplateActorKind(responsibleActorRaw))
-		childRule.OrchestratorMayComplete = orchestratorMayRaw != 0
-		childRule.RequiredForParentDone = requiredParentRaw != 0
-		childRule.RequiredForContainingDone = requiredContainingRaw != 0
-		out = append(out, childRule)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for idx := range out {
-		out[idx].EditableByActorKinds, err = loadTemplateChildRuleActorKinds(ctx, q, "template_child_rule_editor_kinds", libraryID, nodeTemplateID, out[idx].ID)
-		if err != nil {
-			return nil, err
-		}
-		out[idx].CompletableByActorKinds, err = loadTemplateChildRuleActorKinds(ctx, q, "template_child_rule_completer_kinds", libraryID, nodeTemplateID, out[idx].ID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-// loadTemplateChildRuleActorKinds loads one child rule's actor-kind list.
-func loadTemplateChildRuleActorKinds(ctx context.Context, q queryRowser, table, libraryID, nodeTemplateID, childRuleID string) ([]domain.TemplateActorKind, error) {
-	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
-		SELECT actor_kind
-		FROM %s
-		WHERE library_id = ? AND node_template_id = ? AND child_rule_id = ?
-		ORDER BY actor_kind ASC
-	`, table), domain.NormalizeTemplateLibraryID(libraryID), domain.NormalizeTemplateLibraryID(nodeTemplateID), domain.NormalizeTemplateLibraryID(childRuleID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]domain.TemplateActorKind, 0)
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		normalized := domain.NormalizeTemplateActorKind(domain.TemplateActorKind(raw))
-		if normalized == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	return out, rows.Err()
-}
-
-// loadNodeContractActorKinds loads one node-contract actor-kind list.
-func loadNodeContractActorKinds(ctx context.Context, q queryRowser, table, nodeID string) ([]domain.TemplateActorKind, error) {
-	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
-		SELECT actor_kind
-		FROM %s
-		WHERE node_id = ?
-		ORDER BY actor_kind ASC
-	`, table), strings.TrimSpace(nodeID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]domain.TemplateActorKind, 0)
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		normalized := domain.NormalizeTemplateActorKind(domain.TemplateActorKind(raw))
-		if normalized == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	return out, rows.Err()
-}
-
 // scanProject handles scan project.
 func scanProject(s scanner) (domain.Project, error) {
 	var (
 		p           domain.Project
-		kindRaw     string
 		metadataRaw string
 		createdRaw  string
 		updatedRaw  string
 		archived    sql.NullString
 	)
-	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &kindRaw, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Project{}, app.ErrNotFound
 		}
 		return domain.Project{}, err
-	}
-	p.Kind = domain.NormalizeKindID(domain.KindID(kindRaw))
-	if p.Kind == "" {
-		p.Kind = domain.DefaultProjectKind
 	}
 	if strings.TrimSpace(metadataRaw) == "" {
 		metadataRaw = "{}"
@@ -4055,7 +2786,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, err
 	}
 	t.Priority = domain.Priority(priority)
-	t.Kind = domain.WorkKind(kind)
+	t.Kind = domain.Kind(kind)
 	t.Scope = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeRaw))
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
@@ -4076,14 +2807,13 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, fmt.Errorf("decode labels_json: %w", err)
 	}
 	if strings.TrimSpace(string(t.Kind)) == "" {
-		t.Kind = domain.WorkKindActionItem
+		// Rows written before the 12-value Kind enum shipped can carry empty
+		// kind. Fall back to KindPlan so the scan succeeds; the SQL
+		// migration in Unit E rewrites persisted rows to valid enum values.
+		t.Kind = domain.KindPlan
 	}
 	if t.Scope == "" {
-		if strings.TrimSpace(t.ParentID) == "" {
-			t.Scope = domain.KindAppliesToActionItem
-		} else {
-			t.Scope = domain.KindAppliesToSubtask
-		}
+		t.Scope = domain.KindAppliesTo(t.Kind)
 	}
 	if t.LifecycleState == "" {
 		t.LifecycleState = domain.StateTodo
@@ -4205,152 +2935,6 @@ func scanKindDefinition(s scanner) (domain.KindDefinition, error) {
 	kind.UpdatedAt = parseTS(updatedRaw)
 	kind.ArchivedAt = parseNullTS(archivedRaw)
 	return kind, nil
-}
-
-// scanTemplateLibrary decodes one template_libraries row.
-func scanTemplateLibrary(s scanner) (domain.TemplateLibrary, error) {
-	var (
-		library              domain.TemplateLibrary
-		scopeRaw             string
-		projectIDRaw         sql.NullString
-		statusRaw            string
-		sourceLibraryIDRaw   sql.NullString
-		builtinManagedRaw    int
-		createdActorTypeRaw  string
-		createdRaw           string
-		updatedRaw           string
-		approvedActorTypeRaw string
-		approvedAtRaw        sql.NullString
-	)
-	if err := s.Scan(
-		&library.ID,
-		&scopeRaw,
-		&projectIDRaw,
-		&library.Name,
-		&library.Description,
-		&statusRaw,
-		&sourceLibraryIDRaw,
-		&builtinManagedRaw,
-		&library.BuiltinSource,
-		&library.BuiltinVersion,
-		&library.Revision,
-		&library.RevisionDigest,
-		&library.CreatedByActorID,
-		&library.CreatedByActorName,
-		&createdActorTypeRaw,
-		&createdRaw,
-		&updatedRaw,
-		&library.ApprovedByActorID,
-		&library.ApprovedByActorName,
-		&approvedActorTypeRaw,
-		&approvedAtRaw,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.TemplateLibrary{}, app.ErrNotFound
-		}
-		return domain.TemplateLibrary{}, err
-	}
-	library.ID = domain.NormalizeTemplateLibraryID(library.ID)
-	library.Scope = domain.NormalizeTemplateLibraryScope(domain.TemplateLibraryScope(scopeRaw))
-	library.ProjectID = strings.TrimSpace(projectIDRaw.String)
-	library.Status = domain.NormalizeTemplateLibraryStatus(domain.TemplateLibraryStatus(statusRaw))
-	library.SourceLibraryID = domain.NormalizeTemplateLibraryID(sourceLibraryIDRaw.String)
-	library.BuiltinManaged = builtinManagedRaw != 0
-	library.Revision = max(library.Revision, 1)
-	library.RevisionDigest = strings.TrimSpace(library.RevisionDigest)
-	library.CreatedByActorType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(createdActorTypeRaw)))
-	library.CreatedAt = parseTS(createdRaw)
-	library.UpdatedAt = parseTS(updatedRaw)
-	library.ApprovedByActorType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(approvedActorTypeRaw)))
-	library.ApprovedAt = parseNullTS(approvedAtRaw)
-	return library, nil
-}
-
-// scanProjectTemplateBinding decodes one project_template_bindings row.
-func scanProjectTemplateBinding(s scanner) (domain.ProjectTemplateBinding, error) {
-	var (
-		binding                  domain.ProjectTemplateBinding
-		actorTypeRaw             string
-		boundLibraryUpdatedAtRaw string
-		boundLibrarySnapshotJSON string
-		boundAtRaw               string
-	)
-	if err := s.Scan(
-		&binding.ProjectID,
-		&binding.LibraryID,
-		&binding.LibraryName,
-		&binding.BoundRevision,
-		&binding.BoundRevisionDigest,
-		&boundLibraryUpdatedAtRaw,
-		&boundLibrarySnapshotJSON,
-		&binding.BoundByActorID,
-		&binding.BoundByActorName,
-		&actorTypeRaw,
-		&boundAtRaw,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.ProjectTemplateBinding{}, app.ErrNotFound
-		}
-		return domain.ProjectTemplateBinding{}, err
-	}
-	binding.LibraryID = domain.NormalizeTemplateLibraryID(binding.LibraryID)
-	binding.BoundRevision = max(binding.BoundRevision, 1)
-	binding.BoundRevisionDigest = strings.TrimSpace(binding.BoundRevisionDigest)
-	binding.BoundLibraryUpdatedAt = parseTS(boundLibraryUpdatedAtRaw)
-	binding.BoundLibrarySnapshot = unmarshalTemplateLibrarySnapshot(boundLibrarySnapshotJSON)
-	if normalized := normalizeOptionalActorType(domain.ActorType(actorTypeRaw)); normalized != "" {
-		binding.BoundByActorType = domain.ActorType(normalized)
-	} else {
-		binding.BoundByActorType = domain.ActorTypeUser
-	}
-	binding.BoundAt = parseTS(boundAtRaw)
-	return binding, nil
-}
-
-// scanNodeContractSnapshot decodes one node_contract_snapshots row.
-func scanNodeContractSnapshot(s scanner) (domain.NodeContractSnapshot, error) {
-	var (
-		snapshot              domain.NodeContractSnapshot
-		createdActorTypeRaw   string
-		responsibleActorRaw   string
-		orchestratorMayRaw    int
-		requiredParentRaw     int
-		requiredContainingRaw int
-		createdAtRaw          string
-	)
-	if err := s.Scan(
-		&snapshot.NodeID,
-		&snapshot.ProjectID,
-		&snapshot.SourceLibraryID,
-		&snapshot.SourceNodeTemplateID,
-		&snapshot.SourceChildRuleID,
-		&snapshot.CreatedByActorID,
-		&createdActorTypeRaw,
-		&responsibleActorRaw,
-		&orchestratorMayRaw,
-		&requiredParentRaw,
-		&requiredContainingRaw,
-		&createdAtRaw,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.NodeContractSnapshot{}, app.ErrNotFound
-		}
-		return domain.NodeContractSnapshot{}, err
-	}
-	snapshot.SourceLibraryID = domain.NormalizeTemplateLibraryID(snapshot.SourceLibraryID)
-	snapshot.SourceNodeTemplateID = domain.NormalizeTemplateLibraryID(snapshot.SourceNodeTemplateID)
-	snapshot.SourceChildRuleID = domain.NormalizeTemplateLibraryID(snapshot.SourceChildRuleID)
-	if normalized := normalizeOptionalActorType(domain.ActorType(createdActorTypeRaw)); normalized != "" {
-		snapshot.CreatedByActorType = domain.ActorType(normalized)
-	} else {
-		snapshot.CreatedByActorType = domain.ActorTypeSystem
-	}
-	snapshot.ResponsibleActorKind = domain.NormalizeTemplateActorKind(domain.TemplateActorKind(responsibleActorRaw))
-	snapshot.OrchestratorMayComplete = orchestratorMayRaw != 0
-	snapshot.RequiredForParentDone = requiredParentRaw != 0
-	snapshot.RequiredForContainingDone = requiredContainingRaw != 0
-	snapshot.CreatedAt = parseTS(createdAtRaw)
-	return snapshot, nil
 }
 
 // scanCapabilityLease decodes one capability_leases row.

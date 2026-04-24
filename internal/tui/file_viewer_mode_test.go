@@ -220,7 +220,7 @@ func TestModel_V_EntersFileViewerMode(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewActionItem(domain.ActionItemInput{
+	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,

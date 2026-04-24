@@ -12,36 +12,108 @@ import (
 // KindID identifies one reusable kind definition in the global kind catalog.
 type KindID string
 
-// DefaultProjectKind defines the default project kind identifier.
-const DefaultProjectKind KindID = "project"
+// Kind represents the closed 12-value enum of action-item kinds.
+type Kind string
 
-// KindAppliesTo identifies the node types a kind can be used for.
-type KindAppliesTo string
-
-// KindAppliesTo values.
+// Built-in kind values. Scope mirrors kind per row.
 const (
-	KindAppliesToProject    KindAppliesTo = "project"
-	KindAppliesToBranch     KindAppliesTo = "branch"
-	KindAppliesToPhase      KindAppliesTo = "phase"
-	KindAppliesToActionItem KindAppliesTo = "actionItem"
-	KindAppliesToSubtask    KindAppliesTo = "subtask"
+	KindPlan                 Kind = "plan"
+	KindResearch             Kind = "research"
+	KindBuild                Kind = "build"
+	KindPlanQAProof          Kind = "plan-qa-proof"
+	KindPlanQAFalsification  Kind = "plan-qa-falsification"
+	KindBuildQAProof         Kind = "build-qa-proof"
+	KindBuildQAFalsification Kind = "build-qa-falsification"
+	KindCloseout             Kind = "closeout"
+	KindCommit               Kind = "commit"
+	KindRefinement           Kind = "refinement"
+	KindDiscussion           Kind = "discussion"
+	KindHumanVerify          Kind = "human-verify"
 )
 
-// validKindAppliesTo stores all supported applies_to values.
-var validKindAppliesTo = []KindAppliesTo{
-	KindAppliesToProject,
-	KindAppliesToBranch,
-	KindAppliesToPhase,
-	KindAppliesToActionItem,
-	KindAppliesToSubtask,
+// validKinds stores every member of the closed 12-value Kind enum.
+var validKinds = []Kind{
+	KindPlan,
+	KindResearch,
+	KindBuild,
+	KindPlanQAProof,
+	KindPlanQAFalsification,
+	KindBuildQAProof,
+	KindBuildQAFalsification,
+	KindCloseout,
+	KindCommit,
+	KindRefinement,
+	KindDiscussion,
+	KindHumanVerify,
 }
 
-// validWorkItemAppliesTo stores applies_to values valid for work-items.
-var validWorkItemAppliesTo = []KindAppliesTo{
-	KindAppliesToBranch,
-	KindAppliesToPhase,
-	KindAppliesToActionItem,
-	KindAppliesToSubtask,
+// IsValidKind reports whether kind is a member of the closed Kind enum.
+func IsValidKind(kind Kind) bool {
+	return slices.Contains(validKinds, Kind(strings.TrimSpace(strings.ToLower(string(kind)))))
+}
+
+// KindAppliesTo identifies the node types a kind can be used for. Scope mirrors
+// kind per row, so the applies-to vocabulary is the 12-value Kind enum.
+type KindAppliesTo string
+
+// KindAppliesTo values mirror the 12 Kind values exactly.
+const (
+	KindAppliesToPlan                 KindAppliesTo = KindAppliesTo(KindPlan)
+	KindAppliesToResearch             KindAppliesTo = KindAppliesTo(KindResearch)
+	KindAppliesToBuild                KindAppliesTo = KindAppliesTo(KindBuild)
+	KindAppliesToPlanQAProof          KindAppliesTo = KindAppliesTo(KindPlanQAProof)
+	KindAppliesToPlanQAFalsification  KindAppliesTo = KindAppliesTo(KindPlanQAFalsification)
+	KindAppliesToBuildQAProof         KindAppliesTo = KindAppliesTo(KindBuildQAProof)
+	KindAppliesToBuildQAFalsification KindAppliesTo = KindAppliesTo(KindBuildQAFalsification)
+	KindAppliesToCloseout             KindAppliesTo = KindAppliesTo(KindCloseout)
+	KindAppliesToCommit               KindAppliesTo = KindAppliesTo(KindCommit)
+	KindAppliesToRefinement           KindAppliesTo = KindAppliesTo(KindRefinement)
+	KindAppliesToDiscussion           KindAppliesTo = KindAppliesTo(KindDiscussion)
+	KindAppliesToHumanVerify          KindAppliesTo = KindAppliesTo(KindHumanVerify)
+)
+
+// validKindAppliesTo stores all supported applies_to values. Because scope
+// mirrors kind, this is the single valid set for both catalog definitions and
+// work-item rows; IsValidKindAppliesTo and IsValidWorkItemAppliesTo both
+// delegate here.
+var validKindAppliesTo = []KindAppliesTo{
+	KindAppliesToPlan,
+	KindAppliesToResearch,
+	KindAppliesToBuild,
+	KindAppliesToPlanQAProof,
+	KindAppliesToPlanQAFalsification,
+	KindAppliesToBuildQAProof,
+	KindAppliesToBuildQAFalsification,
+	KindAppliesToCloseout,
+	KindAppliesToCommit,
+	KindAppliesToRefinement,
+	KindAppliesToDiscussion,
+	KindAppliesToHumanVerify,
+}
+
+// AllowedParentKinds returns the kinds permitted as a direct parent of the
+// given kind. An empty parent identifier at creation time represents a
+// project-root placement and is acceptable for KindPlan only; for every other
+// kind a non-empty parent is required and must match one of the returned
+// values.
+func AllowedParentKinds(kind Kind) []Kind {
+	switch Kind(strings.TrimSpace(strings.ToLower(string(kind)))) {
+	case KindPlan,
+		KindResearch,
+		KindPlanQAProof,
+		KindPlanQAFalsification,
+		KindBuild,
+		KindCloseout,
+		KindCommit,
+		KindRefinement,
+		KindDiscussion,
+		KindHumanVerify:
+		return []Kind{KindPlan}
+	case KindBuildQAProof, KindBuildQAFalsification:
+		return []Kind{KindBuild}
+	default:
+		return nil
+	}
 }
 
 // KindTemplateChildSpec defines one child item auto-created by a kind template.
@@ -163,23 +235,20 @@ func (k KindDefinition) AllowsParentScope(scope KindAppliesTo) bool {
 	return false
 }
 
-// NormalizeKindID canonicalizes kind identifiers for storage/lookup.
-// The input is trimmed and lowercased, then any "actionitem" token
-// (whole-word matched against `-` or `_` boundaries) is rewritten to
-// the canonical "actionItem" camelCase spelling so kind ids like
-// "actionItem" or "build-actionItem" survive the round-trip intact.
+// NormalizeKindID canonicalizes kind identifiers for storage/lookup by
+// trimming whitespace and lowercasing the input.
 func NormalizeKindID(id KindID) KindID {
 	trimmed := strings.TrimSpace(string(id))
 	if trimmed == "" {
 		return ""
 	}
-	return KindID(canonicalizeActionItemToken(strings.ToLower(trimmed)))
+	return KindID(strings.ToLower(trimmed))
 }
 
 // NormalizeKindAppliesTo canonicalizes applies_to values. Inputs are matched
-// case-insensitively against the supported set and returned in their
-// canonical camelCase form (e.g. "actionItem"); unknown values are returned
-// lowercased so callers can still detect invalid inputs.
+// case-insensitively against the supported 12-value set and returned in their
+// canonical form; unknown values are returned lowercased so callers can still
+// detect invalid inputs.
 func NormalizeKindAppliesTo(scope KindAppliesTo) KindAppliesTo {
 	lowered := strings.TrimSpace(strings.ToLower(string(scope)))
 	if lowered == "" {
@@ -200,9 +269,10 @@ func IsValidKindAppliesTo(scope KindAppliesTo) bool {
 }
 
 // IsValidWorkItemAppliesTo reports whether a value is supported for work-item rows.
+// Scope mirrors kind, so the work-item applies-to set is identical to the
+// catalog applies-to set; both helpers delegate to the same 12-value list.
 func IsValidWorkItemAppliesTo(scope KindAppliesTo) bool {
-	scope = NormalizeKindAppliesTo(scope)
-	return slices.Contains(validWorkItemAppliesTo, scope)
+	return IsValidKindAppliesTo(scope)
 }
 
 // normalizeKindAppliesToList trims, validates, and de-duplicates applies_to values.
@@ -265,7 +335,7 @@ func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
 			return KindTemplate{}, fmt.Errorf("%w: template child %d kind is required", ErrInvalidKindTemplate, idx)
 		}
 		if child.AppliesTo == "" {
-			child.AppliesTo = KindAppliesToSubtask
+			child.AppliesTo = KindAppliesTo(child.Kind)
 		}
 		if !IsValidWorkItemAppliesTo(child.AppliesTo) {
 			return KindTemplate{}, fmt.Errorf("%w: template child %d applies_to %q", ErrInvalidKindTemplate, idx, child.AppliesTo)
@@ -293,7 +363,7 @@ func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
 	if in.ActionItemMetadataDefaults != nil {
 		normalized, err := normalizeActionItemMetadata(*in.ActionItemMetadataDefaults)
 		if err != nil {
-			return KindTemplate{}, fmt.Errorf("%w: actionItem metadata defaults: %v", ErrInvalidKindTemplate, err)
+			return KindTemplate{}, fmt.Errorf("%w: action-item metadata defaults: %v", ErrInvalidKindTemplate, err)
 		}
 		actionItemDefaults = &normalized
 	}

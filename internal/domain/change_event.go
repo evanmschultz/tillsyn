@@ -17,15 +17,15 @@ const (
 
 // ChangeEvent represents a single activity-log entry for a project work item.
 type ChangeEvent struct {
-	ID         int64
-	ProjectID  string
-	WorkItemID string
-	Operation  ChangeOperation
-	ActorID    string
-	ActorName  string
-	ActorType  ActorType
-	Metadata   map[string]string
-	OccurredAt time.Time
+	ID           int64
+	ProjectID    string
+	ActionItemID string
+	Operation    ChangeOperation
+	ActorID      string
+	ActorName    string
+	ActorType    ActorType
+	Metadata     map[string]string
+	OccurredAt   time.Time
 }
 
 // DependencyRollup summarizes dependency and blocked-state counts for a project.

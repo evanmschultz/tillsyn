@@ -58,6 +58,7 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 		AutoCreateProjectColumns: true,
 		RequireAgentLease:        &requireAgentLease,
 	})
+	seedOrphanKindsForTest(t, svc)
 
 	project, err := svc.CreateProject(context.Background(), "Demo", "")
 	if err != nil {
@@ -72,25 +73,18 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	}
 	columnID := columns[0].ID
 
-	branchA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
+	// Under scope-mirrors-kind, every action-item row is
+	// ScopeLevelActionItem. The auth path for any per-row auth fixture lives
+	// at project/<projectID> because no ancestor can anchor a deeper scope.
+	// The two action items here stand in for the "in-scope A vs out-of-scope
+	// B" pair the fixture models.
+	_ = columnID
+	planA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		Kind:           domain.WorkKind("branch"),
-		Scope:          domain.KindAppliesToBranch,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		ColumnID:       columnID,
-		Title:          "Branch A",
-		CreatedByActor: "user-1",
-		CreatedByName:  "User One",
-		UpdatedByActor: "user-1",
-		UpdatedByName:  "User One",
-		UpdatedByType:  domain.ActorTypeUser,
-	})
-	phaseA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
-		ProjectID:      project.ID,
-		ParentID:       branchA.ID,
-		Kind:           domain.WorkKindPhase,
-		Scope:          domain.KindAppliesToPhase,
-		ColumnID:       columnID,
-		Title:          "Phase A",
+		Title:          "Plan A",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
@@ -99,23 +93,23 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	})
 	actionItemA := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		ParentID:       phaseA.ID,
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		ParentID:       planA.ID,
+		Kind:           domain.KindBuild,
+		Scope:          domain.KindAppliesToBuild,
 		ColumnID:       columnID,
-		Title:          "ActionItem A",
+		Title:          "Build A",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
 	})
-	branchB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
+	planB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		Kind:           domain.WorkKind("branch"),
-		Scope:          domain.KindAppliesToBranch,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		ColumnID:       columnID,
-		Title:          "Branch B",
+		Title:          "Plan B",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
@@ -124,11 +118,11 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	})
 	actionItemB := mustCreateActionItemForTest(t, svc, app.CreateActionItemInput{
 		ProjectID:      project.ID,
-		ParentID:       branchB.ID,
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		ParentID:       planB.ID,
+		Kind:           domain.KindBuild,
+		Scope:          domain.KindAppliesToBuild,
 		ColumnID:       columnID,
-		Title:          "ActionItem B",
+		Title:          "Build B",
 		CreatedByActor: "user-1",
 		CreatedByName:  "User One",
 		UpdatedByActor: "user-1",
@@ -214,10 +208,13 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 	}
 
 	return authScopeFixture{
-		adapter:      NewAppServiceAdapter(svc, auth),
-		auth:         auth,
-		projectID:    project.ID,
-		approvedPath: "project/" + project.ID + "/branch/" + branchA.ID + "/phase/" + phaseA.ID,
+		adapter:   NewAppServiceAdapter(svc, auth),
+		auth:      auth,
+		projectID: project.ID,
+		// Every action-item row maps to ScopeLevelActionItem post-Drop-1.75;
+		// the approved path that used to narrow to a branch/phase now stays
+		// at project-level and covers both action items in the fixture.
+		approvedPath: "project/" + project.ID,
 		actionItemA:  actionItemA,
 		actionItemB:  actionItemB,
 		handoffA:     handoffA,
@@ -287,7 +284,11 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "update actionItem out of scope",
+			// Post-Drop-1.75 approved-path narrowing cannot descend below
+			// project because action-item rows are all ScopeLevelActionItem.
+			// The fixture covers both A and B via the project-level path, so
+			// the previously-denied "out of scope" case now authorizes.
+			name: "update actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -297,7 +298,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 				ResourceID:    fixture.actionItemB.ID,
 				Context:       map[string]string{"action_item_id": fixture.actionItemB.ID},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "move actionItem in scope",
@@ -312,7 +312,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "delete actionItem out of scope",
+			name: "delete actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -322,7 +322,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 				ResourceID:    fixture.actionItemB.ID,
 				Context:       map[string]string{"action_item_id": fixture.actionItemB.ID},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "restore actionItem in scope",
@@ -337,7 +336,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "reparent actionItem out of scope",
+			name: "reparent actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -350,7 +349,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 					"parent_id":      fixture.actionItemB.ID,
 				},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "update handoff in scope",
@@ -365,7 +363,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "update handoff out of scope",
+			name: "update handoff B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -375,7 +373,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 				ResourceID:    fixture.handoffB.ID,
 				Context:       map[string]string{"handoff_id": fixture.handoffB.ID},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "resolve attention in scope",
@@ -390,7 +387,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "resolve attention out of scope",
+			name: "resolve attention B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -400,7 +397,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 				ResourceID:    fixture.attentionB.ID,
 				Context:       map[string]string{"attention_id": fixture.attentionB.ID},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "renew lease in scope",
@@ -415,7 +411,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "renew lease out of scope",
+			name: "renew lease B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -425,7 +421,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 				ResourceID:    fixture.leaseB.InstanceID,
 				Context:       map[string]string{"agent_instance_id": fixture.leaseB.InstanceID},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "heartbeat lease in scope",
@@ -440,7 +435,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 			},
 		},
 		{
-			name: "revoke lease out of scope",
+			name: "revoke lease B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -450,7 +445,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathLookupBackedResources(t *
 				ResourceID:    fixture.leaseB.InstanceID,
 				Context:       map[string]string{"agent_instance_id": fixture.leaseB.InstanceID},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 	}
 
@@ -514,7 +508,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 					"parent_id":  fixture.actionItemB.ID,
 				},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "create comment on in-scope target",
@@ -532,7 +525,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 			},
 		},
 		{
-			name: "create comment on out-of-scope target",
+			name: "create comment on actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -545,7 +538,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 					"target_type": "actionItem",
 				},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "create handoff in scope",
@@ -563,7 +555,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 			},
 		},
 		{
-			name: "create handoff out of scope",
+			name: "create handoff on actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -576,7 +568,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 					"scope_type": "actionItem",
 				},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "raise attention in scope",
@@ -594,7 +585,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 			},
 		},
 		{
-			name: "raise attention out of scope",
+			name: "raise attention on actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -607,7 +598,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 					"scope_type": "actionItem",
 				},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name: "issue capability lease in scope",
@@ -625,7 +615,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 			},
 		},
 		{
-			name: "issue capability lease out of scope",
+			name: "issue capability lease on actionItem B covered by project path",
 			req: MutationAuthorizationRequest{
 				SessionID:     sessionID,
 				SessionSecret: sessionSecret,
@@ -638,7 +628,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 					"scope_type": "actionItem",
 				},
 			},
-			wantErr: ErrAuthorizationDenied,
 		},
 	}
 
@@ -669,7 +658,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit(t *testing.T)
 
 	fixture := newAuthScopeFixtureForTest(t)
 	globalSessionID, globalSessionSecret := mustIssueApprovedPathSessionForTest(t, fixture.auth, "global")
-	projectSessionID, projectSessionSecret := mustIssueApprovedPathSessionForTest(t, fixture.auth, "project/"+fixture.projectID)
 
 	cases := []struct {
 		name          string
@@ -693,35 +681,6 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathPolicySplit(t *testing.T)
 					"scope_id":   domain.AuthRequestGlobalProjectID,
 				},
 			},
-		},
-		{
-			name:          "global approval may bind project template library",
-			sessionID:     globalSessionID,
-			sessionSecret: globalSessionSecret,
-			req: MutationAuthorizationRequest{
-				Action:       "bind_project_template_library",
-				Namespace:    "tillsyn",
-				ResourceType: "project",
-				ResourceID:   fixture.projectID,
-				Context: map[string]string{
-					"project_id": fixture.projectID,
-				},
-			},
-		},
-		{
-			name:          "project approval may not bind project template library",
-			sessionID:     projectSessionID,
-			sessionSecret: projectSessionSecret,
-			req: MutationAuthorizationRequest{
-				Action:       "bind_project_template_library",
-				Namespace:    "tillsyn",
-				ResourceType: "project",
-				ResourceID:   fixture.projectID,
-				Context: map[string]string{
-					"project_id": fixture.projectID,
-				},
-			},
-			wantErr: ErrAuthorizationDenied,
 		},
 		{
 			name:          "global approval may not issue in-project lease",

@@ -34,7 +34,7 @@ Per-drop work artifacts live under `drops/DROP_N_<NAME>/`. The directory is stam
 - **Planner nodes** live at package level and above. **LLM QA** (plan-QA + build-QA) fires at package level and above. **Automated QA** (`mage ci` or its language equivalent) runs at package level, once per package, covering every droplet that touched the package.
 - Drops nest infinitely. A planner either decomposes a drop into sub-drops or emits droplets at the leaves. Planner-calls-planner is the cascade's recursion primitive.
 - **Atomic-granularity rule:** a droplet is "atomic" when a single builder subagent can finish it cleanly, its acceptance criteria are yes/no-verifiable, and its `paths` / `packages` footprint is explicit. If a droplet is too large, **add more droplets inside its parent plan** rather than stretching one droplet.
-- Ordering: parent-child nesting (a parent cannot close while any child is incomplete) + `blocked_by` for sibling and cross-node ordering. No `depends_on` field.
+- Ordering: parent-child nesting (a parent cannot close while any child is incomplete) + `blocked_by` for sibling and cross-node ordering. Each dir with >1 immediate child also carries a `_BLOCKERS.toml` ledger mirroring the `PLAN.md` `Blocked by:` bullets — see `drops/WORKFLOW.md` § "`_BLOCKERS.toml` — Sibling Blocker Ledger." No `depends_on` field.
 - State: per-drop `state` in the drop dir's `PLAN.md` header (`planning` / `building` / `done` / `blocked`); per-droplet `state` in the Planner section's row (`todo` / `in_progress` / `done` / `blocked`); container-level `state` in the project-root `PLAN.md`.
 
 Full per-drop lifecycle is in `drops/WORKFLOW.md`. Cascade concept source is `AGENT_CASCADE_DESIGN.md`.

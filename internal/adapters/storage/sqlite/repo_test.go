@@ -115,6 +115,7 @@ func TestRepository_ProjectColumnActionItemLifecycle(t *testing.T) {
 
 	due := now.Add(24 * time.Hour)
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -201,6 +202,7 @@ func TestRepository_ActionItemEmbeddingsRoundTrip(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -292,6 +294,7 @@ func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -433,6 +436,7 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t-comment-targets",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -901,6 +905,7 @@ func TestRepository_DeleteProjectCascades(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -968,226 +973,6 @@ func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
 	}
 	if loaded.Metadata.Owner != "evan" {
 		t.Fatalf("expected metadata owner to persist after migration, got %#v", loaded.Metadata)
-	}
-}
-
-// TestRepository_MigratesLegacyActionItemsTable verifies behavior for the covered scenario.
-func TestRepository_MigratesLegacyActionItemsTable(t *testing.T) {
-	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "legacy-tasks.db")
-	db, err := sql.Open(driverName, dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-
-	legacySchema := []string{
-		`CREATE TABLE projects (
-			id TEXT PRIMARY KEY,
-			slug TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			archived_at TEXT
-		)`,
-		`CREATE TABLE columns_v1 (
-			id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			wip_limit INTEGER NOT NULL DEFAULT 0,
-			position INTEGER NOT NULL,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			archived_at TEXT
-		)`,
-		`CREATE TABLE tasks (
-			id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			column_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			priority TEXT NOT NULL,
-			due_at TEXT,
-			labels_json TEXT NOT NULL DEFAULT '[]',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			archived_at TEXT
-		)`,
-	}
-	for _, stmt := range legacySchema {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			t.Fatalf("create legacy schema error = %v", err)
-		}
-	}
-	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	for _, stmt := range []string{
-		`INSERT INTO projects(id, slug, name, description, created_at, updated_at, archived_at)
-		 VALUES ('p1', 'legacy', 'Legacy', '', '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
-		`INSERT INTO columns_v1(id, project_id, name, wip_limit, position, created_at, updated_at, archived_at)
-		 VALUES ('c1', 'p1', 'To Do', 0, 0, '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
-		`INSERT INTO tasks(id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at)
-		 VALUES ('t1', 'p1', 'c1', 0, 'Legacy actionItem', 'desc', 'medium', NULL, '["legacy"]', '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
-	} {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			t.Fatalf("seed legacy rows error = %v", err)
-		}
-	}
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open() on legacy actionItem db error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	rows, err := repo.db.QueryContext(ctx, `PRAGMA table_info(tasks)`)
-	if err != nil {
-		t.Fatalf("PRAGMA table_info(tasks) error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = rows.Close()
-	})
-
-	seenParentID := false
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			colType    string
-			notNull    int
-			defaultVal sql.NullString
-			primaryKey int
-		)
-		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
-			t.Fatalf("rows.Scan() error = %v", err)
-		}
-		if name == "parent_id" {
-			seenParentID = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows.Err() = %v", err)
-	}
-	if !seenParentID {
-		t.Fatal("expected parent_id column to be added during migration")
-	}
-
-	var workItemCount int
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM action_items WHERE id = 't1'`).Scan(&workItemCount); err != nil {
-		t.Fatalf("count action_items error = %v", err)
-	}
-	if workItemCount != 1 {
-		t.Fatalf("expected migrated action_items row count 1, got %d", workItemCount)
-	}
-	loaded, err := repo.GetActionItem(ctx, "t1")
-	if err != nil {
-		t.Fatalf("GetActionItem() migrated row error = %v", err)
-	}
-	if loaded.Title != "Legacy actionItem" || loaded.ProjectID != "p1" {
-		t.Fatalf("unexpected migrated actionItem %#v", loaded)
-	}
-	if loaded.Kind != domain.WorkKindActionItem || loaded.LifecycleState != domain.StateTodo {
-		t.Fatalf("expected default kind/state migration values, got kind=%q state=%q", loaded.Kind, loaded.LifecycleState)
-	}
-
-	var tableCount int
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='change_events'`).Scan(&tableCount); err != nil {
-		t.Fatalf("count change_events table error = %v", err)
-	}
-	if tableCount != 1 {
-		t.Fatalf("expected change_events table to exist after migration, got %d", tableCount)
-	}
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='comments'`).Scan(&tableCount); err != nil {
-		t.Fatalf("count comments table error = %v", err)
-	}
-	if tableCount != 1 {
-		t.Fatalf("expected comments table to exist after migration, got %d", tableCount)
-	}
-	commentColumns := map[string]struct{}{}
-	commentRows, err := repo.db.QueryContext(ctx, `PRAGMA table_info(comments)`)
-	if err != nil {
-		t.Fatalf("PRAGMA table_info(comments) error = %v", err)
-	}
-	for commentRows.Next() {
-		var (
-			cid        int
-			name       string
-			colType    string
-			notNull    int
-			defaultVal sql.NullString
-			primaryKey int
-		)
-		if err := commentRows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
-			_ = commentRows.Close()
-			t.Fatalf("scan comments table_info error = %v", err)
-		}
-		commentColumns[name] = struct{}{}
-	}
-	if err := commentRows.Close(); err != nil {
-		t.Fatalf("close comments table_info rows error = %v", err)
-	}
-	if _, ok := commentColumns["actor_id"]; !ok {
-		t.Fatalf("expected comments.actor_id in migrated schema, got %#v", commentColumns)
-	}
-	if _, ok := commentColumns["actor_name"]; !ok {
-		t.Fatalf("expected comments.actor_name in migrated schema, got %#v", commentColumns)
-	}
-	if _, ok := commentColumns["summary"]; !ok {
-		t.Fatalf("expected comments.summary in migrated schema, got %#v", commentColumns)
-	}
-	if _, ok := commentColumns["author_name"]; ok {
-		t.Fatalf("expected comments.author_name to be removed from canonical schema, got %#v", commentColumns)
-	}
-	changeEventColumns := map[string]struct{}{}
-	changeRows, err := repo.db.QueryContext(ctx, `PRAGMA table_info(change_events)`)
-	if err != nil {
-		t.Fatalf("PRAGMA table_info(change_events) error = %v", err)
-	}
-	for changeRows.Next() {
-		var (
-			cid        int
-			name       string
-			colType    string
-			notNull    int
-			defaultVal sql.NullString
-			primaryKey int
-		)
-		if err := changeRows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
-			_ = changeRows.Close()
-			t.Fatalf("scan change_events table_info error = %v", err)
-		}
-		changeEventColumns[name] = struct{}{}
-	}
-	if err := changeRows.Close(); err != nil {
-		t.Fatalf("close change_events table_info rows error = %v", err)
-	}
-	if _, ok := changeEventColumns["actor_name"]; !ok {
-		t.Fatalf("expected change_events.actor_name in migrated schema, got %#v", changeEventColumns)
-	}
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attention_items'`).Scan(&tableCount); err != nil {
-		t.Fatalf("count attention_items table error = %v", err)
-	}
-	if tableCount != 1 {
-		t.Fatalf("expected attention_items table to exist after migration, got %d", tableCount)
-	}
-
-	var indexCount int
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_comments_project_target_created_at'`).Scan(&indexCount); err != nil {
-		t.Fatalf("count comments index error = %v", err)
-	}
-	if indexCount != 1 {
-		t.Fatalf("expected comments target index to exist after migration, got %d", indexCount)
-	}
-	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_attention_scope_state_created_at'`).Scan(&indexCount); err != nil {
-		t.Fatalf("count attention scope index error = %v", err)
-	}
-	if indexCount != 1 {
-		t.Fatalf("expected attention scope index to exist after migration, got %d", indexCount)
 	}
 }
 
@@ -1459,6 +1244,7 @@ func TestRepositoryUpdateNotFound(t *testing.T) {
 	}
 
 	tk, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "missing-actionItem",
 		ProjectID: "missing",
 		ColumnID:  "missing-col",
@@ -1497,6 +1283,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 	}
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       todo.ID,
@@ -1643,6 +1430,7 @@ func TestRepository_ActionItemLifecyclePreservesMutationActorName(t *testing.T) 
 				t.Fatalf("CreateColumn() error = %v", err)
 			}
 			actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+				Kind:      domain.KindPlan,
 				ID:        "t1",
 				ProjectID: project.ID,
 				ColumnID:  todo.ID,
@@ -1741,8 +1529,8 @@ func TestRepository_ServiceCreateActionItemPersistsHumanActorName(t *testing.T) 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d (%#v)", len(events), events)
 	}
-	if events[0].WorkItemID != created.ID {
-		t.Fatalf("expected event work item id %q, got %q", created.ID, events[0].WorkItemID)
+	if events[0].ActionItemID != created.ID {
+		t.Fatalf("expected event work item id %q, got %q", created.ID, events[0].ActionItemID)
 	}
 	if events[0].ActorID != "user-1" || events[0].ActorName != "Evan Schultz" {
 		t.Fatalf("expected human attribution user-1/Evan Schultz, got %q/%q", events[0].ActorID, events[0].ActorName)
@@ -1773,10 +1561,15 @@ func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 
+	// Attach a payload schema to a custom kind id not seeded by the 12-value
+	// Kind enum. Custom kinds remain allowed in the catalog but cannot be
+	// used for action-item rows; the test exercises catalog storage, not
+	// action-item creation. The project_allowed_kinds closure can still mix
+	// built-in and custom ids.
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:                "refactor",
-		DisplayName:       "Refactor",
-		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:                "custom-refactor",
+		DisplayName:       "Custom Refactor",
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToPlan},
 		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
 	}, now)
 	if err != nil {
@@ -1789,11 +1582,11 @@ func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetKindDefinition() error = %v", err)
 	}
-	if loadedKind.DisplayName != "Refactor" {
+	if loadedKind.DisplayName != "Custom Refactor" {
 		t.Fatalf("unexpected kind display name %q", loadedKind.DisplayName)
 	}
 
-	if err := repo.SetProjectAllowedKinds(ctx, project.ID, []domain.KindID{kind.ID, domain.DefaultProjectKind}); err != nil {
+	if err := repo.SetProjectAllowedKinds(ctx, project.ID, []domain.KindID{kind.ID, domain.KindID(domain.KindPlan)}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
 	}
 	allowed, err := repo.ListProjectAllowedKinds(ctx, project.ID)
@@ -2330,29 +2123,6 @@ func TestRepository_AttentionItemProjectWideRoleFilterAndUpsert(t *testing.T) {
 	}
 }
 
-// TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport verifies seeded defaults include nested phase support.
-func TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport(t *testing.T) {
-	ctx := context.Background()
-	repo, err := OpenInMemory()
-	if err != nil {
-		t.Fatalf("OpenInMemory() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	phase, err := repo.GetKindDefinition(ctx, domain.KindID(domain.WorkKindPhase))
-	if err != nil {
-		t.Fatalf("GetKindDefinition(phase) error = %v", err)
-	}
-	if !phase.AppliesToScope(domain.KindAppliesToPhase) {
-		t.Fatalf("expected phase kind to apply to phase, got %#v", phase.AppliesTo)
-	}
-	if !phase.AllowsParentScope(domain.KindAppliesToPhase) {
-		t.Fatalf("expected phase kind parent scopes to include phase, got %#v", phase.AllowedParentScopes)
-	}
-}
-
 // TestRepository_PersistsProjectKindAndActionItemScope verifies new kind/scope columns round-trip.
 func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	ctx := context.Background()
@@ -2366,18 +2136,12 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p-scope", "Scope", "", now)
-	if err := project.SetKind("project-template", now); err != nil {
-		t.Fatalf("SetKind() error = %v", err)
-	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
-	loadedProject, err := repo.GetProject(ctx, project.ID)
+	_, err = repo.GetProject(ctx, project.ID)
 	if err != nil {
 		t.Fatalf("GetProject() error = %v", err)
-	}
-	if loadedProject.Kind != domain.KindID("project-template") {
-		t.Fatalf("expected persisted project kind, got %q", loadedProject.Kind)
 	}
 
 	column, _ := domain.NewColumn("c-scope", project.ID, "To Do", 0, 0, now)
@@ -2388,8 +2152,8 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		ID:        "t-scope",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Scope:     domain.KindAppliesToPhase,
-		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToDiscussion,
+		Kind:      domain.KindDiscussion,
 		Position:  0,
 		Title:     "phase",
 		Priority:  domain.PriorityMedium,
@@ -2404,7 +2168,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetActionItem() error = %v", err)
 	}
-	if loadedActionItem.Scope != domain.KindAppliesToPhase {
+	if loadedActionItem.Scope != domain.KindAppliesToDiscussion {
 		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedActionItem.Scope)
 	}
 
@@ -2413,8 +2177,8 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  actionItem.ID,
 		ColumnID:  column.ID,
-		Scope:     domain.KindAppliesToPhase,
-		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToDiscussion,
+		Kind:      domain.KindDiscussion,
 		Position:  1,
 		Title:     "nested phase",
 		Priority:  domain.PriorityMedium,
@@ -2429,7 +2193,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetActionItem(nested phase) error = %v", err)
 	}
-	if loadedNestedPhaseActionItem.Scope != domain.KindAppliesToPhase {
+	if loadedNestedPhaseActionItem.Scope != domain.KindAppliesToDiscussion {
 		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedNestedPhaseActionItem.Scope)
 	}
 }
@@ -2590,5 +2354,98 @@ func TestRepositoryAuthRequestScanErrors(t *testing.T) {
 	}
 	if _, err := repo.ListAuthRequests(ctx, domain.AuthRequestListFilter{ProjectID: project.ID}); err == nil {
 		t.Fatal("ListAuthRequests() error = nil, want scan decode error")
+	}
+}
+
+// TestRepositoryFreshOpenKindCatalog verifies that a fresh DB open bakes the
+// 12-value Kind enum into the kind_catalog table.
+func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	rows, err := repo.db.QueryContext(ctx, `SELECT id FROM kind_catalog ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query kind_catalog error = %v", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan kind_catalog id error = %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate kind_catalog error = %v", err)
+	}
+
+	want := []string{
+		"build",
+		"build-qa-falsification",
+		"build-qa-proof",
+		"closeout",
+		"commit",
+		"discussion",
+		"human-verify",
+		"plan",
+		"plan-qa-falsification",
+		"plan-qa-proof",
+		"refinement",
+		"research",
+	}
+	if len(ids) != len(want) {
+		t.Fatalf("kind_catalog rows = %d (%v), want %d (%v)", len(ids), ids, len(want), want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("kind_catalog row %d = %q, want %q (all ids: %v)", i, ids[i], want[i], ids)
+		}
+	}
+}
+
+// TestRepositoryFreshOpenProjectsSchema verifies that a fresh DB open produces a projects table with no kind column.
+func TestRepositoryFreshOpenProjectsSchema(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	rows, err := repo.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('projects')`)
+	if err != nil {
+		t.Fatalf("query pragma_table_info error = %v", err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan pragma_table_info error = %v", err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate pragma_table_info error = %v", err)
+	}
+
+	for _, c := range columns {
+		if c == "kind" {
+			t.Fatalf("projects table still contains 'kind' column (all columns: %v)", columns)
+		}
+	}
+	if len(columns) == 0 {
+		t.Fatalf("pragma_table_info('projects') returned 0 columns — table missing?")
 	}
 }

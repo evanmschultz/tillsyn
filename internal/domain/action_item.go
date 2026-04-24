@@ -25,7 +25,7 @@ type ActionItem struct {
 	ID             string
 	ProjectID      string
 	ParentID       string
-	Kind           WorkKind
+	Kind           Kind
 	Scope          KindAppliesTo
 	LifecycleState LifecycleState
 	ColumnID       string
@@ -54,7 +54,7 @@ type ActionItemInput struct {
 	ID             string
 	ProjectID      string
 	ParentID       string
-	Kind           WorkKind
+	Kind           Kind
 	Scope          KindAppliesTo
 	LifecycleState LifecycleState
 	ColumnID       string
@@ -72,22 +72,16 @@ type ActionItemInput struct {
 	UpdatedByType  ActorType
 }
 
-// DefaultActionItemScope returns the canonical default scope for one work-item kind and parent tuple.
-func DefaultActionItemScope(kind WorkKind, parentID string) KindAppliesTo {
-	parentID = strings.TrimSpace(parentID)
-	switch strings.TrimSpace(strings.ToLower(string(kind))) {
-	case "branch":
-		return KindAppliesToBranch
-	case "phase":
-		return KindAppliesToPhase
-	case "subtask":
-		return KindAppliesToSubtask
-	default:
-		if parentID == "" {
-			return KindAppliesToActionItem
-		}
-		return KindAppliesToSubtask
+// DefaultActionItemScope returns the canonical default scope for one work-item
+// kind. Scope mirrors kind per the 12-value Kind enum, so the scope is the
+// KindAppliesTo value whose stored form equals the supplied kind. The helper
+// returns the empty KindAppliesTo when the kind is not a member of the enum so
+// the caller can reject with ErrInvalidKind.
+func DefaultActionItemScope(kind Kind) KindAppliesTo {
+	if !IsValidKind(kind) {
+		return ""
 	}
+	return KindAppliesTo(Kind(strings.TrimSpace(strings.ToLower(string(kind)))))
 }
 
 // NewActionItem constructs a new value for this package.
@@ -124,21 +118,25 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	if !slices.Contains(validPriorities, in.Priority) {
 		return ActionItem{}, ErrInvalidPriority
 	}
+	in.Kind = Kind(strings.TrimSpace(strings.ToLower(string(in.Kind))))
 	if in.Kind == "" {
-		in.Kind = WorkKindActionItem
+		return ActionItem{}, ErrInvalidKind
 	}
-	if !isValidWorkKind(in.Kind) {
+	if !IsValidKind(in.Kind) {
 		return ActionItem{}, ErrInvalidKind
 	}
 	in.Scope = NormalizeKindAppliesTo(in.Scope)
 	if in.Scope == "" {
-		in.Scope = DefaultActionItemScope(in.Kind, in.ParentID)
+		in.Scope = DefaultActionItemScope(in.Kind)
 	}
 	if !IsValidWorkItemAppliesTo(in.Scope) {
 		return ActionItem{}, ErrInvalidKindAppliesTo
 	}
-	if in.ParentID == "" && in.Scope == KindAppliesToSubtask {
-		return ActionItem{}, ErrInvalidParentID
+	// Scope mirrors kind per the 12-value Kind enum. Reject any caller that
+	// supplies a scope that disagrees with the kind; downstream persistence
+	// relies on the mirror invariant.
+	if in.Scope != KindAppliesTo(in.Kind) {
+		return ActionItem{}, ErrInvalidKindAppliesTo
 	}
 	if in.LifecycleState == "" {
 		in.LifecycleState = StateTodo

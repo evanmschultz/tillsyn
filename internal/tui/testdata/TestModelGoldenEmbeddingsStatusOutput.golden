@@ -6,9 +6,9 @@
       │ embeddings ready:1 pending:1 running:0 failed:1 stale:0                                                  │
       │ filter: all                                                                                              │
       │ showing 3 of 3 rows                                                                                      │
-      │ > Inbox • branch • ready • Embeddings status actionItem                                                  │
+      │ > Inbox • plan • ready • Embeddings status actionItem                                                    │
       │    path: Inbox -> Embeddings status actionItem                                                           │
-      │   Inbox • actionItem thread • pending • Embeddings status thread actionItem                              │
+      │   Inbox • build thread • pending • Embeddings status thread actionItem                                   │
       │    path: Inbox -> Embeddings status actionItem -> Embeddings status thread actionItem                    │
       │   Inbox • project document • failed • project overview                                                   │
       │    path: Inbox                                                                                           │

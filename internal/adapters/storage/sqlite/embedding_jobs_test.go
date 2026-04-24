@@ -685,6 +685,7 @@ func mustSeedEmbeddingActionItem(t *testing.T, repo *Repository, projectID, colu
 	t.Helper()
 
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          actionItemID,
 		ProjectID:   projectID,
 		ColumnID:    columnID,

@@ -68,20 +68,7 @@ func commentAttentionLevel(comment domain.Comment) (domain.LevelTupleInput, bool
 	case domain.CommentTargetTypeProject:
 		level.ScopeType = domain.ScopeLevelProject
 		level.ScopeID = strings.TrimSpace(comment.TargetID)
-	case domain.CommentTargetTypeBranch:
-		level.BranchID = strings.TrimSpace(comment.TargetID)
-		level.ScopeType = domain.ScopeLevelBranch
-		level.ScopeID = strings.TrimSpace(comment.TargetID)
-	case domain.CommentTargetTypePhase:
-		level.ScopeType = domain.ScopeLevelPhase
-		level.ScopeID = strings.TrimSpace(comment.TargetID)
 	case domain.CommentTargetTypeActionItem:
-		level.ScopeType = domain.ScopeLevelActionItem
-		level.ScopeID = strings.TrimSpace(comment.TargetID)
-	case domain.CommentTargetTypeSubtask:
-		level.ScopeType = domain.ScopeLevelSubtask
-		level.ScopeID = strings.TrimSpace(comment.TargetID)
-	case domain.CommentTargetTypeDecision, domain.CommentTargetTypeNote:
 		level.ScopeType = domain.ScopeLevelActionItem
 		level.ScopeID = strings.TrimSpace(comment.TargetID)
 	default:

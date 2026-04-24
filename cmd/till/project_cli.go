@@ -141,11 +141,9 @@ func runProjectCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	}
 	ctx = cliMutationContext(ctx, cfg)
 	project, err := svc.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:              opts.name,
-		Description:       opts.description,
-		Kind:              domain.KindID(opts.kind),
-		TemplateLibraryID: opts.templateLibraryID,
-		Metadata:          metadata,
+		Name:        opts.name,
+		Description: opts.description,
+		Metadata:    metadata,
 	})
 	if err != nil {
 		return fmt.Errorf("create project: %w", err)
@@ -256,13 +254,12 @@ func writeProjectList(stdout io.Writer, projects []domain.Project, emptyGuidance
 		rows = append(rows, []string{
 			compactText(project.Name),
 			compactText(project.ID),
-			compactText(string(project.Kind)),
 			compactText(project.Metadata.Owner),
 			projectArchivedText(project.ArchivedAt),
 		})
 	}
 	printer := newCLIPrinter(stdout)
-	if err := writeCLITableWithPrinter(printer, "Projects", []string{"NAME", "ID", "KIND", "OWNER", "ARCHIVED"}, rows, "No projects found."); err != nil {
+	if err := writeCLITableWithPrinter(printer, "Projects", []string{"NAME", "ID", "OWNER", "ARCHIVED"}, rows, "No projects found."); err != nil {
 		return err
 	}
 	if len(projects) == 0 {
@@ -279,7 +276,6 @@ func writeProjectDetail(stdout io.Writer, project domain.Project, title string) 
 		{"name", compactText(project.Name)},
 		{"id", compactText(project.ID)},
 		{"slug", compactText(project.Slug)},
-		{"kind", compactText(string(project.Kind))},
 		{"owner", compactText(project.Metadata.Owner)},
 		{"icon", compactText(project.Metadata.Icon)},
 		{"color", compactText(project.Metadata.Color)},
@@ -303,7 +299,6 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 		{"name", compactText(project.Name)},
 		{"id", compactText(project.ID)},
 		{"slug", compactText(project.Slug)},
-		{"kind", compactText(string(project.Kind))},
 		{"owner", compactText(project.Metadata.Owner)},
 		{"archived", projectArchivedText(project.ArchivedAt)},
 	}
