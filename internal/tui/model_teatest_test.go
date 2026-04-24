@@ -17,7 +17,7 @@ func TestModelWithTeatest(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -91,7 +91,7 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
 		ProjectID:   p.ID,
 		ColumnID:    c1.ID,
@@ -118,7 +118,7 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -144,23 +144,25 @@ func TestModelGoldenEmbeddingsStatusOutput(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 45, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		Position:  0,
 		Title:     "Embeddings status actionItem",
-		Kind:      domain.WorkKind("branch"),
-		Scope:     domain.KindAppliesToBranch,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Priority:  domain.PriorityLow,
 	}, now)
-	child, _ := domain.NewActionItem(domain.ActionItemInput{
+	child, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
 		ParentID:  actionItem.ID,
 		Position:  1,
 		Title:     "Embeddings status thread actionItem",
+		Kind:      domain.KindBuild,
+		Scope:     domain.KindAppliesToBuild,
 		Priority:  domain.PriorityLow,
 	}, now)
 	threadSubjectID := app.BuildThreadContextSubjectID(domain.CommentTarget{
@@ -206,7 +208,7 @@ func TestModelGoldenSearchResultsEmptyOutput(t *testing.T) {
 	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p-search-empty", "Search Empty", "", now)
 	c1, _ := domain.NewColumn("c-search-empty", p.ID, "To Do", 0, 0, now)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-search-empty",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -235,7 +237,7 @@ func TestModelWithTeatestWIPWarning(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -243,7 +245,7 @@ func TestModelWithTeatestWIPWarning(t *testing.T) {
 		Title:     "First",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,

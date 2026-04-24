@@ -11,7 +11,7 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	comment, err := NewComment(CommentInput{
 		ID:           "comment-1",
 		ProjectID:    " project-1 ",
-		TargetType:   CommentTargetType(" ACTIONITEM "),
+		TargetType:   CommentTargetType(" ACTION_ITEM "),
 		TargetID:     " item-1 ",
 		BodyMarkdown: " **done** ",
 	}, now)
@@ -22,7 +22,7 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 		t.Fatalf("expected trimmed project id, got %q", comment.ProjectID)
 	}
 	if comment.TargetType != CommentTargetTypeActionItem {
-		t.Fatalf("expected normalized actionItem target type, got %q", comment.TargetType)
+		t.Fatalf("expected normalized action-item target type, got %q", comment.TargetType)
 	}
 	if comment.TargetID != "item-1" {
 		t.Fatalf("expected trimmed target id, got %q", comment.TargetID)
@@ -150,7 +150,7 @@ func TestNewCommentValidation(t *testing.T) {
 			input: CommentInput{
 				ID:           "c1",
 				ProjectID:    "p1",
-				TargetType:   CommentTargetType("column"),
+				TargetType:   CommentTargetType("branch"),
 				TargetID:     "c1",
 				BodyMarkdown: "body",
 			},
@@ -193,39 +193,28 @@ func TestNewCommentValidation(t *testing.T) {
 func TestNormalizeCommentTarget(t *testing.T) {
 	target, err := NormalizeCommentTarget(CommentTarget{
 		ProjectID:  " p1 ",
-		TargetType: CommentTargetType(" SUBTASK "),
+		TargetType: CommentTargetType(" ACTION_ITEM "),
 		TargetID:   " t2 ",
 	})
 	if err != nil {
 		t.Fatalf("NormalizeCommentTarget() error = %v", err)
 	}
-	if target.ProjectID != "p1" || target.TargetType != CommentTargetTypeSubtask || target.TargetID != "t2" {
+	if target.ProjectID != "p1" || target.TargetType != CommentTargetTypeActionItem || target.TargetID != "t2" {
 		t.Fatalf("unexpected normalized target %#v", target)
 	}
 }
 
-// TestNormalizeCommentTargetSupportsHierarchyNodes verifies branch/phase target normalization.
-func TestNormalizeCommentTargetSupportsHierarchyNodes(t *testing.T) {
-	tests := []struct {
-		name       string
-		targetType CommentTargetType
-		wantType   CommentTargetType
-	}{
-		{name: "branch", targetType: CommentTargetType(" BRANCH "), wantType: CommentTargetTypeBranch},
-		{name: "phase", targetType: CommentTargetType(" PHASE "), wantType: CommentTargetTypePhase},
-	}
-
-	for _, tc := range tests {
-		target, err := NormalizeCommentTarget(CommentTarget{
-			ProjectID:  " p1 ",
-			TargetType: tc.targetType,
-			TargetID:   " item-1 ",
-		})
-		if err != nil {
-			t.Fatalf("%s: NormalizeCommentTarget() error = %v", tc.name, err)
-		}
-		if target.TargetType != tc.wantType {
-			t.Fatalf("%s: normalized target type = %q, want %q", tc.name, target.TargetType, tc.wantType)
+// TestNormalizeCommentTargetRejectsLegacyScopeTypes verifies the collapsed
+// target-type vocabulary rejects the pre-12-kind branch / phase / subtask
+// target types.
+func TestNormalizeCommentTargetRejectsLegacyScopeTypes(t *testing.T) {
+	for _, legacy := range []CommentTargetType{"branch", "phase", "subtask", "decision", "note"} {
+		if _, err := NormalizeCommentTarget(CommentTarget{
+			ProjectID:  "p1",
+			TargetType: legacy,
+			TargetID:   "item-1",
+		}); err != ErrInvalidTargetType {
+			t.Fatalf("NormalizeCommentTarget(%q) error = %v, want ErrInvalidTargetType", legacy, err)
 		}
 	}
 }

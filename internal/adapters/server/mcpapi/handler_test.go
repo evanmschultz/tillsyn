@@ -934,13 +934,6 @@ func TestToolResultFromErrorMapping(t *testing.T) {
 			wantLogClass: "bootstrap",
 		},
 		{
-			name:         "builtin template bootstrap required",
-			err:          errors.Join(common.ErrBuiltinTemplateBootstrapRequired, errors.New("missing typed kinds")),
-			wantPrefix:   "builtin_template_bootstrap_required:",
-			wantLogCode:  "builtin_template_bootstrap_required",
-			wantLogClass: "bootstrap",
-		},
-		{
 			name:         "guardrail violation",
 			err:          errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
 			wantPrefix:   "guardrail_failed:",

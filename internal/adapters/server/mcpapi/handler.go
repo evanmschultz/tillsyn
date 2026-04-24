@@ -63,13 +63,11 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		projects:  pickProjectService(captureState, attention),
 		tasks:     pickActionItemService(captureState, attention),
 		kinds:     pickKindCatalogService(captureState, attention),
-		templates: pickTemplateLibraryService(captureState, attention),
 	})
 	registerProjectTools(
 		mcpSrv,
 		pickProjectService(captureState, attention),
 		pickKindCatalogService(captureState, attention),
-		pickTemplateLibraryService(captureState, attention),
 		pickChangeFeedService(captureState, attention),
 		authContexts,
 		cfg.ExposeLegacyProjectTools,
@@ -83,7 +81,6 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		cfg.ExposeLegacyActionItemTools,
 	)
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)
-	registerTemplateLibraryTools(mcpSrv, pickTemplateLibraryService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), authContexts, cfg.ExposeLegacyLeaseTools)
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention), authContexts)
 	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention), authContexts, cfg.ExposeLegacyCoordinationTools)
@@ -852,12 +849,6 @@ func mapToolError(err error) toolErrorMapping {
 			Code:  "bootstrap_required",
 			Text:  "bootstrap_required: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrBuiltinTemplateBootstrapRequired):
-		return toolErrorMapping{
-			Class: "bootstrap",
-			Code:  "builtin_template_bootstrap_required",
-			Text:  "builtin_template_bootstrap_required: " + err.Error(),
-		}
 	case errors.Is(err, common.ErrGuardrailViolation):
 		return toolErrorMapping{
 			Class: "guardrail",
@@ -1037,17 +1028,6 @@ func pickAuthRequestService(captureState common.CaptureStateReader, attention co
 		return svc
 	}
 	if svc, ok := attention.(common.AuthRequestService); ok {
-		return svc
-	}
-	return nil
-}
-
-// pickTemplateLibraryService resolves one template-library service provider from available services.
-func pickTemplateLibraryService(captureState common.CaptureStateReader, attention common.AttentionService) common.TemplateLibraryService {
-	if svc, ok := captureState.(common.TemplateLibraryService); ok {
-		return svc
-	}
-	if svc, ok := attention.(common.TemplateLibraryService); ok {
 		return svc
 	}
 	return nil

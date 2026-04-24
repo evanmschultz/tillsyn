@@ -263,7 +263,8 @@ func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		ColumnID:       progress.ID,
 		Position:       0,
 		Title:          "Ship release",

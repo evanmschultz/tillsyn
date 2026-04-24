@@ -19,51 +19,41 @@ import (
 type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
-	lastCreateProjectReq             common.CreateProjectRequest
-	lastListProjectsArchived         bool
-	lastGetActionItemID              string
-	lastListActionItemsProjectID     string
-	lastListActionItemsArchived      bool
-	lastListChildProjectID           string
-	lastListChildParentID            string
-	lastListChildArchived            bool
-	lastCreateActionItemReq          common.CreateActionItemRequest
-	lastUpdateActionItemReq          common.UpdateActionItemRequest
-	lastMoveActionItemStateReq       common.MoveActionItemStateRequest
-	lastRestoreActionItemReq         common.RestoreActionItemRequest
-	lastIssueLeaseReq                common.IssueCapabilityLeaseRequest
-	lastListLeaseReq                 common.ListCapabilityLeasesRequest
-	lastCreateCommentReq             common.CreateCommentRequest
-	lastListCommentReq               common.ListCommentsByTargetRequest
-	lastCreateHandoffReq             common.CreateHandoffRequest
-	lastUpdateHandoffReq             common.UpdateHandoffRequest
-	lastListHandoffsReq              common.ListHandoffsRequest
-	lastListTemplateReq              common.ListTemplateLibrariesRequest
-	lastListKindsArchived            bool
-	lastUpsertKindReq                common.UpsertKindDefinitionRequest
-	lastSetAllowedKindsReq           common.SetProjectAllowedKindsRequest
-	lastEnsureBuiltinReq             common.EnsureBuiltinTemplateLibraryRequest
-	lastUpsertTemplateReq            common.UpsertTemplateLibraryRequest
-	lastBindTemplateReq              common.BindProjectTemplateLibraryRequest
-	lastApproveTemplateMigrationsReq common.ApproveProjectTemplateMigrationsRequest
-	lastGetTemplateID                string
-	lastGetBuiltinTemplateID         string
-	lastGetTemplateBindingID         string
-	lastGetTemplatePreviewID         string
-	lastGetNodeContractID            string
-	lastSearchActionItemsReq         common.SearchActionItemsRequest
-	lastEmbeddingsStatusReq          common.EmbeddingsStatusRequest
-	lastEmbeddingsReindexReq         common.ReindexEmbeddingsRequest
-	lastCreateAuthRequestReq         common.CreateAuthRequestRequest
-	lastListAuthRequestsReq          common.ListAuthRequestsRequest
-	lastGetAuthRequestID             string
-	lastGetHandoffID                 string
-	lastClaimAuthRequestReq          common.ClaimAuthRequestRequest
-	lastCancelAuthRequestReq         common.CancelAuthRequestRequest
-	lastListAuthSessionsReq          common.ListAuthSessionsRequest
-	lastValidateAuthSessionReq       common.ValidateAuthSessionRequest
-	lastCheckAuthSessionReq          common.CheckAuthSessionGovernanceRequest
-	lastRevokeAuthSessionReq         common.RevokeAuthSessionRequest
+	lastCreateProjectReq         common.CreateProjectRequest
+	lastListProjectsArchived     bool
+	lastGetActionItemID          string
+	lastListActionItemsProjectID string
+	lastListActionItemsArchived  bool
+	lastListChildProjectID       string
+	lastListChildParentID        string
+	lastListChildArchived        bool
+	lastCreateActionItemReq      common.CreateActionItemRequest
+	lastUpdateActionItemReq      common.UpdateActionItemRequest
+	lastMoveActionItemStateReq   common.MoveActionItemStateRequest
+	lastRestoreActionItemReq     common.RestoreActionItemRequest
+	lastIssueLeaseReq            common.IssueCapabilityLeaseRequest
+	lastListLeaseReq             common.ListCapabilityLeasesRequest
+	lastCreateCommentReq         common.CreateCommentRequest
+	lastListCommentReq           common.ListCommentsByTargetRequest
+	lastCreateHandoffReq         common.CreateHandoffRequest
+	lastUpdateHandoffReq         common.UpdateHandoffRequest
+	lastListHandoffsReq          common.ListHandoffsRequest
+	lastListKindsArchived        bool
+	lastUpsertKindReq            common.UpsertKindDefinitionRequest
+	lastSetAllowedKindsReq       common.SetProjectAllowedKindsRequest
+	lastSearchActionItemsReq     common.SearchActionItemsRequest
+	lastEmbeddingsStatusReq      common.EmbeddingsStatusRequest
+	lastEmbeddingsReindexReq     common.ReindexEmbeddingsRequest
+	lastCreateAuthRequestReq     common.CreateAuthRequestRequest
+	lastListAuthRequestsReq      common.ListAuthRequestsRequest
+	lastGetAuthRequestID         string
+	lastGetHandoffID             string
+	lastClaimAuthRequestReq      common.ClaimAuthRequestRequest
+	lastCancelAuthRequestReq     common.CancelAuthRequestRequest
+	lastListAuthSessionsReq      common.ListAuthSessionsRequest
+	lastValidateAuthSessionReq   common.ValidateAuthSessionRequest
+	lastCheckAuthSessionReq      common.CheckAuthSessionGovernanceRequest
+	lastRevokeAuthSessionReq     common.RevokeAuthSessionRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -95,7 +85,6 @@ func (s *stubExpandedService) ListProjects(_ context.Context, includeArchived bo
 			ID:        "p1",
 			Slug:      "proj-1",
 			Name:      "Project One",
-			Kind:      domain.KindID("go-project"),
 			Metadata:  domain.ProjectMetadata{StandardsMarkdown: "Use MCP tools first.\nRun TDD-style changes and finish with mage ci."},
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -346,8 +335,8 @@ func (s *stubExpandedService) ListActionItems(_ context.Context, projectID strin
 			ColumnID:       "c1",
 			Position:       0,
 			Title:          "ActionItem One",
-			Kind:           domain.WorkKindActionItem,
-			Scope:          domain.KindAppliesToActionItem,
+			Kind:           domain.KindPlan,
+			Scope:          domain.KindAppliesToPlan,
 			LifecycleState: domain.StateTodo,
 			Priority:       domain.PriorityMedium,
 			CreatedAt:      now,
@@ -366,8 +355,8 @@ func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID stri
 		ColumnID:       "c1",
 		Position:       0,
 		Title:          "ActionItem One",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		Description:    "Implement the scoped instructions explainer.",
@@ -396,8 +385,8 @@ func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.Crea
 		ColumnID:       "c1",
 		Position:       0,
 		Title:          "ActionItem One",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -415,8 +404,8 @@ func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.Upda
 		ColumnID:       "c1",
 		Position:       0,
 		Title:          "ActionItem One Updated",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -433,8 +422,8 @@ func (s *stubExpandedService) MoveActionItem(_ context.Context, _ common.MoveAct
 		ColumnID:       "c2",
 		Position:       1,
 		Title:          "ActionItem One",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateProgress,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -452,8 +441,8 @@ func (s *stubExpandedService) MoveActionItemState(_ context.Context, in common.M
 		ColumnID:       "c2",
 		Position:       0,
 		Title:          "ActionItem One",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateDone,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -476,8 +465,8 @@ func (s *stubExpandedService) RestoreActionItem(_ context.Context, in common.Res
 		ColumnID:       "c1",
 		Position:       0,
 		Title:          "ActionItem One",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -495,8 +484,8 @@ func (s *stubExpandedService) ReparentActionItem(_ context.Context, _ common.Rep
 		ColumnID:       "c1",
 		Position:       0,
 		Title:          "ActionItem One",
-		Kind:           domain.WorkKindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -518,8 +507,8 @@ func (s *stubExpandedService) ListChildActionItems(_ context.Context, projectID,
 			ColumnID:       "c1",
 			Position:       0,
 			Title:          "Child",
-			Kind:           domain.WorkKindSubtask,
-			Scope:          domain.KindAppliesToSubtask,
+			Kind:           domain.KindBuild,
+			Scope:          domain.KindAppliesToBuild,
 			LifecycleState: domain.StateTodo,
 			Priority:       domain.PriorityMedium,
 			CreatedAt:      now,
@@ -541,8 +530,8 @@ func (s *stubExpandedService) SearchActionItems(_ context.Context, in common.Sea
 				ColumnID:       "c1",
 				Position:       0,
 				Title:          "ActionItem One",
-				Kind:           domain.WorkKindActionItem,
-				Scope:          domain.KindAppliesToActionItem,
+				Kind:           domain.KindPlan,
+				Scope:          domain.KindAppliesToPlan,
 				LifecycleState: domain.StateTodo,
 				Priority:       domain.PriorityMedium,
 				CreatedAt:      now,
@@ -623,15 +612,15 @@ func (s *stubExpandedService) ReindexEmbeddings(_ context.Context, in common.Rei
 func (s *stubExpandedService) ListProjectChangeEvents(_ context.Context, _ string, _ int) ([]domain.ChangeEvent, error) {
 	return []domain.ChangeEvent{
 		{
-			ID:         1,
-			ProjectID:  "p1",
-			WorkItemID: "t1",
-			Operation:  domain.ChangeOperationUpdate,
-			ActorID:    "tester",
-			ActorName:  "tester",
-			ActorType:  domain.ActorTypeUser,
-			Metadata:   map[string]string{"field": "title"},
-			OccurredAt: time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC),
+			ID:           1,
+			ProjectID:    "p1",
+			ActionItemID: "t1",
+			Operation:    domain.ChangeOperationUpdate,
+			ActorID:      "tester",
+			ActorName:    "tester",
+			ActorType:    domain.ActorTypeUser,
+			Metadata:     map[string]string{"field": "title"},
+			OccurredAt:   time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC),
 		},
 	}, nil
 }
@@ -658,8 +647,8 @@ func (s *stubExpandedService) ListKindDefinitions(_ context.Context, includeArch
 			ID:                  domain.KindID("actionItem"),
 			DisplayName:         "ActionItem",
 			DescriptionMarkdown: "Normal implementation work item. Prefer comments for progress and handoffs for explicit routing.",
-			AppliesTo:           []domain.KindAppliesTo{domain.KindAppliesToActionItem},
-			AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToActionItem},
+			AppliesTo:           []domain.KindAppliesTo{domain.KindAppliesToPlan},
+			AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToDiscussion, domain.KindAppliesToPlan},
 			CreatedAt:           now,
 			UpdatedAt:           now,
 		},
@@ -673,7 +662,7 @@ func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, in common.
 	return domain.KindDefinition{
 		ID:          domain.KindID("phase"),
 		DisplayName: "Phase",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPhase},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToDiscussion},
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil
@@ -688,206 +677,6 @@ func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, in commo
 // ListProjectAllowedKinds returns deterministic allowlist rows.
 func (s *stubExpandedService) ListProjectAllowedKinds(_ context.Context, _ string) ([]string, error) {
 	return []string{"build-actionItem", "go-project", "qa-check", "actionItem"}, nil
-}
-
-// ListTemplateLibraries returns one deterministic template-library row.
-func (s *stubExpandedService) ListTemplateLibraries(_ context.Context, in common.ListTemplateLibrariesRequest) ([]domain.TemplateLibrary, error) {
-	s.lastListTemplateReq = in
-	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
-	return []domain.TemplateLibrary{
-		{
-			ID:          "go-defaults",
-			Scope:       domain.TemplateLibraryScopeGlobal,
-			Name:        "Go Defaults",
-			Description: "Default Go workflow contract. Use MCP first, test with mage, and route QA explicitly.",
-			Status:      domain.TemplateLibraryStatusApproved,
-			Revision:    3,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-			NodeTemplates: []domain.NodeTemplate{
-				{
-					ID:                  "tmpl-actionItem-build",
-					LibraryID:           "go-defaults",
-					ScopeLevel:          domain.KindAppliesToActionItem,
-					NodeKindID:          domain.KindID("build-actionItem"),
-					DisplayName:         "Build ActionItem",
-					DescriptionMarkdown: "Build work should stay TDD-first and hand off to QA once implementation evidence is attached.",
-					ChildRules: []domain.TemplateChildRule{{
-						ID:                      "rule-qa-pass",
-						NodeTemplateID:          "tmpl-actionItem-build",
-						ChildScopeLevel:         domain.KindAppliesToSubtask,
-						ChildKindID:             domain.KindID("qa-check"),
-						TitleTemplate:           "QA PROOF REVIEW",
-						ResponsibleActorKind:    domain.TemplateActorKindQA,
-						EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
-						CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
-						RequiredForParentDone:   true,
-					}},
-				},
-			},
-		},
-	}, nil
-}
-
-// GetTemplateLibrary returns one deterministic template-library row.
-func (s *stubExpandedService) GetTemplateLibrary(_ context.Context, libraryID string) (domain.TemplateLibrary, error) {
-	s.lastGetTemplateID = strings.TrimSpace(libraryID)
-	rows, _ := s.ListTemplateLibraries(context.Background(), common.ListTemplateLibrariesRequest{})
-	return rows[0], nil
-}
-
-// GetBuiltinTemplateLibraryStatus returns one deterministic builtin template lifecycle view.
-func (s *stubExpandedService) GetBuiltinTemplateLibraryStatus(_ context.Context, libraryID string) (domain.BuiltinTemplateLibraryStatus, error) {
-	s.lastGetBuiltinTemplateID = strings.TrimSpace(libraryID)
-	return domain.BuiltinTemplateLibraryStatus{
-		LibraryID:             firstNonEmptyString(strings.TrimSpace(libraryID), "default-go"),
-		Name:                  "Default Go",
-		BuiltinSource:         "builtin://tillsyn/default-go",
-		BuiltinVersion:        "2026-04-13.1",
-		BuiltinRevisionDigest: "builtin-digest",
-		RequiredKindIDs:       []domain.KindID{"branch", "build-phase", "build-actionItem", "branch-cleanup-phase", "closeout-phase", "commit-and-reingest", "dogfood-refactor-phase", "dogfood-refactor-actionItem", "go-project", "plan-phase", "project-setup-phase", "qa-check", "refactor-phase", "refactor-actionItem", "subtask", "actionItem"},
-		State:                 domain.BuiltinTemplateLibraryStateCurrent,
-		Installed:             true,
-		InstalledLibraryName:  "Default Go",
-		InstalledStatus:       domain.TemplateLibraryStatusApproved,
-		InstalledRevision:     3,
-		InstalledDigest:       "builtin-digest",
-		InstalledBuiltin:      true,
-	}, nil
-}
-
-// EnsureBuiltinTemplateLibrary returns one deterministic builtin ensure result.
-func (s *stubExpandedService) EnsureBuiltinTemplateLibrary(_ context.Context, in common.EnsureBuiltinTemplateLibraryRequest) (domain.BuiltinTemplateLibraryEnsureResult, error) {
-	s.lastEnsureBuiltinReq = in
-	status, _ := s.GetBuiltinTemplateLibraryStatus(context.Background(), in.LibraryID)
-	return domain.BuiltinTemplateLibraryEnsureResult{
-		Library: domain.TemplateLibrary{
-			ID:             status.LibraryID,
-			Name:           status.Name,
-			Scope:          domain.TemplateLibraryScopeGlobal,
-			Status:         domain.TemplateLibraryStatusApproved,
-			BuiltinManaged: true,
-			BuiltinSource:  status.BuiltinSource,
-			BuiltinVersion: status.BuiltinVersion,
-			Revision:       status.InstalledRevision,
-			RevisionDigest: status.BuiltinRevisionDigest,
-		},
-		Status:  status,
-		Changed: true,
-	}, nil
-}
-
-// UpsertTemplateLibrary returns one deterministic updated template-library row.
-func (s *stubExpandedService) UpsertTemplateLibrary(_ context.Context, in common.UpsertTemplateLibraryRequest) (domain.TemplateLibrary, error) {
-	s.lastUpsertTemplateReq = in
-	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
-	return domain.TemplateLibrary{
-		ID:        strings.TrimSpace(in.ID),
-		Scope:     in.Scope,
-		ProjectID: strings.TrimSpace(in.ProjectID),
-		Name:      strings.TrimSpace(in.Name),
-		Status:    in.Status,
-		CreatedAt: now,
-		UpdatedAt: now,
-		NodeTemplates: []domain.NodeTemplate{
-			{
-				ID:          "tmpl-actionItem-build",
-				LibraryID:   strings.TrimSpace(in.ID),
-				ScopeLevel:  domain.KindAppliesToActionItem,
-				NodeKindID:  domain.KindID("build-actionItem"),
-				DisplayName: "Build ActionItem",
-			},
-		},
-	}, nil
-}
-
-// BindProjectTemplateLibrary returns one deterministic project binding.
-func (s *stubExpandedService) BindProjectTemplateLibrary(_ context.Context, in common.BindProjectTemplateLibraryRequest) (domain.ProjectTemplateBinding, error) {
-	s.lastBindTemplateReq = in
-	return domain.ProjectTemplateBinding{
-		ProjectID: in.ProjectID,
-		LibraryID: in.LibraryID,
-		BoundAt:   time.Date(2026, 3, 29, 12, 5, 0, 0, time.UTC),
-	}, nil
-}
-
-// GetProjectTemplateBinding returns one deterministic project binding.
-func (s *stubExpandedService) GetProjectTemplateBinding(_ context.Context, projectID string) (domain.ProjectTemplateBinding, error) {
-	s.lastGetTemplateBindingID = strings.TrimSpace(projectID)
-	return domain.ProjectTemplateBinding{
-		ProjectID:     projectID,
-		LibraryID:     "go-defaults",
-		LibraryName:   "Go Defaults",
-		BoundRevision: 3,
-		DriftStatus:   domain.ProjectTemplateBindingDriftCurrent,
-		BoundAt:       time.Date(2026, 3, 29, 12, 5, 0, 0, time.UTC),
-	}, nil
-}
-
-// GetProjectTemplateReapplyPreview returns one deterministic project reapply preview.
-func (s *stubExpandedService) GetProjectTemplateReapplyPreview(_ context.Context, projectID string) (domain.ProjectTemplateReapplyPreview, error) {
-	s.lastGetTemplatePreviewID = strings.TrimSpace(projectID)
-	return domain.ProjectTemplateReapplyPreview{
-		ProjectID:              strings.TrimSpace(projectID),
-		LibraryID:              "go-defaults",
-		LibraryName:            "Go Defaults",
-		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
-		BoundRevision:          2,
-		LatestRevision:         3,
-		EligibleMigrationCount: 1,
-		ReviewRequired:         true,
-		ChildRuleChanges: []domain.ProjectTemplateChildRuleChange{{
-			NodeTemplateID:        "build-actionItem-template",
-			NodeTemplateName:      "Build ActionItem",
-			ChildRuleID:           "qa-proof-review",
-			ChangeKinds:           []string{"title", "editable_by"},
-			PreviousTitleTemplate: "QA PROOF REVIEW",
-			CurrentTitleTemplate:  "QA PROOF REVIEW UPDATE",
-		}},
-		MigrationCandidates: []domain.ProjectTemplateMigrationCandidate{{
-			ActionItemID: "actionItem-qa-1",
-			Title:        "QA PROOF REVIEW",
-			Status:       domain.ProjectTemplateReapplyCandidateEligible,
-			ChangeKinds:  []string{"title", "editable_by"},
-		}},
-	}, nil
-}
-
-// ApproveProjectTemplateMigrations returns one deterministic migration-approval result.
-func (s *stubExpandedService) ApproveProjectTemplateMigrations(_ context.Context, in common.ApproveProjectTemplateMigrationsRequest) (domain.ProjectTemplateMigrationApprovalResult, error) {
-	s.lastApproveTemplateMigrationsReq = in
-	return domain.ProjectTemplateMigrationApprovalResult{
-		ProjectID:              strings.TrimSpace(in.ProjectID),
-		LibraryID:              "go-defaults",
-		LibraryName:            "Go Defaults",
-		DriftStatus:            domain.ProjectTemplateBindingDriftUpdateAvailable,
-		ApprovedAll:            in.ApproveAll,
-		AppliedCount:           max(1, len(in.ActionItemIDs)),
-		RemainingEligibleCount: 0,
-		Approvals: []domain.ProjectTemplateMigrationApproval{{
-			ActionItemID: "actionItem-qa-1",
-			Title:        "QA PROOF REVIEW",
-			ChangeKinds:  []string{"title", "editable_by"},
-			NewTitle:     "QA PROOF REVIEW UPDATE",
-		}},
-	}, nil
-}
-
-// GetNodeContractSnapshot returns one deterministic node-contract snapshot.
-func (s *stubExpandedService) GetNodeContractSnapshot(_ context.Context, nodeID string) (domain.NodeContractSnapshot, error) {
-	s.lastGetNodeContractID = strings.TrimSpace(nodeID)
-	return domain.NodeContractSnapshot{
-		NodeID:                  nodeID,
-		ProjectID:               "p1",
-		SourceLibraryID:         "go-defaults",
-		SourceNodeTemplateID:    "tmpl-actionItem-build",
-		SourceChildRuleID:       "rule-qa-pass",
-		ResponsibleActorKind:    domain.TemplateActorKindQA,
-		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
-		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA},
-		RequiredForParentDone:   true,
-		CreatedAt:               time.Date(2026, 3, 29, 12, 6, 0, 0, time.UTC),
-	}, nil
 }
 
 // newStubCapabilityLease returns one deterministic lease row without mutating request capture state.
@@ -1235,7 +1024,6 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.project",
 		"till.embeddings",
 		"till.kind",
-		"till.template",
 		"till.capability_lease",
 		"till.comment",
 		"till.handoff",
@@ -1354,38 +1142,6 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.kind", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "upsert", "id": "phase", "applies_to": []any{"phase"}})},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "actionItem"}})},
 		{name: "till.project", args: map[string]any{"operation": "list_allowed_kinds", "project_id": "p1"}},
-		{name: "till.template", args: map[string]any{"operation": "list", "scope": "global", "status": "approved"}},
-		{name: "till.template", args: map[string]any{"operation": "get", "library_id": "go-defaults"}},
-		{name: "till.template", args: map[string]any{"operation": "get_builtin_status", "library_id": "default-go"}},
-		{name: "till.template", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "ensure_builtin", "library_id": "default-go"})},
-		{name: "till.template", args: mergeArgs(validSessionArgs(), map[string]any{
-			"operation": "upsert",
-			"library": map[string]any{
-				"id":     "go-defaults",
-				"scope":  "global",
-				"name":   "Go Defaults",
-				"status": "approved",
-				"node_templates": []any{
-					map[string]any{
-						"id":           "tmpl-actionItem-build",
-						"scope_level":  "actionItem",
-						"node_kind_id": "phase",
-						"display_name": "Build ActionItem",
-					},
-				},
-			},
-		})},
-		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "bind_template", "project_id": "p1", "template_library_id": "go-defaults"})},
-		{name: "till.project", args: map[string]any{"operation": "get_template_binding", "project_id": "p1"}},
-		{name: "till.project", args: map[string]any{"operation": "preview_template_reapply", "project_id": "p1"}},
-		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{
-			"operation":         "approve_template_migrations",
-			"project_id":        "p1",
-			"action_item_ids":   []any{"actionItem-qa-1"},
-			"agent_instance_id": "inst-1",
-			"lease_token":       "tok-1",
-		})},
-		{name: "till.template", args: map[string]any{"operation": "get_node_contract", "node_id": "actionItem-qa-1"}},
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
 		{name: "till.embeddings", args: map[string]any{"operation": "reindex", "project_id": "p1", "wait": true}},
 		{name: "till.capability_lease", args: map[string]any{"operation": "list", "project_id": "p1", "scope_type": "project", "include_revoked": true}},
@@ -1452,12 +1208,6 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("tool %q returned isError=true: %#v", tc.name, callResp.Result)
 		}
-	}
-	if got := service.lastApproveTemplateMigrationsReq.ProjectID; got != "p1" {
-		t.Fatalf("approve_template_migrations project_id = %q, want p1", got)
-	}
-	if got := service.lastApproveTemplateMigrationsReq.ActionItemIDs; !slices.Equal(got, []string{"actionItem-qa-1"}) {
-		t.Fatalf("approve_template_migrations action_item_ids = %#v, want [actionItem-qa-1]", got)
 	}
 	if got := service.lastCreateAuthRequestReq.PrincipalRole; got != "research" {
 		t.Fatalf("create auth request principal_role = %q, want research", got)
@@ -1676,10 +1426,6 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 		"till.list_kind_definitions",
 		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
-		"till.bind_project_template_library",
-		"till.list_template_libraries",
-		"till.get_template_library",
-		"till.upsert_template_library",
 	} {
 		if slices.Contains(defaultTools, legacy) {
 			t.Fatalf("unexpected legacy project tool %q in default surface: %#v", legacy, defaultTools)
@@ -1695,10 +1441,6 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 		"till.list_kind_definitions",
 		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
-		"till.bind_project_template_library",
-		"till.list_template_libraries",
-		"till.get_template_library",
-		"till.upsert_template_library",
 	} {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy project mode missing %q: %#v", required, legacyTools)
@@ -1921,11 +1663,9 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 			name: "create_project",
 			tool: "till.create_project",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"name":                "Project One",
-				"kind":                "go-service",
-				"template_library_id": "go-defaults",
-				"agent_instance_id":   "inst-1",
-				"lease_token":         "tok-1",
+				"name":              "Project One",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
 			}),
 		},
 		{
@@ -1946,14 +1686,6 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 				"kind_ids":   []any{"phase", "actionItem"},
 			}),
 		},
-		{
-			name: "bind_project_template_library",
-			tool: "till.bind_project_template_library",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"project_id": "p1",
-				"library_id": "go-defaults",
-			}),
-		},
 	}
 
 	for idx, tc := range callCases {
@@ -1963,11 +1695,8 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 		}
 	}
 
-	if got := service.lastCreateProjectReq.TemplateLibraryID; got != "go-defaults" {
-		t.Fatalf("legacy create_project template_library_id = %q, want go-defaults", got)
-	}
-	if got := service.lastBindTemplateReq.LibraryID; got != "go-defaults" {
-		t.Fatalf("legacy bind_project_template_library library_id = %q, want go-defaults", got)
+	if got := service.lastCreateProjectReq.Name; got != "Project One" {
+		t.Fatalf("legacy create_project name = %q, want Project One", got)
 	}
 }
 
@@ -2013,28 +1742,6 @@ func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
 				"applies_to": []any{"project"},
 			}),
 		},
-		{
-			name: "get_template_library",
-			tool: "till.get_template_library",
-			args: map[string]any{"library_id": "go-defaults"},
-		},
-		{
-			name: "list_template_libraries",
-			tool: "till.list_template_libraries",
-			args: map[string]any{"scope": "global", "status": "approved"},
-		},
-		{
-			name: "upsert_template_library",
-			tool: "till.upsert_template_library",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"library": map[string]any{
-					"id":     "go-defaults",
-					"scope":  "global",
-					"name":   "Go Defaults",
-					"status": "approved",
-				},
-			}),
-		},
 	}
 
 	for idx, tc := range callCases {
@@ -2055,18 +1762,6 @@ func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
 	}
 	if got := service.lastSetAllowedKindsReq.ProjectID; got != "" {
 		t.Fatalf("legacy set_project_allowed_kinds unexpectedly ran, got project_id %q", got)
-	}
-	if got := service.lastListTemplateReq.Scope; got != domain.TemplateLibraryScopeGlobal {
-		t.Fatalf("legacy list_template_libraries scope = %q, want global", got)
-	}
-	if got := service.lastListTemplateReq.Status; got != domain.TemplateLibraryStatusApproved {
-		t.Fatalf("legacy list_template_libraries status = %q, want approved", got)
-	}
-	if got := service.lastGetTemplateID; got != "go-defaults" {
-		t.Fatalf("legacy get_template_library library_id = %q, want go-defaults", got)
-	}
-	if got := service.lastUpsertTemplateReq.ID; got != "go-defaults" {
-		t.Fatalf("legacy upsert_template_library id = %q, want go-defaults", got)
 	}
 }
 
@@ -2238,9 +1933,6 @@ func TestHandlerInstructionsToolExplainsProjectScope(t *testing.T) {
 	if !strings.Contains(rulesText, "standards_markdown") {
 		t.Fatalf("scoped_rules = %q, want standards_markdown guidance", rulesText)
 	}
-	if !strings.Contains(rulesText, "template library") {
-		t.Fatalf("scoped_rules = %q, want template binding guidance", rulesText)
-	}
 	recommendedAny, ok := structured["recommended_agent_settings"].([]any)
 	if !ok || len(recommendedAny) == 0 {
 		t.Fatalf("recommended_agent_settings missing: %#v", structured)
@@ -2318,8 +2010,8 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 		t.Fatalf("workflow_contract missing: %#v", explanation)
 	}
 	workflowText := strings.ToLower(joinAnyStrings(workflow))
-	if !strings.Contains(workflowText, "responsible actor kind") {
-		t.Fatalf("workflow_contract = %q, want responsible actor guidance", workflowText)
+	if !strings.Contains(workflowText, "depends_on") || !strings.Contains(workflowText, "blocked_by") {
+		t.Fatalf("workflow_contract = %q, want dependency/blocked_by sequencing guidance", workflowText)
 	}
 	scopedRules, ok := explanation["scoped_rules"].([]any)
 	if !ok || len(scopedRules) == 0 {
@@ -2448,28 +2140,9 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 		t.Fatalf("comment description = %q, want guarded mutation guidance", commentDesc)
 	}
 	projectSchema := findToolSchemaByName(t, toolsRaw, "till.project")
-	projectDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.project"))
-	if !strings.Contains(strings.ToLower(projectDesc), "preview drift first") {
-		t.Fatalf("project description = %q, want preview-first template guidance", projectDesc)
-	}
-	templateLibraryDesc := schemaStringPropertyDescription(t, projectSchema, "template_library_id")
-	if !strings.Contains(strings.ToLower(templateLibraryDesc), "whether this library should govern the project workflow") {
-		t.Fatalf("template_library_id description = %q, want dev-confirmed binding guidance", templateLibraryDesc)
-	}
-	kindIDsDesc := schemaStringPropertyDescription(t, projectSchema, "kind_ids")
-	if !strings.Contains(strings.ToLower(kindIDsDesc), "template-limited") && !strings.Contains(strings.ToLower(kindIDsDesc), "template kinds") {
-		t.Fatalf("kind_ids description = %q, want template-limited allowlist guidance", kindIDsDesc)
-	}
 	projectAgentDesc := schemaStringPropertyDescription(t, projectSchema, "agent_instance_id")
 	if !strings.Contains(strings.ToLower(projectAgentDesc), "project-scoped approved agent session") {
 		t.Fatalf("project agent_instance_id description = %q, want project-scoped agent guidance", projectAgentDesc)
-	}
-	templateDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.template"))
-	if !strings.Contains(strings.ToLower(templateDesc), "call get_builtin_status before ensure_builtin") {
-		t.Fatalf("template description = %q, want builtin-status-first guidance", templateDesc)
-	}
-	if !strings.Contains(strings.ToLower(templateDesc), "bootstrap/runtime mismatch issue") {
-		t.Fatalf("template description = %q, want runtime-mismatch guidance", templateDesc)
 	}
 	leaseDesc := toolDescription(t, findToolByName(t, toolsRaw, "till.capability_lease"))
 	if !strings.Contains(strings.ToLower(leaseDesc), "does not upgrade a user session into an agent session") {
@@ -3321,40 +2994,6 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedCreateProjectPassesTemplateLibraryID verifies the MCP project tool forwards template-library selection.
-func TestHandlerExpandedCreateProjectPassesTemplateLibraryID(t *testing.T) {
-	service := &stubExpandedService{
-		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
-		},
-		stubMutationAuthorizer: stubMutationAuthorizer{},
-	}
-	handler, err := NewHandler(Config{}, service, nil)
-	if err != nil {
-		t.Fatalf("NewHandler() error = %v", err)
-	}
-
-	server := httptest.NewServer(handler)
-	defer server.Close()
-	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
-
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(202, "till.project", mergeArgs(validSessionArgs(), map[string]any{
-		"operation":           "create",
-		"name":                "Project One",
-		"kind":                "go-service",
-		"template_library_id": "go-defaults",
-	})))
-	if isError, _ := callResp.Result["isError"].(bool); isError {
-		t.Fatalf("create_project returned isError=true: %#v", callResp.Result)
-	}
-	if got := service.lastCreateProjectReq.TemplateLibraryID; got != "go-defaults" {
-		t.Fatalf("create_project template_library_id = %q, want go-defaults", got)
-	}
-	if got := service.lastCreateProjectReq.Kind; got != "go-service" {
-		t.Fatalf("create_project kind = %q, want go-service", got)
-	}
-}
-
 // TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope verifies global/bootstrap admin tools authorize against a rooted project scope.
 func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing.T) {
 	t.Parallel()
@@ -3388,37 +3027,6 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 			}),
 			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
 			wantProjectID: domain.AuthRequestGlobalProjectID,
-		},
-		{
-			name: "global template library uses global sentinel scope",
-			tool: "till.template",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"operation": "upsert",
-				"library": map[string]any{
-					"id":     "go-defaults",
-					"scope":  "global",
-					"name":   "Go Defaults",
-					"status": "approved",
-				},
-			}),
-			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
-			wantProjectID: domain.AuthRequestGlobalProjectID,
-		},
-		{
-			name: "project template library stays rooted to its project",
-			tool: "till.template",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"operation": "upsert",
-				"library": map[string]any{
-					"id":         "go-defaults-p1",
-					"scope":      "project",
-					"project_id": "p1",
-					"name":       "Go Defaults P1",
-					"status":     "draft",
-				},
-			}),
-			wantNamespace: "project:p1",
-			wantProjectID: "p1",
 		},
 	}
 

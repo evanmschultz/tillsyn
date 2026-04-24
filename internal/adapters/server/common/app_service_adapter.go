@@ -607,8 +607,6 @@ func mapAppError(operation string, err error) error {
 	switch {
 	case errors.Is(err, ErrBootstrapRequired):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrBootstrapRequired, err))
-	case errors.Is(err, domain.ErrBuiltinTemplateBootstrapRequired):
-		return fmt.Errorf("%s: %w", operation, errors.Join(ErrBuiltinTemplateBootstrapRequired, err))
 	case errors.Is(err, app.ErrNotFound):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
 	case errors.Is(err, domain.ErrMutationLeaseRequired),
@@ -646,18 +644,12 @@ func mapAppError(operation string, err error) error {
 		errors.Is(err, domain.ErrInvalidKindID),
 		errors.Is(err, domain.ErrInvalidKindAppliesTo),
 		errors.Is(err, domain.ErrInvalidKindTemplate),
-		errors.Is(err, domain.ErrInvalidTemplateLibrary),
-		errors.Is(err, domain.ErrInvalidTemplateLibraryScope),
-		errors.Is(err, domain.ErrInvalidTemplateStatus),
-		errors.Is(err, domain.ErrInvalidTemplateActorKind),
-		errors.Is(err, domain.ErrInvalidTemplateBinding),
 		errors.Is(err, domain.ErrInvalidKindPayload),
 		errors.Is(err, domain.ErrInvalidKindPayloadSchema),
 		errors.Is(err, domain.ErrKindNotAllowed),
 		errors.Is(err, app.ErrInvalidDeleteMode):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))
-	case errors.Is(err, domain.ErrKindNotFound),
-		errors.Is(err, domain.ErrTemplateLibraryNotFound):
+	case errors.Is(err, domain.ErrKindNotFound):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
 	default:
 		return fmt.Errorf("%s: %w", operation, err)

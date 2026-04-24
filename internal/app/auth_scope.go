@@ -79,10 +79,9 @@ func (s *Service) ResolveAuthScopeContext(ctx context.Context, in domain.LevelTu
 		return AuthScopeContext{}, ErrNotFound
 	}
 
-	actualScopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-	if actualScopeType == "" {
-		return AuthScopeContext{}, domain.ErrInvalidScopeType
-	}
+	// Scope mirrors kind in the 12-value enum, so every action-item row is
+	// ScopeLevelActionItem for auth-path purposes regardless of kind.
+	actualScopeType := scopeLevelForActionItem(actionItem)
 	if level.ScopeType != actualScopeType {
 		return AuthScopeContext{}, domain.ErrInvalidScopeType
 	}
@@ -151,14 +150,11 @@ func authScopeContextFromActionItemLineage(projectID string, scopeType domain.Sc
 		ScopeType: scopeType,
 		ScopeID:   scopeID,
 	}
-	for _, node := range lineage {
-		switch domain.ScopeLevelFromKindAppliesTo(node.Scope) {
-		case domain.ScopeLevelBranch:
-			out.BranchID = node.ID
-		case domain.ScopeLevelPhase:
-			out.PhaseIDs = append(out.PhaseIDs, node.ID)
-		}
-	}
+	// Lineage previously populated BranchID / PhaseIDs when an ancestor row
+	// carried KindAppliesToBranch or KindAppliesToPhase. The 12-value Kind
+	// enum no longer includes those scopes, so no ancestor contributes a
+	// branch or phase anchor and the fallback below forces project scope.
+	_ = lineage
 
 	// The auth path model only narrows below project once a branch root exists.
 	if out.BranchID == "" && (scopeType == domain.ScopeLevelPhase || scopeType == domain.ScopeLevelActionItem || scopeType == domain.ScopeLevelSubtask) {

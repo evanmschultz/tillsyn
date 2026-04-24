@@ -27,69 +27,22 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo.columns[c1.ID] = c1
 	repo.columns[c2.ID] = c2
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh}, now)
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh, Kind: domain.KindPlan}, now)
 	t2.Archive(now.Add(2 * time.Minute))
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
 
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:          "refactor",
-		DisplayName: "Refactor",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:          domain.KindID(domain.KindRefinement),
+		DisplayName: "Refinement",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToRefinement},
 	}, now)
 	if err != nil {
 		t.Fatalf("NewKindDefinition() error = %v", err)
 	}
 	repo.kindDefs[kind.ID] = kind
 	repo.projectAllowedKinds[p1.ID] = []domain.KindID{kind.ID}
-	templateLibrary, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-		ID:                  "global-defaults",
-		Scope:               domain.TemplateLibraryScopeGlobal,
-		Name:                "Global Defaults",
-		Status:              domain.TemplateLibraryStatusApproved,
-		CreatedByActorID:    "tester",
-		CreatedByActorName:  "Tester",
-		CreatedByActorType:  domain.ActorTypeUser,
-		ApprovedByActorID:   "tester",
-		ApprovedByActorName: "Tester",
-		ApprovedByActorType: domain.ActorTypeUser,
-		NodeTemplates: []domain.NodeTemplateInput{{
-			ID:          "actionItem-template",
-			ScopeLevel:  domain.KindAppliesToActionItem,
-			NodeKindID:  kind.ID,
-			DisplayName: "Refactor ActionItem",
-		}},
-	}, now)
-	if err != nil {
-		t.Fatalf("NewTemplateLibrary() error = %v", err)
-	}
-	repo.templateLibraries[templateLibrary.ID] = templateLibrary
-	binding, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
-		ProjectID:        p1.ID,
-		LibraryID:        templateLibrary.ID,
-		BoundByActorID:   "tester",
-		BoundByActorName: "Tester",
-		BoundByActorType: domain.ActorTypeUser,
-	}, now)
-	if err != nil {
-		t.Fatalf("NewProjectTemplateBinding() error = %v", err)
-	}
-	repo.projectBindings[p1.ID] = binding
-	nodeContract, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
-		NodeID:                  t1.ID,
-		ProjectID:               p1.ID,
-		SourceLibraryID:         templateLibrary.ID,
-		SourceNodeTemplateID:    "actionItem-template",
-		ResponsibleActorKind:    domain.TemplateActorKindQA,
-		EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
-		CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
-		RequiredForParentDone:   true,
-	}, now)
-	if err != nil {
-		t.Fatalf("NewNodeContractSnapshot() error = %v", err)
-	}
-	repo.nodeContracts[t1.ID] = nodeContract
 
 	projectComment, err := domain.NewComment(domain.CommentInput{
 		ID:           "comment-1",
@@ -185,20 +138,14 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.ActionItems) != 2 {
 		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.ActionItems))
 	}
-	if len(snapAll.KindDefinitions) != 1 {
-		t.Fatalf("expected kind definition closure in snapshot, got %#v", snapAll.KindDefinitions)
+	// Post-Drop-1.75 the fake repo seeds all 12 kinds from the closed enum;
+	// this test upserts a refinement kind in addition (duplicate ID; no extra
+	// row), so the exported closure contains the 12 built-in definitions.
+	if len(snapAll.KindDefinitions) != 12 {
+		t.Fatalf("expected kind definition closure in snapshot, got %d definitions: %#v", len(snapAll.KindDefinitions), snapAll.KindDefinitions)
 	}
 	if len(snapAll.ProjectAllowedKinds) != 1 || snapAll.ProjectAllowedKinds[0].ProjectID != p1.ID {
 		t.Fatalf("expected project allowlist closure in snapshot, got %#v", snapAll.ProjectAllowedKinds)
-	}
-	if len(snapAll.TemplateLibraries) != 1 || snapAll.TemplateLibraries[0].ID != templateLibrary.ID {
-		t.Fatalf("expected template library closure in snapshot, got %#v", snapAll.TemplateLibraries)
-	}
-	if len(snapAll.ProjectBindings) != 1 || snapAll.ProjectBindings[0].ProjectID != p1.ID {
-		t.Fatalf("expected project template binding closure in snapshot, got %#v", snapAll.ProjectBindings)
-	}
-	if len(snapAll.NodeContracts) != 1 || snapAll.NodeContracts[0].NodeID != t1.ID {
-		t.Fatalf("expected node contract closure in snapshot, got %#v", snapAll.NodeContracts)
 	}
 	if len(snapAll.Comments) != 1 || snapAll.Comments[0].ID != "comment-1" {
 		t.Fatalf("expected comment closure in snapshot, got %#v", snapAll.Comments)
@@ -234,7 +181,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 
 	existingProject, _ := domain.NewProject("p1", "Old Name", "", now)
 	existingCol, _ := domain.NewColumn("c1", existingProject.ID, "Old Col", 0, 0, now)
-	existingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow}, now)
+	existingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
 
 	repo.projects[existingProject.ID] = existingProject
 	repo.columns[existingCol.ID] = existingCol
@@ -255,78 +202,19 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 		ActionItems: []SnapshotActionItem{
 			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated ActionItem", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
-			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, Kind: domain.WorkKindPhase, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Discussion", Priority: domain.PriorityMedium, Kind: domain.KindDiscussion, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
 		KindDefinitions: []SnapshotKindDefinition{
 			{
-				ID:          "refactor",
-				DisplayName: "Refactor",
-				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+				ID:          domain.KindID(domain.KindRefinement),
+				DisplayName: "Refinement",
+				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToRefinement},
 				CreatedAt:   now,
 				UpdatedAt:   now.Add(time.Minute),
 			},
 		},
 		ProjectAllowedKinds: []SnapshotProjectAllowedKinds{
-			{ProjectID: "p1", KindIDs: []domain.KindID{"refactor"}},
-		},
-		TemplateLibraries: []domain.TemplateLibrary{
-			func() domain.TemplateLibrary {
-				library, err := domain.NewTemplateLibrary(domain.TemplateLibraryInput{
-					ID:                  "global-defaults",
-					Scope:               domain.TemplateLibraryScopeGlobal,
-					Name:                "Global Defaults",
-					Status:              domain.TemplateLibraryStatusApproved,
-					CreatedByActorID:    "importer",
-					CreatedByActorName:  "Importer",
-					CreatedByActorType:  domain.ActorTypeUser,
-					ApprovedByActorID:   "importer",
-					ApprovedByActorName: "Importer",
-					ApprovedByActorType: domain.ActorTypeUser,
-					NodeTemplates: []domain.NodeTemplateInput{{
-						ID:          "actionItem-template",
-						ScopeLevel:  domain.KindAppliesToActionItem,
-						NodeKindID:  domain.KindID("refactor"),
-						DisplayName: "Refactor ActionItem",
-					}},
-				}, now)
-				if err != nil {
-					t.Fatalf("NewTemplateLibrary(import) error = %v", err)
-				}
-				return library
-			}(),
-		},
-		ProjectBindings: []domain.ProjectTemplateBinding{
-			func() domain.ProjectTemplateBinding {
-				binding, err := domain.NewProjectTemplateBinding(domain.ProjectTemplateBindingInput{
-					ProjectID:        "p1",
-					LibraryID:        "global-defaults",
-					BoundByActorID:   "importer",
-					BoundByActorName: "Importer",
-					BoundByActorType: domain.ActorTypeUser,
-				}, now)
-				if err != nil {
-					t.Fatalf("NewProjectTemplateBinding(import) error = %v", err)
-				}
-				return binding
-			}(),
-		},
-		NodeContracts: []domain.NodeContractSnapshot{
-			func() domain.NodeContractSnapshot {
-				snapshot, err := domain.NewNodeContractSnapshot(domain.NodeContractSnapshotInput{
-					NodeID:                  "t1",
-					ProjectID:               "p1",
-					SourceLibraryID:         "global-defaults",
-					SourceNodeTemplateID:    "actionItem-template",
-					ResponsibleActorKind:    domain.TemplateActorKindQA,
-					EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindQA},
-					CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindQA, domain.TemplateActorKindHuman},
-					RequiredForParentDone:   true,
-				}, now)
-				if err != nil {
-					t.Fatalf("NewNodeContractSnapshot(import) error = %v", err)
-				}
-				return snapshot
-			}(),
+			{ProjectID: "p1", KindIDs: []domain.KindID{domain.KindID(domain.KindRefinement)}},
 		},
 		Comments: []SnapshotComment{
 			{
@@ -402,24 +290,15 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	if _, ok := repo.tasks["t2"]; !ok {
 		t.Fatal("expected new actionItem t2")
 	}
-	if got := repo.tasks["phase-1"]; got.Kind != domain.WorkKindPhase || got.Scope != domain.KindAppliesToPhase {
-		t.Fatalf("expected imported phase actionItem to default to phase scope, got %#v", got)
+	if got := repo.tasks["phase-1"]; got.Kind != domain.KindDiscussion || got.Scope != domain.KindAppliesToDiscussion {
+		t.Fatalf("expected imported discussion actionItem to default to discussion scope, got %#v", got)
 	}
-	if _, ok := repo.kindDefs[domain.KindID("refactor")]; !ok {
-		t.Fatal("expected imported kind definition refactor")
+	if _, ok := repo.kindDefs[domain.KindID(domain.KindRefinement)]; !ok {
+		t.Fatal("expected imported kind definition refinement")
 	}
 	allowed := repo.projectAllowedKinds["p1"]
-	if len(allowed) != 1 || allowed[0] != domain.KindID("refactor") {
+	if len(allowed) != 1 || allowed[0] != domain.KindID(domain.KindRefinement) {
 		t.Fatalf("expected imported project allowlist for p1, got %#v", allowed)
-	}
-	if _, ok := repo.templateLibraries["global-defaults"]; !ok {
-		t.Fatal("expected imported template library global-defaults")
-	}
-	if binding, ok := repo.projectBindings["p1"]; !ok || binding.LibraryID != "global-defaults" {
-		t.Fatalf("expected imported project binding for p1, got %#v", repo.projectBindings["p1"])
-	}
-	if nodeContract, ok := repo.nodeContracts["t1"]; !ok || nodeContract.SourceLibraryID != "global-defaults" {
-		t.Fatalf("expected imported node contract for t1, got %#v", repo.nodeContracts["t1"])
 	}
 	commentKey := "p1|project|p1"
 	if len(repo.comments[commentKey]) != 1 || repo.comments[commentKey][0].ID != "comment-1" {
@@ -460,40 +339,9 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		t.Fatal("expected reference validation error")
 	}
 
-	invalidPhaseParent := Snapshot{
-		Version: SnapshotVersion,
-		Projects: []SnapshotProject{
-			{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now},
-		},
-		Columns: []SnapshotColumn{
-			{ID: "c1", ProjectID: "p1", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
-		},
-		ActionItems: []SnapshotActionItem{
-			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "p1", ProjectID: "p1", ParentID: "t1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c1", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-		},
-	}
-	if err := svc.ImportSnapshot(context.Background(), invalidPhaseParent); err == nil || !strings.Contains(err.Error(), "invalid for phase parent scope") {
-		t.Fatalf("expected invalid phase parent error, got %v", err)
-	}
-
-	validNestedPhase := Snapshot{
-		Version: SnapshotVersion,
-		Projects: []SnapshotProject{
-			{ID: "p2", Name: "B", Slug: "b", CreatedAt: now, UpdatedAt: now},
-		},
-		Columns: []SnapshotColumn{
-			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
-		},
-		ActionItems: []SnapshotActionItem{
-			{ID: "branch-1", ProjectID: "p2", Kind: domain.WorkKind("branch"), Scope: domain.KindAppliesToBranch, ColumnID: "c2", Position: 0, Title: "Branch", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "phase-1", ProjectID: "p2", ParentID: "branch-1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "phase-2", ProjectID: "p2", ParentID: "phase-1", Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 2, Title: "Nested Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-		},
-	}
-	if err := svc.ImportSnapshot(context.Background(), validNestedPhase); err != nil {
-		t.Fatalf("expected valid nested phase lineage to import, got %v", err)
-	}
+	// The invalid-phase-parent and valid-nested-phase cases were ripped when
+	// the 12-value Kind enum removed the Phase/Branch kinds and their
+	// snapshot-side parent check.
 
 	orphanHandoff := Snapshot{
 		Version: SnapshotVersion,
@@ -527,39 +375,6 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 	}
 	if err := svc.ImportSnapshot(context.Background(), orphanHandoff); err == nil || !strings.Contains(err.Error(), "unknown source scope") {
 		t.Fatalf("expected orphan handoff validation error, got %v", err)
-	}
-
-	badTemplateRefs := Snapshot{
-		Version: SnapshotVersion,
-		Projects: []SnapshotProject{
-			{ID: "p4", Name: "D", Slug: "d", CreatedAt: now, UpdatedAt: now},
-		},
-		Columns: []SnapshotColumn{
-			{ID: "c4", ProjectID: "p4", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
-		},
-		ActionItems: []SnapshotActionItem{
-			{ID: "t4", ProjectID: "p4", ColumnID: "c4", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-		},
-		TemplateLibraries: []domain.TemplateLibrary{
-			{
-				ID:        "broken-library",
-				Scope:     domain.TemplateLibraryScopeGlobal,
-				Name:      "Broken",
-				Status:    domain.TemplateLibraryStatusApproved,
-				CreatedAt: now,
-				UpdatedAt: now,
-				NodeTemplates: []domain.NodeTemplate{{
-					ID:          "broken-template",
-					LibraryID:   "broken-library",
-					ScopeLevel:  domain.KindAppliesToActionItem,
-					NodeKindID:  domain.KindID("missing-kind"),
-					DisplayName: "Broken Template",
-				}},
-			},
-		},
-	}
-	if err := svc.ImportSnapshot(context.Background(), badTemplateRefs); err == nil || !strings.Contains(err.Error(), "unknown node_kind_id") {
-		t.Fatalf("expected template reference validation error, got %v", err)
 	}
 }
 

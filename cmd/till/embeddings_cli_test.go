@@ -115,6 +115,7 @@ func TestRunEmbeddingsReindexRendersQueuedWork(t *testing.T) {
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
 		ID:             "actionItem-reindex",
 		ProjectID:      projectID,
+		Kind:           domain.KindPlan,
 		ColumnID:       "c1",
 		Position:       1,
 		Title:          "Backfill semantic rows",

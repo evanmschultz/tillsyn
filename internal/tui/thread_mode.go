@@ -562,7 +562,6 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 				ProjectID:     project.ID,
 				Name:          project.Name,
 				Description:   description,
-				Kind:          project.Kind,
 				Metadata:      project.Metadata,
 				UpdatedBy:     actorID,
 				UpdatedByName: actorName,
@@ -667,32 +666,22 @@ func commentSummaryText(comment domain.Comment) string {
 	return domain.NormalizeCommentSummary(comment.Summary, comment.BodyMarkdown)
 }
 
-// commentTargetTypeForActionItem maps one work item into comment target types with scope-aware overrides.
+// commentTargetTypeForActionItem maps one work item into comment target types.
+// Post-Drop-1.75 kind-collapse, every non-project action item routes to the
+// ActionItem target; the project/action-item split is the only surviving
+// distinction in the comment target taxonomy.
 func commentTargetTypeForActionItem(actionItem domain.ActionItem) (domain.CommentTargetType, bool) {
-	if actionItem.Scope == domain.KindAppliesToBranch {
-		return domain.CommentTargetTypeBranch, true
-	}
-	return commentTargetTypeForWorkKind(actionItem.Kind)
+	return commentTargetTypeForKind(actionItem.Kind)
 }
 
-// commentTargetTypeForWorkKind maps work-item kinds into comment target types.
-func commentTargetTypeForWorkKind(kind domain.WorkKind) (domain.CommentTargetType, bool) {
-	switch kind {
-	case domain.WorkKind(domain.KindAppliesToBranch):
-		return domain.CommentTargetTypeBranch, true
-	case domain.WorkKindActionItem:
+// commentTargetTypeForKind maps work-item kinds into comment target types.
+// All 12 action-item kinds share the same ActionItem target after the kind
+// collapse; only the project surface uses a distinct target type.
+func commentTargetTypeForKind(kind domain.Kind) (domain.CommentTargetType, bool) {
+	if domain.IsValidKind(kind) {
 		return domain.CommentTargetTypeActionItem, true
-	case domain.WorkKindSubtask:
-		return domain.CommentTargetTypeSubtask, true
-	case domain.WorkKindPhase:
-		return domain.CommentTargetTypePhase, true
-	case domain.WorkKindDecision:
-		return domain.CommentTargetTypeDecision, true
-	case domain.WorkKindNote:
-		return domain.CommentTargetTypeNote, true
-	default:
-		return "", false
 	}
+	return "", false
 }
 
 // formatThreadTimestamp formats comment timestamps for thread metadata rows.

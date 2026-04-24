@@ -67,7 +67,7 @@ func enforceMutationApprovedPathPolicy(sessionMetadata map[string]string, action
 // global-admin operation rather than a project-scoped workflow mutation.
 func mutationActionRequiresGlobalApprovedPath(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "create_project", "upsert_kind_definition", "upsert_template_library", "bind_project_template_library":
+	case "create_project", "upsert_kind_definition":
 		return true
 	default:
 		return false
@@ -182,11 +182,10 @@ func (a *AppServiceAdapter) populateActionItemAuthContext(ctx context.Context, c
 	if err != nil {
 		return err
 	}
-	scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-	if scopeType == "" {
-		return domain.ErrInvalidScopeType
-	}
-	return a.populateLevelAuthContext(ctx, contextValues, actionItem.ProjectID, string(scopeType), actionItem.ID)
+	// Scope mirrors kind in the 12-value enum, so every action-item row is
+	// ScopeLevelActionItem for auth-path resolution regardless of which kind
+	// the row carries.
+	return a.populateLevelAuthContext(ctx, contextValues, actionItem.ProjectID, string(domain.ScopeLevelActionItem), actionItem.ID)
 }
 
 // populateHandoffAuthContext derives auth scope from one existing handoff row.

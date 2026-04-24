@@ -56,127 +56,133 @@ The execution pattern is a **cascade**: **design down, build up.** Planning deco
 
 | Term | Definition |
 |---|---|
-| **agent** | A one-shot autonomous unit dispatched by Tillsyn. Receives auth + actionItem context, does work via MCP, moves its actionItem to `complete`/`failed`, dies. Typed by role: planner, builder, QA, commit. |
+| **agent** | A one-shot autonomous unit dispatched by Tillsyn. Receives auth + action-item context, does work via MCP, moves its action item to `complete`/`failed`, dies. Typed by role: planner, builder, QA, commit. |
 | **cascade** | The hierarchical execution pattern: planning decomposes downward ("design down"), completion propagates upward ("build up"). State changes trigger the next step. |
 | **cascade run** | A single execution of a cascade, from drop `in_progress` through completion or failure. |
 | **cascade tree** | The tree of action items produced by a cascade run. |
 | **dispatcher** | The Tillsyn subsystem that watches for state changes and spawns agent processes. Not an agent — purely programmatic (except commit message formation, which uses a lightweight haiku agent). |
 | **gate** | A deterministic verification step (e.g., `mage ci`) that runs programmatically after an agent completes. No LLM involved. |
-| **drop** *(rename from phase)* | A nestable grouping of work. Contains a plan-actionItem (with plan-qa children), and either sub-drops or build-tasks. See §1.4 for typed-drop kinds and §2.2 for the tree shape. |
-| **actionItem** | A unit of work. Leaf-level when it's a build-actionItem (contains qa-proof + qa-falsification children). |
-| **check** | A QA verification step (proof or falsification). Child of a plan-actionItem or a build-actionItem. |
+| **Drop** *(workflow unit — capitalized in prose)* | A release/lane coordination unit (`Drop 1.75`, `Drop 2`, etc.) — one PR, one drop-orch, one branch. NOT an `action_items.kind` value post-Drop-1.75; the in-tree grouping primitive is the `plan` kind. See §1.4 for the kind vocabulary and §2.2 for the tree shape. |
+| **action item** | A row in the `action_items` table. `kind` is a closed 12-value enum (`plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`). `plan` is the grouping primitive — nests infinitely and contains `build` / `research` / sub-`plan` children plus auto-created QA twins. `build` is a leaf with `build-qa-*` children. |
 
 ### 1.4. Cascade Addressing Vocabulary (drop 0 Convergence)
 
 Converged during drop 0 closeout discussions. Pre-cascade these are conceptual; post-drop-4 the dispatcher materializes them.
 
-**drop nesting + naming:**
+**Workflow-drop nesting + naming:**
 
-- **drops all the way down.** The `project` is NOT a drop — it is the root container. Immediate children of the project are **top-level drops** (drop_0, drop_1, …).
-- A drop's children that are themselves drops are called **sub-drops**, addressed as `drop_sub_N` where `N` is the zero-indexed position among this drop's sub-drop children. A drop may have multiple non-drop children (plan-tasks, build-tasks, closeout); only other drop-kind children count toward `N`.
-- Nesting is infinite. `drop_sub_1` of `drop_sub_0` is perfectly valid — the planner decomposes as far as the work demands.
+- **Drops all the way down at the workflow level.** The `project` is NOT a workflow drop — it is the root container. Immediate children of the project are **top-level Drops** (Drop 0, Drop 1, …). In the action-items tree this is the root `plan` node for that workflow drop.
+- Workflow Drops may contain sub-`plan`s (recursive decomposition) and `build` leaves. Every `plan` nests infinitely when the work needs deeper breakdown.
+- Dotted addresses (below) let readers reference any node in the tree by position regardless of how deep nesting goes.
 
 **Dotted addresses (read-only shorthand):**
 
-- Top-level drop `N` is addressed as `N` (e.g. `0` is drop 0).
-- Sub-drop `M` of drop `N` is `N.M` (e.g. `0.1` is drop 0's second sub-drop).
-- `0.1.5.2` = project's drop_0 → its sub-drop_1 → that sub-drop's sub-drop_5 → that sub-drop's sub-drop_2.
+- Top-level Drop `N` is addressed as `N` (e.g. `0` is Drop 0).
+- Sub-node `M` of node `N` is `N.M` (e.g. `0.1` is Drop 0's second sub-item).
+- `0.1.5.2` = project's Drop 0 → its sub-item_1 → that sub-item's sub-item_5 → that sub-item's sub-item_2.
 - Project-qualified form: `<proj_name>-<dotted>` (e.g. `tillsyn-0.1.5.2`) for unambiguous cross-project references.
 - **Dotted addresses are read-only.** For mutations, always use the UUID action-item id. Dotted addresses are unstable under re-parenting and should never be load-bearing in scripts.
 
-**Type-drop kinds (post-drop-3 template vocabulary):**
+**`action_items.kind` — closed 12-value enum (post-Drop-1.75 kind catalog):**
 
-A drop has a **primary type** recorded in its `kind` (or equivalent metadata pre-template). Typed drops let the dispatcher route agents and the planner apply different `child_rules`. Canonical set:
+Drop 1.75 collapses the old `kind_catalog` (16+ mixed kinds + `project`) into two node types — `projects` (table, no kind column) and `action_items` (table, 12-value `kind` enum). The kind axis is what templates bind `child_rules`, gate rules, and agent bindings against. No fallback kind — every `action_items` row sets `kind` explicitly at creation.
 
-| Kind | Purpose | Typical children |
-|---|---|---|
-| `plan-drop` | Planning-dominant work — decomposing and specifying future work. | plan-actionItem + plan-qa-proof + plan-qa-falsification. |
-| `build-drop` | Build-dominant work — tasks that change code. | build-actionItem(s) + qa children; optional sub-drops if decomposition continues. |
-| `qa-drop` | QA-dominant work — review, audit, verification without code change. | qa-check children (proof / falsification). |
-| `closeout-drop` | drop-end ledger update, Hylla reingest, WIKI_CHANGELOG line. | The `drop <N> END — LEDGER UPDATE` actionItem. |
-| `refinement-drop` | Perpetual / long-lived tracking drop for accumulated refinement entries (e.g. `REFINEMENTS.md`, `HYLLA_REFINEMENTS.md`). Typically adhoc-created, not template-generated. | Whatever the refinement calls for (usually notes / discussion, occasionally build tasks). |
-| `human-verify-drop` | Dev must inspect and ack before the drop can close. | Attention item(s) + checklist actionItem(s). |
-| `discussion-drop` | Cross-cutting decision park — description holds the converged shape, comments hold the audit trail. Pre-cascade, discussion happens in chat (see `CLAUDE.md` §"Discussion Mode"); this kind formalizes the pattern. | Notes / decision items. |
+| Table          | Kind                     | Purpose                                                                                                                                |
+| -------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `projects`     | _(no kind column)_       | Root container per project. Project-kind info (language/stack) lives in `projects.metadata`, not as a catalog value.                   |
+| `action_items` | `plan`                   | Planning-dominant — decomposes work into children. The grouping primitive; nests infinitely. Auto-creates `plan-qa-proof` + `plan-qa-falsification` children. |
+| `action_items` | `research`               | Read-only investigation. Standalone — no auto-QA children. Posts findings in a closing comment and dies.                                |
+| `action_items` | `build`                  | Code-changing leaf. Auto-creates `build-qa-proof` + `build-qa-falsification` children. Cannot contain further children.                |
+| `action_items` | `plan-qa-proof`          | Proof-completeness QA pass on a `plan` parent. `blocked_by: <plan-parent>`.                                                            |
+| `action_items` | `plan-qa-falsification`  | Falsification QA pass on a `plan` parent. `blocked_by: <plan-parent>`.                                                                 |
+| `action_items` | `build-qa-proof`         | Proof-completeness QA pass on a `build` parent. `blocked_by: <build-parent>` + post-build gates (mage ci).                             |
+| `action_items` | `build-qa-falsification` | Falsification QA pass on a `build` parent. Same blockers as `build-qa-proof`.                                                          |
+| `action_items` | `closeout`               | Drop-end coordination — ledger update, Hylla reingest, WIKI_CHANGELOG line. Orchestrator-managed. `blocked_by: <every-other-drop-item>`. |
+| `action_items` | `commit`                 | Commit action. Template-triggered under `plan` at level ≥ 2 with a `complete` `build` descendant (see Commit Cadence below). Post-Drop-4. |
+| `action_items` | `refinement`             | Perpetual / long-lived tracking umbrella — drop-end entries roll up here. Persistent STEWARD-owned drops (REFINEMENTS, HYLLA_REFINEMENTS) use this kind. |
+| `action_items` | `discussion`             | Cross-cutting decision park — description holds converged shape, comments hold audit trail. Pre-cascade discussion happens in chat (see `CLAUDE.md` §"Discussion Mode"); this kind formalizes the artifact. |
+| `action_items` | `human-verify`           | Dev sign-off hold point — attention items + checklist children, NO plan/QA children. Used for `DROP N START — PLANNING CONFIRMATION WITH DEV` and `DROP N END — REVIEW DONE + CORRECT`. |
 
-Pre-drop-3, the project has **no template bound** and these types exist only as labels + naming conventions. The cascade-tree architecture in `CLAUDE.md` still applies; type-drop kinds extend it with orthogonal routing hints. drop 3 encodes them as template kinds; drop 4's dispatcher reads them.
+**Customization (future drop — NOT Drop 1.75).** Projects and orchestrators author custom kinds via template that attach as sub-action-items of specific generic kinds. Examples: a custom `ledger-update` under `closeout`; a custom `ledger-aggregation` or `refinement-entry` under `refinement`. Drop 1.75 ships only the 12 generics plus the template hook. Project templates will also carry an allowed-kinds enum + a `disallow_generics` bool to restrict which kinds a project accepts.
 
-**Crosswalk between §1.4 type-drop kinds and §2.2 tree rows:**
+**Commit Cadence (Drop 2 discussion seed — see §19.2).** Current commit-every-build-task rate is too aggressive. Proposed default: auto-generate a `commit` child under any `plan` at level ≥ 2 whose subtree contains at least one `build` in `complete` state, fired at plan close-time. Templates can set `auto_commit = false` per-kind for local-only outputs (SQL migration scripts never committed, scratch work). Edge cases to resolve in the Drop 2 discussion: multi-PR drops (one commit per plan vs one per Drop), cascade-owned vs dev-owned commit, partial-success subtrees.
 
-| §1.4 type-drop kind | §2.2 tree row(s) |
-|---|---|
-| `plan-drop` | Any drop whose primary work is `plan-actionItem + plan-qa-proof + plan-qa-falsification` with no build-tasks underneath. Decomposes into sub-drops. |
-| `build-drop` | The default. Carries `plan-actionItem` + `actionItem`(s) + sub-drops; standard drop bracketing with START / LEDGER UPDATE / REVIEW DONE. |
-| `qa-drop` | A drop whose tree is qa-check children only — no build-tasks, no code changes. |
-| `closeout-drop` | Contains `DROP N END — LEDGER UPDATE`. |
-| `refinement-drop` | Adhoc perpetual drops (`REFINEMENTS.md`, `HYLLA_REFINEMENTS.md`) — also maps to the persistent STEWARD-owned level_1 drops in §15.7. |
-| `human-verify-drop` | `DROP N START — PLANNING CONFIRMATION WITH DEV`, `DROP N START — REFINEMENT REVIEW`, `DROP N END — REVIEW DONE + CORRECT`. Attention items + checklist tasks as children — **no plan-actionItem / plan-qa**. |
-| `discussion-drop` | The persistent `DISCUSSIONS` level_1 drop and any cross-cutting decision park underneath. Description = converged shape, comments = audit trail. |
+**Workflow-Drop ↔ `plan` action-item bridge.** Workflow Drops (Drop 0 / Drop 1 / Drop 1.75 / …) materialize as a root `plan` per-Drop in the action_items tree: that root `plan` holds the Drop's human-verify start, planning children, build children, sub-`plan`s, closeout, and human-verify end. A Drop's numbered name (`DROP 1.75`) is stable and human-facing; its dotted address (`1.75`, `1.75.0`, `<proj>-1.75.0.2`) is position-derived and unstable under re-parenting. Use named form in prose and docs; UUIDs for all mutations; dotted form only for quick cross-references in chat. Post-Drop-2 the resolver (§19.2) accepts either UUID or dotted form on read paths.
 
-**Dotted-address ↔ named-drop bridge:** dotted addresses in §1.4 (`0`, `0.1`, `<proj_name>-0.1.5.2`) are read-only shorthand for the same drops named in §2.2 / §3.2 / §19 (e.g. `DROP 0`, `DROP 1`, `DROP 5 START — PLANNING CONFIRMATION WITH DEV`). A drop's numbered name is stable and human-facing; its dotted address is position-derived and unstable under re-parenting. Use named form in prose and documentation; use UUIDs for all mutations; use dotted form only for quick cross-references in chat. Post-drop-2 the resolver (§19.2) accepts either UUID or dotted form on read paths.
+**Adhoc vs. template-generated action items:**
 
-**Adhoc vs. template-generated drops:**
-
-- **Template-generated** — a `build-drop`'s `plan-actionItem` child-rule creates sibling `plan-qa-proof` and `plan-qa-falsification` automatically. This is the cascade's default flow.
-- **Adhoc** — a refinement or discussion drop created manually by the orchestrator outside any cascade flow, typically because the work is cross-cutting or long-lived. Per drop 0 5.2 decision: refinement drops (`REFINEMENTS.MD`, `HYLLA_REFINEMENTS.MD`) use the generic `drop` kind + adhoc creation pre-drop-3, and existing drops get updated in place rather than re-created.
+- **Template-generated** — a `plan`'s `child_rules` create sibling `plan-qa-proof` and `plan-qa-falsification` automatically (Drop 3+). Same for `build` → `build-qa-*`. This is the cascade's default flow.
+- **Adhoc** — a `refinement` or `discussion` action item created manually by the orchestrator outside any cascade flow, typically because the work is cross-cutting or long-lived. Per drop 0 5.2 decision: persistent refinement trees (`REFINEMENTS.MD`, `HYLLA_REFINEMENTS.MD`) use `kind: refinement` + adhoc creation pre-Drop-3, and existing items get updated in place rather than re-created.
 
 ---
 
 ## 2. Hierarchy Refactor
 
-### 2.1. Current State — Confused Primitives
+### 2.1. Pre-Drop-1.75 State — Confused Primitives (Being Collapsed Now)
 
-Today Tillsyn has: `project > branch > phase > actionItem > subtask`. In practice:
-- **Branch** exists to map to git worktrees. With file-level gating instead of worktrees, branches are unnecessary.
-- **Phase** and **branch** are used interchangeably and inconsistently.
+Pre-Drop-1.75 Tillsyn had: `project > branch > phase > actionItem > subtask` in `kind_catalog`, plus `build-actionItem`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `decision`, `note`. In practice:
+
+- **Branch** existed to map to git worktrees. With file-level gating (Section 5), worktrees are unnecessary.
+- **Phase** and **branch** were used interchangeably and inconsistently.
+- The 16+ kind_catalog values carried no orthogonal structural meaning — most were role-flavored `actionItem` variants. The `plan-actionItem`/`build-actionItem`/`qa-check` split conflated "what role does this agent play?" with "where does this node sit in the tree?"
 - **`depends_on`** overlaps with the parent-child hierarchy (children must complete before parent = implicit depends_on).
 - **`done`** should be `complete` — more descriptive, clearer intent.
 
-### 2.2. Proposed Hierarchy
+**Drop 1.75 is the collapse drop.** `kind_catalog` becomes a closed 12-value enum on `action_items.kind`; `projects.kind` column is dropped entirely; `scope` is mirrored from `kind` for this drop (column removal deferred to a future refinement). Role moves from kind to description prose (pre-Drop-2) and to `metadata.role` (post-Drop-2).
+
+### 2.2. Proposed Hierarchy (Post-Drop-1.75 Target)
+
+Two node tables. Tree uses `action_items.kind` on every non-project node. `plan` is the grouping primitive (the old `drop` kind collapses into it).
 
 ```
-project
-  └── drop (nestable — was "phase" and "branch")
-        ├── DROP N START — PLANNING CONFIRMATION WITH DEV  (dev-gated, first child)
-        ├── DROP N START — REFINEMENT REVIEW               (sibling of start confirmation)
-        ├── plan-actionItem (always present in a drop)
-        │     ├── plan-qa-proof          (child of plan-actionItem, blocked_by plan-actionItem)
-        │     └── plan-qa-falsification  (child of plan-actionItem, blocked_by plan-actionItem)
-        ├── actionItem (build actionItem — leaf-level work)
-        │     ├── qa-proof (always present under actionItem)
-        │     └── qa-falsification (always present under actionItem)
-        ├── drop (sub-drop — infinite nesting)
-        │     └── ... same structure, with its own START/END bracketing ...
-        ├── DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1         (STEWARD-owned, §15.8)
-        ├── DROP N END — LEDGER UPDATE                     (blocked_by every other actionItem)
-        └── DROP N END — REVIEW DONE + CORRECT             (dev-gated, blocked_by LEDGER UPDATE + refinements-gate)
+project                                                          (table: projects — no kind column)
+  └── plan (root plan — one per workflow Drop; nests infinitely) kind: plan
+        ├── human-verify (DROP N START — PLANNING CONFIRMATION)  kind: human-verify    (dev-gated, first child)
+        ├── human-verify (DROP N START — REFINEMENT REVIEW)      kind: human-verify    (sibling of start confirmation)
+        ├── plan-qa-proof                                        kind: plan-qa-proof   (auto-created child of this plan)
+        ├── plan-qa-falsification                                kind: plan-qa-falsification
+        ├── research  (optional, adhoc)                          kind: research
+        ├── build  (leaf work)                                   kind: build
+        │     ├── build-qa-proof                                 kind: build-qa-proof
+        │     └── build-qa-falsification                         kind: build-qa-falsification
+        ├── plan  (sub-plan — infinite nesting)                  kind: plan
+        │     └── ... same structure with its own start/end human-verify bracketing ...
+        ├── discussion (cross-cutting decision park)             kind: discussion
+        ├── refinement (adhoc perpetual entries)                 kind: refinement
+        ├── commit (template-triggered, post-Drop-4)             kind: commit
+        ├── DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1              kind: refinement       (STEWARD-owned, §15.8)
+        ├── closeout (DROP N END — LEDGER UPDATE)                kind: closeout         (blocked_by every other drop item)
+        └── human-verify (DROP N END — REVIEW DONE + CORRECT)    kind: human-verify     (dev-gated, blocked_by closeout + refinements-gate)
 ```
 
 **Rules:**
-- **Every drop starts with `DROP N START — PLANNING CONFIRMATION WITH DEV`** — a dev-gated `human-verify-drop` (see §1.4) subdrop that captures the dev's sign-off on scope, plan, and agent/system-prompt direction before any planning agent fires. Absorbs the existing `DROP N START — REFINEMENT REVIEW` actionItem as a sibling inside the bracket — the refinement review feeds the planning confirmation, they happen together at drop start.
-- **Every drop ends with `DROP N END — REVIEW DONE + CORRECT`** — a dev-gated `human-verify-drop` subdrop that captures the dev's sign-off that all work landed correctly. `blocked_by` both `DROP N END — LEDGER UPDATE` (so the ledger entry is in place) AND `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` (so STEWARD's post-merge MD writes + refinements-gate discussion have completed — see §15.7–§15.8). Nothing in the drop moves to `complete` until this final subdrop is signed off.
-- **drops** always have: plan-actionItem + plan-qa-proof + plan-qa-falsification. `plan-qa-proof` and `plan-qa-falsification` are **children of plan-actionItem** (blocked_by plan-actionItem, firing in parallel after plan-actionItem completes) — not siblings of plan-actionItem under the drop. Drops contain either tasks or sub-drops (or both), bracketed by the START/END dev-gated subdrops.
-- **ActionItems** always have: qa-proof + qa-falsification as children. ActionItems are leaf-level — no nesting beyond one level of checks.
-- **drops can nest infinitely.** A planner at one level creates sub-drops if the work needs further decomposition, or tasks if the work is granular enough. Sub-drops carry their own START/END bracketing — the pattern is recursive, not root-only.
-- **Human-verify-drops** (START CONFIRMATION, REFINEMENT REVIEW, END REVIEW DONE) do **not** carry plan-actionItem / plan-qa children — they are dev-gated hold points whose internal structure is attention item(s) + checklist actionItem(s) (see §1.4). No planner fires for them.
-- A planner can create an actionItem directly (small enough, no further decomposition needed) — it just creates the actionItem with its QA children.
 
-**Why bracketing, not just a wrap-up note.** The prior "per-drop wrap-up" was documentation-level — nothing structurally prevented a drop from completing without dev sign-off. The START/END bracketing makes dev sign-off a real `blocked_by` edge the dispatcher enforces. It is the primary hook for the Discussion Mode rule in `CLAUDE.md` ("cross-cutting decisions happen in chat, converged shape lands on the action item") — the START subdrop is where those chats are scheduled, the END subdrop is where they're validated.
+- **Every workflow Drop starts with a `human-verify` (`DROP N START — PLANNING CONFIRMATION WITH DEV`)** — dev-gated first child that captures sign-off on scope, plan, and agent/system-prompt direction before any planning agent fires. Absorbs the existing `DROP N START — REFINEMENT REVIEW` as a sibling `human-verify` inside the bracket — the refinement review feeds the planning confirmation, they happen together at Drop start.
+- **Every workflow Drop ends with a `human-verify` (`DROP N END — REVIEW DONE + CORRECT`)** — dev-gated sign-off that all work landed correctly. `blocked_by` both the `closeout` (`DROP N END — LEDGER UPDATE`, so the ledger entry is in place) AND `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` (so STEWARD's post-merge MD writes + refinements-gate discussion have completed — see §15.7–§15.8). Nothing in the Drop moves to `complete` until this final `human-verify` is signed off.
+- **Every `plan`** auto-creates `plan-qa-proof` + `plan-qa-falsification` children (blocked_by the `plan`, firing in parallel after plan completes). `plan` contains either `build` leaves, sub-`plan`s, or both, bracketed by the start/end `human-verify` items.
+- **Every `build`** auto-creates `build-qa-proof` + `build-qa-falsification` children. `build` is leaf-level — no nesting beyond one level of QA checks.
+- **`plan` nests infinitely.** A planner at one level creates sub-`plan`s if the work needs further decomposition, or `build`s if the work is granular enough. Sub-`plan`s carry their own start/end `human-verify` bracketing — the pattern is recursive, not root-only.
+- **`human-verify`** does NOT carry `plan`/QA children — it is a dev-gated hold point whose internal structure is attention item(s) + checklist action-item(s). No planner fires for it.
+- **`research`, `discussion`, `refinement`, `closeout`, `commit`** do NOT auto-create QA children. Review is via comment thread (`research`), description convergence (`discussion`), orchestrator-managed aggregation (`closeout`, `refinement`), or template-triggered post-build gating (`commit`).
+- A planner can create a `build` directly (small enough, no further decomposition needed) — it just creates the `build` with its QA children.
+
+**Why bracketing, not just a wrap-up note.** The prior "per-drop wrap-up" was documentation-level — nothing structurally prevented a Drop from completing without dev sign-off. The start/end `human-verify` bracketing makes dev sign-off a real `blocked_by` edge the dispatcher enforces. It is the primary hook for the Discussion Mode rule in `CLAUDE.md` ("cross-cutting decisions happen in chat, converged shape lands on the action item") — the start `human-verify` is where those chats are scheduled, the end `human-verify` is where they're validated.
 
 ### 2.3. Remove `branch`
 
-Branch was a primitive for git worktree mapping. With file-level gating (Section 5), worktrees are unnecessary. Branches add a hierarchy level that creates confusion with phases.
+`branch` was a primitive for git worktree mapping. With file-level gating (Section 5), worktrees are unnecessary. Branches add a hierarchy level that creates confusion with phases.
 
-**Action:** Remove `branch` from the hierarchy. Migrate existing branches to drops. Remove from schema, domain, TUI, templates.
+**Action:** Remove `branch` from the kind catalog. Pre-existing `branch` nodes are rewritten to `plan` by `main/scripts/drops-rewrite.sql` (Drop 1.75). Remove from schema, domain, TUI, templates.
 
-### 2.4. Rename `phase` → `drop`
+### 2.4. Remove `phase` and `branch` — Use `plan` as the Grouping Primitive
 
-"Phase" implies temporal ordering (phase 1, phase 2). "drop" implies a bounded chunk of work that can be ordered OR parallel. Better fit for the cascade model where sibling drops might run in parallel.
+"Phase" implied temporal ordering (phase 1, phase 2). "Branch" was a worktree-mapping holdover. Neither survives Drop 1.75: both collapse into `plan`, which is the natural grouping primitive because a `plan` is where decomposition decisions land (agent: planner) and it's where the cascade's `blocked_by` edges are set. Siblings can run in parallel when paths/packages don't overlap — no temporal-ordering word needed in the schema.
 
-**Action:** Rename in schema, domain, TUI, templates, documentation. Migration: existing phases become drops.
+**Action:** Drop 1.75 rewrites all pre-existing `phase` and `branch` nodes to `plan` via `main/scripts/drops-rewrite.sql`. Remove `phase` and `branch` from schema, domain, TUI, templates, documentation. The word "Drop" survives as workflow-level prose ("Drop 1.75") but is NOT an `action_items.kind` value.
 
 ### 2.5. Rename `done` → `complete`
 
-`complete` is more descriptive. "This actionItem is complete" reads better than "this actionItem is done." Aligns with `completion_contract`, `completion_notes`, `CompletedAt`.
+`complete` is more descriptive. "This action item is complete" reads better than "this action item is done." Aligns with `completion_contract`, `completion_notes`, `CompletedAt`.
 
 **Lifecycle states:** `todo` → `in_progress` → `complete` | `failed`
 
@@ -222,116 +228,123 @@ At every level, the pattern is:
 ### 3.2. ASCII Art — Full Cascade
 
 ```
-drop: "Add failed lifecycle state" ← human/orchestrator moves to in_progress
+ROOT PLAN: "Add failed lifecycle state" ← kind: plan ← human/orchestrator moves to in_progress
 │
-│  ┌──────────────────────────────────────────────────────────┐
-│  │ TEMPLATE AUTO-CREATES:                                   │
-│  │  • PLAN-TASK (kind: plan-actionItem)                           │
-│  │  • PLAN-QA-PROOF (kind: qa-check, role: qa)              │
-│  │  • PLAN-QA-FALSIFICATION (kind: qa-check, role: qa)      │
-│  └──────────────────────────────────────────────────────────┘
+│  ┌──────────────────────────────────────────────────────────────┐
+│  │ TEMPLATE AUTO-CREATES (on plan creation):                    │
+│  │  • PLAN-QA-PROOF           (kind: plan-qa-proof)             │
+│  │  • PLAN-QA-FALSIFICATION   (kind: plan-qa-falsification)     │
+│  │ (No separate planner action item — the `plan` kind IS the    │
+│  │  planner's work unit. The planner agent runs against THIS    │
+│  │  action item.)                                               │
+│  └──────────────────────────────────────────────────────────────┘
 │
-├── PLAN-TASK ← no blockers → auto in_progress → planner agent fires
-│   │  Agent: go-planning-agent (opus, high effort)
-│   │  Work: reads drop goal, decomposes into 2-4 sub-drops,
+├── ROOT PLAN runs the planner → go-planning-agent (opus, high effort)
+│   │  Work: reads plan goal, decomposes into sub-`plan`s or `build`s,
 │   │        fills out scope/context/affected areas for each,
-│   │        sets blocked_by between sequential drops,
-│   │        sets file paths on each actionItem for file-level gating
-│   │  Output: creates SUB-drop-1, SUB-drop-2 as children of drop
+│   │        sets blocked_by between sequential children,
+│   │        sets paths[] + packages[] on each child for file-/package-level gating
+│   │  Output: creates SUB-PLAN-1, SUB-PLAN-2 (kind: plan) and/or
+│   │          BUILD-1, BUILD-2 (kind: build) as children of ROOT PLAN
 │   │          via till.action_item(operation=create)
-│   │  Terminal: moves own actionItem to complete via MCP → auth revoked → killed
+│   │  Terminal: moves ROOT PLAN to complete → auth revoked → killed
 │   │
-│   ├── PLAN-QA-PROOF ← blocked_by: PLAN-TASK → fires when plan completes
+│   ├── PLAN-QA-PROOF ← kind: plan-qa-proof ← blocked_by: ROOT PLAN
 │   │   Agent: go-qa-proof-agent (opus, high effort)
 │   │   Checks: plan completeness, evidence grounding, consistency
-│   │   PASS → moves to complete │ FAIL → moves to failed + comment
+│   │   PASS → complete │ FAIL → failed + comment
 │   │
-│   └── PLAN-QA-FALSIFICATION ← blocked_by: PLAN-TASK → fires in parallel
+│   └── PLAN-QA-FALSIFICATION ← kind: plan-qa-falsification ← blocked_by: ROOT PLAN
 │       Agent: go-qa-falsification-agent (opus, high effort)
 │       Checks: vagueness, missing cases, incorrect assumptions, YAGNI,
-│               FILE-LEVEL CONFLICTS (must verify no two tasks share files
-│               without explicit blocked_by between them!)
-│       PASS → moves to complete │ FAIL → moves to failed + comment
+│               FILE-/PACKAGE-LEVEL CONFLICTS (must verify no two siblings share
+│               paths[] or packages[] without explicit blocked_by between them!)
+│       PASS → complete │ FAIL → failed + comment
 │
 │   ┌──────────────────────────────────────────────────────────────┐
-│   │ ALL PLAN QA PASS → sub-drops become eligible                │
+│   │ ALL PLAN QA PASS → child plans / builds become eligible      │
 │   │                                                              │
 │   │ ANY PLAN QA FAIL → failed + comment with findings            │
-│   │   try 1 of max-tries=2:                                     │
-│   │     new PLAN-TASK created with failure context                │
-│   │     planner re-plans incorporating QA feedback               │
+│   │   try 1 of max-tries=2:                                      │
+│   │     ROOT PLAN re-runs planner with failure context           │
 │   │     plan QA runs again on the revised plan                   │
 │   │   try 2 fails → attention item to orchestrator AND human     │
 │   │     full stop until human intervenes                         │
 │   └──────────────────────────────────────────────────────────────┘
 │
-├── SUB-drop-1 ← no blocked_by → auto in_progress when plan QA passes
+├── SUB-PLAN-1 ← kind: plan ← no blocked_by → auto in_progress when plan QA passes
 │   │
-│   │  ┌─ TEMPLATE AUTO-CREATES plan-actionItem + plan-qa children ─┐
+│   │  ┌─ TEMPLATE AUTO-CREATES plan-qa-proof + plan-qa-falsification children ─┐
 │   │
-│   ├── PLAN-TASK ← planner agent fires
-│   │   │  Agent: go-planning-agent (opus, high effort)
-│   │   │  Work: decomposes sub-drop into 1-4 granular build tasks
-│   │   │        fills out: description, paths, packages,
+│   ├── SUB-PLAN-1 runs its planner → go-planning-agent (opus)
+│   │   │  Work: decomposes sub-plan into 1-4 granular builds
+│   │   │        fills out: description, paths[], packages[],
 │   │   │        acceptance_criteria, test targets
-│   │   │        sets blocked_by for tasks sharing files OR packages
-│   │   │  Output: creates BUILD-TASK-1, BUILD-TASK-2 as children
+│   │   │        sets blocked_by for builds sharing files OR packages
+│   │   │  Output: creates BUILD-1, BUILD-2 (kind: build) as children
 │   │   │
-│   │   ├── PLAN-QA-PROOF (checks plan + file conflict detection)
-│   │   └── PLAN-QA-FALSIFICATION (attacks plan + file conflict detection)
+│   │   ├── PLAN-QA-PROOF (kind: plan-qa-proof)
+│   │   └── PLAN-QA-FALSIFICATION (kind: plan-qa-falsification)
 │   │
-│   │   ON PLAN QA PASS → build tasks eligible:
+│   │   ON PLAN QA PASS → builds eligible:
 │   │
-│   ├── BUILD-TASK-1 ← no blocked_by → auto in_progress
+│   ├── BUILD-1 ← kind: build ← no blocked_by → auto in_progress
 │   │   │  Agent: go-builder-agent (sonnet, standard effort)
-│   │   │  File gating: can only edit files listed in action item paths
+│   │   │  File gating: can only edit files listed in action item paths[]
 │   │   │  Pre-check: system confirms assigned files have clean git status
 │   │   │  Work: implements code, runs mage test-func on affected funcs
 │   │   │  max-tries=2 (builder can retry once on test failure)
 │   │   │  Terminal: moves to complete via MCP → auth revoked → killed
 │   │   │
-│   │   │  ┌─ ON BUILDER COMPLETE: ───────────────────────────────┐
-│   │   │  │ GATE: mage ci (deterministic, system runs it)         │
-│   │   │  │ Gate pass → QA fires (proof + falsification parallel) │
-│   │   │  │ Gate fail → actionItem moves to failed + gate output comment │
-│   │   │  │   → try 1 of max-tries: new builder fires            │
-│   │   │  │   → try 2 fails: escalate (re-plan or human)         │
-│   │   │  └──────────────────────────────────────────────────────┘
+│   │   │  ┌─ ON BUILDER COMPLETE: ─────────────────────────────────┐
+│   │   │  │ GATE: mage ci (deterministic, system runs it)          │
+│   │   │  │ Gate pass → QA fires (proof + falsification parallel)  │
+│   │   │  │ Gate fail → action_item moves to failed + gate comment │
+│   │   │  │   → try 1 of max-tries: new builder fires              │
+│   │   │  │   → try 2 fails: escalate (re-plan or human)           │
+│   │   │  └────────────────────────────────────────────────────────┘
 │   │   │
-│   │   ├── QA-PROOF ← fires after mage ci passes (before commit)
+│   │   ├── BUILD-QA-PROOF ← kind: build-qa-proof ← fires after mage ci passes
 │   │   │   Agent: go-qa-proof-agent (sonnet, medium effort)
 │   │   │   Checks: evidence completeness, reasoning, trace coverage
 │   │   │
-│   │   └── QA-FALSIFICATION ← fires in parallel with QA-PROOF
+│   │   └── BUILD-QA-FALSIFICATION ← kind: build-qa-falsification ← fires in parallel
 │   │       Agent: go-qa-falsification-agent (sonnet, medium effort)
 │   │       Checks: counterexamples, hidden deps, contract mismatches
 │   │
-│   │   ALL QA PASS → commit agent (haiku) forms message
+│   │   ALL QA PASS → commit-cadence check (§CLAUDE.md Commit Cadence):
+│   │                 IF parent plan at level ≥ 2 with ≥1 build complete →
+│   │                   template auto-creates COMMIT (kind: commit)
+│   │                 commit agent (haiku) forms message
 │   │                 → system commits + optionally pushes (template cfg)
 │   │                 → gh run watch --exit-status until CI green
-│   │                 → BUILD-TASK-1 complete
-│   │                 (NO per-actionItem hylla reingest — ingest is drop-end only,
-│   │                  owned by DROP N END — LEDGER UPDATE; see §15.7, CLAUDE.md)
-│   │   ANY QA FAIL → BUILD-TASK-1 failed → attention item
+│   │                 → BUILD-1 complete
+│   │                 (NO per-build hylla reingest — ingest is Drop-end only,
+│   │                  owned by the Drop's closeout action item; see §15.7)
+│   │   ANY QA FAIL → BUILD-1 failed → attention item
 │   │     QA never retries. QA failure → escalation or human.
 │   │
-│   ├── BUILD-TASK-2 ← blocked_by: BUILD-TASK-1 (if shares files)
-│   │   │              OR no blocked_by (if different files → parallel)
+│   ├── BUILD-2 ← kind: build ← blocked_by: BUILD-1 (if shares files/packages)
+│   │   │                       OR no blocked_by (if disjoint → parallel)
 │   │   └── ... same build+gate+commit+QA flow ...
 │   │
-│   │  ┌─ drop COMPLETION CHECK: ─────────────────────────────┐
+│   │  ┌─ SUB-PLAN COMPLETION CHECK: ──────────────────────────┐
 │   │  │ System checks for uncommitted/unpushed changes         │
 │   │  │ If any found → attention item to orchestrator          │
-│   │  └───────────────────────────────────────────────────────┘
+│   │  └────────────────────────────────────────────────────────┘
 │   │
-│   └── ALL BUILD-TASKS complete → SUB-drop-1 complete
+│   └── ALL BUILDS complete → SUB-PLAN-1 complete
 │
-├── SUB-drop-2 ← blocked_by: SUB-drop-1 (or parallel if no conflict)
-│   │  Auto in_progress when SUB-drop-1 completes
+├── SUB-PLAN-2 ← kind: plan ← blocked_by: SUB-PLAN-1 (or parallel if disjoint)
+│   │  Auto in_progress when SUB-PLAN-1 completes
 │   │  Same cascade flow
 │   └── ...
 │
-└── ALL SUB-dropS complete → drop complete
+├── CLOSEOUT ← kind: closeout ← blocked_by: every other ROOT PLAN child
+│   │  Orchestrator-managed. Aggregates ledger / refinements / Hylla findings.
+│   │  Triggers Hylla reingest at Drop end (full_enrichment, from remote).
+│
+└── ALL CHILDREN complete → ROOT PLAN complete
 ```
 
 ### 3.3. Key Properties
@@ -346,7 +359,7 @@ drop: "Add failed lifecycle state" ← human/orchestrator moves to in_progress
 - Template `child_rules` auto-create QA children for each created item
 
 **Build up (completion):**
-- Build actionItem complete → sub-drop checks all children → sub-drop complete → drop checks → complete
+- `build` action item complete → sub-drop checks all children → sub-drop complete → drop checks → complete
 - Uses `require_children_done` — parent can't complete until all children complete
 - No `depends_on` needed for parent-child — the hierarchy IS the dependency
 - `blocked_by` is for siblings and file-level conflicts
@@ -452,7 +465,7 @@ Dispatcher spawns claude CLI process
   ├── Agent boots, claims auth via till.auth_request(operation=claim)
   │   (auth was pre-created by dispatcher, no human approval needed)
   │
-  ├── Agent reads actionItem details via action_item(get) — its working brief
+  ├── Agent reads action-item details via action_item(get) — its working brief
   │
   ├── Agent does work:
   │   ├── Planner: creates child action items via MCP
@@ -496,7 +509,7 @@ Examples why this matters:
 - `internal/domain` is ~25 files in one Go package. Two agents each editing one file still share a compile. If agent A renames a type, agent B's test compile fails.
 - `internal/adapters/server/common` has multiple MCP adapter files sharing private helpers. Same problem.
 
-The planner sets **both** `paths` (the specific files) and `packages` (the Go packages those files belong to) on each build actionItem. The dispatcher enforces mutual exclusion:
+The planner sets **both** `paths` (the specific files) and `packages` (the Go packages those files belong to) on each `build` action item. The dispatcher enforces mutual exclusion:
 
 1. Before dispatching a builder, check all assigned files against active file locks AND all assigned packages against active package locks.
 2. If any file or package is locked by another active agent → add dynamic `blocked_by`, defer dispatch.
@@ -504,11 +517,11 @@ The planner sets **both** `paths` (the specific files) and `packages` (the Go pa
 
 ### 5.3. Planner Responsibility
 
-The planner **must** set file paths and package paths on every build actionItem it creates. This is not optional — it's how the cascade prevents file and package conflicts.
+The planner **must** set file paths and package paths on every `build` action item it creates. This is not optional — it's how the cascade prevents file and package conflicts.
 
 Plan QA falsification **specifically checks** for:
-- ActionItems with missing or incomplete `paths`
-- ActionItems with missing or inconsistent `packages` (packages must cover every file in `paths`)
+- Action items with missing or incomplete `paths`
+- Action items with missing or inconsistent `packages` (packages must cover every file in `paths`)
 - Two sibling tasks sharing a file OR a package without an explicit `blocked_by` between them
 - File paths that don't match the drop's stated scope
 
@@ -538,7 +551,7 @@ Even if the planner forgot to set `blocked_by` between two tasks sharing files o
 
 1. Builder A dispatches with files `[internal/domain/a.go]`, packages `[internal/domain]` → both locks acquired.
 2. Builder B tries to dispatch with files `[internal/domain/b.go]`, packages `[internal/domain]`. File `b.go` is free, but the package `internal/domain` is already locked by Builder A.
-3. Dispatcher adds dynamic `blocked_by: Builder-A's-actionItem` to Builder B's actionItem.
+3. Dispatcher adds dynamic `blocked_by: Builder-A's-action-item` to Builder B's action item.
 4. Builder B defers until Builder A completes and releases both locks.
 
 This is the safety net. The planner should set `blocked_by` explicitly; the dispatcher catches what the planner missed, at either the file OR package level.
@@ -577,7 +590,7 @@ Templates are the configuration layer for the cascade. They define:
 
 | Configuration | What It Controls | Example |
 |---|---|---|
-| **Agent binding** | Which agent type fires for this kind | `build-actionItem` → `go-builder-agent` |
+| **Agent binding** | Which agent type fires for this kind | `build` → `go-builder-agent` |
 | **Model** | Which Claude model to use | `opus`, `sonnet`, `haiku` |
 | **Effort** | Claude Code effort level | `high`, `standard`, `low` |
 | **Tools** | Allowed and disallowed tools | `allowedTools: [Read, Edit, Bash, Grep]` |
@@ -585,7 +598,7 @@ Templates are the configuration layer for the cascade. They define:
 | **Turns** | Max conversation turns | `max_turns: 20` |
 | **Max-tries** | Total attempts before permanent failure | `max_tries: 2` |
 | **Gates** | Deterministic verification steps | `[{command: "mage ci", on_fail: "fail_task"}]` |
-| **Child rules** | Auto-created children on item creation | `build-actionItem` → auto-create `qa-proof`, `qa-falsification` |
+| **Child rules** | Auto-created children on item creation | `build` → auto-create `build-qa-proof`, `build-qa-falsification` |
 | **Trigger state** | Which state transition fires the agent | `in_progress` (default for all) |
 | **Escalation** | Whether failures re-trigger planning | `escalation_enabled: true` |
 | **Push policy** | Whether to push after commit | `auto_push: true` (default), `auto_push: false` |
@@ -593,8 +606,10 @@ Templates are the configuration layer for the cascade. They define:
 
 ### 6.2. Example Template Kind Definition (Sketch)
 
+Templates bind against the 12-value `action_items.kind` enum. Example spec for the `build`, `plan`, and `commit` kinds:
+
 ```toml
-[kinds.build-actionItem]
+[kinds.build]
 agent_name = "go-builder-agent"
 model = "sonnet"
 effort = "standard"
@@ -602,22 +617,22 @@ max_budget_usd = 5.00
 max_turns = 20
 max_tries = 2
 trigger_state = "in_progress"
-auto_push = true
+auto_commit = true      # overridable per project or per kind instance
 commit_agent = true
 
-[kinds.build-actionItem.tools]
+[kinds.build.tools]
 allowed = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
 disallowed = ["Agent"]
 
-[[kinds.build-actionItem.gates]]
+[[kinds.build.gates]]
 name = "ci"
 command = "mage ci"
 on_fail = "fail_task"
 
-[kinds.build-actionItem.child_rules]
-auto_create = ["qa-proof", "qa-falsification"]
+[kinds.build.child_rules]
+auto_create = ["build-qa-proof", "build-qa-falsification"]
 
-[kinds.plan-actionItem]
+[kinds.plan]
 agent_name = "go-planning-agent"
 model = "opus"
 effort = "high"
@@ -627,17 +642,25 @@ max_tries = 2
 trigger_state = "in_progress"
 escalation_enabled = true
 
-[kinds.plan-actionItem.tools]
+[kinds.plan.tools]
 allowed = ["Read", "Grep", "Glob", "Bash"]
 disallowed = ["Edit", "Write", "Agent"]
 
-[kinds.commit-agent]
+[kinds.plan.child_rules]
+auto_create = ["plan-qa-proof", "plan-qa-falsification"]
+# commit-cadence rule (see §19.2 discussion): at plan close-time, if this plan
+# is at level ≥ 2 AND has ≥1 `build` child in state `complete` AND auto_commit = true,
+# auto-generate a `commit` child.
+
+[kinds.commit]
 agent_name = "commit-message-agent"
 model = "haiku"
 effort = "low"
 max_budget_usd = 0.10
 max_turns = 3
 ```
+
+`plan-qa-proof` / `plan-qa-falsification` / `build-qa-proof` / `build-qa-falsification` bind to their matching go-qa-*-agent with matched model (opus for plan-QA, sonnet for build-QA). `research`, `closeout`, `refinement`, `discussion`, `human-verify` do not bind to an agent at the template level (orchestrator-managed or template-triggered post-Drop-4).
 
 ### 6.3. Per-Project Template Overrides
 
@@ -673,7 +696,7 @@ The cascade uses these agent types:
 | **Build QA Proof** | sonnet | medium | Evidence verification is structured. Semi-formal certificate guides the work. |
 | **Build QA Falsification** | sonnet | medium | Counterexample search is structured. Certificate + `paths`/`packages` scope the search. |
 | **Commit Agent** | haiku | low | Reads `git diff`, action item title, and template commit format rules. Forms a conventional-commit message. Extremely narrow scope. |
-| **Wiki** | haiku | low | Summarization actionItem. Absorb child wikis, produce summary. |
+| **Wiki** | haiku | low | Summarization action item. Absorb child wikis, produce summary. |
 | **Quality/Vuln** | sonnet | high | Deep graph analysis. Needs careful reasoning about resource lifecycles. |
 
 **Open question:** Is sonnet sufficient for builders? The plan provides detailed instructions, file paths, acceptance criteria. The builder's job is execution, not design. But complex code changes may need opus. **Suggestion:** Default to sonnet, template-configurable to opus for complex kinds.
@@ -712,7 +735,7 @@ Dispatcher detects: action_item moved to in_progress
 ### 8.2. Auth Revocation
 
 Auth is revoked when:
-- The agent moves its actionItem to `complete` or `failed` (auto-revocation)
+- The agent moves its action item to `complete` or `failed` (auto-revocation)
 - The TTL expires (agent took too long)
 - The dispatcher kills the agent (e.g., budget exceeded)
 
@@ -739,7 +762,7 @@ Gates are deterministic verification steps that run **programmatically by the di
 ### 9.2. Gate Execution Flow
 
 ```
-Build agent moves actionItem to complete
+Build agent moves action item to complete
   │
   ├── Dispatcher receives state-change event
   ├── Checks template: does this kind have gates?
@@ -747,14 +770,14 @@ Build agent moves actionItem to complete
   │
   ├── GATE 1: mage ci
   │   ├── Pass → continue
-  │   └── Fail → actionItem moves to failed (override auth) + gate output as comment
+  │   └── Fail → action item moves to failed (override auth) + gate output as comment
   │
   ├── GATE 2: QA agents fire (proof + falsification, parallel)
   │   ├── QA runs against the code as-built, before any commit.
   │   │   (CLAUDE.md Build-QA-Commit Discipline: QA precedes commit.)
   │   ├── ALL PASS → continue
-  │   └── ANY FAIL → actionItem moves to failed + QA output as comment
-  │         → escalate (re-plan or human). QA never retries per-actionItem.
+  │   └── ANY FAIL → action item moves to failed + QA output as comment
+  │         → escalate (re-plan or human). QA never retries per-action-item.
   │
   ├── GATE 3: commit + push + CI green (deterministic + commit agent)
   │   ├── git add <affected files>
@@ -772,10 +795,10 @@ Build agent moves actionItem to complete
   │   ├── System runs: git commit -m "<message>"
   │   ├── If auto_push=true in template: git push
   │   ├── gh run watch --exit-status until CI lands green
-  │   └── Fail → actionItem moves to failed + commit/CI output as comment
+  │   └── Fail → action item moves to failed + commit/CI output as comment
   │
-  └── All gates pass → actionItem complete
-      (NO per-actionItem hylla reingest. Ingest is drop-end only, owned by
+  └── All gates pass → action item complete
+      (NO per-action-item hylla reingest. Ingest is drop-end only, owned by
        DROP N END — LEDGER UPDATE. See §9.7 + §15.7 + CLAUDE.md.)
 ```
 
@@ -798,7 +821,7 @@ This keeps the commit flow 95% deterministic (system runs git) with a thin LLM l
 Whether to auto-push after commit is **template-configurable**:
 
 ```toml
-[kinds.build-actionItem]
+[kinds.build]
 auto_push = true   # push after every successful commit (default)
 # auto_push = false  # commit only, push at drop completion
 ```
@@ -808,7 +831,7 @@ When `auto_push = false`, the dispatcher commits locally but defers push. The **
 ### 9.5. Gate Output
 
 Gate stdout/stderr is captured and posted as a `till.comment` on the action item. On failure:
-- ActionItem moves to `failed` (dispatcher uses override auth for `complete → failed` transition)
+- Action item moves to `failed` (dispatcher uses override auth for `complete → failed` transition)
 - `metadata.outcome: "failure"`
 - `metadata.gate_name: "<which gate failed>"`
 - Gate output posted as comment
@@ -829,9 +852,9 @@ All children complete → drop completion check:
 
 This catches edge cases where a builder's commit was deferred or a gate partially completed.
 
-### 9.7. Hylla Reingest — Drop-End Only, Never Per-ActionItem
+### 9.7. Hylla Reingest — Drop-End Only, Never Per-Action-Item
 
-Hylla reingest is a deterministic step, **not a per-actionItem gate**. It fires **once per drop** inside the `DROP N END — LEDGER UPDATE` actionItem, owned by the drop-orch pre-merge on the drop branch. Never per build-actionItem.
+Hylla reingest is a deterministic step, **not a per-action-item gate**. It fires **once per Drop** inside the `closeout` action item, owned by the drop-orch pre-merge on the drop branch. Never per `build`.
 
 ```
 DROP N END — LEDGER UPDATE (drop-orch) →
@@ -849,7 +872,7 @@ Invariants (mirrored from CLAUDE.md + `feedback_orchestrator_runs_ingest.md`):
 - **Never** before `git push` + `gh run watch --exit-status` green.
 - **Only the drop-orch** calls `hylla_ingest`. Build agents, QA agents, commit agent, STEWARD — never. No exceptions.
 
-**QA agents verify against the code as-built, not against a freshly-ingested Hylla graph.** QA reads the current working tree (LSP + git diff) for uncommitted-since-last-ingest deltas. Keeping ingest drop-end only avoids (a) ingest-flooding the Hylla artifact with per-actionItem snapshots and (b) making QA cost proportional to actionItem count. Full drop-end ingest feeds STEWARD's MD writes + planner context for the next drop.
+**QA agents verify against the code as-built, not against a freshly-ingested Hylla graph.** QA reads the current working tree (LSP + git diff) for uncommitted-since-last-ingest deltas. Keeping ingest drop-end only avoids (a) ingest-flooding the Hylla artifact with per-action-item snapshots and (b) making QA cost proportional to action-item count. Full drop-end ingest feeds STEWARD's MD writes + planner context for the next drop.
 
 The template carries Hylla settings (artifact ref, enrichment mode) so the drop-orch reads them programmatically rather than hard-coding per-drop. See §15.7 for STEWARD's consumption of the ingest results via the five level_2 findings drops.
 
@@ -924,7 +947,7 @@ Stripe can rely on thousands of human reviewers to catch what gates miss. We com
 
 Concretely this means every cascade run must exhibit:
 
-- **Deterministic-agentic-deterministic sandwich.** Every build-actionItem is bracketed by deterministic gates on both sides: git-status pre-check + package-lock acquire (in) → builder agent (agentic middle) → `mage ci` + QA agents + commit-agent + push + CI-green watch (deterministic out). No agentic step is ever the final arbiter of "done." The deterministic bookends are what make the agentic middle affordable. (Hylla reingest is drop-end only, not a per-actionItem bookend — see §9.7.)
+- **Deterministic-agentic-deterministic sandwich.** Every `build` action item is bracketed by deterministic gates on both sides: git-status pre-check + package-lock acquire (in) → builder agent (agentic middle) → `mage ci` + QA agents + commit-agent + push + CI-green watch (deterministic out). No agentic step is ever the final arbiter of "done." The deterministic bookends are what make the agentic middle affordable. (Hylla reingest is drop-end only, not a per-action-item bookend — see §9.7.)
 - **2-CI-round hard cap per try, max 2 tries.** From Stripe's Minions: if `mage ci` fails twice on the same try, the try is done; retry policy lives in §14, not inside the agent. Agents do not loop on CI internally.
 - **Mandatory certificate structure on every QA claim.** Premises / Evidence / Trace-or-cases / Conclusion / Unknowns — no batch assertions, no "all tests pass" without enumeration (§11.2). Enforced by QA agent prompts and verified by orchestrator review on escalation.
 - **Hypothesis-refinement loop on every falsification pass.** HYPOTHESIS → EVIDENCE → STATUS (CONFIRMED | REFUTED | REFINED) → REVISION (§11.3). Each hypothesis gets its own comment; the reasoning chain is inspectable after the fact.
@@ -1043,7 +1066,7 @@ These failures must be:
 
 If an agent's auth TTL expires without a state change:
 1. Dispatcher kills the process
-2. ActionItem moves to `failed` with `metadata.outcome: "blocked"`, `metadata.blocked_reason: "timeout"`
+2. Action item moves to `failed` with `metadata.outcome: "blocked"`, `metadata.blocked_reason: "timeout"`
 3. File locks released
 4. Attention item fires
 
@@ -1055,7 +1078,7 @@ If an agent's auth TTL expires without a state change:
 
 All agents get Hylla MCP access for code understanding. The dispatcher provides an `agent-mcp.json` config that includes:
 
-- **Tillsyn MCP** — for actionItem mutations (move state, create items, post comments)
+- **Tillsyn MCP** — for action-item mutations (move state, create items, post comments)
 - **Hylla MCP** — for code understanding (search, graph nav, node full)
 - **Context7** — for library docs (optional, configurable)
 
@@ -1063,7 +1086,7 @@ gopls is excluded (too stateful, slow initialization, not needed for one-shot wo
 
 ### 13.2. Hylla Reingest
 
-Reingest is a **drop-end programmatic step** (Section 9.7), owned by the drop-orch inside `DROP N END — LEDGER UPDATE`. Not a per-build-actionItem gate, not an agent actionItem. The dispatcher calls `hylla_ingest` programmatically from the remote artifact ref after `git push` + `gh run watch --exit-status` green:
+Reingest is a **drop-end programmatic step** (Section 9.7), owned by the drop-orch inside the Drop's `closeout` action item. Not a per-`build` gate, not an agent action item. The dispatcher calls `hylla_ingest` programmatically from the remote artifact ref after `git push` + `gh run watch --exit-status` green:
 
 ```
 hylla_ingest(
@@ -1123,12 +1146,12 @@ This prevents infinite retry loops on infrastructure issues while giving transie
 
 ### 14.4. Escalation Up
 
-When a build actionItem fails after `max-tries` exhausted:
+When a `build` action item fails after `max-tries` exhausted:
 
-1. Build actionItem is permanently `failed`
+1. The `build` action item is permanently `failed`
 2. Attention item fires to the plan-level orchestrator
 3. If `escalation_enabled: true` in template:
-   a. A new plan actionItem is created at the drop level with the failure context
+   a. A new `plan` action item is created at the drop level with the failure context
    b. A planner agent fires to re-plan the drop, incorporating the failure
    c. Planning QA verifies the revised plan
    d. New build tasks are created from the revised plan
@@ -1140,22 +1163,22 @@ When a build actionItem fails after `max-tries` exhausted:
 **Nothing happens in the dark.** Every escalation must produce:
 
 1. A diff of how the plan changed from the original
-2. Why the plan changed (failure context from the failed build actionItem)
+2. Why the plan changed (failure context from the failed `build` action item)
 3. What the planner tried differently
-4. A comment on the original failed actionItem linking to the new plan
+4. A comment on the original failed action item linking to the new plan
 
-The planner agent is responsible for documenting this in its plan actionItem's comments. QA verifies the documentation is present and accurate.
+The planner agent is responsible for documenting this in its `plan` action item's comments. QA verifies the documentation is present and accurate.
 
 ### 14.6. Template Configuration
 
 ```toml
-[kinds.build-actionItem]
+[kinds.build]
 max_tries = 2
 blocked_retries = 2          # additional attempts for external failures
 blocked_retry_cooldown = 60  # seconds between blocked retries
 escalation_enabled = true    # on permanent failure, re-plan at parent level
 
-[kinds.plan-actionItem]
+[kinds.plan]
 max_tries = 2
 escalation_enabled = false   # plan failure goes to human, not further re-planning
 ```
@@ -1170,16 +1193,16 @@ Escalation can be disabled per-kind in the template. When disabled, permanent fa
 
 ### 15.6. Per-drop MD Cleanup Subdrop (drop 0 Convergence)
 
-Every drop's closeout (`closeout-drop` per Section 1.4, previously "drop <N> END — LEDGER UPDATE") MUST include an **MD cleanup actionItem** that:
+Every drop's closeout (`closeout` action item per Section 1.4, previously "drop <N> END — LEDGER UPDATE") MUST include an **MD cleanup action item** that:
 
 1. Scans the drop's shipped work against current MD files (`PLAN.md`, `REFINEMENTS.md`, `HYLLA_REFINEMENTS.md`, `CLAUDE.md`).
 2. Trims entries that landed in this drop — replace the long-form refinement entry with a one-line summary pointing to the drop's `WIKI_CHANGELOG.md` line and the commit SHA.
 3. Removes stale sections where a design question got resolved by the drop's work.
-4. Runs BEFORE the wiki-updater actionItem (when that lands post-drop-4) so the wiki aggregator sees current MD state.
+4. Runs BEFORE the wiki-updater action item (when that lands post-drop-4) so the wiki aggregator sees current MD state.
 
 This prevents `PLAN.md` and the refinement logs from accreting resolved cruft. The commit history + `WIKI_CHANGELOG.md` holds the full audit trail, so trimming is safe.
 
-Pre-cascade (now): the orchestrator performs the MD cleanup actionItem manually during drop-end closeout.
+Pre-cascade (now): the orchestrator performs the MD cleanup action item manually during drop-end closeout.
 Post-cascade (drop 4+): a dedicated `md-cleanup-agent` subtype fires under the closeout drop and is verified by QA.
 
 ### 15.1. Concept
@@ -1327,7 +1350,7 @@ Builder complete → Gates pass → QA Proof + QA Falsification pass
   → Quality/Vuln check fires (third QA step)
   → Uses hylla_graph_nav to trace resource lifecycles
   → N agents do the same checks (configurable redundancy)
-  → All must pass for the build actionItem to be fully verified
+  → All must pass for the `build` action item to be fully verified
 ```
 
 ### 16.3. Configurable Redundancy
@@ -1370,17 +1393,17 @@ Currently Go-only. Each language will need its own quality agent with language-s
 | Feature | What | Why Required for Cascade |
 |---|---|---|
 | **Failed lifecycle state** | Fourth terminal state `failed` across domain / app / adapters / storage / config / capture / snapshot | Agents must represent failure. Gates must move tasks to failed. |
-| **Outcome required on `failed`** | Moving an actionItem to `failed` requires a non-empty `metadata.outcome` (one of `failure`/`blocked`/`superseded`). Empty `outcome` on terminal `failed` is a domain-level validation error. | Without it, a `failed` actionItem is indistinguishable from a `failed-for-unknown-reason` actionItem, and the cascade can't route. |
+| **Outcome required on `failed`** | Moving an action item to `failed` requires a non-empty `metadata.outcome` (one of `failure`/`blocked`/`superseded`). Empty `outcome` on terminal `failed` is a domain-level validation error. | Without it, a `failed` action item is indistinguishable from a `failed-for-unknown-reason` action item, and the cascade can't route. |
 | **Parent-blocks-on-failed-child (always-on, not configurable)** | Parent cannot move to `complete` while any child is `failed`. **Not a template flag. Not a policy option.** Always-on built-in behavior. Bypass only via the supersede path (human CLI, orchestrator version post-dogfood). | Core cascade integrity. A configurable version (`require_children_done`) can be set to false and breaks the cascade silently. Remove the knob. |
-| **Human supersede CLI** | `till actionItem supersede <id> --reason "..."` — human-only command that marks a `failed` actionItem as `superseded` in `metadata.outcome` and transitions `failed → complete`. Bypasses the terminal-state guard because the CLI asserts human intent at the binary boundary. | Currently the human has no way to resolve stuck `failed` items. Before any cascade runs, the human needs to be able to unstick things. |
-| **Auth auto-revoke on terminal state** | Auth session ends when actionItem moves to `complete` or `failed` | Dead agent auth sessions must clean up. "One auth per scope" constraint. |
-| **ActionItem details as prompt** | Agent reads actionItem detail fields as its working brief | Simplifies agent prompts — the actionItem IS the prompt. |
-| **Action-item `paths` as first-class field** | `paths []string` on the action item, planner-set, readable by builder + QA. Domain-level, not buried in metadata JSON. | Plan-QA falsification needs to query siblings' paths to detect cross-actionItem file conflicts (Section 5.3). Without a first-class field, QA has no data to check. Replaces the removed D10 "affected_artifacts". |
+| **Human supersede CLI** | `till action_item supersede <id> --reason "..."` — human-only command that marks a `failed` action item as `superseded` in `metadata.outcome` and transitions `failed → complete`. Bypasses the terminal-state guard because the CLI asserts human intent at the binary boundary. | Currently the human has no way to resolve stuck `failed` items. Before any cascade runs, the human needs to be able to unstick things. |
+| **Auth auto-revoke on terminal state** | Auth session ends when the action item moves to `complete` or `failed` | Dead agent auth sessions must clean up. "One auth per scope" constraint. |
+| **Action-item details as prompt** | Agent reads action-item detail fields as its working brief | Simplifies agent prompts — the action item IS the prompt. |
+| **Action-item `paths` as first-class field** | `paths []string` on the action item, planner-set, readable by builder + QA. Domain-level, not buried in metadata JSON. | Plan-QA falsification needs to query siblings' paths to detect cross-action-item file conflicts (Section 5.3). Without a first-class field, QA has no data to check. Replaces the removed D10 "affected_artifacts". |
 | **Action-item `files` as first-class field (read-only reference)** | `files []string` on the action item, planner-set via TUI file-picker, distinct from `paths` (which is edit-scope). Holds reference files the builder should read but not edit. | The drop 4.5 file-viewer (§24) and mention-routing (§23) both read `files` to render attached material. Without a first-class field, reference attachments leak into metadata JSON and can't be rendered in the TUI. Validation enforces files exist in the repo at creation time. |
 | **Action-item `start_commit` / `end_commit`** | Two fields on the action item. `start_commit` set at creation (current HEAD). `end_commit` set at move-to-complete (current HEAD). Domain-level. | Needed before the dispatcher takes over commits. Pre-dogfood: orchestrator + dev manage git manually, these fields just record the boundary. Post-dogfood: dispatcher reads these to decide reingest/commit scope. |
 | **Creation gated on clean git for declared paths** | At action-item creation, if any path in `paths` is dirty in `git status --porcelain`, creation fails with an error telling the orchestrator to clean up git first. | Without this gate, a cascade agent (or orchestrator) inherits uncommitted state and silently mixes it into its work. Always-on behavior. |
 | **Orchestrator supersede auth (deferred, post-dogfood)** | Programmatic supersede via orchestrator auth (not human CLI). | Only needed when the orchestrator has to unstick things autonomously. Pre-dogfood, the human CLI is enough. Keep this out of drop 1; it ships in drop 11. |
-| **`drop-human-verify` subdrop kind** | New kind for dev-gated subdrops that bracket every drop (START — PLANNING CONFIRMATION, END — REVIEW DONE + CORRECT — see §2.2). Shape: subdrop with an attention item child addressed to `@dev`, `blocked_by` semantics so parent drop cannot complete until it's signed off. | The START/END bracketing rule (§2.2) needs a real kind to hang off of, not prose. Pre-drop-3 template encoding, the orchestrator creates these manually with `kind='actionItem', scope='actionItem'` + `Role: human-verify` in the description (per the bare-root `CLAUDE.md` pre-drop-2 creation rule). drop 3 promotes to a template kind. |
+| **`human-verify` kind (landed in Drop 1.75)** | Dev-gated action items that bracket every Drop (START — PLANNING CONFIRMATION, END — REVIEW DONE + CORRECT — see §2.2). Shape: `human-verify` action item with an attention item child addressed to `@dev`, `blocked_by` semantics so parent `plan` cannot complete until it's signed off. | The START/END bracketing rule (§2.2) needs a real kind to hang off of, not prose. Drop 1.75's kind collapse lands `human-verify` as one of the 12 closed `action_items.kind` values — orchestrator creates these with `kind='human-verify'` directly, no `Role:` prose workaround. Drop 3 adds template-level auto-generation of start/end `human-verify` items when a top-level `plan` is created. |
 
 ### 17.2. Not Prerequisites (Removed from cascade scope)
 
@@ -1390,7 +1413,7 @@ Currently Go-only. Each language will need its own quality agent with language-s
 | **`require_children_done` as a configurable policy** | Removed as a knob. Replaced by the always-on behavior in 17.1. Having it as a setting meant the default could (and did) ship as `false`, silently breaking cascade integrity. |
 | **Level-based signaling** | Agents fail and die. Dispatcher reads failure. No runtime signaling. |
 | **Auth approval loop for cascade agents** | Agent auth is system-issued inside the cascade, no human approval step. |
-| **TUI rendering of `failed` (deferred)** | Post-dogfood. Pre-dogfood: the orchestrator exposes failures to the human via a CLI subcommand (`till actionItem list --state failed` or `till failures list`). TUI rendering is nice-to-have, not load-bearing. |
+| **TUI rendering of `failed` (deferred)** | Post-dogfood. Pre-dogfood: the orchestrator exposes failures to the human via a CLI subcommand (`till action_item list --state failed` or `till failures list`). TUI rendering is nice-to-have, not load-bearing. |
 
 ---
 
@@ -1455,7 +1478,7 @@ Each worktree needs its own locally-registered MCP server pointing at the worktr
 
 **Every drop is bracketed by dev-gated START/END subdrops (applies to every drop below).** See §2.2 for the structural rule.
 
-- **`DROP N START — PLANNING CONFIRMATION WITH DEV`** — first child of the drop. Dev reviews scope, plan shape, and any agent/system-prompt decisions before the planning agent fires. Absorbs the `DROP N START — REFINEMENT REVIEW` actionItem as a sibling inside the bracket (the refinement review feeds the planning confirmation, they happen at the same drop-start checkpoint).
+- **`DROP N START — PLANNING CONFIRMATION WITH DEV`** — first child of the drop. Dev reviews scope, plan shape, and any agent/system-prompt decisions before the planning agent fires. Absorbs the `DROP N START — REFINEMENT REVIEW` action item as a sibling inside the bracket (the refinement review feeds the planning confirmation, they happen at the same drop-start checkpoint).
 - **Five STEWARD-scope level_2 findings drops + one STEWARD-owned refinements-gate** — drop-orch creates these at drop spin-up (see §15.7 + §15.8). Level_2 findings drops sit under the persistent level_1 STEWARD parents (`HYLLA_FINDINGS` / `LEDGER` / `WIKI_CHANGELOG` / `REFINEMENTS` / `HYLLA_REFINEMENTS`). The refinements-gate item `DROP_N_REFINEMENTS_GATE_BEFORE_DROP_N+1` sits inside drop N's tree, `blocked_by` every other drop N item + the five level_2 findings drops. STEWARD works the refinements-gate post-merge (covers both next-drop refinements and STEWARD-self refinement — expect non-zero STEWARD-self refinement every drop). The refinements-gate blocks drop N's level_1 closure until STEWARD closes it.
 - **`DROP N END — REVIEW DONE + CORRECT`** — last child of the drop. `blocked_by` `DROP N END — LEDGER UPDATE` + the refinements-gate. Dev confirms all work landed correctly; covers the doc-review checklist below.
 
@@ -1530,24 +1553,24 @@ Sequenced **after Drop 0** and **before Drop 1 can start**. This is a hotfix on 
 
 The hard prerequisites from Section 17.1, shipped cleanly against the fresh project. This is the foundation drop 2+ sits on. Each item must pass `mage ci` + QA proof + QA falsification before it's marked complete.
 
-- [ ] **`go.mod` `replace` directive cleanup** *(drop 1 first-actionItem, before any lifecycle work)*. Strip every `replace` directive in `go.mod` except the fantasy-fork replacement (dev maintains a personal fork of `go-fantasy` / equivalent for this project). Grep-audit `go.mod` for every `replace (...)` stanza, delete any that point at local filesystem paths left over from experimentation, delete any that pin an upstream to an old version for reasons nobody still remembers, and keep only the fantasy-fork line documented inline with a `// fantasy-fork: <rationale>` comment. After edits: `go mod tidy` (via mage wrapper if one exists; if not, this is the one raw-`go` exception justified by being a module-file operation the dev runs, not an agent), `mage ci`. QA-proof + QA-falsification required — a stray `replace` that points at a missing path silently breaks every downstream build. Motivation: dev direction (2026-04-16) — "only replace is supposed to be my fork of fantasy."
+- [ ] **`go.mod` `replace` directive cleanup** *(drop 1 first action item, before any lifecycle work)*. Strip every `replace` directive in `go.mod` except the fantasy-fork replacement (dev maintains a personal fork of `go-fantasy` / equivalent for this project). Grep-audit `go.mod` for every `replace (...)` stanza, delete any that point at local filesystem paths left over from experimentation, delete any that pin an upstream to an old version for reasons nobody still remembers, and keep only the fantasy-fork line documented inline with a `// fantasy-fork: <rationale>` comment. After edits: `go mod tidy` (via mage wrapper if one exists; if not, this is the one raw-`go` exception justified by being a module-file operation the dev runs, not an agent), `mage ci`. QA-proof + QA-falsification required — a stray `replace` that points at a missing path silently breaks every downstream build. Motivation: dev direction (2026-04-16) — "only replace is supposed to be my fork of fantasy."
 - [ ] **Install local git hooks for gofumpt + `mage ci` parity** *(drop 0 refinement, scheduled here as drop 1 first item)*. Add committed `.githooks/pre-commit` that runs a new `mage format-check` target (public wrapper around the existing private `formatCheck()` in `magefile.go:218-236`) and `.githooks/pre-push` that runs `mage ci` in full. Add a `mage install-hooks` target that sets `core.hooksPath = .githooks` so the tracked hook scripts become the active hooks for any fresh clone. Also fix the `mage format` no-arg ergonomics wart discovered in drop 0 closeout: `func Format(path string) error` (`magefile.go:200`) requires a positional arg, making the `path == "" || path == "."` branch in the body unreachable from CLI (`mage format` errors with "not enough arguments"); split into `Format()` (no-arg = whole tree via `trackedGoFiles()`) and `FormatPath(path string)` (scoped), or adopt a variadic form. Motivation: drop 0 surfaced that gofumpt drift landed on `main` because no local gate catches it pre-commit — `mage ci` is the CI-parity gate but runs too late to prevent red pushes. Hooks must remain bypassable via `--no-verify` per existing discipline (global CLAUDE.md rule: never bypass without explicit dev instruction). QA-proof + QA-falsification required — the hook scripts are the local build gate, can't silently break.
 - [ ] `failed` lifecycle state (fourth terminal state) across domain / app / adapters / storage / config / capture / snapshot. Fix the HEAD gaps (gofmt regression in `app_service_adapter_outcome_test.go`, empty-outcome acceptance in `validateMetadataOutcome`).
 - [ ] Require non-empty `metadata.outcome` on any transition to `failed` (domain-level validation error, not just value whitelist).
 - [ ] **Remove** `require_children_done` as a configurable option. Replace with always-on parent-blocks-on-failed-child behavior enforced at every hierarchy level. No template flag, no policy knob. Bypass only via the supersede path below.
-- [ ] Human supersede CLI: `till actionItem supersede <id> --reason "..."` — marks `failed` actionItem as `metadata.outcome: "superseded"` and transitions `failed → complete`. Bypasses the terminal-state guard because the CLI asserts human intent at the binary boundary.
+- [ ] Human supersede CLI: `till action_item supersede <id> --reason "..."` — marks `failed` action item as `metadata.outcome: "superseded"` and transitions `failed → complete`. Bypasses the terminal-state guard because the CLI asserts human intent at the binary boundary.
 - [ ] Auth auto-revoke on terminal state (`complete` or `failed`).
 - [ ] **Server-infer `client_type` on auth request create** *(gap surfaced in drop 0)*. Remove `client_type` from the `till.auth_request(operation=create)` MCP tool schema — callers shouldn't declare transport; the server knows. Entrypoint adapters stamp it: MCP-stdio adapter stamps `"mcp-stdio"`, TUI stamps `"tui"`, CLI stamps `"cli"`. Tighten `app.Service.CreateAuthRequest` to reject empty `ClientType` at create time (matches the existing approve-path check in `autentauth.Service.ensureClient`) so the asymmetric validation bug that bit drop 0 — create accepted empty, approve rejected empty with `ErrInvalidClientType` — is structurally unreachable. Governance + display still consume `client_type` as a first-class field; only the caller responsibility moves server-side. MCP-layer tests drop the field; domain-layer tests keep it on `CreateAuthRequestInput` since that's the domain boundary. `client_id` stays caller-supplied (same transport can come from different software).
 - [ ] **Reject unknown keys across all MCP mutation paths** *(gap surfaced in drop 0)*. `till.project(operation=create)` silently dropped every non-schema key in my drop-0 metadata payload — caller thought fields landed, they didn't. Same asymmetric-validation pattern as the `client_type` bug above. Audit every `till.*` mutation tool (`till.project`, `till.action_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.capability_lease`, `till.kind`, `till.template`) and every nested metadata/extension object each one accepts. Every MCP handler must reject unknown keys with a structured error naming the offending key and the accepted schema — never silent-drop. If extension-style freeform fields are wanted for any surface, add an explicit named `extensions map[string]string` (or equivalent) to the domain type so it's documented and validated, not an anything-goes sink. Add golden tests asserting the error shape for each handler. Scope note: this is the *validation* fix; adding new first-class cascade fields to the project node is drop 4's dispatcher prerequisite, not this item.
-- [ ] **PATCH semantics on all update handlers — no more silent full-replace** *(gap surfaced in drop 0; second repro confirmed in 18.2 closeout)*. `till.project(operation=update)` with a partial payload (only `name` + `metadata`) wiped the stored `description` back to empty string — the handler is full-replace without documenting it. Second silent-data-loss bug in the same family as unknown-key drop above. **Live second repro from 18.2 closeout (2026-04-14)**: `till.action_item(operation=update)` on actionItem `f4334081-84ad-47a4-bcf9-238c2f915ad2` passing only `title` + `metadata` wiped `description` (full rewrite contract) and `labels` (`["agents","docs","orchestrator-scope","drop-0"]`). Confirms the behavior is handler-family-wide, not project-only. Audit every `till.*` update/mutation handler for the same behavior (`till.project`, `till.action_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`). Pick ONE semantics per handler and enforce it: either (a) true PATCH — only provided fields change, omitted fields preserved — which matches caller intuition and is strongly preferred, or (b) explicit full-PUT with a required `replace_all: true` flag that forces the caller to acknowledge they are overwriting. Never silently wipe fields because the caller didn't repeat them. Preserve the drop 0 precedent in tests: `update(name, metadata)` must leave `description` intact; `till.action_item.update(title, metadata)` must leave `description` + `labels` intact. **Third repro (2026-04-14, 18.10B closeout)**: builder on 18.10B + 18.7 hit it again — a `till.action_item.update(title, ...)` with no `description` arg cleared 18.7's stored description; builder worked around by re-calling update with the full original description restored. Evidence that every orchestrator / builder round-trip through update is a latent data-loss risk until this lands.
-- [ ] **Accept `state` in place of `column_id` on `till.action_item(operation=create)`; stop leaking column UUIDs into the agent contract** *(gap surfaced in drop 0)*. Fresh project had auto-seeded default columns (`To Do`, `In Progress`, `Done`) but `till.action_item(op=create)` rejects the call unless the caller passes the literal column UUID — and no MCP op exposes column UUIDs (`till.capture_state` loads them for state-hashing but does not surface them; there is no `list_columns` operation). An orchestrator following MCP-only discipline has no way to discover the UUID. Column identity is a UI/layout concern; agents only care about lifecycle state. Fix: `till.action_item(op=create)` must accept `state` (`todo` / `in_progress` / `done` / `failed` once drop 1 adds it) and resolve the column UUID server-side via the existing `resolveActionItemColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop callers that genuinely know the UUID, but make `state` the documented agent-facing input and reject the call only when *both* are empty. Same cleanup on `till.action_item(op=move)` where `to_column_id` currently faces the same leak — accept `state` and resolve internally. Add a golden test proving an orchestrator with no column knowledge can create a action item purely by `state`. No column-listing MCP op needs to be added; the goal is to make column IDs invisible to the agent surface, not to expose them. **Second + third repro (2026-04-17)**: both the `rak` and `fckin` template-free projects blocked their DROP_1_ORCH / DROP_1.5_ORCH-equivalent launches the same way — agent couldn't create any action item because `column_id` is required at the MCP boundary and no discovery op exists; dev had to hand-surface column UUIDs via direct sqlite query and paste them into the orchestrator prompt. Confirms the fix is launch-gating for every fresh project using the cascade model, not just drop 0.
-- [ ] ActionItem details as prompt (agent reads actionItem fields as working brief).
+- [ ] **PATCH semantics on all update handlers — no more silent full-replace** *(gap surfaced in drop 0; second repro confirmed in 18.2 closeout)*. `till.project(operation=update)` with a partial payload (only `name` + `metadata`) wiped the stored `description` back to empty string — the handler is full-replace without documenting it. Second silent-data-loss bug in the same family as unknown-key drop above. **Live second repro from 18.2 closeout (2026-04-14)**: `till.action_item(operation=update)` on action item `f4334081-84ad-47a4-bcf9-238c2f915ad2` passing only `title` + `metadata` wiped `description` (full rewrite contract) and `labels` (`["agents","docs","orchestrator-scope","drop-0"]`). Confirms the behavior is handler-family-wide, not project-only. Audit every `till.*` update/mutation handler for the same behavior (`till.project`, `till.action_item`, `till.comment`, `till.handoff`, `till.attention_item`, `till.kind`, `till.template`). Pick ONE semantics per handler and enforce it: either (a) true PATCH — only provided fields change, omitted fields preserved — which matches caller intuition and is strongly preferred, or (b) explicit full-PUT with a required `replace_all: true` flag that forces the caller to acknowledge they are overwriting. Never silently wipe fields because the caller didn't repeat them. Preserve the drop 0 precedent in tests: `update(name, metadata)` must leave `description` intact; `till.action_item.update(title, metadata)` must leave `description` + `labels` intact. **Third repro (2026-04-14, 18.10B closeout)**: builder on 18.10B + 18.7 hit it again — a `till.action_item.update(title, ...)` with no `description` arg cleared 18.7's stored description; builder worked around by re-calling update with the full original description restored. Evidence that every orchestrator / builder round-trip through update is a latent data-loss risk until this lands.
+- [ ] **Accept `state` in place of `column_id` on `till.action_item(operation=create)`; stop leaking column UUIDs into the agent contract** *(gap surfaced in drop 0)*. Fresh project had auto-seeded default columns (`To Do`, `In Progress`, `Done`) but `till.action_item(op=create)` rejects the call unless the caller passes the literal column UUID — and no MCP op exposes column UUIDs (`till.capture_state` loads them for state-hashing but does not surface them; there is no `list_columns` operation). An orchestrator following MCP-only discipline has no way to discover the UUID. Column identity is a UI/layout concern; agents only care about lifecycle state. Fix: `till.action_item(op=create)` must accept `state` (`todo` / `in_progress` / `done` / `failed` once drop 1 adds it) and resolve the column UUID server-side via the existing `resolveActionItemColumnIDForState` helper (`internal/adapters/server/common/app_service_adapter_mcp.go:811`). Keep `column_id` accepted for TUI drag-and-drop callers that genuinely know the UUID, but make `state` the documented agent-facing input and reject the call only when *both* are empty. Same cleanup on `till.action_item(op=move)` where `to_column_id` currently faces the same leak — accept `state` and resolve internally. Add a golden test proving an orchestrator with no column knowledge can create an action item purely by `state`. No column-listing MCP op needs to be added; the goal is to make column IDs invisible to the agent surface, not to expose them. **Second + third repro (2026-04-17)**: both the `rak` and `fckin` template-free projects blocked their DROP_1_ORCH / DROP_1.5_ORCH-equivalent launches the same way — agent couldn't create any action item because `column_id` is required at the MCP boundary and no discovery op exists; dev had to hand-surface column UUIDs via direct sqlite query and paste them into the orchestrator prompt. Confirms the fix is launch-gating for every fresh project using the cascade model, not just drop 0.
+- [ ] Action-item details as prompt (agent reads action-item fields as working brief).
 - [ ] First-class `paths []string` field on action items (planner-set, readable by builder + QA). Domain-level field, not buried in metadata JSON. Replaces the removed `affected_artifacts`.
 - [ ] First-class `packages []string` field on action items (covers every file in `paths`). Used by package-level blocking (Section 5.2).
 - [ ] First-class `files []string` field on action items — set of files **attached to** the drop (distinct from `paths`). Populated by the planner via the TUI file-picker (drop 4.5 §24) so a drop can carry reference material (existing code the builder should read, prior-design docs, sibling-drop output) without those files being counted as edit-scope. `files` is **read-only reference**; `paths` is **edit-scope**. The drop 4.5 file-viewer (§24) reads `files` to render attached content with `charmbracelet/glamour` and show `git diff` against `start_commit`. Validation: every `files` entry must exist in the repo at creation time; duplicates across `files` + `paths` are allowed (a file can be both edit-scope and reference). QA-proof + QA-falsification verify that the planner populated `files` where reference material is needed (Plan QA falsification treats missing reference attachments on work that depends on external context as a plan gap).
 - [ ] First-class `start_commit` / `end_commit` fields on action items. `start_commit` set at creation (current HEAD). `end_commit` set at move-to-complete (current HEAD).
 - [ ] Creation gated on clean git for declared paths: if any path in `paths` is dirty in `git status --porcelain`, creation fails with an error telling the orchestrator/dev to clean git first. Always-on.
-- [ ] CLI failure listing: `till actionItem list --state failed` (or `till failures list`) so the human can see `failed` tasks without TUI rendering. TUI rendering of `failed` is deferred post-dogfood.
+- [ ] CLI failure listing: `till action_item list --state failed` (or `till failures list`) so the human can see `failed` tasks without TUI rendering. TUI rendering of `failed` is deferred post-dogfood.
 - [ ] **Deferred post-dogfood (documented here, not built yet):** orchestrator programmatic supersede via system-issued auth. Human CLI is enough for Wave-1-equivalent scope.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files to reflect the new required fields, the always-on block behavior, and the supersede CLI.
 
@@ -1572,18 +1595,20 @@ Sequenced **after Drop 1 + Drop 1.5** and **before Drop 2**. This drop unblocks 
 
 ### 19.2. drop 2 — Hierarchy Refactor
 
-This is the touchiest code change. Each step ripples through 5+ packages. Incremental, `mage ci` after each step. Hylla reingest remains drop-end only (§9.7) — run the full drop-2 reingest inside `DROP 2 END — LEDGER UPDATE`, not per-schema-migration-step.
+This is the touchiest code change. Each step ripples through 5+ packages. Incremental, `mage ci` after each step. Hylla reingest remains drop-end only (§9.7) — run the full drop-2 reingest inside Drop 2's `closeout` action item, not per-schema-migration-step.
 
-- [ ] **Remove `branch`**: delete from schema, domain, TUI, templates. Migrate existing branches to top-level drops.
-- [ ] **Rename `phase` → `drop`**: schema migration, domain constants, TUI labels, MCP adapter normalization, templates, docs.
+**Pre-Drop-2 state (landed in Drop 1.75):** `kind_catalog` is a closed 12-value enum on `action_items.kind`; `projects.kind` column is dropped; `branch` and `phase` kinds are rewritten to `plan` by `main/scripts/drops-rewrite.sql`; `scope` is mirrored from `kind`; `metadata.role` is NOT yet a first-class field (role still lives in description prose). Drop 2 picks up from there.
+
+- [ ] **Promote `metadata.role` to a first-class domain field.** Values: `builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`, `research`. Migration: parse `Role: <name>` from every existing action_item description and hydrate `metadata.role` at rename-time. `research` has no pre-collapse kind to hydrate from — new research action items post-Drop-2 set it at creation time.
 - [ ] **Rename `done` → `complete`**: DB column values, domain `StateComplete`, TUI labels, MCP normalization, templates, docs. Combine with any leftover `failed` state migration since they touch the same surfaces.
-- [ ] **Allow infinite drop nesting**: update domain validation to allow drop-under-drop. Update TUI tree rendering.
-- [ ] **Dotted-address fast-nav (CLI + MCP read paths, TUI bindings in drop 4.5)** *(§1.4 convergence landing in drop 2)*. Implement dotted-address resolution (`N`, `N.M`, `N.M.K`, `<proj_name>-<dotted>`) as a pure resolver in `internal/domain` or `internal/app`: takes a dotted string + project context, returns the UUID of the matching drop (or an error if ambiguous/missing). Wire into `till.action_item(operation=get)` and any other MCP read operation that takes a action-item identifier — accept either UUID or dotted form. Wire into CLI read commands the same way. **Dotted addresses remain read-only**: all mutation paths (`till.action_item(op=update|move|create)`, `till.comment(op=create)`, etc.) reject dotted form and require UUIDs. Motivation: §1.4 pins dotted addresses as read-only shorthand for unambiguous cross-drop references; hierarchy refactor is the natural landing window since the resolver depends on the stable parent-child shape Drop 2 produces. TUI keybindings that consume the resolver (type `0.1.5.2` → jump there) land in drop 4.5 (§24) alongside the rest of the TUI overhaul.
-- [ ] **Update kind-hierarchy ASCII art in both `CLAUDE.md` copies** to reflect the post-drop-2 "only `project` + `drop` kinds + `metadata.role`" target state. Current ASCII still shows `plan-actionItem` / `qa-check` / `actionItem` as distinct kinds — contradicts the collapse. Fix during the rename sweep since it touches the same surfaces.
-- [ ] **Add `research` to the `metadata.role` vocabulary** alongside the eight existing values (`builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`). No migration needed — `research` has no pre-collapse kind to hydrate from; new research drops post-Drop-2 set `metadata.role: "research"` at creation time. Agent bindings: `go-research-agent` (Go projects), `fe-research-agent` (FE projects). Also surface `research` in the §19.1.6 auth approval cascade's non-orch role list (already noted there) so orch self-approval covers research subagent auth from day one. Research agents are read-only — they own their own Tillsyn action item, compile findings, post a closing comment, and die; they never edit code, never route work, never create action items.
-- [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files for the new vocabulary.
+- [ ] **Allow infinite `plan` nesting**: update domain validation to allow `plan`-under-`plan`. Update TUI tree rendering. (Kind collapse in Drop 1.75 already removed the branch/phase nesting barrier; Drop 2 enforces the remaining invariants on `action_items.kind`: `build` is leaf-only, `human-verify` carries no `plan`/QA children, `plan-qa-*`/`build-qa-*` appear only as auto-children of their matching parent kind.)
+- [ ] **Dotted-address fast-nav (CLI + MCP read paths, TUI bindings in drop 4.5)** *(§1.4 convergence landing in drop 2)*. Implement dotted-address resolution (`N`, `N.M`, `N.M.K`, `<proj_name>-<dotted>`) as a pure resolver in `internal/domain` or `internal/app`: takes a dotted string + project context, returns the UUID of the matching node (or an error if ambiguous/missing). Wire into `till.action_item(operation=get)` and any other MCP read operation that takes an action-item identifier — accept either UUID or dotted form. Wire into CLI read commands the same way. **Dotted addresses remain read-only**: all mutation paths (`till.action_item(op=update|move|create)`, `till.comment(op=create)`, etc.) reject dotted form and require UUIDs.
+- [ ] **Commit cadence — discussion item (`kind: discussion`).** Current default commits after every build QA pass, which is too aggressive. Converged proposal: auto-generate a `commit` child under any `plan` at level ≥ 2 whose subtree contains at least one `build` in `complete` state, fired at plan close-time (not creation) so no-build plans (pure research / discussion / refinement) don't accrue orphan commit items. Templates set `auto_commit = false` per-kind for local-only outputs (SQL migration scripts, scratch work). **Edge cases to resolve in the discussion**: multi-PR Drops (one commit per plan vs one per Drop), cascade-owned vs dev-owned commit, partial-success subtrees (some `build` children complete, some failed), and the hard-fast-rule-vs-template-override balance. Convergence lands on the discussion item's description before Drop 2 `commit` wiring in Drop 4 (§19.4).
+- [ ] **`scope` column — defer removal to a future refinement drop.** Drop 1.75 mirrored `scope` from `kind` to avoid a ~20-file Go ripple (`ActionItem` struct, `NewActionItem` validator, `DefaultActionItemScope`, `IsValidWorkItemAppliesTo`, SQL column + indexes, MCP request schemas). Drop 2 adds a follow-up refinement bullet (log in REFINEMENTS) to strip the column Hylla-assisted in a later dedicated drop. No work in Drop 2 itself.
+- [ ] **Research as a standalone kind in documentation and agent prompts.** `research` is its own `action_items.kind` (not a role on a plan) — read-only investigation, no auto-QA children, posts findings in a closing comment, dies. Surface this in agent-file docs, `go-research-agent` subagent prompt, and the §19.1.6 auth approval cascade's non-orch role list so orch self-approval covers research subagent auth from day one.
+- [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files for the `metadata.role` promotion and `done → complete` rename.
 
-**Order matters:** Remove `branch` first (least entangled), then `phase → drop` (more entangled but no state-machine changes), then `done → complete` (most entangled, touches state machine + `failed` state).
+**Order matters:** `metadata.role` first (no state-machine changes, pure metadata migration), then `done → complete` (touches state machine + `failed` state), then infinite-nesting validation (depends on the new kind vocabulary already in place from Drop 1.75).
 
 ### 19.3. drop 3 — Template Configuration
 
@@ -1607,7 +1632,7 @@ This is the touchiest code change. Each step ripples through 5+ packages. Increm
 - [ ] **WIKI glossary as single canonical source for cascade vocabulary.** Add a dedicated `## Cascade Vocabulary` section to `main/WIKI.md` owning: structural_type enum + each value's definition + atomicity rules (droplet has zero children, confluence has non-empty `blocked_by`, segment can recurse) + relationship to `metadata.role` (orthogonal axes) + worked examples ("make a confluence action_item at `0.2.5` merging work from `0.2.3` and `0.2.4` to produce the integrated test run"). Every other doc — PLAN, README, CLAUDE, STEWARD_ORCH_PROMPT, agent prompt files, bootstrap skills — holds a **pointer** to the WIKI section, not a duplicate definition. Drift risk mitigation: QA-falsification sweeps any vocabulary redefinition outside the glossary as a mitigation-required finding.
 - [ ] **Plan-QA-falsification attack surface additions.** Teach the plan-qa-falsification pass (prompt + checklist) these new attack vectors:
   - **Droplet-with-children** — any `structural_type=droplet` action_item with one or more children is a misclassification; real shape is segment or drop.
-  - **Segment path/package overlap without `blocked_by`** — sibling segments within the same drop sharing `paths[]` entries or `packages[]` entries without an explicit `blocked_by` between them are a race waiting to fire. Same rule as file/package locking on build-droplets, applied at the segment level.
+  - **Segment path/package overlap without `blocked_by`** — sibling segments within the same drop sharing `paths[]` entries or `packages[]` entries without an explicit `blocked_by` between them are a race waiting to fire. Same rule as file/package locking on `build` action items, applied at the segment level.
   - **Empty-`blocked_by` confluence** — confluence without non-empty `blocked_by` is a definitional contradiction. Flag and refuse.
   - **Confluence with partial upstream coverage** — confluence whose `blocked_by` doesn't name every segment/drop it claims to integrate. Planner must list every upstream.
   - **Role/structural_type contradiction** — role=`qa-proof` on a non-droplet; role=`builder` on a confluence; role=`planner` on a droplet without a downstream integration target. Each combination has narrow legitimate shapes.
@@ -1640,7 +1665,7 @@ The minimal dispatch loop, now that lifecycle + template fields exist.
 - [ ] Gate execution: run template-defined gates after builder completion.
 - [ ] Commit agent (haiku) integration for commit message formation.
 - [ ] Git commit + optionally push as programmatic step — with the no-fallback, orchestrator-escalation path from Section 9.3. **Dispatcher writing to git is still opt-in at this drop;** dev can leave it off and keep managing git manually until confidence lands.
-- [ ] Hylla reingest programmatic integration — **drop-end only**, as part of `DROP N END — LEDGER UPDATE` drop-orch flow. Not a per-build-actionItem gate (see §9.7).
+- [ ] Hylla reingest programmatic integration — **drop-end only**, as part of the Drop's `closeout` action item flow. Not a per-`build` gate (see §9.7).
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files.
 
 ### 19.4.5. drop 4.5 — Frontend + TUI Overhaul (Concurrent with drop 5 Dogfooding)
@@ -1650,7 +1675,7 @@ The minimal dispatch loop, now that lifecycle + template fields exist.
 **Scope.** All TUI + mention-routing UX work consolidates here so the TUI ergonomics land as a coherent overhaul rather than scattered bullets across drops 5-9.
 
 - [ ] **File viewer with `charmbracelet/glamour`** *(§24)*. TUI gains a file-viewer pane that renders drop-attached files via `glamour` — markdown with theme-aware rendering, syntax-highlighted fenced code blocks via glamour's chroma integration. Reads the drop's `files []string` (drop 1). Keybindings: open file-picker to attach, jump to attached file list, cycle through attached files, toggle glamour render vs. raw view. See §24 for the full viewer design.
-- [ ] **Path picker + file picker (TUI)** *(§24)*. Two distinct pickers: path-picker for edit-scope (`paths`), file-picker for reference attachments (`files`). Both navigate the repo tree, filter by glob, multi-select. Path-picker enforces file-exists validation and package inference (derive `packages` from selected paths for builder-actionItem creation). File-picker is laxer — any repo-tracked file is attachable.
+- [ ] **Path picker + file picker (TUI)** *(§24)*. Two distinct pickers: path-picker for edit-scope (`paths`), file-picker for reference attachments (`files`). Both navigate the repo tree, filter by glob, multi-select. Path-picker enforces file-exists validation and package inference (derive `packages` from selected paths for `build` action-item creation). File-picker is laxer — any repo-tracked file is attachable.
 - [ ] **Git-diff-per-action-item against `start_commit`** *(§24)*. For any drop with `start_commit` set, render a split-view diff of the drop's `paths` against `start_commit..HEAD` (or `start_commit..end_commit` if complete). Uses go-git or shells out to `git diff`; rendering via glamour's diff lexer. Live-updates on file-watcher events while the drop is `in_progress`.
 - [ ] **Dotted-address fast-nav TUI bindings** *(§1.4 + drop 2 follow-through)*. Consume the read-only dotted-address resolver landed in drop 2. Keybinding (default `g` for "go-to"): prompt accepts `0.1.5.2` or `tillsyn-0.1.5.2`, resolves to action-item UUID, jumps focus + scrolls tree to that node. Handles `<proj_name>-<dotted>` cross-project form by switching project context first.
 - [ ] **Mention-routing UX** *(§23)*. TUI surface for the `@`-mention routing system defined in §23. Inline comment composer that autocompletes `@dev` / `@builder` / `@qa` / `@qa-proof` / `@qa-falsification` / `@orchestrator` / `@research` / `@human`; on post, the comment is wired into the Tillsyn mention-routing backend so addressed parties see it in their Action Required list. **Requires a planning subdrop** (per §2.2 START bracketing rule) because the system-prompt decisions for dispatched cascade agents to answer `@`-addressed comments are load-bearing and must be confirmed with dev before builder fires.
@@ -1663,7 +1688,7 @@ From here on, the cascade can build itself.
 - [ ] Planner agent integration: agent creates child action items via MCP.
 - [ ] Planning QA integration: plan-qa-proof and plan-qa-falsification auto-fire.
 - [ ] Plan acceptance flow: plan QA pass → children become eligible.
-- [ ] Template child_rules for plan-actionItem → plan-qa-proof + plan-qa-falsification.
+- [ ] Template child_rules for `plan` → `plan-qa-proof` + `plan-qa-falsification`, and `build` → `build-qa-proof` + `build-qa-falsification`.
 - [ ] Validate the cascade flow end-to-end on real Tillsyn work (start dogfooding).
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files.
 
@@ -1672,7 +1697,7 @@ From here on, the cascade can build itself.
 - [ ] Retry tracking per action item (attempt count in metadata).
 - [ ] Re-fire on failure (up to max-tries).
 - [ ] External failure detection + blocked retries (max-tries + 2).
-- [ ] Escalation up: failed build → new plan actionItem at parent level.
+- [ ] Escalation up: failed `build` → new `plan` action item at parent level.
 - [ ] Escalation tracking: plan diff, failure context documentation.
 - [ ] Template configuration for escalation_enabled.
 - [ ] **Per-drop wrap-up:** update CLAUDE.md + agent files.
@@ -1744,12 +1769,12 @@ After real dogfooding reveals what works and what doesn't.
   - [ ] **Cross-project orchestrator sessions**: today the hook injects every valid bundle. If the orchestrator works on multiple projects concurrently it gets multiple bundles injected; fine today, may want cwd-scoped filtering later.
   - [ ] **Port to Linux / Windows** if the project ever runs there — the file semantics are portable; only the `date -j -u -f` parsing in the hook script is macOS-specific and needs a GNU-date alt path.
   - [ ] **Integration with `till auth session show`**: today the CLI's `show` command redacts the secret. If a user wants to seed the cache for a pre-existing session, they can't. Add `till auth session reveal --session-id <id>` (interactive, requires TTY, logs an attention item) so seeding works without re-claiming. Lower priority — the cache is normally written at claim time where the secret is already in hand.
-- [ ] **Cascade Tree Structure docs relocation — MVP docs prep** *(surfaced during 2026-04-17 CLAUDE.md size-cleanup sweep)*. The authoritative "Cascade Tree Structure (Template Architecture)" section — kind hierarchy diagram, required-children rules, agent bindings table, post-build gates, blocker semantics, state-trigger dispatch, pre-Drop-2 creation rule — currently lives in both `main/CLAUDE.md` and the bare-root `CLAUDE.md`. It's not duplicated anywhere in `PLAN.md` today. Before MVP release, relocate the canonical text into `PLAN.md` (natural home: a new top-level section near §3 "The Cascade Model" or as an explicit §3.x "Template Architecture by Kind") and shrink both `CLAUDE.md` bodies to a short summary + pointer. Rationale: `PLAN.md` is the documented source of truth for cascade architecture (per each `CLAUDE.md`'s "Cascade Plan" pointer); having the tree structure live in `CLAUDE.md` instead is a structural inversion that will confuse OSS readers once MVP docs are written. QA-proof + QA-falsification: verify `PLAN.md` version is complete (no content dropped), both `CLAUDE.md` pointers resolve correctly, and WIKI.md `Related Files` is updated. Deferred from the 2026-04-17 sweep because doing it then would have required a large `PLAN.md` edit alongside the CLAUDE.md shrink; the sweep preserved Cascade Tree Structure in both `CLAUDE.md` files pending this refinement.
+- [ ] **Cascade Tree Structure docs relocation — MVP docs prep** *(surfaced during 2026-04-17 CLAUDE.md size-cleanup sweep)*. The authoritative "Cascade Tree Structure (Template Architecture)" section — kind hierarchy diagram, required-children rules, agent bindings table, post-build gates, blocker semantics, state-trigger dispatch, Post-Drop-1.75 creation rule — currently lives in both `main/CLAUDE.md` and the bare-root `CLAUDE.md`. It's not duplicated anywhere in `PLAN.md` today. Before MVP release, relocate the canonical text into `PLAN.md` (natural home: a new top-level section near §3 "The Cascade Model" or as an explicit §3.x "Template Architecture by Kind") and shrink both `CLAUDE.md` bodies to a short summary + pointer. Rationale: `PLAN.md` is the documented source of truth for cascade architecture (per each `CLAUDE.md`'s "Cascade Plan" pointer); having the tree structure live in `CLAUDE.md` instead is a structural inversion that will confuse OSS readers once MVP docs are written. QA-proof + QA-falsification: verify `PLAN.md` version is complete (no content dropped), both `CLAUDE.md` pointers resolve correctly, and WIKI.md `Related Files` is updated. Deferred from the 2026-04-17 sweep because doing it then would have required a large `PLAN.md` edit alongside the CLAUDE.md shrink; the sweep preserved Cascade Tree Structure in both `CLAUDE.md` files pending this refinement.
 - [ ] **Cascade granularity refinements (source: `main/AGENT_CASCADE_DESIGN.md` 2026-04-18).** The design doc sets starting values hardcoded into the dogfood build and lists every dial that should become dev-tunable once we have metrics data:
-  - [ ] **Role→model bindings configurable by path + actionItem type.** `AGENT_CASCADE_DESIGN.md` §3 ships a fixed binding (planner=sonnet, all QA=opus, builder=sonnet, commit=haiku). Refinement: template/project-config fields so the dev can override per path glob + per actionItem type. Configuration surface design is open — see §20.10 Q12.
+  - [ ] **Role→model bindings configurable by path + action-item kind.** `AGENT_CASCADE_DESIGN.md` §3 ships a fixed binding (planner=sonnet, all QA=opus, builder=sonnet, commit=haiku). Refinement: template/project-config fields so the dev can override per path glob + per action-item kind. Configuration surface design is open — see §20.10 Q12.
   - [ ] **Nested planners + QA inside Go packages.** Pre-dogfood rule (`AGENT_CASCADE_DESIGN.md` §2.2): planners and LLM QA stop at the Go-package boundary; droplets go sub-package with `blocked_by` serialization on shared compile. Refinement: figure out how to nest planners + QA *inside* a package keyed on file-clusters or feature-slices. Unblocks finer parallelism and tighter-scoped LLM QA for large packages. Data from dogfood decides if it's worth building.
   - [ ] **Global plan-QA sweep depth threshold configurable.** `AGENT_CASCADE_DESIGN.md` §4.4 hardcodes depth ≥ 3 as the trigger for the second plan-QA pass. Refinement: promote to a template field. Starter value stays at 3; real drops tell us where the threshold actually earns its cost.
-  - [ ] **Droplet LOC/file ceilings configurable per actionItem type, with planner-asks-for-permission flow.** `AGENT_CASCADE_DESIGN.md` §2.1 ships soft ~80 LOC target / ~200 LOC ceiling / ~3 files. Refinement: template fields per actionItem type (SQL migration droplet may want different ceilings than a unit-test droplet than a TUI-component droplet). When a planner genuinely can't decompose under the ceiling, the workflow should let the planner *request* permission to exceed it — captured as an attention item or structured handoff — rather than silently ignoring the rule or forcing a contrived split.
+  - [ ] **Droplet LOC/file ceilings configurable per action-item kind, with planner-asks-for-permission flow.** `AGENT_CASCADE_DESIGN.md` §2.1 ships soft ~80 LOC target / ~200 LOC ceiling / ~3 files. Refinement: template fields per action-item kind (SQL migration droplet may want different ceilings than a unit-test droplet than a TUI-component droplet). When a planner genuinely can't decompose under the ceiling, the workflow should let the planner *request* permission to exceed it — captured as an attention item or structured handoff — rather than silently ignoring the rule or forcing a contrived split.
   - [ ] **Audit-trail storage strategy evaluation.** `AGENT_CASCADE_DESIGN.md` §8 ships Option X (full snapshot per change) on YAGNI grounds. Refinement: if dogfood shows edit-count × node-size bounds out uncomfortably, evaluate Option Y (diff-per-change) or Option Z (snapshot + diffs). Do not optimize until data says to.
   - [ ] **Metrics catalog → structured ledger emission.** `AGENT_CASCADE_DESIGN.md` §13 lists the metrics we want (per-droplet build-green rate, per-planner-node plan-QA pass rate, per-drop cost by tier, re-QA frequency, parallelism extraction rate, etc.). Today the ledger captures this as prose inside `DROP_N_LEDGER_ENTRY`. Refinement: define a structured JSON/TOML block embedded in each ledger entry with the full metric set, so we can aggregate cleanly for the eventual comparative benchmarks (§12 of the design doc — arxiv 2603.01896 framework).
   - [ ] **Split `AGENT_CASCADE_DESIGN.md` into concept + operations before MVP public release.** Today the doc is unified-for-now to prevent drift between the conceptual explanation (audiences: people running a similar cascade with plain Markdown + off-the-shelf subagents, and the future blog-post/article source material) and the internal pre-dogfood MD-only operations content (dev + STEWARD day-to-day reference during Drops 1.75 → 4). Before MVP, split into `docs/cascade-concept.md` (public-facing: §1 thesis, §2 droplet shape, §3 role/model bindings, §4 QA placement, §5 nesting, §6 failure handling, §7 blocker re-QA, §8 audit trail, §9 cascade tree ASCII art, §12 benchmarking framework, §13 metrics catalog) and `docs/cascade-operations.md` (internal: §10 dogfood plan, §11 affected cascade drops, §14 open questions). QA-proof + QA-falsification: verify no content dropped; every cross-reference in `PLAN.md`, `CLAUDE.md`, and other MDs updated to the new locations.
@@ -1831,17 +1856,13 @@ Source: Claude Code official CLI docs via Context7 (`/websites/code_claude`).
 
 Implication: the dispatcher writes a per-run `agent-mcp.json` (Tillsyn + Hylla + Context7, tool allow-lists tailored per agent type) and passes it via the two flags. The orchestrator's `settings.json` is untouched, and the agent sees a clean, minimal MCP surface. This lets us separate the agent MCP surface from the orchestrator MCP surface cleanly — no settings.json forking, no env-var hacks.
 
-### 20.6. Template Kind Expansion
+### 20.6. Template Kind Expansion (Resolved in Drop 1.75)
 
-**Q8:** The cascade introduces new kind types that may not exist in `default-go` yet:
-- `plan-actionItem` (planner agent fires here)
-- `plan-qa` (planning QA agent fires here — or reuse existing `qa-check`?)
-- `quality-check` (quality/vuln agent fires here — see Section 16, DEFERRED)
-- `commit-agent` (haiku commit message agent)
+**Q8 (original):** The cascade introduces new kind types that may not exist in `default-go` yet: `plan-actionItem`, `plan-qa`, `quality-check`, `commit-agent`.
 
-**Partial resolution (drop 0 5.2, 2026-04-14):** the **type-drop kinds** (`plan-drop`, `build-drop`, `qa-drop`, `closeout-drop`, `refinement-drop`, `human-verify-drop`, `discussion-drop` — see Section 1.4) are the authoritative vocabulary. Dev direction: pre-drop-3, use the **generic `drop` kind + adhoc creation** for refinement and discussion work — update existing drops in place rather than fragmenting. drop 3 promotes the type-drop kinds to real template kinds with `child_rules`.
+**Resolution (Drop 1.75, 2026-04-21):** `kind_catalog` collapses to a closed 12-value `action_items.kind` enum (see §1.4): `plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`. Plan-QA splits into its own pair of kinds (`plan-qa-proof` / `plan-qa-falsification`) rather than reusing a generic `qa-check` — same for build-QA — so template `child_rules` can bind distinct agents and gate rules per role. Quality/vuln checking (Section 16, deferred) has no dedicated kind today; when it lands it attaches as a custom sub-kind under `build` via the template-customization hook (see §1.4 Customization).
 
-Still open for drop 3: the per-kind `child_rules` wiring (e.g. does `plan-qa` reuse `qa-check` or become its own kind), and how the dispatcher chooses the agent binding from the drop type.
+Drop 3 picks up `child_rules` wiring against this fixed 12-kind enum — no per-kind vocabulary debate left, just binding agents + gates to known kinds.
 
 ### 20.7. Orchestrator Role in Cascade
 
@@ -1857,31 +1878,31 @@ Is this sufficient? Does the orchestrator need more visibility during a running 
 
 ### 20.8. Plan Item State Machine for Gates (RESOLVED)
 
-**Q10:** When a build agent moves its actionItem to `complete` and then a gate fails, how does the actionItem get to `failed`?
+**Q10:** When a build agent moves its action item to `complete` and then a gate fails, how does the action item get to `failed`?
 
 **Resolution:** The builder moves to `complete`. Gates run. If a gate fails, the dispatcher uses **override auth** to move `complete → failed`. The `complete → failed` transition requires override auth, which the dispatcher has (system-issued). This uses existing mechanisms — no intermediate states, no new state transitions. Override auth is already designed for exactly this kind of system-level state correction.
 
 ### 20.9. Planning Agent Auth Scope
 
-**Q11:** The planner agent needs to create child action items via `till.action_item(operation=create)`. But its auth is scoped to its own plan-actionItem. Creating children on the drop (the plan-actionItem's parent) requires broader scope.
+**Q11:** The planner agent needs to create child action items via `till.action_item(operation=create)`. But its auth is scoped to its own `plan` action item. Creating children on the drop (the `plan` action item's parent) requires broader scope.
 
 Options:
-- a) Planner's auth is scoped to the drop, not just its plan-actionItem
-- b) Planner creates children under its own plan-actionItem, and the dispatcher re-parents them
+- a) Planner's auth is scoped to the drop, not just its `plan` action item
+- b) Planner creates children under its own `plan` action item, and the dispatcher re-parents them
 - c) Planner creates children under the drop via a dedicated "create-child-on-parent" MCP operation
 
 **Leaning:** (a) — the planner needs drop-scoped auth because its job is to decompose the drop. Template configuration specifies the auth scope for each kind.
 
 ### 20.10. Cascade Granularity Configuration (source: `main/AGENT_CASCADE_DESIGN.md`)
 
-**Q12:** How are role→model bindings configured per path + per actionItem type? `AGENT_CASCADE_DESIGN.md` §3 hardcodes the bindings (planner=sonnet, all QA=opus, builder=sonnet, commit=haiku) for the dogfood phase. Options for the configurable form:
+**Q12:** How are role→model bindings configured per path + per action-item kind? `AGENT_CASCADE_DESIGN.md` §3 hardcodes the bindings (planner=sonnet, all QA=opus, builder=sonnet, commit=haiku) for the dogfood phase. Options for the configurable form:
 
 - a) Template field: `role_model_bindings: { planner: "sonnet", plan_qa: "opus", ... }` on the project's template binding. One binding set per template.
 - b) Project-level settings: a `model_bindings.toml` (or block in `tillsyn.toml`) that lives at the project root. Per-path glob overrides inside.
 - c) Per-drop override: drop kind or drop metadata can shadow the template/project default for that drop's subtree.
-- d) All three layered: template default → project override → drop override → per-actionItem override.
+- d) All three layered: template default → project override → drop override → per-action-item override.
 
-**Leaning:** (d) with sensible precedence — template sets the baseline, project overrides for the project's characteristic work (e.g., "this project does a lot of TUI work, bump builder to opus for `internal/tui/**`"), drop metadata overrides for an unusual drop, per-actionItem for final surgery. Ship template-only in Drop 10's first refinement pass; add layers as real use-cases demand.
+**Leaning:** (d) with sensible precedence — template sets the baseline, project overrides for the project's characteristic work (e.g., "this project does a lot of TUI work, bump builder to opus for `internal/tui/**`"), drop metadata overrides for an unusual drop, per-action-item for final surgery. Ship template-only in Drop 10's first refinement pass; add layers as real use-cases demand.
 
 **Q13:** How do we record the dogfood metrics catalog from `AGENT_CASCADE_DESIGN.md` §13 in a machine-aggregable form? The per-droplet / per-planner-node / per-drop / comparative metrics need structured retention, not prose. Options:
 
@@ -1934,7 +1955,7 @@ Options:
 
 - `STRIPE_MINIONS_FOR_TILLSYN_HYLLA_CONCEPT_AND_PLAN_2026-04-11.md` — Previous design doc. Mapping of Stripe concepts. Resource inventory. Partially superseded by this document.
 - `MINIONS_RESEARCH_AND_FINDINGS_2026-04-13.md` — Research compilation. Source material analysis. Open questions (partially answered in this document).
-- `main/TILLSYN_FIX_PROMPT.md` — Historical document listing the pre-cascade fix decisions (failed lifecycle state, outcome metadata, override auth, auth auto-revoke, `require_children_done`, actionItem details as prompt). Hard prerequisites for the cascade.
+- `main/TILLSYN_FIX_PROMPT.md` — Historical document listing the pre-cascade fix decisions (failed lifecycle state, outcome metadata, override auth, auth auto-revoke, `require_children_done`, action-item details as prompt). Hard prerequisites for the cascade.
 - `~/.claude/agents/*.md` — Current 8+2 agent file inventory.
 
 ### 21.5. Tillsyn Code Surfaces (from Hylla)
@@ -2047,7 +2068,7 @@ Auto-mode rules dropped on entry:
 
 Auto-mode on subagents:
 
-> "The classifier checks subagent work at three points: Before a subagent starts, the delegated actionItem description is evaluated, so a dangerous-looking actionItem is blocked at spawn time. While the subagent runs, each of its actions goes through the classifier with the same rules as the parent session, and any `permissionMode` in the subagent's frontmatter is ignored. When the subagent finishes, the classifier reviews its full action history; if that return check flags a concern, a security warning is prepended to the subagent's results."
+> "The classifier checks subagent work at three points: Before a subagent starts, the delegated task description is evaluated, so a dangerous-looking task is blocked at spawn time. While the subagent runs, each of its actions goes through the classifier with the same rules as the parent session, and any `permissionMode` in the subagent's frontmatter is ignored. When the subagent finishes, the classifier reviews its full action history; if that return check flags a concern, a security warning is prepended to the subagent's results."
 
 Auto-mode fallback and headless interaction:
 
@@ -2075,7 +2096,7 @@ Headless flags used by the plan:
 
 Multi-agent support (Claude Code overview — `https://code.claude.com/docs/en/overview`):
 
-> "Spawn multiple Claude Code agents that work on different parts of an actionItem simultaneously. A lead agent coordinates the work, assigns subtasks, and merges results."
+> "Spawn multiple Claude Code agents that work on different parts of a task simultaneously. A lead agent coordinates the work, assigns subtasks, and merges results."
 
 > "For fully custom workflows, the Agent SDK lets you build your own agents powered by Claude Code's tools and capabilities, with full control over orchestration, tool access, and permissions."
 
@@ -2085,7 +2106,7 @@ The original `TOS_COMPLIANCE.md` §4 identified six gray zones with the pre-conv
 
 - **Subscription-tier rate limits (§4.1 → §22.2 + §12.1).** Pure-headless under Max weekly Opus quotas + 5-hour session windows is the operational ceiling, not the legal ceiling. N=6 concurrency cap (§12.1) is calibrated against this.
 - **Auto-mode classifier omitted (§4.2 → §10.6 + cascade safety layers).** Auto mode is unavailable on Max tier. The cascade's own safety layers (per-path `--allowedTools`, file + package locks, `max_tries`, `max_budget_usd`, deterministic CI gates, asymmetric QA with enforced certificate structure) are the intentional substitute. Documented explicitly in §10.6 Full-Benefit Rule.
-- **`Bash(mage *)` wide door (§4.3 → §19.10 refinement).** Replace `Bash(mage *)` with per-kind explicit allowlists (`Bash(mage test-func *), Bash(mage test-pkg *), Bash(mage ci)` for build-actionItem; `Bash(mage test-golden *), Bash(mage ci)` for qa-check; no Bash for plan-actionItem and commit-agent). Scheduled for drop 10 refinement; not drop-1 blocker but must land before broader external use.
+- **`Bash(mage *)` wide door (§4.3 → §19.10 refinement).** Replace `Bash(mage *)` with per-kind explicit allowlists (`Bash(mage test-func *), Bash(mage test-pkg *), Bash(mage ci)` for `build`; `Bash(mage test-golden *), Bash(mage ci)` for `build-qa-proof`/`build-qa-falsification`/`plan-qa-proof`/`plan-qa-falsification`; no Bash for `plan` and `commit`). Scheduled for drop 10 refinement; not drop-1 blocker but must land before broader external use.
 - **Host-machine posture vs sandbox (§4.4 → future drop).** Dogfood runs in the shared `main/` checkout, gated only by file + package locks. Sandboxing options (per-run git worktree, `sandbox-exec` on macOS, devcontainer, Firecracker VM) are explicit future drops, not drop-1 scope. Accepted dogfood risk.
 - **Cascade-run budget ceiling + escalation-depth cap (§4.5 → §14 + §19.10).** Per-invocation `max_budget_usd` + `max_turns` exist; the summed cascade-run ceiling and escalation-depth cap are drop 10 refinement items.
 - **Training-opt-out posture (§4.6 → §22.1).** Explicitly ON at the dev's Anthropic account. Documented in §22.1 as a dogfood precondition.

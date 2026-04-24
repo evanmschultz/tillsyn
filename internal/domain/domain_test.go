@@ -132,6 +132,7 @@ func TestNewActionItemDefaultsAndLabels(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "  Ship feature ",
+		Kind:      KindBuild,
 		DueAt:     &due,
 		Labels:    []string{"Backend", "backend", "  ", "Urgent"},
 	}, now)
@@ -143,6 +144,9 @@ func TestNewActionItemDefaultsAndLabels(t *testing.T) {
 	}
 	if actionItem.Title != "Ship feature" {
 		t.Fatalf("unexpected title %q", actionItem.Title)
+	}
+	if actionItem.Scope != KindAppliesToBuild {
+		t.Fatalf("expected default scope to mirror kind, got %q", actionItem.Scope)
 	}
 	if len(actionItem.Labels) != 2 || actionItem.Labels[0] != "backend" || actionItem.Labels[1] != "urgent" {
 		t.Fatalf("unexpected labels %#v", actionItem.Labels)
@@ -158,10 +162,44 @@ func TestNewActionItemValidation(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "x",
+		Kind:      KindBuild,
 		Priority:  Priority("bad"),
 	}, now)
 	if err != ErrInvalidPriority {
 		t.Fatalf("expected ErrInvalidPriority, got %v", err)
+	}
+
+	if _, err := NewActionItem(ActionItemInput{
+		ID:        "t-missing-kind",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "x",
+	}, now); err != ErrInvalidKind {
+		t.Fatalf("expected ErrInvalidKind for empty kind, got %v", err)
+	}
+
+	if _, err := NewActionItem(ActionItemInput{
+		ID:        "t-bad-kind",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "x",
+		Kind:      Kind("bogus"),
+	}, now); err != ErrInvalidKind {
+		t.Fatalf("expected ErrInvalidKind for junk kind, got %v", err)
+	}
+
+	if _, err := NewActionItem(ActionItemInput{
+		ID:        "t-mismatched-scope",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "x",
+		Kind:      KindBuild,
+		Scope:     KindAppliesToPlan,
+	}, now); err != ErrInvalidKindAppliesTo {
+		t.Fatalf("expected ErrInvalidKindAppliesTo when scope mismatches kind, got %v", err)
 	}
 }
 
@@ -174,6 +212,7 @@ func TestActionItemMoveUpdateArchiveRestore(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "x",
+		Kind:      KindBuild,
 		Priority:  PriorityLow,
 	}, now)
 	if err != nil {
@@ -215,6 +254,7 @@ func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "rich actionItem",
+		Kind:      KindBuild,
 		Priority:  PriorityMedium,
 		Metadata: ActionItemMetadata{
 			Objective: "  Ship feature  ",
@@ -239,8 +279,11 @@ func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewActionItem() error = %v", err)
 	}
-	if actionItem.Kind != WorkKindActionItem {
-		t.Fatalf("expected default kind actionItem, got %q", actionItem.Kind)
+	if actionItem.Kind != KindBuild {
+		t.Fatalf("expected kind build, got %q", actionItem.Kind)
+	}
+	if actionItem.Scope != KindAppliesToBuild {
+		t.Fatalf("expected scope to mirror kind build, got %q", actionItem.Scope)
 	}
 	if actionItem.LifecycleState != StateTodo {
 		t.Fatalf("expected default state todo, got %q", actionItem.LifecycleState)
@@ -271,6 +314,7 @@ func TestActionItemLifecycleTransitions(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "stateful",
+		Kind:      KindBuild,
 		Priority:  PriorityLow,
 	}, now)
 	if err != nil {
@@ -369,6 +413,7 @@ func TestActionItemContractUnmetChecks(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "contract",
+		Kind:      KindBuild,
 		Priority:  PriorityHigh,
 		Metadata: ActionItemMetadata{
 			CompletionContract: CompletionContract{
@@ -411,6 +456,7 @@ func TestNewActionItemRejectsInvalidMetadata(t *testing.T) {
 		ColumnID:  "c1",
 		Position:  0,
 		Title:     "bad",
+		Kind:      KindBuild,
 		Priority:  PriorityMedium,
 		Metadata: ActionItemMetadata{
 			ContextBlocks: []ContextBlock{
@@ -573,4 +619,123 @@ func TestMergeActionItemMetadataDefaults(t *testing.T) {
 // jsonRaw returns one trimmed JSON payload for merge assertions.
 func jsonRaw(raw string) []byte {
 	return []byte(raw)
+}
+
+// TestIsValidKindCoversClosedEnum verifies every member of the 12-value Kind
+// enum is recognized and non-member inputs are rejected.
+func TestIsValidKindCoversClosedEnum(t *testing.T) {
+	for _, kind := range []Kind{
+		KindPlan,
+		KindResearch,
+		KindBuild,
+		KindPlanQAProof,
+		KindPlanQAFalsification,
+		KindBuildQAProof,
+		KindBuildQAFalsification,
+		KindCloseout,
+		KindCommit,
+		KindRefinement,
+		KindDiscussion,
+		KindHumanVerify,
+	} {
+		if !IsValidKind(kind) {
+			t.Fatalf("IsValidKind(%q) = false, want true", kind)
+		}
+	}
+	for _, raw := range []string{"", "  ", "bogus", "actionItem", "subtask", "phase", "project"} {
+		if IsValidKind(Kind(raw)) {
+			t.Fatalf("IsValidKind(%q) = true, want false", raw)
+		}
+	}
+}
+
+// TestDefaultActionItemScopeMirrorsKind verifies scope mirrors kind for every
+// member of the 12-value enum and empty scope for invalid kinds.
+func TestDefaultActionItemScopeMirrorsKind(t *testing.T) {
+	for _, kind := range []Kind{
+		KindPlan,
+		KindResearch,
+		KindBuild,
+		KindPlanQAProof,
+		KindPlanQAFalsification,
+		KindBuildQAProof,
+		KindBuildQAFalsification,
+		KindCloseout,
+		KindCommit,
+		KindRefinement,
+		KindDiscussion,
+		KindHumanVerify,
+	} {
+		got := DefaultActionItemScope(kind)
+		want := KindAppliesTo(kind)
+		if got != want {
+			t.Fatalf("DefaultActionItemScope(%q) = %q, want %q", kind, got, want)
+		}
+	}
+	if got := DefaultActionItemScope(Kind("bogus")); got != "" {
+		t.Fatalf("DefaultActionItemScope(bogus) = %q, want empty", got)
+	}
+}
+
+// TestAllowedParentKindsEncodesHierarchy verifies the hierarchy rules for the
+// 12-value Kind enum. Build-QA children require a build parent; every other
+// kind requires a plan parent. Plan is the only kind that may also sit at
+// project-root (caller checks by allowing empty parent id for KindPlan).
+func TestAllowedParentKindsEncodesHierarchy(t *testing.T) {
+	tests := []struct {
+		kind Kind
+		want []Kind
+	}{
+		{kind: KindPlan, want: []Kind{KindPlan}},
+		{kind: KindResearch, want: []Kind{KindPlan}},
+		{kind: KindBuild, want: []Kind{KindPlan}},
+		{kind: KindPlanQAProof, want: []Kind{KindPlan}},
+		{kind: KindPlanQAFalsification, want: []Kind{KindPlan}},
+		{kind: KindCloseout, want: []Kind{KindPlan}},
+		{kind: KindCommit, want: []Kind{KindPlan}},
+		{kind: KindRefinement, want: []Kind{KindPlan}},
+		{kind: KindDiscussion, want: []Kind{KindPlan}},
+		{kind: KindHumanVerify, want: []Kind{KindPlan}},
+		{kind: KindBuildQAProof, want: []Kind{KindBuild}},
+		{kind: KindBuildQAFalsification, want: []Kind{KindBuild}},
+	}
+	for _, tc := range tests {
+		got := AllowedParentKinds(tc.kind)
+		if len(got) != len(tc.want) {
+			t.Fatalf("AllowedParentKinds(%q) = %#v, want %#v", tc.kind, got, tc.want)
+		}
+		for idx, want := range tc.want {
+			if got[idx] != want {
+				t.Fatalf("AllowedParentKinds(%q)[%d] = %q, want %q", tc.kind, idx, got[idx], want)
+			}
+		}
+	}
+	if got := AllowedParentKinds(Kind("bogus")); got != nil {
+		t.Fatalf("AllowedParentKinds(bogus) = %#v, want nil", got)
+	}
+}
+
+// TestNormalizeKindIDLowercaseAndTrim verifies the simplified normalizer only
+// lowercases and trims; it no longer rewrites the actionItem token.
+func TestNormalizeKindIDLowercaseAndTrim(t *testing.T) {
+	tests := []struct {
+		in   string
+		want KindID
+	}{
+		{in: "  plan  ", want: KindID("plan")},
+		{in: "BUILD", want: KindID("build")},
+		{in: "Build-QA-Proof", want: KindID("build-qa-proof")},
+		{in: "", want: KindID("")},
+		{in: "   ", want: KindID("")},
+		// actionItem and its variants are now preserved verbatim lowercased —
+		// the old camelCase canonicalization is removed.
+		{in: "actionItem", want: KindID("actionitem")},
+		{in: "build-actionItem", want: KindID("build-actionitem")},
+	}
+	for _, tc := range tests {
+		got := NormalizeKindID(KindID(tc.in))
+		if got != tc.want {
+			t.Fatalf("NormalizeKindID(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }

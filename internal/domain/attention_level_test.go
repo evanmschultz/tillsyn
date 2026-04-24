@@ -46,19 +46,18 @@ func TestNewLevelTuplePhaseSupport(t *testing.T) {
 	}
 }
 
-// TestPhaseScopeCompatibility verifies phase support across scope type systems.
+// TestPhaseScopeCompatibility verifies phase survives on the scope-level and
+// capability-scope vocabularies, which remain in use by attention/handoff/
+// auth-request even after the KindAppliesTo enum collapsed to the 12-kind set.
 func TestPhaseScopeCompatibility(t *testing.T) {
-	if !IsValidKindAppliesTo(KindAppliesToPhase) {
-		t.Fatal("expected phase to be valid for kind definitions")
-	}
-	if !IsValidWorkItemAppliesTo(KindAppliesToPhase) {
-		t.Fatal("expected phase to be valid for work-item scope")
+	if !IsValidScopeLevel(ScopeLevelPhase) {
+		t.Fatal("expected phase to be valid scope level")
 	}
 	if !IsValidCapabilityScopeType(CapabilityScopePhase) {
 		t.Fatal("expected phase to be valid capability scope")
 	}
-	if ScopeLevelFromKindAppliesTo(KindAppliesToPhase) != ScopeLevelPhase {
-		t.Fatalf("expected kind->level conversion to return phase")
+	if ScopeLevelFromCapabilityScopeType(CapabilityScopePhase) != ScopeLevelPhase {
+		t.Fatal("expected capability->level conversion to return phase")
 	}
 	if ScopeLevelPhase.ToCapabilityScopeType() != CapabilityScopePhase {
 		t.Fatalf("expected level->capability conversion to return phase")

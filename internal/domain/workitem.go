@@ -31,18 +31,6 @@ const (
 	ActorTypeSystem ActorType = "system"
 )
 
-// WorkKind represents a configurable item kind.
-type WorkKind string
-
-// Built-in kind defaults.
-const (
-	WorkKindActionItem WorkKind = "actionItem"
-	WorkKindSubtask    WorkKind = "subtask"
-	WorkKindPhase      WorkKind = "phase"
-	WorkKindDecision   WorkKind = "decision"
-	WorkKindNote       WorkKind = "note"
-)
-
 // ContextType classifies planning context snippets attached to an item.
 type ContextType string
 
@@ -190,11 +178,6 @@ func IsTerminalState(state LifecycleState) bool {
 func isValidActorType(actorType ActorType) bool {
 	actorType = ActorType(strings.TrimSpace(strings.ToLower(string(actorType))))
 	return slices.Contains([]ActorType{ActorTypeUser, ActorTypeAgent, ActorTypeSystem}, actorType)
-}
-
-// isValidWorkKind reports whether kind is non-empty after normalization.
-func isValidWorkKind(kind WorkKind) bool {
-	return strings.TrimSpace(string(kind)) != ""
 }
 
 // normalizeActionItemMetadata trims and validates rich metadata.

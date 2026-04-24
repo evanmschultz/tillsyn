@@ -17,7 +17,7 @@ var commandHelpSpecs = map[string]commandHelpSpec{
 	"till": {
 		Long: strings.TrimSpace(`
 Run the Tillsyn TUI by default, or use subcommands for MCP, auth, projects,
-templates, embeddings, leases, handoffs, snapshots, and runtime inspection.
+embeddings, leases, handoffs, snapshots, and runtime inspection.
 
 Use --db and --config to point at one specific runtime when auditing or
 scripting. Use subcommand help before mutation commands so the scope, required
@@ -28,7 +28,6 @@ flags, and next-step guidance stay explicit.
 			"  till h",
 			"  till project list",
 			"  till project create --name Inbox",
-			"  till template library list --scope global --status approved",
 			"  till embeddings status --cross-project",
 			"  till auth request list --state pending",
 		},
@@ -100,9 +99,6 @@ status view shows stale or failed lifecycle rows that need a fresh pass.
 	"till kind": {
 		Long: strings.TrimSpace(`
 Inspect kind definitions and project allowlists.
-
-Template-library workflow contracts live under till template, not in the kind
-registry.
 `),
 		Example: []string{
 			"  till kind list",
@@ -116,9 +112,9 @@ registry.
 List the kind registry used to classify projects and work nodes.
 
 Use this to inspect which kind ids exist, what scopes they apply to, and which
-definitions are available before binding templates or tightening allowlists.
+definitions are available before tightening allowlists.
 
-Discover valid kind ids here before template work, project creation, or actionItem creation.
+Discover valid kind ids here before project creation or actionItem creation.
 `),
 		Example: []string{
 			"  till kind list",
@@ -130,8 +126,6 @@ Discover valid kind ids here before template work, project creation, or actionIt
 Create or update one kind definition in the registry.
 
 Kinds describe structural node identity and placement rules.
-
-Template-library workflow contracts are managed separately under till template.
 
 The hidden legacy '--template-json' flag remains compatibility-only and should
 not be used for new work.
@@ -150,9 +144,7 @@ not be used for new work.
 Inspect or replace one project's explicit kind allowlist.
 
 Use this when a project needs tighter kind governance than the global registry
-alone provides. After choosing a template library, use this to keep the
-project template-only or to explicitly allow a small set of generic kinds on
-top of the template-defined workflow.
+alone provides.
 `),
 		Example: []string{
 			"  till kind allowlist list --project-id PROJECT_ID",
@@ -165,10 +157,6 @@ Show the explicit kind ids allowed for one project.
 
 If no explicit allowlist exists, the project is effectively using the default
 registry behavior.
-
-Check this before changing template libraries or other project-level workflow
-rules, especially when you need to see whether extra generic kinds remain
-allowed beyond a bound template library.
 `),
 		Example: []string{
 			"  till kind allowlist list --project-id PROJECT_ID",
@@ -178,151 +166,12 @@ allowed beyond a bound template library.
 		Long: strings.TrimSpace(`
 Replace the explicit kind allowlist for one project.
 
-This is a replace operation. Use it after project creation or template binding
-when you need to keep a project limited to template-defined node kinds or
-deliberately opt specific generic kinds back in.
+This is a replace operation. Use it after project creation when you need to
+restrict a project to a specific set of node kinds.
 `),
 		Example: []string{
 			"  till kind allowlist set --project-id PROJECT_ID --kind-id actionItem --kind-id subtask",
 			"  till kind allowlist set --project-id PROJECT_ID --kind-id build-actionItem --kind-id qa-check",
-		},
-	},
-	"till template": {
-		Example: []string{
-			"  till template library list --scope global --status approved",
-			"  till template library show --library-id LIBRARY_ID",
-			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
-			"  till template contract show --node-id TASK_ID",
-		},
-	},
-	"till template library": {
-		Long: strings.TrimSpace(`
-Inspect or upsert SQLite-backed template libraries.
-
-Template libraries define generated child work, actor-kind ownership, edit and
-complete permissions, and truthful completion gates.
-`),
-		Example: []string{
-			"  till template library list --scope global --status approved",
-			"  till template library show --library-id LIBRARY_ID",
-			"  till template library upsert --spec-json '{\"id\":\"LIBRARY_ID\",...}'",
-		},
-	},
-	"till template library list": {
-		Long: strings.TrimSpace(`
-List template libraries by optional scope, project, or lifecycle status.
-
-Use this to find approved global libraries before binding them to projects or
-to inspect project-local or draft inventory.
-`),
-		Example: []string{
-			"  till template library list",
-			"  till template library list --scope global --status approved",
-			"  till template library list --scope project --project-id PROJECT_ID",
-		},
-	},
-	"till template library show": {
-		Long: strings.TrimSpace(`
-Show one template library with its node templates and child rules.
-
-This is the quickest operator view for verifying generated follow-up work,
-responsible actor kinds, blocker rules, and the child-rule contract table before
-binding the library.
-`),
-		Example: []string{
-			"  till template library show --library-id LIBRARY_ID",
-		},
-	},
-	"till template library upsert": {
-		Example: []string{
-			"  till template library upsert --spec-json \\",
-			"    '{\"id\":\"LIBRARY_ID\",\"scope\":\"global\",\"status\":\"approved\",\"node_templates\":[]}'",
-			"  till template library upsert --spec-json \"$(cat /tmp/template-library.json)\"",
-		},
-	},
-	"till template project": {
-		Long: strings.TrimSpace(`
-Bind projects to approved template libraries and inspect the active binding or
-reapply preview.
-
-Use this when project creation did not already bind a library or when you need
-to confirm which library currently governs generated workflow contracts.
-`),
-		Example: []string{
-			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
-			"  till template project binding --project-id PROJECT_ID",
-			"  till template project preview --project-id PROJECT_ID",
-			"  till template project approve-migrations --project-id PROJECT_ID --all",
-		},
-	},
-	"till template project bind": {
-		Long: strings.TrimSpace(`
-Bind one project to one approved template library.
-
-The binding becomes the project-level source for future generated workflow
-contracts. Existing nodes keep their stored snapshots.
-`),
-		Example: []string{
-			"  till template project bind --project-id PROJECT_ID --library-id LIBRARY_ID",
-		},
-	},
-	"till template project binding": {
-		Long: strings.TrimSpace(`
-Show the active template-library binding for one project.
-
-Use this to confirm which approved library currently governs generated work for
-future create-time template resolution.
-`),
-		Example: []string{
-			"  till template project binding --project-id PROJECT_ID",
-		},
-	},
-	"till template project preview": {
-		Long: strings.TrimSpace(`
-Show the bound-versus-latest template drift for one project plus conservative
-migration-review candidates for existing generated nodes.
-
-Use this before intentionally rebinding the same approved library revision.
-`),
-		Example: []string{
-			"  till template project preview --project-id PROJECT_ID",
-		},
-	},
-	"till template project approve-migrations": {
-		Long: strings.TrimSpace(`
-Approve selected or all eligible generated-node migrations for one project.
-
-Use this after reviewing drift so the dev can explicitly adopt changed child
-rule contracts for existing generated nodes.
-`),
-		Example: []string{
-			"  till template project approve-migrations --project-id PROJECT_ID --actionItem-id TASK_ID",
-			"  till template project approve-migrations --project-id PROJECT_ID --all",
-		},
-	},
-	"till template contract": {
-		Long: strings.TrimSpace(`
-Inspect stored generated-node contract snapshots.
-
-Node contracts preserve the resolved actor-kind rules and completion gates that
-were applied when generated work was created.
-
-This is the truthful runtime record for already-generated work.
-`),
-		Example: []string{
-			"  till template contract show --node-id TASK_ID",
-		},
-	},
-	"till template contract show": {
-		Long: strings.TrimSpace(`
-Show one stored node-contract snapshot for generated work.
-
-Use this to verify the generated node-contract snapshot: responsible actor kind,
-edit and complete permissions, and whether the generated node blocks parent or
-containing-scope completion.
-`),
-		Example: []string{
-			"  till template contract show --node-id TASK_ID",
 		},
 	},
 	"till lease": {
@@ -479,7 +328,7 @@ summary, or record a final resolution note.
 Export the runtime store as one snapshot JSON payload.
 
 Use this for migration, backup, debugging, or inspection of project, actionItem,
-template, and auth-related state in one portable artifact.
+and auth-related state in one portable artifact.
 `),
 		Example: []string{
 			"  till export --out tillsyn-export.json",

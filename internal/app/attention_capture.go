@@ -272,10 +272,9 @@ func (s *Service) CaptureState(ctx context.Context, in CaptureStateInput) (Captu
 
 // ensureActionItemCompletionAttentionClear blocks completion when unresolved blocking attention exists.
 func (s *Service) ensureActionItemCompletionAttentionClear(ctx context.Context, actionItem domain.ActionItem) error {
-	scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-	if scopeType == "" {
-		scopeType = domain.ScopeLevelActionItem
-	}
+	// Scope mirrors kind in the 12-value enum, so every action-item row is
+	// ScopeLevelActionItem for attention-scope resolution.
+	scopeType := scopeLevelForActionItem(actionItem)
 	attention, err := s.repo.ListAttentionItems(ctx, domain.AttentionListFilter{
 		ProjectID:      actionItem.ProjectID,
 		ScopeType:      scopeType,

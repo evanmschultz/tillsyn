@@ -1,18 +1,13 @@
 package main
 
 import (
-	"context"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
-	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
-	"github.com/google/uuid"
 )
 
 // TestWriteProjectList renders a stable human-scannable project table.
@@ -21,14 +16,12 @@ func TestWriteProjectList(t *testing.T) {
 		{
 			ID:          "p2",
 			Name:        "Beta",
-			Kind:        domain.KindID("project"),
 			Metadata:    domain.ProjectMetadata{Owner: "team-b"},
 			Description: "Second project",
 		},
 		{
 			ID:          "p1",
 			Name:        "Alpha",
-			Kind:        domain.KindID("go-service"),
 			Metadata:    domain.ProjectMetadata{Owner: "team-a"},
 			Description: "First\nproject",
 		},
@@ -38,7 +31,7 @@ func TestWriteProjectList(t *testing.T) {
 		t.Fatalf("writeProjectList() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Projects", "NAME", "ID", "OWNER", "Alpha", "p1", "go-service", "team-a", "Beta", "p2", "team-b"} {
+	for _, want := range []string{"Projects", "NAME", "ID", "OWNER", "Alpha", "p1", "team-a", "Beta", "p2", "team-b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project list output, got %q", want, got)
 		}
@@ -76,7 +69,6 @@ func TestWriteProjectDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProject() error = %v", err)
 	}
-	project.Kind = domain.KindID("go-service")
 	project.Metadata.Owner = "team-a"
 	project.Metadata.Tags = []string{"go", "cli"}
 
@@ -85,7 +77,7 @@ func TestWriteProjectDetail(t *testing.T) {
 		t.Fatalf("writeProjectDetail() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Project", "name", "Alpha", "id", "p1", "slug", "alpha", "kind", "go-service", "description", "First project", "owner", "team-a", "tags", "go, cli"} {
+	for _, want := range []string{"Project", "name", "Alpha", "id", "p1", "slug", "alpha", "description", "First project", "owner", "team-a", "tags", "go, cli"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in project detail output, got %q", want, got)
 		}
@@ -150,106 +142,6 @@ func TestProjectWithOwnerFallbackUsesDisplayName(t *testing.T) {
 	project = projectWithOwnerFallback(project, "Evan")
 	if got := project.Metadata.Owner; got != "explicit-owner" {
 		t.Fatalf("project owner fallback overwrote explicit owner: %q", got)
-	}
-}
-
-// TestRunProjectCreateUsesTemplateLibrary verifies the CLI create helper binds an approved global template library during project creation.
-func TestRunProjectCreateUsesTemplateLibrary(t *testing.T) {
-	now := time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
-	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-	svc := app.NewService(repo, func() string { return uuid.NewString() }, func() time.Time { return now }, app.ServiceConfig{})
-
-	if _, err := svc.ListKindDefinitions(context.Background(), false); err != nil {
-		t.Fatalf("ListKindDefinitions() error = %v", err)
-	}
-	if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
-		ID:          "go-service",
-		DisplayName: "Go Service",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
-	}); err != nil {
-		t.Fatalf("UpsertKindDefinition(go-service) error = %v", err)
-	}
-	if _, err := svc.UpsertTemplateLibrary(context.Background(), app.UpsertTemplateLibraryInput{
-		ID:                  "go-defaults",
-		Scope:               domain.TemplateLibraryScopeGlobal,
-		Name:                "Go Defaults",
-		Description:         "Global defaults for Go projects",
-		Status:              domain.TemplateLibraryStatusApproved,
-		CreatedByActorID:    "user-1",
-		CreatedByActorName:  "User One",
-		CreatedByActorType:  domain.ActorTypeUser,
-		ApprovedByActorID:   "user-1",
-		ApprovedByActorName: "User One",
-		ApprovedByActorType: domain.ActorTypeUser,
-		NodeTemplates: []app.UpsertNodeTemplateInput{{
-			ID:         "project-template",
-			ScopeLevel: domain.KindAppliesToProject,
-			NodeKindID: domain.KindID("go-service"),
-			ProjectMetadataDefaults: &domain.ProjectMetadata{
-				Owner:             "Platform",
-				StandardsMarkdown: "Run Go validation",
-			},
-			ChildRules: []app.UpsertTemplateChildRuleInput{{
-				ID:                      "main-branch",
-				Position:                1,
-				ChildScopeLevel:         domain.KindAppliesToBranch,
-				ChildKindID:             domain.KindID("branch"),
-				TitleTemplate:           "Main Branch",
-				DescriptionTemplate:     "default implementation branch",
-				ResponsibleActorKind:    domain.TemplateActorKindBuilder,
-				EditableByActorKinds:    []domain.TemplateActorKind{domain.TemplateActorKindBuilder},
-				CompletableByActorKinds: []domain.TemplateActorKind{domain.TemplateActorKindBuilder, domain.TemplateActorKindHuman},
-				RequiredForParentDone:   true,
-			}},
-		}},
-	}); err != nil {
-		t.Fatalf("UpsertTemplateLibrary(go-defaults) error = %v", err)
-	}
-
-	var out strings.Builder
-	if err := runProjectCreate(context.Background(), svc, config.Config{}, projectCreateCommandOptions{
-		name:              "Go Service",
-		kind:              "go-service",
-		templateLibraryID: "go-defaults",
-	}, &out); err != nil {
-		t.Fatalf("runProjectCreate() error = %v", err)
-	}
-	if got := out.String(); !strings.Contains(got, "Created Project") || !strings.Contains(got, "Go Service") || !strings.Contains(got, "owner") || !strings.Contains(got, "Platform") {
-		t.Fatalf("unexpected runProjectCreate output: %q", got)
-	}
-	projects, err := svc.ListProjects(context.Background(), false)
-	if err != nil {
-		t.Fatalf("ListProjects() error = %v", err)
-	}
-	if len(projects) != 1 {
-		t.Fatalf("len(projects) = %d, want 1", len(projects))
-	}
-	binding, err := svc.GetProjectTemplateBinding(context.Background(), projects[0].ID)
-	if err != nil {
-		t.Fatalf("GetProjectTemplateBinding() error = %v", err)
-	}
-	if binding.LibraryID != "go-defaults" {
-		t.Fatalf("binding.LibraryID = %q, want go-defaults", binding.LibraryID)
-	}
-	allowedKinds, err := svc.ListProjectAllowedKinds(context.Background(), projects[0].ID)
-	if err != nil {
-		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
-	}
-	if got, want := allowedKinds, []domain.KindID{"branch", "go-service"}; !slices.Equal(got, want) {
-		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", got, want)
-	}
-	tasks, err := svc.ListActionItems(context.Background(), projects[0].ID, false)
-	if err != nil {
-		t.Fatalf("ListActionItems() error = %v", err)
-	}
-	if len(tasks) != 1 || tasks[0].Title != "Main Branch" {
-		t.Fatalf("unexpected generated tasks %#v", tasks)
 	}
 }
 

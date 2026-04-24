@@ -1,0 +1,30 @@
+# _BLOCKERS.toml — workflow/drop_1_75/
+# Sibling blocked_by ledger for this dir's immediate children.
+#
+# DROP 1.75 GRANDFATHERED FLAT: planned before cascade atomicity doctrine
+# fully landed; kept flat per dev directive 2026-04-19. Cascade-proper
+# decomposition (multi-level planners, sub-drops per domain concern)
+# applies from Drop 2 onward. See project_drop_1_75_refinements_raised
+# R3 for the refinement that tracks this.
+#
+# Today: coordination hint. Human/LLM-enforced.
+# Post-Tillsyn-Drop-1: ActionItem.blocked_by is first-class; runtime
+# dispatcher hard-refuses in_progress transitions while blockers remain
+# unresolved — prevents work starting on items whose blockers haven't
+# cleared. This file becomes the migration source (each [[blockers]]
+# row loads into ActionItem.blocked_by).
+#
+# Authoritative wiring lives inline in each droplet's PLAN.md section
+# (`Blocked by:` bullet). Populate [[blockers]] entries below **by
+# plan-QA Phase 2 exit** (the "plan accepted, advance to building"
+# transition per drops/WORKFLOW.md Phase 3 step 6) once the 15
+# droplets stabilize — or, if Drop 1.75 closes with this stub still
+# empty, document the waiver in DROP_1_75_REFINEMENTS_RAISED R4
+# extension at drop close.
+#
+# External blockers: none (no cross-drop blocked_by for this drop).
+
+# [[blockers]]
+# node = "1.N"
+# blocked_by = ["1.M"]
+# reason = "..."
