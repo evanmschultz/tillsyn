@@ -202,6 +202,20 @@ Drop-orch closes the drop per `workflow/example/drops/WORKFLOW.md` Phase 7 — a
 
 Until the cascade dispatcher takes over commits (`PLAN.md` Drop 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files an action item declares) is a precondition for creating an action item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
 
+### Post-Merge Branch Cleanup (Drop Closeout)
+
+After a drop PR merges, the closing orchestrator MUST run the cleanup sequence below **in this order**. Skipping steps leaves stale worktrees or branch refs that block future drops (the Drop 1.75 close-out hit this: a leftover `drop/1.5` worktree still had `main` checked out with uncommitted files, which blocked `gh pr merge`'s local sync + blocked the next drop's worktree from checking out `main`).
+
+1. **Merge with history preserved.** `gh pr merge <N> --merge --delete-branch` — `--merge` creates a merge commit that preserves every commit in the drop branch (NOT `--squash`, NOT `--rebase`). `--delete-branch` removes the remote ref when the local sync step succeeds.
+2. **If `gh pr merge`'s local sync step fails** (usually because another worktree has `main` checked out with uncommitted work), the server-side merge still succeeded — verify with `gh pr view <N> --json state,mergeCommit`. Then delete the remote branch explicitly: `git push origin --delete <branch>`.
+3. **`cd` into the `main/` worktree — NEVER run cleanup from inside the worktree you're about to remove.** Removing the worktree you're standing in pulls the rug out from the current shell.
+4. **Fast-forward main:** `git fetch origin && git pull --ff-only` in `main/`. Confirm the merge commit is at HEAD.
+5. **Remove the drop worktree:** `git worktree remove /path/to/drop/N` from `main/` or the bare root. If it refuses because of staged/unstaged changes, INVESTIGATE before `--force`-ing — those changes may be real work someone forgot to commit.
+6. **Delete the local branch ref:** `git branch -D drop/N`.
+7. **Verify clean:** `git worktree list` should show only bare + `main` (+ any live concurrent drops). `git branch -a` should show no stale local drop branches.
+
+**Guardrail against "uncommitted work in a stale worktree" recurrence:** every drop orchestrator MUST commit or explicitly stash all working-dir changes before marking its drop closed. A stale worktree holding `main` with staged files is an anti-pattern — if work isn't ready to commit, it should sit on its own named branch, not on `main` in a drop worktree. If a close-out orchestrator finds pending changes during step 5 above, they must route them (commit to a preservation branch, hand back to dev, or explicitly destroy with dev sign-off) — never silently force-remove.
+
 ## Orchestrator-as-Hub Architecture
 
 The parent Claude Code session launched by the dev from this directory is always **the orchestrator**. There is no `.claude/agents/orchestration-agent.md` file — the orchestrator is defined by the invocation context, not by a markdown spec. Every other role (builder, qa, planner, closeout, research) is a subagent spawned via the `Agent` tool.
