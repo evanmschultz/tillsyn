@@ -12,15 +12,15 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 		ID:                  " Refactor ",
 		DisplayName:         " Refactor Work ",
 		DescriptionMarkdown: " refactor tasks ",
-		AppliesTo:           []KindAppliesTo{KindAppliesToActionItem, KindAppliesToActionItem, KindAppliesToSubtask},
-		AllowedParentScopes: []KindAppliesTo{KindAppliesToPhase},
+		AppliesTo:           []KindAppliesTo{KindAppliesToBuild, KindAppliesToBuild, KindAppliesToResearch},
+		AllowedParentScopes: []KindAppliesTo{KindAppliesToPlan},
 		PayloadSchemaJSON:   `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
 		Template: KindTemplate{
 			CompletionChecklist: []ChecklistItem{{ID: "c1", Text: "run tests", Done: false}},
 			AutoCreateChildren: []KindTemplateChildSpec{{
 				Title:     "scan packages",
-				Kind:      "actionItem",
-				AppliesTo: KindAppliesToSubtask,
+				Kind:      "build",
+				AppliesTo: KindAppliesToBuild,
 			}},
 			ProjectMetadataDefaults: &ProjectMetadata{
 				Owner:    "  Team A ",
@@ -43,11 +43,11 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 	if kind.ID != KindID("refactor") {
 		t.Fatalf("expected normalized id refactor, got %q", kind.ID)
 	}
-	if !kind.AppliesToScope(KindAppliesToActionItem) {
-		t.Fatal("expected applies_to actionItem")
+	if !kind.AppliesToScope(KindAppliesToBuild) {
+		t.Fatal("expected applies_to build")
 	}
-	if !kind.AllowsParentScope(KindAppliesToPhase) {
-		t.Fatal("expected allowed parent scope phase")
+	if !kind.AllowsParentScope(KindAppliesToPlan) {
+		t.Fatal("expected allowed parent scope plan")
 	}
 	if len(kind.Template.AutoCreateChildren) != 1 {
 		t.Fatalf("expected one child template, got %d", len(kind.Template.AutoCreateChildren))
@@ -81,13 +81,13 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 // TestNewKindDefinitionRejectsInvalidValues verifies validation errors for malformed entries.
 func TestNewKindDefinitionRejectsInvalidValues(t *testing.T) {
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	if _, err := NewKindDefinition(KindDefinitionInput{ID: "", AppliesTo: []KindAppliesTo{KindAppliesToActionItem}}, now); err != ErrInvalidKindID {
+	if _, err := NewKindDefinition(KindDefinitionInput{ID: "", AppliesTo: []KindAppliesTo{KindAppliesToBuild}}, now); err != ErrInvalidKindID {
 		t.Fatalf("expected ErrInvalidKindID, got %v", err)
 	}
 	if _, err := NewKindDefinition(KindDefinitionInput{ID: "x", AppliesTo: []KindAppliesTo{KindAppliesTo("bad")}}, now); err == nil {
 		t.Fatal("expected invalid applies_to error")
 	}
-	if _, err := NewKindDefinition(KindDefinitionInput{ID: "x", AppliesTo: []KindAppliesTo{KindAppliesToActionItem}, PayloadSchemaJSON: "{"}, now); err != ErrInvalidKindPayloadSchema {
+	if _, err := NewKindDefinition(KindDefinitionInput{ID: "x", AppliesTo: []KindAppliesTo{KindAppliesToBuild}, PayloadSchemaJSON: "{"}, now); err != ErrInvalidKindPayloadSchema {
 		t.Fatalf("expected ErrInvalidKindPayloadSchema, got %v", err)
 	}
 }

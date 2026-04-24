@@ -295,16 +295,82 @@ func (r *Repository) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
 		);`,
+		// Seed the 12-value Kind enum into the kind catalog at boot. Scope
+		// mirrors kind (applies_to_json = ["<kind-id>"]), and the parent-scope
+		// list encodes the domain.AllowedParentKinds rule: build-qa-proof /
+		// build-qa-falsification nest under build; every other non-plan kind
+		// nests under plan; plan itself nests under plan (and accepts a
+		// project-root placement through an empty parent).
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'project', 'Project', 'Built-in project kind', '["project"]', '[]', '', '{}',
+			'plan', 'Plan', 'Planning-dominant action item', '["plan"]', '["plan"]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'actionItem', 'ActionItem', 'Built-in actionItem kind', '["actionItem"]', '[]', '', '{}',
+			'research', 'Research', 'Read-only investigation action item', '["research"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'build', 'Build', 'Code-changing leaf action item', '["build"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'plan-qa-proof', 'Plan QA Proof', 'Proof-completeness QA pass on a plan parent', '["plan-qa-proof"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'plan-qa-falsification', 'Plan QA Falsification', 'Falsification QA pass on a plan parent', '["plan-qa-falsification"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'build-qa-proof', 'Build QA Proof', 'Proof-completeness QA pass on a build parent', '["build-qa-proof"]', '["build"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'build-qa-falsification', 'Build QA Falsification', 'Falsification QA pass on a build parent', '["build-qa-falsification"]', '["build"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'closeout', 'Closeout', 'Drop-end coordination action item', '["closeout"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'commit', 'Commit', 'Commit action item', '["commit"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'refinement', 'Refinement', 'Long-lived tracking umbrella', '["refinement"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'discussion', 'Discussion', 'Cross-cutting decision park', '["discussion"]', '["plan"]', '', '{}',
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
+		);`,
+		`INSERT OR IGNORE INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		) VALUES (
+			'human-verify', 'Human Verify', 'Dev sign-off hold point', '["human-verify"]', '["plan"]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS project_allowed_kinds (
@@ -1154,7 +1220,7 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(t.Kind)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -1242,7 +1308,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(t.Kind)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2741,14 +2807,13 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, fmt.Errorf("decode labels_json: %w", err)
 	}
 	if strings.TrimSpace(string(t.Kind)) == "" {
-		t.Kind = domain.KindActionItem
+		// Rows written before the 12-value Kind enum shipped can carry empty
+		// kind. Fall back to KindPlan so the scan succeeds; the SQL
+		// migration in Unit E rewrites persisted rows to valid enum values.
+		t.Kind = domain.KindPlan
 	}
 	if t.Scope == "" {
-		if strings.TrimSpace(t.ParentID) == "" {
-			t.Scope = domain.KindAppliesToActionItem
-		} else {
-			t.Scope = domain.KindAppliesToSubtask
-		}
+		t.Scope = domain.KindAppliesTo(t.Kind)
 	}
 	if t.LifecycleState == "" {
 		t.LifecycleState = domain.StateTodo

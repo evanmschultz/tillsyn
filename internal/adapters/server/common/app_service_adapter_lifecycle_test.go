@@ -48,7 +48,7 @@ func newCommonLifecycleFixture(t *testing.T) commonLifecycleFixture {
 	}
 }
 
-// seedOrphanKindsForTest upserts the branch/phase/subtask kind definitions that
+// seedOrphanKindsForTest seeds the plan/build/research kind definitions under
 // the built-in sqlite seed omits so adapter-layer fixtures can create non-actionItem
 // work items without hitting ErrKindNotFound. Post-Drop-1.75 the app layer no
 // longer seeds these legacy kinds; adapter tests that still exercise them must
@@ -61,9 +61,9 @@ func seedOrphanKindsForTest(t *testing.T, svc *app.Service) {
 		display   string
 		appliesTo domain.KindAppliesTo
 	}{
-		{id: domain.KindID("branch"), display: "Branch", appliesTo: domain.KindAppliesToBranch},
-		{id: domain.KindID("phase"), display: "Phase", appliesTo: domain.KindAppliesToPhase},
-		{id: domain.KindID("subtask"), display: "Subtask", appliesTo: domain.KindAppliesToSubtask},
+		{id: domain.KindID(domain.KindPlan), display: "Plan", appliesTo: domain.KindAppliesToPlan},
+		{id: domain.KindID(domain.KindBuild), display: "Build", appliesTo: domain.KindAppliesToBuild},
+		{id: domain.KindID(domain.KindResearch), display: "Research", appliesTo: domain.KindAppliesToResearch},
 	}
 	for _, entry := range entries {
 		if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
@@ -193,7 +193,7 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	child, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
 		ProjectID: project.ID,
 		ParentID:  actionItem.ID,
-		Kind:      string(domain.KindSubtask),
+		Kind:      string(domain.KindBuild),
 		ColumnID:  done.ID,
 		Title:     "Child actionItem",
 		Priority:  "medium",
@@ -581,7 +581,7 @@ func TestAppServiceAdapterKindAndAllowlistLifecycle(t *testing.T) {
 		ID:                  "review",
 		DisplayName:         "Review",
 		DescriptionMarkdown: "Review item",
-		AppliesTo:           []string{"actionItem"},
+		AppliesTo:           []string{"plan"},
 	})
 	if err != nil {
 		t.Fatalf("UpsertKindDefinition() error = %v", err)

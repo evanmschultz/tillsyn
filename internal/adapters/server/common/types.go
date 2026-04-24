@@ -55,18 +55,14 @@ func canonicalScopeType(scopeType string) string {
 }
 
 // commentTargetTypeFromScope maps transport scope_type values to comment target types.
+// Comments now only address projects and individual action items; branch,
+// phase, and subtask-level scope types no longer map to comment targets.
 func commentTargetTypeFromScope(scopeType string) (domain.CommentTargetType, bool) {
 	switch strings.ToLower(strings.TrimSpace(scopeType)) {
 	case strings.ToLower(ScopeTypeProject):
 		return domain.CommentTargetTypeProject, true
-	case strings.ToLower(ScopeTypeBranch):
-		return domain.CommentTargetTypeBranch, true
-	case strings.ToLower(ScopeTypePhase):
-		return domain.CommentTargetTypePhase, true
 	case strings.ToLower(ScopeTypeActionItem):
 		return domain.CommentTargetTypeActionItem, true
-	case strings.ToLower(ScopeTypeSubtask):
-		return domain.CommentTargetTypeSubtask, true
 	default:
 		return "", false
 	}

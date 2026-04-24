@@ -234,7 +234,7 @@ func TestModel_CtrlD_EntersDiffMode(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewActionItem(domain.ActionItemInput{
+	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -266,7 +266,7 @@ func TestModel_EscFromDiff_RestoresPrior(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewActionItem(domain.ActionItemInput{
+	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -302,7 +302,7 @@ func TestDiffMode_Teatest_E2E(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewActionItem(domain.ActionItemInput{
+	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -354,7 +354,7 @@ func newDiffTestTask(t *testing.T, refs []domain.ResourceRef) domain.ActionItem 
 	if err != nil {
 		t.Fatalf("NewColumn: %v", err)
 	}
-	task, err := domain.NewActionItem(domain.ActionItemInput{
+	task, err := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-diff-test",
 		ProjectID: p.ID,
 		ColumnID:  col.ID,
@@ -560,7 +560,7 @@ func TestDiffMode_SetItem_PassesResolvedPaths(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewActionItem(domain.ActionItemInput{
+	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -609,7 +609,7 @@ func TestDiffMode_RecomputesOnItemChange(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	task, _ := domain.NewActionItem(domain.ActionItemInput{
+	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,

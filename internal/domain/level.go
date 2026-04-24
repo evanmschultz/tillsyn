@@ -99,24 +99,6 @@ func IsValidScopeLevel(level ScopeLevel) bool {
 	return slices.Contains(validScopeLevels, level)
 }
 
-// ScopeLevelFromKindAppliesTo converts a kind applies_to value into a scope level.
-func ScopeLevelFromKindAppliesTo(scope KindAppliesTo) ScopeLevel {
-	switch NormalizeKindAppliesTo(scope) {
-	case KindAppliesToProject:
-		return ScopeLevelProject
-	case KindAppliesToBranch:
-		return ScopeLevelBranch
-	case KindAppliesToPhase:
-		return ScopeLevelPhase
-	case KindAppliesToSubtask:
-		return ScopeLevelSubtask
-	case KindAppliesToActionItem:
-		return ScopeLevelActionItem
-	default:
-		return ""
-	}
-}
-
 // ScopeLevelFromCapabilityScopeType converts a capability scope into a scope level.
 func ScopeLevelFromCapabilityScopeType(scope CapabilityScopeType) ScopeLevel {
 	switch NormalizeCapabilityScopeType(scope) {
@@ -148,24 +130,6 @@ func (level ScopeLevel) ToCapabilityScopeType() CapabilityScopeType {
 		return CapabilityScopeSubtask
 	case ScopeLevelActionItem:
 		return CapabilityScopeActionItem
-	default:
-		return ""
-	}
-}
-
-// ToKindAppliesTo maps one level value into a kind applies_to value.
-func (level ScopeLevel) ToKindAppliesTo() KindAppliesTo {
-	switch NormalizeScopeLevel(level) {
-	case ScopeLevelProject:
-		return KindAppliesToProject
-	case ScopeLevelBranch:
-		return KindAppliesToBranch
-	case ScopeLevelPhase:
-		return KindAppliesToPhase
-	case ScopeLevelSubtask:
-		return KindAppliesToSubtask
-	case ScopeLevelActionItem:
-		return KindAppliesToActionItem
 	default:
 		return ""
 	}

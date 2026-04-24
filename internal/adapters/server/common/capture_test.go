@@ -153,13 +153,16 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 			LifecycleState: domain.StateFailed,
 		},
 	}
+	// Comments and attention now live on an action-item scope; branch-level
+	// comment target types were removed alongside the 12-kind enum, and the
+	// capture-state scope path uses the corresponding action-item path.
 	comments := []domain.Comment{
-		{ID: "cm-1", ProjectID: project.ID, TargetType: domain.CommentTargetTypeBranch, TargetID: "b1", BodyMarkdown: "urgent: review this"},
-		{ID: "cm-2", ProjectID: project.ID, TargetType: domain.CommentTargetTypeBranch, TargetID: "b1", BodyMarkdown: "plain note"},
+		{ID: "cm-1", ProjectID: project.ID, TargetType: domain.CommentTargetTypeActionItem, TargetID: "t-parent", BodyMarkdown: "urgent: review this"},
+		{ID: "cm-2", ProjectID: project.ID, TargetType: domain.CommentTargetTypeActionItem, TargetID: "t-parent", BodyMarkdown: "plain note"},
 	}
 	attention := []AttentionItem{
-		{ID: "att-2", ProjectID: project.ID, ScopeType: ScopeTypeBranch, ScopeID: "b1", State: AttentionStateOpen, Summary: "later", CreatedAt: now.Add(time.Minute)},
-		{ID: "att-1", ProjectID: project.ID, ScopeType: ScopeTypeBranch, ScopeID: "b1", State: AttentionStateOpen, Summary: "first", RequiresUserAction: true, CreatedAt: now},
+		{ID: "att-2", ProjectID: project.ID, ScopeType: ScopeTypeActionItem, ScopeID: "t-parent", State: AttentionStateOpen, Summary: "later", CreatedAt: now.Add(time.Minute)},
+		{ID: "att-1", ProjectID: project.ID, ScopeType: ScopeTypeActionItem, ScopeID: "t-parent", State: AttentionStateOpen, Summary: "first", RequiresUserAction: true, CreatedAt: now},
 	}
 
 	service := NewCaptureStateService(fakeCaptureReadModel{
@@ -173,8 +176,8 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 
 	capture, err := service.CaptureState(context.Background(), CaptureStateRequest{
 		ProjectID: project.ID,
-		ScopeType: ScopeTypeBranch,
-		ScopeID:   "b1",
+		ScopeType: ScopeTypeActionItem,
+		ScopeID:   "t-parent",
 		View:      "full",
 	})
 	if err != nil {
@@ -183,8 +186,8 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 	if capture.CapturedAt != now.UTC().Truncate(time.Second) {
 		t.Fatalf("CapturedAt = %s, want %s", capture.CapturedAt, now.UTC().Truncate(time.Second))
 	}
-	if len(capture.ScopePath) != 2 || capture.ScopePath[1].ScopeType != ScopeTypeBranch || capture.ScopePath[1].ScopeID != "b1" {
-		t.Fatalf("ScopePath = %#v, want project + branch b1", capture.ScopePath)
+	if len(capture.ScopePath) != 2 || capture.ScopePath[1].ScopeType != ScopeTypeActionItem || capture.ScopePath[1].ScopeID != "t-parent" {
+		t.Fatalf("ScopePath = %#v, want project + actionItem t-parent", capture.ScopePath)
 	}
 	if capture.AttentionOverview.OpenCount != 2 || capture.AttentionOverview.RequiresUserAction != 1 {
 		t.Fatalf("AttentionOverview = %#v, want open=2 requires=1", capture.AttentionOverview)

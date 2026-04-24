@@ -73,11 +73,16 @@ func issueUserSessionForTest(t *testing.T, auth *autentauth.Service) autent.Issu
 }
 
 // approvedPathAttentionFixture stores one real HTTP handler plus approved-path attention fixtures.
+// Post-Drop-1.75, auth scope mirrors kind and is always project-level for action-item-scoped rows
+// (see internal/app/auth_scope.go authScopeContextFromActionItemLineage). The fixture therefore
+// anchors approval at the project level and uses a second project for out-of-scope denial tests
+// instead of the pre-collapse branch/phase narrowing.
 type approvedPathAttentionFixture struct {
 	handler               *Handler
 	repo                  *sqlite.Repository
 	auth                  *autentauth.Service
 	projectID             string
+	outOfScopeProjectID   string
 	branchID              string
 	phaseID               string
 	attentionID           string
@@ -116,9 +121,14 @@ func newApprovedPathAttentionFixture(t *testing.T) approvedPathAttentionFixture 
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
+	otherProject, err := service.CreateProject(context.Background(), "Other", "")
+	if err != nil {
+		t.Fatalf("CreateProject(other) error = %v", err)
+	}
 	columnID := firstHTTPProjectColumnIDForTest(t, repo, project.ID)
+	otherColumnID := firstHTTPProjectColumnIDForTest(t, repo, otherProject.ID)
 	branch, phase, actionItem := createHTTPScopedActionItemChainForTest(t, service, project.ID, columnID)
-	otherBranch, _, otherActionItem := createHTTPScopedActionItemChainForTest(t, service, project.ID, columnID)
+	_, _, otherActionItem := createHTTPScopedActionItemChainForTest(t, service, otherProject.ID, otherColumnID)
 	attention, err := service.RaiseAttentionItem(context.Background(), app.RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
 			ProjectID: project.ID,
@@ -136,8 +146,7 @@ func newApprovedPathAttentionFixture(t *testing.T) approvedPathAttentionFixture 
 	}
 	outOfScopeAttention, err := service.RaiseAttentionItem(context.Background(), app.RaiseAttentionItemInput{
 		Level: domain.LevelTupleInput{
-			ProjectID: project.ID,
-			BranchID:  otherBranch.ID,
+			ProjectID: otherProject.ID,
 			ScopeType: domain.ScopeLevelActionItem,
 			ScopeID:   otherActionItem.ID,
 		},
@@ -156,6 +165,7 @@ func newApprovedPathAttentionFixture(t *testing.T) approvedPathAttentionFixture 
 		repo:                  repo,
 		auth:                  auth,
 		projectID:             project.ID,
+		outOfScopeProjectID:   otherProject.ID,
 		branchID:              branch.ID,
 		phaseID:               phase.ID,
 		attentionID:           attention.ID,
@@ -177,42 +187,26 @@ func firstHTTPProjectColumnIDForTest(t *testing.T, repo *sqlite.Repository, proj
 	return columns[0].ID
 }
 
-// seedHTTPOrphanKindsForTest upserts branch/phase/subtask kind definitions that the
-// built-in sqlite seed omits so HTTP integration fixtures can build branch -> phase
-// -> actionItem chains without hitting ErrKindNotFound. Post-Drop-1.75 the app layer
-// no longer seeds these legacy kinds; adapter tests that still exercise them must
-// seed explicitly via the service API per the orphan-via-collapse doctrine.
+// seedHTTPOrphanKindsForTest is retained for API compatibility with integration
+// fixtures that used to seed branch/phase/subtask kind definitions. Post-Drop-1.75
+// the built-in seed covers every valid kind, so this is now a no-op. Kept so
+// existing call sites compile without churn.
 func seedHTTPOrphanKindsForTest(t *testing.T, svc *app.Service) {
 	t.Helper()
-
-	entries := []struct {
-		id        domain.KindID
-		display   string
-		appliesTo domain.KindAppliesTo
-	}{
-		{id: domain.KindID("branch"), display: "Branch", appliesTo: domain.KindAppliesToBranch},
-		{id: domain.KindID("phase"), display: "Phase", appliesTo: domain.KindAppliesToPhase},
-		{id: domain.KindID("subtask"), display: "Subtask", appliesTo: domain.KindAppliesToSubtask},
-	}
-	for _, entry := range entries {
-		if _, err := svc.UpsertKindDefinition(context.Background(), app.CreateKindDefinitionInput{
-			ID:          entry.id,
-			DisplayName: entry.display,
-			AppliesTo:   []domain.KindAppliesTo{entry.appliesTo},
-		}); err != nil {
-			t.Fatalf("UpsertKindDefinition(%q) error = %v", entry.id, err)
-		}
-	}
+	_ = svc
 }
 
-// createHTTPScopedActionItemChainForTest creates one branch -> phase -> actionItem chain for HTTP approved-path tests.
+// createHTTPScopedActionItemChainForTest creates one plan -> plan -> build chain for HTTP approved-path tests.
+// The chain's shape (3-level tree under one project) mirrors the pre-Drop-1.75 branch -> phase -> actionItem
+// hierarchy for authorization traversal; the chain variables are still named branch/phase/actionItem to
+// preserve the semantic role each level plays in approved-path assertions.
 func createHTTPScopedActionItemChainForTest(t *testing.T, service *app.Service, projectID, columnID string) (domain.ActionItem, domain.ActionItem, domain.ActionItem) {
 	t.Helper()
 
 	branch, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
-		Kind:           domain.Kind("branch"),
-		Scope:          domain.KindAppliesToBranch,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		ColumnID:       columnID,
 		Title:          "Branch",
 		CreatedByActor: "user-1",
@@ -227,8 +221,8 @@ func createHTTPScopedActionItemChainForTest(t *testing.T, service *app.Service, 
 	phase, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       branch.ID,
-		Kind:           domain.KindPhase,
-		Scope:          domain.KindAppliesToPhase,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		ColumnID:       columnID,
 		Title:          "Phase",
 		CreatedByActor: "user-1",
@@ -243,8 +237,8 @@ func createHTTPScopedActionItemChainForTest(t *testing.T, service *app.Service, 
 	actionItem, err := service.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      projectID,
 		ParentID:       phase.ID,
-		Kind:           domain.KindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindBuild,
+		Scope:          domain.KindAppliesToBuild,
 		ColumnID:       columnID,
 		Title:          "ActionItem",
 		CreatedByActor: "user-1",
@@ -259,9 +253,14 @@ func createHTTPScopedActionItemChainForTest(t *testing.T, service *app.Service, 
 	return branch, phase, actionItem
 }
 
-// issueApprovedPathHTTPTestSession issues one HTTP user session constrained to the requested branch/phase path.
+// issueApprovedPathHTTPTestSession issues one HTTP user session constrained to one project-scoped approved path.
+// Post-Drop-1.75 auth scope collapses to project level for action-item rows, so branch/phase segments in the
+// approved path would make the session narrower than any resolvable context. The branchID / phaseIDs parameters
+// are retained for call-site compatibility but only the projectID contributes to the issued approved_path.
 func issueApprovedPathHTTPTestSession(t *testing.T, auth *autentauth.Service, projectID, branchID string, phaseIDs ...string) autent.IssuedSession {
 	t.Helper()
+	_ = branchID
+	_ = phaseIDs
 
 	issued, err := auth.IssueSession(context.Background(), autentauth.IssueSessionInput{
 		PrincipalID:   "user-1",
@@ -273,8 +272,6 @@ func issueApprovedPathHTTPTestSession(t *testing.T, auth *autentauth.Service, pr
 		Metadata: map[string]string{
 			"approved_path": domain.AuthRequestPath{
 				ProjectID: projectID,
-				BranchID:  branchID,
-				PhaseIDs:  append([]string(nil), phaseIDs...),
 			}.String(),
 			"project_id": projectID,
 		},

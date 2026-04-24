@@ -392,20 +392,19 @@ func (s *Service) validateCapabilityScopeTuple(ctx context.Context, projectID st
 }
 
 // capabilityScopeTypeForActionItem maps one actionItem scope into a capability-scope value.
+// Scope now mirrors the 12-value Kind enum, so every action-item row resolves
+// to CapabilityScopeActionItem for capability-lease purposes.
 func capabilityScopeTypeForActionItem(actionItem domain.ActionItem) domain.CapabilityScopeType {
-	switch actionItem.Scope {
-	case domain.KindAppliesToProject:
-		// Legacy/manual rows can carry project scope and must never be coerced to actionItem scope.
-		return domain.CapabilityScopeProject
-	case domain.KindAppliesToBranch:
-		return domain.CapabilityScopeBranch
-	case domain.KindAppliesToPhase:
-		return domain.CapabilityScopePhase
-	case domain.KindAppliesToSubtask:
-		return domain.CapabilityScopeSubtask
-	default:
-		return domain.CapabilityScopeActionItem
-	}
+	return domain.CapabilityScopeActionItem
+}
+
+// scopeLevelForActionItem returns the canonical auth/attention scope level for
+// one action-item row. Scope mirrors kind in the 12-value enum, so every
+// action item resolves to ScopeLevelActionItem regardless of which kind it
+// carries.
+func scopeLevelForActionItem(actionItem domain.ActionItem) domain.ScopeLevel {
+	_ = actionItem
+	return domain.ScopeLevelActionItem
 }
 
 // ensureOrchestratorOverlapPolicy enforces project policy for overlapping orchestrator leases
@@ -546,7 +545,7 @@ func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectI
 func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID string, kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem) (domain.KindDefinition, error) {
 	kindID = domain.NormalizeKindID(kindID)
 	if kindID == "" {
-		kindID = domain.KindID(domain.KindActionItem)
+		kindID = domain.KindID(domain.KindPlan)
 	}
 	scope = normalizeActionItemScopeForKind(kindID, scope, parent)
 	if !domain.IsValidWorkItemAppliesTo(scope) {
@@ -590,26 +589,18 @@ func (s *Service) validateActionItemKind(ctx context.Context, projectID string, 
 	return kind, nil
 }
 
-// normalizeActionItemScopeForKind infers the canonical stored scope for one work-item kind.
+// normalizeActionItemScopeForKind infers the canonical stored scope for one
+// work-item kind. Scope mirrors kind per the 12-value Kind enum, so the scope
+// is always the KindAppliesTo value whose stored form equals the supplied
+// kind. The parent pointer is no longer consulted because no kind resolves to
+// a parent-dependent scope.
 func normalizeActionItemScopeForKind(kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.ActionItem) domain.KindAppliesTo {
+	_ = parent
 	scope = domain.NormalizeKindAppliesTo(scope)
 	if scope != "" {
 		return scope
 	}
-
-	switch domain.NormalizeKindID(kindID) {
-	case domain.KindID(domain.KindAppliesToBranch):
-		return domain.KindAppliesToBranch
-	case domain.KindID(domain.KindPhase):
-		return domain.KindAppliesToPhase
-	case domain.KindID(domain.KindSubtask):
-		return domain.KindAppliesToSubtask
-	default:
-		if parent != nil {
-			return domain.KindAppliesToSubtask
-		}
-		return domain.KindAppliesToActionItem
-	}
+	return domain.KindAppliesTo(domain.NormalizeKindID(kindID))
 }
 
 // resolveProjectAllowedKinds returns explicit project allowlist values or built-in fallback.
@@ -650,9 +641,22 @@ func (s *Service) defaultProjectAllowedKindIDs(ctx context.Context) ([]domain.Ki
 		kindIDs = append(kindIDs, kind.ID)
 	}
 	if len(kindIDs) == 0 {
+		// Fallback to the built-in 12-value Kind enum when the catalog has not
+		// been seeded yet. Keeps `kind_capability` callers able to resolve an
+		// allowlist even against an empty kind_catalog table.
 		kindIDs = []domain.KindID{
-			domain.DefaultProjectKind,
-			domain.KindID(domain.KindActionItem),
+			domain.KindID(domain.KindPlan),
+			domain.KindID(domain.KindResearch),
+			domain.KindID(domain.KindBuild),
+			domain.KindID(domain.KindPlanQAProof),
+			domain.KindID(domain.KindPlanQAFalsification),
+			domain.KindID(domain.KindBuildQAProof),
+			domain.KindID(domain.KindBuildQAFalsification),
+			domain.KindID(domain.KindCloseout),
+			domain.KindID(domain.KindCommit),
+			domain.KindID(domain.KindRefinement),
+			domain.KindID(domain.KindDiscussion),
+			domain.KindID(domain.KindHumanVerify),
 		}
 	}
 	return normalizeKindIDList(kindIDs), nil
@@ -762,15 +766,14 @@ func mergeActionItemMetadataWithKindTemplate(base domain.ActionItemMetadata, kin
 }
 
 // validateKindTemplateExpansion preflights nested template children before persistence.
-func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.ActionItem, defaultChildScope domain.KindAppliesTo, depth int) error {
+// Scope mirrors kind per the 12-value enum, so the child scope is resolved
+// from each spec's own Kind/AppliesTo rather than a caller-supplied default.
+func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.ActionItem, depth int) error {
 	if depth > maxKindTemplateApplyDepth {
 		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidKindTemplate)
 	}
 	for _, childSpec := range kind.Template.AutoCreateChildren {
 		childScope := childSpec.AppliesTo
-		if childScope == "" {
-			childScope = defaultChildScope
-		}
 		childMetadata, err := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
 		if err != nil {
 			return err
@@ -790,7 +793,7 @@ func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID s
 			ProjectID: projectID,
 			Scope:     childScope,
 		}
-		if err := s.validateKindTemplateExpansion(ctx, projectID, childKind, childParent, domain.KindAppliesToSubtask, depth+1); err != nil {
+		if err := s.validateKindTemplateExpansion(ctx, projectID, childKind, childParent, depth+1); err != nil {
 			return err
 		}
 	}

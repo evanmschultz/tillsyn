@@ -115,6 +115,7 @@ func TestRepository_ProjectColumnActionItemLifecycle(t *testing.T) {
 
 	due := now.Add(24 * time.Hour)
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -201,6 +202,7 @@ func TestRepository_ActionItemEmbeddingsRoundTrip(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -292,6 +294,7 @@ func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -433,6 +436,7 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t-comment-targets",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -901,6 +905,7 @@ func TestRepository_DeleteProjectCascades(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1239,6 +1244,7 @@ func TestRepositoryUpdateNotFound(t *testing.T) {
 	}
 
 	tk, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "missing-actionItem",
 		ProjectID: "missing",
 		ColumnID:  "missing-col",
@@ -1277,6 +1283,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 	}
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       todo.ID,
@@ -1423,6 +1430,7 @@ func TestRepository_ActionItemLifecyclePreservesMutationActorName(t *testing.T) 
 				t.Fatalf("CreateColumn() error = %v", err)
 			}
 			actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+				Kind:      domain.KindPlan,
 				ID:        "t1",
 				ProjectID: project.ID,
 				ColumnID:  todo.ID,
@@ -1553,10 +1561,15 @@ func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 
+	// Attach a payload schema to a custom kind id not seeded by the 12-value
+	// Kind enum. Custom kinds remain allowed in the catalog but cannot be
+	// used for action-item rows; the test exercises catalog storage, not
+	// action-item creation. The project_allowed_kinds closure can still mix
+	// built-in and custom ids.
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:                "refactor",
-		DisplayName:       "Refactor",
-		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:                "custom-refactor",
+		DisplayName:       "Custom Refactor",
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToPlan},
 		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
 	}, now)
 	if err != nil {
@@ -1569,11 +1582,11 @@ func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetKindDefinition() error = %v", err)
 	}
-	if loadedKind.DisplayName != "Refactor" {
+	if loadedKind.DisplayName != "Custom Refactor" {
 		t.Fatalf("unexpected kind display name %q", loadedKind.DisplayName)
 	}
 
-	if err := repo.SetProjectAllowedKinds(ctx, project.ID, []domain.KindID{kind.ID, domain.DefaultProjectKind}); err != nil {
+	if err := repo.SetProjectAllowedKinds(ctx, project.ID, []domain.KindID{kind.ID, domain.KindID(domain.KindPlan)}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
 	}
 	allowed, err := repo.ListProjectAllowedKinds(ctx, project.ID)
@@ -2139,8 +2152,8 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		ID:        "t-scope",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Scope:     domain.KindAppliesToPhase,
-		Kind:      domain.KindPhase,
+		Scope:     domain.KindAppliesToDiscussion,
+		Kind:      domain.KindDiscussion,
 		Position:  0,
 		Title:     "phase",
 		Priority:  domain.PriorityMedium,
@@ -2155,7 +2168,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetActionItem() error = %v", err)
 	}
-	if loadedActionItem.Scope != domain.KindAppliesToPhase {
+	if loadedActionItem.Scope != domain.KindAppliesToDiscussion {
 		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedActionItem.Scope)
 	}
 
@@ -2164,8 +2177,8 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  actionItem.ID,
 		ColumnID:  column.ID,
-		Scope:     domain.KindAppliesToPhase,
-		Kind:      domain.KindPhase,
+		Scope:     domain.KindAppliesToDiscussion,
+		Kind:      domain.KindDiscussion,
 		Position:  1,
 		Title:     "nested phase",
 		Priority:  domain.PriorityMedium,
@@ -2180,7 +2193,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetActionItem(nested phase) error = %v", err)
 	}
-	if loadedNestedPhaseActionItem.Scope != domain.KindAppliesToPhase {
+	if loadedNestedPhaseActionItem.Scope != domain.KindAppliesToDiscussion {
 		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedNestedPhaseActionItem.Scope)
 	}
 }
@@ -2344,7 +2357,8 @@ func TestRepositoryAuthRequestScanErrors(t *testing.T) {
 	}
 }
 
-// TestRepositoryFreshOpenKindCatalog verifies that a fresh DB open bakes exactly two kind_catalog rows.
+// TestRepositoryFreshOpenKindCatalog verifies that a fresh DB open bakes the
+// 12-value Kind enum into the kind_catalog table.
 func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
@@ -2373,7 +2387,20 @@ func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
 		t.Fatalf("iterate kind_catalog error = %v", err)
 	}
 
-	want := []string{"actionItem", "project"}
+	want := []string{
+		"build",
+		"build-qa-falsification",
+		"build-qa-proof",
+		"closeout",
+		"commit",
+		"discussion",
+		"human-verify",
+		"plan",
+		"plan-qa-falsification",
+		"plan-qa-proof",
+		"refinement",
+		"research",
+	}
 	if len(ids) != len(want) {
 		t.Fatalf("kind_catalog rows = %d (%v), want %d (%v)", len(ids), ids, len(want), want)
 	}

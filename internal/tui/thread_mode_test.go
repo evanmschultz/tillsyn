@@ -6,27 +6,21 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// TestCommentTargetTypeForKindSupportsHierarchyKinds verifies branch/phase kind coverage.
-func TestCommentTargetTypeForKindSupportsHierarchyKinds(t *testing.T) {
+// TestCommentTargetTypeForKindCollapsesToActionItem verifies every valid kind maps to the ActionItem
+// comment target after the Drop-1.75 kind collapse. The pre-collapse branch/phase target taxonomy
+// is gone; the only surviving distinction is the project vs action-item split (project targets are
+// not produced by this helper).
+func TestCommentTargetTypeForKindCollapsesToActionItem(t *testing.T) {
 	tests := []struct {
 		name   string
 		kind   domain.Kind
 		want   domain.CommentTargetType
 		wantOK bool
 	}{
-		{
-			name:   "branch kind",
-			kind:   domain.Kind(domain.KindAppliesToBranch),
-			want:   domain.CommentTargetTypeBranch,
-			wantOK: true,
-		},
-		{name: "phase kind", kind: domain.KindPhase, want: domain.CommentTargetTypePhase, wantOK: true},
-		{
-			name:   "unknown kind",
-			kind:   domain.Kind("unknown"),
-			want:   "",
-			wantOK: false,
-		},
+		{name: "plan kind", kind: domain.KindPlan, want: domain.CommentTargetTypeActionItem, wantOK: true},
+		{name: "discussion kind", kind: domain.KindDiscussion, want: domain.CommentTargetTypeActionItem, wantOK: true},
+		{name: "build kind", kind: domain.KindBuild, want: domain.CommentTargetTypeActionItem, wantOK: true},
+		{name: "unknown kind", kind: domain.Kind("unknown"), want: "", wantOK: false},
 	}
 
 	for _, tc := range tests {
@@ -40,8 +34,9 @@ func TestCommentTargetTypeForKindSupportsHierarchyKinds(t *testing.T) {
 	}
 }
 
-// TestCommentTargetTypeForActionItemUsesScopeOverrides verifies scope-aware branch mapping.
-func TestCommentTargetTypeForActionItemUsesScopeOverrides(t *testing.T) {
+// TestCommentTargetTypeForActionItemCollapsesToActionItem verifies the actionItem mapper also
+// collapses to the single ActionItem target post-Drop-1.75.
+func TestCommentTargetTypeForActionItemCollapsesToActionItem(t *testing.T) {
 	tests := []struct {
 		name       string
 		actionItem domain.ActionItem
@@ -49,15 +44,15 @@ func TestCommentTargetTypeForActionItemUsesScopeOverrides(t *testing.T) {
 		wantOK     bool
 	}{
 		{
-			name:       "branch scope on actionItem kind",
-			actionItem: domain.ActionItem{Kind: domain.KindActionItem, Scope: domain.KindAppliesToBranch},
-			want:       domain.CommentTargetTypeBranch,
+			name:       "plan kind",
+			actionItem: domain.ActionItem{Kind: domain.KindPlan, Scope: domain.KindAppliesToPlan},
+			want:       domain.CommentTargetTypeActionItem,
 			wantOK:     true,
 		},
 		{
-			name:       "phase remains phase",
-			actionItem: domain.ActionItem{Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase},
-			want:       domain.CommentTargetTypePhase,
+			name:       "discussion kind",
+			actionItem: domain.ActionItem{Kind: domain.KindDiscussion, Scope: domain.KindAppliesToDiscussion},
+			want:       domain.CommentTargetTypeActionItem,
 			wantOK:     true,
 		},
 	}

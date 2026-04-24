@@ -397,15 +397,19 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("tasks[%d].priority must be low|medium|high", i)
 		}
 		if strings.TrimSpace(string(t.Kind)) == "" {
-			t.Kind = domain.KindActionItem
+			// Snapshot imports tolerate legacy rows with empty kind by falling
+			// back to KindPlan, which is the lightest-weight member of the
+			// 12-value Kind enum. Domain creation rejects empty kind; this
+			// fallback keeps importers forward-compatible with older exports.
+			t.Kind = domain.KindPlan
 			s.ActionItems[i].Kind = t.Kind
 		}
 		if t.Scope == "" {
-			t.Scope = domain.DefaultActionItemScope(t.Kind, t.ParentID)
+			t.Scope = domain.DefaultActionItemScope(t.Kind)
 			s.ActionItems[i].Scope = t.Scope
 		}
 		if !domain.IsValidWorkItemAppliesTo(t.Scope) {
-			return fmt.Errorf("tasks[%d].scope must be branch|phase|actionItem|subtask", i)
+			return fmt.Errorf("tasks[%d].scope must be a member of the 12-value Kind enum", i)
 		}
 		if t.LifecycleState == "" {
 			t.LifecycleState = domain.StateTodo
@@ -441,10 +445,10 @@ func (s *Snapshot) Validate() error {
 		if _, exists := actionItemIDs[t.ParentID]; !exists {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
 		}
-		parent := actionItemByID[t.ParentID]
-		if t.Kind == domain.KindPhase && parent.Scope != domain.KindAppliesToBranch && parent.Scope != domain.KindAppliesToPhase {
-			return fmt.Errorf("tasks[%d].parent_id %q invalid for phase parent scope %q", i, t.ParentID, parent.Scope)
-		}
+		// Parent-kind constraints are enforced by domain.AllowedParentKinds at
+		// action-item creation. Snapshot validation no longer special-cases the
+		// legacy KindPhase hierarchy because the 12-value Kind enum removed it.
+		_ = actionItemByID[t.ParentID]
 	}
 
 	kindIDs := map[domain.KindID]struct{}{}
@@ -898,45 +902,20 @@ func (s *Service) importSnapshotHandoffs(ctx context.Context, handoffs []Snapsho
 	return nil
 }
 
-// snapshotCommentTargetTypeForActionItem maps one work-item row to a comment target type.
+// snapshotCommentTargetTypeForActionItem maps one work-item row to a comment
+// target type. Comments now address the action item as a whole, regardless of
+// which of the 12 kinds the row carries.
 func snapshotCommentTargetTypeForActionItem(actionItem domain.ActionItem) domain.CommentTargetType {
-	switch actionItem.Kind {
-	case domain.Kind(domain.KindAppliesToBranch):
-		return domain.CommentTargetTypeBranch
-	case domain.KindPhase:
-		return domain.CommentTargetTypePhase
-	case domain.KindSubtask:
-		return domain.CommentTargetTypeSubtask
-	case domain.KindDecision:
-		return domain.CommentTargetTypeDecision
-	case domain.KindNote:
-		return domain.CommentTargetTypeNote
-	default:
-		if actionItem.Scope == domain.KindAppliesToBranch {
-			return domain.CommentTargetTypeBranch
-		}
-		if actionItem.Scope == domain.KindAppliesToSubtask {
-			return domain.CommentTargetTypeSubtask
-		}
-		if actionItem.Scope == domain.KindAppliesToPhase {
-			return domain.CommentTargetTypePhase
-		}
-		return domain.CommentTargetTypeActionItem
-	}
+	_ = actionItem
+	return domain.CommentTargetTypeActionItem
 }
 
-// snapshotCapabilityScopeTypeForActionItem maps one work-item row to a capability scope type.
+// snapshotCapabilityScopeTypeForActionItem maps one work-item row to a
+// capability scope type. Scope mirrors kind in the 12-value enum, so every
+// action-item row resolves to CapabilityScopeActionItem.
 func snapshotCapabilityScopeTypeForActionItem(actionItem domain.ActionItem) domain.CapabilityScopeType {
-	switch actionItem.Scope {
-	case domain.KindAppliesToBranch:
-		return domain.CapabilityScopeBranch
-	case domain.KindAppliesToPhase:
-		return domain.CapabilityScopePhase
-	case domain.KindAppliesToSubtask:
-		return domain.CapabilityScopeSubtask
-	default:
-		return domain.CapabilityScopeActionItem
-	}
+	_ = actionItem
+	return domain.CapabilityScopeActionItem
 }
 
 // isSupportedActorType validates snapshot actor types for comments.
@@ -1218,11 +1197,9 @@ func snapshotAvailableHandoffScopes(projects []SnapshotProject, tasks []Snapshot
 		if projectID == "" || scopeID == "" {
 			continue
 		}
-		scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-		if scopeType == "" {
-			scopeType = domain.ScopeLevelActionItem
-		}
-		out[snapshotHandoffScopeKey(projectID, scopeType, scopeID)] = struct{}{}
+		// Scope mirrors kind in the 12-value enum, so every action-item
+		// handoff scope lives at ScopeLevelActionItem.
+		out[snapshotHandoffScopeKey(projectID, domain.ScopeLevelActionItem, scopeID)] = struct{}{}
 	}
 	return out
 }
@@ -1234,11 +1211,9 @@ func snapshotAvailableDomainHandoffScopes(projectID string, tasks []domain.Actio
 		snapshotHandoffScopeKey(projectID, domain.ScopeLevelProject, projectID): {},
 	}
 	for _, actionItem := range tasks {
-		scopeType := domain.ScopeLevelFromKindAppliesTo(actionItem.Scope)
-		if scopeType == "" {
-			scopeType = domain.ScopeLevelActionItem
-		}
-		out[snapshotHandoffScopeKey(projectID, scopeType, actionItem.ID)] = struct{}{}
+		// Scope mirrors kind in the 12-value enum, so every action-item
+		// handoff scope lives at ScopeLevelActionItem.
+		out[snapshotHandoffScopeKey(projectID, domain.ScopeLevelActionItem, actionItem.ID)] = struct{}{}
 	}
 	return out
 }
@@ -1293,11 +1268,13 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 	}
 	kind := t.Kind
 	if kind == "" {
-		kind = domain.KindActionItem
+		// Legacy rows with empty kind fall back to KindPlan so imports remain
+		// forward-compatible with the strict 12-value Kind enum.
+		kind = domain.KindPlan
 	}
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		scope = domain.DefaultActionItemScope(kind, t.ParentID)
+		scope = domain.DefaultActionItemScope(kind)
 	}
 	updatedType := t.UpdatedByType
 	if updatedType == "" {

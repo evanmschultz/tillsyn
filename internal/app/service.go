@@ -50,12 +50,21 @@ const (
 )
 
 // supportedSearchLevelFilters lists accepted level values for search filters.
+// Scope mirrors kind per the 12-value Kind enum, so the accepted level set is
+// the lowercase form of every KindAppliesTo value.
 var supportedSearchLevelFilters = map[string]struct{}{
-	string(domain.KindAppliesToProject):    {},
-	string(domain.KindAppliesToBranch):     {},
-	string(domain.KindAppliesToPhase):      {},
-	string(domain.KindAppliesToActionItem): {},
-	string(domain.KindAppliesToSubtask):    {},
+	string(domain.KindAppliesToPlan):                 {},
+	string(domain.KindAppliesToResearch):             {},
+	string(domain.KindAppliesToBuild):                {},
+	string(domain.KindAppliesToPlanQAProof):          {},
+	string(domain.KindAppliesToPlanQAFalsification):  {},
+	string(domain.KindAppliesToBuildQAProof):         {},
+	string(domain.KindAppliesToBuildQAFalsification): {},
+	string(domain.KindAppliesToCloseout):             {},
+	string(domain.KindAppliesToCommit):               {},
+	string(domain.KindAppliesToRefinement):           {},
+	string(domain.KindAppliesToDiscussion):           {},
+	string(domain.KindAppliesToHumanVerify):          {},
 }
 
 // ServiceConfig holds configuration for service.
@@ -1110,9 +1119,6 @@ func (s *Service) ReparentActionItem(ctx context.Context, actionItemID, parentID
 		if wouldCreateParentCycle(actionItem.ID, parentActionItem.ID, tasks) {
 			return domain.ActionItem{}, domain.ErrInvalidParentID
 		}
-	}
-	if parentID == "" && actionItem.Scope == domain.KindAppliesToSubtask {
-		return domain.ActionItem{}, domain.ErrInvalidParentID
 	}
 	if _, err := s.validateActionItemKind(ctx, actionItem.ProjectID, domain.KindID(actionItem.Kind), actionItem.Scope, parent, actionItem.Metadata.KindPayload); err != nil {
 		return domain.ActionItem{}, err
