@@ -21,7 +21,7 @@ The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md`
 
 ## Cascade Tree Structure (Template Architecture)
 
-This is the cascade's template architecture by action-item `kind` — the **post-Drop-2 target state**. **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually, but the `kind` values written into Tillsyn today are constrained by what Drop 2 Go can read — see "Pre-Drop-2 Creation Rule" below. The Kind Hierarchy / Agent Bindings sections describe the target shape, not the current runtime writes.
+This is the cascade's template architecture by action-item `kind`. **Drop 1.75 landed the closed 12-kind `action_items.kind` enum in Go + SQL** (see "Post-Drop-1.75 Creation Rule" below). **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually — spawning builders / QA agents by convention rather than via the dispatcher — but the `kind` values written into Tillsyn already match the target closed enum.
 
 ### Post-Drop-1.75 Creation Rule
 
