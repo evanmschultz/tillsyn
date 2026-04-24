@@ -1249,8 +1249,8 @@ func NewModel(svc Service, opts ...Option) Model {
 		confirmArchive:                       true,
 		confirmHardDelete:                    true,
 		confirmRestore:                       false,
-		actionItemFormKind:                   domain.KindActionItem,
-		actionItemFormScope:                  domain.KindAppliesToActionItem,
+		actionItemFormKind:                   domain.KindPlan,
+		actionItemFormScope:                  domain.KindAppliesToPlan,
 		allowedLabelProject:                  map[string][]string{},
 		searchRoots:                          []string{},
 		projectRoots:                         map[string]string{},
@@ -4785,8 +4785,8 @@ func (m *Model) startActionItemForm(actionItem *domain.ActionItem) tea.Cmd {
 	m.pickerBack = modeNone
 	m.input = ""
 	m.actionItemFormParentID = ""
-	m.actionItemFormKind = domain.KindActionItem
-	m.actionItemFormScope = domain.KindAppliesToActionItem
+	m.actionItemFormKind = domain.KindPlan
+	m.actionItemFormScope = domain.KindAppliesToPlan
 	m.actionItemFormResourceRefs = nil
 	m.actionItemFormSubactionItemCursor = 0
 	m.actionItemFormResourceCursor = 0
@@ -4868,14 +4868,18 @@ func (m *Model) startActionItemForm(actionItem *domain.ActionItem) tea.Cmd {
 }
 
 // newActionItemDefaultsForActiveBoardScope infers parent/kind/scope defaults from active focused scope.
+// Post-Drop-1.75 kind-collapse: scope mirrors kind, so defaults land on KindPlan
+// (the default decomposition parent) at project root, or KindBuild when the
+// focused root is already itself a leaf-ish work item. This is compile-fix only
+// scaffolding; filter/pill polish is deferred to Drop 4.5.
 func (m Model) newActionItemDefaultsForActiveBoardScope() (string, domain.Kind, domain.KindAppliesTo) {
 	rootID := strings.TrimSpace(m.projectionRootActionItemID)
 	if rootID == "" {
-		return "", domain.KindActionItem, domain.KindAppliesToActionItem
+		return "", domain.KindPlan, domain.KindAppliesToPlan
 	}
 	root, ok := m.actionItemByID(rootID)
 	if !ok {
-		return "", domain.KindActionItem, domain.KindAppliesToActionItem
+		return "", domain.KindPlan, domain.KindAppliesToPlan
 	}
 	levelByActionItemID := m.searchLevelByActionItemID([]domain.ActionItem{root})
 	level := strings.TrimSpace(levelByActionItemID[root.ID])
@@ -4884,28 +4888,33 @@ func (m Model) newActionItemDefaultsForActiveBoardScope() (string, domain.Kind, 
 	}
 	switch level {
 	case "actionItem", "subtask":
-		return root.ID, domain.KindSubtask, domain.KindAppliesToSubtask
+		return root.ID, domain.KindBuild, domain.KindAppliesToBuild
 	default:
-		return root.ID, domain.KindActionItem, domain.KindAppliesToActionItem
+		return root.ID, domain.KindPlan, domain.KindAppliesToPlan
 	}
 }
 
 // startSubactionItemForm opens the actionItem form preconfigured for a child item.
+// Post-Drop-1.75 kind-collapse: subtasks map to KindBuild (the leaf code-changing
+// kind). Compile-fix only; pill/filter polish deferred to Drop 4.5.
 func (m *Model) startSubactionItemForm(parent domain.ActionItem) tea.Cmd {
 	cmd := m.startActionItemForm(nil)
 	m.actionItemFormParentID = parent.ID
-	m.actionItemFormKind = domain.KindSubtask
-	m.actionItemFormScope = domain.KindAppliesToSubtask
+	m.actionItemFormKind = domain.KindBuild
+	m.actionItemFormScope = domain.KindAppliesToBuild
 	m.refreshActionItemFormLabelSuggestions()
 	m.status = "new subtask for " + parent.Title
 	return cmd
 }
 
-// startBranchForm opens the actionItem form preconfigured for a branch work item.
+// startBranchForm opens the actionItem form preconfigured for a branch-flavored
+// work item. Post-Drop-1.75 kind-collapse there is no KindBranch; branches map
+// to KindPlan (the top-level decomposition kind). Compile-fix only; pill/filter
+// polish deferred to Drop 4.5.
 func (m *Model) startBranchForm(parent *domain.ActionItem) tea.Cmd {
 	cmd := m.startActionItemForm(nil)
-	m.actionItemFormKind = domain.Kind("branch")
-	m.actionItemFormScope = domain.KindAppliesToBranch
+	m.actionItemFormKind = domain.KindPlan
+	m.actionItemFormScope = domain.KindAppliesToPlan
 	m.actionItemFormParentID = ""
 	if parent != nil && strings.TrimSpace(parent.ID) != "" {
 		m.actionItemFormParentID = parent.ID
@@ -4918,11 +4927,14 @@ func (m *Model) startBranchForm(parent *domain.ActionItem) tea.Cmd {
 	return cmd
 }
 
-// startPhaseForm opens the actionItem form preconfigured for a phase work item.
+// startPhaseForm opens the actionItem form preconfigured for a phase-flavored
+// work item. Post-Drop-1.75 kind-collapse there is no KindPhase; phases map to
+// KindDiscussion (cross-cutting coordination node). Compile-fix only;
+// pill/filter polish deferred to Drop 4.5.
 func (m *Model) startPhaseForm(parent *domain.ActionItem) tea.Cmd {
 	cmd := m.startActionItemForm(nil)
-	m.actionItemFormKind = domain.KindPhase
-	m.actionItemFormScope = domain.KindAppliesToPhase
+	m.actionItemFormKind = domain.KindDiscussion
+	m.actionItemFormScope = domain.KindAppliesToDiscussion
 	m.actionItemFormParentID = ""
 	if parent != nil && strings.TrimSpace(parent.ID) != "" {
 		m.actionItemFormParentID = parent.ID
@@ -7546,7 +7558,7 @@ func (m Model) loadDependencyMatches() tea.Msg {
 					ActionItem: domain.ActionItem{
 						ID:    linkedID,
 						Title: "(missing actionItem reference)",
-						Kind:  domain.KindActionItem,
+						Kind:  domain.KindPlan,
 					},
 					StateID: "missing",
 				},
@@ -8182,6 +8194,8 @@ func (m Model) selectedActionItemForLabelInheritance() (domain.ActionItem, bool)
 }
 
 // labelsFromPhaseAncestors collects inherited labels from phase ancestors in parent-chain order.
+// Post-Drop-1.75 kind-collapse: KindPhase is gone; the phase-flavored discussion
+// kind is KindDiscussion.
 func (m Model) labelsFromPhaseAncestors(actionItem domain.ActionItem) []string {
 	out := make([]string, 0)
 	seenLabels := map[string]struct{}{}
@@ -8192,7 +8206,7 @@ func (m Model) labelsFromPhaseAncestors(actionItem domain.ActionItem) []string {
 			break
 		}
 		visited[current.ID] = struct{}{}
-		if current.Kind == domain.KindPhase {
+		if current.Kind == domain.KindDiscussion {
 			for _, rawLabel := range current.Labels {
 				label := strings.TrimSpace(strings.ToLower(rawLabel))
 				if label == "" {
@@ -11169,8 +11183,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.actionItemFormTouched = nil
 			m.editingActionItemID = ""
 			m.actionItemFormParentID = ""
-			m.actionItemFormKind = domain.KindActionItem
-			m.actionItemFormScope = domain.KindAppliesToActionItem
+			m.actionItemFormKind = domain.KindPlan
+			m.actionItemFormScope = domain.KindAppliesToPlan
 			m.actionItemFormBackMode = modeNone
 			m.actionItemFormBackActionItemID = ""
 			m.actionItemFormBackChildID = ""
@@ -11559,8 +11573,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.actionItemFormMarkdown = nil
 		m.actionItemFormTouched = nil
 		m.actionItemFormParentID = ""
-		m.actionItemFormKind = domain.KindActionItem
-		m.actionItemFormScope = domain.KindAppliesToActionItem
+		m.actionItemFormKind = domain.KindPlan
+		m.actionItemFormScope = domain.KindAppliesToPlan
 		m.actionItemFormBackMode = modeNone
 		m.actionItemFormBackActionItemID = ""
 		m.actionItemFormBackChildID = ""
@@ -11666,8 +11680,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.actionItemFormTouched = nil
 		m.editingActionItemID = ""
 		m.actionItemFormParentID = ""
-		m.actionItemFormKind = domain.KindActionItem
-		m.actionItemFormScope = domain.KindAppliesToActionItem
+		m.actionItemFormKind = domain.KindPlan
+		m.actionItemFormScope = domain.KindAppliesToPlan
 		m.actionItemFormBackMode = modeNone
 		m.actionItemFormBackActionItemID = ""
 		m.actionItemFormBackChildID = ""
@@ -13732,7 +13746,10 @@ func (m Model) boardActionItemsForColumn(columnID string) []domain.ActionItem {
 	includeSubtasks := m.focusedScopeShowsSubtasks()
 	out := make([]domain.ActionItem, 0, len(columnActionItems))
 	for _, actionItem := range columnActionItems {
-		if actionItem.Kind == domain.KindSubtask && !includeSubtasks {
+		// Post-Drop-1.75 kind-collapse: the "subtask" concept maps to KindBuild
+		// (the leaf code-changing kind). Compile-fix only; subtask/board-pill
+		// polish is deferred to Drop 4.5.
+		if actionItem.Kind == domain.KindBuild && !includeSubtasks {
 			continue
 		}
 		out = append(out, actionItem)
@@ -13778,25 +13795,28 @@ func (m Model) tasksForColumn(columnID string) []domain.ActionItem {
 }
 
 // baseSearchLevelForActionItem infers a canonical hierarchy level from one actionItem's scope/kind.
+// Post-Drop-1.75 kind-collapse: the legacy "branch"/"phase"/"actionItem"/"subtask"
+// level strings are preserved because downstream filter/search call sites still
+// key off them; the input-side scope+kind detection maps the new 12-value enum
+// onto the same legacy output strings so the rest of the TUI keeps compiling
+// without a broader rework. Level-string polish is deferred to Drop 4.5.
 func baseSearchLevelForActionItem(actionItem domain.ActionItem) string {
 	switch domain.NormalizeKindAppliesTo(actionItem.Scope) {
-	case domain.KindAppliesToBranch:
-		return "branch"
-	case domain.KindAppliesToPhase:
-		return "phase"
-	case domain.KindAppliesToActionItem:
+	case domain.KindAppliesToPlan:
 		return "actionItem"
-	case domain.KindAppliesToSubtask:
+	case domain.KindAppliesToDiscussion:
+		return "phase"
+	case domain.KindAppliesToBuild:
 		return "subtask"
 	}
 	switch strings.TrimSpace(strings.ToLower(string(actionItem.Kind))) {
 	case "branch":
 		return "branch"
-	case "phase":
+	case "phase", string(domain.KindDiscussion):
 		return "phase"
-	case "subtask":
+	case "subtask", string(domain.KindBuild):
 		return "subtask"
-	case "actionItem":
+	case "actionItem", string(domain.KindPlan):
 		return "actionItem"
 	}
 	if strings.TrimSpace(actionItem.ParentID) != "" {
@@ -14504,18 +14524,20 @@ func notificationActionItemIDFromScope(scopeType domain.ScopeLevel, scopeID stri
 }
 
 // commentTargetTypeForScopeLevel maps scope levels into comment-target types.
+// Post-Drop-1.75 kind-collapse: only CommentTargetTypeProject and
+// CommentTargetTypeActionItem survive; every non-project scope level routes to
+// the ActionItem target. Legacy ScopeLevel values (Branch/Phase/Subtask) still
+// appear in notification payloads produced before the collapse, so we still
+// accept them here and map them to the surviving target.
 func commentTargetTypeForScopeLevel(scopeType domain.ScopeLevel) (domain.CommentTargetType, bool) {
 	switch notificationScopeLevel(scopeType) {
 	case domain.ScopeLevelProject:
 		return domain.CommentTargetTypeProject, true
-	case domain.ScopeLevelBranch:
-		return domain.CommentTargetTypeBranch, true
-	case domain.ScopeLevelPhase:
-		return domain.CommentTargetTypePhase, true
-	case domain.ScopeLevelActionItem:
+	case domain.ScopeLevelBranch,
+		domain.ScopeLevelPhase,
+		domain.ScopeLevelActionItem,
+		domain.ScopeLevelSubtask:
 		return domain.CommentTargetTypeActionItem, true
-	case domain.ScopeLevelSubtask:
-		return domain.CommentTargetTypeSubtask, true
 	default:
 		return "", false
 	}
@@ -15387,6 +15409,9 @@ func (m Model) authRequestScopeSegmentDisplay(scopeKind, scopeID string) string 
 }
 
 // projectBranchActionItems returns deterministic branch candidates for one project id.
+// Post-Drop-1.75 kind-collapse: no KindAppliesToBranch exists; legacy persisted
+// rows still carry the "branch" kind string and newer data has no branch kind at
+// all, so matching is case-insensitive on the kind string.
 func (m Model) projectBranchActionItems(projectID string) []domain.ActionItem {
 	out := make([]domain.ActionItem, 0)
 	projectID = strings.TrimSpace(projectID)
@@ -15394,7 +15419,7 @@ func (m Model) projectBranchActionItems(projectID string) []domain.ActionItem {
 		if strings.TrimSpace(actionItem.ProjectID) != projectID {
 			continue
 		}
-		if actionItem.Scope != domain.KindAppliesToBranch && strings.ToLower(strings.TrimSpace(string(actionItem.Kind))) != "branch" {
+		if strings.ToLower(strings.TrimSpace(string(actionItem.Kind))) != "branch" {
 			continue
 		}
 		out = append(out, actionItem)
@@ -15404,6 +15429,9 @@ func (m Model) projectBranchActionItems(projectID string) []domain.ActionItem {
 }
 
 // phaseChildrenForParent returns direct phase children for one branch/phase parent actionItem.
+// Post-Drop-1.75 kind-collapse: no KindAppliesToPhase exists; legacy "phase"
+// rows survive via the kind-string match, and new data uses KindDiscussion for
+// phase-flavored work items.
 func (m Model) phaseChildrenForParent(parentID string) []domain.ActionItem {
 	out := make([]domain.ActionItem, 0)
 	parentID = strings.TrimSpace(parentID)
@@ -15411,7 +15439,8 @@ func (m Model) phaseChildrenForParent(parentID string) []domain.ActionItem {
 		if strings.TrimSpace(actionItem.ParentID) != parentID {
 			continue
 		}
-		if actionItem.Scope != domain.KindAppliesToPhase && strings.ToLower(strings.TrimSpace(string(actionItem.Kind))) != "phase" {
+		kindLower := strings.ToLower(strings.TrimSpace(string(actionItem.Kind)))
+		if kindLower != "phase" && actionItem.Kind != domain.KindDiscussion {
 			continue
 		}
 		out = append(out, actionItem)
@@ -16790,7 +16819,9 @@ func (m Model) cardMeta(actionItem domain.ActionItem) string {
 	if m.actionItemFields.ShowPriority {
 		parts = append(parts, string(actionItem.Priority))
 	}
-	if actionItem.Kind != domain.KindSubtask {
+	// Post-Drop-1.75 kind-collapse: KindBuild replaces the old KindSubtask as
+	// the leaf work-item kind that should not render subactionItem progress.
+	if actionItem.Kind != domain.KindBuild {
 		done, total := m.subactionItemProgress(actionItem.ID)
 		if total > 0 {
 			parts = append(parts, fmt.Sprintf("%d/%d", done, total))
@@ -17093,29 +17124,25 @@ func (m *Model) syncActionItemFormViewportToFocus() {
 }
 
 // actionItemNodeLabel resolves a display-safe node type label from scope/kind context.
+// Post-Drop-1.75 kind-collapse: the old Branch/Phase/Subtask/ActionItem scope
+// vocabulary is gone from the enum but still appears in legacy persisted rows
+// via the kind string; match it there. The new 12-value enum falls through to
+// ActionItem (with kind-string tagging in the default branch for any legacy
+// decision/note/branch/phase/subtask kind strings). Label polish deferred to
+// Drop 4.5.
 func actionItemNodeLabel(scope domain.KindAppliesTo, kind domain.Kind) string {
-	switch domain.NormalizeKindAppliesTo(scope) {
-	case domain.KindAppliesToBranch:
+	_ = scope
+	switch strings.TrimSpace(strings.ToLower(string(kind))) {
+	case "decision":
+		return "Decision"
+	case "note":
+		return "Note"
+	case "branch":
 		return "Branch"
-	case domain.KindAppliesToPhase:
+	case "phase", string(domain.KindDiscussion):
 		return "Phase"
-	case domain.KindAppliesToSubtask:
+	case "subtask", string(domain.KindBuild):
 		return "Subtask"
-	case domain.KindAppliesToActionItem:
-		switch strings.TrimSpace(strings.ToLower(string(kind))) {
-		case "decision":
-			return "Decision"
-		case "note":
-			return "Note"
-		case "branch":
-			return "Branch"
-		case "phase":
-			return "Phase"
-		case "subtask":
-			return "Subtask"
-		default:
-			return "ActionItem"
-		}
 	default:
 		return "ActionItem"
 	}
@@ -17891,7 +17918,8 @@ func (m Model) subtasksForParent(parentID string) []domain.ActionItem {
 		if strings.TrimSpace(actionItem.ParentID) != parentID {
 			continue
 		}
-		if actionItem.Kind != domain.KindSubtask {
+		// Post-Drop-1.75 kind-collapse: the subtask slot is now KindBuild.
+		if actionItem.Kind != domain.KindBuild {
 			continue
 		}
 		if !m.showArchived && actionItem.ArchivedAt != nil {

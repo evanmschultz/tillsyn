@@ -27,16 +27,16 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo.columns[c1.ID] = c1
 	repo.columns[c2.ID] = c2
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh}, now)
+	t1, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
+	t2, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh, Kind: domain.KindPlan}, now)
 	t2.Archive(now.Add(2 * time.Minute))
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
 
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:          "refactor",
-		DisplayName: "Refactor",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:          domain.KindID(domain.KindRefinement),
+		DisplayName: "Refinement",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToRefinement},
 	}, now)
 	if err != nil {
 		t.Fatalf("NewKindDefinition() error = %v", err)
@@ -138,11 +138,11 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.ActionItems) != 2 {
 		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.ActionItems))
 	}
-	// Post-collapse fake repo seeds the 5 runtime-live kinds (project, actionItem,
-	// branch, phase, subtask); this test upserts `refactor` in addition, so the
-	// exported closure contains 6 definitions.
-	if len(snapAll.KindDefinitions) != 6 {
-		t.Fatalf("expected kind definition closure in snapshot, got %#v", snapAll.KindDefinitions)
+	// Post-Drop-1.75 the fake repo seeds all 12 kinds from the closed enum;
+	// this test upserts a refinement kind in addition (duplicate ID; no extra
+	// row), so the exported closure contains the 12 built-in definitions.
+	if len(snapAll.KindDefinitions) != 12 {
+		t.Fatalf("expected kind definition closure in snapshot, got %d definitions: %#v", len(snapAll.KindDefinitions), snapAll.KindDefinitions)
 	}
 	if len(snapAll.ProjectAllowedKinds) != 1 || snapAll.ProjectAllowedKinds[0].ProjectID != p1.ID {
 		t.Fatalf("expected project allowlist closure in snapshot, got %#v", snapAll.ProjectAllowedKinds)
@@ -181,7 +181,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 
 	existingProject, _ := domain.NewProject("p1", "Old Name", "", now)
 	existingCol, _ := domain.NewColumn("c1", existingProject.ID, "Old Col", 0, 0, now)
-	existingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow}, now)
+	existingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
 
 	repo.projects[existingProject.ID] = existingProject
 	repo.columns[existingCol.ID] = existingCol
@@ -202,19 +202,19 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 		ActionItems: []SnapshotActionItem{
 			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated ActionItem", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
-			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, Kind: domain.KindPhase, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "phase-1", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "Discussion", Priority: domain.PriorityMedium, Kind: domain.KindDiscussion, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
 		KindDefinitions: []SnapshotKindDefinition{
 			{
-				ID:          "refactor",
-				DisplayName: "Refactor",
-				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+				ID:          domain.KindID(domain.KindRefinement),
+				DisplayName: "Refinement",
+				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToRefinement},
 				CreatedAt:   now,
 				UpdatedAt:   now.Add(time.Minute),
 			},
 		},
 		ProjectAllowedKinds: []SnapshotProjectAllowedKinds{
-			{ProjectID: "p1", KindIDs: []domain.KindID{"refactor"}},
+			{ProjectID: "p1", KindIDs: []domain.KindID{domain.KindID(domain.KindRefinement)}},
 		},
 		Comments: []SnapshotComment{
 			{
@@ -290,14 +290,14 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	if _, ok := repo.tasks["t2"]; !ok {
 		t.Fatal("expected new actionItem t2")
 	}
-	if got := repo.tasks["phase-1"]; got.Kind != domain.KindPhase || got.Scope != domain.KindAppliesToPhase {
-		t.Fatalf("expected imported phase actionItem to default to phase scope, got %#v", got)
+	if got := repo.tasks["phase-1"]; got.Kind != domain.KindDiscussion || got.Scope != domain.KindAppliesToDiscussion {
+		t.Fatalf("expected imported discussion actionItem to default to discussion scope, got %#v", got)
 	}
-	if _, ok := repo.kindDefs[domain.KindID("refactor")]; !ok {
-		t.Fatal("expected imported kind definition refactor")
+	if _, ok := repo.kindDefs[domain.KindID(domain.KindRefinement)]; !ok {
+		t.Fatal("expected imported kind definition refinement")
 	}
 	allowed := repo.projectAllowedKinds["p1"]
-	if len(allowed) != 1 || allowed[0] != domain.KindID("refactor") {
+	if len(allowed) != 1 || allowed[0] != domain.KindID(domain.KindRefinement) {
 		t.Fatalf("expected imported project allowlist for p1, got %#v", allowed)
 	}
 	commentKey := "p1|project|p1"
@@ -339,40 +339,9 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 		t.Fatal("expected reference validation error")
 	}
 
-	invalidPhaseParent := Snapshot{
-		Version: SnapshotVersion,
-		Projects: []SnapshotProject{
-			{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now},
-		},
-		Columns: []SnapshotColumn{
-			{ID: "c1", ProjectID: "p1", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
-		},
-		ActionItems: []SnapshotActionItem{
-			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "ActionItem", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "p1", ProjectID: "p1", ParentID: "t1", Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c1", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-		},
-	}
-	if err := svc.ImportSnapshot(context.Background(), invalidPhaseParent); err == nil || !strings.Contains(err.Error(), "invalid for phase parent scope") {
-		t.Fatalf("expected invalid phase parent error, got %v", err)
-	}
-
-	validNestedPhase := Snapshot{
-		Version: SnapshotVersion,
-		Projects: []SnapshotProject{
-			{ID: "p2", Name: "B", Slug: "b", CreatedAt: now, UpdatedAt: now},
-		},
-		Columns: []SnapshotColumn{
-			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
-		},
-		ActionItems: []SnapshotActionItem{
-			{ID: "branch-1", ProjectID: "p2", Kind: domain.Kind("branch"), Scope: domain.KindAppliesToBranch, ColumnID: "c2", Position: 0, Title: "Branch", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "phase-1", ProjectID: "p2", ParentID: "branch-1", Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 1, Title: "Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-			{ID: "phase-2", ProjectID: "p2", ParentID: "phase-1", Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase, ColumnID: "c2", Position: 2, Title: "Nested Phase", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now},
-		},
-	}
-	if err := svc.ImportSnapshot(context.Background(), validNestedPhase); err != nil {
-		t.Fatalf("expected valid nested phase lineage to import, got %v", err)
-	}
+	// The invalid-phase-parent and valid-nested-phase cases were ripped when
+	// the 12-value Kind enum removed the Phase/Branch kinds and their
+	// snapshot-side parent check.
 
 	orphanHandoff := Snapshot{
 		Version: SnapshotVersion,

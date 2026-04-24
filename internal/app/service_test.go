@@ -36,53 +36,41 @@ type fakeRepo struct {
 
 // newFakeRepo constructs fake repo.
 //
-// Post-Unit-1.5 the app-layer kind-catalog bootstrap helper has been deleted;
-// the SQLite schema seeds {project, actionItem} via CREATE-time INSERT OR
-// IGNORE, but this in-memory fake never runs SQL migrations. Seed {project,
-// actionItem} plus the runtime-live orphan kinds {branch, phase, subtask}
-// that tests exercise for nested scope lineage; the post-collapse kind_catalog
-// drops these rows but the Kind/Scope constants remain valid at runtime for
-// ActionItem placement inside the lineage. Refinement: remove orphan kinds
-// once drops-rewrite.sql rewrites their usages. See "Orphan-via-Collapse,
-// Defer to Refinement" memory rule.
+// Post-Drop-1.75 the app-layer kind-catalog bootstrap helper has been deleted;
+// the SQLite schema seeds the 12-value Kind enum via CREATE-time INSERT OR
+// IGNORE, but this in-memory fake never runs SQL migrations. Seed every
+// member of the new enum so tests have all kind IDs available for fixture
+// construction.
 func newFakeRepo() *fakeRepo {
 	now := time.Now().UTC()
-	kindDefs := map[domain.KindID]domain.KindDefinition{
-		domain.KindID("project"): {
-			ID:          domain.KindID("project"),
-			DisplayName: "Project",
-			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToProject},
+	kinds := []struct {
+		kind      domain.Kind
+		display   string
+		appliesTo domain.KindAppliesTo
+	}{
+		{kind: domain.KindPlan, display: "Plan", appliesTo: domain.KindAppliesToPlan},
+		{kind: domain.KindResearch, display: "Research", appliesTo: domain.KindAppliesToResearch},
+		{kind: domain.KindBuild, display: "Build", appliesTo: domain.KindAppliesToBuild},
+		{kind: domain.KindPlanQAProof, display: "Plan QA Proof", appliesTo: domain.KindAppliesToPlanQAProof},
+		{kind: domain.KindPlanQAFalsification, display: "Plan QA Falsification", appliesTo: domain.KindAppliesToPlanQAFalsification},
+		{kind: domain.KindBuildQAProof, display: "Build QA Proof", appliesTo: domain.KindAppliesToBuildQAProof},
+		{kind: domain.KindBuildQAFalsification, display: "Build QA Falsification", appliesTo: domain.KindAppliesToBuildQAFalsification},
+		{kind: domain.KindCloseout, display: "Closeout", appliesTo: domain.KindAppliesToCloseout},
+		{kind: domain.KindCommit, display: "Commit", appliesTo: domain.KindAppliesToCommit},
+		{kind: domain.KindRefinement, display: "Refinement", appliesTo: domain.KindAppliesToRefinement},
+		{kind: domain.KindDiscussion, display: "Discussion", appliesTo: domain.KindAppliesToDiscussion},
+		{kind: domain.KindHumanVerify, display: "Human Verify", appliesTo: domain.KindAppliesToHumanVerify},
+	}
+	kindDefs := map[domain.KindID]domain.KindDefinition{}
+	for _, entry := range kinds {
+		id := domain.KindID(entry.kind)
+		kindDefs[id] = domain.KindDefinition{
+			ID:          id,
+			DisplayName: entry.display,
+			AppliesTo:   []domain.KindAppliesTo{entry.appliesTo},
 			CreatedAt:   now,
 			UpdatedAt:   now,
-		},
-		domain.KindID("actionItem"): {
-			ID:          domain.KindID("actionItem"),
-			DisplayName: "ActionItem",
-			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		domain.KindID("branch"): {
-			ID:          domain.KindID("branch"),
-			DisplayName: "Branch",
-			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToBranch},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		domain.KindID("phase"): {
-			ID:          domain.KindID("phase"),
-			DisplayName: "Phase",
-			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPhase},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		domain.KindID("subtask"): {
-			ID:          domain.KindID("subtask"),
-			DisplayName: "Subtask",
-			AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToSubtask},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
+		}
 	}
 	return &fakeRepo{
 		projects:            map[string]domain.Project{},
@@ -392,6 +380,7 @@ func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() str
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t-second-wave",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -1222,6 +1211,7 @@ func TestRenameActionItem(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1246,6 +1236,7 @@ func TestUpdateActionItem(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1281,6 +1272,7 @@ func TestUpdateActionItemAppliesMutationActorContext(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      "p1",
 		ColumnID:       "c1",
@@ -1322,8 +1314,8 @@ func TestCreateActionItemCarriesHumanActorName(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
-		ID:        domain.KindID(domain.KindActionItem),
-		AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:        domain.KindID(domain.KindPlan),
+		AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPlan},
 	}, now)
 	if err != nil {
 		t.Fatalf("NewKindDefinition() error = %v", err)
@@ -1362,6 +1354,7 @@ func TestUpdateActionItemCarriesExplicitActorName(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 10, 30, 0, 0, time.UTC)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1404,6 +1397,7 @@ func TestUpdateActionItemPreservesPriorityWhenOmitted(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -1438,6 +1432,7 @@ func TestListAndSortHelpers(t *testing.T) {
 	repo.columns[c2.ID] = c2
 
 	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -1446,6 +1441,7 @@ func TestListAndSortHelpers(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: p.ID,
 		ColumnID:  c1.ID,
@@ -1454,6 +1450,7 @@ func TestListAndSortHelpers(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t3",
 		ProjectID: p.ID,
 		ColumnID:  c2.ID,
@@ -1522,6 +1519,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 	repo.columns[c3.ID] = c3
 
 	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   p1.ID,
 		ColumnID:    c1.ID,
@@ -1531,6 +1529,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 		Priority:    domain.PriorityMedium,
 	}, now)
 	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t2",
 		ProjectID:   p1.ID,
 		ColumnID:    c2.ID,
@@ -1540,6 +1539,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 		Priority:    domain.PriorityHigh,
 	}, now)
 	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t3",
 		ProjectID:   p2.ID,
 		ColumnID:    c3.ID,
@@ -1593,6 +1593,7 @@ func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 	repo.columns[c1.ID] = c1
 
 	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   p1.ID,
 		ColumnID:    c1.ID,
@@ -1603,6 +1604,7 @@ func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 		Labels:      []string{"frontend", "parsing"},
 	}, now)
 	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t2",
 		ProjectID:   p1.ID,
 		ColumnID:    c1.ID,
@@ -1683,8 +1685,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  todo.ID,
 		Position:  0,
 		Title:     "Phase planning",
-		Kind:      domain.KindPhase,
-		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.KindDiscussion,
+		Scope:     domain.KindAppliesToDiscussion,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
@@ -1694,8 +1696,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  todo.ID,
 		Position:  1,
 		Title:     "Phase QA",
-		Kind:      domain.KindPhase,
-		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.KindDiscussion,
+		Scope:     domain.KindAppliesToDiscussion,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend"},
 	}, now)
@@ -1705,8 +1707,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  progress.ID,
 		Position:  0,
 		Title:     "ActionItem implementation",
-		Kind:      domain.KindActionItem,
-		Scope:     domain.KindAppliesToActionItem,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
@@ -1716,8 +1718,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ColumnID:  progress.ID,
 		Position:  1,
 		Title:     "Archived phase note",
-		Kind:      domain.KindPhase,
-		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.KindDiscussion,
+		Scope:     domain.KindAppliesToDiscussion,
 		Priority:  domain.PriorityLow,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
@@ -1731,8 +1733,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 
 	strictMatches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
-		Levels:    []string{"phase"},
-		Kinds:     []string{"phase"},
+		Levels:    []string{"discussion"},
+		Kinds:     []string{"discussion"},
 		LabelsAny: []string{"backend"},
 		LabelsAll: []string{"urgent"},
 	})
@@ -1745,8 +1747,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 
 	pagedMatches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		ProjectID: project.ID,
-		Levels:    []string{"phase"},
-		Kinds:     []string{"phase"},
+		Levels:    []string{"discussion"},
+		Kinds:     []string{"discussion"},
 		LabelsAny: []string{"backend"},
 		Limit:     1,
 		Offset:    1,
@@ -1762,8 +1764,8 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		ProjectID:       project.ID,
 		IncludeArchived: true,
 		States:          []string{"archived"},
-		Levels:          []string{"phase"},
-		Kinds:           []string{"phase"},
+		Levels:          []string{"discussion"},
+		Kinds:           []string{"discussion"},
 		LabelsAny:       []string{"backend"},
 		LabelsAll:       []string{"urgent"},
 	})
@@ -1785,6 +1787,7 @@ func TestSearchActionItemMatchesLexicalMetadataFields(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -1841,6 +1844,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1849,6 +1853,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1857,6 +1862,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t3",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1865,6 +1871,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	t4, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t4",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -1983,6 +1990,7 @@ func TestSearchActionItemMatchesLimitDefaultsAndCaps(t *testing.T) {
 
 	for i := 0; i < 205; i++ {
 		actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+			Kind:      domain.KindPlan,
 			ID:        fmt.Sprintf("t%03d", i),
 			ProjectID: project.ID,
 			ColumnID:  column.ID,
@@ -2177,6 +2185,7 @@ func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2185,6 +2194,7 @@ func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2250,6 +2260,7 @@ func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	keywordActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2258,6 +2269,7 @@ func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	otherActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2313,6 +2325,7 @@ func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *te
 	repo.columns[column.ID] = column
 
 	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2321,6 +2334,7 @@ func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *te
 		Priority:  domain.PriorityLow,
 	}, now)
 	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2374,6 +2388,7 @@ func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	keywordActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2382,6 +2397,7 @@ func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 		Priority:  domain.PriorityLow,
 	}, now)
 	otherActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2634,6 +2650,7 @@ func TestSearchActionItemMatchesSemanticUsesThreadContextDocuments(t *testing.T)
 		return id
 	})
 	actionItemB, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t-thread-b",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,
@@ -2872,6 +2889,7 @@ func TestArchiveRestoreAndDeleteProject(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2973,6 +2991,7 @@ func TestMoveActionItemBlocksWhenStartCriteriaUnmet(t *testing.T) {
 	repo.columns[progress.ID] = progress
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
@@ -3006,6 +3025,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	repo.columns[done.ID] = done
 
 	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t-parent",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -3024,6 +3044,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 		},
 	}, now)
 	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t-child",
 		ProjectID:      project.ID,
 		ParentID:       parent.ID,
@@ -3061,6 +3082,7 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 	repo.columns[done.ID] = done
 
 	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t-parent",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -3075,6 +3097,7 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 		},
 	}, now)
 	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t-child",
 		ProjectID:      project.ID,
 		ParentID:       parent.ID,
@@ -3106,6 +3129,7 @@ func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "parent",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -3114,6 +3138,7 @@ func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "child",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -3151,6 +3176,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	readyDep, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "dep-ready",
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
@@ -3160,6 +3186,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		LifecycleState: domain.StateDone,
 	}, now)
 	openDep, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "dep-open",
 		ProjectID:      project.ID,
 		ColumnID:       column.ID,
@@ -3169,6 +3196,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		LifecycleState: domain.StateProgress,
 	}, now)
 	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "blocked",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -3235,6 +3263,7 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
@@ -3371,6 +3400,7 @@ func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
@@ -3411,6 +3441,7 @@ func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
@@ -3465,6 +3496,7 @@ func TestCreateCommentValidation(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  "c1",
@@ -3514,39 +3546,25 @@ func TestCreateCommentValidation(t *testing.T) {
 	}
 }
 
-// TestSnapshotCommentTargetTypeForActionItemSupportsHierarchyNodes verifies branch/phase comment target mapping.
-func TestSnapshotCommentTargetTypeForActionItemSupportsHierarchyNodes(t *testing.T) {
+// TestSnapshotCommentTargetTypeForActionItemAlwaysActionItem verifies every
+// kind in the 12-value enum maps to CommentTargetTypeActionItem. Branch /
+// phase / subtask comment target types were removed alongside the
+// scope-mirrors-kind collapse.
+func TestSnapshotCommentTargetTypeForActionItemAlwaysActionItem(t *testing.T) {
 	tests := []struct {
 		name       string
 		actionItem domain.ActionItem
-		want       domain.CommentTargetType
 	}{
-		{
-			name:       "branch kind",
-			actionItem: domain.ActionItem{Kind: domain.Kind(domain.KindAppliesToBranch)},
-			want:       domain.CommentTargetTypeBranch,
-		},
-		{
-			name:       "branch scope fallback",
-			actionItem: domain.ActionItem{Kind: domain.KindActionItem, Scope: domain.KindAppliesToBranch},
-			want:       domain.CommentTargetTypeBranch,
-		},
-		{
-			name:       "phase kind",
-			actionItem: domain.ActionItem{Kind: domain.KindPhase, Scope: domain.KindAppliesToPhase},
-			want:       domain.CommentTargetTypePhase,
-		},
-		{
-			name:       "actionItem backward compatible",
-			actionItem: domain.ActionItem{Kind: domain.KindActionItem, Scope: domain.KindAppliesToActionItem},
-			want:       domain.CommentTargetTypeActionItem,
-		},
+		{name: "plan", actionItem: domain.ActionItem{Kind: domain.KindPlan, Scope: domain.KindAppliesToPlan}},
+		{name: "build", actionItem: domain.ActionItem{Kind: domain.KindBuild, Scope: domain.KindAppliesToBuild}},
+		{name: "research", actionItem: domain.ActionItem{Kind: domain.KindResearch, Scope: domain.KindAppliesToResearch}},
+		{name: "build-qa-proof", actionItem: domain.ActionItem{Kind: domain.KindBuildQAProof, Scope: domain.KindAppliesToBuildQAProof}},
 	}
 
 	for _, tc := range tests {
 		got := snapshotCommentTargetTypeForActionItem(tc.actionItem)
-		if got != tc.want {
-			t.Fatalf("%s: snapshotCommentTargetTypeForActionItem() = %q, want %q", tc.name, got, tc.want)
+		if got != domain.CommentTargetTypeActionItem {
+			t.Fatalf("%s: snapshotCommentTargetTypeForActionItem() = %q, want %q", tc.name, got, domain.CommentTargetTypeActionItem)
 		}
 	}
 }
@@ -4024,8 +4042,8 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("branch"),
-		Scope:     domain.KindAppliesToBranch,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Title:     "Branch A",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4033,38 +4051,41 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 
+	// Post-Drop-1.75 every action-item row resolves to
+	// CapabilityScopeActionItem; the legacy branch scope no longer attaches
+	// to action items.
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeType:       domain.CapabilityScopeActionItem,
 		ScopeID:         branch.ID,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-a",
 		AgentInstanceID: "orch-a-inst",
 	}); err != nil {
-		t.Fatalf("IssueCapabilityLease(orch-a, branch) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(orch-a, actionItem) error = %v", err)
 	}
 
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeType:       domain.CapabilityScopeActionItem,
 		ScopeID:         branch.ID,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-b",
 		AgentInstanceID: "orch-b-inst",
 	}); err != nil {
-		t.Fatalf("IssueCapabilityLease(orch-b, branch) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(orch-b, actionItem) error = %v", err)
 	}
 
 	leases, err := svc.ListCapabilityLeases(context.Background(), ListCapabilityLeasesInput{
 		ProjectID: project.ID,
-		ScopeType: domain.CapabilityScopeBranch,
+		ScopeType: domain.CapabilityScopeActionItem,
 		ScopeID:   branch.ID,
 	})
 	if err != nil {
-		t.Fatalf("ListCapabilityLeases(branch) error = %v", err)
+		t.Fatalf("ListCapabilityLeases(actionItem) error = %v", err)
 	}
 	if len(leases) != 2 {
-		t.Fatalf("ListCapabilityLeases(branch) len = %d, want 2", len(leases))
+		t.Fatalf("ListCapabilityLeases(actionItem) len = %d, want 2", len(leases))
 	}
 }
 
@@ -4171,8 +4192,8 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("branch"),
-		Scope:     domain.KindAppliesToBranch,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Title:     "Branch A",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4183,8 +4204,8 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.KindPhase,
-		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.KindDiscussion,
+		Scope:     domain.KindAppliesToDiscussion,
 		Title:     "Phase A",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4195,8 +4216,8 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  phase.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.KindActionItem,
-		Scope:     domain.KindAppliesToActionItem,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Title:     "ActionItem A1",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4204,16 +4225,19 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
 	}
 
+	// Post-Drop-1.75 every action-item row lives at CapabilityScopeActionItem;
+	// the legacy branch/phase capability scopes no longer attach to action
+	// items, so the lineage test exercises the action-item scope throughout.
 	branchLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeType:       domain.CapabilityScopeActionItem,
 		ScopeID:         branch.ID,
 		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "branch-agent",
 		AgentInstanceID: "branch-agent",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(branch) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(branch-as-actionItem) error = %v", err)
 	}
 	branchCtx := WithMutationGuard(context.Background(), MutationGuard{
 		AgentName:       branchLease.AgentName,
@@ -4221,8 +4245,8 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		LeaseToken:      branchLease.LeaseToken,
 	})
 	if _, err := svc.UpdateActionItem(branchCtx, UpdateActionItemInput{
-		ActionItemID: actionItem.ID,
-		Title:        "ActionItem A1",
+		ActionItemID: branch.ID,
+		Title:        "Branch A",
 		Description:  "branch-updated",
 		Priority:     domain.PriorityMedium,
 		UpdatedBy:    "branch-agent",
@@ -4233,14 +4257,14 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 
 	phaseLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopePhase,
+		ScopeType:       domain.CapabilityScopeActionItem,
 		ScopeID:         phase.ID,
 		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "phase-agent",
 		AgentInstanceID: "phase-agent",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(phase) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(phase-as-actionItem) error = %v", err)
 	}
 	phaseCtx := WithMutationGuard(context.Background(), MutationGuard{
 		AgentName:       phaseLease.AgentName,
@@ -4251,8 +4275,8 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		ProjectID:      project.ID,
 		ParentID:       phase.ID,
 		ColumnID:       column.ID,
-		Kind:           domain.KindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		Title:          "ActionItem A2",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "phase-agent",
@@ -4320,8 +4344,8 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("branch"),
-		Scope:     domain.KindAppliesToBranch,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Title:     "Branch",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4332,8 +4356,8 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.KindPhase,
-		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.KindDiscussion,
+		Scope:     domain.KindAppliesToDiscussion,
 		Title:     "Phase A",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4344,8 +4368,8 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  branch.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.KindPhase,
-		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.KindDiscussion,
+		Scope:     domain.KindAppliesToDiscussion,
 		Title:     "Phase B",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4356,8 +4380,8 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID: project.ID,
 		ParentID:  phaseB.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.KindActionItem,
-		Scope:     domain.KindAppliesToActionItem,
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
 		Title:     "ActionItem B1",
 		Priority:  domain.PriorityMedium,
 	})
@@ -4365,16 +4389,19 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		t.Fatalf("CreateActionItem(actionItemB) error = %v", err)
 	}
 
+	// All action-item rows live at CapabilityScopeActionItem post-Drop-1.75;
+	// sibling mutation denial is exercised by leasing one phase-as-actionItem
+	// and attempting a write on the other phase's child.
 	phaseALease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopePhase,
+		ScopeType:       domain.CapabilityScopeActionItem,
 		ScopeID:         phaseA.ID,
 		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "phase-a-agent",
 		AgentInstanceID: "phase-a-agent",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(phaseA) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(phaseA-as-actionItem) error = %v", err)
 	}
 	phaseACtx := WithMutationGuard(context.Background(), MutationGuard{
 		AgentName:       phaseALease.AgentName,
@@ -4397,8 +4424,8 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		ProjectID:      project.ID,
 		ParentID:       phaseB.ID,
 		ColumnID:       column.ID,
-		Kind:           domain.KindActionItem,
-		Scope:          domain.KindAppliesToActionItem,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
 		Title:          "ActionItem B2",
 		Priority:       domain.PriorityMedium,
 		CreatedByActor: "phase-a-agent",
@@ -4431,10 +4458,12 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 
+	// Attach a payload schema to a member of the 12-value Kind enum; custom
+	// kinds can no longer be used for action-item rows post-Drop-1.75.
 	_, err = svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
-		ID:                "refactor",
-		DisplayName:       "Refactor",
-		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:                domain.KindID(domain.KindRefinement),
+		DisplayName:       "Refinement",
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToRefinement},
 		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}},"additionalProperties":false}`,
 	})
 	if err != nil {
@@ -4442,7 +4471,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	}
 	if err := svc.SetProjectAllowedKinds(context.Background(), SetProjectAllowedKindsInput{
 		ProjectID: project.ID,
-		KindIDs:   []domain.KindID{"refactor", domain.DefaultProjectKind, domain.KindID(domain.KindActionItem), domain.KindID(domain.KindSubtask)},
+		KindIDs:   []domain.KindID{domain.KindID(domain.KindPlan), domain.KindID(domain.KindBuild), domain.KindID(domain.KindRefinement)},
 	}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
 	}
@@ -4450,7 +4479,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("refactor"),
+		Kind:      domain.KindRefinement,
 		Title:     "invalid payload",
 		Priority:  domain.PriorityMedium,
 		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
@@ -4462,7 +4491,7 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("refactor"),
+		Kind:      domain.KindRefinement,
 		Title:     "valid payload",
 		Priority:  domain.PriorityMedium,
 		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
@@ -4470,8 +4499,8 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateActionItem(valid payload) error = %v", err)
 	}
-	if created.Kind != domain.Kind("refactor") {
-		t.Fatalf("expected refactor kind, got %q", created.Kind)
+	if created.Kind != domain.KindRefinement {
+		t.Fatalf("expected refinement kind, got %q", created.Kind)
 	}
 }
 
@@ -4508,7 +4537,7 @@ func TestReparentActionItemRejectsCycle(t *testing.T) {
 	child, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ParentID:  parent.ID,
-		Kind:      domain.KindSubtask,
+		Kind:      domain.KindBuild,
 		ColumnID:  column.ID,
 		Title:     "child",
 		Priority:  domain.PriorityMedium,
@@ -4534,6 +4563,7 @@ func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 	repo.columns[failed.ID] = failed
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -4569,6 +4599,7 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 	repo.columns[failed.ID] = failed
 
 	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t-parent",
 		ProjectID:      project.ID,
 		ColumnID:       progress.ID,
@@ -4584,6 +4615,7 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 		},
 	}, now)
 	child, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t-child",
 		ProjectID:      project.ID,
 		ParentID:       parent.ID,
@@ -4618,6 +4650,7 @@ func TestMoveActionItemFromFailedToTodoBlocked(t *testing.T) {
 	repo.columns[failed.ID] = failed
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       failed.ID,
@@ -4650,6 +4683,7 @@ func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 	repo.columns[done.ID] = done
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       done.ID,
@@ -4680,6 +4714,7 @@ func TestMoveActionItemFromFailedIdempotentAllowed(t *testing.T) {
 	repo.columns[failed.ID] = failed
 
 	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
 		ColumnID:       failed.ID,

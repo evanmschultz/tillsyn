@@ -180,11 +180,6 @@ func isValidActorType(actorType ActorType) bool {
 	return slices.Contains([]ActorType{ActorTypeUser, ActorTypeAgent, ActorTypeSystem}, actorType)
 }
 
-// isValidKind reports whether kind is non-empty after normalization.
-func isValidKind(kind Kind) bool {
-	return strings.TrimSpace(string(kind)) != ""
-}
-
 // normalizeActionItemMetadata trims and validates rich metadata.
 func normalizeActionItemMetadata(meta ActionItemMetadata) (ActionItemMetadata, error) {
 	meta.Objective = strings.TrimSpace(meta.Objective)

@@ -1808,7 +1808,7 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 		"kind", "upsert",
 		"--id", "qa-check",
 		"--display-name", "QA Check",
-		"--applies-to", "actionItem",
+		"--applies-to", "build-qa-proof",
 		"--template-json", "{}",
 	}, &upsertOut, io.Discard); err != nil {
 		t.Fatalf("run(kind upsert) error = %v", err)

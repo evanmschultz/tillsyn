@@ -6,29 +6,22 @@ import (
 	"time"
 )
 
-// CommentTargetType identifies the entity type a comment belongs to.
+// CommentTargetType identifies the entity type a comment belongs to. Comments
+// now target either a project as a whole or a single action item; scope-level
+// distinctions (branch/phase/subtask) were removed alongside the 12-kind
+// action-item enum.
 type CommentTargetType string
 
 // Comment target type values.
 const (
 	CommentTargetTypeProject    CommentTargetType = "project"
-	CommentTargetTypeBranch     CommentTargetType = CommentTargetType(KindAppliesToBranch)
-	CommentTargetTypeActionItem CommentTargetType = CommentTargetType(KindActionItem)
-	CommentTargetTypeSubtask    CommentTargetType = CommentTargetType(KindSubtask)
-	CommentTargetTypePhase      CommentTargetType = CommentTargetType(KindPhase)
-	CommentTargetTypeDecision   CommentTargetType = CommentTargetType(KindDecision)
-	CommentTargetTypeNote       CommentTargetType = CommentTargetType(KindNote)
+	CommentTargetTypeActionItem CommentTargetType = "action_item"
 )
 
 // validCommentTargetTypes stores supported target-type values.
 var validCommentTargetTypes = []CommentTargetType{
 	CommentTargetTypeProject,
-	CommentTargetTypeBranch,
 	CommentTargetTypeActionItem,
-	CommentTargetTypeSubtask,
-	CommentTargetTypePhase,
-	CommentTargetTypeDecision,
-	CommentTargetTypeNote,
 }
 
 // CommentTarget identifies a concrete target within a project.
@@ -145,8 +138,8 @@ func NormalizeCommentTarget(target CommentTarget) (CommentTarget, error) {
 
 // NormalizeCommentTargetType canonicalizes target types to their stored form.
 // Inputs are matched case-insensitively against the supported set and
-// returned in their canonical camelCase form (e.g. "actionItem"); unknown
-// values are returned lowercased so callers can still detect invalid inputs.
+// returned in their canonical form; unknown values are returned lowercased so
+// callers can still detect invalid inputs.
 func NormalizeCommentTargetType(targetType CommentTargetType) CommentTargetType {
 	lowered := strings.TrimSpace(strings.ToLower(string(targetType)))
 	if lowered == "" {

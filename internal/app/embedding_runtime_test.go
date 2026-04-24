@@ -22,6 +22,7 @@ func seedEmbeddingRuntimeScope(t *testing.T, repo *fakeRepo, now time.Time) (dom
 		t.Fatalf("NewColumn() error = %v", err)
 	}
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+		Kind:        domain.KindPlan,
 		ID:          "t-runtime",
 		ProjectID:   project.ID,
 		ColumnID:    column.ID,

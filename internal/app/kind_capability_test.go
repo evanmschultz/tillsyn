@@ -51,7 +51,7 @@ func TestServiceSetAndListProjectAllowedKindsValidation(t *testing.T) {
 	}
 	if err := svc.SetProjectAllowedKinds(context.Background(), SetProjectAllowedKindsInput{
 		ProjectID: project.ID,
-		KindIDs:   []domain.KindID{"actionItem", "phase", "actionItem"},
+		KindIDs:   []domain.KindID{"plan", "build", "plan"},
 	}); err != nil {
 		t.Fatalf("SetProjectAllowedKinds(valid) error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestServiceSetAndListProjectAllowedKindsValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
 	}
-	want := []domain.KindID{"actionItem", "phase"}
+	want := []domain.KindID{"build", "plan"}
 	if !slices.Equal(kinds, want) {
 		t.Fatalf("ListProjectAllowedKinds() = %#v, want %#v", kinds, want)
 	}
@@ -77,14 +77,14 @@ func TestServiceListKindDefinitionsAndUpsert(t *testing.T) {
 	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "zeta",
 		DisplayName: "Zeta",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPlan},
 	}); err != nil {
 		t.Fatalf("UpsertKindDefinition(create) error = %v", err)
 	}
 	updated, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
 		ID:          "zeta",
 		DisplayName: "Alpha",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPlan},
 	})
 	if err != nil {
 		t.Fatalf("UpsertKindDefinition(update) error = %v", err)
@@ -219,19 +219,10 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 	}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("RevokeAllCapabilityLeases(unknown actionItem scope) error = %v, want ErrNotFound", err)
 	}
-	// Guard against project-scoped root rows being treated as actionItem-scoped tuples.
-	repo.tasks["project-root-item"] = domain.ActionItem{
-		ID:        "project-root-item",
-		ProjectID: project.ID,
-		Scope:     domain.KindAppliesToProject,
-	}
-	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
-		ProjectID: project.ID,
-		ScopeType: domain.CapabilityScopeActionItem,
-		ScopeID:   "project-root-item",
-	}); !errors.Is(err, domain.ErrInvalidCapabilityScope) {
-		t.Fatalf("RevokeAllCapabilityLeases(project root as actionItem scope) error = %v, want ErrInvalidCapabilityScope", err)
-	}
+	// The legacy "project root rows disguised as action-item scope" guard is
+	// gone with scope-mirrors-kind: every action_items row is
+	// ScopeLevelActionItem now, so no tuple can slip through on a mismatched
+	// scope coercion.
 	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
 		ProjectID: project.ID,
 		ScopeType: domain.CapabilityScopeProject,
@@ -362,44 +353,48 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		t.Fatalf("enforceMutationGuard(expired) error = %v, want ErrMutationLeaseExpired", err)
 	}
 
-	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+	// Under scope-mirrors-kind, every action-item row is ScopeLevelActionItem
+	// (CapabilityScopeActionItem). Exercise the scope-match vs scope-mismatch
+	// lease-guard paths using a plan-kind action item against an
+	// action-item-scoped lease.
+	planItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("branch"),
-		Scope:     domain.KindAppliesToBranch,
-		Title:     "Branch A",
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
+		Title:     "Plan A",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateActionItem(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(plan) error = %v", err)
 	}
-	branchLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	planLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeBranch,
-		ScopeID:         branch.ID,
+		ScopeType:       domain.CapabilityScopeActionItem,
+		ScopeID:         planItem.ID,
 		Role:            domain.CapabilityRoleBuilder,
-		AgentName:       "agent-branch",
-		AgentInstanceID: "agent-branch-instance",
+		AgentName:       "agent-plan",
+		AgentInstanceID: "agent-plan-instance",
 	})
 	if err != nil {
-		t.Fatalf("IssueCapabilityLease(branch) error = %v", err)
+		t.Fatalf("IssueCapabilityLease(plan) error = %v", err)
 	}
-	branchGuard := WithMutationGuard(context.Background(), MutationGuard{
-		AgentName:       branchLease.AgentName,
-		AgentInstanceID: branchLease.InstanceID,
-		LeaseToken:      branchLease.LeaseToken,
+	planGuard := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       planLease.AgentName,
+		AgentInstanceID: planLease.InstanceID,
+		LeaseToken:      planLease.LeaseToken,
 	})
-	if err := svc.enforceMutationGuard(branchGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+	if err := svc.enforceMutationGuard(planGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
 		t.Fatalf("enforceMutationGuard(scope mismatch) error = %v, want ErrMutationLeaseInvalid", err)
 	}
-	if err := svc.enforceMutationGuard(branchGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeBranch, branch.ID, domain.CapabilityActionEditNode); err != nil {
+	if err := svc.enforceMutationGuard(planGuard, project.ID, domain.ActorTypeAgent, domain.CapabilityScopeActionItem, planItem.ID, domain.CapabilityActionEditNode); err != nil {
 		t.Fatalf("enforceMutationGuard(scope match) error = %v", err)
 	}
-	storedBranch, err := repo.GetCapabilityLease(context.Background(), branchLease.InstanceID)
+	storedPlan, err := repo.GetCapabilityLease(context.Background(), planLease.InstanceID)
 	if err != nil {
-		t.Fatalf("GetCapabilityLease(branch) error = %v", err)
+		t.Fatalf("GetCapabilityLease(plan) error = %v", err)
 	}
-	if storedBranch.HeartbeatAt.IsZero() {
+	if storedPlan.HeartbeatAt.IsZero() {
 		t.Fatal("enforceMutationGuard(scope match) expected heartbeat update")
 	}
 }
@@ -415,23 +410,27 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 // only ActionItemMetadataDefaults + CompletionChecklist merge remains live,
 // exercised by TestCreateActionItemKindMergesCompletionChecklist below.
 
-// TestCreateActionItemKindMergesCompletionChecklist verifies the surviving KindTemplate merge path — CompletionChecklist + ActionItemMetadataDefaults flow into the created ActionItem's metadata.
+// TestCreateActionItemKindMergesCompletionChecklist verifies the surviving
+// KindTemplate merge path — CompletionChecklist + ActionItemMetadataDefaults
+// flow into the created ActionItem's metadata. The 12-value Kind enum is
+// closed, so the test drives the merge via a plan-kind entry rather than a
+// custom kind.
 func TestCreateActionItemKindMergesCompletionChecklist(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
 
 	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
-		ID:          "refactor",
-		DisplayName: "Refactor",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToActionItem},
+		ID:          domain.KindID(domain.KindPlan),
+		DisplayName: "Plan",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPlan},
 		Template: domain.KindTemplate{
 			CompletionChecklist: []domain.ChecklistItem{
 				{ID: "ck-run-tests", Text: "run package tests", Done: false},
 			},
 		},
 	}); err != nil {
-		t.Fatalf("UpsertKindDefinition(refactor) error = %v", err)
+		t.Fatalf("UpsertKindDefinition(plan) error = %v", err)
 	}
 
 	project, err := svc.CreateProject(context.Background(), "Template Project", "")
@@ -447,11 +446,11 @@ func TestCreateActionItemKindMergesCompletionChecklist(t *testing.T) {
 		ColumnID:    column.ID,
 		Title:       "Parent ActionItem",
 		Description: "Template parent",
-		Kind:        domain.Kind("refactor"),
-		Scope:       domain.KindAppliesToActionItem,
+		Kind:        domain.KindPlan,
+		Scope:       domain.KindAppliesToPlan,
 	})
 	if err != nil {
-		t.Fatalf("CreateActionItem(refactor) error = %v", err)
+		t.Fatalf("CreateActionItem(plan) error = %v", err)
 	}
 	storedParent, err := repo.GetActionItem(context.Background(), parent.ID)
 	if err != nil {
@@ -515,28 +514,32 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+	// Under scope-mirrors-kind, every action-item row lives at
+	// CapabilityScopeActionItem. Exercise the delegation policy using a
+	// project-scoped orchestrator parent delegating to an action-item-scoped
+	// child, reflecting the only non-equal-scope path still reachable.
+	planItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.Kind("branch"),
-		Scope:     domain.KindAppliesToBranch,
-		Title:     "Branch A",
+		Kind:      domain.KindPlan,
+		Scope:     domain.KindAppliesToPlan,
+		Title:     "Plan A",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateActionItem(branch) error = %v", err)
+		t.Fatalf("CreateActionItem(plan) error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID: project.ID,
-		ParentID:  branch.ID,
+		ParentID:  planItem.ID,
 		ColumnID:  column.ID,
-		Kind:      domain.KindActionItem,
-		Scope:     domain.KindAppliesToActionItem,
-		Title:     "ActionItem A",
+		Kind:      domain.KindBuild,
+		Scope:     domain.KindAppliesToBuild,
+		Title:     "Build A",
 		Priority:  domain.PriorityMedium,
 	})
 	if err != nil {
-		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
+		t.Fatalf("CreateActionItem(build) error = %v", err)
 	}
 
 	parent, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
@@ -554,8 +557,8 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	}
 	child, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:        project.ID,
-		ScopeType:        domain.CapabilityScopeBranch,
-		ScopeID:          branch.ID,
+		ScopeType:        domain.CapabilityScopeActionItem,
+		ScopeID:          planItem.ID,
 		Role:             domain.CapabilityRoleBuilder,
 		AgentName:        "builder-1",
 		AgentInstanceID:  "builder-1",
@@ -582,8 +585,8 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 
 	parentAllowed, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:                 project.ID,
-		ScopeType:                 domain.CapabilityScopeBranch,
-		ScopeID:                   branch.ID,
+		ScopeType:                 domain.CapabilityScopeActionItem,
+		ScopeID:                   planItem.ID,
 		Role:                      domain.CapabilityRoleOrchestrator,
 		AgentName:                 "orch-allowed",
 		AgentInstanceID:           "orch-allowed",
@@ -595,11 +598,11 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	}
 	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:        project.ID,
-		ScopeType:        domain.CapabilityScopeBranch,
-		ScopeID:          branch.ID,
+		ScopeType:        domain.CapabilityScopeActionItem,
+		ScopeID:          planItem.ID,
 		Role:             domain.CapabilityRoleBuilder,
-		AgentName:        "builder-branch-allowed",
-		AgentInstanceID:  "builder-branch-allowed",
+		AgentName:        "builder-equal-allowed",
+		AgentInstanceID:  "builder-equal-allowed",
 		ParentInstanceID: parentAllowed.InstanceID,
 	}); err != nil {
 		t.Fatalf("IssueCapabilityLease(equal scope allowed) error = %v", err)
@@ -630,8 +633,8 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 
 	builderParent, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeBranch,
-		ScopeID:         branch.ID,
+		ScopeType:       domain.CapabilityScopeActionItem,
+		ScopeID:         planItem.ID,
 		Role:            domain.CapabilityRoleBuilder,
 		AgentName:       "builder-parent",
 		AgentInstanceID: "builder-parent",
@@ -727,8 +730,9 @@ func TestQALeaseActionPolicy(t *testing.T) {
 
 // TestKindCapabilityHelpers verifies deterministic helper behavior used by service methods.
 func TestKindCapabilityHelpers(t *testing.T) {
-	normalized := normalizeKindIDList([]domain.KindID{"ActionItem", "phase", "actionItem", "  ", "Phase"})
-	wantIDs := []domain.KindID{"actionItem", "phase"}
+	// NormalizeKindID now trims + lowercases (no camelCase rewriting).
+	normalized := normalizeKindIDList([]domain.KindID{"Plan", "build", "plan", "  ", "Build"})
+	wantIDs := []domain.KindID{"build", "plan"}
 	if !slices.Equal(normalized, wantIDs) {
 		t.Fatalf("normalizeKindIDList() = %#v, want %#v", normalized, wantIDs)
 	}
