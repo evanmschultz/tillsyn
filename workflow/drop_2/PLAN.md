@@ -138,21 +138,23 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 
 Bundled in one sweep per PLAN.md § 19.2. After Unit B-zero deleted `templates/builtin/*.json`, the rename only touches Go code + Go tests + checklist JSON keys (no template JSON sweep). Three droplets. The rename is intrusive enough that a single droplet would balloon past the atomic-droplet ceiling; splitting by package layer keeps each droplet inspectable.
 
-Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explicit "role promotion → state rename" ordering. Same-package-blocking inside Unit B: 2.7 owns the `internal/domain` flip (constants + alias normalization + `IsTerminalState` + `ChecklistItem.Done → Complete` field rename). 2.8 owns the `internal/tui` sweep (model.go + options.go). 2.9 owns the MCP coercion + final repo-wide grep sweep. **2.7 unblocks 2.8 and 2.9** because the constants it renames are the truth source the others reference. 2.8 + 2.9 touch disjoint packages and could parallelize in principle, but serialize anyway: 2.9's grep sweep depends on 2.8's TUI rename being committed so the sweep can confirm zero stragglers.
+**Strict-canonical only (dev decision, 2026-05-01).** No alias tolerance. The rename is a hard cutover — only canonical values (`complete`, `in_progress`) are accepted on every code path (constants, alias normalizers, JSON unmarshal, MCP coercion, CLI input). Legacy values (`done`, `progress`, `completed`, `doing`, `in-progress`) are REJECTED, not coerced. Pre-MVP every caller is the dev; broken callers fail loud and get fixed at the source. Rationale: pre-MVP cleanliness — no lingering legacy-tolerance trash that needs a separate cleanup drop later.
+
+Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explicit "role promotion → state rename" ordering. Same-package-blocking inside Unit B: 2.7 owns the `internal/domain` flip (constants + strict-canonical normalization with no legacy alias tolerance + `IsTerminalState` + `ChecklistItem.Done → Complete` field rename). 2.8 owns the `internal/tui` sweep (model.go + options.go). 2.9 owns the MCP coercion + final repo-wide grep sweep. **2.7 unblocks 2.8 and 2.9** because the constants it renames are the truth source the others reference. 2.8 + 2.9 touch disjoint packages and could parallelize in principle, but serialize anyway: 2.9's grep sweep depends on 2.8's TUI rename being committed so the sweep can confirm zero stragglers.
 
 #### Droplet 2.7 — Domain rename: `StateDone → StateComplete`, `StateProgress → StateInProgress`, `ChecklistItem.Done → Complete`
 
 - **State:** todo
-- **Paths:** `internal/domain/workitem.go` (rename `StateDone` → `StateComplete` and `StateProgress` → `StateInProgress` constants at `:17-22`; flip alias normalization at `:147-163` so canonical-out is `complete`/`in_progress` and aliases (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) coerce to canonical; flip `IsTerminalState` at `:171-175` to test against `StateComplete`/`StateFailed`; rename `ChecklistItem.Done bool` → `ChecklistItem.Complete bool` at `:80-85` including the JSON tag `\`json:"complete"\``), `internal/domain/workitem_test.go` and any other `internal/domain/*_test.go` files referencing the old constants/field name (rename references)
+- **Paths:** `internal/domain/workitem.go` (rename `StateDone` → `StateComplete` and `StateProgress` → `StateInProgress` constants at `:17-22`; rewrite normalization at `:147-163` so ONLY canonical values (`"complete"`, `"in_progress"`) are accepted — every legacy value (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) returns the unknown-state error path; flip `IsTerminalState` at `:171-175` to test against `StateComplete`/`StateFailed`; rename `ChecklistItem.Done bool` → `ChecklistItem.Complete bool` at `:80-85` including the JSON tag `\`json:"complete"\``), `internal/domain/workitem_test.go` and any other `internal/domain/*_test.go` files referencing the old constants/field name (rename references)
 - **Packages:** `internal/domain`
 - **Acceptance:**
   - `git grep "StateDone\b"` returns empty.
   - `git grep "StateProgress\b"` returns empty.
-  - `git grep "ChecklistItem.*Done bool\|\.Done = true\|\.Done = false"` returns only test fixtures that the builder updated to use `Complete`.
+  - `git grep "ChecklistItem.*Done bool\|\.Done = true\|\.Done = false"` returns empty across the whole tree (test fixtures rewritten to `Complete`).
   - `IsTerminalState(StateComplete)` returns true; `IsTerminalState(StateFailed)` returns true; all other states return false.
-  - Alias normalization: input `"done"`, `"complete"`, `"completed"` → `StateComplete`. Input `"progress"`, `"in-progress"`, `"in_progress"`, `"doing"` → `StateInProgress`.
-  - `ChecklistItem` JSON marshal emits `"complete":` not `"done":`. JSON unmarshal accepts both `"complete"` (canonical) AND legacy `"done"` (during alias normalization); decide explicit alias vs strict during build — the table-driven test should pin behavior either way.
-  - Existing `internal/domain/*_test.go` tests still green after rename.
+  - **Strict-canonical normalization:** input `"complete"` → `StateComplete`; input `"in_progress"` → `StateInProgress`. Input `"done"`, `"completed"`, `"progress"`, `"in-progress"`, `"doing"` returns the unknown-state error path (NOT coerced).
+  - `ChecklistItem` JSON marshal emits `"complete":` not `"done":`. JSON unmarshal accepts ONLY `"complete"` — `"done"` keys produce a decode error (no fallback alias). Table-driven test asserts both directions: canonical accepted, legacy rejected.
+  - Existing `internal/domain/*_test.go` tests updated to use canonical state values; no test relies on legacy-alias coercion.
   - `mage test-pkg ./internal/domain` green.
 - **Blocked by:** 2.6
 
@@ -162,8 +164,8 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
 - **Paths:** `internal/tui/model.go` (update `canonicalSearchStatesOrdered` at `:305` from `["todo", "progress", "done", "archived"]` to `["todo", "in_progress", "complete", "archived"]`; update `searchStates` at `:1231` and `dependencyStates` at `:1236` from `["todo", "progress", "done"]` to `["todo", "in_progress", "complete"]`; sweep label maps and any other `"done"` / `"progress"` literals — full grep sweep), `internal/tui/options.go` (update default-state list at `:147` from `["todo", "progress", "done"]` to `["todo", "in_progress", "complete"]`), `internal/tui/model_test.go` and any other `internal/tui/*_test.go` references to old state literals
 - **Packages:** `internal/tui`
 - **Acceptance:**
-  - `git grep -F "\"done\"" internal/tui/` returns empty (or only test fixtures that explicitly check legacy-alias coercion if 2.7's normalizer kept the alias).
-  - `git grep -F "\"progress\"" internal/tui/` returns empty (same caveat).
+  - `git grep -F "\"done\"" internal/tui/` returns empty.
+  - `git grep -F "\"progress\"" internal/tui/` returns empty.
   - `git grep -F "\"in_progress\"" internal/tui/` and `git grep -F "\"complete\"" internal/tui/` return non-empty (canonical literals are present).
   - All `internal/tui/*_test.go` tests still green after literal sweep.
   - `mage test-pkg ./internal/tui` green.
@@ -172,14 +174,13 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
 #### Droplet 2.9 — MCP coercion + final repo-wide grep sweep
 
 - **State:** todo
-- **Paths:** `internal/adapters/server/common/app_service_adapter_mcp.go` (update `actionItemLifecycleStateForColumnName` at `:849-864` so column-name `"done"` resolves to `domain.StateComplete` and `"progress"` resolves to `domain.StateInProgress`; update `normalizeStateLikeID` at `:866-901` so the switch carries both canonical (`"in-progress"`/`"in_progress"`) and legacy (`"progress"`/`"doing"`) inputs to `"in_progress"`, and `"done"`/`"complete"`/`"completed"` to `"complete"` — alias tolerance for pre-rename callers; canonical writes use the new values), `cmd/till/main.go` (any `"done"`/`"progress"` literals in CLI state filtering or state-name display — full grep sweep), all tests touched by the rename
+- **Paths:** `internal/adapters/server/common/app_service_adapter_mcp.go` (rewrite `actionItemLifecycleStateForColumnName` at `:849-864` to accept ONLY canonical column-names (`"complete"` → `domain.StateComplete`, `"in_progress"` → `domain.StateInProgress`); rewrite `normalizeStateLikeID` at `:866-901` to accept ONLY canonical inputs and reject every legacy form with a clear error), `cmd/till/main.go` (any `"done"`/`"progress"` literals in CLI state filtering or state-name display — full grep sweep, rewrite to canonical), all tests touched by the rename
 - **Packages:** `internal/adapters/server/common`, `cmd/till`
 - **Acceptance:**
-  - `git grep -F "StateDone\|StateProgress" -- '*.go'` returns empty across the WHOLE repo (including production + test).
-  - `git grep -E '"done"' -- '*.go'` returns only intentional alias-tolerance cases (the MCP coercion switch + tests asserting alias behavior).
-  - `git grep -E '"progress"' -- '*.go'` returns only intentional alias-tolerance cases.
-  - The `till.action_item` MCP create/list/move-state tool accepts both legacy (`"done"`, `"progress"`) and canonical (`"complete"`, `"in_progress"`) state values; canonical values round-trip through reads.
-  - `mage ci` green (this is the unit boundary — the unified CI run validates that 2.7 + 2.8 + 2.9 left no stragglers anywhere).
+  - `git grep -F "StateDone\|StateProgress" -- '*.go'` returns empty across the WHOLE repo (production + test).
+  - `git grep -E '"done"' -- '*.go'` and `git grep -E '"progress"' -- '*.go'` and `git grep -E '"completed"' -- '*.go'` and `git grep -E '"in-progress"' -- '*.go'` and `git grep -E '"doing"' -- '*.go'` ALL return empty across the whole tree. **No alias-tolerance cases remain — strict-canonical only.**
+  - The `till.action_item` MCP create/list/move-state tool accepts ONLY canonical state values (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`); legacy values produce a clear error response. Canonical values round-trip through reads.
+  - `mage ci` green (unit boundary — the unified CI run validates that 2.7 + 2.8 + 2.9 left no legacy state literals anywhere).
 - **Blocked by:** 2.8
 
 ---
@@ -277,8 +278,8 @@ Same-package-blocking: 2.12 owns the resolver in `internal/app`. 2.13 wires CLI 
 ### Cross-droplet decisions
 
 - **Role field on `ActionItem` is optional** (empty allowed at the constructor; `IsValidRole` rejects empty as part of the closed-enum check, but the `NewActionItem` validator only invokes it on non-empty input). Rationale: pre-MVP, existing description-prose `Role:` lines aren't backfilled into a column; rows without a parsable role land with empty role. The `ParseRoleFromDescription` helper exists for callers who want to opportunistically lift the value out of description prose at create time.
-- **Alias-tolerance for state literals (Unit B):** the `normalizeStateLikeID` switch keeps the legacy aliases (`"done"`, `"progress"`, `"completed"`, `"doing"`, `"in-progress"`) as inputs that coerce to canonical (`"complete"`, `"in_progress"`). Pre-MVP DB has no rows (dev fresh-DBs after the unit), so the alias is purely for client/CLI tolerance during the transition window. Canonical writes use the new values exclusively.
-- **`ChecklistItem.Done bool → ChecklistItem.Complete bool`:** the JSON tag changes from `"done"` to `"complete"`. There are no persisted-snapshot rows to back-compat against pre-MVP, so the rename is straight — no JSON-decoder alias is required (decide during build whether to add one for forward-compat with externally-stored snapshots; default is no, dev fresh-DBs).
+- **Strict-canonical state literals (Unit B, dev decision 2026-05-01):** `normalizeStateLikeID` and `actionItemLifecycleStateForColumnName` accept ONLY canonical inputs (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`). Every legacy form (`"done"`, `"progress"`, `"completed"`, `"doing"`, `"in-progress"`) returns the unknown-state error path. Pre-MVP every caller is the dev; broken callers fail loud and get fixed at the source. Rationale: no lingering legacy-tolerance trash that would need cleanup later.
+- **`ChecklistItem.Done bool → ChecklistItem.Complete bool` (strict-canonical):** JSON tag changes from `"done"` to `"complete"`. Unmarshal accepts ONLY `"complete"` — `"done"` keys produce a decode error. No fallback alias, no `UnmarshalJSON` shim. Pre-MVP no persisted-snapshot rows exist; any test fixture with legacy keys gets rewritten to canonical in the same droplet.
 - **Resolver location (Unit D):** `internal/app/dotted_address.go` (not `internal/domain`). Resolution requires a project-context repo lookup, which is an application-service concern. Keep `internal/domain` free of repo dependencies.
 
 ### Explicit YAGNI rulings
@@ -295,4 +296,4 @@ Same-package-blocking: 2.12 owns the resolver in `internal/app`. 2.13 wires CLI 
 - **Drop 4 — dispatcher.** Reads template-bound role + kind axes, fans out subagents.
 - **Drop 4.5 — TUI overhaul.** Includes dotted-address bindings in TUI (resolver lands in Drop 2; TUI consumption lands later).
 - **Future refinement drop — strip `scope` column from `action_items`.** Mirroring `scope` from `kind` lives until then per PLAN.md § 19.2 explicit OOS.
-- **Future refinement drop — MD content cleanup.** Drop 2's Unit B-zero deletion + Unit B state rename will leave stale references in `README.md` / `CLAUDE.md` / `PLAN.md`. Trivial in-section MD edits are at builder discretion in Unit B-zero / Unit B; whole-document doc sweep is out of scope here.
+- **Future refinement drop — MD content cleanup.** Drop 2's Unit B-zero deletion + Unit B state rename will leave stale references in `README.md` / `CLAUDE.md` / `PLAN.md`. **Drop 2 carve-out (dev decision 2026-05-01, this drop only):** builders MAY make trivial in-section MD edits adjacent to their droplet's `paths` if the change is a single-sentence / single-phrase fix obviously broken by their code change. Build-QA (proof + falsification) MUST verify any MD edits via `git diff` and confirm correctness. **Whole-document or whole-section MD sweeps remain out of scope here.** Future drops route MD cleanup to planner+QA, not builder. This carve-out does not establish a precedent.
