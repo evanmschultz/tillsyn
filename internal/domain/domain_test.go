@@ -203,6 +203,57 @@ func TestNewActionItemValidation(t *testing.T) {
 	}
 }
 
+// TestNewActionItemRoleValidation covers the closed Role enum on the optional
+// Role field — empty round-trips empty, every valid role round-trips, an
+// unknown value rejects with ErrInvalidRole, and whitespace-only normalizes
+// to the empty zero value.
+func TestNewActionItemRoleValidation(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name     string
+		input    Role
+		wantRole Role
+		wantErr  error
+	}{
+		{name: "empty", input: "", wantRole: "", wantErr: nil},
+		{name: "whitespace", input: "   ", wantRole: "", wantErr: nil},
+		{name: "builder", input: RoleBuilder, wantRole: RoleBuilder, wantErr: nil},
+		{name: "qa-proof", input: RoleQAProof, wantRole: RoleQAProof, wantErr: nil},
+		{name: "qa-falsification", input: RoleQAFalsification, wantRole: RoleQAFalsification, wantErr: nil},
+		{name: "qa-a11y", input: RoleQAA11y, wantRole: RoleQAA11y, wantErr: nil},
+		{name: "qa-visual", input: RoleQAVisual, wantRole: RoleQAVisual, wantErr: nil},
+		{name: "design", input: RoleDesign, wantRole: RoleDesign, wantErr: nil},
+		{name: "commit", input: RoleCommit, wantRole: RoleCommit, wantErr: nil},
+		{name: "planner", input: RolePlanner, wantRole: RolePlanner, wantErr: nil},
+		{name: "research", input: RoleResearch, wantRole: RoleResearch, wantErr: nil},
+		{name: "unknown rejects", input: Role("foobar"), wantRole: "", wantErr: ErrInvalidRole},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:        "t-role",
+				ProjectID: "p1",
+				ColumnID:  "c1",
+				Position:  0,
+				Title:     "x",
+				Kind:      KindBuild,
+				Role:      tc.input,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if actionItem.Role != tc.wantRole {
+				t.Fatalf("Role = %q, want %q", actionItem.Role, tc.wantRole)
+			}
+		})
+	}
+}
+
 // TestActionItemMoveUpdateArchiveRestore verifies behavior for the covered scenario.
 func TestActionItemMoveUpdateArchiveRestore(t *testing.T) {
 	now := time.Now()

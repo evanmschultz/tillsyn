@@ -84,7 +84,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 
 #### Droplet 2.3 — Add `Role` field to `ActionItem` + `ActionItemInput` + `NewActionItem` validation
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/domain/action_item.go` (add `Role Role` field to both structs; add validation block in `NewActionItem`), `internal/domain/domain_test.go` (extend existing `NewActionItem` table-driven tests — confirmed via Read: no `internal/domain/action_item_test.go` file exists today; tests live in `domain_test.go`)
 - **Packages:** `internal/domain`
 - **Acceptance:**

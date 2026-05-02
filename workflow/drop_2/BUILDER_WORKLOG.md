@@ -91,3 +91,31 @@ N/A — task created two brand-new Go files (`role.go`, `role_test.go`) and made
 ## Hylla Feedback
 
 N/A — task touched only existing Go test code via three line-deletions. No symbol search, no reference lookup, no Hylla query needed. The work was 100% LSP-warning-driven (the `forvar` diagnostics handed me the exact line numbers + the exact pattern to remove). Zero ergonomic gripes.
+
+## Droplet 2.3 — Round 1
+
+**Outcome:** success.
+
+**Files touched:**
+
+- `internal/domain/action_item.go` — added `Role Role` field to `ActionItem` struct (placed between `Scope` and `LifecycleState`, alongside the closed-enum classifier neighborhood) and to `ActionItemInput`. Added a normalize-and-validate block in `NewActionItem` after the `Scope`-mirrors-`Kind` check. Added `Role: in.Role` to the constructor's return literal. Net delta: +21 LOC.
+- `internal/domain/domain_test.go` — added `TestNewActionItemRoleValidation`, a 12-case table-driven test covering empty / whitespace-only / each of 9 valid roles / unknown-rejects. Inserted directly after `TestNewActionItemValidation`. Net delta: +49 LOC.
+- `internal/tui/model_test.go` — added `"Role": {}` to the `readOnly` map inside `TestActionItemSchemaCoverageIsExplicit` (line 14812). **Scope expansion** — this path was NOT in the orchestrator's listed Paths, but the schema-coverage gate trips on every new `ActionItem` field. The classification is unambiguous (closed-enum classifier — same lane as `Kind`/`Scope`/`LifecycleState`, all readOnly). Reported back to orchestrator. Net delta: +1 LOC.
+
+**Mage results:**
+
+- `mage test-pkg ./internal/domain` → 103 tests pass (was 102 prior; new `TestNewActionItemRoleValidation` adds 1 test with 12 subtests).
+- `mage ci` → exit 0. 1313 tests pass across 19 packages. All packages above 70% coverage threshold (`internal/domain` at 79.4%, `internal/tui` at 70.0%). Build succeeds.
+
+**Design notes:**
+
+- **Field placement:** `Role` lives between `Scope` and `LifecycleState` in both structs. Rationale — `Kind`, `Scope`, `Role`, `LifecycleState` are the four closed-enum classifiers. Grouping them keeps the struct's mental model clean (system-classifier section vs user-data section).
+- **Short-circuit on empty before `IsValidRole`:** required because `IsValidRole` rejects the empty string per `role.go:58-60`. The validator pattern is `in.Role = NormalizeRole(in.Role); if in.Role != "" && !IsValidRole(in.Role) { return ErrInvalidRole }`. This makes the empty zero-value the permitted default and makes whitespace-only inputs round-trip as empty (since `NormalizeRole` returns `""` for whitespace).
+- **Test style — table-driven, no `tc := tc`:** the new test uses `for _, tc := range cases { t.Run(tc.name, func(t *testing.T) { ... }) }` without the legacy `tc := tc` capture line, per Go 1.22+ per-iteration scoping. This is the post-Round-2 forvar-clean pattern.
+- **Existing tests stay green:** the `Kind` validation path was untouched. `TestNewActionItemDefaultsAndLabels`, `TestNewActionItemValidation`, `TestActionItemMoveUpdateArchiveRestore`, `TestNewActionItemRichMetadataAndDefaults`, `TestActionItemLifecycleTransitions`, `TestActionItemContractUnmetChecks`, `TestNewActionItemRejectsInvalidMetadata` all pass without change — those tests omit `Role`, so the empty-zero-value path is exercised implicitly.
+
+**PLAN.md state flips:** Droplet 2.3 `todo → in_progress` at start, `in_progress → done` at end.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed. The investigation was code-local (read three files in `internal/domain`, one test file, one test in `internal/tui`) and the LSP `documentSymbol` query handled fast navigation inside the 26k-line `domain_test.go`. No symbol search ambiguity, no stale-ingest issue. Zero ergonomic gripes for this droplet.

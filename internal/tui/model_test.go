@@ -14810,6 +14810,7 @@ func TestActionItemSchemaCoverageIsExplicit(t *testing.T) {
 		"ParentID":       {},
 		"Kind":           {},
 		"Scope":          {},
+		"Role":           {},
 		"LifecycleState": {},
 		"ColumnID":       {},
 		"Position":       {},
