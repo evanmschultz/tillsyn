@@ -68,7 +68,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 
 #### Droplet 2.2 — Pure `Role` enum + `ParseRoleFromDescription` parser in `internal/domain`
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/domain/role.go` (new), `internal/domain/role_test.go` (new), `internal/domain/errors.go` (add `ErrInvalidRole = errors.New("invalid role")`)
 - **Packages:** `internal/domain`
 - **Acceptance:**
