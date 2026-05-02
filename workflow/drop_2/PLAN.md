@@ -157,14 +157,15 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
 - **Paths:** the rename touches every state-machine site in the tree. Enumerated below by package; every file is in one commit. **All file:line cites verified at HEAD via `git grep` for this Round 2 revision.**
 
   **`internal/domain/` (state-machine truth source + struct fields):**
-  - `internal/domain/workitem.go` — rename `StateDone` → `StateComplete` and `StateProgress` → `StateInProgress` constants at `:18-19`; rewrite normalization at `:147-163` so ONLY canonical values (`"complete"`, `"in_progress"`) are accepted — every legacy value (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) returns the unknown-state error path; flip `IsTerminalState` at `:174` to test against `StateComplete`/`StateFailed`; rename `ChecklistItem.Done bool` → `ChecklistItem.Complete bool` at `:81-85` including the JSON tag `\`json:"complete"\``; rewrite `IsValidLifecycleState` at `:168` to enumerate the canonical values; rename `CompletionPolicy.RequireChildrenDone bool` at `:89` → `CompletionPolicy.RequireChildrenComplete bool` including the JSON tag `\`json:"require_children_done"\`` → `\`json:"require_children_complete"\``.
+  - `internal/domain/workitem.go` — rename `StateDone` → `StateComplete` and `StateProgress` → `StateInProgress` constants at `:18-19`; rewrite normalization at `:147-163` so ONLY canonical values (`"complete"`, `"in_progress"`) are accepted — every legacy value (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) returns the unknown-state error path; flip `IsTerminalState` at `:174` to test against `StateComplete`/`StateFailed`; rename `ChecklistItem.Done bool` → `ChecklistItem.Complete bool` at `:81-85` including the JSON tag `\`json:"complete"\``; rewrite `isValidLifecycleState` (unexported) at `:166` to enumerate the canonical values; rename `CompletionPolicy.RequireChildrenDone bool` at `:89` → `CompletionPolicy.RequireChildrenComplete bool` including the JSON tag `\`json:"require_children_done"\`` → `\`json:"require_children_complete"\``.
   - `internal/domain/action_item.go` — rename `StateProgress`/`StateDone` symbol references at `:268, 275, 278, 315`; rename `item.Done` field access at `:357` to `item.Complete` (production code); rename `policy.RequireChildrenDone` reader at `:310` to `policy.RequireChildrenComplete`.
-  - `internal/domain/domain_test.go` — rename test references to renamed constants and `ChecklistItem.Done` fields throughout (e.g. `:114, 275, 324, 327, 330, 333, 374, 393, 396, 420-442, 536, 561-566`); rename `RequireChildrenDone:` test fixtures at `:430, 566, 614-615` to `RequireChildrenComplete:`.
-  - `internal/domain/kind_capability_test.go` — rename `RequireChildrenDone:` test fixture at `:35` to `RequireChildrenComplete:`.
+  - `internal/domain/domain_test.go` — rename test references to renamed constants and `ChecklistItem.Done` fields throughout (e.g. `:275, 324, 327, 330, 333, 374, 393, 396, 420-442, 536, 561-566`); rename `RequireChildrenDone:` test fixtures at `:430, 566, 614-615` to `RequireChildrenComplete:`. **NOT in scope:** `:114` references column name `"done"` as a free-form column-rename test input, NOT a lifecycle state literal — leave unchanged.
+  - `internal/domain/kind_capability_test.go` — rename `RequireChildrenDone:` test fixtures at `:35` AND `:73` to `RequireChildrenComplete:`.
+  - `internal/app/kind_capability_test.go` — rename `Done: false` test fixture at `:429` (and any other `ChecklistItem.Done` field references in this file) to `Complete: false`. **Without this file in scope, `mage test-pkg ./internal/app` compile-fails after the field rename.**
 
   **`internal/app/` (transition rules, snapshot validation, attention overview, default state seed):**
-  - `internal/app/service.go` — rename `domain.StateDone`/`StateProgress` symbol references at `:556, 623, 627, 639, 644, 694, 1817, 1965-1975`; flip `defaultStateTemplates()` at `:1873-1881` so the seed ID column emits `"in_progress"` and `"complete"` (NOT `"progress"`/`"done"`); rewrite `normalizeStateID` at `:1922-1955` to accept ONLY canonical inputs (every legacy alias case at `:1948-1951` removed); rewrite `lifecycleStateForColumnID` at `:1958-1979` to switch on canonical column names only.
-  - `internal/app/service_test.go` — sweep all 16+ symbol references and any state-literal test inputs (verified hits at `:2467, 3035, 3055, 3065, 3092, 3108, 3186, 3196, 3797, 4573, 4609, 4626, 4693`; full grep sweep required); rename `Done: true/false` checklist literals at `:3003, 3038, 3039, 4612` to `Complete:`; rename `RequireChildrenDone:` test fixtures at `:3042, 3095, 4613` to `RequireChildrenComplete:`.
+  - `internal/app/service.go` — rename `domain.StateDone`/`StateProgress` symbol references at `:623, 627, 639, 644, 1817, 1965-1975`; flip `defaultStateTemplates()` at `:1873-1881` so the seed ID column emits `"in_progress"` and `"complete"` (NOT `"progress"`/`"done"`); rewrite `normalizeStateID` at `:1922-1955` to accept ONLY canonical inputs (every legacy alias case at `:1948-1951` removed); rewrite `lifecycleStateForColumnID` at `:1958-1979` to switch on canonical column names only. **NOT in scope:** `:556` and `:694` reference `domain.StateTodo` (unchanged by Drop 2) — leave unchanged.
+  - `internal/app/service_test.go` — sweep all symbol references and state-literal test inputs (verified hits at `:1561, 1567, 2467, 2953, 3035, 3055, 3065, 3092, 3108, 3186, 3196, 4573, 4609, 4626, 4693`; full grep sweep required); rewrite `States: []string{"progress"}` and `StateID == "progress"` legacy state literals at `:1561, 1567, 2953` to canonical (`"in_progress"`); rename `Done: true/false` checklist literals at `:3003, 3038, 3040, 4612` to `Complete:`; rename `RequireChildrenDone:` test fixtures at `:3042, 3095, 4613` to `RequireChildrenComplete:`. **NOT in scope:** `:3797` is `Reason: "done"` on a capability-lease revoke (free-form text), NOT a state literal — leave unchanged. **`fakeRepo` extension for new `Repository.ListActionItemsByParent` method belongs in Droplet 2.10, NOT 2.7.**
   - `internal/app/snapshot.go` — rename symbols in the validation switch at `:419` and any other site (e.g., `:1267` fallback uses `StateTodo`, unchanged); flip the doc comment that names `domain.AllowedParentKinds` at `:448` is OUT OF SCOPE for 2.7 — it lives under Droplet 2.9 (Unit C, 2.9 in the Round 2 renumbering) — but `:419` IS in 2.7.
   - `internal/app/snapshot_test.go` — sweep any state-symbol references touched by the rename.
   - `internal/app/attention_capture.go` — rename `domain.StateProgress`/`StateDone` references at `:350, 353, 356, 371`. Field renames `InProgressItems` → consider rename to `InProgressItems` (already canonical in field name; only the JSON tag at `:95` `json:"in_progress_items"` is canonical-friendly already). `DoneItems` field at `:96` (`json:"done_items"`) → rename field to `CompleteItems` and JSON tag to `json:"complete_items"`. Update increments at `:351, 354`. (See `## Notes` → "Aggregate counter rename" for rationale.)
@@ -180,6 +181,7 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
   - `internal/adapters/server/common/types.go` — rename struct field `InProgressActionItems` (already canonical) at `:142` and JSON tag `json:"in_progress_tasks"` (already canonical); rename `DoneActionItems` at `:143` → `CompleteActionItems` and JSON tag `json:"done_tasks"` → `json:"complete_tasks"`.
 
   **`internal/adapters/server/mcpapi/`:**
+  - `internal/adapters/server/mcpapi/extended_tools.go` — rewrite the MCP tool-description string at `:1339` (`"Lifecycle state target for operation=move_state (for example: todo|in_progress|done)"`) to use canonical values only (`"... todo|in_progress|complete"`). LLM agents read tool descriptions as canonical examples; leaving the legacy literal contradicts strict-canonical at the external-API contract surface.
   - `internal/adapters/server/mcpapi/extended_tools_test.go` — rename `domain.StateProgress`/`StateDone` symbol references at `:427, 446`; rewrite `"state": "done"` test inputs at `:1114, 2587` to `"state": "complete"`; rewrite `service.lastMoveActionItemStateReq.State` assertion at `:2600` from `"done"` to `"complete"`.
 
   **`internal/tui/` (state literals, label maps, default-state lists, all surfaces):**
@@ -206,6 +208,7 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
     - `git grep -nE "\\bDoneItems\\b|\\bDoneActionItems\\b" -- '*.go'` returns empty (aggregate counter fields renamed to `CompleteItems`/`CompleteActionItems`).
     - `git grep -nE "\\bRequireChildrenDone\\b" -- '*.go'` returns empty (field renamed to `RequireChildrenComplete`).
     - `git grep -nE 'json:"require_children_done"' -- '*.go'` returns empty (JSON tag renamed to `require_children_complete`).
+    - `git grep -nE '\\.Done\\s*=\\s*(true|false)|Done:\\s*(true|false)' -- '*.go'` returns only stdlib concurrency idioms (`ctx.Done()`, `wg.Done()`) — zero `ChecklistItem.Done` field-literal sites remain.
   - **State-machine literal checks (scope-narrowed to state-machine contexts, NOT broad string sweeps):**
     - `git grep -nE 'domain\\.StateDone|domain\\.StateProgress' -- '*.go'` returns empty.
     - `git grep -nE 'lifecycle_state.*"done"|lifecycle_state.*"progress"' -- '*.go'` returns empty.
@@ -223,7 +226,7 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
     - The `till.action_item` MCP create/list/move-state tool accepts ONLY canonical state values (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`); legacy values produce a clear error response. Canonical values round-trip through reads.
   - **Whole-tree CI gate:** `mage ci` green (the unified CI run is the unit-boundary gate — any missed file produces a compile error or test failure here).
   - **DB action:** DELETE `~/.tillsyn/tillsyn.db` BEFORE running `mage ci` for this droplet (state-vocab change — column IDs change from `progress`/`done` to `in_progress`/`complete`).
-- **Blocked by:** 2.6
+- **Blocked by:** 2.5, 2.6  *(2.5 added Round 3: 2.5 + 2.7 both edit `internal/adapters/server/common/app_service_adapter_mcp.go` — same-package serialization required to prevent cross-unit compile race once Unit B fans out from Unit A's tail)*
 
 ---
 
@@ -275,18 +278,19 @@ Same-package-blocking: 2.10 owns the resolver in `internal/app` + the `Repositor
 #### Droplet 2.10 — Pure dotted-address resolver in `internal/app` + `Repository.ListActionItemsByParent`
 
 - **State:** todo
-- **Paths:** `internal/app/dotted_address.go` (new — function `ResolveDottedAddress(ctx, repo, projectID, dotted string) (actionItemID string, err error)` with sentinel errors `ErrDottedAddressAmbiguous`, `ErrDottedAddressNotFound`, `ErrDottedAddressInvalidSyntax`), `internal/app/dotted_address_test.go` (new — table-driven tests using an in-memory fake or the existing test SQLite fixture), `internal/app/ports.go` (add `ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)` to the `Repository` interface), `internal/adapters/storage/sqlite/repo.go` (add `ListActionItemsByParent` method on `*Repository` alongside existing `ListActionItems` at `:1393`), `internal/adapters/storage/sqlite/repo_test.go` (round-trip test for the new method)
+- **Paths:** `internal/app/dotted_address.go` (new — function `ResolveDottedAddress(ctx, repo, projectID, dotted string) (actionItemID string, err error)` with sentinel errors `ErrDottedAddressNotFound`, `ErrDottedAddressInvalidSyntax`), `internal/app/dotted_address_test.go` (new — table-driven tests using an in-memory fake or the existing test SQLite fixture), `internal/app/ports.go` (add `ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)` to the `Repository` interface), `internal/app/service_test.go` (extend `fakeRepo` to implement the new method — without this, `mage test-pkg ./internal/app` compile-fails on every test that constructs `fakeRepo`), `internal/adapters/storage/sqlite/repo.go` (add `ListActionItemsByParent` method on `*Repository` alongside existing `ListActionItems` at `:1393`), `internal/adapters/storage/sqlite/repo_test.go` (round-trip test for the new method)
 - **Packages:** `internal/app`, `internal/adapters/storage/sqlite`
 - **Acceptance:**
-  - Function signature: `func ResolveDottedAddress(ctx context.Context, repo Repository, projectID string, dotted string) (string, error)` — `Repository` is the existing app-layer interface, now extended with `ListActionItemsByParent`.
-  - `Repository.ListActionItemsByParent(ctx, projectID, parentID)` returns the list of action items whose `ParentID == parentID` within `projectID`. Empty `parentID` returns level-1 children (no parent).
-  - SQLite implementation uses an indexed query (`WHERE project_id = ? AND parent_id = ?`); no per-call full-table scan.
-  - `ResolveDottedAddress` accepts these forms: `N` (level-1), `N.M` (level-2), `N.M.K` (level-3), and `<proj_slug>-N.M.K` (slug-prefixed). The slug prefix is optional — when absent, the resolver scopes to the supplied `projectID`. When present, the resolver verifies the slug matches the project named by `projectID`.
-  - Returns the resolved action-item UUID on unique match.
-  - Returns `ErrDottedAddressNotFound` when the path doesn't lead to an action item.
-  - Returns `ErrDottedAddressAmbiguous` when the path is non-unique (multiple matches at some level).
-  - Returns `ErrDottedAddressInvalidSyntax` when the input fails the `^([a-z0-9-]+-)?\d+(\.\d+)*$` shape check.
-  - Table-driven tests cover: valid `N`, valid `N.M`, valid `N.M.K`, slug-prefixed valid, slug-prefix mismatch, missing path, ambiguous path, malformed inputs (empty, `1.`, `.1`, `1..2`, `abc`, `1.2.3.4.5` deep nesting), UUID input rejected (must use the dotted form OR the caller is expected to skip the resolver).
+  - Function signature: `func ResolveDottedAddress(ctx context.Context, repo Repository, projectID string, dotted string) (string, error)` — `Repository` is the existing app-layer interface, now extended with `ListActionItemsByParent`. **`projectID` is supplied by the caller** (CLI `--project <slug>` flag, slug-prefix shorthand, or MCP session inference); the resolver does NOT parse a project component out of the dotted body.
+  - **Dotted body is project-LESS and 0-indexed at every level.** Form: `<lvl1_pos>.<lvl2_pos>.<lvl3_pos>...` — `0` = first child of project (level_1 position 0), `0.0` = first grandchild, `2.5` = level_1 position 2 then level_2 position 5. **Project NEVER appears as `0` in the body.** Body regex: `^\d+(\.\d+)*$`. (Names are not in play — addresses are positional only; renaming a drop does not change its position-based address.)
+  - **CLI shorthand:** `<proj_slug>:<dotted>` (slug-prefix-colon, e.g. `tillsyn:1.5.2`) accepted as a CLI ergonomic; the resolver parses the slug, looks up `projectID` for the slug, then resolves the body. CLI also accepts `--project <slug>` flag with bare body. Slug verified against the supplied/inferred `projectID`.
+  - `Repository.ListActionItemsByParent(ctx, projectID, parentID)` returns the list of action items whose `ParentID == parentID` within `projectID`, **deterministically ordered by `created_at ASC, id ASC`** (or `position ASC, created_at ASC, id ASC` if a `position` column exists on `action_items` — quick schema check at build time, prefer position if available). Empty `parentID` returns level-1 children (no parent). Position N in this ordering IS the dotted index.
+  - SQLite implementation uses an indexed query (`WHERE project_id = ? AND parent_id = ? ORDER BY ...`); no per-call full-table scan.
+  - Returns the resolved action-item UUID on match.
+  - Returns `ErrDottedAddressNotFound` when any level's index is out-of-range for the listing at that level.
+  - Returns `ErrDottedAddressInvalidSyntax` when the input fails the body shape check (or slug-prefix shape check).
+  - **No `ErrDottedAddressAmbiguous` error** — by construction the deterministic ORDER BY + UUID tie-breaker yields a unique item per index, so ambiguity is unreachable.
+  - Table-driven tests cover: valid `0` (single-level), valid `0.0` (two-level), valid `2.5.1` (three-level), slug-prefixed valid (`tillsyn:1.5.2`), slug-prefix mismatch (slug doesn't match `projectID`), out-of-range path at each level, malformed inputs (empty, `1.`, `.1`, `1..2`, `abc`, leading-dash, deep nesting), UUID input rejected (the resolver expects the dotted form; UUID-vs-dotted detection is a caller-side concern in 2.11).
   - `mage test-pkg ./internal/app` and `mage test-pkg ./internal/adapters/storage/sqlite` both green.
   - DB action: NONE (additive method, no schema change).
 - **Blocked by:** 2.9
@@ -297,11 +301,13 @@ Same-package-blocking: 2.10 owns the resolver in `internal/app` + the `Repositor
 - **Paths:** `internal/adapters/server/common/app_service_adapter_mcp.go` (in `till.action_item(operation=get)`, accept either UUID or dotted form for `action_item_id` — when input doesn't parse as UUID, call `ResolveDottedAddress`; mutation operations `create|update|move|move_state|delete|restore|reparent` reject dotted form with a clear error), `internal/adapters/server/mcpapi/extended_tools.go` (mirror the get-vs-mutate distinction in tool-level argument validation), `cmd/till/main.go` (CLI read commands accept dotted form via the same resolver; CLI mutation commands reject dotted form), test files for each path
 - **Packages:** `internal/adapters/server/common`, `internal/adapters/server/mcpapi`, `cmd/till`
 - **Acceptance:**
-  - `till.action_item(operation=get, action_item_id="2.1")` resolves through the resolver and returns the matching action item.
-  - `till.action_item(operation=get, action_item_id="<UUID>")` continues to work unchanged.
+  - `till.action_item(operation=get, action_item_id="2.1")` resolves through the resolver — project inferred from MCP auth-gated session — and returns the matching action item.
+  - `till.action_item(operation=get, action_item_id="<UUID>")` continues to work unchanged. UUID-vs-dotted detection: caller checks for UUID shape (e.g. `regexp.MustCompile`-based UUID check) and routes to direct `GetActionItem` if UUID, else `ResolveDottedAddress`.
   - `till.action_item(operation=update, action_item_id="2.1", ...)` returns a 400-class error explaining that mutations require UUIDs.
-  - CLI `till action_item get 2.1` works; CLI `till action_item update 2.1 ...` rejects with the same error class.
-  - Unknown / ambiguous dotted addresses propagate `ErrDottedAddressNotFound` / `ErrDottedAddressAmbiguous` upward as MCP/CLI errors with descriptive messages.
+  - **CLI `till action_item get` accepts both forms:** explicit `--project <slug>` flag with bare dotted body (`till action_item get --project tillsyn 1.5.2`), AND slug-prefix shorthand (`till action_item get tillsyn:1.5.2`). Bare dotted form without project (`till action_item get 1.5.2`) errors with a clear message — project is required.
+  - CLI `till action_item update 2.1 ...` rejects with the same mutations-require-UUID error class.
+  - **MCP tool description for `till.action_item` explicitly documents:** `action_item_id` accepts UUID OR dotted form (project inferred from session); list of mutations that reject dotted form.
+  - Unknown / out-of-range dotted addresses propagate `ErrDottedAddressNotFound` upward as MCP/CLI errors with descriptive messages naming the level + index that failed.
   - `mage ci` green (drop boundary — full validation that all four units composed cleanly).
   - DB action: NONE.
 - **Blocked by:** 2.10
@@ -325,6 +331,19 @@ This is the Round 2 revision of `workflow/drop_2/PLAN.md`. Round 1 was reviewed 
 - **B9.** Confirmed `internal/adapters/server/common/mcp_surface.go:227 Completed bool json:"completed"` is independent of lifecycle state — it's a checklist-item-completed boolean on an MCP response shape, unrelated to `ChecklistItem.Done`. No rename, no acceptance criterion touches it. (Verified via Read at HEAD.)
 - **B10.** Updated `## Notes` to reflect every change above (this section, plus updates to Cross-droplet decisions, Explicit YAGNI rulings, Deferrals).
 
+### Round 3 revision summary
+
+This is the Round 3 revision following `PLAN_QA_PROOF_R2.md` (FAIL — 4 surgical blockers + 3 nits) and `PLAN_QA_FALSIFICATION_R2.md` (FAIL — 5 surgical blockers + 6 nits). All Round 1 blockers stayed resolved across Round 2; Round 3 closes surgical drift. Patches applied (orch self-edit, no planner respawn — surgical only):
+
+- **R3-1.** Added `internal/app/kind_capability_test.go` to Droplet 2.7 `Paths:` — `Done: false` test fixture at `:429` would compile-fail post-rename without it.
+- **R3-2.** Added `service_test.go:1561, 1567, 2953` legacy state literals (`States: []string{"progress"}`, `StateID == "progress"`) to 2.7's enumeration; rewrite to canonical (`"in_progress"`).
+- **R3-3.** Added `Blocked by: 2.5, 2.6` to Droplet 2.7. Both 2.5 and 2.7 edit `internal/adapters/server/common/app_service_adapter_mcp.go`; cross-unit serialization was in prose only, not in the DAG. Now enforced.
+- **R3-4.** Removed `domain_test.go:114` from 2.7's rename scope. Column name `"done"` at that line is free-form column-rename test input, NOT a lifecycle state literal.
+- **R3-5.** Added `internal/app/service_test.go fakeRepo` extension to **Droplet 2.10** `Paths:`. Adding `ListActionItemsByParent` to `Repository` interface compile-breaks every test using `fakeRepo` (25+ sites) without the fake also implementing the new method.
+- **R3-6.** Added `internal/adapters/server/mcpapi/extended_tools.go:1339` to 2.7 `Paths:` — MCP tool description string `"...todo|in_progress|done"` rewrites to `"...todo|in_progress|complete"`. LLM agents read tool descriptions as canonical examples; legacy literal contradicts strict-canonical at the external-API contract surface.
+- **R3-7.** Cite drift sweep: `service.go:556, :694` reference `domain.StateTodo` (NOT renamable) — removed from rename instructions. `IsValidLifecycleState` corrected to lowercase `isValidLifecycleState` (unexported, line `:166`). `kind_capability_test.go` cite extended from `:35` to `:35, :73` (both have `RequireChildrenDone`). `service_test.go:3039 → :3040` cite drift fix. `service_test.go:3797` is `Reason: "done"` lease-revoke (free-form, NOT state literal) — removed from over-claim. Added `Done: true|false` field-literal acceptance grep.
+- **R3-8.** Dotted-address resolver final spec applied (Droplet 2.10): **project is NOT in the dotted body** — supplied separately (CLI `--project <slug>` flag, slug-prefix shorthand `<proj_slug>:<dotted>`, or MCP session inference). Body is 0-indexed positions among parent's children at each level. `ORDER BY created_at ASC, id ASC` (or `position ASC, ...` if a position column exists — quick schema check at build time). `ErrDottedAddressAmbiguous` removed (unreachable by construction with deterministic ordering). Memory `project_tillsyn_cascade_vocabulary.md` updated to match.
+
 ### Aggregate counter rename (Round 2 discovery)
 
 Strict-canonical state vocabulary implies aggregate-counter field names tracking a state should follow the rename. Verified hits:
@@ -343,7 +362,7 @@ Sites updated in Droplet 2.7 (all already in 2.7's `Paths:`, file-line cites ver
 
 - **Definition:** `internal/domain/workitem.go:89` — field rename + JSON tag rename.
 - **Reader:** `internal/domain/action_item.go:310` — `policy.RequireChildrenDone` → `policy.RequireChildrenComplete`.
-- **Test fixtures:** `internal/adapters/server/common/capture_test.go:126`; `internal/app/service_test.go:3042, 3095, 4613`; `internal/domain/domain_test.go:430, 566, 614-615`; `internal/domain/kind_capability_test.go:35`.
+- **Test fixtures:** `internal/adapters/server/common/capture_test.go:126`; `internal/app/service_test.go:3042, 3095, 4613`; `internal/domain/domain_test.go:430, 566, 614-615`; `internal/domain/kind_capability_test.go:35, :73`.
 
 ### Template-loader-coupling investigation (Unit B-zero)
 
