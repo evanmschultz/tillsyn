@@ -251,3 +251,169 @@ Droplet 2.2 lands cleanly. The `internal/domain.Role` closed enum (9 typed const
 ### Hylla Feedback
 
 N/A — task created two brand-new Go files (`role.go`, `role_test.go`) and made a one-line edit to a known existing Go file (`errors.go`). QA verification used `Read` for whole-file structural inspection (the relevant question was "show me the full file" not "find a symbol"), `Bash` for `git status` / `git diff` / `git grep` (the right tool for change-set + symbol-absence checks), and `mage` directly for gate reproduction. No Hylla queries were attempted because the work product is freshly-untracked Go that Hylla would not yet index until reingest, and the structural questions were better served by `Read`. Zero Hylla misses, zero ergonomic gripes.
+
+## Droplet 2.3 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-01
+
+### Findings
+
+#### F1. `Role Role` field added to `ActionItem` struct in correct position. (PASS)
+
+`internal/domain/action_item.go:24-54` declares the struct. The new field lives at lines 30-33:
+
+```
+Kind      Kind                              // line 28
+Scope     KindAppliesTo                     // line 29
+// Role optionally tags ...                 // lines 30-32 doc comment
+Role           Role                          // line 33
+LifecycleState LifecycleState                // line 34
+```
+
+Field is correctly placed between `Scope` and `LifecycleState`, grouping the four closed-enum classifiers (`Kind`, `Scope`, `Role`, `LifecycleState`) in adjacent struct slots. Exactly matches the builder's stated rationale and acceptance "ActionItem struct gains Role Role field."
+
+#### F2. `Role Role` field added to `ActionItemInput` struct in correct position. (PASS)
+
+`internal/domain/action_item.go:57-82` declares the input struct. The new field lives at lines 63-67:
+
+```
+Kind      Kind                              // line 61
+Scope     KindAppliesTo                     // line 62
+// Role optionally tags ...                 // lines 63-66 doc comment
+Role           Role                          // line 67
+LifecycleState LifecycleState                // line 68
+```
+
+Symmetric placement to `ActionItem`. Acceptance "ActionItemInput struct gains Role Role field" satisfied.
+
+#### F3. `NewActionItem` validation block correct. (PASS)
+
+`internal/domain/action_item.go:150-158` implements the exact pattern specified:
+
+```
+// Role is optional. NormalizeRole collapses whitespace-only input to the
+// empty string; an empty normalized role is permitted and round-trips as
+// the zero-value Role. A non-empty normalized value must be a member of
+// the closed Role enum — short-circuit on emptiness because IsValidRole
+// rejects the empty string.
+in.Role = NormalizeRole(in.Role)
+if in.Role != "" && !IsValidRole(in.Role) {
+    return ActionItem{}, ErrInvalidRole
+}
+```
+
+The block is positioned after `Scope` validation (line 149) and before `LifecycleState` validation (line 159) — i.e. the same order as the struct fields, matching the validation flow's section organization. The constructor's return literal at line 201 carries `Role: in.Role`, completing the round-trip path. Empty short-circuit is correct because `IsValidRole` at `role.go:58-60` rejects the empty string (verified during Droplet 2.2 QA Round 1 F2). Acceptance "normalizes via NormalizeRole; if non-empty calls IsValidRole; on failure returns ErrInvalidRole; empty role is permitted" satisfied.
+
+#### F4. Doc comments on `Role` fields are present and accurate. (PASS)
+
+- `ActionItem.Role` doc (action_item.go:30-32): "Role optionally tags an action item with a closed-enum role (e.g. builder, qa-proof, planner). Empty string is the zero value and is permitted — callers that require a role should validate downstream."
+- `ActionItemInput.Role` doc (action_item.go:63-66): "Role optionally tags the action item with a closed-enum role. Empty string is permitted and round-trips as the zero-value Role; non-empty values must match the closed Role enum or NewActionItem returns ErrInvalidRole."
+
+Both doc comments correctly describe optional/empty semantics and the input-side specifically names `ErrInvalidRole` as the failure surface. Idiomatic Go-doc style. Per project rule "Go doc comments on every top-level declaration."
+
+#### F5. `TestNewActionItemRoleValidation` exists with all 12 required cases. (PASS)
+
+`internal/domain/domain_test.go:210-255` declares the test. The 12 cases at lines 219-230:
+
+1. `empty` (input: `""`, expects empty role, no error)
+2. `whitespace` (input: `"   "`, expects empty role, no error — exercises NormalizeRole's whitespace-collapse path)
+3. `builder` (RoleBuilder round-trip)
+4. `qa-proof` (RoleQAProof round-trip)
+5. `qa-falsification` (RoleQAFalsification round-trip)
+6. `qa-a11y` (RoleQAA11y round-trip)
+7. `qa-visual` (RoleQAVisual round-trip)
+8. `design` (RoleDesign round-trip)
+9. `commit` (RoleCommit round-trip)
+10. `planner` (RolePlanner round-trip)
+11. `research` (RoleResearch round-trip)
+12. `unknown rejects` (input: `Role("foobar")`, expects empty role, `ErrInvalidRole`)
+
+All 9 valid roles round-trip; empty + whitespace exercise the optional-empty path; unknown rejects with `ErrInvalidRole`. Matches acceptance "empty role round-trips empty; each of 9 valid roles round-trips; unknown role rejected with ErrInvalidRole; whitespace-only role normalizes to empty" exactly.
+
+LSP `documentSymbol` confirms the test func is registered at line 210 of the file. Test position is immediately after `TestNewActionItemValidation` (line 157) per the builder's stated insertion order, preserving co-location of constructor-validation tests.
+
+#### F6. No `tc := tc` in the new test loop. (PASS)
+
+`internal/domain/domain_test.go:233-254` opens the loop body directly with `t.Run(tc.name, func(t *testing.T) { … })` — no shadow-copy line. Go 1.22+ per-iteration scoping (project is Go 1.26+) makes `tc := tc` dead code; the new test follows the post-Droplet-2.2-Round-2 forvar-clean pattern. Consistent with `internal/domain/role_test.go` after the Droplet 2.2 Round 2 cleanup pass.
+
+#### F7. TUI schema-coverage gate handled correctly. (PASS, scope-expansion accepted as readOnly)
+
+`internal/tui/model_test.go:14797-14829` declares `TestActionItemSchemaCoverageIsExplicit`. The two field maps and the new `Role` entry:
+
+- **`editable`** (lines 14799-14806): `Title`, `Description`, `Priority`, `DueAt`, `Labels`, `Metadata` — user-data fields the TUI exposes for direct edit.
+- **`readOnly`** (lines 14807-14828): `ID`, `ProjectID`, `ParentID`, `Kind`, `Scope`, `Role`, `LifecycleState`, `ColumnID`, `Position`, plus all the actor/timestamp fields. The new `"Role": {}` lands at line 14813, between `Scope` (14812) and `LifecycleState` (14814).
+
+The classification is correct. `Role` is a closed-enum classifier identical in shape to `Kind`/`Scope`/`LifecycleState` — those three are all `readOnly` because they're set at create-time (`Kind`/`Scope`) or via dedicated state-machine transitions (`LifecycleState`), not via free-form TUI edit. `Role` follows the same pattern: it's set at create-time via the constructor's normalize-and-validate block (action_item.go:155-158); there's no `Role` mutator method on `ActionItem` (no equivalent of `UpdateDetails`/`SetLifecycleState` for roles). The TUI today has no role-edit overlay. Adjacent placement to its peer classifiers also makes the slot easy to spot in future audits.
+
+The reflect-based assertion `assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ActionItem{}), editable, readOnly, nil)` at line 14829 enumerates every struct field on `domain.ActionItem` and fails if any are missing from the union of the two maps — that's why adding `Role Role` to the struct forced this scope expansion. The builder's flag is correct: this gate trips on every new `ActionItem` field. The single-line addition `"Role": {}` is the minimum diff to satisfy the gate.
+
+**Scope-expansion judgment: ACCEPT readOnly classification.** The path was not in the orchestrator's listed Paths, but the gate's mechanics force the classification, and `readOnly` matches the actual data model (no mutator + closed-enum classifier in the same lane as Kind/Scope/LifecycleState). Adding it to `editable` instead would imply a TUI edit path that doesn't exist and would create an asymmetry with `Kind`/`Scope`/`LifecycleState`. No re-classification needed; no orchestrator routing needed beyond informational acknowledgment.
+
+#### F8. `mage test-pkg ./internal/domain` green at HEAD. (PASS)
+
+I re-ran `mage test-pkg ./internal/domain` on HEAD and observed:
+
+- `[RUNNING] Running go test ./internal/domain`
+- `[SUCCESS] Test stream detected`
+- `[PKG PASS] github.com/evanmschultz/tillsyn/internal/domain (0.00s)`
+- Test summary: `tests: 103 / passed: 103 / failed: 0 / skipped: 0`
+- `[SUCCESS] All tests passed`
+
+Test count went from 90 (Droplet 2.2 baseline) to 103 — delta of +13 tests. The new `TestNewActionItemRoleValidation` itself contributes 12 sub-cases plus the parent test, but the Go test counter at this aggregation level reports the parent + each sub-case (the +13 lines up with the 12 new sub-cases plus the harness arithmetic noted in BUILDER_WORKLOG: "103 tests pass (was 102 prior; new TestNewActionItemRoleValidation adds 1 test with 12 subtests)"). Independent confirmation of the builder's claim. Acceptance "mage test-pkg ./internal/domain green" satisfied.
+
+#### F9. `mage ci` green at HEAD with full coverage compliance. (PASS)
+
+I re-ran `mage ci` on HEAD and observed:
+
+- All four `[SUCCESS]` source/format/test-stream gates green.
+- 19 packages, **1313 tests**, 0 failed, 0 skipped — every package `[PKG PASS]`.
+- `internal/domain` package coverage: **79.4%** (≥ 70.0% threshold).
+- `internal/tui` package coverage: **70.0%** (exactly meets threshold — the schema-coverage gate's `+1 LOC` did not move the needle).
+- Minimum package coverage across all 15 reported packages: 70.0%.
+- `[SUCCESS] Built till from ./cmd/till`.
+
+This corroborates the builder's claim of 1313 tests + ≥ 70% coverage on every package + clean build. Test count delta from Droplet 2.2 (1300) to Droplet 2.3 (1313) is +13 — matches `mage test-pkg ./internal/domain` delta (90 → 103, also +13). `internal/tui` coverage holds at exactly 70.0% — the `+1 LOC` schema-map entry did not push the package below threshold.
+
+#### F10. `git status --porcelain` matches expected delta exactly. (PASS)
+
+Observed:
+
+- ` M internal/domain/action_item.go`
+- ` M internal/domain/domain_test.go`
+- ` M internal/tui/model_test.go`
+- ` M workflow/drop_2/BUILDER_WORKLOG.md`
+- ` M workflow/drop_2/PLAN.md`
+
+Five entries, exactly matching the prompt's expected set (`M action_item.go`, `M domain_test.go`, `M model_test.go`, `M PLAN.md`, `M BUILDER_WORKLOG.md`). No stray modifications, no accidental edits to other files. The scope expansion to `model_test.go` is staged and is the only path beyond the original three (`action_item.go` + `domain_test.go` + the worklog/plan MDs).
+
+#### F11. PLAN.md state flip is correct. (PASS)
+
+`workflow/drop_2/PLAN.md:87` reads `- **State:** done` immediately under the `#### Droplet 2.3 — Add Role field to ActionItem + ActionItemInput + NewActionItem validation` heading at line 85. State-flip executed correctly (`todo → in_progress → done`).
+
+#### F12. `BUILDER_WORKLOG.md` carries a structurally-sound Droplet 2.3 Round 1 entry. (PASS)
+
+`workflow/drop_2/BUILDER_WORKLOG.md` (lines 95-121) contains:
+
+- `## Droplet 2.3 — Round 1` heading (line 95)
+- `**Outcome:** success.` (line 97)
+- Files-touched section enumerating the three Go files + worklog + PLAN with explicit LOC deltas (lines 99-103)
+- **Scope expansion explicitly flagged** for `internal/tui/model_test.go` with classification rationale (line 103)
+- `**Mage results:**` section reporting `mage test-pkg ./internal/domain` 103/103 + `mage ci` 1313/1313 (lines 105-108)
+- `**Design notes:**` section covering field placement, short-circuit-on-empty rationale, post-forvar test-style choice, and existing-test-stay-green claim (lines 110-115)
+- `**PLAN.md state flips:**` line 117 documenting both transitions
+- `## Hylla Feedback` section (line 119) with explicit "None — Hylla answered everything needed" status
+
+Structurally sound and substantively accurate. Builder's pre-flagged scope expansion is honored.
+
+### Missing Evidence
+
+None. All 12 required proof checks have direct citations + reproducible mage gates at HEAD. The `internal/tui/` pre-existing tech-debt warnings are explicitly out of scope per the orchestrator prompt and per memory `project_drop_2_refinements_raised.md` R1; not flagged.
+
+### Verdict Summary
+
+Droplet 2.3 lands cleanly. The `Role Role` field is on both `ActionItem` (action_item.go:33) and `ActionItemInput` (action_item.go:67) in the correct position between `Scope` and `LifecycleState`, with idiomatic Go-doc comments documenting empty/optional semantics. `NewActionItem`'s normalize-and-validate block at action_item.go:150-158 implements the exact pattern (`in.Role = NormalizeRole(in.Role); if in.Role != "" && !IsValidRole(in.Role) { return ErrInvalidRole }`) and the constructor's return literal at line 201 carries `Role: in.Role` for the round-trip. `TestNewActionItemRoleValidation` at domain_test.go:210-255 covers all 12 required cases (empty, whitespace, 9 valid roles, unknown rejects) using the post-Droplet-2.2-Round-2 forvar-clean test idiom. The schema-coverage gate scope expansion to `internal/tui/model_test.go:14813` (`"Role": {}` in the `readOnly` map) is the right call — `Role` is a closed-enum classifier in the same lane as `Kind`/`Scope`/`LifecycleState`, all readOnly, with no mutator method on `ActionItem`. `mage test-pkg ./internal/domain` reproduces 103/103 tests passing on HEAD; `mage ci` reproduces 1313/1313 tests across 19 packages, with `internal/domain` at 79.4% coverage and all packages ≥ 70% (the `+1 LOC` schema-map entry left `internal/tui` at exactly 70.0%, threshold-compliant). `git status --porcelain` matches the expected 5-entry delta exactly. `PLAN.md` state is correctly `done`. `BUILDER_WORKLOG.md` carries a structurally-sound Round 1 entry that pre-flags the scope expansion. Ready to commit.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. QA verification was code-local: `Read` for whole-file inspection of `action_item.go` (small file, structural questions), `Read` with offset/limit for the new test func at `domain_test.go:210-255` and the schema-coverage gate at `model_test.go:14797-14829`, `LSP documentSymbol` for fast top-level navigation inside the 26k-line `domain_test.go` (the right tool for "show me every test func and its line"), `Bash` for `git status` / `git diff` / `mage test-pkg` / `mage ci`. No Hylla queries were attempted because the changed files (`action_item.go`, `domain_test.go`, `model_test.go`) are post-last-ingest deltas — Hylla is stale on those by definition until drop-end reingest, so `Read` and `LSP` are the canonical tools per CLAUDE.md "Code Understanding Rules" §2 ("Changed since last ingest: use git diff for files touched after the last Hylla ingest"). Zero Hylla misses, zero ergonomic gripes.
