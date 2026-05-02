@@ -60,6 +60,7 @@ type SnapshotActionItem struct {
 	ParentID       string                    `json:"parent_id,omitempty"`
 	Kind           domain.Kind               `json:"kind"`
 	Scope          domain.KindAppliesTo      `json:"scope,omitempty"`
+	Role           domain.Role               `json:"role,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
 	Position       int                       `json:"position"`
@@ -1061,6 +1062,7 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		ParentID:       t.ParentID,
 		Kind:           t.Kind,
 		Scope:          t.Scope,
+		Role:           t.Role,
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -1307,6 +1309,7 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 		ParentID:       strings.TrimSpace(t.ParentID),
 		Kind:           kind,
 		Scope:          scope,
+		Role:           t.Role,
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

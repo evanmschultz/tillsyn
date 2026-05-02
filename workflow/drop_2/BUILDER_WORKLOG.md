@@ -211,3 +211,32 @@ None — Hylla answered everything needed. The investigation was code-local agai
 ## Hylla Feedback
 
 N/A — task touched only existing Go test code via two line-deletions. No symbol search, no reference lookup, no Hylla query needed. The work was 100% LSP-warning-driven (the `forvar` diagnostics handed me the exact line numbers + the exact pattern to remove). Zero ergonomic gripes.
+
+## Droplet 2.6 — Round 1
+
+**Outcome:** success.
+
+**Files touched:**
+
+- `internal/app/snapshot.go` — added `Role domain.Role \`json:"role,omitempty"\`` to `SnapshotActionItem` (between `Scope` and `LifecycleState`); threaded `Role: t.Role` through `snapshotActionItemFromDomain` (line ~1058) and through `(SnapshotActionItem).toDomain()` (line ~1264). +3 LOC, -0.
+- `internal/app/snapshot_test.go` — added `encoding/json` import; appended three new tests (`TestSnapshotActionItemRoleRoundTripPreservesAllRoles`, `TestSnapshotActionItemRoleEmptyRoundTripsEmpty`, `TestSnapshotActionItemRoleJSONShape`). +131 LOC.
+- `workflow/drop_2/PLAN.md` — Droplet 2.6 `**State:** todo` → `**State:** in_progress` at start; will flip to `**State:** done` at end of round.
+
+**Mage targets run:**
+
+- `mage test-pkg ./internal/app` — green. 188 tests passed in 1.28s (185 pre-existing + 3 new top-level tests; the role round-trip test runs as 9 `t.Run` subtests, all green).
+- `mage ci` — green. 1332 tests passed across 19 packages. `internal/app` coverage 71.5% (≥ 70.0% threshold). Build of `./cmd/till` succeeded. Exit code 0.
+
+**Design notes:**
+
+- **Field placement.** Inserted `Role` between `Scope` and `LifecycleState` in the struct so the snapshot field order mirrors `domain.ActionItem`'s order (`Kind` → `Scope` → `Role` → `LifecycleState`). This keeps the closed-enum classifiers grouped and the snapshot literal grep-friendly against the domain literal.
+- **Field typing.** Used `domain.Role` (not `string`) — same convention as the other closed-enum fields on this struct (`Kind: domain.Kind`, `Scope: domain.KindAppliesTo`, `LifecycleState: domain.LifecycleState`, `Priority: domain.Priority`).
+- **`omitempty` rationale.** `domain.Role` is `type Role string` (per `internal/domain/role.go:10`), so the standard string-empty `omitempty` rule applies: zero-value (`""`) drops the JSON key on serialize. JSON-shape test asserts both sides of this contract.
+- **`toDomain` does NOT call `domain.NewActionItem`.** Direct struct-literal copy of `t.Role` into the constructed `domain.ActionItem`, matching the existing `toDomain` pattern (the value was already validated when first written; `toDomain` is hydration, not validation).
+- **Snapshot version stays at v5.** `omitempty` plus `encoding/json`'s ignore-unknown-keys default means old `v5` snapshots load forward-compatibly without a version bump (per Droplet 2.6 spec note + Droplet 2.7's `## Notes` deferral of the version bump to post-MVP).
+- **Test idiom matched the file.** `snapshot_test.go` uses standalone `TestX` functions with direct construction (no shared helper). Added three dedicated round-trip tests rather than extending the existing import/export tests, which already span 175+ lines each and exercise broader closure surfaces. Table-driven role test uses Go 1.22+ scoping (NO `tc := tc`).
+- **JSON-shape test goes both ways.** Marshal → assert key present/absent; then Unmarshal → assert value preserved (with-role) or stays empty (without-role). Catches JSON-tag drift in either direction.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed for context discovery (struct shape, fromDomain/toDomain locations, `domain.Role` type definition, `domain.ActionItem.Role` confirmation). Most of the symbol-locating work landed via `LSP documentSymbol` (live, exact line numbers), which is the right tool for a surgical Go edit task — Hylla would also have answered, but LSP was lower-friction here.

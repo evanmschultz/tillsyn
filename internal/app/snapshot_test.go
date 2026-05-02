@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -432,5 +433,140 @@ func TestSnapshotValidateRejectsInvalidState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed") {
 		t.Fatalf("error message should include 'failed' in valid states list, got %q", err.Error())
+	}
+}
+
+// TestSnapshotActionItemRoleRoundTripPreservesAllRoles verifies that every
+// member of the closed Role enum survives a domain → snapshot → domain
+// round-trip via snapshotActionItemFromDomain and (SnapshotActionItem).toDomain.
+func TestSnapshotActionItemRoleRoundTripPreservesAllRoles(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		role domain.Role
+	}{
+		{name: "builder", role: domain.RoleBuilder},
+		{name: "qa-proof", role: domain.RoleQAProof},
+		{name: "qa-falsification", role: domain.RoleQAFalsification},
+		{name: "qa-a11y", role: domain.RoleQAA11y},
+		{name: "qa-visual", role: domain.RoleQAVisual},
+		{name: "design", role: domain.RoleDesign},
+		{name: "commit", role: domain.RoleCommit},
+		{name: "planner", role: domain.RolePlanner},
+		{name: "research", role: domain.RoleResearch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItem(domain.ActionItemInput{
+				ID:        "t-role",
+				ProjectID: "p1",
+				ColumnID:  "c1",
+				Position:  0,
+				Title:     "Role round-trip",
+				Priority:  domain.PriorityMedium,
+				Kind:      domain.KindBuild,
+				Role:      tc.role,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if snap.Role != tc.role {
+				t.Fatalf("snapshotActionItemFromDomain dropped role: got %q, want %q", snap.Role, tc.role)
+			}
+			hydrated := snap.toDomain()
+			if hydrated.Role != tc.role {
+				t.Fatalf("toDomain dropped role: got %q, want %q", hydrated.Role, tc.role)
+			}
+		})
+	}
+}
+
+// TestSnapshotActionItemRoleEmptyRoundTripsEmpty verifies that an unset Role
+// stays empty across the snapshot round-trip and that omitempty drops the
+// JSON key on serialize.
+func TestSnapshotActionItemRoleEmptyRoundTripsEmpty(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	original, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "t-empty-role",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "Empty role",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.KindBuild,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem() error = %v", err)
+	}
+	if original.Role != "" {
+		t.Fatalf("expected zero-value Role on freshly constructed ActionItem, got %q", original.Role)
+	}
+	snap := snapshotActionItemFromDomain(original)
+	if snap.Role != "" {
+		t.Fatalf("snapshotActionItemFromDomain invented a role: got %q, want \"\"", snap.Role)
+	}
+	hydrated := snap.toDomain()
+	if hydrated.Role != "" {
+		t.Fatalf("toDomain invented a role: got %q, want \"\"", hydrated.Role)
+	}
+}
+
+// TestSnapshotActionItemRoleJSONShape verifies the on-the-wire JSON shape:
+// the role key is present when set and omitted when empty (omitempty contract).
+func TestSnapshotActionItemRoleJSONShape(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+
+	withRole := SnapshotActionItem{
+		ID:             "t-json-with",
+		ProjectID:      "p1",
+		Kind:           domain.KindBuild,
+		Scope:          domain.KindAppliesToBuild,
+		Role:           domain.RoleBuilder,
+		LifecycleState: domain.StateTodo,
+		ColumnID:       "c1",
+		Title:          "With role",
+		Priority:       domain.PriorityMedium,
+		Labels:         []string{},
+		CreatedByActor: "tester",
+		UpdatedByActor: "tester",
+		UpdatedByType:  domain.ActorTypeUser,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	rawWith, err := json.Marshal(withRole)
+	if err != nil {
+		t.Fatalf("json.Marshal(withRole) error = %v", err)
+	}
+	if !strings.Contains(string(rawWith), `"role":"builder"`) {
+		t.Fatalf("expected role key with builder value in JSON, got %s", rawWith)
+	}
+
+	withoutRole := withRole
+	withoutRole.ID = "t-json-without"
+	withoutRole.Role = ""
+	rawWithout, err := json.Marshal(withoutRole)
+	if err != nil {
+		t.Fatalf("json.Marshal(withoutRole) error = %v", err)
+	}
+	if strings.Contains(string(rawWithout), `"role"`) {
+		t.Fatalf("expected role key absent when empty (omitempty), got %s", rawWithout)
+	}
+
+	// Round-trip the on-the-wire form back through json.Unmarshal to confirm
+	// the role tag matches on both directions of the wire boundary.
+	var decodedWith SnapshotActionItem
+	if err := json.Unmarshal(rawWith, &decodedWith); err != nil {
+		t.Fatalf("json.Unmarshal(rawWith) error = %v", err)
+	}
+	if decodedWith.Role != domain.RoleBuilder {
+		t.Fatalf("json round-trip dropped role: got %q, want %q", decodedWith.Role, domain.RoleBuilder)
+	}
+	var decodedWithout SnapshotActionItem
+	if err := json.Unmarshal(rawWithout, &decodedWithout); err != nil {
+		t.Fatalf("json.Unmarshal(rawWithout) error = %v", err)
+	}
+	if decodedWithout.Role != "" {
+		t.Fatalf("expected empty role after unmarshal of role-less JSON, got %q", decodedWithout.Role)
 	}
 }

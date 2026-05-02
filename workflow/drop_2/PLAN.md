@@ -129,7 +129,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 
 #### Droplet 2.6 — Snapshot serialization for `Role`
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/app/snapshot.go` (add `Role domain.Role \`json:"role,omitempty"\`` to `SnapshotActionItem` struct at `:57`; thread the field through `snapshotActionItemFromDomain` at `:1057` and `(t SnapshotActionItem) toDomain()` at `:1263`), `internal/app/snapshot_test.go` if it exists, otherwise extend whichever test exercises `SnapshotActionItem` round-trip
 - **Packages:** `internal/app`
 - **Acceptance:**
