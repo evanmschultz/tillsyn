@@ -964,3 +964,90 @@ issued during this falsification round; the modified surfaces
 `internal/tui/model_test.go`) are localized and read in full from the
 working tree, with `LSP documentSymbol` used to enumerate the
 domain_test.go test functions. No Hylla miss to report.
+
+## Droplet 2.4 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-02
+**Scope:** SQLite `action_items.role` column + scanner + insert/update paths.
+
+The builder claims that adding a `role TEXT NOT NULL DEFAULT ''` column to `action_items` and threading it through `scanActionItem`, the INSERT, the UPDATE, and both SELECTs is positionally consistent across all five sites, that empty role round-trips, that no migration code was added, that existing fixtures still pass, and that `mage ci` is green. I attacked all fourteen required vectors and could not produce a counterexample.
+
+### 1. Bind-arg position drift across all five SQL sites — REFUTED
+
+Hand-counted positions across `internal/adapters/storage/sqlite/repo.go:168` (CREATE TABLE), `:1238` (INSERT column list + values), `:1244` (INSERT bind args), `:1332` (UPDATE SET), `:1337` (UPDATE bind args), `:1399` (List SELECT), `:2450` (getActionItemByID SELECT), and `:2760` (`scanActionItem`). The full ordered column list is:
+
+1. id, 2. project_id, 3. parent_id, 4. kind, 5. scope, **6. role**, 7. lifecycle_state, 8. column_id, 9. position, 10. title, 11. description, 12. priority, 13. due_at, 14. labels_json, 15. metadata_json, 16. created_by_actor, 17. created_by_name, 18. updated_by_actor, 19. updated_by_name, 20. updated_by_type, 21. created_at, 22. updated_at, 23. started_at, 24. completed_at, 25. archived_at, 26. canceled_at.
+
+- INSERT column list (`:1239-1240`): 26 names. INSERT VALUES (`:1242`): 26 `?`'s. INSERT bind args (`:1244-1269`): 26 args, position 6 = `string(t.Role)`. Match.
+- UPDATE SET (`:1333-1334`): 21 columns (id excluded — it's the WHERE) plus `WHERE id = ?` = 22 binds. Position 4 = `role` in SET (`parent_id, kind, scope, role, ...`); UPDATE bind args (`:1337-1358`): 22 args, position 4 = `string(t.Role)`. Match.
+- List SELECT (`:1399-1400`) and getActionItemByID SELECT (`:2450-2451`): identical 26-column lists, position 6 = `role`.
+- `scanActionItem` Scan args (`:2760-2787`): 26 args, position 6 = `&roleRaw`. `t.Role = domain.Role(roleRaw)` at `:2796`. Match.
+
+No off-by-one. No mismatch.
+
+### 2. Hidden third SELECT FROM action_items — REFUTED
+
+`git grep -n "FROM action_items" -- 'internal/adapters/storage/sqlite/*.go'` returns three rows: `:1401` (List), `:1443` (DELETE — column-list-irrelevant), and `:2452` (getActionItemByID). Both column-projecting SELECTs are updated. No third SELECT exists in the SQLite adapter.
+
+### 3. Hidden write paths — REFUTED
+
+`git grep -n "INSERT INTO action_items\|UPDATE action_items"` returns four rows. Two are pre-existing backfill UPDATEs at `:766` and `:767` — they only touch `created_by_name` / `updated_by_name`, no positional binds, no role concern. The other two are `:1238` (the canonical INSERT) and `:1332` (the canonical UPDATE), both threaded with role. No hidden write path.
+
+### 4. `role TEXT NOT NULL DEFAULT ''` semantics — REFUTED
+
+The column declaration at `:174` accepts the empty string as a valid NOT NULL value (SQLite treats `''` as a NOT NULL value, distinct from `NULL`). The bind-arg type is always `string(t.Role)` — `Role` is a string-typed enum (see `internal/domain/role.go`), zero value is `""`, never nil. NOT NULL is structurally unviolatable from this code path.
+
+### 5. Existing fixture compatibility — REFUTED
+
+Read three pre-existing CreateActionItem fixtures: `repo_test.go:117-134` (TestRepository_CreatesAndPersistsActionItem), `:209-217` (TestRepository_PersistsActionItemTimestamps), and `:301-308` (TestRepository_AssignsActionItemPosition). None set `Role` on `ActionItemInput`. All passed in `mage ci` (1314/1314 green) — empty Role binds as `""`, round-trips through DEFAULT, scans back as `domain.Role("")`. Domain validation (`action_item.go:156`) short-circuits empty role before `IsValidRole`, so the empty-role path is explicitly allowed.
+
+### 6. UpdateActionItem reassign correctness — REFUTED
+
+UPDATE SET clause at `:1333` is unconditional: `SET parent_id = ?, kind = ?, scope = ?, role = ?, lifecycle_state = ?, ...`. There is no `CASE WHEN` or `COALESCE` — every UPDATE writes every listed column from the bind args. The new test at `repo_test.go:2295-2303` reassigns `RoleBuilder` → `RoleQAProof` and asserts the round-trip; it passes. SET unconditionally overwrites.
+
+### 7. Snapshot serialization — REFUTED
+
+`internal/app/snapshot.go:57-83` (`SnapshotActionItem` struct) does NOT include a `Role` field — that's droplet 2.6's responsibility per the plan. `snapshotActionItemFromDomain` at `:1057-1085` does not propagate `Role`. So adding `Role` to the SQL layer cannot break snapshot tests today, since snapshot encoding ignores the field on the way out and decoding never sets it on the way in. `mage test-pkg ./internal/app` passes (verified in full `mage ci`).
+
+### 8. List-by-role hidden requirement — REFUTED
+
+`git grep -in "WHERE.*role" -- 'internal/adapters/storage/sqlite/' 'internal/app/'` returns empty — no existing query filters by role. The plan does not require role to be filterable; this droplet adds the column only for round-trip persistence.
+
+### 9. Migration ban honored — REFUTED
+
+`git grep -n "ALTER TABLE action_items"` shows lines `:518-530` are pre-existing migrations for legacy columns (parent_id, kind, scope, lifecycle_state, etc.), unchanged in this diff. No new ALTER added for `role`. Confirmed via `git diff internal/adapters/storage/sqlite/repo.go` — diff touches only `:174` (CREATE TABLE), `:1239-1249` (INSERT), `:1333-1340` (UPDATE), `:1399` (List SELECT), `:2450` (getActionItemByID SELECT), and `:2756/:2766/:2796` (scanActionItem). No migration code.
+
+### 10. DB schema inspection — REFUTED
+
+`repo_test.go:178` calls `OpenInMemory()` — schema-creation runs through the `migrate(ctx)` block at `:142-540`, which is the only path that runs the `CREATE TABLE IF NOT EXISTS action_items (...)` statement carrying the new role column. No alternate schema source.
+
+### 11. Test assertion completeness — REFUTED
+
+`TestRepository_PersistsActionItemRole` at `repo_test.go:2201-2305` covers:
+- Create + Get with empty role (`emptyItem`, asserts `loadedEmpty.Role == ""`).
+- Create + Get with `RoleBuilder` (`builderItem`, asserts `loadedBuilder.Role == domain.RoleBuilder`).
+- ListActionItems surfacing `RoleBuilder` (separate SELECT path).
+- Update reassign `RoleBuilder` → `RoleQAProof` + Get round-trip.
+
+Plan acceptance at PLAN.md:108-109 asks "Insert + update SQL include the `role` column. Existing tests with empty `Role` still pass… One new test in `repo_test.go` writes `domain.RoleBuilder`, reads it back, asserts equality." All four code paths the plan claimed (Create, Get, List, Update) are exercised. The empty-role-explicit-update edge case (UPDATE setting role from non-empty back to "") is NOT tested, but the plan does not require it. Acceptance met.
+
+### 12. `mage ci` re-run — REFUTED
+
+Ran `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. Result: 1314 / 1314 tests passed across 19 packages. Coverage threshold (70%) met for every package. Build succeeded. No raw `go test` invocation; mage-only.
+
+### 13. Forvar absence — REFUTED
+
+`git grep "tc := tc" internal/adapters/storage/sqlite/repo_test.go` returns empty.
+
+### 14. Pre-MVP fresh-DB precondition — REFUTED
+
+`internal/adapters/storage/sqlite/repo.go` has no migration shim for `role`. Pre-existing dev DBs without the column would indeed break — this is explicitly accepted by the plan (`PLAN.md:110`: "Pre-MVP rule honored: no `ALTER TABLE` migration, no SQL backfill — dev fresh-DBs"). Acceptance criterion at PLAN.md:112 demands the dev DELETE `~/.tillsyn/tillsyn.db` BEFORE running `mage ci` for this droplet. The codebase honors this contract. Pre-MVP rule per `~/.claude/projects/.../feedback_no_migration_logic_pre_mvp.md` ("Pre-MVP, no migration code in Go, no till migrate CLI, no one-shot SQL scripts. Dev deletes ~/.tillsyn/tillsyn.db on schema/state-vocab change").
+
+### Verdict Summary
+
+All 14 required attack vectors REFUTED. No counterexample produced. The role column is positionally consistent across CREATE, scanActionItem, INSERT, UPDATE, and both SELECTs; no hidden write path or third SELECT exists; empty role round-trips through the NOT NULL DEFAULT ''; existing fixtures unaffected; UPDATE unconditionally overwrites role; snapshot tests untouched (snapshot serialization is droplet 2.6); no migration code added; new test covers Create / Get / List / Update; `mage ci` green (1314 / 1314); no forvar issue; pre-MVP fresh-DB rule honored. Build-QA falsification verdict: **PASS**.
+
+### Hylla Feedback
+
+N/A — task touched only Go files in `internal/adapters/storage/sqlite/repo.go`, `repo_test.go`, and one snapshot.go read for the snapshot-serialization vector. All reads done via `Read` + `git grep` + `git diff`. No Hylla queries issued during this falsification round — the modified surface is localized to one file (repo.go) and one test file, both fully read from the working tree against a known-stale Hylla index (changes uncommitted). No Hylla miss to report.

@@ -417,3 +417,160 @@ Droplet 2.3 lands cleanly. The `Role Role` field is on both `ActionItem` (action
 ### Hylla Feedback
 
 None — Hylla answered everything needed. QA verification was code-local: `Read` for whole-file inspection of `action_item.go` (small file, structural questions), `Read` with offset/limit for the new test func at `domain_test.go:210-255` and the schema-coverage gate at `model_test.go:14797-14829`, `LSP documentSymbol` for fast top-level navigation inside the 26k-line `domain_test.go` (the right tool for "show me every test func and its line"), `Bash` for `git status` / `git diff` / `mage test-pkg` / `mage ci`. No Hylla queries were attempted because the changed files (`action_item.go`, `domain_test.go`, `model_test.go`) are post-last-ingest deltas — Hylla is stale on those by definition until drop-end reingest, so `Read` and `LSP` are the canonical tools per CLAUDE.md "Code Understanding Rules" §2 ("Changed since last ingest: use git diff for files touched after the last Hylla ingest"). Zero Hylla misses, zero ergonomic gripes.
+
+## Droplet 2.4 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-02
+
+### Findings
+
+#### F1. CREATE TABLE adds `role TEXT NOT NULL DEFAULT ''` between `scope` and `lifecycle_state`. (PASS)
+
+`internal/adapters/storage/sqlite/repo.go:174` (post-edit) reads:
+
+```
+kind TEXT NOT NULL DEFAULT 'actionItem',
+scope TEXT NOT NULL DEFAULT 'actionItem',
+role TEXT NOT NULL DEFAULT '',
+lifecycle_state TEXT NOT NULL DEFAULT 'todo',
+```
+
+`git diff` confirms the addition is a single new line (`+role TEXT NOT NULL DEFAULT ''`) inside the `CREATE TABLE IF NOT EXISTS action_items` block at `:171`. Column position groups the four closed-enum classifiers (`kind`, `scope`, `role`, `lifecycle_state`) consecutively — matches the Droplet 2.3 struct ordering convention and the "all five SQL sites in lockstep" rationale in the worklog. PLAN.md acceptance #1 ("`role TEXT NOT NULL DEFAULT ''` appears in the `action_items` `CREATE TABLE` statement at `:168`") satisfied.
+
+#### F2. `scanActionItem` reads `role` into `domain.ActionItem.Role` in correct slot. (PASS)
+
+`internal/adapters/storage/sqlite/repo.go:2756` (post-edit) declares the local `roleRaw string` between `scopeRaw` and `state`. `:2766` adds `&roleRaw,` as the 6th Scan target between `&scopeRaw` and `&state`. `:2796` assigns `t.Role = domain.Role(roleRaw)`. The Scan-target order matches the SELECT column list order — `id, project_id, parent_id, kind, scope, role, lifecycle_state, ...` (positional slots 1-7). The `domain.Role(roleRaw)` cast is a typed-string conversion; the empty default round-trips as the `Role` zero value. PLAN.md acceptance #2 satisfied.
+
+#### F3. INSERT SQL — column list, VALUES placeholders, and bind-args slice all add `role` at position 6. (PASS)
+
+`repo.go:1239` (column list, post-edit):
+
+```
+id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+```
+
+`repo.go:1242` (VALUES list): `25 → 26` placeholders (one new `?` added). `repo.go:1244-1252` bind-args: `t.ID, t.ProjectID, t.ParentID, string(t.Kind), string(scope), string(t.Role), string(t.LifecycleState), t.ColumnID, t.Position, ...`. The `string(t.Role)` arg lands at slot 6 between `string(scope)` and `string(t.LifecycleState)`, matching the column-list slot. Diff is a 3-line addition (column-list slot, one new `?`, one bind-arg line) — net +3 lines on the INSERT path. PLAN.md acceptance #3 (insert SQL includes `role`) satisfied.
+
+#### F4. UPDATE SQL — SET clause and bind-args add `role = ?` at correct slot. (PASS)
+
+`repo.go:1333` (SET clause, post-edit):
+
+```
+SET parent_id = ?, kind = ?, scope = ?, role = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, ...
+```
+
+`repo.go:1340` adds `string(t.Role)` between `string(scope)` and `string(t.LifecycleState)` in the bind-args. Slot ordering matches the SET clause: 1=parent_id, 2=kind, 3=scope, 4=role, 5=lifecycle_state. The UPDATE SET clause omits `id` and `project_id` (immutable post-create) but the relative ordering for the rest of the row matches the INSERT column list and CREATE TABLE schema. PLAN.md acceptance #3 (update SQL includes `role`) satisfied.
+
+#### F5. Both SELECT statements add `role` at slot 6. (PASS)
+
+Builder pre-flagged this as a discovery: PLAN.md mentions "scanActionItem at `:2738`" but doesn't enumerate the SELECT sites. Two SELECT statements feed `scanActionItem`:
+
+- **`ListActionItems` SELECT at `repo.go:1399`**: column list now reads `id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, ...`. `role` at slot 6.
+- **`getActionItemByID` SELECT at `repo.go:2450`**: column list now reads `id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, ...`. `role` at slot 6.
+
+Both SELECT slots match `scanActionItem`'s Scan-target order (F2). If only one had been updated, `scanActionItem` would have read `lifecycle_state` into `roleRaw` for the unupdated path — every test exercising that path would have silently shifted bindings and broken. The new test's ListActionItems assertion (F7 below) and the existing 68 sqlite tests (which exercise `getActionItemByID` heavily) all passing on HEAD confirms both paths are correctly aligned.
+
+#### F6. Pre-MVP rule honored — no `ALTER TABLE` for `role`, no migration code, no SQL backfill. (PASS)
+
+`git grep -n "ALTER TABLE" internal/adapters/storage/sqlite/repo.go` returns 22 hits, all of which are pre-existing `ALTER TABLE` statements for legacy columns:
+
+- `:511` `projects.metadata_json` (pre-existing).
+- `:514` `attention_items.target_role` (pre-existing).
+- `:518-530` legacy `action_items.{parent_id, kind, scope, lifecycle_state, metadata_json, created_by_*, updated_by_*, started_at, completed_at, canceled_at}` (pre-existing migration block).
+- `:547-549` `auth_requests.*` (pre-existing).
+- `:633` `comments` rename (pre-existing).
+- `:694` `comments.summary` (pre-existing).
+- `:742` `change_events.actor_name` (pre-existing).
+
+**Critically, zero `ALTER TABLE action_items ADD COLUMN role` anywhere in repo.go.** The only schema source for the new `role` column is the `CREATE TABLE IF NOT EXISTS action_items` block at `:172` (F1 above). `git diff internal/adapters/storage/sqlite/repo.go | grep -E "^\\+.*ALTER TABLE"` returns empty — no `ALTER TABLE` was added by this droplet. Pre-MVP rule (memory `feedback_no_migration_logic_pre_mvp.md`) honored. PLAN.md acceptance "no `ALTER TABLE` migration, no SQL backfill — dev fresh-DBs" satisfied.
+
+#### F7. `TestRepository_PersistsActionItemRole` exercises every required behavior. (PASS)
+
+`internal/adapters/storage/sqlite/repo_test.go:2204-2306` (new test, +106 LOC) covers the four required behaviors:
+
+- **Empty-role default round-trip** (`:2225-2245`): `NewActionItem` with no `Role` field set → `CreateActionItem` → `GetActionItem` → asserts `loadedEmpty.Role != ""` would fatal. Exercises the empty-string DEFAULT path and the `domain.Role(roleRaw)` zero-value cast in `scanActionItem`.
+- **`RoleBuilder` round-trip via create + get** (`:2249-2270`): `NewActionItem` with `Role: domain.RoleBuilder` → `CreateActionItem` → `GetActionItem` → asserts equality. Exercises INSERT with `string(t.Role) == "builder"` at slot 6 and `getActionItemByID` SELECT path.
+- **`ListActionItems` surfaces role** (`:2272-2284`): separate SELECT path — iterates the listing and confirms the `RoleBuilder` item carries the role value. Exercises `ListActionItems`'s independent SELECT at `repo.go:1399` (the second SELECT path that feeds `scanActionItem`).
+- **Reassign on update from `RoleBuilder` → `RoleQAProof`** (`:2289-2305`): mutates the loaded item, calls `UpdateActionItem`, re-fetches, asserts new value. This is the load-bearing UPDATE assertion — an UPDATE that forgot the `role = ?` clause would still pass a "create with role, read back" test, but would fail the reassign because the underlying row would still carry `"builder"`.
+
+All four covered. PLAN.md acceptance "Existing tests with empty `Role` still pass (empty-string default)" + "One new test in `repo_test.go` writes `domain.RoleBuilder`, reads it back, asserts equality" satisfied — and the test goes beyond the literal acceptance text by also covering ListActionItems and Update, which is appropriate given the five SQL sites the column touches.
+
+#### F8. No `tc := tc` lines in the new test. (PASS)
+
+`git grep "tc := tc" internal/adapters/storage/sqlite/repo_test.go` returned no hits ("NO HITS"). The new test is straight-line (not table-driven across `t.Run` subtests), so the Go 1.22+ per-iteration scoping rule doesn't even apply, but the file-wide invariant holds anyway. Consistent with the post-Droplet-2.2-Round-2 forvar-clean convention.
+
+#### F9. `mage test-pkg ./internal/adapters/storage/sqlite` green at HEAD with fresh DB. (PASS)
+
+I deleted `~/.tillsyn/tillsyn.db` (per PLAN.md DB action) and re-ran `mage test-pkg ./internal/adapters/storage/sqlite` on HEAD:
+
+- `[RUNNING] Running go test ./internal/adapters/storage/sqlite`
+- `[SUCCESS] Test stream detected`
+- `[PKG PASS] github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite (0.00s)`
+- Test summary: `tests: 69 / passed: 69 / failed: 0 / skipped: 0`
+- `[SUCCESS] All tests passed`
+
+Test count went 68 → 69, exactly +1 — the new `TestRepository_PersistsActionItemRole`. Independent confirmation of the builder's claim. PLAN.md acceptance "`mage test-pkg ./internal/adapters/storage/sqlite` green" satisfied.
+
+#### F10. `mage ci` green at HEAD with full coverage compliance. (PASS)
+
+I re-ran `mage ci` on HEAD and observed:
+
+- All four `[SUCCESS]` source/format/test-stream gates green.
+- 19 packages, **1314 tests**, 0 failed, 0 skipped — every package `[PKG PASS]`.
+- `internal/adapters/storage/sqlite` package coverage: **75.1%** (≥ 70.0% threshold).
+- Minimum package coverage across all 15 reported packages: 70.0% (lowest is `internal/tui` at exactly 70.0%; `internal/buildinfo` at 100.0%).
+- `[SUCCESS] Built till from ./cmd/till`.
+
+Test count delta from Droplet 2.3 (1313) to Droplet 2.4 (1314) is exactly +1 — matches the `mage test-pkg ./internal/adapters/storage/sqlite` delta (68 → 69, also +1). All 19 packages green. The `role` column addition + scan-args + insert/update bindings did not regress any existing test, confirming the empty-string DEFAULT correctly round-trips through every fixture that constructs an `ActionItem` without setting `Role`.
+
+#### F11. No regressions on existing tests. (PASS, covered by F9 + F10)
+
+The 68 pre-existing sqlite tests + 1245 pre-existing tests across the other 18 packages all pass. The empty-string DEFAULT means existing fixtures that omit the `Role` field continue to round-trip cleanly:
+
+- INSERT writes `string(t.Role) == ""` at slot 6 — accepted by `role TEXT NOT NULL DEFAULT ''`.
+- Scan reads `roleRaw == ""` — assigned to `t.Role` as `domain.Role("")`, the typed zero value.
+- Existing comparisons that don't reference `Role` are invariant on the addition.
+
+This is the "additive column with safe default" pattern that the pre-MVP fresh-DB rule unlocks — no migration code needed, no backfill, existing fixtures keep working. PLAN.md acceptance "Existing tests with empty `Role` still pass (empty-string default)" satisfied.
+
+#### F12. `git status --porcelain` matches expected delta exactly. (PASS)
+
+Observed:
+
+- ` M internal/adapters/storage/sqlite/repo.go`
+- ` M internal/adapters/storage/sqlite/repo_test.go`
+- ` M workflow/drop_2/BUILDER_WORKLOG.md`
+- ` M workflow/drop_2/PLAN.md`
+
+Four entries, exactly matching the prompt's expected set (`M repo.go`, `M repo_test.go`, `M PLAN.md`, `M BUILDER_WORKLOG.md`). No stray modifications, no accidental edits to other files. The Round 1 scope-expansion to `internal/tui/model_test.go` from Droplet 2.3 was already committed prior to Droplet 2.4 — `Role` is already in the readOnly schema-coverage map, so this droplet did not need to touch the TUI gate again.
+
+#### F13. PLAN.md state flip is correct. (PASS)
+
+`workflow/drop_2/PLAN.md:102` reads `- **State:** done` immediately under the `#### Droplet 2.4 — SQLite \`action_items.role\` column + scanner + insert/update paths` heading at line 100. State-flip executed correctly (`todo → in_progress → done`).
+
+#### F14. `BUILDER_WORKLOG.md` carries a structurally-sound Droplet 2.4 Round 1 entry. (PASS)
+
+`workflow/drop_2/BUILDER_WORKLOG.md` (lines 123-150) contains:
+
+- `## Droplet 2.4 — Round 1` heading (line 123).
+- Files-touched section enumerating both Go files with explicit LOC deltas (+9 on `repo.go`, +106 on `repo_test.go`) at `:125-128`.
+- `**Mage results:**` section reporting `mage test-pkg ./internal/adapters/storage/sqlite` 69/69 + `mage ci` 1314/1314 + sqlite coverage 75.1% at `:130-133`.
+- `**Design notes:**` section covering: column position rationale, three-SELECT-path discovery (PLAN.md mentioned only one), empty-role default semantics, test-pattern choice (focused round-trip vs extending the kind/scope test), reassign-via-update being the load-bearing assertion, pre-MVP rule honored at `:135-142`.
+- `**No `tc := tc`...`** explicit invariant honored note at `:144`.
+- `**PLAN.md state flips:**` line `:146` documenting both transitions.
+- `## Hylla Feedback` section at `:148-150` with explicit "None — Hylla answered everything needed" status + rationale.
+
+Structurally sound and substantively accurate. The discovery callout (two SELECTs, not one as PLAN.md suggested) is correctly surfaced for orchestrator awareness.
+
+### Missing Evidence
+
+None. All 14 required proof checks have direct citations + reproducible mage gates at HEAD. The fresh-DB requirement was honored before the test run (deleted `~/.tillsyn/tillsyn.db` per PLAN.md DB action). The pre-existing `internal/tui/`, `internal/app/`, `internal/adapters/storage/sqlite/` tech-debt warnings (R1, R5, R6 in `project_drop_2_refinements_raised.md`) and the `go.mod` chroma/v2 indirect→direct warning (R2) are explicitly out of scope per the orchestrator prompt; not flagged.
+
+### Verdict Summary
+
+Droplet 2.4 lands cleanly. The `role TEXT NOT NULL DEFAULT ''` column joins the `action_items` `CREATE TABLE` block at `repo.go:174`, between `scope` and `lifecycle_state` — keeping the four closed-enum classifiers (`kind`, `scope`, `role`, `lifecycle_state`) consecutive across the schema, the Go struct, and every SQL site. All five SQL sites are in lockstep at slot 6: `scanActionItem` Scan target (`:2766`), INSERT column list + bind args (`:1239 + :1249`), UPDATE SET clause + bind arg (`:1333 + :1340`), `ListActionItems` SELECT (`:1399`), and `getActionItemByID` SELECT (`:2450`). The builder correctly discovered and updated BOTH SELECT statements — PLAN.md mentioned only `scanActionItem` but the file has two SELECTs feeding it; missing one would have silently shifted bindings and broken every fixture exercising that path. Pre-MVP rule honored: zero `ALTER TABLE`, zero migration code, zero SQL backfill — the `CREATE TABLE IF NOT EXISTS` block is the only schema source for the new column. `TestRepository_PersistsActionItemRole` at `repo_test.go:2204-2306` exercises all four required behaviors (empty-role default, `RoleBuilder` round-trip, `ListActionItems` surfaces role, reassign on update from `RoleBuilder` → `RoleQAProof`) — the reassign assertion is load-bearing because a "create-and-read" alone wouldn't catch a forgotten UPDATE SET clause. No `tc := tc` lines anywhere in the test file. With `~/.tillsyn/tillsyn.db` deleted (per PLAN.md DB action), `mage test-pkg ./internal/adapters/storage/sqlite` reproduces 69/69 tests passing on HEAD; `mage ci` reproduces 1314/1314 tests across 19 packages, with `internal/adapters/storage/sqlite` at 75.1% coverage and all packages ≥ 70%. `git status --porcelain` matches the expected 4-entry delta exactly. PLAN.md state is correctly `done`. `BUILDER_WORKLOG.md` carries a structurally-sound Round 1 entry that pre-flags the two-SELECT-paths discovery. Ready to commit.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed (and most of the verification was against committed Go code in `repo.go` + uncommitted test deltas in `repo_test.go`, where Hylla is stale post-edit by design). QA verification used `Read` for whole-file inspection of `role.go` (small file, structural check on the Role enum constants), `Read` with offset/limit for surgical inspection of the test file diff and the worklog, `Bash` for `git status` / `git diff` / `git grep "ALTER TABLE"` / `git grep "tc := tc"` / `mage test-pkg` / `mage ci`. No Hylla queries were attempted because (a) `repo.go` and `repo_test.go` carry uncommitted deltas — Hylla is stale on those by definition until drop-end reingest, so `git diff` and `Read` are the canonical tools per CLAUDE.md "Code Understanding Rules" §2; (b) the SQL string contents being verified are non-Go-symbol payloads that Hylla doesn't index (per memory `feedback_hylla_go_only_today.md`), so `Read` + `git diff` are the right tools regardless. Zero Hylla misses, zero ergonomic gripes for this droplet.
