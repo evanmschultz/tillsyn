@@ -171,6 +171,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			parent_id TEXT NOT NULL DEFAULT '',
 			kind TEXT NOT NULL DEFAULT 'actionItem',
 			scope TEXT NOT NULL DEFAULT 'actionItem',
+			role TEXT NOT NULL DEFAULT '',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -1235,16 +1236,17 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO action_items(
-			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		t.ID,
 		t.ProjectID,
 		t.ParentID,
 		string(t.Kind),
 		string(scope),
+		string(t.Role),
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1328,13 +1330,14 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE action_items
-		SET parent_id = ?, kind = ?, scope = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
+		SET parent_id = ?, kind = ?, scope = ?, role = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
 		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_name = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
 	`,
 		t.ParentID,
 		string(t.Kind),
 		string(scope),
+		string(t.Role),
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1393,7 +1396,7 @@ func (r *Repository) GetActionItem(ctx context.Context, id string) (domain.Actio
 func (r *Repository) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ?
@@ -2444,7 +2447,7 @@ type queryRowser interface {
 func getActionItemByID(ctx context.Context, q queryRower, id string) (domain.ActionItem, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE id = ?
@@ -2750,6 +2753,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		priority     string
 		kind         string
 		scopeRaw     string
+		roleRaw      string
 		state        string
 		updatedType  string
 	)
@@ -2759,6 +2763,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		&t.ParentID,
 		&kind,
 		&scopeRaw,
+		&roleRaw,
 		&state,
 		&t.ColumnID,
 		&t.Position,
@@ -2788,6 +2793,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 	t.Priority = domain.Priority(priority)
 	t.Kind = domain.Kind(kind)
 	t.Scope = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeRaw))
+	t.Role = domain.Role(roleRaw)
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
 	t.CreatedAt = parseTS(createdRaw)

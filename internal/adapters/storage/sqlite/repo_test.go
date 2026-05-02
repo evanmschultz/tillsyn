@@ -2198,6 +2198,112 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	}
 }
 
+// TestRepository_PersistsActionItemRole verifies the role column round-trips
+// across create + get + list + update on an action item, including the empty-
+// role default and a reassign to a different closed-enum value.
+func TestRepository_PersistsActionItemRole(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-role", "Role", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-role", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	// Empty-role item: confirms the empty-string default round-trips and that
+	// the SELECT/INSERT column ordering does not crash on the zero value.
+	emptyItem, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "t-role-empty",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.KindBuild,
+		Position:  0,
+		Title:     "no role",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem(empty role) error = %v", err)
+	}
+	if err := repo.CreateActionItem(ctx, emptyItem); err != nil {
+		t.Fatalf("CreateActionItem(empty role) error = %v", err)
+	}
+	loadedEmpty, err := repo.GetActionItem(ctx, emptyItem.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(empty role) error = %v", err)
+	}
+	if loadedEmpty.Role != "" {
+		t.Fatalf("expected empty persisted role, got %q", loadedEmpty.Role)
+	}
+
+	// Builder-role item: confirms a closed-enum value round-trips through
+	// create + get.
+	builderItem, err := domain.NewActionItem(domain.ActionItemInput{
+		ID:        "t-role-builder",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.KindBuild,
+		Role:      domain.RoleBuilder,
+		Position:  1,
+		Title:     "builder item",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem(builder) error = %v", err)
+	}
+	if err := repo.CreateActionItem(ctx, builderItem); err != nil {
+		t.Fatalf("CreateActionItem(builder) error = %v", err)
+	}
+	loadedBuilder, err := repo.GetActionItem(ctx, builderItem.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(builder) error = %v", err)
+	}
+	if loadedBuilder.Role != domain.RoleBuilder {
+		t.Fatalf("expected persisted role %q, got %q", domain.RoleBuilder, loadedBuilder.Role)
+	}
+
+	// ListActionItems must also surface the role column (separate SELECT path).
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	var sawBuilder bool
+	for _, item := range listed {
+		if item.ID == builderItem.ID && item.Role == domain.RoleBuilder {
+			sawBuilder = true
+		}
+	}
+	if !sawBuilder {
+		t.Fatalf("ListActionItems() did not surface builder role; got %#v", listed)
+	}
+
+	// Reassign role on update: confirms the UPDATE SET clause writes the new
+	// value through. RoleQAProof is a different closed-enum value than the
+	// initial RoleBuilder, so a successful round-trip proves the SET is wired.
+	loadedBuilder.Role = domain.RoleQAProof
+	loadedBuilder.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, loadedBuilder); err != nil {
+		t.Fatalf("UpdateActionItem(role reassign) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, builderItem.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after update) error = %v", err)
+	}
+	if reloaded.Role != domain.RoleQAProof {
+		t.Fatalf("expected reassigned role %q, got %q", domain.RoleQAProof, reloaded.Role)
+	}
+}
+
 // TestRepositoryAuthRequestCRUD verifies auth-request persistence, listing, and update behavior.
 func TestRepositoryAuthRequestCRUD(t *testing.T) {
 	ctx := context.Background()
