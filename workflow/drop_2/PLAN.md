@@ -2,8 +2,8 @@
 
 **State:** planning
 **Blocked by:** —
-**Paths (expected):** `internal/domain/`, `internal/app/`, `internal/adapters/storage/sqlite/`, `internal/adapters/server/common/`, `internal/tui/`, `templates/builtin/` (deletion), `cmd/till/`
-**Packages (expected):** `internal/domain`, `internal/app`, `internal/adapters/storage/sqlite`, `internal/adapters/server/common`, `internal/tui`, `cmd/till`
+**Paths (expected):** `internal/domain/`, `internal/app/`, `internal/adapters/storage/sqlite/`, `internal/adapters/server/common/`, `internal/adapters/server/mcpapi/`, `internal/tui/`, `internal/config/`, `templates/builtin/` (deletion), `cmd/till/`
+**Packages (expected):** `internal/domain`, `internal/app`, `internal/adapters/storage/sqlite`, `internal/adapters/server/common`, `internal/adapters/server/mcpapi`, `internal/tui`, `internal/config`, `cmd/till`
 **PLAN.md ref:** `main/PLAN.md` § 19.2 — drop 2 — Hierarchy Refactor
 **Started:** 2026-05-01
 **Closed:** —
@@ -13,11 +13,11 @@
 Drop 2 is the hierarchy-refactor drop. Four units of work, all grounded in `main/PLAN.md` § 19.2:
 
 1. **Promote `metadata.role` to a first-class domain field.** Closed-enum `Role` type with 9 values (`builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`, `research`). Pure parser (`ParseRoleFromDescription`) lives in `internal/domain/role.go`. `Role` field added to `ActionItem` struct with validation. SQLite schema column. MCP `role` field on action-item create/update/get + snapshot serialization. **No hydration runner, no `till migrate` CLI subcommand, no SQL backfill — pre-MVP, dev deletes `~/.tillsyn/tillsyn.db` after the unit lands.**
-2. **State-vocabulary rename: `done → complete` AND `progress → in_progress`** (bundled). Touches `internal/domain/workitem.go` (`StateDone → StateComplete`, `StateProgress → StateInProgress` constants, `IsTerminalState`, alias normalization), `ChecklistItem.Done bool → ChecklistItem.Complete bool` field including JSON serialization key, TUI state-string surfaces (`internal/tui/model.go` and `internal/tui/options.go`), MCP coercion at `internal/adapters/server/common/app_service_adapter_mcp.go`. **Pre-step: delete `templates/builtin/*.json` entirely (Drop 3 will overhaul the template system from scratch); also delete or neutralize the Go loader code that reads them.** No state-rewrite SQL script; dev deletes DB.
-3. **Strip hardwired nesting defaults from the domain catalog (mechanism stays).** Set every `KindDefinition.AllowedParentScopes` to empty in boot-seed payloads (`internal/adapters/storage/sqlite/repo.go`). The `AllowsParentScope` enforcement path at `internal/app/kind_capability.go:566` continues to work — empty defaults make it return true for every parent (universal-allow). Delete the speculative `domain.AllowedParentKinds(Kind) []Kind` function (zero production callers per PLAN.md). One DB UPDATE script for any existing rows' `allowed_parent_scopes_json` is also OUT — dev fresh-DBs.
-4. **Dotted-address fast-nav reads.** Pure resolver in `internal/domain` or `internal/app` taking a dotted string + project context, returns UUID or ambiguity/missing error. Wire into `till.action_item(operation=get)` MCP read + CLI read commands. Mutation paths reject dotted form. TUI bindings deferred to Drop 4.5.
+2. **State-vocabulary rename: `done → complete` AND `progress → in_progress`** (bundled). Touches every file in the tree that names `domain.StateDone` / `domain.StateProgress` symbols, every legacy state literal at a state-machine site, and `ChecklistItem.Done bool → ChecklistItem.Complete bool` field including JSON serialization key. **Pre-step: delete `templates/builtin/*.json` and the `templates/` package entirely (Drop 3 will overhaul the template system from scratch).** No state-rewrite SQL script; dev deletes DB.
+3. **Strip hardwired nesting defaults from the domain catalog (mechanism stays).** Set every `KindDefinition.AllowedParentScopes` to empty in boot-seed payloads (`internal/adapters/storage/sqlite/repo.go`). The `AllowsParentScope` enforcement path at `internal/app/kind_capability.go:566` continues to work — empty defaults make it return true for every parent (universal-allow), per the empty-list early return at `internal/domain/kind.go:227-229`. Delete the speculative `domain.AllowedParentKinds(Kind) []Kind` function (zero production callers per PLAN.md). One DB UPDATE script for any existing rows' `allowed_parent_scopes_json` is also OUT — dev fresh-DBs.
+4. **Dotted-address fast-nav reads.** Pure resolver in `internal/app` taking a dotted string + project context, returns UUID or ambiguity/missing error. Wire into `till.action_item(operation=get)` MCP read + CLI read commands. Mutation paths reject dotted form. TUI bindings deferred to Drop 4.5.
 
-**Order matters per PLAN.md § 19.2:** role promotion (no state-machine changes) → state rename (touches state machine + JSON template deletion + many files) → strip nesting defaults (orthogonal) → dotted-address reads (zero coupling, lands last so rename churn settles before resolver tests).
+**Order matters per PLAN.md § 19.2:** template deletion (Unit B-zero, Droplet 2.1) → role promotion (Unit A, no state-machine changes) → state rename (Unit B, ONE atomic droplet that flips every reference) → strip nesting defaults (Unit C, orthogonal) → dotted-address reads (Unit D, lands last so rename churn settles before resolver tests).
 
 **Out of scope (explicit, per PLAN.md § 19.2):** commit cadence rules, reverse-hierarchy prohibitions, auto-create rules, template wiring (all Drop 3); dispatcher (Drop 4); TUI overhaul (Drop 4.5); `scope` column removal (deferred to a future refinement drop).
 
@@ -29,17 +29,19 @@ Drop 2 is the hierarchy-refactor drop. Four units of work, all grounded in `main
 
 ## Planner
 
-Decomposition into atomic droplets. Order: B-zero → A → B → C → D, per the PLAN.md § 19.2 ordering paragraph and the pre-MVP rules in the Scope section above. Each unit lands `mage ci` green before the next unit's first droplet starts. Within a unit, droplets that share a Go package carry an explicit `Blocked by:` to the prior package-touching droplet — same-package-parallel-edits break each other's compile.
+Decomposition into 11 atomic droplets. Order: Unit B-zero → Unit A → Unit B (single atomic droplet) → Unit C → Unit D, per the PLAN.md § 19.2 ordering paragraph and the pre-MVP rules in the Scope section above. Each unit lands `mage ci` green before the next unit's first droplet starts. Within a unit, droplets that share a Go package carry an explicit `Blocked by:` to the prior package-touching droplet — same-package-parallel-edits break each other's compile.
 
 Acceptance verification target throughout: `mage test-pkg <pkg>` (per droplet) and `mage ci` (per unit boundary). **Never `mage install`** — dev-only.
+
+**Unit B is one atomic droplet (Round 2 revision).** Round 1 split Unit B into three droplets (2.7 domain / 2.8 TUI / 2.9 MCP); Plan-QA proof + falsification both flagged that the symbol rename has whole-tree fanout that breaks the mage-ci-green-between-droplets invariant if partitioned. Strict-canonical is a single atomic invariant. Unit B (now Droplet 2.7) flips every reference in one commit — every `StateDone` / `StateProgress` symbol, every legacy state literal at a state-machine site, every `ChecklistItem.Done` field reference, every aggregate-counter field tied to state vocab.
 
 ---
 
 ### Unit B-zero — Delete builtin template JSON + neutralize loader (prerequisite to all other units)
 
-The pre-step from Scope item 2. Lands first because Unit B's state rename would otherwise have to sweep ~80 `"done": false` and ~unknown `"progress"` literals across `templates/builtin/default-go.json` (76k file) + `templates/builtin/default-frontend.json` (71k file). Drop 3 overhauls templates from scratch — keeping these JSON files alive through Drop 2 only to delete them at Drop 3 start is wasted churn.
+The pre-step from Scope item 2. Lands first because Unit B's state rename would otherwise have to sweep ~80 `"done": false` and `"progress"` literals across `templates/builtin/default-go.json` (76k file) + `templates/builtin/default-frontend.json` (71k file). Drop 3 overhauls templates from scratch — keeping these JSON files alive through Drop 2 only to delete them at Drop 3 start is wasted churn.
 
-**Loader-coupling investigation result (see `## Notes` for full analysis):** `templates/embed.go` is the only Go file in the `templates` package and uses `//go:embed builtin/*.json`. Zero importers anywhere in the Go tree (verified: `git grep "evanmschultz/tillsyn/templates"` returns empty). Per Go embed semantics, deleting all matching files makes `//go:embed builtin/*.json` a build error. **Therefore Unit B-zero must delete the entire `templates/` package — both the JSON files AND `templates/embed.go`** in one droplet, or stub the embed directive to point at a placeholder. Going with full deletion: simpler, no orphan code, Drop 3 reintroduces a fresh `templates/` package on its own terms.
+**Loader-coupling investigation result (see `## Notes` for full analysis):** `templates/embed.go` is the only Go file in the `templates` package and uses `//go:embed builtin/*.json`. Zero importers anywhere in the Go tree (verified: `git grep "evanmschultz/tillsyn/templates"` returns empty). Per Go embed semantics, deleting all matching files makes `//go:embed builtin/*.json` a build error. **Therefore Unit B-zero must delete the entire `templates/` package — both the JSON files AND `templates/embed.go`** in one droplet. Going with full deletion: simpler, no orphan code, Drop 3 reintroduces a fresh `templates/` package on its own terms.
 
 #### Droplet 2.1 — Delete `templates/` package outright
 
@@ -51,6 +53,7 @@ The pre-step from Scope item 2. Lands first because Unit B's state rename would 
   - `git grep "evanmschultz/tillsyn/templates"` returns empty across the whole repo (no orphan imports).
   - `git grep "templates/builtin"` returns only MD references in `README.md`, `PLAN.md`, `CLAUDE.md`, and `workflow/drop_2/PLAN.md` (those are MD content edits, NOT Go-tree references, and may stay until Drop 3 cleanup or be touched by builder if trivially in scope — see Notes).
   - `mage ci` green.
+  - DB action: NONE.
 - **Blocked by:** —
 
 ---
@@ -76,12 +79,13 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
   - `internal/domain/errors.go` adds `ErrInvalidRole = errors.New("invalid role")` to the existing var-block (same style as `ErrInvalidKind`).
   - Table-driven tests cover: each of 9 valid values; empty desc; desc with no `Role:` line; multiline desc with `Role:` mid-paragraph (regex anchors require start-of-line); two `Role:` lines (asserts first wins); whitespace variants (`Role:  builder  ` → `RoleBuilder`); unknown value (`Role: foobar` → `ErrInvalidRole`); case sensitivity (`Role: Builder` should fail since the regex captures `[a-z-]+`); `Role: qa-proof` round-trip.
   - `mage test-pkg ./internal/domain` green.
+  - DB action: NONE.
 - **Blocked by:** —
 
 #### Droplet 2.3 — Add `Role` field to `ActionItem` + `ActionItemInput` + `NewActionItem` validation
 
 - **State:** todo
-- **Paths:** `internal/domain/action_item.go` (add `Role Role` field to both structs; add validation block in `NewActionItem`), `internal/domain/action_item_test.go` or `internal/domain/domain_test.go` (extend existing `NewActionItem` table-driven tests)
+- **Paths:** `internal/domain/action_item.go` (add `Role Role` field to both structs; add validation block in `NewActionItem`), `internal/domain/domain_test.go` (extend existing `NewActionItem` table-driven tests — confirmed via Read: no `internal/domain/action_item_test.go` file exists today; tests live in `domain_test.go`)
 - **Packages:** `internal/domain`
 - **Acceptance:**
   - `ActionItem` struct gains `Role Role` field (zero-value empty string allowed).
@@ -90,6 +94,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
   - Table-driven test additions: empty role round-trips empty; each of 9 valid roles round-trips; unknown role rejected with `ErrInvalidRole`; whitespace-only role normalizes to empty.
   - All existing `domain_test.go` tests remain green (no regressions on the 12-value `Kind` validation path).
   - `mage test-pkg ./internal/domain` green.
+  - DB action: NONE.
 - **Blocked by:** 2.2
 
 #### Droplet 2.4 — SQLite `action_items.role` column + scanner + insert/update paths
@@ -104,6 +109,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
   - One new test in `repo_test.go` writes `domain.RoleBuilder`, reads it back, asserts equality.
   - **Pre-MVP rule honored:** no `ALTER TABLE` migration, no SQL backfill — dev fresh-DBs. The schema-creation block is the only schema source.
   - `mage test-pkg ./internal/adapters/storage/sqlite` green.
+  - **DB action:** DELETE `~/.tillsyn/tillsyn.db` BEFORE running `mage ci` for this droplet (schema change).
 - **Blocked by:** 2.3
 
 #### Droplet 2.5 — MCP `role` field on action-item create/update/get + app-service plumbing
@@ -118,6 +124,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
   - Invalid role returns a 400-class MCP error (carries `ErrInvalidRole` semantics — match the existing pattern for kind-invalid errors).
   - Test in `extended_tools_test.go` covers: create with valid role, create without role, update role, get returns role, create with invalid role rejects.
   - `mage test-pkg ./internal/adapters/server/common` and `mage test-pkg ./internal/adapters/server/mcpapi` both green.
+  - DB action: NONE (data-shape change rides on 2.4's schema change).
 - **Blocked by:** 2.4
 
 #### Droplet 2.6 — Snapshot serialization for `Role`
@@ -126,85 +133,119 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 - **Paths:** `internal/app/snapshot.go` (add `Role domain.Role \`json:"role,omitempty"\`` to `SnapshotActionItem` struct at `:57`; thread the field through `snapshotActionItemFromDomain` at `:1057` and `(t SnapshotActionItem) toDomain()` at `:1263`), `internal/app/snapshot_test.go` if it exists, otherwise extend whichever test exercises `SnapshotActionItem` round-trip
 - **Packages:** `internal/app`
 - **Acceptance:**
-  - Snapshot round-trip preserves a non-empty `Role` value.
+  - Snapshot round-trip preserves a non-empty `Role` value across all 9 valid roles (table-driven).
   - Snapshot with empty role round-trips empty (omitempty drops the JSON key on serialize).
   - JSON shape: `{"role":"builder"}` when set, key absent when empty.
+  - **No `SnapshotVersion` bump required** — field uses `omitempty` and `encoding/json` ignores unknown keys by default. Old `v5` snapshots load forward-compatibly.
   - `mage test-pkg ./internal/app` green.
+  - DB action: NONE.
 - **Blocked by:** 2.3
 
 ---
 
-### Unit B — State-vocabulary rename `done → complete`, `progress → in_progress`
+### Unit B — State-vocabulary rename `done → complete`, `progress → in_progress` (single atomic droplet)
 
-Bundled in one sweep per PLAN.md § 19.2. After Unit B-zero deleted `templates/builtin/*.json`, the rename only touches Go code + Go tests + checklist JSON keys (no template JSON sweep). Three droplets. The rename is intrusive enough that a single droplet would balloon past the atomic-droplet ceiling; splitting by package layer keeps each droplet inspectable.
+Bundled in one droplet per Round 2 dev decision (see `## Notes` → "Round 2 revision summary"). After Unit B-zero deleted `templates/builtin/*.json`, the rename only touches Go code + Go tests + checklist JSON keys (no template JSON sweep). The rename is intrusive enough that splitting risks per-droplet `mage ci` red between commits — every consumer file MUST flip in one commit.
 
-**Strict-canonical only (dev decision, 2026-05-01).** No alias tolerance. The rename is a hard cutover — only canonical values (`complete`, `in_progress`) are accepted on every code path (constants, alias normalizers, JSON unmarshal, MCP coercion, CLI input). Legacy values (`done`, `progress`, `completed`, `doing`, `in-progress`) are REJECTED, not coerced. Pre-MVP every caller is the dev; broken callers fail loud and get fixed at the source. Rationale: pre-MVP cleanliness — no lingering legacy-tolerance trash that needs a separate cleanup drop later.
+**Strict-canonical only (dev decision, 2026-05-01).** No alias tolerance. The rename is a hard cutover — only canonical values (`complete`, `in_progress`) are accepted on every code path (constants, alias normalizers, JSON unmarshal, MCP coercion, CLI input, config). Legacy values (`done`, `progress`, `completed`, `doing`, `in-progress`) are REJECTED, not coerced. Pre-MVP every caller is the dev; broken callers fail loud and get fixed at the source. Rationale: pre-MVP cleanliness — no lingering legacy-tolerance trash that needs a separate cleanup drop later.
 
-Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explicit "role promotion → state rename" ordering. Same-package-blocking inside Unit B: 2.7 owns the `internal/domain` flip (constants + strict-canonical normalization with no legacy alias tolerance + `IsTerminalState` + `ChecklistItem.Done → Complete` field rename). 2.8 owns the `internal/tui` sweep (model.go + options.go). 2.9 owns the MCP coercion + final repo-wide grep sweep. **2.7 unblocks 2.8 and 2.9** because the constants it renames are the truth source the others reference. 2.8 + 2.9 touch disjoint packages and could parallelize in principle, but serialize anyway: 2.9's grep sweep depends on 2.8's TUI rename being committed so the sweep can confirm zero stragglers.
+Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explicit "role promotion → state rename" ordering.
 
-#### Droplet 2.7 — Domain rename: `StateDone → StateComplete`, `StateProgress → StateInProgress`, `ChecklistItem.Done → Complete`
+#### Droplet 2.7 — State-vocabulary rename across the whole tree (atomic)
 
 - **State:** todo
-- **Paths:** `internal/domain/workitem.go` (rename `StateDone` → `StateComplete` and `StateProgress` → `StateInProgress` constants at `:17-22`; rewrite normalization at `:147-163` so ONLY canonical values (`"complete"`, `"in_progress"`) are accepted — every legacy value (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) returns the unknown-state error path; flip `IsTerminalState` at `:171-175` to test against `StateComplete`/`StateFailed`; rename `ChecklistItem.Done bool` → `ChecklistItem.Complete bool` at `:80-85` including the JSON tag `\`json:"complete"\``), `internal/domain/workitem_test.go` and any other `internal/domain/*_test.go` files referencing the old constants/field name (rename references)
-- **Packages:** `internal/domain`
+- **Paths:** the rename touches every state-machine site in the tree. Enumerated below by package; every file is in one commit. **All file:line cites verified at HEAD via `git grep` for this Round 2 revision.**
+
+  **`internal/domain/` (state-machine truth source + struct fields):**
+  - `internal/domain/workitem.go` — rename `StateDone` → `StateComplete` and `StateProgress` → `StateInProgress` constants at `:18-19`; rewrite normalization at `:147-163` so ONLY canonical values (`"complete"`, `"in_progress"`) are accepted — every legacy value (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) returns the unknown-state error path; flip `IsTerminalState` at `:174` to test against `StateComplete`/`StateFailed`; rename `ChecklistItem.Done bool` → `ChecklistItem.Complete bool` at `:81-85` including the JSON tag `\`json:"complete"\``; rewrite `IsValidLifecycleState` at `:168` to enumerate the canonical values.
+  - `internal/domain/action_item.go` — rename `StateProgress`/`StateDone` symbol references at `:268, 275, 278, 315`; rename `item.Done` field access at `:357` to `item.Complete` (production code).
+  - `internal/domain/domain_test.go` — rename test references to renamed constants and `ChecklistItem.Done` fields throughout (e.g. `:114, 275, 324, 327, 330, 333, 374, 393, 396, 420-442, 536, 561-566`).
+
+  **`internal/app/` (transition rules, snapshot validation, attention overview, default state seed):**
+  - `internal/app/service.go` — rename `domain.StateDone`/`StateProgress` symbol references at `:556, 623, 627, 639, 644, 694, 1817, 1965-1975`; flip `defaultStateTemplates()` at `:1873-1881` so the seed ID column emits `"in_progress"` and `"complete"` (NOT `"progress"`/`"done"`); rewrite `normalizeStateID` at `:1922-1955` to accept ONLY canonical inputs (every legacy alias case at `:1948-1951` removed); rewrite `lifecycleStateForColumnID` at `:1958-1979` to switch on canonical column names only.
+  - `internal/app/service_test.go` — sweep all 16+ symbol references and any state-literal test inputs (verified hits at `:2467, 3035, 3055, 3065, 3092, 3108, 3186, 3196, 3797, 4573, 4609, 4626, 4693`; full grep sweep required); rename `Done: true/false` checklist literals at `:3003, 3038, 3039, 4612` to `Complete:`.
+  - `internal/app/snapshot.go` — rename symbols in the validation switch at `:419` and any other site (e.g., `:1267` fallback uses `StateTodo`, unchanged); flip the doc comment that names `domain.AllowedParentKinds` at `:448` is OUT OF SCOPE for 2.7 — it lives under Droplet 2.9 (Unit C, 2.9 in the Round 2 renumbering) — but `:419` IS in 2.7.
+  - `internal/app/snapshot_test.go` — sweep any state-symbol references touched by the rename.
+  - `internal/app/attention_capture.go` — rename `domain.StateProgress`/`StateDone` references at `:350, 353, 356, 371`. Field renames `InProgressItems` → consider rename to `InProgressItems` (already canonical in field name; only the JSON tag at `:95` `json:"in_progress_items"` is canonical-friendly already). `DoneItems` field at `:96` (`json:"done_items"`) → rename field to `CompleteItems` and JSON tag to `json:"complete_items"`. Update increments at `:351, 354`. (See `## Notes` → "Aggregate counter rename" for rationale.)
+  - `internal/app/attention_capture_test.go` — sweep references at `:272, 377-378, 386-390` (rename `DoneItems` → `CompleteItems`).
+
+  **`internal/adapters/server/common/` (capture state, MCP coercion, lifecycle adapter, types):**
+  - `internal/adapters/server/common/capture.go` — rename symbols at `:258, 260, 302, 304`; **rewrite `canonicalLifecycleState` at `:296-312` to accept ONLY canonical inputs** (this is the SECOND coercion site Round 1 missed; verified at HEAD `:296-312`); rename increments `overview.InProgressActionItems++` at `:259` (canonical-friendly) and `overview.DoneActionItems++` at `:261` → rename field to `CompleteActionItems` (see types.go below).
+  - `internal/adapters/server/common/capture_test.go` — rename symbol references at `:111, 136, 268-269`; rewrite `canonicalLifecycleState("doing")` test at `:268` to verify rejection (no longer coercion to `StateProgress`); rename `Done:` checklist field at `:123` to `Complete:`; rename `RequireChildrenDone` at `:126` per Notes (see "RequireChildrenDone field rename"); rename `WorkOverview.DoneActionItems` assertion at `:198` to `CompleteActionItems`.
+  - `internal/adapters/server/common/app_service_adapter.go` — rename `summary.WorkOverview.DoneItems` → `CompleteItems` at `:409`; rename struct-field assignment `DoneActionItems:` → `CompleteActionItems:` at `:421` (target field name in `types.go`).
+  - `internal/adapters/server/common/app_service_adapter_test.go` — rename `DoneItems` field literals at `:39, 95`.
+  - `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` — rewrite `State: "done"` test input at `:180` to `State: "complete"` (state-machine input — strict-canonical applies); leave `Reason: "done"` / `RevokedReason: "done"` at `:716, 721, 912` unchanged (capability-lease revoke reason — incidental free-form string, not a state literal). Rename `domain.StateDone` symbol references at `:189-190`.
+  - `internal/adapters/server/common/app_service_adapter_mcp.go` — rename symbols at `:820, 854, 856`; rewrite `actionItemLifecycleStateForColumnName` at `:849-864` to accept ONLY canonical column-names (`"complete"` → `domain.StateComplete`, `"in_progress"` → `domain.StateInProgress`); rewrite `normalizeStateLikeID` at `:866-901` (legacy alias cases at `:892, 894-895`) to accept ONLY canonical inputs and reject every legacy form with a clear error.
+  - `internal/adapters/server/common/types.go` — rename struct field `InProgressActionItems` (already canonical) at `:142` and JSON tag `json:"in_progress_tasks"` (already canonical); rename `DoneActionItems` at `:143` → `CompleteActionItems` and JSON tag `json:"done_tasks"` → `json:"complete_tasks"`.
+
+  **`internal/adapters/server/mcpapi/`:**
+  - `internal/adapters/server/mcpapi/extended_tools_test.go` — rename `domain.StateProgress`/`StateDone` symbol references at `:427, 446`; rewrite `"state": "done"` test inputs at `:1114, 2587` to `"state": "complete"`; rewrite `service.lastMoveActionItemStateReq.State` assertion at `:2600` from `"done"` to `"complete"`.
+
+  **`internal/tui/` (state literals, label maps, default-state lists, all surfaces):**
+  - `internal/tui/model.go` — rename `domain.StateDone`/`StateProgress` symbol references at `:12249, 14052, 14058, 17188, 17199, 17370, 17641, 17977, 17979, 18017, 18019, 18066, 18074, 18171-18172, 18210`; update `canonicalSearchStatesOrdered` at `:305` from `["todo", "progress", "done", "archived"]` to `["todo", "in_progress", "complete", "archived"]`; update `canonicalSearchStateLabels` at `:317-318` and the `"done"`/`"progress"` keys at `:321` plus the lookups at `:18016, 18018, 18020`; update `searchStates`/`searchDefaultStates`/`dependencyStates` literal lists at `:1231-1236`; update label-map switch cases at `:13692, 14151, 17978`; rewrite `normalizeColumnStateID` at `:17934-17967` (strict-canonical only — legacy alias case at `:17960-17963` removed); rewrite `lifecycleStateForColumnName` at `:17971-17985` and `lifecycleStateLabel` at `:18012-18029` strict-canonical; update `item.Done` access at `:17742` → `item.Complete`.
+  - `internal/tui/model_test.go` — sweep all references at `:627, 685-686, 967-970, 4549, 5734-5740, 11463-11472, 13004, 13186, 13247, 13267, 13541-13549`; rewrite `"in-progress", "progress", "doing"` test cases at `:685, 967` and `"done", "complete", "completed"` test case at `:969` so they verify rejection (no longer coercion).
+  - `internal/tui/options.go` — update default-state list at `:147` from `["todo", "progress", "done"]` to `["todo", "in_progress", "complete"]`.
+  - `internal/tui/thread_mode.go` — rename `domain.StateDone` symbol reference at `:151` (Round 1 plan missed this file; Round 2 includes it).
+
+  **`internal/config/` (search states + validator):**
+  - `internal/config/config.go` — flip `Search.States` default at `:218` from `["todo", "progress", "done"]` to `["todo", "in_progress", "complete"]`; flip fallback at `:550`; rewrite `isKnownLifecycleState` at `:1092-1094` from `["todo", "progress", "done", "failed", "archived"]` to `["todo", "in_progress", "complete", "failed", "archived"]` — strict-canonical, no legacy alias tolerance for "external config compatibility."
+  - `internal/config/config_test.go` — rewrite `states = ["todo", "progress", "archived"]` TOML fixture at `:326` to canonical (`"in_progress"`); rewrite `isKnownLifecycleState` table-driven assertions at `:811-820` to verify strict-canonical (only canonical values return true; `"progress"`/`"done"` now return false).
+
+  **Out of `Paths:` — verified no state-machine touches:** `cmd/till/main.go` (no `StateDone`/`StateProgress` symbol or legacy state literal — `cfg.Search.States` is just a slice copy at `:3262`), `cmd/till/embeddings_cli.go` (`status = "completed"` at `:242` is embedding-job status, unrelated to lifecycle state), `internal/adapters/storage/sqlite/repo.go` (only `domain.StateTodo` reference at `:2819`, unchanged). `internal/adapters/server/common/app_service_adapter_outcome_test.go:71` (`Outcome: "done"` is a sample bad value for the `outcome` validator, NOT a lifecycle state — test passes unchanged after rename because it asserts rejection). `internal/adapters/server/mcpapi/handler_integration_test.go:380, 405` (`resolution_note: "done"` is free-form text, not a state). `internal/adapters/storage/sqlite/repo_test.go:1749`, `internal/app/capability_inventory_test.go:50`, `internal/domain/comment_test.go:95`, `internal/domain/handoff_test.go:64` (all `Reason`/`Summary`/body-text free-form `"done"`, not state literals). `internal/app/service_test.go:2467` `{ID: "doing", Name: "Doing", Position: 1}` is a test fixture verifying `normalizeStateID` legacy-alias coercion — under strict-canonical the test must be rewritten to assert rejection, so it IS in scope (covered above under `service_test.go`).
+
+- **Packages:** `internal/domain`, `internal/app`, `internal/adapters/storage/sqlite` (test only — covered by 2.4's earlier touch but state-vocab leaves it untouched), `internal/adapters/server/common`, `internal/adapters/server/mcpapi`, `internal/tui`, `internal/config`
 - **Acceptance:**
-  - `git grep "StateDone\b"` returns empty.
-  - `git grep "StateProgress\b"` returns empty.
-  - `git grep "ChecklistItem.*Done bool\|\.Done = true\|\.Done = false"` returns empty across the whole tree (test fixtures rewritten to `Complete`).
-  - `IsTerminalState(StateComplete)` returns true; `IsTerminalState(StateFailed)` returns true; all other states return false.
-  - **Strict-canonical normalization:** input `"complete"` → `StateComplete`; input `"in_progress"` → `StateInProgress`. Input `"done"`, `"completed"`, `"progress"`, `"in-progress"`, `"doing"` returns the unknown-state error path (NOT coerced).
-  - `ChecklistItem` JSON marshal emits `"complete":` not `"done":`. JSON unmarshal accepts ONLY `"complete"` — `"done"` keys produce a decode error (no fallback alias). Table-driven test asserts both directions: canonical accepted, legacy rejected.
-  - Existing `internal/domain/*_test.go` tests updated to use canonical state values; no test relies on legacy-alias coercion.
-  - `mage test-pkg ./internal/domain` green.
+  - **Symbol-grep checks (whole-tree, scope-aware):**
+    - `git grep -nE "\\bStateDone\\b" -- '*.go'` returns empty.
+    - `git grep -nE "\\bStateProgress\\b" -- '*.go'` returns empty.
+    - `git grep -nE "\\bStateComplete\\b" -- '*.go'` returns non-empty (the new canonical symbol is present).
+    - `git grep -nE "\\bStateInProgress\\b" -- '*.go'` returns non-empty.
+    - `git grep -nE "\\bChecklistItem\\b.*\\bDone\\b" -- '*.go'` returns empty (struct field renamed).
+    - `git grep -nE "\\.Done\\b" -- 'internal/domain/' 'internal/tui/' 'internal/app/' 'internal/adapters/'` shows zero ChecklistItem.Done access remaining (free-form `ctx.Done()`, `wg.Done()`, `start.Done()` matches are unchanged stdlib/concurrency idioms — these are NOT state-vocab and are explicitly allowed; verify the only `.Done` hits remaining are stdlib concurrency calls, not domain field access).
+    - `git grep -nE "\\bDoneItems\\b|\\bDoneActionItems\\b" -- '*.go'` returns empty (aggregate counter fields renamed to `CompleteItems`/`CompleteActionItems`).
+  - **State-machine literal checks (scope-narrowed to state-machine contexts, NOT broad string sweeps):**
+    - `git grep -nE 'domain\\.StateDone|domain\\.StateProgress' -- '*.go'` returns empty.
+    - `git grep -nE 'lifecycle_state.*"done"|lifecycle_state.*"progress"' -- '*.go'` returns empty.
+    - `git grep -nE 'LifecycleState.*"done"|LifecycleState.*"progress"' -- '*.go'` returns empty.
+    - `git grep -nE '"in-progress"|"doing"' -- 'internal/domain/' 'internal/app/' 'internal/adapters/server/' 'internal/tui/' 'internal/config/'` returns empty (legacy aliases gone from every state-machine file).
+    - In `internal/domain/workitem.go`, `internal/app/service.go`, `internal/adapters/server/common/app_service_adapter_mcp.go`, `internal/adapters/server/common/capture.go`, `internal/tui/model.go`, `internal/config/config.go`, `git grep -E '"done"|"progress"|"completed"' <file>` returns empty (the state-machine source files have zero legacy literals).
+    - `git grep -nE 'json:"done"|json:"progress"|json:"completed"|json:"in-progress"|json:"doing"' -- '*.go'` returns empty (no JSON tags carry legacy state vocab).
+    - `git grep -nE 'json:"done_tasks"|json:"done_items"' -- '*.go'` returns empty (aggregate counter JSON tags renamed to `complete_tasks`/`complete_items`).
+  - **Behavior checks (test-driven):**
+    - `IsTerminalState(StateComplete)` returns true; `IsTerminalState(StateFailed)` returns true; all other states return false.
+    - **Strict-canonical normalization (every site):** input `"complete"` → `StateComplete`; input `"in_progress"` → `StateInProgress`. Input `"done"`, `"completed"`, `"progress"`, `"in-progress"`, `"doing"` returns the unknown-state error path (NOT coerced). This applies to `domain.NormalizeLifecycleState`, `app.normalizeStateID`, `app.lifecycleStateForColumnID`, `common.canonicalLifecycleState`, `common.actionItemLifecycleStateForColumnName`, `common.normalizeStateLikeID`, `tui.normalizeColumnStateID`, `tui.lifecycleStateForColumnName`, `config.isKnownLifecycleState`.
+    - `defaultStateTemplates()` returns `[{ID: "todo"}, {ID: "in_progress"}, {ID: "complete"}, {ID: "failed"}]` (canonical IDs).
+    - `ChecklistItem` JSON marshal emits `"complete":` not `"done":`. JSON unmarshal accepts ONLY `"complete"` — `"done"` keys produce a decode error (no fallback alias). Table-driven test asserts both directions: canonical accepted, legacy rejected.
+    - `WorkOverview` JSON emits `complete_tasks` (was `done_tasks`); `AttentionWorkOverview` JSON emits `complete_items` (was `done_items`).
+    - The `till.action_item` MCP create/list/move-state tool accepts ONLY canonical state values (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`); legacy values produce a clear error response. Canonical values round-trip through reads.
+  - **Whole-tree CI gate:** `mage ci` green (the unified CI run is the unit-boundary gate — any missed file produces a compile error or test failure here).
+  - **DB action:** DELETE `~/.tillsyn/tillsyn.db` BEFORE running `mage ci` for this droplet (state-vocab change — column IDs change from `progress`/`done` to `in_progress`/`complete`).
 - **Blocked by:** 2.6
-
-#### Droplet 2.8 — TUI state-string sweep
-
-- **State:** todo
-- **Paths:** `internal/tui/model.go` (update `canonicalSearchStatesOrdered` at `:305` from `["todo", "progress", "done", "archived"]` to `["todo", "in_progress", "complete", "archived"]`; update `searchStates` at `:1231` and `dependencyStates` at `:1236` from `["todo", "progress", "done"]` to `["todo", "in_progress", "complete"]`; sweep label maps and any other `"done"` / `"progress"` literals — full grep sweep), `internal/tui/options.go` (update default-state list at `:147` from `["todo", "progress", "done"]` to `["todo", "in_progress", "complete"]`), `internal/tui/model_test.go` and any other `internal/tui/*_test.go` references to old state literals
-- **Packages:** `internal/tui`
-- **Acceptance:**
-  - `git grep -F "\"done\"" internal/tui/` returns empty.
-  - `git grep -F "\"progress\"" internal/tui/` returns empty.
-  - `git grep -F "\"in_progress\"" internal/tui/` and `git grep -F "\"complete\"" internal/tui/` return non-empty (canonical literals are present).
-  - All `internal/tui/*_test.go` tests still green after literal sweep.
-  - `mage test-pkg ./internal/tui` green.
-- **Blocked by:** 2.7
-
-#### Droplet 2.9 — MCP coercion + final repo-wide grep sweep
-
-- **State:** todo
-- **Paths:** `internal/adapters/server/common/app_service_adapter_mcp.go` (rewrite `actionItemLifecycleStateForColumnName` at `:849-864` to accept ONLY canonical column-names (`"complete"` → `domain.StateComplete`, `"in_progress"` → `domain.StateInProgress`); rewrite `normalizeStateLikeID` at `:866-901` to accept ONLY canonical inputs and reject every legacy form with a clear error), `cmd/till/main.go` (any `"done"`/`"progress"` literals in CLI state filtering or state-name display — full grep sweep, rewrite to canonical), all tests touched by the rename
-- **Packages:** `internal/adapters/server/common`, `cmd/till`
-- **Acceptance:**
-  - `git grep -F "StateDone\|StateProgress" -- '*.go'` returns empty across the WHOLE repo (production + test).
-  - `git grep -E '"done"' -- '*.go'` and `git grep -E '"progress"' -- '*.go'` and `git grep -E '"completed"' -- '*.go'` and `git grep -E '"in-progress"' -- '*.go'` and `git grep -E '"doing"' -- '*.go'` ALL return empty across the whole tree. **No alias-tolerance cases remain — strict-canonical only.**
-  - The `till.action_item` MCP create/list/move-state tool accepts ONLY canonical state values (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`); legacy values produce a clear error response. Canonical values round-trip through reads.
-  - `mage ci` green (unit boundary — the unified CI run validates that 2.7 + 2.8 + 2.9 left no legacy state literals anywhere).
-- **Blocked by:** 2.8
 
 ---
 
 ### Unit C — Strip hardwired nesting defaults from domain catalog (mechanism stays)
 
-Two droplets. Independent of Unit B per PLAN.md § 19.2 ("orthogonal, can run in parallel with the rename if convenient"); ordered after Unit B here only because B leaves no Go-tree fallout for C to step on. **2.10** flips the boot-seed payloads (the live production data path). **2.11** deletes the speculative `AllowedParentKinds` function (the dead-code path).
+Two droplets. Independent of Unit B per PLAN.md § 19.2 ("orthogonal, can run in parallel with the rename if convenient"); ordered after Unit B here only because B leaves no Go-tree fallout for C to step on. **2.8** flips the boot-seed payloads (the live production data path). **2.9** deletes the speculative `AllowedParentKinds` function (the dead-code path).
 
-Same-package-blocking: 2.10 + 2.11 are in different packages (`internal/adapters/storage/sqlite` vs `internal/domain`), so independent. 2.11 also touches a doc-comment in `internal/app/snapshot.go:448` and `internal/adapters/storage/sqlite/repo.go:300` — still no compile-overlap conflict with 2.10 because comment edits do not race compile units.
+Same-package-blocking: 2.8 + 2.9 are in different packages (`internal/adapters/storage/sqlite` vs `internal/domain`), so independent. 2.9 also touches a doc-comment in `internal/app/snapshot.go:448` and `internal/adapters/storage/sqlite/repo.go:300` — still no compile-overlap conflict with 2.8 because comment edits do not race compile units, and 2.8 owns its own edit window on `repo.go` (boot-seed payloads at `:304-375`).
 
-#### Droplet 2.10 — Empty `AllowedParentScopes` for every kind in boot-seed
+#### Droplet 2.8 — Empty `AllowedParentScopes` for every kind in boot-seed
 
 - **State:** todo
-- **Paths:** `internal/adapters/storage/sqlite/repo.go` (change every `INSERT OR IGNORE INTO kind_catalog` row at `:304-375` so `allowed_parent_scopes_json` is `'[]'` instead of `'["plan"]'` or `'["build"]'` — 12 rows total: `plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`), `internal/adapters/storage/sqlite/repo_test.go` and `internal/app/kind_capability_test.go` and `internal/domain/kind_capability_test.go` (update any test that asserted the old `["plan"]`/`["build"]` defaults; assert universal-allow behavior of `AllowsParentScope` per `internal/domain/kind.go:225-232`)
+- **Paths:** `internal/adapters/storage/sqlite/repo.go` (change every `INSERT OR IGNORE INTO kind_catalog` row at `:304-375` so `allowed_parent_scopes_json` is `'[]'` instead of `'["plan"]'` or `'["build"]'` — 12 rows total: `plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`), `internal/adapters/storage/sqlite/repo_test.go` and `internal/app/kind_capability_test.go` and `internal/domain/kind_capability_test.go` (update any test that asserted the old `["plan"]`/`["build"]` defaults; assert universal-allow behavior of `AllowsParentScope` per `internal/domain/kind.go:224-236` with the empty-list early return at `:227-229`)
 - **Packages:** `internal/adapters/storage/sqlite`, `internal/app`, `internal/domain` (test-only edit)
 - **Acceptance:**
   - All 12 `INSERT OR IGNORE INTO kind_catalog` payloads carry `allowed_parent_scopes_json = '[]'`.
-  - `KindDefinition.AllowsParentScope(any-scope)` returns `true` for every seeded kind (universal-allow), per the existing `internal/domain/kind.go:225-232` early-return on empty `AllowedParentScopes`.
+  - **Untouched fields:** `applies_to_json` and every other column on each row remain unchanged. ONLY `allowed_parent_scopes_json` flips to `'[]'`.
+  - `KindDefinition.AllowsParentScope(any-scope)` returns `true` for every seeded kind (universal-allow), per the existing `internal/domain/kind.go:224-236` early-return at `:227-229` on empty `AllowedParentScopes`.
   - The `AllowsParentScope` enforcement path at `internal/app/kind_capability.go:566` is unchanged — only the input data shape changed.
   - **Pre-MVP rule honored:** no DB UPDATE script for any existing rows' `allowed_parent_scopes_json`; dev fresh-DBs.
   - `mage test-pkg ./internal/adapters/storage/sqlite` and `mage test-pkg ./internal/app` and `mage test-pkg ./internal/domain` all green.
-- **Blocked by:** 2.9
+  - **DB action:** DELETE `~/.tillsyn/tillsyn.db` BEFORE running `mage ci` for this droplet (boot-seed data change).
+- **Blocked by:** 2.7
 
-#### Droplet 2.11 — Delete `domain.AllowedParentKinds` function + test fixture + doc-comment cleanup
+#### Droplet 2.9 — Delete `domain.AllowedParentKinds` function + test fixture + doc-comment cleanup
 
 - **State:** todo
 - **Paths:** `internal/domain/kind.go` (delete `AllowedParentKinds` function at `:94-117`), `internal/domain/domain_test.go` (delete `TestAllowedParentKindsEncodesHierarchy` at `:680-714`), `internal/app/snapshot.go` (update doc comment at `:448` referencing `domain.AllowedParentKinds` — replace with reference to `KindDefinition.AllowedParentScopes` + `AllowsParentScope`), `internal/adapters/storage/sqlite/repo.go` (update doc comment at `:300` referencing `domain.AllowedParentKinds` — same replacement)
@@ -213,7 +254,8 @@ Same-package-blocking: 2.10 + 2.11 are in different packages (`internal/adapters
   - `git grep "AllowedParentKinds"` returns empty across the whole repo (function deleted, test deleted, both doc comments updated).
   - `internal/app/kind_capability.go:566` enforcement path still compiles and tests still pass — that path uses `AllowedParentScopes` + `AllowsParentScope`, NOT the deleted `AllowedParentKinds`.
   - `mage ci` green (unit boundary — confirms whole-tree no orphans).
-- **Blocked by:** 2.10
+  - DB action: NONE (code-deletion, no schema or data shape change).
+- **Blocked by:** 2.8
 
 ---
 
@@ -223,25 +265,30 @@ Pure resolver, single package. Two droplets. Lands last per PLAN.md § 19.2 orde
 
 **Decision: resolver lives in `internal/app`** (not `internal/domain`). Rationale: resolution requires a project-context lookup against the action-items repo, which is an application-service concern, not a pure-domain concern. Keep the domain layer free of repo dependencies.
 
-Same-package-blocking: 2.12 owns the resolver in `internal/app`. 2.13 wires CLI + MCP — disjoint packages from 2.12 (`cmd/till` + `internal/adapters/server/...`), so no compile race; serialize anyway because 2.13 calls into the resolver 2.12 created.
+**Repository interface decision (Round 2):** `Repository` (`internal/app/ports.go:11-53`) exposes `GetActionItem(ctx, id)` and `ListActionItems(ctx, projectID, includeArchived)` — but no list-children-by-parent operation. Resolving `N.M.K` requires walking the parent→child tree level by level. With only `ListActionItems`, the resolver would pull every action item in the project and filter by `ParentID` in memory — O(depth × N) per resolve. **Add `ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)` to `Repository`** with a SQLite-side implementation, alongside the resolver. This is a clean-interface decision over an O(N) walk; the new method is a consumer-side requirement of the resolver, justified by the use-case.
 
-#### Droplet 2.12 — Pure dotted-address resolver in `internal/app`
+Same-package-blocking: 2.10 owns the resolver in `internal/app` + the `Repository` interface change in `internal/app/ports.go` + the SQLite-side implementation in `internal/adapters/storage/sqlite`. 2.11 wires CLI + MCP — disjoint packages from 2.10's resolver (`cmd/till` + `internal/adapters/server/...`), so no compile race; serialize anyway because 2.11 calls into the resolver 2.10 created.
+
+#### Droplet 2.10 — Pure dotted-address resolver in `internal/app` + `Repository.ListActionItemsByParent`
 
 - **State:** todo
-- **Paths:** `internal/app/dotted_address.go` (new — function `ResolveDottedAddress(ctx, repo, projectID, dotted string) (actionItemID string, err error)` with sentinel errors `ErrDottedAddressAmbiguous`, `ErrDottedAddressNotFound`, `ErrDottedAddressInvalidSyntax`), `internal/app/dotted_address_test.go` (new — table-driven tests using an in-memory fake or the existing test SQLite fixture)
-- **Packages:** `internal/app`
+- **Paths:** `internal/app/dotted_address.go` (new — function `ResolveDottedAddress(ctx, repo, projectID, dotted string) (actionItemID string, err error)` with sentinel errors `ErrDottedAddressAmbiguous`, `ErrDottedAddressNotFound`, `ErrDottedAddressInvalidSyntax`), `internal/app/dotted_address_test.go` (new — table-driven tests using an in-memory fake or the existing test SQLite fixture), `internal/app/ports.go` (add `ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)` to the `Repository` interface), `internal/adapters/storage/sqlite/repo.go` (add `ListActionItemsByParent` method on `*Repository` alongside existing `ListActionItems` at `:1393`), `internal/adapters/storage/sqlite/repo_test.go` (round-trip test for the new method)
+- **Packages:** `internal/app`, `internal/adapters/storage/sqlite`
 - **Acceptance:**
-  - Function signature: `func ResolveDottedAddress(ctx context.Context, repo Repository, projectID string, dotted string) (string, error)` (where `Repository` is the existing app-layer interface that already exposes the action-item read methods; consumer-side interface, not a new abstraction).
-  - Accepts these forms: `N` (level-1), `N.M` (level-2), `N.M.K` (level-3), and `<proj_slug>-N.M.K` (slug-prefixed). The slug prefix is optional — when absent, the resolver scopes to the supplied `projectID`. When present, the resolver verifies the slug matches the project named by `projectID`.
+  - Function signature: `func ResolveDottedAddress(ctx context.Context, repo Repository, projectID string, dotted string) (string, error)` — `Repository` is the existing app-layer interface, now extended with `ListActionItemsByParent`.
+  - `Repository.ListActionItemsByParent(ctx, projectID, parentID)` returns the list of action items whose `ParentID == parentID` within `projectID`. Empty `parentID` returns level-1 children (no parent).
+  - SQLite implementation uses an indexed query (`WHERE project_id = ? AND parent_id = ?`); no per-call full-table scan.
+  - `ResolveDottedAddress` accepts these forms: `N` (level-1), `N.M` (level-2), `N.M.K` (level-3), and `<proj_slug>-N.M.K` (slug-prefixed). The slug prefix is optional — when absent, the resolver scopes to the supplied `projectID`. When present, the resolver verifies the slug matches the project named by `projectID`.
   - Returns the resolved action-item UUID on unique match.
   - Returns `ErrDottedAddressNotFound` when the path doesn't lead to an action item.
   - Returns `ErrDottedAddressAmbiguous` when the path is non-unique (multiple matches at some level).
   - Returns `ErrDottedAddressInvalidSyntax` when the input fails the `^([a-z0-9-]+-)?\d+(\.\d+)*$` shape check.
   - Table-driven tests cover: valid `N`, valid `N.M`, valid `N.M.K`, slug-prefixed valid, slug-prefix mismatch, missing path, ambiguous path, malformed inputs (empty, `1.`, `.1`, `1..2`, `abc`, `1.2.3.4.5` deep nesting), UUID input rejected (must use the dotted form OR the caller is expected to skip the resolver).
-  - `mage test-pkg ./internal/app` green.
-- **Blocked by:** 2.11
+  - `mage test-pkg ./internal/app` and `mage test-pkg ./internal/adapters/storage/sqlite` both green.
+  - DB action: NONE (additive method, no schema change).
+- **Blocked by:** 2.9
 
-#### Droplet 2.13 — Wire resolver into CLI + MCP read paths; mutation paths reject dotted form
+#### Droplet 2.11 — Wire resolver into CLI + MCP read paths; mutation paths reject dotted form
 
 - **State:** todo
 - **Paths:** `internal/adapters/server/common/app_service_adapter_mcp.go` (in `till.action_item(operation=get)`, accept either UUID or dotted form for `action_item_id` — when input doesn't parse as UUID, call `ResolveDottedAddress`; mutation operations `create|update|move|move_state|delete|restore|reparent` reject dotted form with a clear error), `internal/adapters/server/mcpapi/extended_tools.go` (mirror the get-vs-mutate distinction in tool-level argument validation), `cmd/till/main.go` (CLI read commands accept dotted form via the same resolver; CLI mutation commands reject dotted form), test files for each path
@@ -253,11 +300,41 @@ Same-package-blocking: 2.12 owns the resolver in `internal/app`. 2.13 wires CLI 
   - CLI `till action_item get 2.1` works; CLI `till action_item update 2.1 ...` rejects with the same error class.
   - Unknown / ambiguous dotted addresses propagate `ErrDottedAddressNotFound` / `ErrDottedAddressAmbiguous` upward as MCP/CLI errors with descriptive messages.
   - `mage ci` green (drop boundary — full validation that all four units composed cleanly).
-- **Blocked by:** 2.12
+  - DB action: NONE.
+- **Blocked by:** 2.10
 
 ---
 
 ## Notes
+
+### Round 2 revision summary
+
+This is the Round 2 revision of `workflow/drop_2/PLAN.md`. Round 1 was reviewed by `PLAN_QA_PROOF.md` (5 blockers, 4 nits, FAIL) and `PLAN_QA_FALSIFICATION.md` (9 blockers, 6 nits, FAIL). Brief items applied (per orchestrator):
+
+- **B1.** Collapsed Round 1's three-droplet Unit B (2.7 domain / 2.8 TUI / 2.9 MCP) into ONE atomic droplet (new 2.7) that flips every reference in one commit. Preserves the mage-ci-green-between-droplets invariant.
+- **B2.** Enumerated all 14 cross-package files in Unit B's `Paths:` (originals: `internal/domain/action_item.go`, `internal/tui/thread_mode.go`, `internal/adapters/server/common/capture.go` + `_test.go` + `app_service_adapter_lifecycle_test.go`, `internal/adapters/server/mcpapi/extended_tools_test.go`, `internal/app/service.go` + `_test.go` + `snapshot.go` (state-symbol section) + `snapshot_test.go` + `attention_capture.go` + `_test.go`, `internal/config/config.go` + `_test.go`). Plus additions discovered during verification: `internal/app/service.go:2467` (test fixture), `internal/adapters/server/common/types.go` (counter struct fields), `internal/adapters/server/common/app_service_adapter.go` + `_test.go` (counter-field references), `internal/domain/domain_test.go:114` column-rename test (verified state-vocab-relevant — column name `"done"`).
+- **B3.** Added `canonicalLifecycleState` site at `internal/adapters/server/common/capture.go:296-312` to Unit B scope. This was Round 1's most-damaging miss (independent coercion site).
+- **B4.** Narrowed acceptance greps to state-machine context. Replaced unbounded `git grep -E '"done"' -- '*.go'` (which catches 9+ legitimate non-state uses: capability-lease revoke reasons, comment bodies, handoff summaries, embedding-job status, outcome validator) with scope-aware regexes: `git grep "domain.StateDone\b"`, `git grep "lifecycle_state.*\"done\""`, `git grep "json:\"done\""`, plus per-file checks scoped to state-machine source files (`internal/domain/workitem.go`, `internal/app/service.go`, etc.).
+- **B5.** Added `Repository.ListActionItemsByParent` requirement to droplet 2.10 (renumbered from Round 1's 2.12). Pulled `internal/app/ports.go` and `internal/adapters/storage/sqlite/repo.go` into the droplet's `Paths:`.
+- **B6.** Confirmed `internal/config/config.go isKnownLifecycleState` is strict-canonical (no legacy alias tolerance for "external config compatibility"). Added `internal/config/` to Unit B's `Paths:` and acceptance.
+- **B7.** Renumbered droplets after Unit B collapse: 13 → 11. New chain: 2.1 (Unit B-zero), 2.2-2.6 (Unit A, 5 droplets), 2.7 (Unit B, atomic), 2.8-2.9 (Unit C), 2.10-2.11 (Unit D). Every `Blocked by:` reference updated.
+- **B8.** Kept `ParseRoleFromDescription` parser as domain helper (dev decision — ~50 LOC, costs nothing, available for future opportunistic callers even though no production caller exists post-no-migration-decision).
+- **B9.** Confirmed `internal/adapters/server/common/mcp_surface.go:227 Completed bool json:"completed"` is independent of lifecycle state — it's a checklist-item-completed boolean on an MCP response shape, unrelated to `ChecklistItem.Done`. No rename, no acceptance criterion touches it. (Verified via Read at HEAD.)
+- **B10.** Updated `## Notes` to reflect every change above (this section, plus updates to Cross-droplet decisions, Explicit YAGNI rulings, Deferrals).
+
+### Aggregate counter rename (Round 2 discovery)
+
+Strict-canonical state vocabulary implies aggregate-counter field names tracking a state should follow the rename. Verified hits:
+
+- `internal/adapters/server/common/types.go:142-143` — struct fields `InProgressActionItems` (already canonical name) and `DoneActionItems` (rename → `CompleteActionItems`); JSON tags `in_progress_tasks` (canonical) and `done_tasks` (rename → `complete_tasks`).
+- `internal/app/attention_capture.go:95-96` — fields `InProgressItems` (canonical) and `DoneItems` (rename → `CompleteItems`); JSON tags `in_progress_items` (canonical) and `done_items` (rename → `complete_items`).
+- Increments at `internal/adapters/server/common/capture.go:259, 261` and `internal/app/attention_capture.go:351, 354`, plus reader sites at `internal/adapters/server/common/app_service_adapter.go:409, 421` and tests.
+
+These are folded into Droplet 2.7. Rationale: the field name is part of the state-vocabulary surface — a `DoneActionItems` field tied to "items in `domain.StateDone` state" should rename to `CompleteActionItems` when `StateDone` becomes `StateComplete`. Half-renaming would leave a confusing tree.
+
+### `RequireChildrenDone` field (NOT renamed in Drop 2)
+
+`internal/domain/workitem.go:89` defines `CompletionPolicy.RequireChildrenDone bool` with JSON tag `json:"require_children_done"`. Semantically this means "require children to be in a complete state" — under strict-canonical, it would rename to `RequireChildrenComplete` / `json:"require_children_complete"`. **Decision: leave unchanged in Drop 2** because (a) the field semantically describes a policy bit, not a state literal, and renaming it forces a parallel JSON key change in every persisted snapshot fixture without delivering disambiguation value; (b) the field name uses "Done" as a past-participle adjective ("are children done?"), not as the state-machine token `done`; (c) Drop 2's strict-canonical scope is `LifecycleState` values + their Go symbol mirrors + `ChecklistItem.Done` field (which IS a state-mirror). If a future drop wants to fully purge the word `Done` from the codebase, it does so explicitly. **All `CompletionPolicy{RequireChildrenDone: true}` test fixture sites stay as-is**: `internal/adapters/server/common/capture_test.go:126`, `internal/app/service_test.go:3042, 3095, 4613`, `internal/domain/action_item.go:310`, `internal/domain/domain_test.go:430, 566, 614-615`, `internal/domain/kind_capability_test.go:35`. (Surface this in a future refinement drop if dev wants the rename.)
 
 ### Template-loader-coupling investigation (Unit B-zero)
 
@@ -277,18 +354,25 @@ Same-package-blocking: 2.12 owns the resolver in `internal/app`. 2.13 wires CLI 
 
 ### Cross-droplet decisions
 
-- **Role field on `ActionItem` is optional** (empty allowed at the constructor; `IsValidRole` rejects empty as part of the closed-enum check, but the `NewActionItem` validator only invokes it on non-empty input). Rationale: pre-MVP, existing description-prose `Role:` lines aren't backfilled into a column; rows without a parsable role land with empty role. The `ParseRoleFromDescription` helper exists for callers who want to opportunistically lift the value out of description prose at create time.
-- **Strict-canonical state literals (Unit B, dev decision 2026-05-01):** `normalizeStateLikeID` and `actionItemLifecycleStateForColumnName` accept ONLY canonical inputs (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`). Every legacy form (`"done"`, `"progress"`, `"completed"`, `"doing"`, `"in-progress"`) returns the unknown-state error path. Pre-MVP every caller is the dev; broken callers fail loud and get fixed at the source. Rationale: no lingering legacy-tolerance trash that would need cleanup later.
+- **Role field on `ActionItem` is optional** (empty allowed at the constructor; `IsValidRole` rejects empty as part of the closed-enum check, but the `NewActionItem` validator only invokes it on non-empty input). Rationale: pre-MVP, existing description-prose `Role:` lines aren't backfilled into a column; rows without a parsable role land with empty role.
+- **`ParseRoleFromDescription` is kept as a domain helper** (Round 2 dev decision). No production caller exists post-no-migration-decision; the parser is ~50 LOC pure code with table-driven tests, costs nothing, and is available for future opportunistic callers (Drop 3+ MCP / CLI paths may want to lift `Role:` lines from description prose at create time).
+- **Strict-canonical state literals (Unit B, dev decision 2026-05-01):** every state-coercion site in the tree (`domain.NormalizeLifecycleState`, `app.normalizeStateID`, `app.lifecycleStateForColumnID`, `common.canonicalLifecycleState`, `common.actionItemLifecycleStateForColumnName`, `common.normalizeStateLikeID`, `tui.normalizeColumnStateID`, `tui.lifecycleStateForColumnName`, `config.isKnownLifecycleState`) accepts ONLY canonical inputs (`"complete"`, `"in_progress"`, `"todo"`, `"archived"`, `"failed"`). Every legacy form (`"done"`, `"progress"`, `"completed"`, `"doing"`, `"in-progress"`) returns the unknown-state error path or false. NO legacy alias tolerance for "external config compatibility" — `internal/config/config.go` is strict-canonical too. Pre-MVP every caller is the dev; broken callers fail loud and get fixed at the source. Rationale: no lingering legacy-tolerance trash that would need cleanup later.
 - **`ChecklistItem.Done bool → ChecklistItem.Complete bool` (strict-canonical):** JSON tag changes from `"done"` to `"complete"`. Unmarshal accepts ONLY `"complete"` — `"done"` keys produce a decode error. No fallback alias, no `UnmarshalJSON` shim. Pre-MVP no persisted-snapshot rows exist; any test fixture with legacy keys gets rewritten to canonical in the same droplet.
+- **Aggregate counter rename:** `DoneActionItems → CompleteActionItems`, `DoneItems → CompleteItems`, plus their JSON tag mirrors. See "Aggregate counter rename" section above.
+- **`mcp_surface.Completed` field is independent** of lifecycle-state vocabulary. `internal/adapters/server/common/mcp_surface.go:227 Completed bool json:"completed"` is an MCP-response checklist-completion boolean on a different struct from `ChecklistItem`. NO rename, NO acceptance criterion in Drop 2 touches this field. Verified via Read at HEAD.
 - **Resolver location (Unit D):** `internal/app/dotted_address.go` (not `internal/domain`). Resolution requires a project-context repo lookup, which is an application-service concern. Keep `internal/domain` free of repo dependencies.
+- **`Repository.ListActionItemsByParent` is added** in Droplet 2.10 alongside the resolver. Clean-interface decision over an O(N) walk via existing `ListActionItems`. New method on the `Repository` interface + a SQLite-side implementation.
 
 ### Explicit YAGNI rulings
 
 - **No `mage migrate` or `till migrate` CLI subcommand** for any of the four units. Pre-MVP rule.
 - **No SQL migration scripts** under `main/scripts/` for any of the four units. Pre-MVP rule.
 - **No `internal/app/migrations/` package.** The `ParseRoleFromDescription` helper is a domain helper (`internal/domain/role.go`), not a migration runner.
-- **No JSON-decoder alias for `ChecklistItem.Done` legacy key** unless build discovers a real consumer (none expected — `templates/builtin/*.json` is being deleted in Unit B-zero, which removes the only on-disk source of `"done": false` checklist items in this tree).
+- **No JSON-decoder alias for `ChecklistItem.Done` legacy key.** `templates/builtin/*.json` is being deleted in Unit B-zero, which removes the only on-disk source of `"done": false` checklist items in this tree.
 - **No partial / shim path on Unit B-zero.** Delete the whole `templates/` package outright; do not leave an orphan loader pointing at a stub file.
+- **No partial split of Unit B's strict-canonical sweep.** Round 1's three-droplet split (2.7/2.8/2.9) is reversed in Round 2 — strict-canonical is one atomic invariant; partitioning breaks `mage ci`-green-between-droplets.
+- **No `RequireChildrenDone → RequireChildrenComplete` rename.** See "RequireChildrenDone field" section above. If a future drop wants to fully purge the word `Done`, it does so explicitly.
+- **`main/PLAN.md` § 19.2 vs no-migration constraint:** PROOF Round 1 finding 5 noted that `main/PLAN.md` § 19.2 still names `internal/app/migrations/role_hydration.go` (Round 1 plan also flagged the orchestrator already corrected the line; this Round 2 plan trusts the orchestrator's correction). If the parent PLAN.md still has that text, it's a follow-up to patch out — the executable plan in this file is canonical for Drop 2.
 
 ### Deferrals to later drops
 
@@ -296,4 +380,5 @@ Same-package-blocking: 2.12 owns the resolver in `internal/app`. 2.13 wires CLI 
 - **Drop 4 — dispatcher.** Reads template-bound role + kind axes, fans out subagents.
 - **Drop 4.5 — TUI overhaul.** Includes dotted-address bindings in TUI (resolver lands in Drop 2; TUI consumption lands later).
 - **Future refinement drop — strip `scope` column from `action_items`.** Mirroring `scope` from `kind` lives until then per PLAN.md § 19.2 explicit OOS.
-- **Future refinement drop — MD content cleanup.** Drop 2's Unit B-zero deletion + Unit B state rename will leave stale references in `README.md` / `CLAUDE.md` / `PLAN.md`. **Drop 2 carve-out (dev decision 2026-05-01, this drop only):** builders MAY make trivial in-section MD edits adjacent to their droplet's `paths` if the change is a single-sentence / single-phrase fix obviously broken by their code change. Build-QA (proof + falsification) MUST verify any MD edits via `git diff` and confirm correctness. **Whole-document or whole-section MD sweeps remain out of scope here.** Future drops route MD cleanup to planner+QA, not builder. This carve-out does not establish a precedent.
+- **Future refinement drop — `RequireChildrenDone` rename.** If dev decides the word `Done` should be fully purged from the codebase, that lands in a future refinement drop, not Drop 2.
+- **Future refinement drop — MD content cleanup.** Drop 2's Unit B-zero deletion + Unit B state rename will leave stale references in `README.md` / `CLAUDE.md` / `PLAN.md`. **Drop 2 carve-out (dev decision 2026-05-01, this drop only):** builders MAY make trivial in-section MD edits adjacent to their droplet's `paths` if the change is a single-sentence / single-phrase fix obviously broken by their code change. **Tightened boundary:** delete the broken phrase or replace with `<deleted in Drop 2 — see PLAN.md § 19.3>`. No paraphrasing surrounding sentences. Anything beyond a delete-or-stub is out of scope and routes to a future MD-cleanup refinement drop. Build-QA (proof + falsification) MUST verify any MD edits via `git diff` and confirm correctness. **Whole-document or whole-section MD sweeps remain out of scope here.** Future drops route MD cleanup to planner+QA, not builder. This carve-out does not establish a precedent.
