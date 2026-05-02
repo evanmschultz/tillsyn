@@ -402,10 +402,15 @@ func (s *Service) CreateColumn(ctx context.Context, projectID, name string, posi
 
 // CreateActionItemInput holds input values for create actionItem operations.
 type CreateActionItemInput struct {
-	ProjectID      string
-	ParentID       string
-	Kind           domain.Kind
-	Scope          domain.KindAppliesTo
+	ProjectID string
+	ParentID  string
+	Kind      domain.Kind
+	Scope     domain.KindAppliesTo
+	// Role optionally tags the action item with a closed-enum role (e.g.
+	// builder, qa-proof, planner). Empty string is permitted; non-empty
+	// values must match the closed Role enum or domain.NewActionItem returns
+	// ErrInvalidRole.
+	Role           domain.Role
 	ColumnID       string
 	Title          string
 	Description    string
@@ -422,12 +427,16 @@ type CreateActionItemInput struct {
 
 // UpdateActionItemInput holds input values for update actionItem operations.
 type UpdateActionItemInput struct {
-	ActionItemID  string
-	Title         string
-	Description   string
-	Priority      domain.Priority
-	DueAt         *time.Time
-	Labels        []string
+	ActionItemID string
+	Title        string
+	Description  string
+	Priority     domain.Priority
+	DueAt        *time.Time
+	Labels       []string
+	// Role optionally updates the action item's closed-enum role. Empty
+	// string preserves the existing value (no-op). A non-empty value must
+	// match the closed Role enum or the service returns ErrInvalidRole.
+	Role          domain.Role
 	Metadata      *domain.ActionItemMetadata
 	UpdatedBy     string
 	UpdatedByName string
@@ -568,6 +577,7 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		ParentID:       in.ParentID,
 		Kind:           domain.Kind(kindDef.ID),
 		Scope:          scope,
+		Role:           in.Role,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -770,6 +780,17 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 	}
 	if err := actionItem.UpdateDetails(in.Title, in.Description, priority, in.DueAt, in.Labels, s.clock()); err != nil {
 		return domain.ActionItem{}, err
+	}
+	// Role update: empty input preserves the existing role (no-op). A
+	// non-empty input is normalized + validated against the closed Role
+	// enum; mismatches surface as ErrInvalidRole. Mirrors the validation
+	// performed by domain.NewActionItem on create.
+	if normalized := domain.NormalizeRole(in.Role); normalized != "" {
+		if !domain.IsValidRole(normalized) {
+			return domain.ActionItem{}, domain.ErrInvalidRole
+		}
+		actionItem.Role = normalized
+		actionItem.UpdatedAt = s.clock().UTC()
 	}
 	if in.Metadata != nil {
 		var parent *domain.ActionItem

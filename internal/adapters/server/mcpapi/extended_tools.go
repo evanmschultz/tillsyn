@@ -862,6 +862,7 @@ func registerActionItemTools(
 				ParentID        string                     `json:"parent_id"`
 				Kind            string                     `json:"kind"`
 				Scope           string                     `json:"scope"`
+				Role            string                     `json:"role"`
 				ColumnID        string                     `json:"column_id"`
 				Title           string                     `json:"title"`
 				Description     string                     `json:"description"`
@@ -1029,6 +1030,7 @@ func registerActionItemTools(
 					ParentID:    args.ParentID,
 					Kind:        args.Kind,
 					Scope:       args.Scope,
+					Role:        args.Role,
 					ColumnID:    args.ColumnID,
 					Title:       args.Title,
 					Description: args.Description,
@@ -1086,6 +1088,7 @@ func registerActionItemTools(
 					Priority:     args.Priority,
 					DueAt:        args.DueAt,
 					Labels:       append([]string(nil), args.Labels...),
+					Role:         args.Role,
 					Metadata:     args.Metadata,
 					Actor:        actor,
 				})
@@ -1341,6 +1344,7 @@ func registerActionItemTools(
 				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
 				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+				mcp.WithString("role", mcp.Description("Optional role tag for operation=create|update — see allowed values (closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research). Empty string preserves the existing value on update.")),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
@@ -1394,6 +1398,7 @@ func registerActionItemTools(
 					mcp.WithString("parent_id", mcp.Description("Optional parent actionItem id")),
 					mcp.WithString("kind", mcp.Description("Kind identifier")),
 					mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+					mcp.WithString("role", mcp.Description("Optional role tag — closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research")),
 					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text")),
 					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
@@ -1420,6 +1425,7 @@ func registerActionItemTools(
 					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
+					mcp.WithString("role", mcp.Description("Optional role tag — closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research. Empty preserves prior value.")),
 					mcp.WithObject("metadata", mcp.Description("Optional actionItem metadata object")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),

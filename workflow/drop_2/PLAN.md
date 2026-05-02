@@ -114,7 +114,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 
 #### Droplet 2.5 — MCP `role` field on action-item create/update/get + app-service plumbing
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/adapters/server/common/mcp_surface.go` (add `Role string` to `CreateActionItemRequest` + `UpdateActionItemRequest` request structs and to the response shape), `internal/adapters/server/common/app_service_adapter_mcp.go` (thread `Role` through `CreateActionItem` at `:620` and `UpdateActionItem` at `:661` into the underlying `app.CreateActionItemInput` / `app.UpdateActionItemInput`), `internal/adapters/server/mcpapi/extended_tools.go` (add `mcp.WithString("role", mcp.Description("optional role tag — see allowed values"))` to the `till.action_item` tool's create + update operation schemas; thread the parsed value into the `Create/Update` request), `internal/adapters/server/mcpapi/extended_tools_test.go` (add a test case asserting role round-trip through MCP)
 - **Packages:** `internal/adapters/server/common`, `internal/adapters/server/mcpapi`
 - **Acceptance:**

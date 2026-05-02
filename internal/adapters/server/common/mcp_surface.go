@@ -55,10 +55,15 @@ type UpdateProjectRequest struct {
 
 // CreateActionItemRequest stores transport input for actionItem creation.
 type CreateActionItemRequest struct {
-	ProjectID   string
-	ParentID    string
-	Kind        string
-	Scope       string
+	ProjectID string
+	ParentID  string
+	Kind      string
+	Scope     string
+	// Role optionally tags the new actionItem with a closed-enum role
+	// value. Empty string is permitted; non-empty values must match the
+	// closed Role enum (see domain.IsValidRole) or domain.NewActionItem
+	// returns ErrInvalidRole.
+	Role        string
 	ColumnID    string
 	Title       string
 	Description string
@@ -77,8 +82,12 @@ type UpdateActionItemRequest struct {
 	Priority     string
 	DueAt        string
 	Labels       []string
-	Metadata     *domain.ActionItemMetadata
-	Actor        ActorLeaseTuple
+	// Role optionally updates the closed-enum role value. Empty string
+	// preserves the existing value (no-op); a non-empty value must match
+	// the closed Role enum or the service returns ErrInvalidRole.
+	Role     string
+	Metadata *domain.ActionItemMetadata
+	Actor    ActorLeaseTuple
 }
 
 // MoveActionItemRequest stores transport input for actionItem move operations.

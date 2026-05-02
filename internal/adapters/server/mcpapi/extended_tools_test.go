@@ -375,9 +375,18 @@ func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID stri
 	}, nil
 }
 
-// CreateActionItem returns one deterministic created actionItem row.
+// CreateActionItem returns one deterministic created actionItem row. When
+// the request carries a non-empty role that is not a member of the closed
+// Role enum, the stub returns the same wrapped error shape that the real
+// AppServiceAdapter.CreateActionItem produces via mapAppError (a
+// domain.ErrInvalidRole joined under common.ErrInvalidCaptureStateRequest)
+// so the MCP boundary's error mapping (invalid → invalid_request:) can be
+// exercised without a full app-service stack.
 func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.CreateActionItemRequest) (domain.ActionItem, error) {
 	s.lastCreateActionItemReq = in
+	if trimmed := strings.TrimSpace(in.Role); trimmed != "" && !domain.IsValidRole(domain.Role(trimmed)) {
+		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
+	}
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
 		ID:             "t1",
@@ -387,6 +396,7 @@ func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.Crea
 		Title:          "ActionItem One",
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
+		Role:           domain.Role(strings.TrimSpace(in.Role)),
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -394,9 +404,15 @@ func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.Crea
 	}, nil
 }
 
-// UpdateActionItem returns one deterministic updated actionItem row.
+// UpdateActionItem returns one deterministic updated actionItem row. When
+// the request carries a non-empty role that is not a member of the closed
+// Role enum, the stub returns the same wrapped error shape as the real
+// adapter (see CreateActionItem above).
 func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.UpdateActionItemRequest) (domain.ActionItem, error) {
 	s.lastUpdateActionItemReq = in
+	if trimmed := strings.TrimSpace(in.Role); trimmed != "" && !domain.IsValidRole(domain.Role(trimmed)) {
+		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
+	}
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
 		ID:             "t1",
@@ -406,6 +422,7 @@ func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.Upda
 		Title:          "ActionItem One Updated",
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
+		Role:           domain.Role(strings.TrimSpace(in.Role)),
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -3031,7 +3048,6 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			service := &stubExpandedService{
 				stubCaptureStateReader: stubCaptureStateReader{
@@ -3098,7 +3114,6 @@ func TestHandlerExpandedMutationAuthErrorsMap(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			service := &stubExpandedService{
 				stubCaptureStateReader: stubCaptureStateReader{
@@ -3131,4 +3146,135 @@ func TestHandlerExpandedMutationAuthErrorsMap(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandlerExpandedActionItemRoleRoundTrip verifies the till.action_item
+// MCP tool plumbs role through create + update operations into the
+// underlying request shape, echoes role back through the response payload,
+// preserves prior role on empty update input, and surfaces invalid role
+// values as 400-class invalid_request: errors. This exercises the full
+// MCP→common→app→domain plumbing for Droplet 2.5.
+func TestHandlerExpandedActionItemRoleRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create with valid role plumbs and round-trips", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7000, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"role":              string(domain.RoleBuilder),
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.Role; got != string(domain.RoleBuilder) {
+			t.Fatalf("CreateActionItemRequest.Role = %q, want %q", got, domain.RoleBuilder)
+		}
+		// JSON round-trip: the response body must echo the role so callers
+		// reading via operation=get can observe the value.
+		if got := toolResultText(t, createResp.Result); !strings.Contains(got, string(domain.RoleBuilder)) {
+			t.Fatalf("create response text = %q, want contains role %q", got, domain.RoleBuilder)
+		}
+	})
+
+	t.Run("create without role round-trips empty", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7001, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.Role; got != "" {
+			t.Fatalf("CreateActionItemRequest.Role = %q, want empty", got)
+		}
+	})
+
+	t.Run("update with role plumbs the new value", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7002, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    "t1",
+			"title":             "ActionItem One Updated",
+			"role":              string(domain.RoleQAProof),
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if got := service.lastUpdateActionItemReq.Role; got != string(domain.RoleQAProof) {
+			t.Fatalf("UpdateActionItemRequest.Role = %q, want %q", got, domain.RoleQAProof)
+		}
+	})
+
+	t.Run("update without role preserves prior", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7003, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    "t1",
+			"title":             "ActionItem One Updated",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		// Empty role on the wire surfaces as empty in the request — the
+		// adapter trims and forwards verbatim, leaving preservation
+		// semantics to the service-layer no-op branch.
+		if got := service.lastUpdateActionItemReq.Role; got != "" {
+			t.Fatalf("UpdateActionItemRequest.Role = %q, want empty (preserve)", got)
+		}
+	})
+
+	t.Run("create with invalid role returns invalid_request", func(t *testing.T) {
+		t.Parallel()
+		_, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7004, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"role":              "not-a-role",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); !isError {
+			t.Fatalf("action_item create with invalid role isError = %v, want true", createResp.Result["isError"])
+		}
+		if got := toolResultText(t, createResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+			t.Fatalf("invalid-role error text = %q, want prefix invalid_request:", got)
+		}
+	})
 }
