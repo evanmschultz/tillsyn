@@ -1,9 +1,10 @@
 # DROP_N — Plan QA Proof — Round 1
 
-> **Pedagogical note.** In a real closed drop, this file would have been
-> `git rm`d at the end of Phase 3 (Discuss + Cleanup). It is retained here
-> as a worked example of one plan-QA proof round. Audit of a real drop's
-> plan-QA rounds lives in `git log -- drops/DROP_N_<NAME>/PLAN_QA_PROOF.md`.
+> **Pedagogical note.** This file demonstrates one plan-QA proof round. In a
+> real drop, this file persists in tree as `PLAN_QA_PROOF.md` for round 1;
+> a round 2 review would write a sibling file `PLAN_QA_PROOF_R2.md`, leaving
+> round 1 visible. **Plan-QA files are never `git rm`d** — every adversarial
+> round stays in the tree for audit.
 
 **Verdict:** pass-with-notes (two minor findings; both accepted and folded into a Round 2 planner revision).
 
@@ -38,4 +39,4 @@
 
 Two findings, both small, both accepted. Dev confirmed in chat. Orch writes planner brief: "Planner Round 2: address finding 1 (one-sentence justification of the N.1 compile-check deferral) and finding 2 (clarify N.2 `mage test` exit-code semantics). No structural changes."
 
-Orch `git rm`s this file + `PLAN_QA_FALSIFICATION.md` in the Phase 3 cleanup commit; re-spawns planner for Round 2; Phase 2 repeats against Round 2. Round 2 passed clean — no further findings.
+Orch leaves this file + `PLAN_QA_FALSIFICATION.md` in tree; re-spawns planner for Round 2; Phase 2 repeats against Round 2 by writing fresh `PLAN_QA_PROOF_R2.md` + `PLAN_QA_FALSIFICATION_R2.md` files. Round 2 passed clean — no further findings.
