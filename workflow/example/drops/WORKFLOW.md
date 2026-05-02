@@ -60,13 +60,16 @@ A parent drop cannot close while any sub-drop is incomplete.
 
 ### `_BLOCKERS.toml` — Sibling Blocker Ledger
 
-Every dir with more than one immediate child (sub-drops OR droplets) carries a `_BLOCKERS.toml` file. Scope: **immediate children of this dir only** — cross-level blockers ride on the parent-close-waits-for-child rule, not on this file.
+Created **only when the dir has more than one immediate child** (sub-drops OR droplets). Single-child dirs simply do not have a `_BLOCKERS.toml` — the file is never stamped-then-deleted; it's only created when meaningful. Scope: **immediate children of this dir only** — cross-level blockers ride on the parent-close-waits-for-child rule, not on this file.
 
-Shape:
+The file is **NOT included in `_TEMPLATE/`**. The planner (or orch on the planner's behalf) creates it during Phase 1 step 4 if and only if the planner emitted ≥2 immediate children at that dir. Once created, it is **durable** — never `git rm`d, never deleted (per `feedback_never_remove_workflow_files.md`).
+
+Shape (canonical schema; copy this when creating the file):
 
 ```toml
 # _BLOCKERS.toml — drops/DROP_N_<NAME>/
 # Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
 
 [[blockers]]
 node = "1.3"                 # droplet ID (or sub-drop dir name)
@@ -147,7 +150,7 @@ If `~/.claude/agents/*.md` change in a way that conflicts with the override (e.g
 3. Planner decides: decompose into **droplets** directly OR decompose into **sub-drops** that will themselves be planned.
    - **Droplets**: fills `## Planner` section in the drop's `PLAN.md` with droplets (`N.1`, `N.2`, …), each with `paths`, `packages`, `acceptance`, `blocked_by`, `state: todo`.
    - **Sub-drops**: fills `## Planner` section with sub-drop container rows (`N.1`, `N.2`, …), each with a stub directory reference. Orch then loops Phase 1 for each sub-drop, spawning a sub-planner per sub-drop. Sub-planners run in parallel when their scope doesn't overlap.
-4. Planner returns control. Orch commits the plan (`docs(drop-N): planner decompose into K droplets` or `... into K sub-drops`). **If the planner emitted ≤1 immediate child at this dir** (single droplet, or single sub-drop), **orch `git rm`s the template-stamped `_BLOCKERS.toml`** in the same commit — the sibling-blocker ledger is present only at dirs with >1 immediate child (see § "`_BLOCKERS.toml` — Sibling Blocker Ledger"). Multi-child dirs: orch leaves the file in place for the planner to populate (or planner has already populated it inline with the plan).
+4. Planner returns control. Orch commits the plan (`docs(drop-N): planner decompose into K droplets` or `... into K sub-drops`). **If the planner emitted ≥2 immediate children at this dir**, orch creates `_BLOCKERS.toml` (or leaves it in place if the planner already created and populated it inline) — see § "`_BLOCKERS.toml` — Sibling Blocker Ledger" for schema. Single-child dirs do not get a `_BLOCKERS.toml`. **Files in `workflow/drop_N/` are never `git rm`d** — files that don't apply are simply not created (per `feedback_never_remove_workflow_files.md`).
 5. **Droplets sharing a package MUST have explicit `blocked_by`** between them. A package is one compile unit; parallel builders on the same package trip over each other's test runs. Plan QA (Phase 2) attacks missing blockers.
 6. Move to Phase 2.
 
