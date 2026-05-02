@@ -1942,12 +1942,17 @@ func sanitizeStateTemplates(in []StateTemplate) []StateTemplate {
 // normalizeStateID normalizes a column display name into its canonical state-id slug.
 // Strict-canonical: returns canonical state IDs (todo, in_progress, complete, failed,
 // archived) when the input slug matches; otherwise returns the slugified form for
-// non-state columns. Legacy aliases (done, completed, progress, in-progress, doing)
-// are NOT coerced to canonical — they slugify through to themselves and downstream
-// callers reject them at the state-machine boundary.
+// non-state columns. Legacy aliases (done, completed, progress, doing, in-progress)
+// are REJECTED with an empty-string return — callers test the empty passthrough
+// as the unknown-state error path. Note: "to-do" remains a kebab-spelled canonical
+// (matches "to_do" after slug → maps to "todo") and is NOT a legacy alias.
 func normalizeStateID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
+		return ""
+	}
+	switch name {
+	case "done", "completed", "progress", "doing", "in-progress":
 		return ""
 	}
 	var b strings.Builder

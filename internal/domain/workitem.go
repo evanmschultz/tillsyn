@@ -84,6 +84,25 @@ type ChecklistItem struct {
 	Complete bool   `json:"complete"`
 }
 
+// UnmarshalJSON enforces strict-canonical JSON keys on ChecklistItem.
+// The legacy completion key "done" is rejected explicitly; only the canonical
+// "complete" key is honored. Stdlib encoding/json silently ignores unknown
+// keys by default, which would silently downgrade a legacy {"done":true}
+// payload to ChecklistItem{Complete:false} — the strict-canonical contract
+// requires a hard error so callers fix the source rather than absorb the
+// silent loss.
+func (c *ChecklistItem) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, hasLegacy := raw["done"]; hasLegacy {
+		return fmt.Errorf("checklist item: legacy %q key rejected, use %q (strict-canonical)", "done", "complete")
+	}
+	type alias ChecklistItem
+	return json.Unmarshal(data, (*alias)(c))
+}
+
 // CompletionPolicy controls parent/child completion requirements.
 type CompletionPolicy struct {
 	RequireChildrenComplete bool `json:"require_children_complete"`

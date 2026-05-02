@@ -2,6 +2,8 @@ package domain
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -452,6 +454,69 @@ func TestIsTerminalState(t *testing.T) {
 	}
 	if IsTerminalState(StateArchived) {
 		t.Fatal("archived should not be terminal")
+	}
+}
+
+// TestChecklistItemUnmarshalRejectsLegacyDoneKey verifies that ChecklistItem JSON
+// decode is strict-canonical: only the canonical "complete" key is honored, and
+// the legacy "done" key produces an explicit error rather than being silently
+// dropped to a zero-value Complete field.
+func TestChecklistItemUnmarshalRejectsLegacyDoneKey(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  string
+		wantErr  bool
+		errMatch string
+		want     ChecklistItem
+	}{
+		{
+			name:    "canonical complete=false decodes",
+			payload: `{"id":"x","text":"y","complete":false}`,
+			want:    ChecklistItem{ID: "x", Text: "y", Complete: false},
+		},
+		{
+			name:    "canonical complete=true decodes",
+			payload: `{"id":"x","text":"y","complete":true}`,
+			want:    ChecklistItem{ID: "x", Text: "y", Complete: true},
+		},
+		{
+			name:    "missing completion key defaults to Complete=false",
+			payload: `{"id":"x","text":"y"}`,
+			want:    ChecklistItem{ID: "x", Text: "y", Complete: false},
+		},
+		{
+			name:     "legacy done=true rejected",
+			payload:  `{"id":"x","text":"y","done":true}`,
+			wantErr:  true,
+			errMatch: "legacy",
+		},
+		{
+			name:     "legacy done=false rejected",
+			payload:  `{"id":"x","text":"y","done":false}`,
+			wantErr:  true,
+			errMatch: "legacy",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got ChecklistItem
+			err := json.Unmarshal([]byte(tc.payload), &got)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Unmarshal(%q) error = nil, want error", tc.payload)
+				}
+				if tc.errMatch != "" && !strings.Contains(err.Error(), tc.errMatch) {
+					t.Fatalf("Unmarshal(%q) error = %q, want substring %q", tc.payload, err.Error(), tc.errMatch)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unmarshal(%q) error = %v, want nil", tc.payload, err)
+			}
+			if got != tc.want {
+				t.Fatalf("Unmarshal(%q) = %#v, want %#v", tc.payload, got, tc.want)
+			}
+		})
 	}
 }
 

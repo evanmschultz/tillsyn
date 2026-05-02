@@ -17933,11 +17933,16 @@ func (m Model) subtasksForParent(parentID string) []domain.ActionItem {
 
 // normalizeColumnStateID canonicalizes column names into lifecycle-state identifiers.
 // Strict-canonical: only canonical inputs (todo, in_progress, complete, archived,
-// failed) round-trip; legacy aliases (done, completed, progress, in-progress, doing)
-// slug through to themselves and downstream callers reject them.
+// failed) round-trip; legacy aliases (done, completed, progress, doing, in-progress)
+// are REJECTED with an empty-string return — callers test the empty passthrough
+// as the unknown-state error path.
 func normalizeColumnStateID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
+		return ""
+	}
+	switch name {
+	case "done", "completed", "progress", "doing", "in-progress":
 		return ""
 	}
 	var b strings.Builder

@@ -356,3 +356,51 @@ Droplet 2.7 flipped `**State:** todo` → `**State:** in_progress` at start of r
 ## Hylla Feedback
 
 N/A — task touched 23 Go files for surgical state-vocabulary renames + 1 TOML config example + 2 MD edits (PLAN.md state-flip + this worklog append). The investigation was driven by `git grep` for known symbol/literal patterns and `Read` for context around each cite. Hylla queries were not the right shape for "find every occurrence of these 6 symbol names + 4 string literals across 23 files in known packages" — `git grep` is the natural fit for whole-tree literal sweeps. Zero ergonomic gripes for this droplet.
+
+## Droplet 2.7 — Round 2
+
+**Outcome:** success. Cleanup pass within Droplet 2.7 — Droplet's PLAN.md state stays at `done` from Round 1. Two PLAN-vs-implementation drifts surfaced by Round 1 build-QA tightened to match the strict-canonical contract in PLAN.md `:222` and `:224`.
+
+**Drifts fixed:**
+
+1. **Drift 1 — `ChecklistItem` JSON decoder rejects legacy `"done"` key (PLAN.md `:224`).** Stdlib `encoding/json` silently ignores unknown keys, so `{"id":"x","text":"y","done":true}` decoded to `ChecklistItem{Complete:false}` — silent drop, no error. PLAN required a hard error. Added `func (c *ChecklistItem) UnmarshalJSON(data []byte) error` on `*ChecklistItem` in `internal/domain/workitem.go`. Pattern: decode into `map[string]json.RawMessage`, error if `"done"` key present, else decode via type alias to break the recursion cycle.
+2. **Drift 2 — slug-style normalizers reject legacy state literals (PLAN.md `:222`).** Round 1's design-judgment-call #3 left legacy literals (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`) slugifying through to themselves (e.g. `"done"` → `"done"`), which gave callers a false-positive "valid slug" return. PLAN required the unknown-state error path. Added a pre-slug literal switch at the top of `normalizeStateID` (`internal/app/service.go`), `normalizeStateLikeID` (`internal/adapters/server/common/app_service_adapter_mcp.go`), and `normalizeColumnStateID` (`internal/tui/model.go`) — legacy literals now return `""` (the empty/unknown-state sentinel matching the function's existing unknown return path). Custom column names (`"Backlog"`, `"My Custom Column"`, etc.) preserve through slugification unchanged.
+
+**Files modified:**
+
+- `internal/domain/workitem.go` — added `UnmarshalJSON` method on `*ChecklistItem` (+19 LOC).
+- `internal/domain/domain_test.go` — added `encoding/json` + `strings` imports; added `TestChecklistItemUnmarshalRejectsLegacyDoneKey` (+62 LOC, 5 sub-test cases).
+- `internal/app/service.go` — added pre-slug literal switch at top of `normalizeStateID`; updated doc-comment (+5 LOC, doc-comment touched).
+- `internal/app/service_test.go` — added `TestNormalizeStateIDStrictCanonicalRejectsLegacyLiterals` (+38 LOC, 17 sub-test cases including 5 canonical, 1 kebab-canonical (`to-do`), 2 display-name canonicals, 6 legacy rejections, 1 uppercase-Done legacy, 1 whitespace-wrapped legacy, 1 custom column preserved, 1 empty).
+- `internal/adapters/server/common/app_service_adapter_mcp.go` — added pre-slug literal switch at top of `normalizeStateLikeID`; updated doc-comment (+5 LOC, doc-comment touched).
+- `internal/adapters/server/common/app_service_adapter_mcp_helpers_test.go` — added `TestNormalizeStateLikeIDStrictCanonicalRejectsLegacyLiterals` (+37 LOC, 16 sub-test cases).
+- `internal/tui/model.go` — added pre-slug literal switch at top of `normalizeColumnStateID`; updated doc-comment (+5 LOC, doc-comment touched).
+- `internal/tui/model_test.go` — added `TestNormalizeColumnStateIDStrictCanonicalRejectsLegacyLiterals` (+37 LOC, 17 sub-test cases).
+
+**Tests flipped from coercion to rejection:** **0.** No existing tests asserted the slug-passthrough behavior — Round 1 had already migrated all legacy-coercion assertions to strict-canonical. The fall-through chain (`legacy → slug-passthrough → lifecycleStateForColumnID default arm → StateTodo`) and the new chain (`legacy → empty pre-reject → lifecycleStateForColumnID default arm → StateTodo`) produce the same end-state at the state-machine boundary, so no downstream test required flipping. The new tests assert the function's direct return at the correct strictness level, which Round 1 left untested.
+
+**Scope decision — `"to-do"` is NOT a legacy literal.** The Round 2 spawn prompt listed `"to-do"` among the legacy literals, but PLAN.md `:222` lists only 5 (`"done"`, `"completed"`, `"progress"`, `"doing"`, `"in-progress"`). The existing canonical mapping treats `"to-do"` as a kebab-spelled equivalent of `"todo"` (slugifies to `"to_do"`, matches the canonical `case "to_do", "todo": return "todo"` arm). Following PLAN.md as the authoritative spec — surfaced this prompt-vs-PLAN delta explicitly. Tests assert `"to-do" → "todo"` (canonical preservation) for all three normalizers.
+
+**Mage gate results (incremental):**
+
+- `mage test-pkg ./internal/domain` — green. **109 tests passed** (was 103 pre-Round-2; +6 from `TestChecklistItemUnmarshalRejectsLegacyDoneKey` parent + 5 sub-cases).
+- `mage test-pkg ./internal/app` — green. **206 tests passed** (was 188 pre-Round-2; +18 from `TestNormalizeStateIDStrictCanonicalRejectsLegacyLiterals` parent + 17 sub-cases).
+- `mage test-pkg ./internal/adapters/server/common` — green. **140 tests passed** (was 123 pre-Round-2; +17 from `TestNormalizeStateLikeIDStrictCanonicalRejectsLegacyLiterals` parent + 16 sub-cases).
+- `mage test-pkg ./internal/tui` — green. **372 tests passed** (was 354 pre-Round-2; +18 from `TestNormalizeColumnStateIDStrictCanonicalRejectsLegacyLiterals` parent + 17 sub-cases).
+
+**Final `mage ci`:** **green**. **1391 tests passed across 19 packages** (was 1332 in Round 1; +59 new tests cumulative). All packages ≥ 70.0% coverage (TUI 70.0% on threshold, internal/app 71.6%, internal/domain 79.4%, internal/adapters/server/common 73.4%). Build of `./cmd/till` succeeded. Exit code 0.
+
+**Design judgment calls:**
+
+1. **Legacy-rejection return value: empty string `""` (not a sentinel error).** All three normalizers already had an empty-string return for the empty-input case; legacy rejection extends that pattern. Empty is the natural "unknown / not a canonical state-id" sentinel — downstream callers (`lifecycleStateForColumnID`, `actionItemLifecycleStateForColumnName`, `lifecycleStateForColumnName`) all hit their `default` arm on `""` and return either `StateTodo` (TUI / app) or `""` (common adapter). End-state behavior matches Round 1's slug-passthrough fall-through, but the function's direct return is now honest about the rejection.
+2. **`UnmarshalJSON` pattern: map decode + alias-type recursive decode.** Standard idiom from Go's encoding/json: declaring `type alias ChecklistItem` inside the function gives a fresh type without the `UnmarshalJSON` method, breaking the infinite-recursion risk. The first `json.Unmarshal` into `map[string]json.RawMessage` is required because Go's struct decoder can't be configured to error on unknown keys without a custom hook (`json.Decoder.DisallowUnknownFields` is on the decoder, not on per-field unmarshalers, and using it here would change behavior for ALL fields not just `done`). Map-based detection is surgical: it only flags `"done"`, leaving forward-compat unknown keys (e.g. future fields) silently dropped per stdlib default.
+3. **Test placement.** Drift 1 test in `internal/domain/domain_test.go` (existing 28k-line file with all checklist-related tests). Drift 2 tests in three different files matching each normalizer's package: `service_test.go` (app), `app_service_adapter_mcp_helpers_test.go` (common helpers location for sub-`AppServiceAdapter`-method tests), `model_test.go` (TUI). Each test is table-driven, uses `t.Run` with descriptive names, and follows the post-Round-2 forvar-clean convention (no `tc := tc`).
+4. **Custom column name preservation verified per normalizer.** Each test includes at least one custom-column case (`"My Custom Column" → "my_custom_column"`, `"Backlog" → "backlog"`) to prove the pre-slug rejection is narrow — only the 5 specific legacy literals are rejected, every other input still slugifies normally.
+
+**Out-of-scope items respected:** PLAN.md `:222` and `:224` language NOT touched. PLAN.md state for Droplet 2.7 NOT flipped (stays at `done` from Round 1). No file outside the listed scope edited. No migration code added. No `mage install` invoked.
+
+**PLAN.md state confirmation:** Droplet 2.7 stays at `**State:** done` from Round 1. Round 2 is a same-droplet cleanup pass within the same droplet's lifecycle.
+
+## Hylla Feedback
+
+N/A — task touched only Go production + test code in 4 packages, all 8 files known-by-name from the spawn prompt. The investigation used `Read` for whole-file context and `rg`/`grep` (via Bash) for literal pattern sweeps (`normalizeStateID|normalizeStateLikeID|normalizeColumnStateID` and `"in-progress"|"doing"|"completed"`). Hylla queries were not the right shape for "find direct unit tests of these three functions and the existing legacy-literal test cases" — that's a literal-pattern sweep, naturally fast via `rg`. No symbol-search ambiguity, no stale-ingest concern. Zero ergonomic gripes for this round.
