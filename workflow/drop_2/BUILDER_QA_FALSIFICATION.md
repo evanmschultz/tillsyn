@@ -1051,3 +1051,128 @@ All 14 required attack vectors REFUTED. No counterexample produced. The role col
 ### Hylla Feedback
 
 N/A — task touched only Go files in `internal/adapters/storage/sqlite/repo.go`, `repo_test.go`, and one snapshot.go read for the snapshot-serialization vector. All reads done via `Read` + `git grep` + `git diff`. No Hylla queries issued during this falsification round — the modified surface is localized to one file (repo.go) and one test file, both fully read from the working tree against a known-stale Hylla index (changes uncommitted). No Hylla miss to report.
+
+## Droplet 2.5 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-02
+**Scope:** MCP `role` field plumbing across four layers — extended_tools (MCP wire) → mcp_surface (CreateActionItemRequest / UpdateActionItemRequest) → app_service_adapter_mcp (translation) → app.service.Service.Create/UpdateActionItem → domain.NewActionItem / actionItem.Role.
+
+The builder claims that role is plumbed through every layer for both create and update, with create-time domain-validation, update-time service-layer validation, empty-on-update-preserves-prior semantics, schema parity on `till.action_item` + legacy `till.create_task` + `till.update_task`, and a 400-class invalid_request error on invalid role. 16 attack vectors run; 0 blocking counterexamples constructed. Local `mage ci` reproduces 1320 / 1320 tests across 19 packages, all coverage thresholds met, build green.
+
+### 1. Layer-thread loss attack — REFUTED
+
+Hand-traced create path: MCP wire `"role"` → `args.Role string \`json:"role"\`` (extended_tools.go:865) → `common.CreateActionItemRequest.Role` (extended_tools.go:1033, mcp_surface.go:62) → `app.CreateActionItemInput.Role = domain.Role(strings.TrimSpace(in.Role))` (app_service_adapter_mcp.go:641) → `domain.ActionItemInput.Role = in.Role` (service.go:580) → `domain.NewActionItem` normalizes + validates (verified Droplet 2.3) → `actionItem.Role` set on returned struct → `s.repo.CreateActionItem` writes via SQLite (Droplet 2.4 INSERT). Every layer transcribes `role` straight through. No layer drops, re-types incorrectly, or shadows. Update path mirror: extended_tools.go:1091 → mcp_surface.go:88 → app_service_adapter_mcp.go:685 → service.go:788-794 (NormalizeRole + IsValidRole + assign) → s.repo.UpdateActionItem. No counterexample.
+
+### 2. Update-empty preserves prior — REFUTED
+
+Read service.go:752-794 line-by-line. `UpdateActionItem` calls `s.repo.GetActionItem(ctx, in.ActionItemID)` at :754, populating `actionItem.Role` with the persisted prior value. The role-update block at :788-794 is `if normalized := domain.NormalizeRole(in.Role); normalized != "" { ... }` — the `!= ""` guard short-circuits the entire block when input is empty. `actionItem.Role` is NEVER overwritten in the empty-input case; it retains the value loaded from `GetActionItem`. Then `s.repo.UpdateActionItem(ctx, actionItem)` writes back the unchanged role (Droplet 2.4's UPDATE SET clause is unconditional, but `actionItem.Role` carries the prior value, so it's a write-same-value no-op). REFUTED — empty-on-update is a true preserve-prior, not a silent overwrite-to-empty.
+
+### 3. Update-empty bypasses validation — truth table — REFUTED
+
+Constructed full truth table for the role-update branch:
+
+- **wire-empty + prior-empty:** `NormalizeRole("") == ""` → block skipped → `actionItem.Role` stays `""`. ✓
+- **wire-empty + prior-valid (e.g. RoleBuilder):** block skipped → `actionItem.Role` stays `RoleBuilder`. ✓
+- **wire-non-empty + prior-empty (e.g. RoleQAProof):** `NormalizeRole("qa-proof") != ""` → `IsValidRole` true → `actionItem.Role = "qa-proof"`. ✓
+- **wire-non-empty + prior-valid (e.g. update RoleBuilder → RoleQAProof):** block runs → `actionItem.Role = "qa-proof"`. ✓ (overwrite is the intended semantic).
+- **wire-invalid (e.g. "not-a-role"):** `IsValidRole` false → returns `domain.ErrInvalidRole` before assignment. ✓
+- **wire-whitespace-only:** `NormalizeRole("   ")` returns `""` (TrimSpace), block skipped → preserve. ✓ (whitespace-only is a no-op, equivalent to wire-empty.)
+
+All six rows behave correctly. REFUTED.
+
+### 4. Invalid role error type drift vs ErrInvalidKind — REFUTED
+
+Read app_service_adapter.go:632-657 `mapAppError`. The `case` branch at :631-651 lists `errors.Is(err, domain.ErrInvalidKind)` (line 643) and `errors.Is(err, domain.ErrInvalidRole)` (line 650) **in the same `case`** — both fall through to `return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))`. `ErrInvalidCaptureStateRequest` is the canonical invalid_request: 400-class trigger consumed by handler.go's MCP error mapper. `ErrInvalidRole` and `ErrInvalidKind` produce byte-identical wire-shape errors. REFUTED.
+
+### 5. Stub-vs-production divergence — REFUTED
+
+Read stubExpandedService.CreateActionItem at extended_tools_test.go:386-403 and UpdateActionItem at :411-429. Stub returns `errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)` on invalid input. Real production path is `domain.NewActionItem` returns `domain.ErrInvalidRole` → `Service.CreateActionItem` propagates → `AppServiceAdapter.CreateActionItem` calls `mapAppError("create_task", err)` → produces `fmt.Errorf("create_task: %w", errors.Join(ErrInvalidCaptureStateRequest, ErrInvalidRole))`. Stub joins the same two sentinels under the same `errors.Join`; the only divergence is the `%s: ` prefix from `fmt.Errorf` (operation name). The MCP error mapper at handler.go matches on `errors.Is(err, ErrInvalidCaptureStateRequest)` — both shapes match. The stub is a faithful production-shape simulator for the invalid-role path. REFUTED on integration parity. The single observable wire-shape detail (`invalid_request:` prefix) is asserted by the test at :3274-3276.
+
+### 6. Schema parity — other tools needing role — REFUTED
+
+`git grep -n 'mcp.WithString("kind"'` returns four hits:
+
+- `extended_tools.go:1345` — till.action_item kind schema.
+- `extended_tools.go:1399` — till.create_task kind schema.
+- `handler.go:567` — till.attention raise schema (attention kind, NOT action-item kind).
+- `handler.go:629` — till.attention claim/list schema (attention kind).
+
+Both legacy attention-kind hits in handler.go are for the attention-item domain (different model — attention items have their own `kind` enum disjoint from action_item.Kind). The action_item role field belongs only on action-item create/update tools. Builder added role to all three: till.action_item (line 1347), till.create_task (line 1401), till.update_task (line 1428). REFUTED — exhaustive coverage; no missing tool.
+
+### 7. JSON tag drift — schema "role" vs unmarshal field — REFUTED
+
+`mcp.WithString("role", ...)` schema name is the JSON key the MCP framework will look for. The args struct at extended_tools.go:865 declares `Role string \`json:"role"\`` — matching JSON tag. `req.BindArguments(&args)` (line 896) uses Go's json unmarshal which honors the `json:"role"` tag. Schema name and unmarshal target are identical. REFUTED — no silent drop.
+
+### 8. Args-struct field tag — REFUTED
+
+Verified extended_tools.go:865: `Role            string                     \`json:"role"\``. Tag string is exactly `json:"role"` (lowercase, no extra options). Matches the schema. REFUTED.
+
+### 9. GetActionItem response includes role — REFUTED
+
+Read get-branch at extended_tools.go:905-918: handler calls `tasks.GetActionItem(ctx, actionItemID)` returning `domain.ActionItem`, then `mcp.NewToolResultJSON(actionItem)` marshals the whole struct. `domain.ActionItem.Role` exists post-Droplet-2.3 with no `json:"-"` exclusion tag, so default Go marshaling emits `"Role":"..."` in the response payload. The new Round 1 test at extended_tools_test.go:3196-3198 asserts `strings.Contains(toolResultText(...), string(domain.RoleBuilder))` to confirm the role lands in the response text. REFUTED.
+
+### 10. Empty-role validation short-circuit — REFUTED
+
+`domain.NewActionItem` (verified Droplet 2.3 attack #2) short-circuits empty role: `in.Role = NormalizeRole(in.Role); if in.Role != "" && !IsValidRole(in.Role) { return ErrInvalidRole }`. The app-service create path (`Service.CreateActionItem` at service.go:577) does NOT pre-validate role before passing to NewActionItem — domain owns validation. Update path at service.go:788 does its own NormalizeRole + IsValidRole check (which mirrors NewActionItem's logic). No double-validation, no double-rejection. Empty role on create is permitted (zero-value); empty on update is preserve-prior. REFUTED.
+
+### 11. Hidden role consumer in CreateActionItemInput / UpdateActionItemInput literals — REFUTED
+
+`git grep -n "CreateActionItemInput{" -- '*.go'` returns 39 hits across `cmd/till`, `internal/adapters/server/*`, `internal/adapters/storage/sqlite`, `internal/app`, `internal/tui`. All are named-field struct literals (`CreateActionItemInput{ProjectID: ..., Title: ...}`) — Go's named-field syntax tolerates an added field by zero-defaulting it. `git grep -n "UpdateActionItemInput{" -- '*.go'` returns 22 hits, all named-field literals. None construct via positional literal. Adding `Role domain.Role` to either struct is non-breaking. The struct-literal that DOES set Role on update path (mcpapi extended_tools.go:1085-1093) is updated by the builder. `mage ci` 1320/1320 confirms no compile or test break. REFUTED.
+
+### 12. `tc := tc` absence in role test — REFUTED
+
+`git grep "tc := tc" internal/adapters/server/mcpapi/extended_tools_test.go` returns empty. Round 2 cleanup removed two pre-existing `tc := tc` lines at the prior :3051 and :3118 sites (per worklog). The new `TestHandlerExpandedActionItemRoleRoundTrip` at :3155-3280 uses five direct `t.Run(literal, ...)` calls (NOT a table-driven `for _, tc := range cases` loop), so the forvar-shadow concern is moot for the new test. REFUTED — clean from Round 1.
+
+### 13. `mage ci` re-run — REFUTED
+
+Reviewer ran `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. Tail capture:
+
+```
+Test summary
+  tests: 1320
+  passed: 1320
+  failed: 0
+  skipped: 0
+  packages: 19
+  pkg passed: 19
+  pkg failed: 0
+  pkg skipped: 0
+
+[SUCCESS] All tests passed
+[SUCCESS] Coverage threshold met
+[SUCCESS] Built till from ./cmd/till
+```
+
+Per-package coverage observed (lowest five): `internal/tui` 70.0%, `internal/app` 71.5%, `internal/adapters/server/mcpapi` 72.4%, `internal/adapters/auth/autentauth` 73.0%, `internal/adapters/server/common` 73.0%. All ≥ 70.0% threshold. Build green. Exit 0. Builder's claim reproduced exactly. REFUTED.
+
+### 14. Snapshot drift — REFUTED
+
+`internal/app/snapshot.go:57-83` declares `SnapshotActionItem` with explicit JSON tags on each field. Field set verified: `ID`, `ProjectID`, `ParentID`, `Kind`, `Scope`, `LifecycleState`, `ColumnID`, `Position`, `Title`, `Description`, `Priority`, `DueAt`, `Labels`, `Metadata`, `CreatedByActor`, `CreatedByName`, `UpdatedByActor`, `UpdatedByName`, `UpdatedByType`, `CreatedAt`, `UpdatedAt`, `StartedAt`, `CompletedAt`, `ArchivedAt`. **No `Role` field** — Droplet 2.6 owns adding it. Adding role to `domain.ActionItem` (Droplet 2.3) and to MCP request/response (Droplet 2.5) does NOT affect snapshot serialization, because `snapshotActionItemFromDomain` (snapshot.go:1057) and `(t SnapshotActionItem) toDomain()` (:1263) explicitly project field-by-field. `mage testPkg ./internal/app` returns 176/176. REFUTED.
+
+### 15. Coverage threshold attack — REFUTED
+
+`internal/adapters/server/mcpapi` package coverage: 72.4% (≥ 70.0%). Pre-Droplet-2.5 baseline was 72.3% (per Droplet 2.4 worklog table). The +135 LOC test addition raised coverage by 0.1pp despite the +6 LOC production code add (the new test exercises the entire create+update wire path including error mapping). `internal/adapters/server/common` package held 73.0%. `internal/app` held 71.5%. No package dipped below threshold. REFUTED.
+
+### 16. Forvar in role test code — REFUTED
+
+`git grep "tc := tc" internal/adapters/server/mcpapi/extended_tools_test.go` returns empty across the entire file. New test uses no `for _, tc := range cases` loop. Existing pre-Round-2 forvar lines are cleaned. REFUTED.
+
+### Counterexamples
+
+None constructed. All 16 attack vectors REFUTED.
+
+### Minor Nits (Not Blocking)
+
+- **No service-layer test exercises `Service.UpdateActionItem` with non-empty role.** The MCP-stub `TestHandlerExpandedActionItemRoleRoundTrip` only verifies the `lastUpdateActionItemReq.Role` field on the stub (wire-level plumbing), not the actual service-layer normalize+validate+assign block at service.go:788-794. The block is correct by inspection (mirrors `domain.NewActionItem`'s known-good pattern) and `mage ci` is green, but a dedicated `internal/app` table-driven test on `Service.UpdateActionItem` with role={empty/valid/invalid/whitespace} would close the coverage loop. Not blocking for Droplet 2.5 — the wire-path round-trip test plus `domain.NewActionItem`'s tested validation give defense-in-depth, and the 71.5% package coverage threshold is met.
+- **Role schema description mentions empty-preserves-prior on the `till.action_item` line but legacy `till.create_task` description omits the "preserves prior" note.** `till.create_task` is create-only so the note doesn't apply (empty-on-create is permitted-zero-value, not preserve-prior). The legacy `till.update_task` description at :1428 includes the note. Convention-consistent, not a bug.
+
+### Verdict Summary
+
+**PASS.** Builder's claim that Droplet 2.5 (MCP `role` field plumbing across four layers — extended_tools wire → mcp_surface request → app_service_adapter_mcp translation → app.Service Create/Update → domain.NewActionItem / actionItem.Role mutation) is clean and `mage ci` is green is fully verified. All 16 attack vectors REFUTED. Local `mage ci` reproduces 1320 / 1320 tests across 19 packages / all coverage ≥ 70.0% / build green / exit 0. The role field threads losslessly: `args.Role string \`json:"role"\`` matches `mcp.WithString("role", ...)` schema, `common.CreateActionItemRequest.Role` and `common.UpdateActionItemRequest.Role` are added on transport, `app_service_adapter_mcp.go` trims and casts to `domain.Role`, `app.CreateActionItemInput.Role` and `app.UpdateActionItemInput.Role` are typed `domain.Role`, `Service.CreateActionItem` passes through to `domain.NewActionItem`, `Service.UpdateActionItem` does its own normalize+validate+assign at service.go:788-794. Empty-on-update is a true preserve-prior (verified by line-by-line trace: actionItem loaded from `s.repo.GetActionItem` retains its prior Role; the role-update block at :788 is gated `if normalized != ""`, skipped when wire-empty; `s.repo.UpdateActionItem` writes back the loaded-but-unmodified role). Truth-table for {wire-empty/non-empty/invalid/whitespace} × {prior-empty/valid} verified all six rows correct. `ErrInvalidRole` shares the SAME `mapAppError` case branch as `ErrInvalidKind` (line 643 vs 650) — byte-identical wire shape via `errors.Join(ErrInvalidCaptureStateRequest, ...)` → `invalid_request:` 400-class. Schema parity confirmed across `till.action_item`, legacy `till.create_task`, legacy `till.update_task`. Snapshot serialization untouched (Droplet 2.6 owns that). 39 `CreateActionItemInput{...}` / 22 `UpdateActionItemInput{...}` named-field literals across the codebase — all non-breaking under Go's named-field-with-zero-default rule. No `tc := tc` lines in the new test (Round 1 was clean by design — direct `t.Run` calls, no table-driven loop).
+
+No blocking counterexamples. One minor coverage nit logged (no service-layer-direct test for Service.UpdateActionItem role path) — not blocking, the wire-stub test + domain validation give defense-in-depth. Droplet 2.5 is ready for closeout.
+
+### Hylla Feedback
+
+N/A — Hylla queries not issued during this falsification round. The reviewed surface is five files (`internal/app/service.go`, `internal/adapters/server/common/mcp_surface.go`, `internal/adapters/server/common/app_service_adapter.go`, `internal/adapters/server/common/app_service_adapter_mcp.go`, `internal/adapters/server/mcpapi/extended_tools.go`, plus the test file) all with uncommitted diffs, so Hylla's index would be stale on every queried symbol. Investigation used `git diff` for layer-by-layer change tracking, `Read` for full-context line tracing, and `git grep` for hidden-consumer enumeration. Code-local navigation against an actively-edited diff is the right tool fit; Hylla shines on whole-tree symbol queries against a settled index. No miss to report.
