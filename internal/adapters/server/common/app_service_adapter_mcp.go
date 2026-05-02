@@ -819,7 +819,7 @@ func (a *AppServiceAdapter) resolveActionItemColumnIDForState(ctx context.Contex
 
 func normalizeActionItemStateInput(raw string) (domain.LifecycleState, error) {
 	switch actionItemLifecycleStateForColumnName(raw) {
-	case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateFailed:
+	case domain.StateTodo, domain.StateInProgress, domain.StateComplete, domain.StateFailed:
 		return actionItemLifecycleStateForColumnName(raw), nil
 	case domain.StateArchived:
 		return "", fmt.Errorf("state %q is unsupported for move_state; use delete/restore for archive flows: %w", strings.TrimSpace(raw), ErrInvalidCaptureStateRequest)
@@ -852,10 +852,10 @@ func actionItemLifecycleStateForColumnName(name string) domain.LifecycleState {
 	switch normalizeStateLikeID(name) {
 	case "todo":
 		return domain.StateTodo
-	case "progress":
-		return domain.StateProgress
-	case "done":
-		return domain.StateDone
+	case "in_progress":
+		return domain.StateInProgress
+	case "complete":
+		return domain.StateComplete
 	case "failed":
 		return domain.StateFailed
 	case "archived":
@@ -865,37 +865,44 @@ func actionItemLifecycleStateForColumnName(name string) domain.LifecycleState {
 	}
 }
 
+// normalizeStateLikeID slugifies a column display name into its canonical state-id
+// form. Strict-canonical: only canonical inputs (todo, in_progress, complete,
+// failed, archived) round-trip; legacy aliases (done, completed, progress,
+// in-progress, doing) slug through to themselves and downstream callers reject
+// them at the state-machine boundary.
 func normalizeStateLikeID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
 		return ""
 	}
 	var b strings.Builder
-	lastDash := false
+	lastUnderscore := false
 	for _, r := range name {
 		switch {
 		case r >= 'a' && r <= 'z':
 			b.WriteRune(r)
-			lastDash = false
+			lastUnderscore = false
 		case r >= '0' && r <= '9':
 			b.WriteRune(r)
-			lastDash = false
+			lastUnderscore = false
 		default:
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
+			if !lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = true
 			}
 		}
 	}
-	normalized := strings.Trim(b.String(), "-")
+	normalized := strings.Trim(b.String(), "_")
 	switch normalized {
-	case "to-do", "todo":
+	case "to_do", "todo":
 		return "todo"
-	case "in-progress", "progress", "doing":
-		return "progress"
-	case "done", "complete", "completed":
-		return "done"
-	case "archived", "archive":
+	case "in_progress":
+		return "in_progress"
+	case "complete":
+		return "complete"
+	case "failed":
+		return "failed"
+	case "archived":
 		return "archived"
 	default:
 		return normalized

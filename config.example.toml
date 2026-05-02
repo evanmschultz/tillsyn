@@ -39,8 +39,8 @@ group_by = "none"
 # When true, `/` can search across all projects.
 cross_project = false
 include_archived = false
-# Canonical lifecycle states only: todo | progress | done | archived.
-states = ["todo", "progress", "done"]
+# Canonical lifecycle states only: todo | in_progress | complete | archived.
+states = ["todo", "in_progress", "complete"]
 
 [embeddings]
 # Enable semantic/hybrid search indexing and retrieval.

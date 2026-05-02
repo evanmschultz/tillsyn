@@ -215,7 +215,7 @@ func Default(dbPath string) Config {
 		Search: SearchConfig{
 			CrossProject:    false,
 			IncludeArchived: false,
-			States:          []string{"todo", "progress", "done"},
+			States:          []string{"todo", "in_progress", "complete"},
 		},
 		Embeddings: EmbeddingsConfig{
 			Enabled:             false,
@@ -547,7 +547,7 @@ func (c *Config) normalize() {
 		states = append(states, state)
 	}
 	if len(states) == 0 {
-		states = []string{"todo", "progress", "done"}
+		states = []string{"todo", "in_progress", "complete"}
 	}
 	c.Search.States = states
 	c.Embeddings.Provider = strings.TrimSpace(strings.ToLower(c.Embeddings.Provider))
@@ -1089,9 +1089,11 @@ func decodeTrimmedStringList(value any, field string) ([]string, error) {
 	}
 }
 
-// isKnownLifecycleState reports whether the requested condition is satisfied.
+// isKnownLifecycleState reports whether the requested state is canonical.
+// Strict-canonical: legacy aliases (done, completed, progress, in-progress, doing)
+// are not accepted — pre-MVP every caller is the dev.
 func isKnownLifecycleState(state string) bool {
-	return slices.Contains([]string{"todo", "progress", "done", "failed", "archived"}, state)
+	return slices.Contains([]string{"todo", "in_progress", "complete", "failed", "archived"}, state)
 }
 
 // normalizeKeyBinding trims keybinding text and applies fallback defaults.

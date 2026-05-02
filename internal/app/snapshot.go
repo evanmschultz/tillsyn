@@ -417,9 +417,9 @@ func (s *Snapshot) Validate() error {
 			s.ActionItems[i].LifecycleState = t.LifecycleState
 		}
 		switch t.LifecycleState {
-		case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateFailed, domain.StateArchived:
+		case domain.StateTodo, domain.StateInProgress, domain.StateComplete, domain.StateFailed, domain.StateArchived:
 		default:
-			return fmt.Errorf("tasks[%d].lifecycle_state must be todo|progress|done|failed|archived", i)
+			return fmt.Errorf("tasks[%d].lifecycle_state must be todo|in_progress|complete|failed|archived", i)
 		}
 		if t.CreatedAt.IsZero() || t.UpdatedAt.IsZero() {
 			return fmt.Errorf("tasks[%d] timestamps are required", i)

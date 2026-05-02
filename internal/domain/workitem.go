@@ -14,11 +14,11 @@ type LifecycleState string
 
 // Canonical lifecycle states.
 const (
-	StateTodo     LifecycleState = "todo"
-	StateProgress LifecycleState = "progress"
-	StateDone     LifecycleState = "done"
-	StateFailed   LifecycleState = "failed"
-	StateArchived LifecycleState = "archived"
+	StateTodo       LifecycleState = "todo"
+	StateInProgress LifecycleState = "in_progress"
+	StateComplete   LifecycleState = "complete"
+	StateFailed     LifecycleState = "failed"
+	StateArchived   LifecycleState = "archived"
 )
 
 // ActorType describes the actor class that last updated an item.
@@ -79,14 +79,14 @@ const (
 
 // ChecklistItem describes a completion-contract checklist item.
 type ChecklistItem struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
-	Done bool   `json:"done"`
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Complete bool   `json:"complete"`
 }
 
 // CompletionPolicy controls parent/child completion requirements.
 type CompletionPolicy struct {
-	RequireChildrenDone bool `json:"require_children_done"`
+	RequireChildrenComplete bool `json:"require_children_complete"`
 }
 
 // CompletionContract stores start/complete checks and completion evidence.
@@ -144,34 +144,23 @@ type ActionItemMetadata struct {
 	Outcome                  string             `json:"outcome,omitempty"`
 }
 
-// normalizeLifecycleState canonicalizes lifecycle state aliases.
+// normalizeLifecycleState canonicalizes lifecycle state input. Strict-canonical:
+// only canonical values are accepted; legacy aliases (done, completed, progress,
+// in-progress, doing) pass through and fail isValidLifecycleState downstream.
 func normalizeLifecycleState(state LifecycleState) LifecycleState {
-	switch strings.TrimSpace(strings.ToLower(string(state))) {
-	case "to-do", "todo":
-		return StateTodo
-	case "in-progress", "progress", "doing":
-		return StateProgress
-	case "done", "complete", "completed":
-		return StateDone
-	case "failed", "fail":
-		return StateFailed
-	case "archived", "archive":
-		return StateArchived
-	default:
-		return LifecycleState(strings.TrimSpace(strings.ToLower(string(state))))
-	}
+	return LifecycleState(strings.TrimSpace(strings.ToLower(string(state))))
 }
 
 // isValidLifecycleState reports whether the lifecycle state is canonical.
 func isValidLifecycleState(state LifecycleState) bool {
 	state = normalizeLifecycleState(state)
-	return slices.Contains([]LifecycleState{StateTodo, StateProgress, StateDone, StateFailed, StateArchived}, state)
+	return slices.Contains([]LifecycleState{StateTodo, StateInProgress, StateComplete, StateFailed, StateArchived}, state)
 }
 
-// IsTerminalState reports whether a lifecycle state is terminal (done or failed).
+// IsTerminalState reports whether a lifecycle state is terminal (complete or failed).
 func IsTerminalState(state LifecycleState) bool {
 	state = normalizeLifecycleState(state)
-	return state == StateDone || state == StateFailed
+	return state == StateComplete || state == StateFailed
 }
 
 // isValidActorType reports whether actor type is supported.
@@ -377,7 +366,7 @@ func MergeCompletionContract(base CompletionContract, defaults *CompletionContra
 		CompletionEvidence:  mergeStringLists(normalizedBase.CompletionEvidence, normalizedDefaults.CompletionEvidence),
 		CompletionNotes:     normalizedBase.CompletionNotes,
 		Policy: CompletionPolicy{
-			RequireChildrenDone: normalizedBase.Policy.RequireChildrenDone || normalizedDefaults.Policy.RequireChildrenDone,
+			RequireChildrenComplete: normalizedBase.Policy.RequireChildrenComplete || normalizedDefaults.Policy.RequireChildrenComplete,
 		},
 	}
 	if merged.CompletionNotes == "" {

@@ -1558,13 +1558,13 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 	matches, err := svc.SearchActionItemMatches(context.Background(), SearchActionItemsFilter{
 		CrossProject:    true,
 		IncludeArchived: false,
-		States:          []string{"progress"},
+		States:          []string{"in_progress"},
 		Query:           "parser",
 	})
 	if err != nil {
 		t.Fatalf("SearchActionItemMatches() error = %v", err)
 	}
-	if len(matches) != 1 || matches[0].ActionItem.ID != "t2" || matches[0].StateID != "progress" {
+	if len(matches) != 1 || matches[0].ActionItem.ID != "t2" || matches[0].StateID != "in_progress" {
 		t.Fatalf("unexpected active matches %#v", matches)
 	}
 
@@ -2950,7 +2950,7 @@ func TestStateTemplateSanitization(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 sanitized states, got %#v", got)
 	}
-	if got[0].ID != "progress" || got[1].ID != "todo" {
+	if got[0].ID != "in_progress" || got[1].ID != "todo" {
 		t.Fatalf("unexpected sanitized IDs %#v", got)
 	}
 	if got[0].WIPLimit != 0 {
@@ -3000,7 +3000,7 @@ func TestMoveActionItemBlocksWhenStartCriteriaUnmet(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
-				StartCriteria: []domain.ChecklistItem{{ID: "s1", Text: "design reviewed", Done: false}},
+				StartCriteria: []domain.ChecklistItem{{ID: "s1", Text: "design reviewed", Complete: false}},
 			},
 		},
 	}, now)
@@ -3020,7 +3020,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
-	done, _ := domain.NewColumn("c3", project.ID, "Done", 2, 0, now)
+	done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
@@ -3032,14 +3032,14 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 		Position:       0,
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
-				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Done: true}},
+				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Complete: true}},
 				CompletionChecklist: []domain.ChecklistItem{
-					{ID: "k1", Text: "docs updated", Done: true},
+					{ID: "k1", Text: "docs updated", Complete: true},
 				},
-				Policy: domain.CompletionPolicy{RequireChildrenDone: true},
+				Policy: domain.CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)
@@ -3052,7 +3052,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 		Position:       0,
 		Title:          "child",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	repo.tasks[parent.ID] = parent
 	repo.tasks[child.ID] = child
@@ -3062,8 +3062,8 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoveActionItem() error = %v", err)
 	}
-	if moved.LifecycleState != domain.StateDone {
-		t.Fatalf("expected done lifecycle state, got %q", moved.LifecycleState)
+	if moved.LifecycleState != domain.StateComplete {
+		t.Fatalf("expected complete lifecycle state, got %q", moved.LifecycleState)
 	}
 	if moved.CompletedAt == nil {
 		t.Fatal("expected completed_at to be set")
@@ -3077,7 +3077,7 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
-	done, _ := domain.NewColumn("c3", project.ID, "Done", 2, 0, now)
+	done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
@@ -3089,10 +3089,10 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 		Position:       0,
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
-				Policy: domain.CompletionPolicy{RequireChildrenDone: true},
+				Policy: domain.CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)
@@ -3105,7 +3105,7 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 		Position:       1,
 		Title:          "child",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now)
 	repo.tasks[parent.ID] = parent
 	repo.tasks[child.ID] = child
@@ -3183,7 +3183,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		Position:       0,
 		Title:          "ready dep",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	openDep, _ := domain.NewActionItem(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
@@ -3193,7 +3193,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		Position:       1,
 		Title:          "open dep",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now)
 	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
@@ -4570,7 +4570,7 @@ func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 		Position:       0,
 		Title:          "failing actionItem",
 		Priority:       domain.PriorityMedium,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now)
 	repo.tasks[actionItem.ID] = actionItem
 
@@ -4606,11 +4606,11 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 		Position:       0,
 		Title:          "parent with incomplete children",
 		Priority:       domain.PriorityHigh,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
-				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Done: false}},
-				Policy:             domain.CompletionPolicy{RequireChildrenDone: true},
+				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Complete: false}},
+				Policy:             domain.CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)
@@ -4623,7 +4623,7 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 		Position:       1,
 		Title:          "incomplete child",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now)
 	repo.tasks[parent.ID] = parent
 	repo.tasks[child.ID] = child
@@ -4671,14 +4671,14 @@ func TestMoveActionItemFromFailedToTodoBlocked(t *testing.T) {
 	}
 }
 
-// TestMoveActionItemFromDoneToTodoBlocked verifies that transitions FROM the done terminal state are blocked.
+// TestMoveActionItemFromDoneToTodoBlocked verifies that transitions FROM the complete terminal state are blocked.
 func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
-	done, _ := domain.NewColumn("c3", project.ID, "Done", 2, 0, now)
+	done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
 	repo.columns[todo.ID] = todo
 	repo.columns[done.ID] = done
 
@@ -4688,16 +4688,16 @@ func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 		ProjectID:      project.ID,
 		ColumnID:       done.ID,
 		Position:       0,
-		Title:          "done actionItem",
+		Title:          "complete actionItem",
 		Priority:       domain.PriorityMedium,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	repo.tasks[actionItem.ID] = actionItem
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	_, err := svc.MoveActionItem(context.Background(), actionItem.ID, todo.ID, 0)
 	if err == nil {
-		t.Fatal("MoveActionItem() from done to todo should return an error")
+		t.Fatal("MoveActionItem() from complete to todo should return an error")
 	}
 	if !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("expected ErrTransitionBlocked, got %v", err)

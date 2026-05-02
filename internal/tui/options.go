@@ -144,7 +144,7 @@ func WithSearchConfig(cfg SearchConfig) Option {
 			m.searchDefaultStates = canonicalSearchStates(cfg.States)
 			m.searchStates = append([]string(nil), m.searchDefaultStates...)
 		} else {
-			m.searchDefaultStates = []string{"todo", "progress", "done"}
+			m.searchDefaultStates = []string{"todo", "in_progress", "complete"}
 			m.searchStates = append([]string(nil), m.searchDefaultStates...)
 		}
 		if len(cfg.Levels) > 0 {

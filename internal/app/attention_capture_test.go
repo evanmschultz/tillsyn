@@ -256,7 +256,7 @@ func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Guardrails", "", now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c-progress", project.ID, "In Progress", 0, 0, now)
-	done, _ := domain.NewColumn("c-done", project.ID, "Done", 1, 0, now)
+	done, _ := domain.NewColumn("c-done", project.ID, "Complete", 1, 0, now)
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
@@ -269,7 +269,7 @@ func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 		Position:       0,
 		Title:          "Ship release",
 		Priority:       domain.PriorityHigh,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now)
 	repo.tasks[actionItem.ID] = actionItem
 
@@ -374,8 +374,8 @@ func TestBuildCaptureStateWorkOverviewCountsFailedItems(t *testing.T) {
 	}
 	tasks := []domain.ActionItem{
 		{ID: "t1", ProjectID: "p1", LifecycleState: domain.StateTodo},
-		{ID: "t2", ProjectID: "p1", LifecycleState: domain.StateProgress},
-		{ID: "t3", ProjectID: "p1", LifecycleState: domain.StateDone},
+		{ID: "t2", ProjectID: "p1", LifecycleState: domain.StateInProgress},
+		{ID: "t3", ProjectID: "p1", LifecycleState: domain.StateComplete},
 		{ID: "t4", ProjectID: "p1", LifecycleState: domain.StateFailed},
 		{ID: "t5", ProjectID: "p1", LifecycleState: domain.StateFailed},
 	}
@@ -383,8 +383,8 @@ func TestBuildCaptureStateWorkOverviewCountsFailedItems(t *testing.T) {
 	if overview.FailedItems != 2 {
 		t.Fatalf("FailedItems = %d, want 2", overview.FailedItems)
 	}
-	if overview.DoneItems != 1 {
-		t.Fatalf("DoneItems = %d, want 1", overview.DoneItems)
+	if overview.CompleteItems != 1 {
+		t.Fatalf("CompleteItems = %d, want 1", overview.CompleteItems)
 	}
 	if overview.InProgressItems != 1 {
 		t.Fatalf("InProgressItems = %d, want 1", overview.InProgressItems)

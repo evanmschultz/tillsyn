@@ -426,7 +426,7 @@ func TestCreateActionItemKindMergesCompletionChecklist(t *testing.T) {
 		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPlan},
 		Template: domain.KindTemplate{
 			CompletionChecklist: []domain.ChecklistItem{
-				{ID: "ck-run-tests", Text: "run package tests", Done: false},
+				{ID: "ck-run-tests", Text: "run package tests", Complete: false},
 			},
 		},
 	}); err != nil {

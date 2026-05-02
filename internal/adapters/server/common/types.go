@@ -140,7 +140,7 @@ type WorkOverview struct {
 	TotalActionItems             int `json:"total_tasks"`
 	TodoActionItems              int `json:"todo_tasks"`
 	InProgressActionItems        int `json:"in_progress_tasks"`
-	DoneActionItems              int `json:"done_tasks"`
+	CompleteActionItems          int `json:"complete_tasks"`
 	FailedActionItems            int `json:"failed_tasks"`
 	ArchivedActionItems          int `json:"archived_tasks"`
 	ActionItemsWithOpenBlockers  int `json:"tasks_with_open_blockers"`

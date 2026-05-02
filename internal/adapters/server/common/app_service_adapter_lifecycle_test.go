@@ -139,7 +139,7 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateColumn(todo) error = %v", err)
 	}
-	done, err := fixture.svc.CreateColumn(ctx, project.ID, "Done", 1, 0)
+	done, err := fixture.svc.CreateColumn(ctx, project.ID, "Complete", 1, 0)
 	if err != nil {
 		t.Fatalf("CreateColumn(done) error = %v", err)
 	}
@@ -177,7 +177,7 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	}
 	actionItem, err = fixture.adapter.MoveActionItemState(ctx, MoveActionItemStateRequest{
 		ActionItemID: actionItem.ID,
-		State:        "done",
+		State:        "complete",
 		Actor:        actor,
 	})
 	if err != nil {
@@ -186,8 +186,8 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	if actionItem.ColumnID != done.ID {
 		t.Fatalf("MoveActionItemState() column_id = %q, want %q", actionItem.ColumnID, done.ID)
 	}
-	if actionItem.LifecycleState != domain.StateDone {
-		t.Fatalf("MoveActionItemState() lifecycle_state = %q, want %q", actionItem.LifecycleState, domain.StateDone)
+	if actionItem.LifecycleState != domain.StateComplete {
+		t.Fatalf("MoveActionItemState() lifecycle_state = %q, want %q", actionItem.LifecycleState, domain.StateComplete)
 	}
 
 	child, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{

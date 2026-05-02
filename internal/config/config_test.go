@@ -323,7 +323,7 @@ group_by = "priority"
 [search]
 cross_project = true
 include_archived = true
-states = ["todo", "progress", "archived"]
+states = ["todo", "in_progress", "archived"]
 
 [ui]
 due_soon_windows = ["2h", "48h"]
@@ -806,14 +806,20 @@ func TestUpsertAllowedLabelsRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-// TestIsKnownLifecycleStateIncludesFailed verifies that "failed" is recognized as a known lifecycle state.
+// TestIsKnownLifecycleStateIncludesFailed verifies strict-canonical lifecycle state validation.
 func TestIsKnownLifecycleStateIncludesFailed(t *testing.T) {
 	if !isKnownLifecycleState("failed") {
 		t.Fatal("isKnownLifecycleState(\"failed\") = false, want true")
 	}
-	for _, state := range []string{"todo", "progress", "done", "archived"} {
+	for _, state := range []string{"todo", "in_progress", "complete", "archived"} {
 		if !isKnownLifecycleState(state) {
 			t.Fatalf("isKnownLifecycleState(%q) = false, want true", state)
+		}
+	}
+	// Strict-canonical: legacy aliases are rejected.
+	for _, state := range []string{"progress", "done", "completed", "in-progress", "doing"} {
+		if isKnownLifecycleState(state) {
+			t.Fatalf("isKnownLifecycleState(%q) = true, want false (legacy rejected)", state)
 		}
 	}
 	if isKnownLifecycleState("invalid") {

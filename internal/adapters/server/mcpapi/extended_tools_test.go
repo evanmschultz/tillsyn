@@ -441,7 +441,7 @@ func (s *stubExpandedService) MoveActionItem(_ context.Context, _ common.MoveAct
 		Title:          "ActionItem One",
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -460,7 +460,7 @@ func (s *stubExpandedService) MoveActionItemState(_ context.Context, in common.M
 		Title:          "ActionItem One",
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -1128,7 +1128,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move_state",
 			"action_item_id":    "t1",
-			"state":             "done",
+			"state":             "complete",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
@@ -2601,7 +2601,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	_, moveStateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3010, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "move_state",
 		"action_item_id":    "t1",
-		"state":             "done",
+		"state":             "complete",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
 	})))
@@ -2614,8 +2614,8 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	if got := service.lastMoveActionItemStateReq.Actor.ActorID; got != "agent-session-1" {
 		t.Fatalf("action_item move_state actor_id = %q, want agent-session-1", got)
 	}
-	if got := service.lastMoveActionItemStateReq.State; got != "done" {
-		t.Fatalf("action_item move_state state = %q, want done", got)
+	if got := service.lastMoveActionItemStateReq.State; got != "complete" {
+		t.Fatalf("action_item move_state state = %q, want complete", got)
 	}
 
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.comment", mergeArgs(validSessionArgs(), map[string]any{

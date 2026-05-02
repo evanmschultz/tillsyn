@@ -1339,7 +1339,7 @@ func registerActionItemTools(
 				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
 				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
-				mcp.WithString("state", mcp.Description("Lifecycle state target for operation=move_state (for example: todo|in_progress|done)")),
+				mcp.WithString("state", mcp.Description("Lifecycle state target for operation=move_state (for example: todo|in_progress|complete)")),
 				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
 				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),

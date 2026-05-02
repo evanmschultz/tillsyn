@@ -624,7 +624,7 @@ func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID st
 		rollup.BlockedByEdges += len(blockedBy)
 		for _, depID := range dependsOn {
 			state, ok := stateByID[depID]
-			if !ok || state != domain.StateDone {
+			if !ok || state != domain.StateComplete {
 				rollup.UnresolvedDependencyEdges++
 			}
 		}
@@ -682,8 +682,10 @@ func (f *fakeService) SearchActionItemMatches(ctx context.Context, in app.Search
 				switch columnName {
 				case "to-do", "todo":
 					stateID = "todo"
-				case "in-progress", "progress", "doing":
-					stateID = "progress"
+				case "in-progress":
+					stateID = "in_progress"
+				case "complete":
+					stateID = "complete"
 				default:
 					stateID = columnName
 				}
@@ -964,11 +966,11 @@ func (f *fakeService) MoveActionItem(_ context.Context, actionItemID, toColumnID
 					switch strings.ToLower(strings.TrimSpace(strings.ReplaceAll(column.Name, " ", "-"))) {
 					case "to-do", "todo":
 						f.tasks[projectID][idx].LifecycleState = domain.StateTodo
-					case "in-progress", "progress", "doing":
-						f.tasks[projectID][idx].LifecycleState = domain.StateProgress
-					case "done", "complete", "completed":
-						f.tasks[projectID][idx].LifecycleState = domain.StateDone
-					case "archived", "archive":
+					case "in-progress":
+						f.tasks[projectID][idx].LifecycleState = domain.StateInProgress
+					case "complete":
+						f.tasks[projectID][idx].LifecycleState = domain.StateComplete
+					case "archived":
 						f.tasks[projectID][idx].LifecycleState = domain.StateArchived
 					default:
 						// Keep the prior state when the column name doesn't map to canonical lifecycle values.
@@ -4546,7 +4548,7 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		Kind:           domain.KindBuild,
 		ParentID:       parent.ID,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	childTodo, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-child-todo",
@@ -4845,7 +4847,7 @@ func TestModelActionItemInfoSubactionItemChecklistToggleCompletion(t *testing.T)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
-	cDone, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+	cDone, _ := domain.NewColumn("c3", p.ID, "Complete", 2, 0, now)
 
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -4885,15 +4887,15 @@ func TestModelActionItemInfoSubactionItemChecklistToggleCompletion(t *testing.T)
 		t.Fatalf("expected moved child actionItem in fake service")
 	}
 	if moved.ColumnID != cDone.ID {
-		t.Fatalf("expected checklist toggle to move child to done column %q, got %q", cDone.ID, moved.ColumnID)
+		t.Fatalf("expected checklist toggle to move child to complete column %q, got %q", cDone.ID, moved.ColumnID)
 	}
 
 	rendered = stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(rendered, "[x] Child") {
 		t.Fatalf("expected checked checklist row after completion toggle, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "state:Done") || !strings.Contains(rendered, "complete:yes") {
-		t.Fatalf("expected done state metadata after completion toggle, got\n%s", rendered)
+	if !strings.Contains(rendered, "state:Complete") || !strings.Contains(rendered, "complete:yes") {
+		t.Fatalf("expected complete state metadata after completion toggle, got\n%s", rendered)
 	}
 
 	m = applyMsg(t, m, keyRune(' '))
@@ -5734,7 +5736,7 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 	if got := canonicalSearchStates([]string{}); len(got) != 4 || got[0] != "todo" {
 		t.Fatalf("expected state fallback, got %#v", got)
 	}
-	if got := canonicalSearchStates([]string{"todo", "progress", "todo"}); len(got) != 2 || got[1] != "progress" {
+	if got := canonicalSearchStates([]string{"todo", "in_progress", "todo"}); len(got) != 2 || got[1] != "in_progress" {
 		t.Fatalf("expected deduped state filters, got %#v", got)
 	}
 	if got := canonicalSearchStates([]string{"unknown"}); len(got) != 4 || got[0] != "todo" {
@@ -11460,7 +11462,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 		Position:       1,
 		Title:          "Two",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	t3, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t3",
@@ -11469,7 +11471,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 		Position:       0,
 		Title:          "Three",
 		Priority:       domain.PriorityMedium,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now)
 	m := Model{
 		columns: []domain.Column{c1, c2},
@@ -13001,7 +13003,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	blockedActionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-blocked",
@@ -13183,7 +13185,7 @@ func TestModelDependencyRollupAndActionItemInfoHints(t *testing.T) {
 		Position:       0,
 		Title:          "Finished",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now)
 	blocked, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-blocked",
@@ -13244,7 +13246,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		Position:       0,
 		Title:          "Done dependency",
 		Priority:       domain.PriorityLow,
-		LifecycleState: domain.StateDone,
+		LifecycleState: domain.StateComplete,
 	}, now.Add(time.Minute))
 	depArchived, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-archived",
@@ -13264,7 +13266,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 		Position:       0,
 		Title:          "Active blocker",
 		Priority:       domain.PriorityHigh,
-		LifecycleState: domain.StateProgress,
+		LifecycleState: domain.StateInProgress,
 	}, now.Add(3*time.Minute))
 	candidate, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-candidate",
@@ -13538,16 +13540,24 @@ func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
 func TestDependencyStateIDForActionItem(t *testing.T) {
 	now := time.Date(2026, 2, 23, 14, 0, 0, 0, time.UTC)
 	archivedAt := now.Add(-time.Minute)
-	actionItemArchived := domain.ActionItem{LifecycleState: domain.StateDone, ArchivedAt: &archivedAt}
-	actionItemProgress := domain.ActionItem{LifecycleState: domain.StateProgress}
+	actionItemArchived := domain.ActionItem{LifecycleState: domain.StateComplete, ArchivedAt: &archivedAt}
+	actionItemProgress := domain.ActionItem{LifecycleState: domain.StateInProgress}
+	actionItemComplete := domain.ActionItem{LifecycleState: domain.StateComplete}
+	actionItemFailed := domain.ActionItem{LifecycleState: domain.StateFailed}
 	actionItemUnknown := domain.ActionItem{LifecycleState: domain.LifecycleState("review")}
 	actionItemEmpty := domain.ActionItem{}
 
 	if got := dependencyStateIDForActionItem(actionItemArchived); got != "archived" {
 		t.Fatalf("expected archived state id, got %q", got)
 	}
-	if got := dependencyStateIDForActionItem(actionItemProgress); got != "progress" {
-		t.Fatalf("expected progress state id, got %q", got)
+	if got := dependencyStateIDForActionItem(actionItemProgress); got != "in_progress" {
+		t.Fatalf("expected in_progress state id, got %q", got)
+	}
+	if got := dependencyStateIDForActionItem(actionItemComplete); got != "complete" {
+		t.Fatalf("expected complete state id, got %q", got)
+	}
+	if got := dependencyStateIDForActionItem(actionItemFailed); got != "failed" {
+		t.Fatalf("expected failed state id, got %q", got)
 	}
 	if got := dependencyStateIDForActionItem(actionItemUnknown); got != "review" {
 		t.Fatalf("expected custom normalized state id, got %q", got)

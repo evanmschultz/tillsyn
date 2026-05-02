@@ -93,7 +93,7 @@ type CaptureStateWorkOverview struct {
 	TotalItems      int    `json:"total_items"`
 	ActiveItems     int    `json:"active_items"`
 	InProgressItems int    `json:"in_progress_items"`
-	DoneItems       int    `json:"done_items"`
+	CompleteItems   int    `json:"complete_items"`
 	FailedItems     int    `json:"failed_items"`
 	BlockedItems    int    `json:"blocked_items"`
 	FocusItemID     string `json:"focus_item_id,omitempty"`
@@ -347,11 +347,11 @@ func buildCaptureStateWorkOverview(level domain.LevelTuple, tasks []domain.Actio
 		if actionItem.ArchivedAt == nil {
 			out.ActiveItems++
 		}
-		if actionItem.LifecycleState == domain.StateProgress {
+		if actionItem.LifecycleState == domain.StateInProgress {
 			out.InProgressItems++
 		}
-		if actionItem.LifecycleState == domain.StateDone {
-			out.DoneItems++
+		if actionItem.LifecycleState == domain.StateComplete {
+			out.CompleteItems++
 		}
 		if actionItem.LifecycleState == domain.StateFailed {
 			out.FailedItems++
@@ -368,7 +368,7 @@ func buildCaptureStateWorkOverview(level domain.LevelTuple, tasks []domain.Actio
 		if actionItem.ArchivedAt != nil {
 			continue
 		}
-		if actionItem.LifecycleState != domain.StateDone {
+		if actionItem.LifecycleState != domain.StateComplete {
 			out.OpenChildItems++
 		}
 	}

@@ -630,11 +630,11 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 	}
 	moveAction := domain.CapabilityActionEditNode
 	switch {
-	case toState == domain.StateDone:
+	case toState == domain.StateComplete:
 		moveAction = domain.CapabilityActionMarkComplete
 	case toState == domain.StateFailed:
 		moveAction = domain.CapabilityActionMarkFailed
-	case fromState == domain.StateTodo && toState == domain.StateProgress:
+	case fromState == domain.StateTodo && toState == domain.StateInProgress:
 		moveAction = domain.CapabilityActionMarkInProgress
 	}
 	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), guardScopes, moveAction); err != nil {
@@ -646,12 +646,12 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 	if domain.IsTerminalState(fromState) && fromState != toState {
 		return domain.ActionItem{}, fmt.Errorf("%w: cannot transition from terminal state %q without override auth", domain.ErrTransitionBlocked, fromState)
 	}
-	if fromState == domain.StateTodo && toState == domain.StateProgress {
+	if fromState == domain.StateTodo && toState == domain.StateInProgress {
 		if unmet := actionItem.StartCriteriaUnmet(); len(unmet) > 0 {
 			return domain.ActionItem{}, fmt.Errorf("%w: start criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
 		}
 	}
-	if toState == domain.StateDone {
+	if toState == domain.StateComplete {
 		projectActionItems, listErr := s.ListActionItems(ctx, actionItem.ProjectID, true)
 		if listErr != nil {
 			return domain.ActionItem{}, listErr
@@ -1832,10 +1832,10 @@ func buildDependencyRollup(projectID string, tasks []domain.ActionItem) domain.D
 		}
 		rollup.BlockedByEdges += len(blockedBy)
 
-		// Dependencies are unresolved when the target is missing or not done.
+		// Dependencies are unresolved when the target is missing or not complete.
 		for _, depID := range dependsOn {
 			state, ok := stateByID[depID]
-			if !ok || state != domain.StateDone {
+			if !ok || state != domain.StateComplete {
 				rollup.UnresolvedDependencyEdges++
 			}
 		}
@@ -1895,8 +1895,8 @@ func wouldCreateParentCycle(actionItemID, candidateParentID string, tasks []doma
 func defaultStateTemplates() []StateTemplate {
 	return []StateTemplate{
 		{ID: "todo", Name: "To Do", WIPLimit: 0, Position: 0},
-		{ID: "progress", Name: "In Progress", WIPLimit: 0, Position: 1},
-		{ID: "done", Name: "Done", WIPLimit: 0, Position: 2},
+		{ID: "in_progress", Name: "In Progress", WIPLimit: 0, Position: 1},
+		{ID: "complete", Name: "Complete", WIPLimit: 0, Position: 2},
 		{ID: "failed", Name: "Failed", WIPLimit: 0, Position: 3, Hidden: true},
 	}
 }
@@ -1917,7 +1917,7 @@ func sanitizeStateTemplates(in []StateTemplate) []StateTemplate {
 		if state.ID == "" {
 			state.ID = normalizeStateID(state.Name)
 		}
-		dedupeID := strings.ReplaceAll(state.ID, "-", "")
+		dedupeID := strings.ReplaceAll(strings.ReplaceAll(state.ID, "-", ""), "_", "")
 		if _, ok := seen[dedupeID]; ok {
 			continue
 		}
@@ -1939,37 +1939,46 @@ func sanitizeStateTemplates(in []StateTemplate) []StateTemplate {
 	return out
 }
 
-// normalizeStateID normalizes state id.
+// normalizeStateID normalizes a column display name into its canonical state-id slug.
+// Strict-canonical: returns canonical state IDs (todo, in_progress, complete, failed,
+// archived) when the input slug matches; otherwise returns the slugified form for
+// non-state columns. Legacy aliases (done, completed, progress, in-progress, doing)
+// are NOT coerced to canonical — they slugify through to themselves and downstream
+// callers reject them at the state-machine boundary.
 func normalizeStateID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
 		return ""
 	}
 	var b strings.Builder
-	lastDash := false
+	lastUnderscore := false
 	for _, r := range name {
 		switch {
 		case r >= 'a' && r <= 'z':
 			b.WriteRune(r)
-			lastDash = false
+			lastUnderscore = false
 		case r >= '0' && r <= '9':
 			b.WriteRune(r)
-			lastDash = false
+			lastUnderscore = false
 		default:
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
+			if !lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = true
 			}
 		}
 	}
-	normalized := strings.Trim(b.String(), "-")
+	normalized := strings.Trim(b.String(), "_")
 	switch normalized {
-	case "to-do", "todo":
+	case "to_do", "todo":
 		return "todo"
-	case "in-progress", "progress", "doing":
-		return "progress"
-	case "done", "complete", "completed":
-		return "done"
+	case "in_progress":
+		return "in_progress"
+	case "complete":
+		return "complete"
+	case "failed":
+		return "failed"
+	case "archived":
+		return "archived"
 	default:
 		return normalized
 	}
@@ -1984,10 +1993,10 @@ func lifecycleStateForColumnID(columns []domain.Column, columnID string) domain.
 		switch normalizeStateID(column.Name) {
 		case "todo":
 			return domain.StateTodo
-		case "progress":
-			return domain.StateProgress
-		case "done":
-			return domain.StateDone
+		case "in_progress":
+			return domain.StateInProgress
+		case "complete":
+			return domain.StateComplete
 		case "failed":
 			return domain.StateFailed
 		case "archived":

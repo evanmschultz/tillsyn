@@ -302,7 +302,7 @@ var quickActionSpecs = []quickActionSpec{
 }
 
 // canonicalSearchStates stores canonical searchable lifecycle states.
-var canonicalSearchStatesOrdered = []string{"todo", "progress", "done", "archived"}
+var canonicalSearchStatesOrdered = []string{"todo", "in_progress", "complete", "archived"}
 
 // canonicalSearchLevelsOrdered stores canonical searchable hierarchy levels.
 var canonicalSearchLevelsOrdered = []string{"project", "branch", "phase", "actionItem", "subtask"}
@@ -316,10 +316,10 @@ var bootstrapActorTypes = []string{
 
 // canonicalSearchStateLabels stores display labels for canonical lifecycle states.
 var canonicalSearchStateLabels = map[string]string{
-	"todo":     "To Do",
-	"progress": "In Progress",
-	"done":     "Done",
-	"archived": "Archived",
+	"todo":        "To Do",
+	"in_progress": "In Progress",
+	"complete":    "Complete",
+	"archived":    "Archived",
 }
 
 // canonicalSearchLevelLabels stores display labels for canonical hierarchy levels.
@@ -1228,12 +1228,12 @@ func NewModel(svc Service, opts ...Option) Model {
 		labelPickerInput:                     labelPickerInput,
 		embeddingsSpinner:                    embeddingsSpinner,
 		searchMode:                           app.SearchModeHybrid,
-		searchStates:                         []string{"todo", "progress", "done"},
+		searchStates:                         []string{"todo", "in_progress", "complete"},
 		searchDefaultMode:                    app.SearchModeHybrid,
-		searchDefaultStates:                  []string{"todo", "progress", "done"},
+		searchDefaultStates:                  []string{"todo", "in_progress", "complete"},
 		searchLevels:                         []string{"project", "branch", "phase", "actionItem", "subtask"},
 		searchDefaultLevels:                  []string{"project", "branch", "phase", "actionItem", "subtask"},
-		dependencyStates:                     []string{"todo", "progress", "done"},
+		dependencyStates:                     []string{"todo", "in_progress", "complete"},
 		launchPicker:                         false,
 		boardGroupBy:                         "none",
 		showWIPWarnings:                      true,
@@ -12246,7 +12246,7 @@ func (m Model) actionItemInfoQuickActions() []quickActionItem {
 	if subtask, ok := (&candidate).selectedActionItemInfoSubtask(actionItem); ok {
 		state := candidate.lifecycleStateForActionItem(subtask)
 		toggleLabel := "Mark Selected Subtask Complete"
-		if state == domain.StateDone {
+		if state == domain.StateComplete {
 			toggleLabel = "Mark Selected Subtask Incomplete"
 		}
 		items = append([]quickActionItem{
@@ -13687,10 +13687,10 @@ func (m Model) groupLabelForActionItem(actionItem domain.ActionItem) string {
 		switch strings.ToLower(strings.TrimSpace(string(actionItem.LifecycleState))) {
 		case "todo":
 			return "State: To Do"
-		case "progress":
+		case "in_progress":
 			return "State: In Progress"
-		case "done":
-			return "State: Done"
+		case "complete":
+			return "State: Complete"
 		case "archived":
 			return "State: Archived"
 		default:
@@ -14049,13 +14049,13 @@ func (m Model) actionItemAttentionCount(actionItem domain.ActionItem, byID map[s
 	count := 0
 	for _, depID := range uniqueTrimmed(actionItem.Metadata.DependsOn) {
 		depActionItem, ok := byID[depID]
-		if !ok || m.lifecycleStateForActionItem(depActionItem) != domain.StateDone {
+		if !ok || m.lifecycleStateForActionItem(depActionItem) != domain.StateComplete {
 			count++
 		}
 	}
 	for _, blockerID := range uniqueTrimmed(actionItem.Metadata.BlockedBy) {
 		blockerActionItem, ok := byID[blockerID]
-		if !ok || m.lifecycleStateForActionItem(blockerActionItem) != domain.StateDone {
+		if !ok || m.lifecycleStateForActionItem(blockerActionItem) != domain.StateComplete {
 			count++
 		}
 	}
@@ -14146,9 +14146,9 @@ func actionItemGroupRank(actionItem domain.ActionItem, groupBy string) int {
 		switch strings.ToLower(strings.TrimSpace(string(actionItem.LifecycleState))) {
 		case "todo":
 			return 0
-		case "progress":
+		case "in_progress":
 			return 1
-		case "done":
+		case "complete":
 			return 2
 		case "archived":
 			return 3
@@ -17185,7 +17185,7 @@ func (m Model) actionItemInfoHeaderMeta(actionItem domain.ActionItem) string {
 		"kind: %s • state: %s • complete: %s • mode: info",
 		string(actionItem.Kind),
 		lifecycleStateLabel(state),
-		completionLabel(state == domain.StateDone),
+		completionLabel(state == domain.StateComplete),
 	)
 }
 
@@ -17196,7 +17196,7 @@ func (m Model) actionItemFormHeaderMeta() string {
 	if contextActionItem, ok := m.actionItemFormContextActionItem(); ok {
 		state := m.lifecycleStateForActionItem(contextActionItem)
 		stateLabel = lifecycleStateLabel(state)
-		complete = completionLabel(state == domain.StateDone)
+		complete = completionLabel(state == domain.StateComplete)
 	}
 	modeLabel := "new"
 	if m.mode == modeEditActionItem {
@@ -17367,7 +17367,7 @@ func (m Model) actionItemFormBodyLines(contentWidth int, hintStyle lipgloss.Styl
 		for idx, subtask := range subtasks {
 			state := m.lifecycleStateForActionItem(subtask)
 			check := "[ ]"
-			if state == domain.StateDone {
+			if state == domain.StateComplete {
 				check = "[x]"
 			}
 			line := fmt.Sprintf("  %s %s %s", check, truncate(subtask.Title, 48), hintStyle.Render("state:"+lifecycleStateLabel(state)))
@@ -17638,7 +17638,7 @@ func (m Model) actionItemInfoBodyLines(actionItem domain.ActionItem, boxWidth, c
 		subactionItemIdx := clamp(m.actionItemInfoSubactionItemIdx, 0, len(subtasks)-1)
 		for idx, subtask := range subtasks {
 			subactionItemState := m.lifecycleStateForActionItem(subtask)
-			subactionItemDone := subactionItemState == domain.StateDone
+			subactionItemDone := subactionItemState == domain.StateComplete
 			prefix := "  "
 			if idx == subactionItemIdx {
 				prefix = "> "
@@ -17739,7 +17739,7 @@ func (m Model) actionItemInfoBodyLines(actionItem domain.ActionItem, boxWidth, c
 			if strings.TrimSpace(item.Text) == "" {
 				continue
 			}
-			if !item.Done {
+			if !item.Complete {
 				unmet++
 			}
 		}
@@ -17932,39 +17932,44 @@ func (m Model) subtasksForParent(parentID string) []domain.ActionItem {
 }
 
 // normalizeColumnStateID canonicalizes column names into lifecycle-state identifiers.
+// Strict-canonical: only canonical inputs (todo, in_progress, complete, archived,
+// failed) round-trip; legacy aliases (done, completed, progress, in-progress, doing)
+// slug through to themselves and downstream callers reject them.
 func normalizeColumnStateID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
 		return ""
 	}
 	var b strings.Builder
-	lastDash := false
+	lastUnderscore := false
 	for _, r := range name {
 		switch {
 		case r >= 'a' && r <= 'z':
 			b.WriteRune(r)
-			lastDash = false
+			lastUnderscore = false
 		case r >= '0' && r <= '9':
 			b.WriteRune(r)
-			lastDash = false
+			lastUnderscore = false
 		default:
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
+			if !lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = true
 			}
 		}
 	}
-	switch strings.Trim(b.String(), "-") {
-	case "to-do", "todo":
+	switch strings.Trim(b.String(), "_") {
+	case "to_do", "todo":
 		return "todo"
-	case "in-progress", "progress", "doing":
-		return "progress"
-	case "done", "complete", "completed":
-		return "done"
-	case "archived", "archive":
+	case "in_progress":
+		return "in_progress"
+	case "complete":
+		return "complete"
+	case "failed":
+		return "failed"
+	case "archived":
 		return "archived"
 	default:
-		return strings.Trim(b.String(), "-")
+		return strings.Trim(b.String(), "_")
 	}
 }
 
@@ -17973,10 +17978,12 @@ func lifecycleStateForColumnName(name string) domain.LifecycleState {
 	switch normalizeColumnStateID(name) {
 	case "todo":
 		return domain.StateTodo
-	case "progress":
-		return domain.StateProgress
-	case "done":
-		return domain.StateDone
+	case "in_progress":
+		return domain.StateInProgress
+	case "complete":
+		return domain.StateComplete
+	case "failed":
+		return domain.StateFailed
 	case "archived":
 		return domain.StateArchived
 	default:
@@ -18014,10 +18021,10 @@ func lifecycleStateLabel(state domain.LifecycleState) string {
 	switch state {
 	case domain.StateTodo:
 		return canonicalSearchStateLabels["todo"]
-	case domain.StateProgress:
-		return canonicalSearchStateLabels["progress"]
-	case domain.StateDone:
-		return canonicalSearchStateLabels["done"]
+	case domain.StateInProgress:
+		return canonicalSearchStateLabels["in_progress"]
+	case domain.StateComplete:
+		return canonicalSearchStateLabels["complete"]
 	case domain.StateArchived:
 		return "Archived"
 	default:
@@ -18063,7 +18070,7 @@ func (m Model) firstColumnIndexForState(state domain.LifecycleState) (int, bool)
 
 // firstIncompleteColumnIndex finds the preferred destination for reopening a completed subtask.
 func (m Model) firstIncompleteColumnIndex() (int, bool) {
-	if idx, ok := m.firstColumnIndexForState(domain.StateProgress); ok {
+	if idx, ok := m.firstColumnIndexForState(domain.StateInProgress); ok {
 		return idx, true
 	}
 	if idx, ok := m.firstColumnIndexForState(domain.StateTodo); ok {
@@ -18071,7 +18078,7 @@ func (m Model) firstIncompleteColumnIndex() (int, bool) {
 	}
 	for idx, column := range m.columns {
 		state := lifecycleStateForColumnName(column.Name)
-		if state != domain.StateDone && state != domain.StateArchived {
+		if state != domain.StateComplete && state != domain.StateArchived {
 			return idx, true
 		}
 	}
@@ -18168,14 +18175,14 @@ func (m Model) toggleFocusedSubactionItemCompletion(parent domain.ActionItem) (t
 	}
 
 	status := "subtask marked complete"
-	toIdx, ok := m.firstColumnIndexForState(domain.StateDone)
-	if m.lifecycleStateForActionItem(subtask) == domain.StateDone {
+	toIdx, ok := m.firstColumnIndexForState(domain.StateComplete)
+	if m.lifecycleStateForActionItem(subtask) == domain.StateComplete {
 		status = "subtask marked incomplete"
 		toIdx, ok = m.firstIncompleteColumnIndex()
 	}
 	if !ok {
 		if status == "subtask marked complete" {
-			m.status = "no done column configured"
+			m.status = "no complete column configured"
 		} else {
 			m.status = "no active column for reopening"
 		}
@@ -18207,7 +18214,7 @@ func (m Model) subactionItemProgress(parentID string) (int, int) {
 	}
 	done := 0
 	for _, actionItem := range subtasks {
-		if m.lifecycleStateForActionItem(actionItem) == domain.StateDone {
+		if m.lifecycleStateForActionItem(actionItem) == domain.StateComplete {
 			done++
 		}
 	}

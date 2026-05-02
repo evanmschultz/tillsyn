@@ -255,10 +255,10 @@ func buildWorkOverview(tasks []domain.ActionItem) WorkOverview {
 		switch canonicalLifecycleState(actionItem.LifecycleState) {
 		case domain.StateTodo:
 			overview.TodoActionItems++
-		case domain.StateProgress:
+		case domain.StateInProgress:
 			overview.InProgressActionItems++
-		case domain.StateDone:
-			overview.DoneActionItems++
+		case domain.StateComplete:
+			overview.CompleteActionItems++
 		case domain.StateFailed:
 			overview.FailedActionItems++
 		case domain.StateArchived:
@@ -293,18 +293,21 @@ func buildWarningsOverview(work WorkOverview, attention AttentionOverview) Warni
 	return WarningsOverview{Warnings: warnings}
 }
 
-// canonicalLifecycleState normalizes lifecycle aliases into canonical values.
+// canonicalLifecycleState validates strict-canonical lifecycle state. Only canonical
+// values (todo, in_progress, complete, failed, archived) round-trip; legacy aliases
+// (done, completed, progress, in-progress, doing) fall through to StateTodo. Pre-MVP
+// every caller is the dev — broken inputs surface at the caller.
 func canonicalLifecycleState(state domain.LifecycleState) domain.LifecycleState {
 	switch strings.ToLower(strings.TrimSpace(string(state))) {
-	case "todo", "to-do":
+	case "todo":
 		return domain.StateTodo
-	case "progress", "in-progress", "doing":
-		return domain.StateProgress
-	case "done", "complete", "completed":
-		return domain.StateDone
-	case "failed", "fail":
+	case "in_progress":
+		return domain.StateInProgress
+	case "complete":
+		return domain.StateComplete
+	case "failed":
 		return domain.StateFailed
-	case "archived", "archive":
+	case "archived":
 		return domain.StateArchived
 	default:
 		return domain.StateTodo

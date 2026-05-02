@@ -153,7 +153,7 @@ Cross-unit ordering: 2.7 is `Blocked by: 2.6` to honor PLAN.md § 19.2's explici
 
 #### Droplet 2.7 — State-vocabulary rename across the whole tree (atomic)
 
-- **State:** todo
+- **State:** done
 - **Paths:** the rename touches every state-machine site in the tree. Enumerated below by package; every file is in one commit. **All file:line cites verified at HEAD via `git grep` for this Round 2 revision.**
 
   **`internal/domain/` (state-machine truth source + struct fields):**
