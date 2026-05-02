@@ -596,3 +596,371 @@ honored by the test suite.
 No blocking counterexamples. Two minor coverage nits logged for future
 hardening (tab whitespace explicit assertion, internal-whitespace
 `NormalizeRole` explicit assertion). Droplet 2.2 is ready for closeout.
+
+## Droplet 2.3 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-02
+**Reviewer:** go-qa-falsification-agent (subagent), Round 1
+
+### Summary
+
+Adversarial attack on the builder's claim that Droplet 2.3 (`Role` field on
+`ActionItem` + `ActionItemInput`, `NewActionItem` validation, and the TUI
+schema-coverage gate `readOnly` classification) is clean and `mage ci` is green.
+14 attack vectors run; 0 blocking counterexamples constructed; 0 nits worth
+blocking on. Local `mage ci` reproduces 1313 tests / 19 packages / coverage
+≥ 70.0% / build green / exit 0. `internal/domain` rose to 103 tests
+(+13 net: 1 new top-level test function `TestNewActionItemRoleValidation`
+plus 12 sub-cases) consistent with the +49 LOC test add.
+
+### Attack Vectors and Findings
+
+#### 1. `NewActionItem` validation order — does Role gate get reached?
+
+Traced `NewActionItem` (`action_item.go:97-219`) line-by-line:
+
+- L131-135: Kind empty / invalid → `ErrInvalidKind` (early return).
+- L137-143: Scope normalize / default-from-Kind / invalid-applies-to →
+  `ErrInvalidKindAppliesTo`.
+- L147-149: Scope-mirrors-Kind invariant → `ErrInvalidKindAppliesTo`.
+- **L155-158: Role normalize + validate** (NEW BLOCK). Only reached when Kind
+  is non-empty AND valid AND Scope is valid AND Scope mirrors Kind.
+- L159-164: LifecycleState defaults / validates.
+
+If a caller passes `Kind: ""` and `Role: "foobar"`, they get `ErrInvalidKind`
+— NOT `ErrInvalidRole`. This is the standard "first-invalid-wins" semantics
+that every other validator in this function follows; there is no
+counterexample where a Role-only error would semantically be expected but
+is silently elided. The new `TestNewActionItemRoleValidation` cases
+(`domain_test.go:213-231`) all set `Kind: KindBuild` + valid scope so they
+reach the Role gate as intended.
+
+REFUTED — validation ordering is correct; Role gate is reachable for every
+test case that targets it.
+
+#### 2. Empty-role short-circuit correctness
+
+Pattern at `action_item.go:155-158`:
+
+```go
+in.Role = NormalizeRole(in.Role)
+if in.Role != "" && !IsValidRole(in.Role) {
+    return ActionItem{}, ErrInvalidRole
+}
+```
+
+- `Role: ""` → `NormalizeRole("")` returns `""` (per `role.go:64-70`
+  fast-path) → short-circuits `&&`, no validation, falls through, return
+  literal sets `Role: ""` (zero value). ✓
+- `Role: "   "` (whitespace only) → `NormalizeRole` `TrimSpace` yields `""`
+  → fast-path returns `""` → short-circuits `&&`, no validation, falls
+  through, `Role: ""`. ✓ (covered by test case `name: "whitespace"`,
+  `domain_test.go:220`).
+- `Role: "builder"` → normalize returns `"builder"` (already lowercase) →
+  `IsValidRole("builder")` true → no error → proceeds. ✓
+- `Role: "foobar"` → normalize returns `"foobar"` → `IsValidRole("foobar")`
+  false → `ErrInvalidRole` returned. ✓ (covered by test case `unknown
+  rejects`, `domain_test.go:230`).
+
+The short-circuit (`!= "" &&`) is required because `IsValidRole("")` returns
+false (`role.go:58-60` uses `slices.Contains` against the 9-element closed
+slice; empty string is not a member). Without the short-circuit, every empty
+role would `ErrInvalidRole`, contradicting the spec.
+
+REFUTED — short-circuit logic is correct for all four input categories.
+
+#### 3. NormalizeRole-then-validate ordering
+
+Builder's pattern `in.Role = NormalizeRole(in.Role)` BEFORE `IsValidRole`
+check. Verified:
+
+- Input `Role("  builder  ")` → `NormalizeRole` `TrimSpace` → `"builder"` →
+  `ToLower` → `"builder"` → `IsValidRole("builder")` true → passes.
+- Without normalize-first: `IsValidRole("  builder  ")` would internally call
+  `slices.Contains` after `TrimSpace` + `ToLower` (per `role.go:58-60`), so
+  it would still return true. But then `in.Role` would still equal
+  `"  builder  "` (un-normalized) when set on the returned struct,
+  violating the round-trip contract.
+
+Builder's normalize-first is necessary to ensure `actionItem.Role` byte-equals
+the canonical typed constant when the input had surrounding whitespace.
+Test case `name: "builder"` (`domain_test.go:221`) uses already-canonical
+`RoleBuilder` so it doesn't directly exercise the whitespace-trim path,
+but the test wouldn't expose a regression here either; the normalize-first
+ordering is correct by inspection of the implementation. Whitespace-only
+case (`"   "` → `""`) does exercise normalize.
+
+REFUTED — normalize precedes validate; whitespace handling is correct.
+
+#### 4. `Role` field set on returned struct
+
+Return literal at `action_item.go:195-218` includes `Role: in.Role` at
+line 201, AFTER `in.Role = NormalizeRole(in.Role)` at line 155. So the
+returned struct's `Role` is the normalized value, not the raw input.
+Verified by reading the struct literal field-by-field.
+
+REFUTED — returned struct correctly carries the normalized Role.
+
+#### 5. TUI schema-gate `readOnly` classification correctness
+
+Read `internal/tui/model_test.go:14797-14830`:
+
+- `editable` map: `Title`, `Description`, `Priority`, `DueAt`, `Labels`,
+  `Metadata` (6 fields).
+- `readOnly` map: `ID`, `ProjectID`, `ParentID`, `Kind`, `Scope`, `Role`
+  (NEW), `LifecycleState`, `ColumnID`, `Position`, plus 11 audit/timestamp
+  fields (20 fields total).
+
+Comparison against peers:
+
+- `Kind`, `Scope`, `LifecycleState` are all `readOnly` — these are
+  closed-enum structural fields set at creation, mutated only via specific
+  domain methods (e.g., `SetLifecycleState`), not via free-form TUI form
+  editing.
+- `Role` is structurally the same shape: closed-enum, set at creation via
+  `NewActionItem`, with no mutation method on `*ActionItem` to change it
+  later.
+
+Classifying `Role` as `readOnly` is consistent with the peer pattern.
+Future Drop 2.5 (MCP plumbing) and Drop 3+ (template-driven role binding)
+may permit role to flow in via creation-time payloads from MCP / templates,
+but the TUI editable-vs-readOnly classification is about *interactive form
+field editing in the TUI*, not about *which subsystems can set the value at
+creation time*. So the classification correctly stays `readOnly` even after
+MCP plumbing lands.
+
+REFUTED — schema-gate `readOnly` classification is the correct and
+peer-consistent choice.
+
+#### 6. Schema-gate test SHOULD fail without the addition
+
+Read `assertExplicitFieldCoverage` at `model_test.go:14984-15015`:
+
+- Iterates `typ.NumField()` → for every exported field, checks
+  `classified[field.Name]`; fails the test with `t.Fatalf` if any exported
+  field is unclassified.
+- Adding `Role` to `domain.ActionItem` without the `readOnly` map entry would
+  immediately fail `TestActionItemSchemaCoverageIsExplicit` with:
+  `"ActionItem field \"Role\" is not classified for TUI/schema coverage"`.
+
+This confirms: the schema-gate addition was MANDATORY, not optional. The
+builder correctly identified the gate dependency and addressed it in the
+same droplet.
+
+REFUTED — schema-gate update is required and present; gate would fail
+without it.
+
+#### 7. JSON serialization leak
+
+Verified:
+
+- `domain.ActionItem` has NO `json:"..."` struct tags on any field. Without
+  tags, default JSON marshaling uses field names verbatim (`"Role": "..."`).
+- Searched for direct marshaling of `domain.ActionItem`:
+  `rg "json\.Marshal.*ActionItem|json\.Marshal.*\bitem\b|Marshal\(.*ActionItem|json\.Encoder.*ActionItem"`
+  → empty.
+- The snapshot subsystem (`internal/app/snapshot.go`) defines a separate
+  `SnapshotActionItem` struct with explicit `json:"..."` tags on each
+  field — adding a field to `domain.ActionItem` does NOT add a key to
+  snapshot JSON output. Snapshot would only carry `Role` if the snapshot
+  builder explicitly mapped it across (which is a future drop's concern,
+  not Droplet 2.3's).
+- The MCP surface (`internal/adapters/server/common/mcp_surface.go`,
+  `types.go`) does not directly marshal `domain.ActionItem` either.
+
+REFUTED — no JSON serialization leak from adding `Role` to
+`domain.ActionItem`. Downstream consumers explicitly project ActionItem
+into their own JSON schemas.
+
+#### 8. Zero-value Role == ""
+
+`Role` is `type Role string` (per `role.go:10`). Go's zero value for `string`
+is `""`. So `Role` zero value is `Role("")` which equals `""` for all
+comparisons. The empty test case `name: "empty"` (`domain_test.go:219`)
+exercises this — `input: ""` → `wantRole: ""`.
+
+REFUTED.
+
+#### 9. Test count drift
+
+Reviewer-run `mage test-pkg ./internal/domain` reports `tests: 103`.
+
+Round-1 baseline arithmetic:
+
+- Droplet 2.2 baseline: 90 tests (per `BUILDER_QA_FALSIFICATION.md:541`,
+  `mage test-pkg ./internal/domain` reports `tests: 90`).
+- Droplet 2.3 adds: 1 new top-level test `TestNewActionItemRoleValidation`
+  (sub-cases registered with `t.Run` in a `for _, tc := range cases`
+  loop, with 12 sub-cases enumerated at `domain_test.go:219-230`).
+- Go's test runner counts each `t.Run` subtests as a distinct test. So
+  `TestNewActionItemRoleValidation` contributes 1 (parent) + 12 (subtests)
+  = 13 tests. 90 + 13 = 103. ✓
+
+`mage ci` whole-suite delta: 1300 (post-Droplet-2.2) → 1313 (post-Droplet-2.3)
+= +13. Matches per-package delta exactly.
+
+REFUTED — test count is correct and arithmetic is consistent across the
+whole-suite and per-package counts.
+
+#### 10. `mage ci` re-run
+
+Reviewer ran `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`.
+Tail capture:
+
+```
+Test summary
+  tests: 1313
+  passed: 1313
+  failed: 0
+  skipped: 0
+  packages: 19
+  pkg passed: 19
+  pkg failed: 0
+  pkg skipped: 0
+
+[SUCCESS] All tests passed
+  1313 tests passed across 19 packages.
+
+Minimum package coverage: 70.0%.
+[SUCCESS] Coverage threshold met
+[SUCCESS] Built till from ./cmd/till
+```
+
+Per-package coverage (lowest five):
+
+- `internal/tui` — 70.0% (unchanged, lowest).
+- `internal/app` — 71.5%.
+- `internal/adapters/server/mcpapi` — 72.3%.
+- `internal/adapters/auth/autentauth` — 73.0%.
+- `internal/adapters/server/common` — 73.0%.
+- `internal/domain` — 79.4% (matches Droplet 2.2 baseline; 13 new
+  test runs go through the `NewActionItem` happy-path / `Role`-error
+  paths that were already covered by adjacent tests, so the % stays flat
+  even with absolute test count rising).
+
+Build green. Exit 0. Builder's claim reproduced exactly.
+
+REFUTED — `mage ci` is green at HEAD with Droplet 2.3 staged.
+
+#### 11. Hidden compile failures from struct literal usage
+
+Searched for `ActionItem{` and `domain.ActionItem{` literal constructions:
+
+- `internal/domain/action_item.go:106-192` — multiple `ActionItem{}`
+  zero-value returns. Adding `Role` keeps these as zero literals, so
+  `Role` becomes `""` (zero value for `Role string`). No compile break,
+  no semantic change.
+- `internal/domain/action_item.go:195` — the named-field construction
+  inside `NewActionItem` itself; updated by the builder to include
+  `Role: in.Role`.
+- `internal/domain/domain_test.go:492` — `[]ActionItem{ {ID, Title,
+  LifecycleState} }` partial literal. Go allows partial named-field
+  literals; `Role` is omitted and defaults to `""`. No compile break.
+- `internal/app/kind_capability.go:792` — `&domain.ActionItem{ProjectID,
+  Scope}` partial named-field. Same pattern; `Role` defaults to `""`.
+
+`mage ci` green confirms no struct literal anywhere compile-breaks.
+
+REFUTED — Go's named-field struct literals tolerate adding a new field;
+no caller breaks.
+
+#### 12. Doc comment on Role field
+
+Both `ActionItem.Role` (`action_item.go:30-33`) and `ActionItemInput.Role`
+(`action_item.go:63-67`) carry inline godoc-style comments documenting:
+
+- The optional / closed-enum semantics.
+- The empty-zero-value contract.
+- The `ErrInvalidRole` rejection behavior on `ActionItemInput`.
+
+CLAUDE.md "Go Development Rules" line `Go doc comments on every top-level
+declaration and method` applies to declarations (functions, types,
+top-level vars), not to struct fields. Sibling fields like `ID`,
+`ProjectID`, `Kind` carry no inline comments either, so the convention
+in this package is "doc comment optional on fields." The builder went
+above and beyond by adding doc comments anyway. Compliant.
+
+REFUTED — doc comment present and stylistically appropriate.
+
+#### 13. Forvar absence
+
+`rg -n "tc := tc" internal/domain/domain_test.go` → empty. The new
+`TestNewActionItemRoleValidation` table-driven loop at
+`domain_test.go:233-254` does NOT contain a `tc := tc` line — and
+correctly so for Go 1.22+ where the loop variable is per-iteration by
+default. (The project is on Go 1.26 per `CLAUDE.md` "Tech Stack".)
+
+REFUTED — no forvar shadow needed; loop variable is per-iteration by
+default in Go 1.22+.
+
+#### 14. Validation error wrapping consistency
+
+Inspected the existing error-return style in `NewActionItem` (every
+sentinel returned as `return ActionItem{}, ErrInvalidX` — bare, no
+`fmt.Errorf("...: %w", ...)` wrap, no context prefix):
+
+- L106: `return ActionItem{}, ErrInvalidID`
+- L109: `return ActionItem{}, ErrInvalidID`
+- L112: `return ActionItem{}, ErrInvalidParentID`
+- L115: `return ActionItem{}, ErrInvalidColumnID`
+- L118: `return ActionItem{}, ErrInvalidTitle`
+- L121: `return ActionItem{}, ErrInvalidPosition`
+- L128: `return ActionItem{}, ErrInvalidPriority`
+- L132, L135: `return ActionItem{}, ErrInvalidKind`
+- L142, L148: `return ActionItem{}, ErrInvalidKindAppliesTo`
+- **L157: `return ActionItem{}, ErrInvalidRole`** (NEW — bare).
+- L163: `return ActionItem{}, ErrInvalidLifecycleState`
+- L169: `return ActionItem{}, ErrInvalidActorType`
+
+Builder's `return ActionItem{}, ErrInvalidRole` is byte-for-byte
+consistent with the surrounding style. The test uses `err != tc.wantErr`
+direct comparison (`domain_test.go:244`), which works because the bare
+sentinel is `==` to itself. (`errors.Is` would also work but isn't
+needed.) Consistent with sibling validators.
+
+REFUTED — error style is consistent with package convention.
+
+### Counterexamples
+
+None constructed. All 14 attack vectors REFUTED.
+
+### Verdict Summary
+
+**PASS.** Builder's claim that Droplet 2.3 (`Role` field on `ActionItem` +
+`ActionItemInput`, `NewActionItem` validation block, schema-gate `readOnly`
+classification, +1 `TestNewActionItemRoleValidation` table-driven test
+covering 12 sub-cases) is clean and `mage ci` is green is fully verified.
+All 14 attack vectors REFUTED. Local `mage ci` reproduces 1313 tests / 19
+packages / coverage ≥ 70.0% / build green / exit 0 — exactly the builder's
+reported result. `internal/domain` rose 90 → 103 tests (+13: 1 parent +
+12 sub-cases via `t.Run`), consistent with the whole-suite delta 1300 → 1313.
+
+Validation order is correct: Role gate sits after Kind / Scope mirror
+checks, with empty-role short-circuit (`!= "" && !IsValidRole`)
+preventing false rejections of the optional-empty zero value. Whitespace-only
+input normalizes to `""` and round-trips as the zero `Role` value. The
+return literal at `action_item.go:201` correctly sets `Role: in.Role`
+post-normalize. Schema-gate `readOnly` classification is peer-consistent
+with `Kind` / `Scope` / `LifecycleState` (closed-enum structural fields
+not editable via TUI form input). No JSON serialization leak — snapshot
+and MCP surfaces use their own projection structs with explicit tags.
+No struct-literal callers break (Go's named-field syntax tolerates the
+new field; zero-valued `ActionItem{}` returns continue to work). Error
+sentinel style matches sibling `ErrInvalidX` returns (bare, no wrap).
+No forvar shadow needed (Go 1.22+ per-iteration loop var). Doc comments
+on `Role` fields go above and beyond the package's "fields rarely doc'd"
+convention.
+
+No blocking counterexamples. No nits worth blocking on. Droplet 2.3 is
+ready for closeout.
+
+### Hylla Feedback
+
+N/A — task touched only Go files I read directly via `Read` and `LSP`,
+plus shelled `git diff` / `mage ci` / `mage test-pkg`. No Hylla queries
+issued during this falsification round; the modified surfaces
+(`internal/domain/action_item.go`, `internal/domain/domain_test.go`,
+`internal/tui/model_test.go`) are localized and read in full from the
+working tree, with `LSP documentSymbol` used to enumerate the
+domain_test.go test functions. No Hylla miss to report.
