@@ -647,6 +647,7 @@ func mapAppError(operation string, err error) error {
 		errors.Is(err, domain.ErrInvalidKindPayload),
 		errors.Is(err, domain.ErrInvalidKindPayloadSchema),
 		errors.Is(err, domain.ErrKindNotAllowed),
+		errors.Is(err, domain.ErrInvalidRole),
 		errors.Is(err, app.ErrInvalidDeleteMode):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))
 	case errors.Is(err, domain.ErrKindNotFound):
