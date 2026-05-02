@@ -1303,3 +1303,267 @@ One non-blocking nit (snapshot validate doesn't enforce role membership) recorde
 ### Hylla Feedback
 
 N/A — Hylla queries not issued during this falsification round. The reviewed surface is two files (`internal/app/snapshot.go`, `internal/app/snapshot_test.go`), both with uncommitted diffs against the prior committed state, so Hylla's index would be stale on every queried symbol. Investigation used `git diff` for the precise three-line production change, `Read` for full-context line tracing of the projector + hydrator + Validate function, and `git grep` for hidden-consumer enumeration of `SnapshotActionItem{` literals and method receivers across the `internal/` tree. Code-local navigation against an actively-edited diff is the right tool fit; Hylla shines on whole-tree symbol queries against a settled index. No miss to report.
+
+## Droplet 2.7 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-02
+**Reviewer:** go-qa-falsification-agent (subagent), Round 1
+
+### Summary
+
+Adversarial attack on the builder's claim that the atomic state-vocabulary rename across 25 files in one commit is clean and `mage ci` is green. 20 attack vectors run; **0 blocking counterexamples constructed**. Two soft drifts surfaced (decoder-rejection over-claim in PLAN.md `:224`; slug-equivalence coercion of `"in-progress"` kebab in slug-style normalizers vs. PLAN.md `:222` literal-rejection language), neither of which breaks the implementation, neither blocking. Local `mage ci` reproduces 1332/1332 across 19 packages; TUI 70.0% on threshold (matches builder's coverage-maintenance claim).
+
+### Attack Vectors and Findings
+
+#### 1. Symbol leak hunt — exhaustive
+
+`git grep -nE "\bStateDone\b|\bStateProgress\b|\bRequireChildrenDone\b|\bDoneActionItems\b|\bDoneItems\b|\bDoneTasks\b" -- '*.go'` → empty. Every legacy symbol purged from the Go tree.
+
+`git grep -nE "ChecklistItem.*\.Done\b" -- '*.go'` → empty. The `ChecklistItem.Done` field reference is purged; only `item.Complete` reads remain at `internal/domain/action_item.go:376`.
+
+REFUTED — no symbol leak exists at HEAD.
+
+#### 2. Literal leak hunt — exhaustive
+
+`git grep -nE '"done"|"progress"|"completed"|"in-progress"|"doing"' -- '*.go'` returns 21 hits. Each examined:
+
+- **State-machine ALLOWED (intentional rejection-asserting tests):**
+  - `internal/adapters/server/common/capture_test.go:269, 272` — `canonicalLifecycleState("doing")`, `canonicalLifecycleState("done")` asserting `StateTodo` (legacy rejection). Intentional.
+  - `internal/config/config_test.go:820` — `[]string{"progress", "done", "completed", "in-progress", "doing"}` test loop asserting all-rejected by `isKnownLifecycleState`. Intentional.
+
+- **State-machine ALLOWED (test-fake column-name slug; not state literal):**
+  - `internal/tui/model_test.go:685, 969` — switch case `"in-progress"` in `fakeService.SearchActionItemMatches` and `fakeService.MoveActionItem`. The fake independently lowercases + dashes the column display name (`strings.ReplaceAll(c.Name, " ", "-")`), so the kebab slug `"in-progress"` is the fake's natural slug. Maps to canonical `"in_progress"`. Test fake, not production. Production normalizers use underscore. No call from test through production normalizer compares the two — no break. Acceptable.
+
+- **Free-form text (NOT state-machine, OUT OF SCOPE):**
+  - `cmd/till/embeddings_cli.go:242 status = "completed"` — embeddings reindex job status, unrelated to lifecycle state.
+  - `internal/adapters/server/common/app_service_adapter_lifecycle_test.go:716, 721, 912` — `Reason: "done"` / `RevokedReason == "done"` on capability lease revoke. Free-form revoke reason text.
+  - `internal/adapters/server/common/app_service_adapter_outcome_test.go:71` — `Outcome: "done"` is action-item outcome metadata vocabulary, NOT lifecycle state.
+  - `internal/adapters/server/mcpapi/handler_integration_test.go:380, 405` — `"resolution_note": "done"`, `resolutionNote != "done"` — attention-item resolution note, free-form text.
+  - `internal/adapters/storage/sqlite/repo_test.go:1749` — `Reason: "done"` lease revoke.
+  - `internal/app/capability_inventory_test.go:50` — `revoked.Revoke("done", ...)` lease revoke.
+  - `internal/app/service_test.go:3797` — `Reason: "done"` lease revoke (PLAN.md `:345` R3-7 explicitly noted this is free-form).
+  - `internal/domain/comment_test.go:95 BodyMarkdown: "done"`, `internal/domain/handoff_test.go:64 Summary: "done"`, `internal/domain/domain_test.go:114 c.Name != "done"` — free-form text test inputs (PLAN.md `:162, :345` confirms `domain_test.go:114` is column-rename test, NOT state literal).
+  - `internal/app/service_test.go:2467` — `{ID: "doing", Name: "Doing"}` user-supplied custom column ID round-trip test. Builder design judgment 5 confirmed and reverified: this test does not exercise state-coercion semantics; it only asserts column display-name round-trip via `ListColumns`. The custom ID `"doing"` is opaque user data through `sanitizeStateTemplates`; downstream `lifecycleStateForColumnID` would map `"Doing"` to `StateTodo` via strict-canonical default, but this test never queries that path.
+
+- **Out-of-scope per PLAN.md Notes B9:**
+  - `internal/adapters/server/common/mcp_surface.go:236 Completed bool json:"completed"` — explicitly OOS (independent checklist-completion field on a different struct).
+
+REFUTED — every legacy literal hit is either an intentional rejection-asserting test, a test-fake column-slug (test-internal, not production), free-form text outside state-machine context, or the explicitly OOS `mcp_surface.Completed` field.
+
+#### 3. Strict-canonical reject test fixtures
+
+Spot-checked 5+ rejection-asserting sites:
+
+- `capture_test.go:268-279` — `canonicalLifecycleState("doing")` and `canonicalLifecycleState("done")` both assert `domain.StateTodo` (rejection-via-default). Plus 2 positive assertions for `"in_progress"` and `"complete"`. ✓
+- `service_test.go:1561, 1567` — `States: []string{"in_progress"}` and `StateID == "in_progress"` (canonical; legacy `"progress"` flipped). ✓
+- `service_test.go:2953` — `got[0].ID != "in_progress"` (canonical) in `TestStateTemplateSanitization`. ✓
+- `tui/model_test.go` — `TestDependencyStateIDForActionItem` extended with positive cases for `complete` and `failed`. ✓
+- `config_test.go:810-828 TestIsKnownLifecycleStateIncludesFailed` — explicit positive (`"todo", "in_progress", "complete", "archived"`) + explicit negative (`"progress", "done", "completed", "in-progress", "doing"`). Strict-canonical rejection contract verified. ✓
+
+REFUTED — every coercion-asserting test is correctly flipped to rejection-asserting form.
+
+#### 4. Slug separator change attack
+
+`normalizeStateID`, `normalizeStateLikeID`, `normalizeColumnStateID` now slugify with `_` (underscore) separator. Production callers enumerated:
+
+- `internal/app/service.go:1241 stateByColumn[column.ID] = normalizeStateID(column.Name)` → map value is the slugified state ID. Used as `stateID := stateByColumn[actionItem.ColumnID]` → filtered against `stateSet` of canonical states; non-canonical slugs miss the lookup → filtered out. Underscore separator works fine; no caller compares to `-`-separated strings.
+- `internal/app/service.go:1918 state.ID = normalizeStateID(state.Name)` (sanitizer) → output ID is the underscore slug. Dedupe key strips both `-` and `_` (line 1920) — so legacy `-`-separated user input dedupes correctly against the new `_`-separated canonical IDs.
+- `internal/app/service.go:1993 switch normalizeStateID(column.Name) { case "todo": ... }` — switch arms are canonical underscore form. Match correctly.
+- `internal/adapters/server/common/app_service_adapter_mcp.go:852 switch normalizeStateLikeID(name) {}` — same pattern, canonical arms.
+- `internal/tui/model.go:7871 normalizeColumnStateID(string(actionItem.LifecycleState))` — slugifies a state value; for canonical state strings (which already use `_`) the slug is identity. For legacy state strings (pre-MVP fresh-DB rule) doesn't apply.
+- `internal/tui/model.go:17978 switch normalizeColumnStateID(name) { case "todo": ... }` — canonical arms.
+
+REFUTED — every caller works correctly with the new separator. No legacy `-` expectation remains.
+
+#### 5. `sanitizeStateTemplates` dedupe correctness
+
+`internal/app/service.go:1920`: `dedupeID := strings.ReplaceAll(strings.ReplaceAll(state.ID, "-", ""), "_", "")`. Strips both. Trace with two templates `id="in-progress"` (legacy) and `id="in_progress"` (canonical):
+
+- Both dedupe to `"inprogress"` (no separators) → second one dedupes against first.
+- However, under strict-canonical the upstream `isKnownLifecycleState`/validator would reject the legacy `"in-progress"` config-side; sanitizer is downstream of that.
+- The test `TestStateTemplateSanitization` at `service_test.go:2953` asserts `got[0].ID != "in_progress"`. Builder noted "1 `progress`→`in_progress` ID assertion in `TestStateTemplateSanitization`" — flip is correct.
+
+REFUTED — dedupe semantics correct for both separator conventions.
+
+#### 6. `defaultStateTemplates` ID change persistence impact
+
+`internal/app/service.go:1895-1902`: returns `[{"todo"}, {"in_progress"}, {"complete"}, {"failed", Hidden:true}]` — canonical IDs, with display name `"Complete"` (was `"Done"`, builder design judgment 6 confirms). Existing DB rows with `id = "progress"` / `"done"` won't match. Pre-MVP fresh-DB rule covers this (PLAN.md `:228, :229`). Mage ci runs against the dev-cleaned `~/.tillsyn/` per builder's worklog "DB state" section. No test relies on legacy IDs persisting.
+
+REFUTED — pre-MVP rule honored, no test fallout.
+
+#### 7. `ChecklistItem` JSON decoder strictness — DRIFT
+
+PLAN.md `:224` claims: *"JSON unmarshal accepts ONLY `"complete"` — `"done"` keys produce a decode error (no fallback alias)."*
+
+`ChecklistItem` at `internal/domain/workitem.go:81-85` has only `json:"complete"` tag. No `UnmarshalJSON` method, no `DisallowUnknownFields()` decoder usage at the call sites. Per Go `encoding/json` default semantics, unknown keys are silently ignored — `json.Unmarshal({"id":"a","text":"b","done":true}, &item)` produces `{ID:"a", Text:"b", Complete:false}` with NO error.
+
+So PLAN.md's strict reading ("decode error") is unmet. Pragmatic reading: legacy `"done":true` is silently dropped (Complete defaults to false), so legacy data does not round-trip as expected. There is NO table-driven test asserting decode rejection — that test in PLAN.md `:224` does not exist.
+
+This is a **soft drift** between PLAN.md acceptance language and stdlib semantics, NOT a runtime correctness break:
+
+- Pre-MVP fresh-DB rule means no on-disk JSON with legacy `"done"` keys exists (templates deletion in 2.1 removed the only on-disk source).
+- The negative requirement ("no `UnmarshalJSON` shim, no fallback alias") IS met.
+- The positive requirement ("decode error on legacy keys") is unmet but unreachable at runtime.
+
+Builder's QA Proof Round 1 (Build proof verdict line 722) explicitly flagged this as "documentation-vs-implementation phrasing issue, not a correctness gap." Concur.
+
+NOT BLOCKING — soft drift on PLAN.md acceptance language; no runtime path is broken; pre-MVP rule covers the data-existence question. Routes to a PLAN-language refinement if dev wants the strict interpretation enforced post-MVP.
+
+#### 8. MCP error mapping symmetry
+
+`internal/adapters/server/common/app_service_adapter_mcp.go:820-828 normalizeActionItemStateInput` returns `ErrInvalidCaptureStateRequest` (which `mapAppError` maps to a 400-class error) for unknown states. Trace:
+
+- `move_state` with `"done"`: `actionItemLifecycleStateForColumnName("done")` → `normalizeStateLikeID("done")` returns `"done"` (default arm) → outer switch falls to `default: ""` → `normalizeActionItemStateInput` switch falls to `default: error`. **400-class error correctly produced.**
+- `move_state` with `"completed"`, `"doing"`, `"progress"`: same path → error. ✓
+- `move_state` with `"complete"`: `normalizeStateLikeID("complete")` → `"complete"` → switch case match → `StateComplete` → `normalizeActionItemStateInput` returns `StateComplete, nil`. ✓
+
+REFUTED — strict-canonical rejection produces 400-class errors via the same path as `ErrInvalidKind` / `ErrInvalidRole`.
+
+#### 9. `till.action_item` MCP behavior
+
+`extended_tools_test.go:1131, 2604` — both assert `"state": "complete"` round-trips. Tool description at `extended_tools.go:1342` reads `"todo|in_progress|complete"` (canonical only, no legacy mention). MCP tool schema does NOT enumerate legacy values as Enum members.
+
+The path: tool input `state` → `MoveActionItemStateRequest.State` → `normalizeActionItemStateInput` (vector 8 above). Legacy values produce 400-class errors. No test in `extended_tools_test.go` asserts the legacy-rejection path with a specific input like `"done"` and expecting `isError: true` — that test does not exist. But the underlying code path is exercised by `capture_test.go:268-279` rejection assertions, and the mage ci suite passes.
+
+NOT BLOCKING — code path is strict-canonical, but explicit MCP-layer legacy-input-error test would strengthen the contract proof. Routes as nit.
+
+#### 10. Cross-package compile attack — `mage ci`
+
+Re-ran `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. Result: green. 1332 tests passed across 19 packages. All packages ≥ 70.0% coverage (TUI 70.0% on threshold). Build of `./cmd/till` succeeded. Exit code 0.
+
+Builder's claimed result reproduces exactly.
+
+REFUTED — compile clean across the tree.
+
+#### 11. Pre-MVP fresh-DB sufficient?
+
+Persistence-path implication: a pre-existing DB with `lifecycle_state = "done"` or `column.id = "progress"` rows would no longer round-trip through strict-canonical validators. Pre-MVP fresh-DB rule (PLAN.md `:228`, builder worklog "DB state" section) covers this. Builder confirmed the dev had already deleted `~/.tillsyn/` per Droplet 2.4's spawn-prompt pre-condition.
+
+Documentation/error message clarity:
+
+- `internal/app/snapshot.go:422` — explicit error: `"tasks[%d].lifecycle_state must be todo|in_progress|complete|failed|archived"` — names valid states.
+- `internal/config/config.go:404` — explicit: `"search.states[%d] references unknown state %q"` — names the offending state.
+- `app_service_adapter_mcp.go:826-827` — explicit: `"state %q is unsupported"` — names the offending state.
+
+Errors are clear, not silent. REFUTED.
+
+#### 12. MD carve-out fix at `capture_test.go:199`
+
+Diff verified: line 199 changed `"want todo=2 progress=1 done=1 failed=1 archived=1"` → `"want todo=2 in_progress=1 complete=1 failed=1 archived=1"`. Surrounding prose unchanged. Single-phrase fix per PLAN.md `:411` carve-out (delete-or-stub). ✓
+
+REFUTED — fix is delete-or-stub compliant.
+
+#### 13. `config.example.toml` scope-expansion correctness
+
+`TestExampleConfigEmbeddingsDefaults` at `internal/config/config_test.go:178-219` calls `Load(examplePath, ...)`. `Load` runs validation including `isKnownLifecycleState` per `config.go:402-406`. Strict-canonical rejection of legacy `"progress"` / `"done"` would fail validation with `"search.states[%d] references unknown state %q"`.
+
+Diff at `config.example.toml`: states list flipped from `["todo", "progress", "done"]` → `["todo", "in_progress", "complete"]` plus a one-line comment update. Single-line same-scope edit; required to keep `mage ci` green. NOT in PLAN.md `Paths:` but builder surfaced inline in worklog.
+
+REFUTED — scope expansion is necessary, single-line, and correct.
+
+#### 14. Snapshot serialization compat
+
+Re-verified two snapshot tests:
+
+- `TestSnapshotValidateAcceptsFailedState` at `snapshot_test.go:404` constructs a snapshot with `LifecycleState: domain.StateFailed`. Validate returns nil. ✓
+- `TestSnapshotValidateRejectsInvalidState` at `snapshot_test.go:420` constructs `LifecycleState: "invalid"`. Validate returns error containing "failed" (per error message at `snapshot.go:422`). ✓
+
+`SnapshotVersion = "tillsyn.snapshot.v5"` unchanged at `snapshot.go:16` (verified via `git diff`). Forward-compat per pre-MVP rule.
+
+`mage test-pkg ./internal/app` — 188/188 passed in builder claim, reproduced via `mage ci` (which runs every package).
+
+REFUTED — snapshot tests round-trip correctly across the rename.
+
+#### 15. Aggregate counter rename completeness
+
+`git grep -E "DoneItems|DoneActionItems|DoneTasks" -- '*.go'` → empty. All readers updated:
+
+- `internal/adapters/server/common/types.go:143` — field renamed to `CompleteActionItems` with JSON tag `complete_tasks`.
+- `internal/app/attention_capture.go:96` — field renamed to `CompleteItems` with JSON tag `complete_items`.
+- `internal/adapters/server/common/capture.go` — counter increment `CompleteActionItems++`.
+- `internal/adapters/server/common/app_service_adapter.go:409, 421` — readers updated.
+- `internal/adapters/server/common/capture_test.go:198`, `internal/adapters/server/common/app_service_adapter_test.go:160-161`, `internal/app/attention_capture_test.go:386` — assertions updated.
+
+REFUTED — clean.
+
+#### 16. `RequireChildrenDone` rename completeness
+
+`git grep -nE "\bRequireChildrenDone\b" -- '*.go'` → empty. `git grep -E 'json:"require_children_done"' -- '*.go'` → empty. Test fixtures and readers all flipped:
+
+- `internal/domain/workitem.go:89` — field rename + JSON tag rename.
+- `internal/domain/workitem.go:380` (production merge code in `MergeCompletionContract`) — implicitly covered by compile error post-rename; verified clean via `git grep`.
+- `internal/domain/action_item.go:310` — reader `policy.RequireChildrenComplete`.
+- `internal/domain/domain_test.go:430, 587, 614-615`, `internal/domain/kind_capability_test.go:35, :73`, `internal/app/service_test.go:3042, 3095, 4613`, `internal/adapters/server/common/capture_test.go:126`, `internal/app/kind_capability_test.go:429` — all flipped.
+
+REFUTED — clean across production + tests.
+
+#### 17. Cite drift accountability — spot-check 3 high-traffic edits
+
+- `internal/domain/workitem.go:18-19` — `StateInProgress LifecycleState = "in_progress"` and `StateComplete LifecycleState = "complete"` at the constant declaration. Verified via `Read` at lines 17-19. Edit landed at correct anchor. ✓
+- `internal/app/service.go:1895-1902 defaultStateTemplates` — IDs `"in_progress"`, `"complete"` plus display names `"In Progress"`, `"Complete"`. Verified via `Read`. Correct anchor. ✓
+- `internal/adapters/server/mcpapi/extended_tools.go:1342` — tool description string `"...todo|in_progress|complete"`. Verified via `Read`. Correct anchor. ✓
+
+Builder's cite-drift sweep matches HEAD reality. REFUTED — no anchor mistakes.
+
+#### 18. Forvar absence
+
+`git grep -n "tc := tc" -- '*.go'` returns 9 sites — all in files NOT touched by Droplet 2.7 (`cmd/till/main_test.go`, `internal/adapters/server/common/app_service_adapter_helpers_test.go`, `internal/adapters/server/common/app_service_adapter_mcp_guard_test.go`, `internal/app/schema_validator_test.go`, `internal/domain/auth_request_test.go`). These are pre-existing legacy `tc := tc` lines in unrelated tests — out of scope per PLAN.md `Paths:`. `git diff HEAD -- 'internal/app/service_test.go' 'internal/tui/model_test.go' 'internal/domain/domain_test.go' 'internal/adapters/server/common/capture_test.go' 'internal/config/config_test.go'` shows zero new `tc := tc` lines added by 2.7.
+
+REFUTED — Droplet 2.7 introduced zero new forvar idioms.
+
+#### 19. Coverage threshold attack — fragility nit
+
+`internal/tui` post-rename coverage = 70.0% exactly (PLAN.md threshold). Builder added 2 positive test cases to `TestDependencyStateIDForActionItem` for `complete` and `failed` to recover from a 0.1% drop (legacy alias-coercion arms in `normalizeColumnStateID` were previously covered by `dependencyStateIDForActionItem(StateProgress)`, which strict-canonical removes). Future trivial changes that touch any uncovered TUI line could drop below 70.0%.
+
+This is a fragility, not a correctness gap. Pre-existed Droplet 2.7 (the +0.1% margin was always thin). NOT BLOCKING — recorded as a nit for future drops to surface in their builder/QA discipline.
+
+#### 20. No `ALTER TABLE`
+
+`git diff HEAD -- 'internal/adapters/storage/sqlite/repo.go' 'internal/adapters/storage/sqlite/repo_test.go'` → empty. Zero schema-creation block edits, zero `ALTER TABLE`, zero seed-data SQL changes for 2.7.
+
+REFUTED — DB layer untouched per pre-MVP no-migration rule.
+
+#### Soft drift A — slug-equivalence coercion of `"in-progress"` (kebab)
+
+PLAN.md `:222` lists `"in-progress"` among legacy values that "return the unknown-state error path (NOT coerced)" across nine specific normalizers. Slug-style normalizers (`normalizeStateID`, `normalizeStateLikeID`, `normalizeColumnStateID`) treat `-` and `_` as equivalent separator characters: input `"in-progress"` → trim+lower → slugify (`-` → `_`) → `"in_progress"` → switch case match → returns canonical `"in_progress"`. **COERCED, not rejected.**
+
+Same applies to `"to-do"` (silently accepted as `"todo"`).
+
+For the non-slug normalizers (`canonicalLifecycleState`, `domain.normalizeLifecycleState` + `isValidLifecycleState`, `config.isKnownLifecycleState`), `"in-progress"` IS rejected via switch-on-raw-string-equality without slugification.
+
+Builder design judgment 1 explicitly chose underscore as the canonical slug separator for column-display-name slugifying (`"In Progress"` → `"in_progress"` directly). Treating dashes the same as spaces (both → `_`) is a coherent slugifier design. The kebab `"in-progress"` is a side effect — it falls through dash-to-underscore and lands on canonical.
+
+User-visible impact:
+
+- MCP `move_state` with `state: "in-progress"` succeeds (silently coerced to `StateInProgress`).
+- Pre-MVP rule says broken callers fail loud — this caller doesn't fail (gets the right state via wrong spelling).
+
+This is a **soft drift** between PLAN.md acceptance language (literal-rejection of `"in-progress"` everywhere) and slugifier design (kebab and underscore are equivalent separators). Implementation is internally coherent; PLAN.md `:222` over-states the rejection scope for slug-style normalizers.
+
+NOT BLOCKING — wrong spelling lands on right state; no correctness break. Routes as a PLAN-language refinement if dev wants strict literal rejection at slug-style normalizers (would require pre-slug literal check before slugification step).
+
+### Cross-Cutting Verdicts
+
+- **Strict-canonical at state-machine boundary:** met for `domain.normalizeLifecycleState` + `isValidLifecycleState`, `canonicalLifecycleState`, `isKnownLifecycleState`, `snapshot.go:419`. Legacy state literals (`"done"`, `"completed"`, `"progress"`, `"doing"`) all rejected via fall-through-to-default or false-return.
+- **Strict-canonical at slug-style boundary:** met for legacy literals that don't equate to canonical via dash-to-underscore equivalence (`"done"`, `"completed"`, `"progress"`, `"doing"` all reject). Soft-drifted on `"in-progress"` (kebab) and `"to-do"` (kebab) — these slug-equivalent to canonical and silently coerce. Per soft drift A above.
+- **Symbol/JSON-tag rename completeness:** met. Every legacy symbol (`StateDone`, `StateProgress`, `RequireChildrenDone`, `DoneActionItems`, `DoneItems`) and every legacy JSON tag (`done`, `done_tasks`, `done_items`, `require_children_done`) purged from the Go tree.
+- **Test fixture + assertion flips:** met. Coercion-asserting tests rewritten to rejection-asserting form. Two TUI positive tests added for coverage maintenance.
+- **MD/TOML adjacent edits:** met under PLAN.md `:411` carve-out. `capture_test.go:199` debug-message label is delete-or-stub compliant. `config.example.toml` scope expansion is necessary (test exercises the file via `Load + Validate`).
+- **Pre-MVP rules honored:** zero `ALTER TABLE`, zero migration code, zero new `tc := tc`. DB delete handled per spawn prompt.
+- **`mage ci`:** reproduces 1332/1332 across 19 packages. Coverage maintained.
+
+### Verdict Summary
+
+**PASS.** 20 attack vectors run; 0 blocking counterexamples constructed. Two soft drifts surfaced — one (vector 7, decoder rejection) is a PLAN-vs-stdlib phrasing issue with no runtime path broken; the other (soft drift A, kebab `"in-progress"` slug-equivalence coercion) is a coherent slugifier design that contradicts PLAN.md `:222`'s literal-rejection language for slug-style normalizers. Neither blocks. The atomic state-vocabulary rename across 23 Go files + 1 TOML + 1 MD lands cleanly; `mage ci` reproduces 1332/1332 green; per-package coverage all ≥ 70.0% (TUI exactly on threshold). Builder design judgments (slug separator dash→underscore, column-display-name renames where state-machine semantics require, coverage maintenance via 2 added positive tests, error-path semantics via fall-through-to-default, single-line `config.example.toml` scope expansion) are all coherent with strict-canonical and documented in BUILDER_WORKLOG.
+
+Routing for the two soft drifts:
+
+- **Vector 7 / soft drift on PLAN.md `:224`:** PLAN-language refinement. Either tighten implementation (caller-side `DisallowUnknownFields()` on metadata decode) post-MVP, or relax PLAN-language to "no fallback alias; legacy keys silently dropped per stdlib default." Decision to dev.
+- **Soft drift A / PLAN.md `:222` literal-rejection at slug-style normalizers:** PLAN-language refinement. Either tighten implementation (pre-slug literal check rejecting kebab `"in-progress"` / `"to-do"`) or relax PLAN-language to scope literal rejection to non-slug normalizers only. Decision to dev.
+
+Build is ready to commit.
+
+### Hylla Feedback
+
+N/A — Hylla queries not issued during this falsification round. The reviewed surface is 25 Go files with uncommitted diffs against the prior committed state, so Hylla's index is stale on every queried symbol. Investigation used `git diff` for precise change verification, `Read` for line-anchor confirmation, `git grep` for whole-tree literal/symbol sweeps (the natural fit for "find every occurrence of these patterns across known packages"), and `mage ci` for the cross-package compile + test gate. Code-local navigation against an actively-edited diff is the right tool fit; Hylla shines on symbol-level queries against a settled index. Zero ergonomic gripes for this droplet.
