@@ -22,11 +22,15 @@ var validPriorities = []Priority{PriorityLow, PriorityMedium, PriorityHigh}
 
 // ActionItem represents actionItem data used by this package.
 type ActionItem struct {
-	ID             string
-	ProjectID      string
-	ParentID       string
-	Kind           Kind
-	Scope          KindAppliesTo
+	ID        string
+	ProjectID string
+	ParentID  string
+	Kind      Kind
+	Scope     KindAppliesTo
+	// Role optionally tags an action item with a closed-enum role (e.g.
+	// builder, qa-proof, planner). Empty string is the zero value and is
+	// permitted — callers that require a role should validate downstream.
+	Role           Role
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -51,11 +55,16 @@ type ActionItem struct {
 
 // ActionItemInput holds input values for actionItem operations.
 type ActionItemInput struct {
-	ID             string
-	ProjectID      string
-	ParentID       string
-	Kind           Kind
-	Scope          KindAppliesTo
+	ID        string
+	ProjectID string
+	ParentID  string
+	Kind      Kind
+	Scope     KindAppliesTo
+	// Role optionally tags the action item with a closed-enum role. Empty
+	// string is permitted and round-trips as the zero-value Role; non-empty
+	// values must match the closed Role enum or NewActionItem returns
+	// ErrInvalidRole.
+	Role           Role
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -138,6 +147,15 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	if in.Scope != KindAppliesTo(in.Kind) {
 		return ActionItem{}, ErrInvalidKindAppliesTo
 	}
+	// Role is optional. NormalizeRole collapses whitespace-only input to the
+	// empty string; an empty normalized role is permitted and round-trips as
+	// the zero-value Role. A non-empty normalized value must be a member of
+	// the closed Role enum — short-circuit on emptiness because IsValidRole
+	// rejects the empty string.
+	in.Role = NormalizeRole(in.Role)
+	if in.Role != "" && !IsValidRole(in.Role) {
+		return ActionItem{}, ErrInvalidRole
+	}
 	if in.LifecycleState == "" {
 		in.LifecycleState = StateTodo
 	}
@@ -180,6 +198,7 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		ParentID:       in.ParentID,
 		Kind:           in.Kind,
 		Scope:          in.Scope,
+		Role:           in.Role,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,
