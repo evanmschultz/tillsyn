@@ -1176,3 +1176,130 @@ No blocking counterexamples. One minor coverage nit logged (no service-layer-dir
 ### Hylla Feedback
 
 N/A — Hylla queries not issued during this falsification round. The reviewed surface is five files (`internal/app/service.go`, `internal/adapters/server/common/mcp_surface.go`, `internal/adapters/server/common/app_service_adapter.go`, `internal/adapters/server/common/app_service_adapter_mcp.go`, `internal/adapters/server/mcpapi/extended_tools.go`, plus the test file) all with uncommitted diffs, so Hylla's index would be stale on every queried symbol. Investigation used `git diff` for layer-by-layer change tracking, `Read` for full-context line tracing, and `git grep` for hidden-consumer enumeration. Code-local navigation against an actively-edited diff is the right tool fit; Hylla shines on whole-tree symbol queries against a settled index. No miss to report.
+
+## Droplet 2.6 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-02
+**Reviewer:** go-qa-falsification-agent (subagent), Round 1
+
+### Summary
+
+Adversarial attack on the builder's claim that `Role domain.Role \`json:"role,omitempty"\`` was added to `SnapshotActionItem` (snapshot.go:63), threaded through `snapshotActionItemFromDomain` (`:1065`) and `(t SnapshotActionItem).toDomain()` (`:1312`), with three dedicated round-trip tests covering all 9 roles + empty + JSON shape. 15 attack vectors run. 0 blocking counterexamples constructed. 1 non-blocking nit (snapshot validate doesn't enforce role membership). Local `mage ci` reproduces the builder's claim exactly: 1332 / 1332 tests across 19 packages / all coverage ≥ 70.0% / build green / exit 0. `mage test-pkg ./internal/app` independently green at 188 / 188 tests. Implementation is the smallest possible diff — three lines added to snapshot.go production code, three new tests appended to snapshot_test.go.
+
+### Attack Vectors and Findings
+
+#### 1. Forward-projection drop attack
+
+`snapshotActionItemFromDomain` at snapshot.go:1058–1087 was traced line-by-line. The struct literal at lines 1059–1086 mirrors every field of `domain.ActionItem` including the new `Role: t.Role` at `:1065`. No silent drop. Mental dryrun: `domain.ActionItem{Role: "qa-proof", ...}` → snapshot literal copies `t.Role` byte-for-byte → `Snapshot.Role == "qa-proof"`. REFUTED.
+
+#### 2. Reverse-projection drop attack
+
+`(t SnapshotActionItem).toDomain()` at snapshot.go:1265–1334 was traced. The struct literal at lines 1306–1333 includes `Role: t.Role` at `:1312` between `Scope: scope` and `LifecycleState: state`. Note: unlike the projector code that runs `strings.TrimSpace` on string fields and `NormalizeKindAppliesTo` on Scope, `Role` flows through unchanged. That is consistent with `Scope` (also typed string, also flows raw to the struct) — the function constructs a domain struct directly without re-normalizing typed enums. No silent drop. REFUTED.
+
+#### 3. `omitempty` semantics on typed string
+
+Per Go `encoding/json` package contract: a struct field with tag `json:"role,omitempty"` is omitted when its value is the zero value of its type. `domain.Role` is a `type Role string` — the zero value is `""`. `omitempty` correctly elides empty role. Verified at runtime by `TestSnapshotActionItemRoleJSONShape` (`internal/app/snapshot_test.go:517-571`): the `withoutRole` case asserts `!strings.Contains(string(rawWithout), \`"role"\`)` and the test passes under `mage test-pkg ./internal/app`. REFUTED.
+
+#### 4. `toDomain` re-validation attack
+
+`(t SnapshotActionItem).toDomain()` does NOT route through `domain.NewActionItem`. The function constructs a `domain.ActionItem{...}` struct literal directly, matching the existing pattern for sibling fields (Kind, Scope, LifecycleState all flow raw or through their own normalize calls — none through NewActionItem). Per Droplet 2.3, `domain.NewActionItem` short-circuits empty role at action_item.go:155-158 (`if in.Role != "" && !IsValidRole(in.Role) { return ErrInvalidRole }`), so even if `toDomain` did call it, an empty role would still pass. Construction-direct path means no re-validation, but the snapshot is the system-of-record at restore time — re-validating an already-persisted role would only matter if the persistence layer wrote a malformed value, which is prevented by the SQLite write path's role validation in Droplet 2.4. REFUTED, with one nit recorded under §15 below.
+
+#### 5. `SnapshotVersion` v5 forward-compat (without role key)
+
+`SnapshotVersion = "tillsyn.snapshot.v5"` at snapshot.go:16, unchanged by Droplet 2.6 per the planner's explicit "No `SnapshotVersion` bump required" acceptance bullet (PLAN.md:139). Hydration of a v5 snapshot WITHOUT a `role` key: `encoding/json.Unmarshal` ignores unknown keys by default and leaves missing keys at the struct's zero value — `Role` stays `domain.Role("")`. Verified by `TestSnapshotActionItemRoleJSONShape` decoding `rawWithout` (the no-role-key JSON) and asserting `decodedWithout.Role == ""` at snapshot_test.go:565-571. REFUTED.
+
+#### 6. Backward-compat read (v5 with role key)
+
+A v5 snapshot WITH a `role` key hydrates via `encoding/json.Unmarshal` into the typed `domain.Role` field. Verified by `TestSnapshotActionItemRoleJSONShape` decoding `rawWith` and asserting `decodedWith.Role == domain.RoleBuilder` at snapshot_test.go:558-564. The `TestSnapshotActionItemRoleRoundTripPreservesAllRoles` test at `:442-484` covers all 9 valid roles with the full domain-→snapshot-→domain-struct round-trip. REFUTED.
+
+#### 7. Hidden snapshot consumer hunt
+
+`git grep -n "SnapshotActionItem{" -- internal/` returned exactly five sites: snapshot.go:1059 (the projector — updated), snapshot_test.go:203 + :355 + :410 + :426 (named-field test fixtures — non-breaking under Go field-default semantics), and snapshot_test.go:520 (the new JSON-shape test). `git grep -n "SnapshotActionItem)" -- internal/` returned snapshot.go:1187 (`snapshotAvailableHandoffScopes` — reads only `ProjectID` and `ID`, scope-irrelevant) and snapshot.go:1265 (the toDomain receiver — updated). `git grep -n "snapshotActionItemFromDomain" internal/` confirms only one call site at snapshot.go:222 inside `ExportSnapshot`. No third hidden consumer. REFUTED.
+
+#### 8. Test fixture positional-construct attack
+
+All four pre-existing `SnapshotActionItem{...}` literals in the test file (snapshot_test.go:204-206, :356, :410-411, :426-427) use named-field syntax — adding a new field does NOT break them under Go's field-default-when-omitted rule. The new `withRole` literal at `:520-535` also uses named-field syntax. Compilation green via `mage ci` confirms. REFUTED.
+
+#### 9. Downstream `toDomain` consumer attack
+
+`git grep "\.toDomain()" internal/app/` returned consumers in `ImportSnapshot` (snapshot.go) — they receive the `domain.ActionItem` and pass it to `s.repo.UpsertActionItem` etc. Read of the import path: hydrated action items are persisted via repo upsert without an extra `domain.NewActionItem` call, so a non-empty role from a snapshot flows directly to SQLite. Per Droplet 2.4 the SQLite layer accepts any string in the role column (validation lives in domain.NewActionItem at the create/update path, not at repo persistence). A snapshot-loaded role of `"builder"` thus persists correctly. REFUTED.
+
+#### 10. Snapshot-export integration test extension nit
+
+`TestExportSnapshotIncludesExpectedData` (snapshot_test.go:15-178) does not currently exercise the `Role` field on its action-item entries — none of the three test action items at the export setup carry a `Role:` field. The acceptance criteria don't mandate extending this integration test (the spec scope is "Snapshot round-trip preserves a non-empty Role" + "empty round-trips empty" + "JSON shape" + "no version bump"). The three new dedicated tests fully cover the spec. Nit recorded but not blocking.
+
+#### 11. Snapshot-import integration test extension nit
+
+`TestImportSnapshotCreatesAndUpdates` (snapshot_test.go:179-318) similarly does not exercise role on import. Same nit shape as §10 — out of acceptance scope, dedicated tests cover the contract.
+
+#### 12. Pre-MVP fresh-DB rule
+
+`encoding/json.Unmarshal` ignores unknown keys by default; `omitempty` elides empty role on serialize. Pre-existing snapshots written before 2.6 lacked the role key — they hydrate to `Role: ""` cleanly. Combined with the pre-MVP rule (dev deletes `~/.tillsyn/tillsyn.db` on schema change), no snapshot-state migration code is needed. REFUTED.
+
+#### 13. `tc := tc` absence
+
+`git grep "tc := tc" internal/app/snapshot_test.go` returned empty (exit 1). Go 1.22+ scopes loop variables per-iteration; the historical `tc := tc` shadow idiom is no longer required. Repo is on `go 1.26.1` (go.mod:3). Test loop at snapshot_test.go:457-481 is correctly written. REFUTED.
+
+#### 14. `mage ci` re-run
+
+```
+Test summary
+  tests: 1332
+  passed: 1332
+  failed: 0
+  skipped: 0
+  packages: 19
+  pkg passed: 19
+
+[SUCCESS] All tests passed
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+
+[SUCCESS] Built till from ./cmd/till
+```
+
+Local `mage ci` reproduces the builder's claim exactly: green sources, formatting, coverage, build. `internal/app` coverage at 71.5% (above 70.0% threshold). REFUTED.
+
+#### 15. `mage test-pkg ./internal/app` re-run
+
+```
+Test summary
+  tests: 188
+  passed: 188
+  failed: 0
+  skipped: 0
+  packages: 1
+
+[SUCCESS] All tests passed
+  188 tests passed across 1 package.
+```
+
+Matches builder's claim of 188 tests in `internal/app`. REFUTED.
+
+### Non-Blocking Nit — `Snapshot.Validate()` does not check Role membership
+
+`Snapshot.Validate()` at snapshot.go:326-453 enforces membership for `Kind` (via `domain.IsValidWorkItemAppliesTo` on Scope), `LifecycleState` (via the explicit switch at `:419-423`), and `Priority` (switch at `:395-399`), but does NOT enforce that `Role` is a member of the closed `IsValidRole` set. Validate-time scenarios:
+
+- A snapshot with `"role":"qa-proof"` → Valid + restored as `RoleQAProof`. Correct.
+- A snapshot with `"role":"BUILDER"` (uppercase) → bypasses Validate; stored verbatim as `Role("BUILDER")`. The domain enum's `IsValidRole` lowercases on input but `toDomain` does not normalize. A future read of this `Role` field by domain code that re-validates (e.g. `domain.NewActionItem` on an update) would surface `ErrInvalidRole`.
+- A snapshot with `"role":"foobar"` → bypasses Validate; restored as `Role("foobar")`.
+
+This is a CONSISTENCY GAP relative to sibling enums (Kind, Scope, LifecycleState, Priority all validated). Acceptance criteria for Droplet 2.6 do NOT mandate validation of role at the snapshot boundary — the four listed bullets (round-trip non-empty all 9, round-trip empty, JSON shape, no version bump) are all met. Pre-MVP impact is zero (dev deletes DB on schema change; snapshots are dev-controlled artifacts).
+
+**Routing:** logged here as a refinement candidate for a future drop ("snapshot validate role membership for parity with Kind/State/Priority"). Not blocking Droplet 2.6 closeout.
+
+### Verdict Summary
+
+**PASS.** Builder's claim that Droplet 2.6 (snapshot serialization for `Role` — adding the field to `SnapshotActionItem`, threading it through `snapshotActionItemFromDomain` and `(t SnapshotActionItem).toDomain()`, and adding three round-trip tests covering all 9 roles + empty + JSON shape) is clean and `mage ci` is green is fully verified. All 13 active attack vectors REFUTED (vectors 10/11 were nit-only by design). Local `mage ci` reproduces 1332 / 1332 tests across 19 packages / all coverage ≥ 70.0% / build green / exit 0; `mage test-pkg ./internal/app` independently green at 188 / 188. Implementation is the smallest possible diff — three production lines added (struct field at `:63`, projector wire at `:1065`, hydrator wire at `:1312`) plus 136 lines of dedicated round-trip + JSON-shape tests. The acceptance contract is satisfied byte-for-byte:
+
+- Round-trip preserves non-empty `Role` across all 9 roles (table-driven via `TestSnapshotActionItemRoleRoundTripPreservesAllRoles`).
+- Empty role round-trips empty (`TestSnapshotActionItemRoleEmptyRoundTripsEmpty`).
+- JSON shape `{"role":"builder"}` when set, key absent when empty (`TestSnapshotActionItemRoleJSONShape`).
+- No `SnapshotVersion` bump (verified `SnapshotVersion = "tillsyn.snapshot.v5"` unchanged at snapshot.go:16; `omitempty` + `encoding/json` unknown-key tolerance carry forward-compat).
+
+One non-blocking nit (snapshot validate doesn't enforce role membership) recorded with routing — not blocking. Two acceptance-out-of-scope nits on integration tests (`TestExportSnapshotIncludesExpectedData` / `TestImportSnapshotCreatesAndUpdates` don't exercise the new role field on their action-item fixtures) recorded — also not blocking. Droplet 2.6 is ready for closeout.
+
+### Hylla Feedback
+
+N/A — Hylla queries not issued during this falsification round. The reviewed surface is two files (`internal/app/snapshot.go`, `internal/app/snapshot_test.go`), both with uncommitted diffs against the prior committed state, so Hylla's index would be stale on every queried symbol. Investigation used `git diff` for the precise three-line production change, `Read` for full-context line tracing of the projector + hydrator + Validate function, and `git grep` for hidden-consumer enumeration of `SnapshotActionItem{` literals and method receivers across the `internal/` tree. Code-local navigation against an actively-edited diff is the right tool fit; Hylla shines on whole-tree symbol queries against a settled index. No miss to report.
