@@ -112,7 +112,7 @@ Short and inspectable. Full Section 0 spec lives in `~/.claude/output-styles/til
 - **QA Proof** — evidence completeness, reasoning coherence, trace coverage. Asks: *"does the evidence support the claim?"*
 - **QA Falsification** — counterexamples, alternate traces, hidden dependencies, contract mismatches, YAGNI pressure. Asks: *"can I construct a case where this is wrong?"*
 
-Plan-QA and build-QA both run as parallel proof + falsification spawns. Plan-QA writes transient files (`PLAN_QA_PROOF.md`, `PLAN_QA_FALSIFICATION.md`) that orch `git rm`s between rounds. Build-QA appends rounds to durable files (`BUILDER_QA_PROOF.md`, `BUILDER_QA_FALSIFICATION.md`). Full file-lifecycle table in `drops/WORKFLOW.md`.
+Plan-QA and build-QA both run as parallel proof + falsification spawns. Plan-QA writes round-suffixed files (`PLAN_QA_PROOF.md` for round 1, `PLAN_QA_PROOF_R2.md` for round 2, etc.; same pattern for falsification). Build-QA appends rounds to single durable files (`BUILDER_QA_PROOF.md`, `BUILDER_QA_FALSIFICATION.md`) using `## Droplet N.M — Round K` headings. **Never `git rm` QA files between rounds — every round stays in tree for audit.** Full file-lifecycle table in `drops/WORKFLOW.md`.
 
 **Planner-level LLM QA.** LLM QA fires at planner nodes (package level and above), not below. A droplet that passes its package's automated gate AND passes the planner-above's build-QA is `done`. If a planner's descendants fail their gates, the planner is re-QA'd (ancestor re-QA).
 

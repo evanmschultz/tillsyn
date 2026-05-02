@@ -20,8 +20,8 @@ drops/
 ├── DROP_N_<NAME>/
 │   ├── PLAN.md                     # durable
 │   ├── _BLOCKERS.toml              # durable — sibling blocked_by ledger (only at dirs with >1 immediate child)
-│   ├── PLAN_QA_PROOF.md            # transient — git rm between rounds
-│   ├── PLAN_QA_FALSIFICATION.md    # transient — git rm between rounds
+│   ├── PLAN_QA_PROOF.md            # round 1; round 2+ → PLAN_QA_PROOF_R2.md, _R3.md, ...
+│   ├── PLAN_QA_FALSIFICATION.md    # round 1; round 2+ → PLAN_QA_FALSIFICATION_R2.md, ...
 │   ├── BUILDER_WORKLOG.md          # durable
 │   ├── BUILDER_QA_PROOF.md         # durable
 │   ├── BUILDER_QA_FALSIFICATION.md # durable
@@ -36,16 +36,19 @@ drops/
 |---|---|---|
 | `PLAN.md` | **durable** — refined across plan-QA rounds; final at close | planner subagent edits, orch + builder + QA read |
 | `_BLOCKERS.toml` | **durable** — present only at dirs with >1 immediate child; mirrors inline `Blocked by:` bullets from `PLAN.md` | planner subagent writes, orch + builder + QA read |
-| `PLAN_QA_PROOF.md` | **transient** — `git rm` between plan-QA rounds | qa-proof subagent writes |
-| `PLAN_QA_FALSIFICATION.md` | **transient** — `git rm` between plan-QA rounds | qa-falsification subagent writes |
+| `PLAN_QA_PROOF.md` | **durable** — round 1; round 2+ writes `PLAN_QA_PROOF_R2.md` / `PLAN_QA_PROOF_R3.md` / etc. Never `git rm`d. | qa-proof subagent writes |
+| `PLAN_QA_FALSIFICATION.md` | **durable** — round 1; round 2+ writes `PLAN_QA_FALSIFICATION_R2.md` / etc. Never `git rm`d. | qa-falsification subagent writes |
 | `BUILDER_WORKLOG.md` | **durable** — append `## Droplet N.M — Round K` per build attempt | builder subagent appends |
 | `BUILDER_QA_PROOF.md` | **durable** — append `## Droplet N.M — Round K` per QA attempt | qa-proof subagent appends |
 | `BUILDER_QA_FALSIFICATION.md` | **durable** — append `## Droplet N.M — Round K` per QA attempt | qa-falsification subagent appends |
 | `CLOSEOUT.md` | **durable** — written once at drop close | orch (or `Role: commit` builder) writes |
 
-**Transient = audit via `git log -- <path>`.** The `git rm` records the deletion and the prior file content stays recoverable. Transient files signal active state by their presence — absent files mean "phase complete, no findings outstanding".
+**Durable, never `git rm`d.** Every QA round, every builder round, every plan revision stays in the tree. Two persistence patterns are used depending on the file:
 
-**Durable = append rounds.** Heading convention: `## Droplet N.M — Round K` (e.g. `## Droplet 1.3 — Round 2`). Plan-phase findings use `## Plan — Round K` instead of a droplet number.
+- **Round-suffix files (plan-QA):** round 1 writes `PLAN_QA_PROOF.md` / `PLAN_QA_FALSIFICATION.md`; round 2 writes `PLAN_QA_PROOF_R2.md` / `PLAN_QA_FALSIFICATION_R2.md`; round 3 writes `_R3.md`; and so on. One file per round; every round visible in tree.
+- **Append-round files (builder + build-QA):** `BUILDER_WORKLOG.md`, `BUILDER_QA_PROOF.md`, `BUILDER_QA_FALSIFICATION.md` are single files where each round appends a `## Droplet N.M — Round K` heading (e.g. `## Droplet 1.3 — Round 2`). Plan-phase findings use `## Plan — Round K` instead of a droplet number.
+
+**Audit trail integrity is load-bearing.** Never `git rm` a QA worklog or builder worklog — every adversarial review and every build attempt must remain in the tree, not buried in `git log` archaeology.
 
 ### Sub-Drops (Cascade Recursion)
 
@@ -165,7 +168,7 @@ If `~/.claude/agents/*.md` change in a way that conflicts with the override (e.g
 
 1. Orch summarizes both QA mds for dev (one short numbered list per file). Dev decides accept / reject / defer per finding.
 2. Orch synthesizes accepted findings into a planner brief (in-conversation; no scratch file).
-3. **Orch `git rm`s `PLAN_QA_PROOF.md` + `PLAN_QA_FALSIFICATION.md`** and commits (`docs(drop-N): clear plan qa round K, route to planner`). Audit lives in `git log -- drops/DROP_N_<NAME>/PLAN_QA_PROOF.md`.
+3. **Orch leaves the round-K plan-QA files in tree** (`PLAN_QA_PROOF.md` / `PLAN_QA_FALSIFICATION.md` for round 1, `PLAN_QA_PROOF_R2.md` / `PLAN_QA_FALSIFICATION_R2.md` for round 2, etc.). Never `git rm`. Round K+1's plan-QA spawn writes the next round-suffix file. Every adversarial round stays visible in the tree for audit.
 4. Orch re-spawns the planner (preamble + planner appendix again, plus the brief). Planner edits `PLAN.md` (revises droplets, adjusts `blocked_by`, sharpens acceptance). Heading convention: append `## Planner — Round K` if the round count matters for postmortem; otherwise edit in place and let `git log -- drops/DROP_N_<NAME>/PLAN.md` carry the audit. Default to in-place edit; bump round headings only when reviewers explicitly request the prior version stay visible.
 5. Loop back to Phase 2. Exit when both plan-QA pass without dev-rejected findings.
 6. On exit: orch flips drop's `PLAN.md` header `state: building`, commits (`docs(drop-N): plan accepted, advance to building`). Move to Phase 4.
