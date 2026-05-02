@@ -32,3 +32,62 @@
 ## Hylla Feedback
 
 N/A — task touched non-Go files only (deletions). The single Go file touched was `templates/embed.go`, deleted outright. Pre-deletion verification used `Read`, `Bash` (`git grep`, `ls`) on a known small file rather than Hylla — appropriate for a deletion-only droplet where the question is "are there importers?" answered fastest by `git grep`.
+
+## Droplet 2.2 — Round 1
+
+**Outcome:** success.
+
+**Files touched:**
+
+- `internal/domain/role.go` — new file, 90 LOC (Role type, 9 typed constants, validRoles slice, package-level `roleDescriptionRegex`, `IsValidRole`, `NormalizeRole`, `ParseRoleFromDescription`).
+- `internal/domain/role_test.go` — new file, 191 LOC, table-driven tests (34 sub-cases across 3 top-level test funcs: 11 `IsValidRole`, 5 `NormalizeRole`, 18 `ParseRoleFromDescription`).
+- `internal/domain/errors.go` — added `ErrInvalidRole = errors.New("invalid role")` between `ErrInvalidKindPayloadSchema` and `ErrInvalidLifecycleState` (i.e. immediately after the kind-family group, before the lifecycle/actor/attention/handoff group). Placement is conceptual (Role is a peer of Kind) rather than strict alphabetical — matches the file's existing groups-by-domain organization.
+- `workflow/drop_2/PLAN.md` — Droplet 2.2 `**State:** todo` → `**State:** in_progress` at start; flipped to `**State:** done` at end of round.
+
+**Mage targets run:**
+
+- `mage test-pkg ./internal/domain` — 90 tests passed in package (88 prior + 34 new minus 32 net delta arithmetic = 90 total). Initial run failed with `qa-a11y` parser case (see Design notes below); fixed and re-ran green.
+- `mage ci` — green. 1300 tests passed across 19 packages. `internal/domain` package coverage 79.4% (>= 70.0% threshold). Build of `./cmd/till` succeeded. Exit code 0.
+
+**Design notes:**
+
+- **Mirrored `internal/domain/kind.go` style** — typed string alias + `const ( ... )` block with `Role` constants + `validRoles` slice + `slices.Contains` membership check + trim+lowercase normalizer. Single deviation: no companion `RoleAppliesTo` analogue because Role does not have a parallel scope vocabulary (Kind has `KindAppliesTo` for the projects/work-item scope split; Role does not).
+- **Empty-string rejection in `IsValidRole`** is per acceptance contract — at the validator level the empty string is not a member of the closed enum. Callers that want to permit an unset/optional role short-circuit on emptiness before calling `IsValidRole` (Droplet 2.3's `NewActionItem` will do exactly this). Documented in the Go doc comment on `IsValidRole`.
+- **Regex deviation from PLAN.md spec — surfaced for orchestrator attention.** The PLAN.md acceptance writes the regex as `(?m)^Role:\s*([a-z-]+)\s*$`, but acceptance #1 lists `qa-a11y` as one of the 9 valid string values. `qa-a11y` contains digits (`1`, `1`), so `[a-z-]+` can never match it — the spec is internally inconsistent. Implemented the regex as `(?m)^Role:\s*([a-z0-9-]+)\s*$` (digits added) to satisfy the binding contract that all 9 enum values must round-trip via `ParseRoleFromDescription`. The case-sensitivity contract still holds because uppercase letters remain excluded — `Role: Builder` still produces no match. This deviation is documented in the doc comment on `roleDescriptionRegex`. The QA passes for Droplet 2.2 should confirm the deviation is acceptable; if not, the alternative is to rename the constant value (e.g. `qa-accessibility`) but that ripples through every spec reference.
+- **Package-level regex** — `regexp.MustCompile` at package init so the pattern is compiled once. If the pattern is invalid Go panics at init, which would surface immediately on any test run; the test suite passing implies the regex is well-formed RE2.
+- **Doc comments on every exported symbol** — `Role`, all 9 constants (block-level via `Built-in role values...`), `IsValidRole`, `NormalizeRole`, `ParseRoleFromDescription`. The package-level `roleDescriptionRegex` var is unexported but still documented for maintainability and to record the regex-deviation rationale.
+
+## Hylla Feedback
+
+N/A — task created two brand-new Go files (`role.go`, `role_test.go`) and made a one-line edit to a known existing Go file (`errors.go`). Reference reading used `Read` on `internal/domain/kind.go` and `internal/domain/errors.go` (committed, Go-indexed by Hylla, but reading the whole file via `Read` was the right call — I needed the full structural context for style-mirroring, not a search hit). No Hylla query was attempted because the question shape was "show me this entire file's structure" not "find a symbol / find references / find usages." `Read` is the correct tool for whole-file structural inspection; Hylla shines on symbol-level queries against large codebases. Zero ergonomic gripes for this droplet.
+
+## Droplet 2.2 — Round 2
+
+**Outcome:** success. Cleanup pass within Droplet 2.2 — Droplet's PLAN.md state stays at `done` from Round 1.
+
+**Files touched:**
+
+- `internal/domain/role_test.go` — removed three redundant `tc := tc` lines:
+  - Line 34 (was inside `TestIsValidRole` `for _, tc := range cases` loop).
+  - Line 62 (was inside `TestNormalizeRole` `for _, tc := range cases` loop).
+  - Line 196 (was inside `TestParseRoleFromDescription` `for _, tc := range cases` loop).
+
+**Why:** Go 1.22+ scopes loop variables per-iteration automatically — the `tc := tc` shadow-copy idiom was the pre-1.22 workaround for closure capture in `t.Run` subtests with `t.Parallel()`. Project is Go 1.26+ (per `main/CLAUDE.md` Tech Stack), so the copies are dead code and `go vet` / LSP flag them as `forvar` warnings. Removing them is purely a cleanup; semantics are preserved because the per-iteration scoping rule guarantees each subtest closure captures a distinct `tc`.
+
+**Mage targets run:**
+
+- `mage test-pkg ./internal/domain` — green. 90 tests passed in 0.28s (same count + same coverage as Round 1; redundant-line removal is invariant on test count).
+- `mage ci` — green. 1300 tests passed across 19 packages. `internal/domain` coverage held at 79.4% (>= 70.0% threshold). Build of `./cmd/till` succeeded. Exit code 0.
+
+**Design notes:**
+
+- **Edit shape:** matched `for _, tc := range cases {\n\t\ttc := tc\n\t\tt.Run(tc.name, func(t *testing.T) {` plus the unique 1–2 lines of body content per loop, so each `Edit` call hit exactly one of the three sites despite the leading two lines being structurally identical across all three loops. Body discriminator chosen per-site:
+  - `IsValidRole`: assertion line uses `IsValidRole(tc.role)`.
+  - `NormalizeRole`: assertion line uses `NormalizeRole(tc.in)`.
+  - `ParseRoleFromDescription`: body uses `got, err := ParseRoleFromDescription(tc.desc)` (the only loop with two body lines pre-assertion, so I anchored on those two lines without the assertion to keep the diff minimal).
+- **Out-of-scope items respected:** `go.mod` not touched, no `go mod tidy` run, no other files edited. The pre-existing `chroma/v2 should be direct` warning is unchanged and outside Droplet 2.2's scope per the orchestrator prompt.
+- **PLAN.md state untouched.** Droplet 2.2 stays at `done` from Round 1 — Round 2 is a same-droplet cleanup pass, not a new state transition.
+
+## Hylla Feedback
+
+N/A — task touched only existing Go test code via three line-deletions. No symbol search, no reference lookup, no Hylla query needed. The work was 100% LSP-warning-driven (the `forvar` diagnostics handed me the exact line numbers + the exact pattern to remove). Zero ergonomic gripes.
