@@ -99,7 +99,7 @@ Same-package-blocking constraints inside Unit A: 2.2 + 2.3 share `internal/domai
 
 #### Droplet 2.4 — SQLite `action_items.role` column + scanner + insert/update paths
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/adapters/storage/sqlite/repo.go` (add `role TEXT NOT NULL DEFAULT ''` to the `CREATE TABLE IF NOT EXISTS action_items` block at `:168`; add `role` to `scanActionItem` at `:2738`; add `role` to insert + update SQL inside the action-item write paths), `internal/adapters/storage/sqlite/repo_test.go` (extend round-trip test to set + read a `Role` value)
 - **Packages:** `internal/adapters/storage/sqlite`
 - **Acceptance:**

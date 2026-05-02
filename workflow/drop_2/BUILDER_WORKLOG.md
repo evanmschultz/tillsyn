@@ -119,3 +119,32 @@ N/A — task touched only existing Go test code via three line-deletions. No sym
 ## Hylla Feedback
 
 None — Hylla answered everything needed. The investigation was code-local (read three files in `internal/domain`, one test file, one test in `internal/tui`) and the LSP `documentSymbol` query handled fast navigation inside the 26k-line `domain_test.go`. No symbol search ambiguity, no stale-ingest issue. Zero ergonomic gripes for this droplet.
+
+## Droplet 2.4 — Round 1
+
+**Files touched:**
+
+- `internal/adapters/storage/sqlite/repo.go` — added `role TEXT NOT NULL DEFAULT ''` to the `action_items` `CREATE TABLE` block (column placed between `scope` and `lifecycle_state`); added `roleRaw string` local + `&roleRaw` Scan target inside `scanActionItem` with `t.Role = domain.Role(roleRaw)`; added `role` to the `INSERT INTO action_items(...)` column list, the `VALUES (?...)` slot count, and the bind-args slice (`string(t.Role)` between `string(scope)` and `string(t.LifecycleState)`); added `role = ?` to `UPDATE action_items SET ...` with the matching bind arg; added `role` to the column list inside both `ListActionItems`'s `SELECT` and `getActionItemByID`'s `SELECT`. Net delta: +9 LOC.
+- `internal/adapters/storage/sqlite/repo_test.go` — added `TestRepository_PersistsActionItemRole` immediately after `TestRepository_PersistsProjectKindAndActionItemScope`, mirroring its kind/scope round-trip pattern. The test covers (a) empty-role default round-trip on `CreateActionItem` + `GetActionItem`, (b) `domain.RoleBuilder` round-trip on a second item, (c) `ListActionItems` (separate SELECT path) surfaces the role, and (d) reassign on `UpdateActionItem` from `RoleBuilder` to `RoleQAProof`. Net delta: +106 LOC.
+
+**Mage results:**
+
+- `mage test-pkg ./internal/adapters/storage/sqlite` → 69 tests pass (was 68 prior; new `TestRepository_PersistsActionItemRole` adds 1).
+- `mage ci` → exit 0. 1314 tests pass across 19 packages. `internal/adapters/storage/sqlite` coverage 75.1% (≥ 70% threshold). Build succeeds.
+
+**Design notes:**
+
+- **Column position in `CREATE TABLE`:** placed between `scope` and `lifecycle_state` to group the closed-enum classifiers (`kind`, `scope`, `role`, `lifecycle_state`) consecutively. This matches the Droplet 2.3 worklog convention that placed `Role` between `Scope` and `LifecycleState` on the Go struct, and keeps the SQL column order, the Go `scanActionItem` Scan order, the INSERT column list, the INSERT bind-args slice, the UPDATE SET clause, and both SELECT column lists in lockstep — all five sites added `role` in the same relative slot.
+- **Three SELECT paths, all updated:** the file has two SELECT statements that feed `scanActionItem` (`ListActionItems` at the top of the file and `getActionItemByID` at the bottom). Both column lists were updated, otherwise `scanActionItem` would have read `lifecycle_state` into the new `roleRaw` slot and shifted every subsequent bind, breaking every existing test silently.
+- **Empty-role default:** `domain.Role("")` cast on read yields the zero-value `Role`, matching the schema default `''` and the domain contract from Droplet 2.3 (empty role is permitted, only non-empty values get validated against the closed enum). No special-case `if roleRaw == "" { ... }` is needed — both `Role` and `roleRaw` are typed strings whose empty zero values are interchangeable.
+- **Test pattern — focused round-trip vs extending the existing parameterized test:** chose a dedicated `TestRepository_PersistsActionItemRole` rather than extending `TestRepository_PersistsProjectKindAndActionItemScope`. Rationale: (a) the kind/scope test name reads as a contract; (b) role is a separate first-class field with its own contract (empty-default + reassign-via-update); (c) cleaner test isolation when a future change touches role specifically. The new test mirrors the kind/scope test's structural pattern (`OpenInMemory`, project + column setup, create + get + assert) so the file's idiom stays consistent.
+- **Reassign-via-update is the load-bearing UPDATE assertion:** writing `RoleBuilder` on create then reassigning to `RoleQAProof` and reading back proves the SET clause is wired AND the bound value lands at the correct positional slot. A simple "create with role, read back" test would still pass even if the UPDATE SET clause forgot the role column.
+- **Pre-MVP rule honored:** zero `ALTER TABLE`, zero migration code, zero SQL backfill. The `CREATE TABLE IF NOT EXISTS` block is the only schema source. Dev-deleted `~/.tillsyn/tillsyn.db` before this droplet ran (per spec), so the fresh DB is created with the new column on first connect.
+
+**No `tc := tc` capture line in the new test:** the test is straight-line (not table-driven across `t.Run` subtests), so the Go 1.22+ per-iteration scoping rule does not apply here — but the convention is honored anyway: the file's existing tests in this style do not use loop captures.
+
+**PLAN.md state flips:** Droplet 2.4 `todo → in_progress` at start, `in_progress → done` at end.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed (and most reads in this droplet were against non-Go SQL strings + Go test plumbing, where Hylla is N/A). The investigation was: read `repo.go`'s CREATE TABLE block at `:168`, `scanActionItem` at `:2738`, the insert path at `:1237`, the update path at `:1330`, the two SELECTs at `:1394` + `:2444` — all located via `rg` for `INTO action_items|UPDATE action_items|FROM action_items`. The test file's existing round-trip pattern was found via `rg` for `CreateActionItem|UpdateActionItem|GetActionItem`. Hylla queries were not the right tool for these in-file SQL string locations — code-local file navigation was the natural fit. No miss to report.
