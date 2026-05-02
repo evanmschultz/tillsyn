@@ -1567,3 +1567,238 @@ Build is ready to commit.
 ### Hylla Feedback
 
 N/A — Hylla queries not issued during this falsification round. The reviewed surface is 25 Go files with uncommitted diffs against the prior committed state, so Hylla's index is stale on every queried symbol. Investigation used `git diff` for precise change verification, `Read` for line-anchor confirmation, `git grep` for whole-tree literal/symbol sweeps (the natural fit for "find every occurrence of these patterns across known packages"), and `mage ci` for the cross-package compile + test gate. Code-local navigation against an actively-edited diff is the right tool fit; Hylla shines on symbol-level queries against a settled index. Zero ergonomic gripes for this droplet.
+
+## Droplet 2.7 — Round 2
+
+**Verdict:** PASS
+**Date:** 2026-05-02
+**Reviewer:** go-qa-falsification-agent (subagent), Round 2 (drift cleanup)
+**Commit under attack:** `c7e07f2 fix(drop-2): strict-canonical decoder + slug literal rejection`
+
+### Summary
+
+Adversarial review of the two Round 2 cleanup fixes:
+
+1. `ChecklistItem.UnmarshalJSON` strict-canonical decoder (`internal/domain/workitem.go:87-104`) that rejects legacy `"done"` keys with an explicit error.
+2. Pre-slug literal rejection in the three slug-style normalizers — `app.normalizeStateID`, `common.normalizeStateLikeID`, `tui.normalizeColumnStateID` — that intercepts `"done"`/`"completed"`/`"progress"`/`"doing"`/`"in-progress"` before slugification and returns `""`.
+
+15 attack vectors executed against the cleanup commit. Zero blocking counterexamples constructed. `mage ci` reproduces 1391/1391 tests (1332 Round 1 + 59 net new = exact arithmetic match) across 19 packages with TUI exactly at the 70.0% coverage floor and all other packages above. Both Round 1 soft drifts (decoder-side strict rejection + slug-equivalence kebab coercion of `"in-progress"` / `"to-do"`) are fully resolved; the kebab `"to-do"` case is intentionally preserved as canonical via the slug-result switch (`"to_do" | "todo"` → `"todo"`), matching builder's stated contract that `"to-do"` is canonical kebab, not a legacy alias.
+
+### Attack Vectors and Findings
+
+#### 1. `UnmarshalJSON` recursion attack — REFUTED
+
+The `type alias ChecklistItem` line creates a NEW named type. Per Go spec (Methods and Method Sets), method sets do NOT propagate across `type X Y` definitions — `alias` carries the same memory layout and field tags as `ChecklistItem` but has zero methods. So `json.Unmarshal(data, (*alias)(c))` invokes the stdlib default decoder, NOT the custom `UnmarshalJSON` on `*ChecklistItem`. No infinite recursion possible. Builder pattern is the canonical Go idiom for this exact scenario.
+
+REFUTED — pattern is correct.
+
+#### 2. `UnmarshalJSON` partial-error attack — REFUTED
+
+Malformed JSON path: `json.Unmarshal(data, &raw)` returns the stdlib's `*json.SyntaxError` directly via `if err := ...; err != nil { return err }` at line 96-98. Error pass-through is verbatim with no wrapping. Caller receives the raw stdlib error. This is correct stdlib practice — wrapping a syntax error to "checklist item: ..." would obscure the offset/byte-position the stdlib carries.
+
+REFUTED — clean error propagation.
+
+#### 3. `UnmarshalJSON` empty-object attack — REFUTED
+
+Trace for `{}`:
+- Line 96: `json.Unmarshal([]byte("{}"), &raw)` → `raw = map[string]json.RawMessage{}` (empty), nil error.
+- Line 99: `_, hasLegacy := raw["done"]` → `hasLegacy = false`. Skip.
+- Line 102-103: alias unmarshal of `{}` into zero-value receiver. Returns nil.
+- Result: `ChecklistItem{ID:"", Text:"", Complete:false}`, nil.
+
+Verified by reading the test case at `domain_test.go:478-481` ("missing completion key defaults to Complete=false") which uses `{"id":"x","text":"y"}` — same path, exercises the same code branch. `mage ci` shows the test passing.
+
+REFUTED — empty object decodes cleanly.
+
+#### 4. Forward-compat attack — REFUTED
+
+Rejection check at line 99: `if _, hasLegacy := raw["done"]; hasLegacy`. The check is keyed STRICTLY on the literal string `"done"` — no other key triggers rejection. A future field like `Notes string` with JSON tag `"notes"` would:
+1. Be present in `raw` map after first unmarshal.
+2. NOT match `"done"` literal check.
+3. Be picked up by alias-decode in step 3 (stdlib default behavior — unknown keys are silently ignored unless `DisallowUnknownFields()` is set, which this code does NOT set).
+
+So adding new fields to `ChecklistItem` works exactly like adding fields to any other Go struct decoded with stdlib defaults. The strict check is narrow to legacy `"done"`, NOT broad unknown-key rejection.
+
+REFUTED — forward-compatible.
+
+#### 5. Slug-normalizer rejection completeness — REFUTED
+
+Read each of the 3 normalizers at HEAD:
+
+- `internal/app/service.go:1949-1990` — `normalizeStateID`. Switch at lines 1954-1957 rejects `"done", "completed", "progress", "doing", "in-progress"` with empty-string return.
+- `internal/adapters/server/common/app_service_adapter_mcp.go:873-914` — `normalizeStateLikeID`. Switch at lines 878-881 rejects same 5 literals.
+- `internal/tui/model.go:17939-17979` — `normalizeColumnStateID`. Switch at lines 17944-17947 rejects same 5 literals.
+
+All 3 normalizers reject the exact same 5-literal set: `done`, `completed`, `progress`, `doing`, `in-progress`. Trace inputs:
+- `"Done"` → trim+lower → `"done"` → matches → `""`. ✓
+- `"  IN-PROGRESS "` → trim+lower → `"in-progress"` → matches → `""`. ✓
+- `"DOING"` → trim+lower → `"doing"` → matches → `""`. ✓
+- `"complete"` → trim+lower → `"complete"` → no match in rejection → slugify → `"complete"` → final-switch case `"complete"` → returns `"complete"`. ✓
+
+Test cases at `service_test.go:2989-2990` ("legacy uppercase Done rejected", "legacy with surrounding whitespace rejected") verify the trim+lower paths land on the rejection switch.
+
+REFUTED — rejection set is uniform across all three normalizers and covers all 5 documented legacy literals.
+
+#### 6. `"to-do"` handling — REFUTED with surface-detail confirmation
+
+Trace input `"to-do"` through `normalizeStateID`:
+1. Line 1950: `name = strings.TrimSpace(strings.ToLower("to-do"))` → `"to-do"`.
+2. Line 1951: not empty.
+3. Line 1954-1957: switch on `name`. `"to-do"` is NOT in the rejection set (`{"done","completed","progress","doing","in-progress"}`). Pass through.
+4. Line 1958-1974: slugifier loop. Each rune: `t`,`o` are lowercase letters → write. `-` is non-alpha-non-digit → write `_`. `d`,`o` are letters → write. Result: `"to_do"`.
+5. Line 1975: `strings.Trim("to_do", "_")` → `"to_do"`.
+6. Line 1976-1989: switch on `normalized`. `case "to_do", "todo":` matches `"to_do"` → return `"todo"`.
+
+So `"to-do"` slugifies to `"to_do"` at the slugifier step, but the final-switch BOTH `"to_do"` AND `"todo"` map to canonical `"todo"`. **Builder claim is correct: `"to-do"` ends up returning `"todo"`** — not because `"to-do"` slugifies directly to `"todo"`, but because the post-slug switch explicitly accepts both `"to_do"` and `"todo"` as canonical-kebab equivalents.
+
+This contradicts the attack's hypothesis that `"to-do"` would land on `"to_do"` and be wrong. The pre-existing post-slug switch was intentionally written to handle both kebab AND underscore canonical for the `"todo"` family. Same pattern applies in `normalizeStateLikeID` (line 901: `case "to_do", "todo":`) and `normalizeColumnStateID` (line 17966: `case "to_do", "todo":`). All three are identical on this point.
+
+The builder's `"to-do"` test case (`{name: "kebab to-do is canonical (not legacy)", in: "to-do", want: "todo"}`) at `service_test.go:2978`, `app_service_adapter_mcp_helpers_test.go:155`, and `model_test.go:13586` all pass because the input flow is exactly as traced.
+
+REFUTED — `"to-do"` correctly canonicalizes to `"todo"` via the post-slug `case "to_do", "todo":` arm.
+
+#### 7. Caller-impact attack — REFUTED with caller-by-caller trace
+
+Each normalizer's call sites:
+
+**`normalizeStateID` (3 callers):**
+- `internal/app/service.go:1241` — `stateByColumn[column.ID] = normalizeStateID(column.Name)`. Empty result is stored as the column's stateID. Downstream at `:1249-1255`: `stateID := stateByColumn[...]; if stateID == "" { stateID = string(actionItem.LifecycleState) }; if stateID == "" { stateID = "todo" }`. Empty case is handled with a 2-tier fallback chain. ✓
+- `internal/app/service.go:1918` — `state.ID = normalizeStateID(state.Name)` inside `sanitizeStateTemplates`. Empty state.ID flows into the `dedupeID` calculation at `:1920` and the `out = append(out, state)` at `:1931`. A user creating a state-template with name `"Done"` would now produce `state.ID = ""` — that's a behavior change BUT consistent with the strict-canonical contract (legacy display names are rejected; user must rename to `"Complete"`). No panic, no crash, just an empty ID. ✓
+- `internal/app/service.go:1998` — `switch normalizeStateID(column.Name) { ... default: return domain.StateTodo }`. Empty falls through to `default`, returning `StateTodo`. ✓
+
+**`normalizeStateLikeID` (1 caller):**
+- `internal/adapters/server/common/app_service_adapter_mcp.go:852` — `actionItemLifecycleStateForColumnName`. Switch on result; empty falls through to `default: return ""` at line 864. The caller chain at `normalizeActionItemStateInput` (`:820-829`) explicitly handles the empty `LifecycleState` via `default: return "", fmt.Errorf("state %q is unsupported: %w", ...)` at line 827. So MCP `move_state` with `state: "in-progress"` now returns a clean error. This is the strict-canonical contract behavior. ✓
+
+**`normalizeColumnStateID` (2 callers):**
+- `internal/tui/model.go:7871` — `if stateID := normalizeColumnStateID(string(actionItem.LifecycleState)); stateID != "" { return stateID }`. Empty result is explicitly tested and falls through to `return "todo"` at `:7874`. ✓
+- `internal/tui/model.go:17983` — `lifecycleStateForColumnName`. Switch on result; empty falls through to `default: return domain.StateTodo` at `:17995`. ✓
+
+All callers handle empty-string return gracefully with sensible defaults (most fall back to `StateTodo` or surface a clear "unsupported" error). No panic, no nil-pointer, no silent miscoercion. This is the desired strict-canonical contract: legacy values produce either an error response (MCP boundary) or a default-todo (display rendering) — neither silently fakes a legacy → canonical translation.
+
+REFUTED — caller chains are safe.
+
+#### 8. Hidden coercion paths — REFUTED
+
+Search `git grep -nE '"in-progress"|"doing"' -- '*.go'` returns 18 hits. Categorized:
+
+- 3 hits in the new normalizer rejection switches (`service.go:1955`, `app_service_adapter_mcp.go:879`, `model.go:17945`) — the rejection itself.
+- 14 hits in test files asserting either rejection (legacy → empty/error) or in pre-existing free-form context (`config_test.go:820` is a rejection-testing slice; `model_test.go:685, 969` are legacy-rejection test cases per PLAN.md `:189`).
+- 1 hit in `internal/app/service_test.go:2467` `{ID: "doing", Name: "Doing", ...}` — fixture for state-template rejection assertion.
+
+All non-test occurrences of the legacy literals are in REJECTION code paths. No silent coercion site survives. Verified separately for `"completed"` and `"progress"` — same pattern (rejection arms + test fixtures only).
+
+For `"done"` non-test hits: the only production code paths containing the literal `"done"` are (a) the new rejection switches in the three normalizers, (b) the new `UnmarshalJSON` rejection check at `workitem.go:99`, (c) free-form `Reason: "done"` revoke-reasons / `Outcome: "done"` metadata / `resolution_note: "done"` on test fixtures (legitimate free-form text, NOT lifecycle vocabulary). PLAN.md `:179, 197` explicitly preserves these as out-of-scope free-form text.
+
+REFUTED — no hidden coercion path remains.
+
+#### 9. `mage ci` re-run — GREEN
+
+Reproduced locally:
+- 1391 tests passed across 19 packages.
+- 0 failed, 0 skipped.
+- Coverage minimum 70.0% (TUI exactly on the floor; all other packages above).
+- Build of `./cmd/till` succeeds.
+
+REFUTED — green and reproduces builder claim.
+
+#### 10. PLAN.md untouched — REFUTED
+
+`git diff HEAD -- workflow/drop_2/PLAN.md` returns empty (working tree clean for that path). Last commit touching `workflow/drop_2/PLAN.md` is `f86849d` (the original Round 1 rename commit, before the cleanup). The cleanup commit `c7e07f2` does NOT modify `PLAN.md`. Verified via `git show --stat c7e07f2` — PLAN.md is absent from the file list.
+
+REFUTED — clean.
+
+#### 11. Droplet 2.7 state stays `done` — REFUTED
+
+`workflow/drop_2/PLAN.md:156` — `**State:** done`. Unchanged by the cleanup commit. Round 2 cleanup intentionally retains `done` (drift cleanup, not a rebuild).
+
+REFUTED — state stays done.
+
+#### 12. Test coverage drop attack — REFUTED
+
+Round 1 `mage ci`: 1332 tests, all packages ≥ 70.0%, TUI minimum exactly 70.0%.
+Round 2 cleanup `mage ci`: 1391 tests, all packages ≥ 70.0%, TUI minimum exactly 70.0%.
+
+Per-package coverage delta: zero packages dropped below threshold. The +59 added tests are pure rejection-assertion tables for the three normalizer functions and the new `UnmarshalJSON` decoder — all tests cover code paths added in the cleanup commit (the 5-literal rejection switch + the new decoder body). No pre-existing assertions were modified or removed (`git diff HEAD~1 HEAD -- internal/domain/domain_test.go internal/app/service_test.go internal/adapters/server/common/app_service_adapter_mcp_helpers_test.go internal/tui/model_test.go` shows only additions, no deletions).
+
+REFUTED — coverage maintained or marginally improved by the new positive-coverage of rejection arms.
+
+#### 13. `ChecklistItem` JSON marshal round-trip — REFUTED
+
+`ChecklistItem` does NOT define a custom `MarshalJSON` — only `UnmarshalJSON` was added. Default stdlib marshal uses the struct field tags:
+
+```go
+type ChecklistItem struct {
+    ID       string `json:"id"`
+    Text     string `json:"text"`
+    Complete bool   `json:"complete"`
+}
+```
+
+Marshal of `ChecklistItem{ID:"x", Text:"y", Complete:true}` produces `{"id":"x","text":"y","complete":true}`. Unmarshal of that string through the new `UnmarshalJSON`:
+1. Parse to raw map → `{"id":"x", "text":"y", "complete":true}`.
+2. No `"done"` key → skip rejection.
+3. Alias-decode into `*c` → `ChecklistItem{ID:"x", Text:"y", Complete:true}`.
+
+Round-trip clean. Verified by the table-driven test at `domain_test.go:467-482` (`"canonical complete=true decodes"` case which is exactly this round-trip).
+
+REFUTED — round-trip is byte-stable for canonical payloads.
+
+#### 14. Error message helpfulness — REFUTED
+
+`workitem.go:100`: `return fmt.Errorf("checklist item: legacy %q key rejected, use %q (strict-canonical)", "done", "complete")` produces the runtime string:
+
+```
+checklist item: legacy "done" key rejected, use "complete" (strict-canonical)
+```
+
+This message:
+- Names the offending key (`"done"`).
+- Tells the caller the canonical replacement (`"complete"`).
+- Tags the contract version (`(strict-canonical)`).
+- Is namespaced to the type (`checklist item:`).
+
+Compares favorably to typical stdlib decode errors which only point at offset/type. This is actionable.
+
+REFUTED — error message is sufficiently helpful.
+
+#### 15. Round 1 → Round 2 test arithmetic — REFUTED with exact match
+
+Round 1: 1332/1332. Round 2 cleanup: 1391/1391. Delta = +59.
+
+Counted the new sub-tests by reading the diff:
+
+- `TestChecklistItemUnmarshalRejectsLegacyDoneKey` (`domain_test.go`): 5 sub-cases.
+- `TestNormalizeStateIDStrictCanonicalRejectsLegacyLiterals` (`service_test.go`): 17 sub-cases.
+- `TestNormalizeStateLikeIDStrictCanonicalRejectsLegacyLiterals` (`app_service_adapter_mcp_helpers_test.go`): 16 sub-cases.
+- `TestNormalizeColumnStateIDStrictCanonicalRejectsLegacyLiterals` (`model_test.go`): 17 sub-cases.
+
+Total sub-tests = 5 + 17 + 16 + 17 = 55. Plus 4 new top-level test functions (each adds 1 to the test count) = 55 + 4 = 59. **Exact arithmetic match (+59 = +59).**
+
+No hidden test additions or skips. `git show c7e07f2 --stat` confirms only the four test files were touched (`domain_test.go +65/-0`, `service_test.go +39/-0`, `app_service_adapter_mcp_helpers_test.go +36/-0`, `model_test.go +37/-0`) plus the 3 source files (the normalizers) and 1 source file (the decoder). No assertion changes elsewhere. No `t.Skip()` added (verified by the diff).
+
+REFUTED — test count delta is exact.
+
+### Resolved Round 1 Soft Drifts
+
+- **Soft drift on PLAN.md `:222` (slug-equivalence kebab coercion of `"in-progress"`)**: RESOLVED by the new pre-slug literal rejection switch in all three normalizers. `"in-progress"` now matches the rejection arm BEFORE the slugifier runs, returning `""`. The `"to-do"` case is intentionally retained as canonical kebab (matches the explicit post-slug `case "to_do", "todo":` arm), per builder design judgment that `"to-do"` is canonical kebab spelling, NOT a legacy alias — consistent with `"In Progress"` (display) → `"in_progress"` (canonical underscore) convention.
+- **Soft drift on PLAN.md `:224` (decoder strict-rejection of legacy `"done"` JSON key)**: RESOLVED by `ChecklistItem.UnmarshalJSON` which now produces an explicit decode error on `"done"` keys instead of silently dropping them.
+
+Both Round 1 routing items are addressed without scope creep. No new soft drifts introduced.
+
+### Cross-Cutting Verdicts
+
+- **Strict-canonical at slug-style boundary**: NOW MET for all 5 listed legacy literals across all 3 normalizers. The kebab `"to-do"` case is explicitly preserved as canonical (not a legacy alias) — matches both PLAN.md spirit and builder design judgment.
+- **Strict-canonical at decoder boundary**: NOW MET for `ChecklistItem.UnmarshalJSON` — `"done"` key explicitly rejected with actionable error message.
+- **Forward-compat preserved**: rejection check is narrow to literal `"done"` and the explicit 5-literal slug rejection set; new fields and new unknown keys flow through stdlib's default-tolerant path.
+- **Caller-chain safety**: every caller of the three normalizers handles empty-string return gracefully (default-todo fallback in display contexts, clear "unsupported" error at MCP boundary).
+- **Test arithmetic**: +59 = 5 + 17 + 16 + 17 + 4 (sub-test cases + top-level tests). Zero hidden additions, zero skips, zero modified existing assertions.
+- **Coverage maintained**: TUI 70.0% (on floor, identical to Round 1), all other packages above. New tests are pure positive-coverage of the new rejection arms.
+- **`mage ci`**: 1391/1391 across 19 packages, all coverage thresholds met, build successful. Reproduces builder claim exactly.
+
+### Verdict Summary
+
+**PASS.** 15 attack vectors run; 0 blocking counterexamples constructed; 0 nits worth blocking on. Cleanup commit lands surgically — only the two drift fixes were performed, both Round 1 soft drifts are resolved, no scope creep, PLAN.md untouched, Droplet 2.7 state retained as `done`. The atomic rename + cleanup is ready to ship.
+
+### Hylla Feedback
+
+N/A — Hylla queries not issued during this falsification round. Reviewed surface is one Go commit (`c7e07f2`) with 7 files changed, immediately verifiable via `git show`, `git diff`, `git grep`, and `Read`. The relevant code regions are in actively-edited code (Round 1 + Round 2 cleanup both within ~24h), so Hylla's index would be stale on every queried symbol. Code-local navigation against committed-plus-just-cleaned-up Go code via `git show <sha>` + targeted `Read` is the right tool fit; `git grep` for whole-tree literal sweeps (`"in-progress"`, `"done"`, `"completed"`) is the natural fit for "verify no remaining coercion sites." Zero ergonomic gripes for this round.
