@@ -16,7 +16,7 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 		AllowedParentScopes: []KindAppliesTo{KindAppliesToPlan},
 		PayloadSchemaJSON:   `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
 		Template: KindTemplate{
-			CompletionChecklist: []ChecklistItem{{ID: "c1", Text: "run tests", Done: false}},
+			CompletionChecklist: []ChecklistItem{{ID: "c1", Text: "run tests", Complete: false}},
 			AutoCreateChildren: []KindTemplateChildSpec{{
 				Title:     "scan packages",
 				Kind:      "build",
@@ -32,7 +32,7 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 				CommandSnippets: []string{"make test", "make test"},
 				CompletionContract: CompletionContract{
 					CompletionChecklist: []ChecklistItem{{Text: "default check"}},
-					Policy:              CompletionPolicy{RequireChildrenDone: true},
+					Policy:              CompletionPolicy{RequireChildrenComplete: true},
 				},
 			},
 		},
@@ -70,7 +70,7 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 	if len(kind.Template.ActionItemMetadataDefaults.CommandSnippets) != 1 || kind.Template.ActionItemMetadataDefaults.CommandSnippets[0] != "make test" {
 		t.Fatalf("unexpected actionItem default command snippets %#v", kind.Template.ActionItemMetadataDefaults.CommandSnippets)
 	}
-	if !kind.Template.ActionItemMetadataDefaults.CompletionContract.Policy.RequireChildrenDone {
+	if !kind.Template.ActionItemMetadataDefaults.CompletionContract.Policy.RequireChildrenComplete {
 		t.Fatal("expected normalized actionItem default completion policy")
 	}
 	if !kind.CreatedAt.Equal(now.UTC()) || !kind.UpdatedAt.Equal(now.UTC()) {

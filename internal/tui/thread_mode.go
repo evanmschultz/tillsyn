@@ -148,7 +148,7 @@ func (m Model) threadSurfaceHeader() (string, string) {
 				"kind: %s • state: %s • complete: %s",
 				string(actionItem.Kind),
 				lifecycleStateLabel(m.lifecycleStateForActionItem(actionItem)),
-				completionLabel(m.lifecycleStateForActionItem(actionItem) == domain.StateDone),
+				completionLabel(m.lifecycleStateForActionItem(actionItem) == domain.StateComplete),
 			)
 		}
 		return "ActionItem Thread", fmt.Sprintf("actionItem: %s • comments: %d", truncate(actionItemID, 36), len(m.threadComments))

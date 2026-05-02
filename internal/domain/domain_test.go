@@ -323,7 +323,7 @@ func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 				},
 			},
 			CompletionContract: CompletionContract{
-				StartCriteria: []ChecklistItem{{Text: "ready", Done: true}},
+				StartCriteria: []ChecklistItem{{Text: "ready", Complete: true}},
 			},
 		},
 	}, now)
@@ -372,17 +372,17 @@ func TestActionItemLifecycleTransitions(t *testing.T) {
 		t.Fatalf("NewActionItem() error = %v", err)
 	}
 
-	if err := actionItem.SetLifecycleState(StateProgress, now.Add(time.Minute)); err != nil {
-		t.Fatalf("SetLifecycleState(progress) error = %v", err)
+	if err := actionItem.SetLifecycleState(StateInProgress, now.Add(time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(in_progress) error = %v", err)
 	}
-	if actionItem.StartedAt == nil || actionItem.LifecycleState != StateProgress {
-		t.Fatalf("expected started/progress state, got %#v", actionItem)
+	if actionItem.StartedAt == nil || actionItem.LifecycleState != StateInProgress {
+		t.Fatalf("expected started/in_progress state, got %#v", actionItem)
 	}
-	if err := actionItem.SetLifecycleState(StateDone, now.Add(2*time.Minute)); err != nil {
-		t.Fatalf("SetLifecycleState(done) error = %v", err)
+	if err := actionItem.SetLifecycleState(StateComplete, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(complete) error = %v", err)
 	}
-	if actionItem.CompletedAt == nil || actionItem.LifecycleState != StateDone {
-		t.Fatalf("expected completed/done state, got %#v", actionItem)
+	if actionItem.CompletedAt == nil || actionItem.LifecycleState != StateComplete {
+		t.Fatalf("expected completed/complete state, got %#v", actionItem)
 	}
 	if err := actionItem.Reparent("parent-1", now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("Reparent() error = %v", err)
@@ -422,17 +422,17 @@ func TestActionItemLifecycleTransitions(t *testing.T) {
 	}
 
 	// in_progress → failed is valid (failure during work).
-	if err := actionItem.SetLifecycleState(StateProgress, now.Add(9*time.Minute)); err != nil {
-		t.Fatalf("SetLifecycleState(progress) error = %v", err)
+	if err := actionItem.SetLifecycleState(StateInProgress, now.Add(9*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(in_progress) error = %v", err)
 	}
 	if err := actionItem.SetLifecycleState(StateFailed, now.Add(10*time.Minute)); err != nil {
-		t.Fatalf("SetLifecycleState(failed from progress) error = %v", err)
+		t.Fatalf("SetLifecycleState(failed from in_progress) error = %v", err)
 	}
 	if actionItem.LifecycleState != StateFailed {
-		t.Fatalf("expected failed state from progress, got %q", actionItem.LifecycleState)
+		t.Fatalf("expected failed state from in_progress, got %q", actionItem.LifecycleState)
 	}
 	if actionItem.CompletedAt == nil {
-		t.Fatal("expected CompletedAt to be set when entering failed from progress")
+		t.Fatal("expected CompletedAt to be set when entering failed from in_progress")
 	}
 }
 
@@ -441,11 +441,11 @@ func TestIsTerminalState(t *testing.T) {
 	if IsTerminalState(StateTodo) {
 		t.Fatal("todo should not be terminal")
 	}
-	if IsTerminalState(StateProgress) {
-		t.Fatal("progress should not be terminal")
+	if IsTerminalState(StateInProgress) {
+		t.Fatal("in_progress should not be terminal")
 	}
-	if !IsTerminalState(StateDone) {
-		t.Fatal("done should be terminal")
+	if !IsTerminalState(StateComplete) {
+		t.Fatal("complete should be terminal")
 	}
 	if !IsTerminalState(StateFailed) {
 		t.Fatal("failed should be terminal")
@@ -469,16 +469,16 @@ func TestActionItemContractUnmetChecks(t *testing.T) {
 		Metadata: ActionItemMetadata{
 			CompletionContract: CompletionContract{
 				StartCriteria: []ChecklistItem{
-					{ID: "s1", Text: "design approved", Done: false},
-					{ID: "s2", Text: "repo ready", Done: true},
+					{ID: "s1", Text: "design approved", Complete: false},
+					{ID: "s2", Text: "repo ready", Complete: true},
 				},
 				CompletionCriteria: []ChecklistItem{
-					{ID: "c1", Text: "tests green", Done: false},
+					{ID: "c1", Text: "tests green", Complete: false},
 				},
 				CompletionChecklist: []ChecklistItem{
-					{ID: "k1", Text: "docs updated", Done: false},
+					{ID: "k1", Text: "docs updated", Complete: false},
 				},
-				Policy: CompletionPolicy{RequireChildrenDone: true},
+				Policy: CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)
@@ -490,7 +490,7 @@ func TestActionItemContractUnmetChecks(t *testing.T) {
 		t.Fatalf("unexpected start unmet list %#v", startUnmet)
 	}
 	children := []ActionItem{
-		{ID: "child-1", Title: "child", LifecycleState: StateProgress},
+		{ID: "child-1", Title: "child", LifecycleState: StateInProgress},
 	}
 	doneUnmet := actionItem.CompletionCriteriaUnmet(children)
 	if len(doneUnmet) < 3 {
@@ -584,7 +584,7 @@ func TestMergeActionItemMetadataDefaults(t *testing.T) {
 		DecisionLog:     []string{"decision-a"},
 		KindPayload:     jsonRaw(`{"shared":{"caller":"keep"},"existing":true}`),
 		CompletionContract: CompletionContract{
-			CompletionChecklist: []ChecklistItem{{ID: "ck-existing", Text: "existing check", Done: false}},
+			CompletionChecklist: []ChecklistItem{{ID: "ck-existing", Text: "existing check", Complete: false}},
 		},
 	}, &ActionItemMetadata{
 		ImplementationNotesUser:  "default user notes",
@@ -614,7 +614,7 @@ func TestMergeActionItemMetadataDefaults(t *testing.T) {
 			CompletionChecklist: []ChecklistItem{{ID: "ck-default-2", Text: "default checklist"}},
 			CompletionEvidence:  []string{"evidence-a"},
 			CompletionNotes:     "default notes",
-			Policy:              CompletionPolicy{RequireChildrenDone: true},
+			Policy:              CompletionPolicy{RequireChildrenComplete: true},
 		},
 	})
 	if err != nil {
@@ -662,8 +662,8 @@ func TestMergeActionItemMetadataDefaults(t *testing.T) {
 	if merged.CompletionContract.CompletionNotes != "default notes" {
 		t.Fatalf("CompletionNotes = %q, want default notes", merged.CompletionContract.CompletionNotes)
 	}
-	if !merged.CompletionContract.Policy.RequireChildrenDone {
-		t.Fatal("expected require_children_done to be tightened by defaults")
+	if !merged.CompletionContract.Policy.RequireChildrenComplete {
+		t.Fatal("expected require_children_complete to be tightened by defaults")
 	}
 }
 

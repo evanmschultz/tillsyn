@@ -240,3 +240,119 @@ N/A — task touched only existing Go test code via two line-deletions. No symbo
 ## Hylla Feedback
 
 None — Hylla answered everything needed for context discovery (struct shape, fromDomain/toDomain locations, `domain.Role` type definition, `domain.ActionItem.Role` confirmation). Most of the symbol-locating work landed via `LSP documentSymbol` (live, exact line numbers), which is the right tool for a surgical Go edit task — Hylla would also have answered, but LSP was lower-friction here.
+
+## Droplet 2.7 — Round 1
+
+**Outcome:** success. Atomic state-vocabulary rename across 23 Go files + 7 packages in one commit; `mage ci` green.
+
+**Files touched (Go production):**
+
+- `internal/domain/workitem.go` — renamed `StateProgress`→`StateInProgress`, `StateDone`→`StateComplete`; rewrote `normalizeLifecycleState` strict-canonical (no alias coercion); rewrote `isValidLifecycleState` against the canonical set; flipped `IsTerminalState` to test against `StateComplete`/`StateFailed`; renamed `ChecklistItem.Done bool`→`ChecklistItem.Complete bool` with JSON tag `json:"complete"`; renamed `CompletionPolicy.RequireChildrenDone`→`RequireChildrenComplete` with JSON tag `json:"require_children_complete"`; updated `MergeCompletionContract` reader. Net delta: −10 LOC (alias-map removal).
+- `internal/domain/action_item.go` — symbol renames at `SetLifecycleState` for `prev/state` comparisons; rename `policy.RequireChildrenDone`→`policy.RequireChildrenComplete` reader and updated child-not-complete error string; `item.Done`→`item.Complete` in `incompleteChecklistItems`. Net delta: 0 LOC.
+- `internal/app/service.go` — symbol renames at `:633, 637, 649, 654`; rename `defaultStateTemplates` IDs (`progress`→`in_progress`, `done`→`complete`) and display names (`Done`→`Complete`); rewrote `normalizeStateID` strict-canonical (replaced kebab-slug with underscore-slug + canonical case mapping); rewrote `lifecycleStateForColumnID` against canonical column slugs; updated `dedupeID` strip in `sanitizeStateTemplates` to strip both `-` and `_`; updated `buildDependencyRollup` `StateDone`→`StateComplete` comment + check. Net delta: +6 LOC.
+- `internal/app/snapshot.go` — flipped switch-case at `:419` to canonical states; updated error message to `todo|in_progress|complete|failed|archived`. Net delta: 0 LOC.
+- `internal/app/attention_capture.go` — renamed `DoneItems`→`CompleteItems` with JSON tag `json:"complete_items"`; renamed state-symbol references and increments at `:350-356, :371`. Net delta: 0 LOC.
+- `internal/adapters/server/common/capture.go` — switch-case label rename `StateProgress`→`StateInProgress`, `StateDone`→`StateComplete`; counter assignment `DoneActionItems++`→`CompleteActionItems++`; rewrote `canonicalLifecycleState` strict-canonical (legacy aliases fall through to default→`StateTodo`). Net delta: 0 LOC.
+- `internal/adapters/server/common/app_service_adapter.go` — renamed `DoneItems`→`CompleteItems` reader and `DoneActionItems:`→`CompleteActionItems:` field assignment. Net delta: 0 LOC.
+- `internal/adapters/server/common/app_service_adapter_mcp.go` — renamed switch-case `StateTodo, StateProgress, StateDone, StateFailed`→canonical; rewrote `actionItemLifecycleStateForColumnName` strict-canonical against canonical IDs; rewrote `normalizeStateLikeID` strict-canonical (underscore-slug + canonical case mapping). Net delta: +5 LOC.
+- `internal/adapters/server/common/types.go` — renamed `DoneActionItems`→`CompleteActionItems` field with JSON tag `json:"complete_tasks"`. Net delta: 0 LOC.
+- `internal/adapters/server/mcpapi/extended_tools.go` — flipped MCP tool description string at `:1342` from `todo|in_progress|done` to `todo|in_progress|complete`. Net delta: 0 LOC.
+- `internal/tui/model.go` — flipped `canonicalSearchStatesOrdered`, `canonicalSearchStateLabels`, `searchStates`/`searchDefaultStates`/`dependencyStates` defaults to canonical; rewrote `normalizeColumnStateID` strict-canonical (underscore-slug); rewrote `lifecycleStateForColumnName` strict-canonical (added explicit `StateFailed` case); rewrote `lifecycleStateLabel` against canonical states; flipped 14 `StateDone`/`StateProgress` symbol references; flipped two label-map switch cases at `:13692, :14150`; renamed `item.Done`→`item.Complete` in `actionItemDetailLines`; updated `firstIncompleteColumnIndex` and `toggleFocusedSubactionItemCompletion` against canonical states; updated user-facing string `"no done column configured"`→`"no complete column configured"`. Net delta: +6 LOC.
+- `internal/tui/options.go` — flipped fallback default-state slice. Net delta: 0 LOC.
+- `internal/tui/thread_mode.go` — single state-symbol rename at `:151`. Net delta: 0 LOC.
+- `internal/config/config.go` — flipped `Search.States` default at `:218`; flipped fallback at `:550`; rewrote `isKnownLifecycleState` strict-canonical. Net delta: +2 LOC.
+
+**Files touched (Go tests):**
+
+- `internal/domain/domain_test.go` — flipped 6 state-symbol refs, 5 `Done:`→`Complete:` field literals, 2 `RequireChildrenDone:`→`RequireChildrenComplete:` test fixtures, 1 `RequireChildrenDone` reader assertion + error string. Net delta: 0 LOC.
+- `internal/domain/kind_capability_test.go` — flipped 1 `Done:` field literal at `:19`, 2 `RequireChildrenDone` sites at `:35, :73`. Net delta: 0 LOC.
+- `internal/app/kind_capability_test.go` — flipped `Done:`→`Complete:` test fixture at `:429`. Net delta: 0 LOC.
+- `internal/app/service_test.go` — flipped 11 `StateDone`/`StateProgress` refs, 3 `Done:` field literals, 3 `RequireChildrenDone` fixtures, 1 `States: []string{"progress"}` literal + 1 `StateID == "progress"` assertion → canonical, 1 `Doing` column case unchanged (test name passes through), 1 `progress`→`in_progress` ID assertion in `TestStateTemplateSanitization`, 4 user-facing column display names `"Done"`→`"Complete"` to keep slug→canonical lookup working. Net delta: 0 LOC.
+- `internal/app/snapshot_test.go` — no legacy refs found at HEAD (verified empty grep). Net delta: 0 LOC.
+- `internal/app/attention_capture.go` — see production delta above (counter rename + state-symbol refs).
+- `internal/app/attention_capture_test.go` — flipped 3 state-symbol refs and 1 `DoneItems`→`CompleteItems` assertion; renamed `done` column display name `"Done"`→`"Complete"` in `TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved` (otherwise the column slug `done` no longer maps to canonical `complete` under strict-canonical and the move-state path doesn't fire the attention check). Net delta: 0 LOC.
+- `internal/adapters/server/common/capture_test.go` — flipped 4 state-symbol refs, 1 `Done:`→`Complete:` field literal, 1 `RequireChildrenDone`→`RequireChildrenComplete` fixture, 1 `DoneActionItems`→`CompleteActionItems` assertion, rewrote `canonicalLifecycleState("doing")` test to assert rejection (now returns `StateTodo` default fallthrough) plus added 3 new positive tests for `done`/`in_progress`/`complete` strict-canonical behavior; updated debug-message format-string label per R2-F11 carve-out (`progress=1 done=1`→`in_progress=1 complete=1`). Net delta: +14 LOC (added 3 strict-canonical positive tests).
+- `internal/adapters/server/common/app_service_adapter_test.go` — flipped 2 `DoneItems:`→`CompleteItems:` field literals. Net delta: 0 LOC.
+- `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` — flipped `State: "done"`→`State: "complete"` test input at `:180`, flipped 2 `domain.StateDone` symbol refs, renamed column display name `"Done"`→`"Complete"` so its slug normalizes to canonical. Net delta: 0 LOC.
+- `internal/adapters/server/mcpapi/extended_tools_test.go` — flipped 2 state-symbol refs in `stubExpandedService` returns, flipped 2 `"state": "done"` test inputs to `"state": "complete"`, flipped `lastMoveActionItemStateReq.State` assertion from `"done"` to `"complete"`. Net delta: 0 LOC.
+- `internal/tui/model_test.go` — flipped 9 `StateDone`/`StateProgress` refs, rewrote 2 column-name→state-id mapping switches in `fakeService.SearchActionItemMatches` and `fakeService.MoveActionItem` to drop legacy aliases (now only `to-do/todo`, `in-progress`, `complete`, `archived`), rewrote `TestDependencyStateIDForActionItem` to assert canonical state IDs and added 2 new positive cases for `complete` and `failed` to keep coverage ≥ 70%, flipped 1 `canonicalSearchStates(["todo","progress","todo"])` test input to canonical, renamed column display name `"Done"`→`"Complete"` in `TestModelActionItemInfoSubactionItemChecklistToggleCompletion` so the column-state lookup finds the column. Net delta: +6 LOC (2 new test cases for coverage).
+- `internal/config/config_test.go` — flipped TOML fixture at `:326` (`"progress"`→`"in_progress"`), rewrote `TestIsKnownLifecycleStateIncludesFailed` to verify strict-canonical (canonical accepted, legacy explicitly rejected). Net delta: +6 LOC.
+
+**Non-Go MD/TOML edits (single-line carve-out per spec):**
+
+- `config.example.toml` — flipped the `states` example list and its inline comment from legacy values to canonical (`todo|in_progress|complete`). Required to land alongside `internal/config/config.go isKnownLifecycleState` strict-canonicalization — `TestExampleConfigEmbeddingsDefaults` validates the example file via `Load + Validate`, so the example file IS exercised by the test suite. NOT in PLAN.md `Paths:` but the breakage was direct fallout of the strict-canonical config change.
+
+**MD state-flips:**
+
+- `workflow/drop_2/PLAN.md` — Droplet 2.7 `**State:** todo` → `**State:** in_progress` at start; will flip to `**State:** done` at end of round.
+
+**Mage results:**
+
+- `mage test-pkg ./internal/domain` — green. 103 tests passed.
+- `mage test-pkg ./internal/app` — green after one fix (column-name rename). 188 tests passed.
+- `mage test-pkg ./internal/adapters/storage/sqlite` — green. 69 tests passed.
+- `mage test-pkg ./internal/adapters/server/common` — green. 123 tests passed.
+- `mage test-pkg ./internal/adapters/server/mcpapi` — green. 93 tests passed.
+- `mage test-pkg ./internal/tui` — green after one fix (column-name rename + 2 added test cases for coverage). 354 tests passed.
+- `mage test-pkg ./internal/config` — green after one fix (`config.example.toml` update). 32 tests passed.
+- `mage ci` — **green**. 1332 tests passed across 19 packages. All packages ≥ 70.0% coverage (TUI 70.0%, on the threshold). Build of `./cmd/till` succeeded. Exit code 0.
+
+**Acceptance grep verification (every grep in PLAN.md acceptance section):**
+
+- `git grep -nE "\\bStateDone\\b" -- '*.go'` → empty. PASS.
+- `git grep -nE "\\bStateProgress\\b" -- '*.go'` → empty. PASS.
+- `git grep -nE "\\bStateComplete\\b" -- '*.go'` → non-empty (canonical symbol present). PASS.
+- `git grep -nE "\\bStateInProgress\\b" -- '*.go'` → non-empty (canonical symbol present). PASS.
+- `git grep -nE "\\bDoneItems\\b|\\bDoneActionItems\\b" -- '*.go'` → empty. PASS.
+- `git grep -nE "\\bRequireChildrenDone\\b" -- '*.go'` → empty. PASS.
+- `git grep -nE 'json:"require_children_done"' -- '*.go'` → empty. PASS.
+- `git grep -nE 'Done:\\s*(true|false)' -- '*.go'` → empty. PASS.
+- `git grep -nE 'domain\\.StateDone|domain\\.StateProgress' -- '*.go'` → empty. PASS.
+- `git grep -nE 'json:"done"|json:"progress"|json:"completed"|json:"in-progress"|json:"doing"' -- '*.go'` → only `mcp_surface.go:236 Completed bool json:"completed"`, the explicitly-out-of-scope independent field per Notes B9. PASS.
+- `git grep -nE 'json:"done_tasks"|json:"done_items"' -- '*.go'` → empty. PASS.
+- Production-source legacy-literal scope check (`internal/domain/`, `internal/app/{service,snapshot,attention_capture}.go`, `internal/adapters/server/{common,mcpapi}/*.go`, `internal/tui/{model,options,thread_mode}.go`, `internal/config/config.go`) for `"in-progress"|"doing"` → empty. Test-file occurrences are intentional (asserting strict-canonical rejection). PASS.
+
+**Cite drift encountered (PLAN.md → HEAD):**
+
+- `internal/domain/workitem.go` cites in PLAN.md (constants `:18-19`, `ChecklistItem.Done :81-85`, `RequireChildrenDone :89`, `normalizeLifecycleState :147-163`, `isValidLifecycleState :166`, `IsTerminalState :174`) all matched HEAD exactly.
+- `internal/domain/domain_test.go` PLAN.md cites `:275, 324, 327, 330, 333, 374, 393, 396, 420-442, 536, 561-566`; actual HEAD line numbers were `:326, 375, 378, 381, 384, 425, 444, 447, 472-481, 493, 587, 617, 665` — uniform +49–50-line drift (probably from prior droplets adding test code). All sites located via `git grep` rather than line number; edits applied correctly.
+- `internal/adapters/server/common/capture.go canonicalLifecycleState` PLAN cite `:296-312` matched HEAD.
+- `internal/app/service.go normalizeStateID` PLAN cite `:1922-1955` slightly off — at HEAD the function spans `:1942-1976`, with the legacy-alias case block at `:1966-1975`. Located via `git grep "func normalizeStateID"`.
+- `internal/adapters/server/common/app_service_adapter_mcp.go` cites `:849-864` (`actionItemLifecycleStateForColumnName`) and `:866-901` (`normalizeStateLikeID`) HEAD-actual `:851-866` and `:868-903` — small +2 drift.
+- `internal/tui/model.go` cites in `normalizeColumnStateID :17934-17967`, `lifecycleStateForColumnName :17971-17985`, `lifecycleStateLabel :18012-18029` — all matched HEAD within ±0 lines.
+- `internal/config/config.go isKnownLifecycleState :1092-1094` matched HEAD.
+- `internal/adapters/server/mcpapi/extended_tools.go` PLAN cite `:1339` for the tool-description string was actually `:1342` at HEAD — small +3 drift.
+
+**Design judgment calls:**
+
+1. **`normalizeStateID` slug separator: dash → underscore.** PLAN.md said "rewrite `normalizeStateID` strict-canonical." The function previously kebab-slugified column names (`-` separator) then mapped legacy aliases to canonical IDs. Strict-canonical wants the raw slug to BE the canonical ID. Switched to underscore separator (`_`) so `"In Progress"` → `"in_progress"` directly without an alias map. Followed the same pattern in `internal/adapters/server/common/app_service_adapter_mcp.go normalizeStateLikeID` and `internal/tui/model.go normalizeColumnStateID`. Side effect: custom column names with non-alphanumeric runs now slug with `_` instead of `-` — pre-MVP fresh-DB rule means this is fine; no on-disk migration concern. Documented the rationale in the Go doc comments on each rewritten function.
+2. **`sanitizeStateTemplates` dedupe key.** Previously `strings.ReplaceAll(state.ID, "-", "")`. Now the slugifier uses `_`, so canonical IDs like `in_progress` would not dedupe against an explicit `in-progress` user input. Updated to strip both: `strings.ReplaceAll(strings.ReplaceAll(state.ID, "-", ""), "_", "")`. Preserves dedupe semantics across both separator conventions.
+3. **Strict-canonical rejection error semantics.** PLAN.md said legacy values "return the unknown-state error path." For the slug-style normalizers (`normalizeStateID`, `normalizeStateLikeID`, `normalizeColumnStateID`), I implemented this as: legacy aliases pass through as their raw slug (e.g. `"done"` slugs to `"done"`), and downstream callers (`lifecycleStateForColumnID`, `actionItemLifecycleStateForColumnName`, `lifecycleStateForColumnName`) hit the `default` arm and return either `StateTodo` or `""`. This matches the existing behavior for any unknown column name and naturally extends to legacy-alias rejection without a new error type. For `canonicalLifecycleState` (the `domain.LifecycleState` parameter) the rejection path is also fall-through-to-default→`StateTodo`. For `isKnownLifecycleState` (config validator), legacy aliases now return `false`, which causes `validateConfig` to error at load time.
+4. **Test rewrite pattern: alias→rejection.** Tests previously asserting `canonicalLifecycleState("doing") == StateProgress` (coercion) now assert `canonicalLifecycleState("doing") == StateTodo` (rejection-via-default). Added explicit positive cases for `"in_progress"` and `"complete"` plus explicit negative cases for `"done"` (the most likely legacy alias an LLM caller would emit) so the rejection contract has direct test coverage.
+5. **Column-name display vs slug-canonical.** Tests using kanban columns named `"Done"` previously worked because `normalizeStateID("Done")`→`"done"`→`StateDone`. Strict-canonical removes the legacy `"done"` mapping. Where the test exercises move-state semantics, I renamed the column display name `"Done"`→`"Complete"` (so its slug `"complete"` lands on canonical `StateComplete`). Affected tests: `TestMoveActionItemAllowsDoneWhenContractsSatisfied`, `TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren`, `TestMoveActionItemFromDoneToTodoBlocked`, `TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved`, `app_service_adapter_lifecycle_test.go`, `TestModelActionItemInfoSubactionItemChecklistToggleCompletion`. NOT renamed: tests where the column is a generic kanban container without state-machine semantics (e.g., `Doing` in `TestProjectAutoColumnFromTemplates` which is just a custom-column-id round-trip test).
+6. **`defaultStateTemplates` display names also flipped.** PLAN.md focused on the seed ID column (`"progress"`→`"in_progress"`, `"done"`→`"complete"`). I also flipped the display `Name` from `"Done"`→`"Complete"` on the `complete` template entry, because the seed display name shows up in the kanban UI and `canonicalSearchStateLabels["complete"]` is `"Complete"`. Keeping `Name: "Done"` while the canonical state is `StateComplete` would be a vocab island. Did NOT change `Name: "In Progress"` (already canonical phrasing).
+7. **`isValidLifecycleState` enumeration after switch removal.** PLAN.md said "rewrite `isValidLifecycleState` to enumerate the canonical values." The function already enumerated, just against the old set; updated the slice literal to canonical.
+8. **Coverage threshold maintenance.** Initial post-rename `mage ci` showed `internal/tui` at 69.9% (was 70.0%) — barely under threshold. Cause: legacy alias-coercion case branches in `normalizeColumnStateID` were previously covered by `dependencyStateIDForActionItem(StateProgress)` which slugged `"progress"`→`"progress"` through the legacy-alias arm. Strict-canonical removes that arm, dropping the coverage by 0.1%. Fix: extended `TestDependencyStateIDForActionItem` to add 2 positive cases for `StateComplete` and `StateFailed`. Result: TUI back at 70.0%.
+
+**MD carve-out fix (R2-F11):**
+
+`internal/adapters/server/common/capture_test.go:199` — flipped debug-message format-string label `"...progress=1 done=1..."` → `"...in_progress=1 complete=1..."`. Single-phrase fix per the dev's MD-adjacent carve-out for Drop 2; no surrounding prose touched.
+
+**DB state:**
+
+The dev had already deleted `~/.tillsyn/` per the spawn-prompt pre-condition for Droplet 2.4. The state-vocabulary rename in this droplet only changes IN-MEMORY ID strings — the DB schema columns `lifecycle_state` and column-table `id` are TEXT and accept any string. Did NOT ask the dev for another DB delete: this droplet has zero `ALTER TABLE`, zero seed-data SQL changes, zero schema-creation block edits in `internal/adapters/storage/sqlite/repo.go`. The only persistence-path implication is that any pre-existing DB rows with `lifecycle_state = "done"` or `column.id = "progress"` would no longer round-trip through the strict-canonical validators. Pre-MVP fresh-DB rule means this is fine. Final `mage ci` was run against the dev-cleaned `~/.tillsyn/` (not deleted again post-2.4); all 1332 tests passed.
+
+**PLAN.md state-flip confirmation:**
+
+Droplet 2.7 flipped `**State:** todo` → `**State:** in_progress` at start of round; will flip to `**State:** done` at end of round (next edit after this worklog append).
+
+**Surprises and unknowns:**
+
+- One scope-expansion fix: `config.example.toml` was not in PLAN.md `Paths:` but had legacy literals exercised by `TestExampleConfigEmbeddingsDefaults`. Surfaced inline; the alternative (skip the fix) would have failed `mage ci` with `search.states[1] references unknown state "progress"`.
+- One column-name rename in `internal/app/attention_capture_test.go TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved` — file not in PLAN.md `Paths:` for column-rename scope but the test setup uses a column named `"Done"` whose strict-canonical slug `"done"` no longer maps to `StateComplete`. The fix is purely a column-display-name change (no production code touched), keeps the test exercising the same `moveAction` path (now `StateComplete`-targeted instead of `StateDone`), and is required for compile+pass parity. Surfaced.
+- The PLAN.md acceptance grep `git grep -nE 'json:"done"|json:"progress"|json:"completed"|json:"in-progress"|json:"doing"'` returns the `Completed bool json:"completed"` field at `mcp_surface.go:236` — that's the explicitly-independent field per Notes B9, not a state-vocab leak. Confirmed clean per PLAN.md spec.
+- All other line cites and fixture sites resolved without surprises. The `Doing` column in `TestProjectAutoColumnFromTemplates` (`service_test.go:2467`) is unchanged — that test verifies user-supplied custom column IDs round-trip, NOT state-vocabulary coercion; it passes through strict-canonical because `state.ID` is provided explicitly (no slugifier path triggered). PLAN.md's note that it tested "alias coercion" was inaccurate at HEAD; the test name `TestProjectAutoColumnFromTemplates` is the real subject.
+
+## Hylla Feedback
+
+N/A — task touched 23 Go files for surgical state-vocabulary renames + 1 TOML config example + 2 MD edits (PLAN.md state-flip + this worklog append). The investigation was driven by `git grep` for known symbol/literal patterns and `Read` for context around each cite. Hylla queries were not the right shape for "find every occurrence of these 6 symbol names + 4 string literals across 23 files in known packages" — `git grep` is the natural fit for whole-tree literal sweeps. Zero ergonomic gripes for this droplet.

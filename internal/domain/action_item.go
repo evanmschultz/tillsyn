@@ -284,17 +284,17 @@ func (t *ActionItem) SetLifecycleState(state LifecycleState, now time.Time) erro
 	ts := now.UTC()
 	prev := t.LifecycleState
 	t.LifecycleState = state
-	if prev != StateProgress && state == StateProgress && t.StartedAt == nil {
+	if prev != StateInProgress && state == StateInProgress && t.StartedAt == nil {
 		t.StartedAt = &ts
 	}
-	// CompletedAt is reused for both done and failed (D1). The metadata.outcome
+	// CompletedAt is reused for both complete and failed (D1). The metadata.outcome
 	// field (D6) distinguishes success from failure. Both branches must be
 	// updated atomically — setting one without the other causes CompletedAt to
 	// be set and immediately nilled in the same call.
-	if (prev != StateDone && state == StateDone) || (prev != StateFailed && state == StateFailed) {
+	if (prev != StateComplete && state == StateComplete) || (prev != StateFailed && state == StateFailed) {
 		t.CompletedAt = &ts
 	}
-	if state != StateDone && state != StateFailed {
+	if state != StateComplete && state != StateFailed {
 		t.CompletedAt = nil
 	}
 	if state == StateArchived {
@@ -326,13 +326,13 @@ func (t ActionItem) StartCriteriaUnmet() []string {
 func (t ActionItem) CompletionCriteriaUnmet(children []ActionItem) []string {
 	out := incompleteChecklistItems(t.Metadata.CompletionContract.CompletionCriteria)
 	out = append(out, incompleteChecklistItems(t.Metadata.CompletionContract.CompletionChecklist)...)
-	if t.Metadata.CompletionContract.Policy.RequireChildrenDone {
+	if t.Metadata.CompletionContract.Policy.RequireChildrenComplete {
 		for _, child := range children {
 			if child.ArchivedAt != nil {
 				continue
 			}
-			if normalizeLifecycleState(child.LifecycleState) != StateDone {
-				out = append(out, fmt.Sprintf("child item %q is not done", child.Title))
+			if normalizeLifecycleState(child.LifecycleState) != StateComplete {
+				out = append(out, fmt.Sprintf("child item %q is not complete", child.Title))
 			}
 		}
 	}
@@ -373,7 +373,7 @@ func incompleteChecklistItems(in []ChecklistItem) []string {
 		if text == "" {
 			continue
 		}
-		if item.Done {
+		if item.Complete {
 			continue
 		}
 		out = append(out, text)
