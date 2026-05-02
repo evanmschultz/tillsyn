@@ -13567,6 +13567,43 @@ func TestDependencyStateIDForActionItem(t *testing.T) {
 	}
 }
 
+// TestNormalizeColumnStateIDStrictCanonicalRejectsLegacyLiterals verifies the
+// TUI column-name normalizer rejects legacy state literals via empty-string
+// return rather than slug-passthrough. PLAN.md Droplet 2.7 acceptance line 222
+// requires the unknown-state error path for legacy values.
+func TestNormalizeColumnStateIDStrictCanonicalRejectsLegacyLiterals(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "canonical todo", in: "todo", want: "todo"},
+		{name: "canonical in_progress", in: "in_progress", want: "in_progress"},
+		{name: "canonical complete", in: "complete", want: "complete"},
+		{name: "canonical failed", in: "failed", want: "failed"},
+		{name: "canonical archived", in: "archived", want: "archived"},
+		{name: "kebab to-do is canonical (not legacy)", in: "to-do", want: "todo"},
+		{name: "display In Progress slugs canonical", in: "In Progress", want: "in_progress"},
+		{name: "display Complete slugs canonical", in: "Complete", want: "complete"},
+		{name: "legacy done rejected", in: "done", want: ""},
+		{name: "legacy completed rejected", in: "completed", want: ""},
+		{name: "legacy progress rejected", in: "progress", want: ""},
+		{name: "legacy doing rejected", in: "doing", want: ""},
+		{name: "legacy in-progress rejected", in: "in-progress", want: ""},
+		{name: "legacy uppercase Done rejected", in: "Done", want: ""},
+		{name: "legacy with surrounding whitespace rejected", in: " completed ", want: ""},
+		{name: "custom column Backlog preserved", in: "Backlog", want: "backlog"},
+		{name: "empty stays empty", in: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeColumnStateID(tc.in); got != tc.want {
+				t.Fatalf("normalizeColumnStateID(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestModelDependencyInspectorFilterControls verifies dependency inspector control paths for query/filter toggles and cancel flow.
 func TestModelDependencyInspectorFilterControls(t *testing.T) {
 	now := time.Date(2026, 2, 23, 15, 0, 0, 0, time.UTC)

@@ -2958,6 +2958,45 @@ func TestStateTemplateSanitization(t *testing.T) {
 	}
 }
 
+// TestNormalizeStateIDStrictCanonicalRejectsLegacyLiterals verifies the
+// strict-canonical contract: legacy state literals are rejected via empty-string
+// return rather than slug-passthrough. Round 1 of Droplet 2.7 left them
+// passing through to themselves (e.g. "done" → "done") which gave callers a
+// false-positive "valid slug" signal; PLAN.md acceptance line 222 mandates
+// the unknown-state error path.
+func TestNormalizeStateIDStrictCanonicalRejectsLegacyLiterals(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "canonical todo", in: "todo", want: "todo"},
+		{name: "canonical in_progress", in: "in_progress", want: "in_progress"},
+		{name: "canonical complete", in: "complete", want: "complete"},
+		{name: "canonical failed", in: "failed", want: "failed"},
+		{name: "canonical archived", in: "archived", want: "archived"},
+		{name: "kebab to-do is canonical (not legacy)", in: "to-do", want: "todo"},
+		{name: "display In Progress slugs canonical", in: "In Progress", want: "in_progress"},
+		{name: "display Complete slugs canonical", in: "Complete", want: "complete"},
+		{name: "legacy done rejected", in: "done", want: ""},
+		{name: "legacy completed rejected", in: "completed", want: ""},
+		{name: "legacy progress rejected", in: "progress", want: ""},
+		{name: "legacy doing rejected", in: "doing", want: ""},
+		{name: "legacy in-progress rejected", in: "in-progress", want: ""},
+		{name: "legacy uppercase Done rejected", in: "Done", want: ""},
+		{name: "legacy with surrounding whitespace rejected", in: "  progress  ", want: ""},
+		{name: "custom column name preserved", in: "My Custom Column", want: "my_custom_column"},
+		{name: "empty stays empty", in: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeStateID(tc.in); got != tc.want {
+				t.Fatalf("normalizeStateID(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // failingRepo represents failing repo data used by this package.
 type failingRepo struct {
 	*fakeRepo

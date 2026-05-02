@@ -868,11 +868,15 @@ func actionItemLifecycleStateForColumnName(name string) domain.LifecycleState {
 // normalizeStateLikeID slugifies a column display name into its canonical state-id
 // form. Strict-canonical: only canonical inputs (todo, in_progress, complete,
 // failed, archived) round-trip; legacy aliases (done, completed, progress,
-// in-progress, doing) slug through to themselves and downstream callers reject
-// them at the state-machine boundary.
+// doing, in-progress) are REJECTED with an empty-string return — callers test
+// the empty passthrough as the unknown-state error path.
 func normalizeStateLikeID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
+		return ""
+	}
+	switch name {
+	case "done", "completed", "progress", "doing", "in-progress":
 		return ""
 	}
 	var b strings.Builder
