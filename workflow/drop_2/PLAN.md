@@ -45,7 +45,7 @@ The pre-step from Scope item 2. Lands first because Unit B's state rename would 
 
 #### Droplet 2.1 — Delete `templates/` package outright
 
-- **State:** todo
+- **State:** done
 - **Paths:** `templates/builtin/default-go.json` (delete), `templates/builtin/default-frontend.json` (delete), `templates/embed.go` (delete), `templates/builtin/` (delete dir if empty), `templates/` (delete dir if empty)
 - **Packages:** `github.com/evanmschultz/tillsyn/templates` (deletion)
 - **Acceptance:**
