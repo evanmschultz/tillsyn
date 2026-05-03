@@ -33,6 +33,55 @@ The `kind_catalog` still lists `build-actionItem`, `subtask`, `qa-check`, `plan-
 
 Templates are part of the long-term cascade design, but **do not bind a template to new projects today**. The Tillsyn project itself is template-free (`template: none`). Templates will come back in Drop 3+ when `child_rules` can enforce required-QA subtasks and role gates. Until then, **the orchestrator enforces the tree shape manually** and this wiki is the specification for what that shape looks like.
 
+## Cascade Vocabulary
+
+The cascade tree's shape vocabulary is a closed 4-value enum that describes **where a node sits in the work flow's structure**, independent of what kind of work it is (`metadata.kind`) or who does the work (`metadata.role`). Picture water flowing down a series of waterfalls: a **drop** is one vertical step that may decompose into more steps; **segments** are parallel streams within a drop; **confluences** are merge points where streams rejoin; **droplets** are atomic, indivisible units that finish in one shot. The metaphor orients the vocabulary; enforcement happens at the `till.action_item(operation=create|update)` boundary.
+
+### `metadata.structural_type` Enum
+
+Closed 4-value enum, mandatory on every non-project node, validated at the create/update boundary. **Default is NOT inferred** — the creator (planner, orchestrator, dev) chooses explicitly. Empty rejects with `ErrInvalidStructuralType`.
+
+| Value | Meaning | Atomicity Rule |
+|---|---|---|
+| `drop` | Vertical cascade step. Level-1 children of the project are always drops; deeper drops are sub-cascades. | Decomposes recursively into segments, confluences, or sub-drops. |
+| `segment` | Parallel execution stream within a drop — the fan-out unit. May recurse. | May contain droplets, sub-segments, or confluences. |
+| `confluence` | Merge / integration node where multiple upstream streams rejoin. | **MUST have non-empty `blocked_by`** naming every upstream contributor. Empty `blocked_by` is a definitional contradiction. |
+| `droplet` | Atomic, indivisible leaf — one builder agent finishes it in one shot. | **MUST have zero children.** Any child indicates misclassification: should be `segment` or `drop`. |
+
+### Orthogonality With `metadata.role`
+
+`structural_type` (where) and `metadata.role` (who) are independent axes. Worked combinations:
+
+- `(structural_type=droplet, role=builder)` — canonical build leaf: one file's worth of code change.
+- `(structural_type=droplet, role=qa-proof)` — canonical QA leaf: one verification pass against one build droplet.
+- `(structural_type=droplet, role=qa-falsification)` — canonical attack leaf.
+- `(structural_type=confluence, role=orchestrator)` — integration point at the bottom of fan-out.
+- `(structural_type=segment, role=planner)` — a planning sub-stream that fans out further work.
+- `(structural_type=drop, role=orchestrator)` — the level-1 root for a numbered drop.
+
+### Worked Examples
+
+1. **Single-package change.** Level-1 `drop` named `DROP_3`. Inside it, a `segment` named "Unit A — Cascade Vocabulary Foundation" that fans out into 7 sibling `droplet` children (each one a builder + QA-proof droplet + QA-falsification droplet). The droplets close concurrently where their `blocked_by` allows.
+
+2. **Cross-package change.** Level-1 `drop` named `DROP_4`. Inside, two parallel `segment` siblings — "App Plumbing" and "Schema Plumbing" — each with droplet children. A `confluence` named "Integration" sits at the bottom with `blocked_by` listing every droplet under both segments. The confluence is the natural close-of-drop checkpoint.
+
+3. **Refinements gate.** A `confluence` named `DROP_3_REFINEMENTS_GATE_BEFORE_DROP_4` with non-empty `blocked_by` enumerating every level_2 finding drop + every other level_2 child of `DROP_3`. STEWARD closes it after working the per-drop refinements pass.
+
+4. **Atomic leaf misclassified.** A node with `structural_type=droplet` AND any children is a definitional violation — the plan-QA-falsification agent flags it. Either reclassify the parent to `segment` (it fans out) or `drop` (it's a vertical sub-cascade).
+
+### Adjacent Domain Primitives
+
+Two boolean flags on every cascade node generalize what was previously STEWARD-specific behavior into reusable primitives:
+
+- **`metadata.persistent`** — when `true`, the node is retained as a long-lived anchor across drops. The 6 STEWARD level_1 parents (`DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS`) are the canonical consumers. Default `false`.
+- **`metadata.dev_gated`** — when `true`, state transitions on the node require dev sign-off (the refinements-gate confluence is the canonical consumer). Default `false`.
+
+Both are domain primitives — STEWARD is one consumer, not the definition.
+
+### Single-Canonical-Source Rule
+
+This section is **the** canonical definition for cascade vocabulary. Every other doc — `PLAN.md`, `CLAUDE.md`, `STEWARD_ORCH_PROMPT.md`, agent prompt files, bootstrap skills, memory files — holds a **pointer** to this section, not a duplicate definition. The `plan-qa-falsification` agent attacks any cascade-vocabulary redefinition outside this section.
+
 ## Level Addressing (0-Indexed)
 
 Levels name depth from the project root down. **The project is level 0.** The first drop under the project is level 1. This is **0-indexed on purpose** — the whole DB zero-indexes everything, so levels do too. Use this language consistently:
