@@ -42,7 +42,43 @@ type ActionItem struct {
 	// function-signature changes, single SQL migrations, single template
 	// edits. Default false. Semantics per `ta-docs/cascade-methodology.md`
 	// §2.3 and §11.3.
-	Irreducible    bool
+	Irreducible bool
+	// Owner optionally tags an action item with the principal-name of an
+	// orchestrator that owns it (e.g. "STEWARD"). Free-form string —
+	// trim-only, no closed-enum membership check; any non-empty trimmed
+	// value is permitted so future template-defined owned kinds can pick
+	// their own owner names without a domain-package change. STEWARD is the
+	// dominant present-day consumer (auth-gate keys on it), but Owner is a
+	// domain primitive — not STEWARD-specific. Empty is the zero value and
+	// means "no owner / orchestrator-routable by default." Semantics per
+	// `ta-docs/cascade-methodology.md` §11.2.
+	Owner string
+	// DropNumber stores the cascade drop index a node is associated with
+	// (e.g. 3 for "drop 3"). Zero is the zero value and is treated as "not
+	// a numbered drop" rather than "drop 0"; consumers MUST NOT distinguish
+	// between unset and drop-0. Negative values are rejected by
+	// NewActionItem with ErrInvalidDropNumber.
+	//
+	// Rollback-cost note (per Drop 3 plan-QA Round 2 finding 5.C.16): if
+	// this is later moved back into metadata-JSON, every consumer except
+	// the auth gate (3.18 schema column, 3.20 read-side filters, 3.21 MCP
+	// plumbing, plus their tests) must change shape — non-trivial backout.
+	// Domain primitive, not STEWARD-specific. Semantics per
+	// `ta-docs/cascade-methodology.md` §11.2.
+	DropNumber int
+	// Persistent marks long-lived umbrella nodes (refinement rollups,
+	// anchor nodes, perpetual tracking trees) that survive across drops
+	// rather than being created and closed within a single drop. Default
+	// false. The 6 anchor nodes are the dominant present-day consumer, but
+	// Persistent is a domain primitive — not STEWARD-specific. Semantics
+	// per `ta-docs/cascade-methodology.md` §11.2.
+	Persistent bool
+	// DevGated marks nodes whose terminal transition requires explicit dev
+	// sign-off — typically refinement rollups and human-verify hold points.
+	// Default false. The refinements gate is the dominant present-day
+	// consumer, but DevGated is a domain primitive — not STEWARD-specific.
+	// Semantics per `ta-docs/cascade-methodology.md` §11.2.
+	DevGated       bool
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -87,7 +123,27 @@ type ActionItemInput struct {
 	// migrations / single template edits — droplets that cannot decompose
 	// further. Default false. Semantics per
 	// `ta-docs/cascade-methodology.md` §2.3 and §11.3.
-	Irreducible    bool
+	Irreducible bool
+	// Owner optionally tags the action item with a principal-name string
+	// (e.g. "STEWARD"). Free-form — NewActionItem trims surrounding
+	// whitespace but does NOT enforce a closed enum, so any non-empty
+	// trimmed value round-trips. Whitespace-only collapses to empty.
+	// Semantics per `ta-docs/cascade-methodology.md` §11.2.
+	Owner string
+	// DropNumber stores the cascade drop index. Zero is the zero value and
+	// means "not a numbered drop"; positive values round-trip; negative
+	// values reject with ErrInvalidDropNumber. Semantics per
+	// `ta-docs/cascade-methodology.md` §11.2.
+	DropNumber int
+	// Persistent marks long-lived umbrella / anchor / perpetual-tracking
+	// nodes. Default false. Domain primitive — not STEWARD-specific.
+	// Semantics per `ta-docs/cascade-methodology.md` §11.2.
+	Persistent bool
+	// DevGated marks nodes whose terminal transition requires dev sign-off
+	// (refinement rollups, human-verify hold points). Default false.
+	// Domain primitive — not STEWARD-specific. Semantics per
+	// `ta-docs/cascade-methodology.md` §11.2.
+	DevGated       bool
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -191,6 +247,17 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	if !IsValidStructuralType(in.StructuralType) {
 		return ActionItem{}, ErrInvalidStructuralType
 	}
+	// Owner is a free-form principal-name string. Trim only — no closed-enum
+	// membership check, since future template-defined owned kinds can pick
+	// their own owner names. Whitespace-only collapses to empty. Persistent
+	// and DevGated are bools with no validation; their zero-value (false) is
+	// the dominant case.
+	in.Owner = strings.TrimSpace(in.Owner)
+	// DropNumber: zero is the zero value and is permitted (treated as "not a
+	// numbered drop"); positive values round-trip; negative values reject.
+	if in.DropNumber < 0 {
+		return ActionItem{}, ErrInvalidDropNumber
+	}
 	if in.LifecycleState == "" {
 		in.LifecycleState = StateTodo
 	}
@@ -236,6 +303,10 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		Role:           in.Role,
 		StructuralType: in.StructuralType,
 		Irreducible:    in.Irreducible,
+		Owner:          in.Owner,
+		DropNumber:     in.DropNumber,
+		Persistent:     in.Persistent,
+		DevGated:       in.DevGated,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,

@@ -865,3 +865,159 @@ func TestNormalizeKindIDLowercaseAndTrim(t *testing.T) {
 		}
 	}
 }
+
+// TestNewActionItemOwnerNormalization covers the free-form Owner field on
+// ActionItemInput — empty round-trips empty, whitespace-only collapses to
+// empty, surrounding whitespace is trimmed, and arbitrary non-empty values
+// (including STEWARD) round-trip without a closed-enum membership check.
+func TestNewActionItemOwnerNormalization(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name      string
+		input     string
+		wantOwner string
+	}{
+		{name: "empty", input: "", wantOwner: ""},
+		{name: "whitespace collapses to empty", input: "   ", wantOwner: ""},
+		{name: "steward round-trips", input: "STEWARD", wantOwner: "STEWARD"},
+		{name: "surrounding whitespace trimmed", input: "  STEWARD  ", wantOwner: "STEWARD"},
+		{name: "arbitrary value round-trips", input: "DEV", wantOwner: "DEV"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-owner",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Owner:          tc.input,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			if actionItem.Owner != tc.wantOwner {
+				t.Fatalf("Owner = %q, want %q", actionItem.Owner, tc.wantOwner)
+			}
+		})
+	}
+}
+
+// TestNewActionItemDropNumberValidation covers the DropNumber field —
+// zero round-trips as the zero value (treated as "not a numbered drop"),
+// positive values round-trip, and negative values reject with
+// ErrInvalidDropNumber.
+func TestNewActionItemDropNumberValidation(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name           string
+		input          int
+		wantDropNumber int
+		wantErr        error
+	}{
+		{name: "zero round-trips", input: 0, wantDropNumber: 0, wantErr: nil},
+		{name: "positive round-trips", input: 5, wantDropNumber: 5, wantErr: nil},
+		{name: "negative rejects", input: -1, wantDropNumber: 0, wantErr: ErrInvalidDropNumber},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-drop-number",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				DropNumber:     tc.input,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if actionItem.DropNumber != tc.wantDropNumber {
+				t.Fatalf("DropNumber = %d, want %d", actionItem.DropNumber, tc.wantDropNumber)
+			}
+		})
+	}
+}
+
+// TestNewActionItemPersistentRoundTrip covers the Persistent bool — both
+// the false zero-value (default) and explicit true round-trip without any
+// validation.
+func TestNewActionItemPersistentRoundTrip(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name  string
+		input bool
+	}{
+		{name: "false default", input: false},
+		{name: "true round-trips", input: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-persistent",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Persistent:     tc.input,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			if actionItem.Persistent != tc.input {
+				t.Fatalf("Persistent = %v, want %v", actionItem.Persistent, tc.input)
+			}
+		})
+	}
+}
+
+// TestNewActionItemDevGatedRoundTrip covers the DevGated bool — both the
+// false zero-value (default) and explicit true round-trip without any
+// validation.
+func TestNewActionItemDevGatedRoundTrip(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name  string
+		input bool
+	}{
+		{name: "false default", input: false},
+		{name: "true round-trips", input: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-dev-gated",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				DevGated:       tc.input,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			if actionItem.DevGated != tc.input {
+				t.Fatalf("DevGated = %v, want %v", actionItem.DevGated, tc.input)
+			}
+		})
+	}
+}
