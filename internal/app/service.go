@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // DeleteMode represents a selectable mode.
@@ -219,6 +221,9 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 	if err != nil {
 		return domain.Project{}, err
 	}
+	if err := bakeProjectKindCatalog(&project); err != nil {
+		return domain.Project{}, err
+	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
@@ -270,6 +275,9 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if err := project.UpdateDetails(project.Name, project.Description, mergedMetadata, now); err != nil {
 		return domain.Project{}, err
 	}
+	if err := bakeProjectKindCatalog(&project); err != nil {
+		return domain.Project{}, err
+	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
@@ -285,6 +293,61 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 		return domain.Project{}, err
 	}
 	return project, nil
+}
+
+// bakeProjectKindCatalog populates project.KindCatalogJSON with the JSON
+// envelope of a templates.KindCatalog baked from the project's bound
+// Template at create time.
+//
+// Per Drop 3 droplet 3.12 + fix L5: the catalog is loaded from
+//
+//   - <project_root>/.tillsyn/template.toml when an explicit per-project
+//     template exists (file-system source resolution lands in droplet 3.14
+//     alongside the embedded default), OR
+//   - the embedded internal/templates/builtin/default.toml fallback that
+//     droplet 3.14 introduces.
+//
+// Until 3.14 lands, neither source is available from this droplet and the
+// helper is a no-op: KindCatalogJSON stays empty (length 0). Per droplet
+// 3.12 acceptance criterion an empty envelope routes through the legacy
+// repo fallback in resolveActionItemKindDefinition, preserving Drop 2.8
+// universal-nesting boot compatibility.
+//
+// The helper accepts a *domain.Project so 3.14 can substitute a real
+// implementation without touching the call site in CreateProjectWithMetadata.
+// It returns error so future template-load failures can propagate without
+// another signature break.
+//
+// Per Drop 3 finding 5.B.14: edits to <project_root>/.tillsyn/template.toml
+// AFTER project creation are ignored — the catalog is the create-time
+// snapshot. Re-baking on every project lookup is explicitly out of scope.
+func bakeProjectKindCatalog(project *domain.Project) error {
+	if project == nil {
+		return nil
+	}
+	tpl, ok, err := loadProjectTemplate()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	catalog := templates.Bake(tpl)
+	encoded, err := json.Marshal(catalog)
+	if err != nil {
+		return fmt.Errorf("encode kind catalog: %w", err)
+	}
+	project.KindCatalogJSON = encoded
+	return nil
+}
+
+// loadProjectTemplate is the future hook for resolving the Template that
+// CreateProjectWithMetadata bakes into a project's KindCatalog. Droplet
+// 3.14 fills this in with file-system + embedded TOML resolution. Until
+// then it returns (zero, false, nil), which routes the create path through
+// the empty-catalog branch.
+func loadProjectTemplate() (templates.Template, bool, error) {
+	return templates.Template{}, false, nil
 }
 
 // UpdateProjectInput holds input values for update project operations.
