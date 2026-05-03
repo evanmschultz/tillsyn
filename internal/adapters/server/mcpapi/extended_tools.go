@@ -869,6 +869,10 @@ func registerActionItemTools(
 				Scope           string                     `json:"scope"`
 				Role            string                     `json:"role"`
 				StructuralType  string                     `json:"structural_type"`
+				Owner           *string                    `json:"owner"`
+				DropNumber      *int                       `json:"drop_number"`
+				Persistent      *bool                      `json:"persistent"`
+				DevGated        *bool                      `json:"dev_gated"`
 				ColumnID        string                     `json:"column_id"`
 				Title           string                     `json:"title"`
 				Description     string                     `json:"description"`
@@ -1035,7 +1039,7 @@ func registerActionItemTools(
 				if args.Metadata != nil {
 					metadata = *args.Metadata
 				}
-				actionItem, err := tasks.CreateActionItem(ctx, common.CreateActionItemRequest{
+				createReq := common.CreateActionItemRequest{
 					ProjectID:      args.ProjectID,
 					ParentID:       args.ParentID,
 					Kind:           args.Kind,
@@ -1050,7 +1054,26 @@ func registerActionItemTools(
 					Labels:         append([]string(nil), args.Labels...),
 					Metadata:       metadata,
 					Actor:          actor,
-				})
+				}
+				// Owner / DropNumber / Persistent / DevGated are domain
+				// primitives (per L13). Pointer-sentinel inputs from the args
+				// struct collapse to value-type fields on the create request:
+				// nil = "not supplied" = leave the request's zero value
+				// (empty string / 0 / false), which domain.NewActionItem
+				// accepts as the default.
+				if args.Owner != nil {
+					createReq.Owner = *args.Owner
+				}
+				if args.DropNumber != nil {
+					createReq.DropNumber = *args.DropNumber
+				}
+				if args.Persistent != nil {
+					createReq.Persistent = *args.Persistent
+				}
+				if args.DevGated != nil {
+					createReq.DevGated = *args.DevGated
+				}
+				actionItem, err := tasks.CreateActionItem(ctx, createReq)
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
@@ -1104,8 +1127,17 @@ func registerActionItemTools(
 					Labels:         append([]string(nil), args.Labels...),
 					Role:           args.Role,
 					StructuralType: args.StructuralType,
-					Metadata:       args.Metadata,
-					Actor:          actor,
+					// Pointer-sentinels pass through verbatim — nil preserves
+					// the existing value at the service boundary; non-nil
+					// applies the dereferenced value. Lets the L1 STEWARD
+					// field-level guard distinguish "absent" from "explicit
+					// empty/zero/false" without collapsing the wire shape.
+					Owner:      args.Owner,
+					DropNumber: args.DropNumber,
+					Persistent: args.Persistent,
+					DevGated:   args.DevGated,
+					Metadata:   args.Metadata,
+					Actor:      actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1376,6 +1408,10 @@ func registerActionItemTools(
 				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 				mcp.WithString("role", mcp.Description("Optional role tag for operation=create|update — see allowed values (closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research). Empty string preserves the existing value on update.")),
 				mcp.WithString("structural_type", mcp.Description("Required for operation=create — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty rejects on create. Empty preserves prior value on update."), mcp.Enum("drop", "segment", "confluence", "droplet")),
+				mcp.WithString("owner", mcp.Description("Optional Owner principal-name string for operation=create|update (e.g. \"STEWARD\"). Free-form, whitespace-trimmed; domain primitive — not STEWARD-specific. On update, omit to preserve the existing value; supplying any value (including empty string) triggers the L1 STEWARD field-level guard at the adapter boundary.")),
+				mcp.WithNumber("drop_number", mcp.Description("Optional cascade drop index for operation=create|update. Zero = \"not a numbered drop\"; positive values round-trip; negative values reject with invalid_request. On update, omit to preserve the existing value.")),
+				mcp.WithBoolean("persistent", mcp.Description("Optional Persistent flag for operation=create|update — long-lived umbrella / anchor / perpetual-tracking nodes. Default false. Domain primitive — not STEWARD-specific. On update, omit to preserve the existing value (a value-typed bool would silently clobber Persistent=true on STEWARD anchors).")),
+				mcp.WithBoolean("dev_gated", mcp.Description("Optional DevGated flag for operation=create|update — nodes whose terminal transition requires dev sign-off. Default false. Domain primitive — not STEWARD-specific. On update, omit to preserve the existing value.")),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),

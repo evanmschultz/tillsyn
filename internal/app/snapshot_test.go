@@ -656,3 +656,129 @@ func TestSnapshotActionItemIrreducibleRoundTripPreservesBothStates(t *testing.T)
 		})
 	}
 }
+
+// TestSnapshotActionItemOwnerAndDropNumberRoundTrip verifies that the four
+// new domain primitives added in Drop 3 droplet 3.21 — Owner, DropNumber,
+// Persistent, DevGated — survive the domain → snapshot → domain round-trip
+// in both their dominant zero-value cases (Owner="", DropNumber=0, false
+// bools) and their representative non-zero cases. Legacy-format
+// compatibility (pre-3.21 snapshots without these fields) is covered by the
+// `omitempty` JSON tags: missing fields deserialize to their zero values,
+// which match the legitimate domain defaults — no SnapshotVersion bump
+// required. The in-memory domain → snapshot → domain path tested here does
+// NOT pass through JSON, so a copy bug in either direction would still
+// surface on every case (mirrors the Irreducible-round-trip rationale).
+func TestSnapshotActionItemOwnerAndDropNumberRoundTrip(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name       string
+		owner      string
+		dropNumber int
+		persistent bool
+		devGated   bool
+	}{
+		{name: "all-zero-values", owner: "", dropNumber: 0, persistent: false, devGated: false},
+		{name: "steward-anchor", owner: "STEWARD", dropNumber: 5, persistent: true, devGated: true},
+		{name: "owner-only", owner: "STEWARD", dropNumber: 0, persistent: false, devGated: false},
+		{name: "drop-number-only", owner: "", dropNumber: 3, persistent: false, devGated: false},
+		{name: "persistent-only", owner: "", dropNumber: 0, persistent: true, devGated: false},
+		{name: "dev-gated-only", owner: "", dropNumber: 0, persistent: false, devGated: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				ID:         "t-owner-dropnumber",
+				ProjectID:  "p1",
+				ColumnID:   "c1",
+				Position:   0,
+				Title:      "Owner/DropNumber/Persistent/DevGated round-trip",
+				Priority:   domain.PriorityMedium,
+				Kind:       domain.KindBuild,
+				Owner:      tc.owner,
+				DropNumber: tc.dropNumber,
+				Persistent: tc.persistent,
+				DevGated:   tc.devGated,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if snap.Owner != tc.owner {
+				t.Fatalf("snapshotActionItemFromDomain dropped owner: got %q, want %q", snap.Owner, tc.owner)
+			}
+			if snap.DropNumber != tc.dropNumber {
+				t.Fatalf("snapshotActionItemFromDomain dropped drop_number: got %d, want %d", snap.DropNumber, tc.dropNumber)
+			}
+			if snap.Persistent != tc.persistent {
+				t.Fatalf("snapshotActionItemFromDomain dropped persistent: got %v, want %v", snap.Persistent, tc.persistent)
+			}
+			if snap.DevGated != tc.devGated {
+				t.Fatalf("snapshotActionItemFromDomain dropped dev_gated: got %v, want %v", snap.DevGated, tc.devGated)
+			}
+			hydrated := snap.toDomain()
+			if hydrated.Owner != tc.owner {
+				t.Fatalf("toDomain dropped owner: got %q, want %q", hydrated.Owner, tc.owner)
+			}
+			if hydrated.DropNumber != tc.dropNumber {
+				t.Fatalf("toDomain dropped drop_number: got %d, want %d", hydrated.DropNumber, tc.dropNumber)
+			}
+			if hydrated.Persistent != tc.persistent {
+				t.Fatalf("toDomain dropped persistent: got %v, want %v", hydrated.Persistent, tc.persistent)
+			}
+			if hydrated.DevGated != tc.devGated {
+				t.Fatalf("toDomain dropped dev_gated: got %v, want %v", hydrated.DevGated, tc.devGated)
+			}
+		})
+	}
+}
+
+// TestSnapshotActionItemOwnerLegacyFormatCompatibility verifies that a
+// pre-droplet-3.21 snapshot — one whose JSON wire form OMITS the four new
+// fields entirely — deserializes cleanly with all four set to their zero
+// values. This is the production legacy-format path: the `omitempty` tags
+// on Owner / DropNumber / Persistent / DevGated keep older snapshots
+// forward-compatible without bumping SnapshotVersion. Failure here would
+// indicate a copy bug at the JSON boundary that the in-memory round-trip
+// above cannot catch.
+func TestSnapshotActionItemOwnerLegacyFormatCompatibility(t *testing.T) {
+	legacyJSON := []byte(`{
+		"id": "t-legacy",
+		"project_id": "p1",
+		"kind": "build",
+		"structural_type": "droplet",
+		"lifecycle_state": "todo",
+		"column_id": "c1",
+		"position": 0,
+		"title": "Legacy snapshot",
+		"description": "pre-3.21 row, no owner/drop_number/persistent/dev_gated",
+		"priority": "medium",
+		"labels": [],
+		"metadata": {},
+		"created_by_actor": "u1",
+		"updated_by_actor": "u1",
+		"updated_by_type": "user",
+		"created_at": "2026-04-01T00:00:00Z",
+		"updated_at": "2026-04-01T00:00:00Z"
+	}`)
+	var snap SnapshotActionItem
+	if err := json.Unmarshal(legacyJSON, &snap); err != nil {
+		t.Fatalf("legacy snapshot unmarshal error = %v", err)
+	}
+	if snap.Owner != "" {
+		t.Fatalf("legacy snapshot Owner = %q, want empty", snap.Owner)
+	}
+	if snap.DropNumber != 0 {
+		t.Fatalf("legacy snapshot DropNumber = %d, want 0", snap.DropNumber)
+	}
+	if snap.Persistent != false {
+		t.Fatalf("legacy snapshot Persistent = %v, want false", snap.Persistent)
+	}
+	if snap.DevGated != false {
+		t.Fatalf("legacy snapshot DevGated = %v, want false", snap.DevGated)
+	}
+	hydrated := snap.toDomain()
+	if hydrated.Owner != "" || hydrated.DropNumber != 0 || hydrated.Persistent != false || hydrated.DevGated != false {
+		t.Fatalf("legacy snapshot toDomain leaked non-zero defaults: owner=%q drop_number=%d persistent=%v dev_gated=%v",
+			hydrated.Owner, hydrated.DropNumber, hydrated.Persistent, hydrated.DevGated)
+	}
+}
