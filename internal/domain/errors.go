@@ -22,7 +22,6 @@ var (
 	ErrInvalidKindAppliesTo        = errors.New("invalid kind applies_to")
 	ErrKindNotAllowed              = errors.New("kind is not allowed for this project")
 	ErrKindNotFound                = errors.New("kind definition not found")
-	ErrInvalidKindTemplate         = errors.New("invalid kind template")
 	ErrInvalidKindPayload          = errors.New("invalid kind payload")
 	ErrInvalidKindPayloadSchema    = errors.New("invalid kind payload schema")
 	ErrInvalidRole                 = errors.New("invalid role")

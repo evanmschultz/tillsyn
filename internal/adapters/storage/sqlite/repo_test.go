@@ -2595,109 +2595,13 @@ func TestRepositoryAuthRequestScanErrors(t *testing.T) {
 	}
 }
 
-// TestRepositoryFreshOpenKindCatalog verifies that a fresh DB open bakes the
-// 12-value Kind enum into the kind_catalog table.
-func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
-	ctx := context.Background()
-	repo, err := OpenInMemory()
-	if err != nil {
-		t.Fatalf("OpenInMemory() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	rows, err := repo.db.QueryContext(ctx, `SELECT id FROM kind_catalog ORDER BY id`)
-	if err != nil {
-		t.Fatalf("query kind_catalog error = %v", err)
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			t.Fatalf("scan kind_catalog id error = %v", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate kind_catalog error = %v", err)
-	}
-
-	want := []string{
-		"build",
-		"build-qa-falsification",
-		"build-qa-proof",
-		"closeout",
-		"commit",
-		"discussion",
-		"human-verify",
-		"plan",
-		"plan-qa-falsification",
-		"plan-qa-proof",
-		"refinement",
-		"research",
-	}
-	if len(ids) != len(want) {
-		t.Fatalf("kind_catalog rows = %d (%v), want %d (%v)", len(ids), ids, len(want), want)
-	}
-	for i := range want {
-		if ids[i] != want[i] {
-			t.Fatalf("kind_catalog row %d = %q, want %q (all ids: %v)", i, ids[i], want[i], ids)
-		}
-	}
-}
-
-// TestRepositoryFreshOpenKindCatalogUniversalParentAllow verifies that every
-// boot-seeded kind in the kind_catalog carries an empty AllowedParentScopes
-// list and therefore allows any parent scope per the empty-list early-return
-// in domain.KindDefinition.AllowsParentScope (internal/domain/kind.go:225-232).
-// This is the post-Droplet-2.8 universal-allow contract.
-func TestRepositoryFreshOpenKindCatalogUniversalParentAllow(t *testing.T) {
-	ctx := context.Background()
-	repo, err := OpenInMemory()
-	if err != nil {
-		t.Fatalf("OpenInMemory() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	kinds, err := repo.ListKindDefinitions(ctx, false)
-	if err != nil {
-		t.Fatalf("ListKindDefinitions() error = %v", err)
-	}
-	if len(kinds) != 12 {
-		t.Fatalf("ListKindDefinitions() len = %d, want 12 seeded kinds", len(kinds))
-	}
-
-	parentScopeProbes := []domain.KindAppliesTo{
-		domain.KindAppliesToPlan,
-		domain.KindAppliesToBuild,
-		domain.KindAppliesToResearch,
-		domain.KindAppliesToCloseout,
-		domain.KindAppliesToCommit,
-		domain.KindAppliesToDiscussion,
-		domain.KindAppliesToRefinement,
-		domain.KindAppliesToHumanVerify,
-		domain.KindAppliesToPlanQAProof,
-		domain.KindAppliesToPlanQAFalsification,
-		domain.KindAppliesToBuildQAProof,
-		domain.KindAppliesToBuildQAFalsification,
-	}
-
-	for _, kind := range kinds {
-		if len(kind.AllowedParentScopes) != 0 {
-			t.Fatalf("kind %q AllowedParentScopes = %#v, want empty (universal-allow)", kind.ID, kind.AllowedParentScopes)
-		}
-		for _, scope := range parentScopeProbes {
-			if !kind.AllowsParentScope(scope) {
-				t.Fatalf("kind %q AllowsParentScope(%q) = false, want true (universal-allow)", kind.ID, scope)
-			}
-		}
-	}
-}
+// Per Drop 3 droplet 3.15 (finding 5.B.8 / CE3) the legacy kind_catalog
+// boot-seed regression tests TestRepositoryFreshOpenKindCatalog and
+// TestRepositoryFreshOpenKindCatalogUniversalParentAllow were retired
+// because the kind_catalog table is no longer boot-seeded with the closed
+// 12-value Kind enum. Equivalent universal-allow assertions live in
+// internal/templates/embed_test.go (3.14 catalog), where the post-Drop-3
+// nesting rules are exercised against the new templates.KindCatalog.
 
 // TestRepositoryFreshOpenProjectsSchema verifies that a fresh DB open produces a projects table with no kind column.
 func TestRepositoryFreshOpenProjectsSchema(t *testing.T) {

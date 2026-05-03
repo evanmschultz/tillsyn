@@ -250,14 +250,18 @@ type ReindexEmbeddingsResult struct {
 }
 
 // UpsertKindDefinitionRequest stores transport input for kind upserts.
+//
+// Per Drop 3 droplet 3.15 the legacy AllowedParentScopes + Template fields
+// were removed; nesting rules now flow through the project's baked
+// KindCatalog. The till.kind operation=upsert MCP wire surface and the
+// till.upsert_kind_definition legacy alias were also deleted in this
+// droplet — only programmatic Service.UpsertKindDefinition callers remain.
 type UpsertKindDefinitionRequest struct {
 	ID                  string
 	DisplayName         string
 	DescriptionMarkdown string
 	AppliesTo           []string
-	AllowedParentScopes []string
 	PayloadSchemaJSON   string
-	Template            domain.KindTemplate
 }
 
 // SetProjectAllowedKindsRequest stores transport input for allowlist updates.

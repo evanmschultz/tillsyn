@@ -18,14 +18,16 @@ import (
 )
 
 // CreateKindDefinitionInput holds write values for kind-catalog upsert behavior.
+//
+// Per Drop 3 droplet 3.15 the legacy AllowedParentScopes + Template fields
+// were removed; nesting rules now flow through templates.Template.AllowsNesting +
+// the project's baked KindCatalog (per fix L5).
 type CreateKindDefinitionInput struct {
 	ID                  domain.KindID
 	DisplayName         string
 	DescriptionMarkdown string
 	AppliesTo           []domain.KindAppliesTo
-	AllowedParentScopes []domain.KindAppliesTo
 	PayloadSchemaJSON   string
-	Template            domain.KindTemplate
 }
 
 // SetProjectAllowedKindsInput holds project allowlist update values.
@@ -84,7 +86,6 @@ type schemaCacheEntry struct {
 // defaultCapabilityLeaseTTL defines default lease expiration behavior.
 const (
 	defaultCapabilityLeaseTTL = 24 * time.Hour
-	maxKindTemplateApplyDepth = 8
 )
 
 // ListKindDefinitions lists catalog entries with deterministic ordering.
@@ -110,9 +111,7 @@ func (s *Service) UpsertKindDefinition(ctx context.Context, in CreateKindDefinit
 		DisplayName:         in.DisplayName,
 		DescriptionMarkdown: in.DescriptionMarkdown,
 		AppliesTo:           in.AppliesTo,
-		AllowedParentScopes: in.AllowedParentScopes,
 		PayloadSchemaJSON:   in.PayloadSchemaJSON,
-		Template:            in.Template,
 	}, now)
 	if err != nil {
 		return domain.KindDefinition{}, err
@@ -154,10 +153,16 @@ func (s *Service) SetProjectAllowedKinds(ctx context.Context, in SetProjectAllow
 	}
 	for _, kindID := range kindIDs {
 		if _, err := s.repo.GetKindDefinition(ctx, kindID); err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			// Per Drop 3 droplet 3.15 the SQLite kind_catalog is no longer
+			// boot-seeded with the closed 12-value Kind enum. Accept any
+			// member of domain.IsValidKind as a valid allowlist target
+			// even when no catalog row exists yet.
+			if !domain.IsValidKind(domain.Kind(string(kindID))) {
 				return fmt.Errorf("%w: %q", domain.ErrKindNotFound, kindID)
 			}
-			return err
 		}
 	}
 	return s.repo.SetProjectAllowedKinds(ctx, projectID, kindIDs)
@@ -544,17 +549,21 @@ func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectI
 
 // resolveActionItemKindDefinition resolves one work-item kind definition and scope constraints.
 //
-// Resolution order, per Drop 3 droplet 3.12:
+// Resolution order, per Drop 3 droplets 3.12 + 3.15:
 //
 //  1. Decode the project's KindCatalogJSON (per fix L5 lazy-decode envelope).
 //     If the catalog has a KindRule for kindID, synthesize a KindDefinition
-//     from it and skip the legacy repo lookup. The synthesized definition
-//     carries enough surface for AppliesToScope / AllowsParentScope checks
+//     from it AND run the parent-nesting gate via KindCatalog.AllowsNesting.
+//     The synthesized definition carries enough surface for AppliesToScope
 //     plus the project-allowlist gate; payload-schema checks short-circuit
 //     because templates v1 does not encode payload schemas.
 //  2. Otherwise — empty catalog, missing kind, or decode failure — fall
 //     back to s.repo.GetKindDefinition. Preserves boot compatibility for
 //     projects baked before Drop 3 (Drop 2.8 universal-nesting default).
+//     The fallback path no longer enforces a parent-scope gate because the
+//     legacy KindDefinition.AllowsParentScope was deleted in droplet 3.15;
+//     pre-Drop-3 boot rows recorded universal-allow already, so the missing
+//     gate is functionally equivalent.
 //
 // Per Drop 3 finding 5.B.14: edits to <project_root>/.tillsyn/template.toml
 // AFTER project create are ignored. The catalog is the create-time snapshot
@@ -569,25 +578,38 @@ func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID
 		return domain.KindDefinition{}, domain.ErrInvalidKindAppliesTo
 	}
 
-	kind, gotFromCatalog, err := s.lookupKindDefinitionFromCatalog(ctx, projectID, kindID)
+	kind, catalog, gotFromCatalog, err := s.lookupKindDefinitionFromCatalog(ctx, projectID, kindID)
 	if err != nil {
 		return domain.KindDefinition{}, err
 	}
 	if !gotFromCatalog {
 		kind, err = s.repo.GetKindDefinition(ctx, kindID)
 		if err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if !errors.Is(err, ErrNotFound) {
+				return domain.KindDefinition{}, err
+			}
+			// Per Drop 3 droplet 3.15 the SQLite kind_catalog table is no
+			// longer boot-seeded with the closed 12-value Kind enum. When
+			// the project has no baked KindCatalogJSON (the dominant case
+			// until 3.14's default.toml ships) and the repo carries no row
+			// for this kind, fall back to the closed-enum default:
+			// synthesize a minimal KindDefinition for any built-in Kind.
+			// Unrecognized kinds still error out as ErrKindNotFound.
+			if !domain.IsValidKind(domain.Kind(string(kindID))) {
 				return domain.KindDefinition{}, fmt.Errorf("%w: %q", domain.ErrKindNotFound, kindID)
 			}
-			return domain.KindDefinition{}, err
+			kind = synthesizeKindDefinitionFromCatalog(kindID)
 		}
 	}
 	if !kind.AppliesToScope(scope) {
 		return domain.KindDefinition{}, fmt.Errorf("%w: %q does not apply to %q", domain.ErrKindNotAllowed, kindID, scope)
 	}
-	if parent != nil {
-		if !kind.AllowsParentScope(parent.Scope) {
-			return domain.KindDefinition{}, fmt.Errorf("%w: %q parent scope %q", domain.ErrKindNotAllowed, kindID, parent.Scope)
+	if gotFromCatalog && parent != nil {
+		parentKind := domain.NormalizeKindID(domain.KindID(parent.Kind))
+		if parentKind != "" {
+			if allowed, reason := catalog.AllowsNesting(domain.Kind(string(parentKind)), domain.Kind(string(kindID))); !allowed {
+				return domain.KindDefinition{}, fmt.Errorf("%w: %s", domain.ErrKindNotAllowed, reason)
+			}
 		}
 	}
 	allowed, err := s.resolveProjectAllowedKinds(ctx, projectID)
@@ -602,73 +624,72 @@ func (s *Service) resolveActionItemKindDefinition(ctx context.Context, projectID
 
 // lookupKindDefinitionFromCatalog attempts to resolve one kind definition
 // from the project's baked KindCatalog (per Drop 3 fix L5). It returns
-// (def, true, nil) on a catalog hit, (zero, false, nil) when the catalog is
-// empty / decode fails / the kind is missing, and (zero, false, err) only
-// for a hard repo error fetching the project. Decode failures are SOFT
-// failures: the legacy repo fallback path picks up where the catalog left
-// off, preserving boot compatibility per droplet 3.12 acceptance criterion.
-func (s *Service) lookupKindDefinitionFromCatalog(ctx context.Context, projectID string, kindID domain.KindID) (domain.KindDefinition, bool, error) {
+// (def, catalog, true, nil) on a catalog hit, (zero, zero, false, nil) when
+// the catalog is empty / decode fails / the kind is missing, and
+// (zero, zero, false, err) only for a hard repo error fetching the project.
+// Decode failures are SOFT failures: the legacy repo fallback path picks up
+// where the catalog left off, preserving boot compatibility per droplet
+// 3.12 acceptance criterion.
+//
+// The catalog is returned alongside the synthesized definition so the
+// resolver can run KindCatalog.AllowsNesting against the same snapshot the
+// definition came from. Per droplet 3.15 the parent-scope gate moved from
+// the deleted KindDefinition.AllowsParentScope to KindCatalog.AllowsNesting.
+func (s *Service) lookupKindDefinitionFromCatalog(ctx context.Context, projectID string, kindID domain.KindID) (domain.KindDefinition, templates.KindCatalog, bool, error) {
 	if projectID == "" {
-		return domain.KindDefinition{}, false, nil
+		return domain.KindDefinition{}, templates.KindCatalog{}, false, nil
 	}
 	project, err := s.repo.GetProject(ctx, projectID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return domain.KindDefinition{}, false, nil
+			return domain.KindDefinition{}, templates.KindCatalog{}, false, nil
 		}
-		return domain.KindDefinition{}, false, err
+		return domain.KindDefinition{}, templates.KindCatalog{}, false, err
 	}
 	if len(project.KindCatalogJSON) == 0 {
-		return domain.KindDefinition{}, false, nil
+		return domain.KindDefinition{}, templates.KindCatalog{}, false, nil
 	}
 	var catalog templates.KindCatalog
 	if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
 		// Soft fallback per droplet 3.12: a malformed envelope must NOT
 		// brick the create path; the legacy repo path covers boot
 		// compatibility.
-		return domain.KindDefinition{}, false, nil
+		return domain.KindDefinition{}, templates.KindCatalog{}, false, nil
 	}
 	kindEnum := domain.Kind(string(kindID))
-	rule, ok := catalog.Lookup(kindEnum)
-	if !ok {
-		return domain.KindDefinition{}, false, nil
+	if _, ok := catalog.Lookup(kindEnum); !ok {
+		return domain.KindDefinition{}, templates.KindCatalog{}, false, nil
 	}
-	return synthesizeKindDefinitionFromRule(kindID, rule), true, nil
+	return synthesizeKindDefinitionFromCatalog(kindID), catalog, true, nil
 }
 
-// synthesizeKindDefinitionFromRule builds a domain.KindDefinition from a
-// templates.KindRule so callers downstream of resolveActionItemKindDefinition
-// (AppliesToScope / AllowsParentScope / project-allowlist gates) keep a
-// stable, unchanged contract during the catalog-first transition.
+// synthesizeKindDefinitionFromCatalog builds a domain.KindDefinition from a
+// catalog hit so callers downstream of resolveActionItemKindDefinition
+// (AppliesToScope + project-allowlist gates) keep a stable, unchanged
+// contract during the catalog-first transition.
 //
-// Field mapping (template → KindDefinition):
+// Per droplet 3.15 the synthesized definition no longer mirrors the rule's
+// AllowedParentKinds onto a KindDefinition.AllowedParentScopes field — the
+// field was deleted along with KindDefinition.AllowsParentScope. Parent-
+// nesting checks now flow through KindCatalog.AllowsNesting on the live
+// catalog snapshot.
+//
+// Field mapping (catalog → KindDefinition):
 //
 //   - ID                    = supplied kindID
 //   - DisplayName           = string(kindID)
 //   - AppliesTo             = [KindAppliesTo(kindID)] — scope mirrors kind
 //     per the closed 12-value enum.
-//   - AllowedParentScopes   = each rule.AllowedParentKinds[i] coerced to
-//     KindAppliesTo. Empty stays empty (universal-allow per Drop 2.8).
 //   - PayloadSchemaJSON     = "" — templates v1 does not encode schemas;
 //     legacy repo path remains the only schema source until a future drop.
-//   - Template              = empty KindTemplate{} — the legacy
-//     KindTemplate is being deleted in 3.15 and is not mirrored from
-//     KindRule.
 //   - CreatedAt / UpdatedAt = zero — the catalog snapshot does not carry
 //     timestamps.
-func synthesizeKindDefinitionFromRule(kindID domain.KindID, rule templates.KindRule) domain.KindDefinition {
-	def := domain.KindDefinition{
+func synthesizeKindDefinitionFromCatalog(kindID domain.KindID) domain.KindDefinition {
+	return domain.KindDefinition{
 		ID:          kindID,
 		DisplayName: string(kindID),
 		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesTo(kindID)},
 	}
-	if len(rule.AllowedParentKinds) > 0 {
-		def.AllowedParentScopes = make([]domain.KindAppliesTo, 0, len(rule.AllowedParentKinds))
-		for _, parentKind := range rule.AllowedParentKinds {
-			def.AllowedParentScopes = append(def.AllowedParentScopes, domain.KindAppliesTo(string(parentKind)))
-		}
-	}
-	return def
 }
 
 // validateActionItemKind validates project allowlist, applies_to rules, parent constraints, and schema payload.
@@ -697,7 +718,12 @@ func normalizeActionItemScopeForKind(kindID domain.KindID, scope domain.KindAppl
 	return domain.KindAppliesTo(domain.NormalizeKindID(kindID))
 }
 
-// resolveProjectAllowedKinds returns explicit project allowlist values or built-in fallback.
+// resolveProjectAllowedKinds returns explicit project allowlist values or
+// built-in fallback. Per Drop 3 droplet 3.15 the SQLite kind_catalog is no
+// longer boot-seeded with the closed 12-value Kind enum, so when a project
+// has no recorded allowlist AND the catalog row list comes back empty the
+// resolver delegates to defaultProjectAllowedKindIDs's built-in fallback —
+// the closed Kind enum lives in domain.IsValidKind / domain.KindPlan / etc.
 func (s *Service) resolveProjectAllowedKinds(ctx context.Context, projectID string) (map[domain.KindID]struct{}, error) {
 	kindIDs, err := s.repo.ListProjectAllowedKinds(ctx, projectID)
 	if err != nil {
@@ -705,17 +731,10 @@ func (s *Service) resolveProjectAllowedKinds(ctx context.Context, projectID stri
 	}
 	kindIDs = normalizeKindIDList(kindIDs)
 	if len(kindIDs) == 0 {
-		kinds, listErr := s.repo.ListKindDefinitions(ctx, false)
-		if listErr != nil {
-			return nil, listErr
+		kindIDs, err = s.defaultProjectAllowedKindIDs(ctx)
+		if err != nil {
+			return nil, err
 		}
-		for _, kind := range kinds {
-			if len(kind.AppliesTo) == 0 {
-				continue
-			}
-			kindIDs = append(kindIDs, kind.ID)
-		}
-		kindIDs = normalizeKindIDList(kindIDs)
 	}
 	allowed := make(map[domain.KindID]struct{}, len(kindIDs))
 	for _, kindID := range kindIDs {
@@ -840,58 +859,15 @@ func normalizeKindIDList(in []domain.KindID) []domain.KindID {
 	return out
 }
 
-// mergeActionItemMetadataWithKindTemplate applies actionItem-template defaults for one kind at create time.
-func mergeActionItemMetadataWithKindTemplate(base domain.ActionItemMetadata, kind domain.KindDefinition) (domain.ActionItemMetadata, error) {
-	merged, err := domain.MergeActionItemMetadata(base, kind.Template.ActionItemMetadataDefaults)
-	if err != nil {
-		return domain.ActionItemMetadata{}, err
-	}
-	if len(kind.Template.CompletionChecklist) == 0 {
-		return merged, nil
-	}
-	contract, err := domain.MergeCompletionContract(merged.CompletionContract, &domain.CompletionContract{
-		CompletionChecklist: kind.Template.CompletionChecklist,
-	})
-	if err != nil {
-		return domain.ActionItemMetadata{}, err
-	}
-	merged.CompletionContract = contract
-	return merged, nil
-}
-
-// validateKindTemplateExpansion preflights nested template children before persistence.
-// Scope mirrors kind per the 12-value enum, so the child scope is resolved
-// from each spec's own Kind/AppliesTo rather than a caller-supplied default.
-func (s *Service) validateKindTemplateExpansion(ctx context.Context, projectID string, kind domain.KindDefinition, parent *domain.ActionItem, depth int) error {
-	if depth > maxKindTemplateApplyDepth {
-		return fmt.Errorf("%w: template application depth exceeded", domain.ErrInvalidKindTemplate)
-	}
-	for _, childSpec := range kind.Template.AutoCreateChildren {
-		childScope := childSpec.AppliesTo
-		childMetadata, err := normalizeActionItemMetadataFromKindPayload(childSpec.MetadataPayload)
-		if err != nil {
-			return err
-		}
-		childKind, err := s.resolveActionItemKindDefinition(ctx, projectID, childSpec.Kind, childScope, parent)
-		if err != nil {
-			return err
-		}
-		mergedMetadata, err := mergeActionItemMetadataWithKindTemplate(childMetadata, childKind)
-		if err != nil {
-			return err
-		}
-		if err := s.validateKindPayload(childKind, mergedMetadata.KindPayload); err != nil {
-			return err
-		}
-		childParent := &domain.ActionItem{
-			ProjectID: projectID,
-			Scope:     childScope,
-		}
-		if err := s.validateKindTemplateExpansion(ctx, projectID, childKind, childParent, depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
+// mergeActionItemMetadataWithKindTemplate previously applied
+// kind-template-driven action-item metadata defaults (CompletionChecklist +
+// ActionItemMetadataDefaults). Per Drop 3 droplet 3.15 the legacy
+// KindTemplate surface was deleted; the new templates v1 schema does not
+// encode action-item metadata defaults on a KindRule, and the merge is now a
+// pass-through. Kept as a named function so call sites continue to compile
+// during the transition; a future drop will fold it into the caller.
+func mergeActionItemMetadataWithKindTemplate(base domain.ActionItemMetadata, _ domain.KindDefinition) (domain.ActionItemMetadata, error) {
+	return base, nil
 }
 
 // nextActionItemPosition calculates the next append position for a project column.

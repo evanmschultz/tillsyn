@@ -6,6 +6,12 @@ import (
 )
 
 // TestNewKindDefinitionValidation verifies catalog normalization and validation behavior.
+//
+// Per Drop 3 droplet 3.15 the legacy KindTemplate / AllowedParentScopes /
+// AllowsParentScope surface was deleted; KindDefinition now carries only
+// catalog-shape fields (id, display name, description, applies_to, payload
+// schema JSON, timestamps). Parent/child nesting flows through
+// templates.Template.AllowsNesting + the project's baked KindCatalog.
 func TestNewKindDefinitionValidation(t *testing.T) {
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
 	kind, err := NewKindDefinition(KindDefinitionInput{
@@ -13,29 +19,7 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 		DisplayName:         " Refactor Work ",
 		DescriptionMarkdown: " refactor tasks ",
 		AppliesTo:           []KindAppliesTo{KindAppliesToBuild, KindAppliesToBuild, KindAppliesToResearch},
-		AllowedParentScopes: []KindAppliesTo{KindAppliesToPlan},
 		PayloadSchemaJSON:   `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
-		Template: KindTemplate{
-			CompletionChecklist: []ChecklistItem{{ID: "c1", Text: "run tests", Complete: false}},
-			AutoCreateChildren: []KindTemplateChildSpec{{
-				Title:     "scan packages",
-				Kind:      "build",
-				AppliesTo: KindAppliesToBuild,
-			}},
-			ProjectMetadataDefaults: &ProjectMetadata{
-				Owner:    "  Team A ",
-				Tags:     []string{"Alpha", "alpha"},
-				Homepage: " https://example.com ",
-			},
-			ActionItemMetadataDefaults: &ActionItemMetadata{
-				Objective:       "  default objective  ",
-				CommandSnippets: []string{"make test", "make test"},
-				CompletionContract: CompletionContract{
-					CompletionChecklist: []ChecklistItem{{Text: "default check"}},
-					Policy:              CompletionPolicy{RequireChildrenComplete: true},
-				},
-			},
-		},
 	}, now)
 	if err != nil {
 		t.Fatalf("NewKindDefinition() error = %v", err)
@@ -43,35 +27,20 @@ func TestNewKindDefinitionValidation(t *testing.T) {
 	if kind.ID != KindID("refactor") {
 		t.Fatalf("expected normalized id refactor, got %q", kind.ID)
 	}
+	if kind.DisplayName != "Refactor Work" {
+		t.Fatalf("expected trimmed display name, got %q", kind.DisplayName)
+	}
+	if kind.DescriptionMarkdown != "refactor tasks" {
+		t.Fatalf("expected trimmed description, got %q", kind.DescriptionMarkdown)
+	}
 	if !kind.AppliesToScope(KindAppliesToBuild) {
 		t.Fatal("expected applies_to build")
 	}
-	if !kind.AllowsParentScope(KindAppliesToPlan) {
-		t.Fatal("expected allowed parent scope plan")
+	if !kind.AppliesToScope(KindAppliesToResearch) {
+		t.Fatal("expected applies_to research after de-duplication")
 	}
-	if len(kind.Template.AutoCreateChildren) != 1 {
-		t.Fatalf("expected one child template, got %d", len(kind.Template.AutoCreateChildren))
-	}
-	if kind.Template.ProjectMetadataDefaults == nil {
-		t.Fatal("expected normalized project metadata defaults")
-	}
-	if kind.Template.ProjectMetadataDefaults.Owner != "Team A" {
-		t.Fatalf("unexpected project default owner %q", kind.Template.ProjectMetadataDefaults.Owner)
-	}
-	if len(kind.Template.ProjectMetadataDefaults.Tags) != 1 || kind.Template.ProjectMetadataDefaults.Tags[0] != "alpha" {
-		t.Fatalf("unexpected project default tags %#v", kind.Template.ProjectMetadataDefaults.Tags)
-	}
-	if kind.Template.ActionItemMetadataDefaults == nil {
-		t.Fatal("expected normalized actionItem metadata defaults")
-	}
-	if kind.Template.ActionItemMetadataDefaults.Objective != "default objective" {
-		t.Fatalf("unexpected actionItem default objective %q", kind.Template.ActionItemMetadataDefaults.Objective)
-	}
-	if len(kind.Template.ActionItemMetadataDefaults.CommandSnippets) != 1 || kind.Template.ActionItemMetadataDefaults.CommandSnippets[0] != "make test" {
-		t.Fatalf("unexpected actionItem default command snippets %#v", kind.Template.ActionItemMetadataDefaults.CommandSnippets)
-	}
-	if !kind.Template.ActionItemMetadataDefaults.CompletionContract.Policy.RequireChildrenComplete {
-		t.Fatal("expected normalized actionItem default completion policy")
+	if len(kind.AppliesTo) != 2 {
+		t.Fatalf("expected de-duplicated applies_to, got %#v", kind.AppliesTo)
 	}
 	if !kind.CreatedAt.Equal(now.UTC()) || !kind.UpdatedAt.Equal(now.UTC()) {
 		t.Fatalf("expected UTC timestamps, got created=%s updated=%s", kind.CreatedAt, kind.UpdatedAt)

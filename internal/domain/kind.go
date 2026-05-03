@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -91,33 +90,20 @@ var validKindAppliesTo = []KindAppliesTo{
 	KindAppliesToHumanVerify,
 }
 
-// KindTemplateChildSpec defines one child item auto-created by a kind template.
-type KindTemplateChildSpec struct {
-	Title           string          `json:"title"`
-	Description     string          `json:"description"`
-	Kind            KindID          `json:"kind"`
-	AppliesTo       KindAppliesTo   `json:"applies_to"`
-	Labels          []string        `json:"labels"`
-	MetadataPayload json.RawMessage `json:"metadata_payload,omitempty"`
-}
-
-// KindTemplate stores template-driven system actions and default metadata for a kind definition.
-type KindTemplate struct {
-	AutoCreateChildren         []KindTemplateChildSpec `json:"auto_create_children"`
-	CompletionChecklist        []ChecklistItem         `json:"completion_checklist"`
-	ProjectMetadataDefaults    *ProjectMetadata        `json:"project_metadata_defaults,omitempty"`
-	ActionItemMetadataDefaults *ActionItemMetadata     `json:"task_metadata_defaults,omitempty"`
-}
-
 // KindDefinition stores one reusable kind definition.
+//
+// Per Drop 3 droplet 3.15 the legacy KindTemplate surface
+// (AutoCreateChildren / ProjectMetadataDefaults / ActionItemMetadataDefaults /
+// CompletionChecklist / AllowedParentScopes / AllowsParentScope) was removed.
+// Parent/child nesting now flows through templates.Template.AllowsNesting +
+// the project's baked KindCatalog (per fix L5). KindDefinition keeps only the
+// surface still needed by the catalog list/get + JSON-payload schema gate.
 type KindDefinition struct {
 	ID                  KindID
 	DisplayName         string
 	DescriptionMarkdown string
 	AppliesTo           []KindAppliesTo
-	AllowedParentScopes []KindAppliesTo
 	PayloadSchemaJSON   string
-	Template            KindTemplate
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	ArchivedAt          *time.Time
@@ -129,9 +115,7 @@ type KindDefinitionInput struct {
 	DisplayName         string
 	DescriptionMarkdown string
 	AppliesTo           []KindAppliesTo
-	AllowedParentScopes []KindAppliesTo
 	PayloadSchemaJSON   string
-	Template            KindTemplate
 }
 
 // NewKindDefinition validates and normalizes one kind definition.
@@ -154,21 +138,11 @@ func NewKindDefinition(in KindDefinitionInput, now time.Time) (KindDefinition, e
 		return KindDefinition{}, ErrInvalidKindAppliesTo
 	}
 
-	allowedParentScopes, err := normalizeKindParentScopes(in.AllowedParentScopes)
-	if err != nil {
-		return KindDefinition{}, err
-	}
-
 	schemaJSON := strings.TrimSpace(in.PayloadSchemaJSON)
 	if schemaJSON != "" {
 		if !json.Valid([]byte(schemaJSON)) {
 			return KindDefinition{}, ErrInvalidKindPayloadSchema
 		}
-	}
-
-	template, err := normalizeKindTemplate(in.Template)
-	if err != nil {
-		return KindDefinition{}, err
 	}
 
 	ts := now.UTC()
@@ -177,9 +151,7 @@ func NewKindDefinition(in KindDefinitionInput, now time.Time) (KindDefinition, e
 		DisplayName:         displayName,
 		DescriptionMarkdown: strings.TrimSpace(in.DescriptionMarkdown),
 		AppliesTo:           appliesTo,
-		AllowedParentScopes: allowedParentScopes,
 		PayloadSchemaJSON:   schemaJSON,
-		Template:            template,
 		CreatedAt:           ts,
 		UpdatedAt:           ts,
 	}, nil
@@ -189,20 +161,6 @@ func NewKindDefinition(in KindDefinitionInput, now time.Time) (KindDefinition, e
 func (k KindDefinition) AppliesToScope(scope KindAppliesTo) bool {
 	scope = NormalizeKindAppliesTo(scope)
 	for _, candidate := range k.AppliesTo {
-		if NormalizeKindAppliesTo(candidate) == scope {
-			return true
-		}
-	}
-	return false
-}
-
-// AllowsParentScope reports whether the kind allows a parent in the given scope.
-func (k KindDefinition) AllowsParentScope(scope KindAppliesTo) bool {
-	scope = NormalizeKindAppliesTo(scope)
-	if len(k.AllowedParentScopes) == 0 {
-		return true
-	}
-	for _, candidate := range k.AllowedParentScopes {
 		if NormalizeKindAppliesTo(candidate) == scope {
 			return true
 		}
@@ -269,84 +227,4 @@ func normalizeKindAppliesToList(in []KindAppliesTo) ([]KindAppliesTo, error) {
 		out = append(out, scope)
 	}
 	return out, nil
-}
-
-// normalizeKindParentScopes trims, validates, and de-duplicates allowed parent scopes.
-func normalizeKindParentScopes(in []KindAppliesTo) ([]KindAppliesTo, error) {
-	out := make([]KindAppliesTo, 0, len(in))
-	seen := map[KindAppliesTo]struct{}{}
-	for _, raw := range in {
-		scope := NormalizeKindAppliesTo(raw)
-		if scope == "" {
-			continue
-		}
-		if !IsValidWorkItemAppliesTo(scope) {
-			return nil, fmt.Errorf("%w: parent scope %q", ErrInvalidKindAppliesTo, scope)
-		}
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		out = append(out, scope)
-	}
-	return out, nil
-}
-
-// normalizeKindTemplate validates template-driven behavior fields.
-func normalizeKindTemplate(in KindTemplate) (KindTemplate, error) {
-	children := make([]KindTemplateChildSpec, 0, len(in.AutoCreateChildren))
-	for idx, child := range in.AutoCreateChildren {
-		child.Title = strings.TrimSpace(child.Title)
-		child.Description = strings.TrimSpace(child.Description)
-		child.Kind = NormalizeKindID(child.Kind)
-		child.AppliesTo = NormalizeKindAppliesTo(child.AppliesTo)
-		child.Labels = normalizeLabels(child.Labels)
-		child.MetadataPayload = bytes.TrimSpace(child.MetadataPayload)
-
-		if child.Title == "" {
-			return KindTemplate{}, fmt.Errorf("%w: template child %d title is required", ErrInvalidKindTemplate, idx)
-		}
-		if child.Kind == "" {
-			return KindTemplate{}, fmt.Errorf("%w: template child %d kind is required", ErrInvalidKindTemplate, idx)
-		}
-		if child.AppliesTo == "" {
-			child.AppliesTo = KindAppliesTo(child.Kind)
-		}
-		if !IsValidWorkItemAppliesTo(child.AppliesTo) {
-			return KindTemplate{}, fmt.Errorf("%w: template child %d applies_to %q", ErrInvalidKindTemplate, idx, child.AppliesTo)
-		}
-		if len(child.MetadataPayload) > 0 && !json.Valid(child.MetadataPayload) {
-			return KindTemplate{}, fmt.Errorf("%w: template child %d metadata payload", ErrInvalidKindTemplate, idx)
-		}
-		children = append(children, child)
-	}
-
-	checklist, err := normalizeChecklist(in.CompletionChecklist)
-	if err != nil {
-		return KindTemplate{}, fmt.Errorf("%w: %v", ErrInvalidKindTemplate, err)
-	}
-
-	var projectDefaults *ProjectMetadata
-	if in.ProjectMetadataDefaults != nil {
-		normalized, err := normalizeProjectMetadata(*in.ProjectMetadataDefaults)
-		if err != nil {
-			return KindTemplate{}, fmt.Errorf("%w: project metadata defaults: %v", ErrInvalidKindTemplate, err)
-		}
-		projectDefaults = &normalized
-	}
-	var actionItemDefaults *ActionItemMetadata
-	if in.ActionItemMetadataDefaults != nil {
-		normalized, err := normalizeActionItemMetadata(*in.ActionItemMetadataDefaults)
-		if err != nil {
-			return KindTemplate{}, fmt.Errorf("%w: action-item metadata defaults: %v", ErrInvalidKindTemplate, err)
-		}
-		actionItemDefaults = &normalized
-	}
-
-	return KindTemplate{
-		AutoCreateChildren:         children,
-		CompletionChecklist:        checklist,
-		ProjectMetadataDefaults:    projectDefaults,
-		ActionItemMetadataDefaults: actionItemDefaults,
-	}, nil
 }

@@ -1647,22 +1647,19 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 		return
 	}
 
+	// Per Drop 3 droplet 3.15 (finding 5.B.13 / CE8) the till.kind tool is
+	// read-only: operation=upsert was deleted from the wire surface, the
+	// till.upsert_kind_definition legacy alias was deleted, and the till
+	// kind upsert CLI subcommand was deleted. Programmatic
+	// Service.UpsertKindDefinition callers (snapshot import + tests) keep
+	// the path alive — wire-level mutation re-lands when the new template
+	// system needs an explicit edit channel.
 	srv.AddTool(
 		mcp.NewTool(
 			"till.kind",
-			mcp.WithDescription("Inspect or mutate kind catalog definitions. Use operation=list|upsert."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Kind operation"), mcp.Enum("list", "upsert")),
+			mcp.WithDescription("Inspect kind catalog definitions. Use operation=list."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Kind operation"), mcp.Enum("list")),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived kind definitions")),
-			mcp.WithString("id", mcp.Description("Kind identifier. Required for operation=upsert")),
-			mcp.WithString("display_name", mcp.Description("Kind display name")),
-			mcp.WithString("description_markdown", mcp.Description("Kind description markdown")),
-			mcp.WithArray("applies_to", mcp.Description("Allowed applies_to scope list for operation=upsert"), mcp.WithStringItems()),
-			mcp.WithArray("allowed_parent_scopes", mcp.Description("Allowed parent scope list for operation=upsert"), mcp.WithStringItems()),
-			mcp.WithString("payload_schema_json", mcp.Description("Optional payload schema JSON")),
-			mcp.WithObject("template", mcp.Description("Optional template object")),
-			mcp.WithString("session_id", mcp.Description("Required for operation=upsert. "+mcpMutationSessionDescription)),
-			mcp.WithString("session_secret", mcp.Description("Required for operation=upsert. "+mcpMutationSessionSecretDescription)),
-			mcp.WithString("auth_context_id", mcp.Description("Required for operation=upsert when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
@@ -1675,62 +1672,6 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 				result, err := mcp.NewToolResultJSON(map[string]any{"kinds": rows})
 				if err != nil {
 					return nil, fmt.Errorf("encode kind list result: %w", err)
-				}
-				return result, nil
-			case "upsert":
-				var args struct {
-					ID                  string              `json:"id"`
-					DisplayName         string              `json:"display_name"`
-					DescriptionMarkdown string              `json:"description_markdown"`
-					AppliesTo           []string            `json:"applies_to"`
-					AllowedParentScopes []string            `json:"allowed_parent_scopes"`
-					PayloadSchemaJSON   string              `json:"payload_schema_json"`
-					Template            domain.KindTemplate `json:"template"`
-					SessionID           string              `json:"session_id"`
-					SessionSecret       string              `json:"session_secret"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
-				if strings.TrimSpace(args.ID) == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
-				}
-				if len(args.AppliesTo) == 0 {
-					return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
-				}
-				namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
-					"kind_id": strings.TrimSpace(args.ID),
-				})
-				if _, err := authorizeMCPMutation(
-					ctx,
-					pickMutationAuthorizer(kinds),
-					mcpSessionAuthArgs{
-						SessionID:     args.SessionID,
-						SessionSecret: args.SessionSecret,
-					},
-					"upsert_kind_definition",
-					namespace,
-					"kind_definition",
-					strings.TrimSpace(args.ID),
-					authContext,
-				); err != nil {
-					return toolResultFromError(err), nil
-				}
-				kind, err := kinds.UpsertKindDefinition(ctx, common.UpsertKindDefinitionRequest{
-					ID:                  args.ID,
-					DisplayName:         args.DisplayName,
-					DescriptionMarkdown: args.DescriptionMarkdown,
-					AppliesTo:           append([]string(nil), args.AppliesTo...),
-					AllowedParentScopes: append([]string(nil), args.AllowedParentScopes...),
-					PayloadSchemaJSON:   args.PayloadSchemaJSON,
-					Template:            args.Template,
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(kind)
-				if err != nil {
-					return nil, fmt.Errorf("encode kind upsert result: %w", err)
 				}
 				return result, nil
 			default:
@@ -1759,78 +1700,11 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 			},
 		)
 
-		srv.AddTool(
-			mcp.NewTool(
-				"till.upsert_kind_definition",
-				mcp.WithDescription("Create or update one kind definition (legacy alias for till.kind operation=upsert)."),
-				mcp.WithString("id", mcp.Required(), mcp.Description("Kind identifier")),
-				mcp.WithString("display_name", mcp.Description("Kind display name")),
-				mcp.WithString("description_markdown", mcp.Description("Kind description markdown")),
-				mcp.WithArray("applies_to", mcp.Required(), mcp.Description("Allowed applies_to scope list"), mcp.WithStringItems()),
-				mcp.WithArray("allowed_parent_scopes", mcp.Description("Allowed parent scope list"), mcp.WithStringItems()),
-				mcp.WithString("payload_schema_json", mcp.Description("Optional payload schema JSON")),
-				mcp.WithObject("template", mcp.Description("Optional template object")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					ID                  string              `json:"id"`
-					DisplayName         string              `json:"display_name"`
-					DescriptionMarkdown string              `json:"description_markdown"`
-					AppliesTo           []string            `json:"applies_to"`
-					AllowedParentScopes []string            `json:"allowed_parent_scopes"`
-					PayloadSchemaJSON   string              `json:"payload_schema_json"`
-					Template            domain.KindTemplate `json:"template"`
-					SessionID           string              `json:"session_id"`
-					SessionSecret       string              `json:"session_secret"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
-				if strings.TrimSpace(args.ID) == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "id" not found`), nil
-				}
-				if len(args.AppliesTo) == 0 {
-					return mcp.NewToolResultError(`invalid_request: required argument "applies_to" not found`), nil
-				}
-				namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
-					"kind_id": strings.TrimSpace(args.ID),
-				})
-				if _, err := authorizeMCPMutation(
-					ctx,
-					pickMutationAuthorizer(kinds),
-					mcpSessionAuthArgs{
-						SessionID:     args.SessionID,
-						SessionSecret: args.SessionSecret,
-					},
-					"upsert_kind_definition",
-					namespace,
-					"kind_definition",
-					strings.TrimSpace(args.ID),
-					authContext,
-				); err != nil {
-					return toolResultFromError(err), nil
-				}
-				kind, err := kinds.UpsertKindDefinition(ctx, common.UpsertKindDefinitionRequest{
-					ID:                  args.ID,
-					DisplayName:         args.DisplayName,
-					DescriptionMarkdown: args.DescriptionMarkdown,
-					AppliesTo:           append([]string(nil), args.AppliesTo...),
-					AllowedParentScopes: append([]string(nil), args.AllowedParentScopes...),
-					PayloadSchemaJSON:   args.PayloadSchemaJSON,
-					Template:            args.Template,
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(kind)
-				if err != nil {
-					return nil, fmt.Errorf("encode upsert_kind_definition result: %w", err)
-				}
-				return result, nil
-			},
-		)
+		// Per Drop 3 droplet 3.15 (finding 5.B.13 / CE8) the
+		// till.upsert_kind_definition legacy alias was deleted along with
+		// the till.kind operation=upsert wire surface above. Read-only
+		// till.list_kind_definitions stays for legacy clients; mutating
+		// upsert paths are no longer exposed over the wire.
 
 		srv.AddTool(
 			mcp.NewTool(

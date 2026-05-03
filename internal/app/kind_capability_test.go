@@ -400,80 +400,15 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	}
 }
 
-// Note: Unit 1.11 (post-Drop-1.75 kind-collapse) deleted four template-coupled
-// cases — TestCreateActionItemAppliesKindTemplateActions,
-// TestCreateProjectAppliesKindTemplateDefaultsAndChildren,
-// TestCreateActionItemCascadesChildKindTemplateDefaults, and
-// TestCreateActionItemRejectsRecursiveTemplateBeforePersistence — because the
-// underlying KindTemplate behaviors (AutoCreateChildren, ProjectMetadataDefaults,
-// recursive template validation via validateKindTemplateExpansion) are now
-// runtime no-ops per F5 classification. KindTemplate is orphaned post-collapse;
-// only ActionItemMetadataDefaults + CompletionChecklist merge remains live,
-// exercised by TestCreateActionItemKindMergesCompletionChecklist below.
-
-// TestCreateActionItemKindMergesCompletionChecklist verifies the surviving
-// KindTemplate merge path — CompletionChecklist + ActionItemMetadataDefaults
-// flow into the created ActionItem's metadata. The 12-value Kind enum is
-// closed, so the test drives the merge via a plan-kind entry rather than a
-// custom kind.
-func TestCreateActionItemKindMergesCompletionChecklist(t *testing.T) {
-	repo := newFakeRepo()
-	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
-	svc := newDeterministicService(repo, now, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
-
-	if _, err := svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
-		ID:          domain.KindID(domain.KindPlan),
-		DisplayName: "Plan",
-		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToPlan},
-		Template: domain.KindTemplate{
-			CompletionChecklist: []domain.ChecklistItem{
-				{ID: "ck-run-tests", Text: "run package tests", Complete: false},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("UpsertKindDefinition(plan) error = %v", err)
-	}
-
-	project, err := svc.CreateProject(context.Background(), "Template Project", "")
-	if err != nil {
-		t.Fatalf("CreateProject() error = %v", err)
-	}
-	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
-	if err != nil {
-		t.Fatalf("CreateColumn() error = %v", err)
-	}
-	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID:      project.ID,
-		ColumnID:       column.ID,
-		Title:          "Parent ActionItem",
-		Description:    "Template parent",
-		Kind:           domain.KindPlan,
-		Scope:          domain.KindAppliesToPlan,
-		StructuralType: domain.StructuralTypeDroplet,
-	})
-	if err != nil {
-		t.Fatalf("CreateActionItem(plan) error = %v", err)
-	}
-	storedParent, err := repo.GetActionItem(context.Background(), parent.ID)
-	if err != nil {
-		t.Fatalf("GetActionItem(parent) error = %v", err)
-	}
-	if len(storedParent.Metadata.CompletionContract.CompletionChecklist) != 1 {
-		t.Fatalf("parent checklist len = %d, want 1", len(storedParent.Metadata.CompletionContract.CompletionChecklist))
-	}
-
-	// Post-collapse: AutoCreateChildren is a no-op, so no child should be
-	// auto-created even when the kind template declared children previously.
-	tasks, err := svc.ListActionItems(context.Background(), project.ID, true)
-	if err != nil {
-		t.Fatalf("ListActionItems() error = %v", err)
-	}
-	for _, actionItem := range tasks {
-		if actionItem.ParentID == parent.ID {
-			t.Fatalf("expected no template-auto-created children post-collapse, got %#v", actionItem)
-		}
-	}
-}
+// Note: Drop 3 droplet 3.15 deleted the legacy KindTemplate surface
+// (AutoCreateChildren, ProjectMetadataDefaults, ActionItemMetadataDefaults,
+// CompletionChecklist) along with mergeActionItemMetadataWithKindTemplate's
+// merge behavior — the function is now a pass-through. The previously
+// surviving "merges CompletionChecklist" test
+// (TestCreateActionItemKindMergesCompletionChecklist) was retired in this
+// droplet because the merge it covered no longer exists; templates v1's
+// KindRule does not encode action-item metadata defaults. Future template-
+// driven defaults will be reintroduced through a different mechanism.
 
 // TestCreateActionItemRejectsExternalSystemBypass verifies public callers cannot fake the internal template path.
 func TestCreateActionItemRejectsExternalSystemBypass(t *testing.T) {

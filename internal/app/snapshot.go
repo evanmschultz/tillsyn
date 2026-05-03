@@ -86,14 +86,18 @@ type SnapshotActionItem struct {
 }
 
 // SnapshotKindDefinition represents one kind-catalog definition persisted in a snapshot.
+//
+// Per Drop 3 droplet 3.15 the legacy AllowedParentScopes + Template fields
+// were removed; nesting now flows through templates.Template.AllowsNesting +
+// the project's baked KindCatalog. Pre-Drop-3 snapshots that carry those
+// fields are silently dropped on import (no migration logic per pre-MVP
+// rule — dev fresh-DBs).
 type SnapshotKindDefinition struct {
 	ID                  domain.KindID          `json:"id"`
 	DisplayName         string                 `json:"display_name"`
 	DescriptionMarkdown string                 `json:"description_markdown"`
 	AppliesTo           []domain.KindAppliesTo `json:"applies_to"`
-	AllowedParentScopes []domain.KindAppliesTo `json:"allowed_parent_scopes,omitempty"`
 	PayloadSchemaJSON   string                 `json:"payload_schema_json,omitempty"`
-	Template            domain.KindTemplate    `json:"template,omitempty"`
 	CreatedAt           time.Time              `json:"created_at"`
 	UpdatedAt           time.Time              `json:"updated_at"`
 	ArchivedAt          *time.Time             `json:"archived_at,omitempty"`
@@ -449,10 +453,10 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
 		}
 		// Parent-scope constraints are enforced by
-		// domain.KindDefinition.AllowsParentScope (against the kind's
-		// AllowedParentScopes list) at action-item creation. Snapshot validation
-		// no longer special-cases the legacy KindPhase hierarchy because the
-		// 12-value Kind enum removed it.
+		// templates.KindCatalog.AllowsNesting at action-item creation (per
+		// Drop 3 droplet 3.15). Snapshot validation does not duplicate that
+		// gate; an unknown-parent-id check above is the only structural
+		// invariant snapshot import enforces here.
 		_ = actionItemByID[t.ParentID]
 	}
 
@@ -1099,9 +1103,7 @@ func snapshotKindDefinitionFromDomain(kind domain.KindDefinition) SnapshotKindDe
 		DisplayName:         kind.DisplayName,
 		DescriptionMarkdown: kind.DescriptionMarkdown,
 		AppliesTo:           append([]domain.KindAppliesTo(nil), kind.AppliesTo...),
-		AllowedParentScopes: append([]domain.KindAppliesTo(nil), kind.AllowedParentScopes...),
 		PayloadSchemaJSON:   kind.PayloadSchemaJSON,
-		Template:            kind.Template,
 		CreatedAt:           kind.CreatedAt.UTC(),
 		UpdatedAt:           kind.UpdatedAt.UTC(),
 		ArchivedAt:          copyTimePtr(kind.ArchivedAt),
@@ -1353,9 +1355,7 @@ func (k SnapshotKindDefinition) toDomain() domain.KindDefinition {
 		DisplayName:         strings.TrimSpace(k.DisplayName),
 		DescriptionMarkdown: strings.TrimSpace(k.DescriptionMarkdown),
 		AppliesTo:           append([]domain.KindAppliesTo(nil), k.AppliesTo...),
-		AllowedParentScopes: append([]domain.KindAppliesTo(nil), k.AllowedParentScopes...),
 		PayloadSchemaJSON:   strings.TrimSpace(k.PayloadSchemaJSON),
-		Template:            k.Template,
 		CreatedAt:           k.CreatedAt.UTC(),
 		UpdatedAt:           k.UpdatedAt.UTC(),
 		ArchivedAt:          copyTimePtr(k.ArchivedAt),
