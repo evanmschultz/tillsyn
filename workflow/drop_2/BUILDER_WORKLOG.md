@@ -404,3 +404,42 @@ N/A — task touched 23 Go files for surgical state-vocabulary renames + 1 TOML 
 ## Hylla Feedback
 
 N/A — task touched only Go production + test code in 4 packages, all 8 files known-by-name from the spawn prompt. The investigation used `Read` for whole-file context and `rg`/`grep` (via Bash) for literal pattern sweeps (`normalizeStateID|normalizeStateLikeID|normalizeColumnStateID` and `"in-progress"|"doing"|"completed"`). Hylla queries were not the right shape for "find direct unit tests of these three functions and the existing legacy-literal test cases" — that's a literal-pattern sweep, naturally fast via `rg`. No symbol-search ambiguity, no stale-ingest concern. Zero ergonomic gripes for this round.
+
+## Droplet 2.8 — Round 1
+
+**Outcome:** success.
+
+**Files touched (production + test):**
+
+- `internal/adapters/storage/sqlite/repo.go` — flipped `allowed_parent_scopes_json` from `'["plan"]'` (10 rows) / `'["build"]'` (2 rows) to `'[]'` for **all 12** seeded `INSERT OR IGNORE INTO kind_catalog` rows (`plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`). The 2 `["build"]` rows (`build-qa-proof`, `build-qa-falsification`) previously held that value per the legacy `domain.AllowedParentKinds` rule; the other 10 held `["plan"]`. `applies_to_json` and every other column on each row are unchanged. LOC delta: 12 single-token replacements inside the 12 VALUES tuples; net +0 lines.
+- `internal/adapters/storage/sqlite/repo_test.go` — added `TestRepositoryFreshOpenKindCatalogUniversalParentAllow` (60-line table-style assertion). Loads the seeded catalog via `repo.ListKindDefinitions(ctx, false)`, confirms `len == 12`, and for every kind asserts `AllowedParentScopes` is empty AND `AllowsParentScope` returns `true` for each of all 12 `KindAppliesTo*` constants. Net +50 LOC.
+
+**Files touched (state-flips):**
+
+- `workflow/drop_2/PLAN.md` — Droplet 2.8 state flipped `todo` → `in_progress` at start, then `in_progress` → `done` on success.
+
+**Tests updated (count + before/after pattern):**
+
+- 0 existing tests modified. The spec hinted at "any test that asserted the old `["plan"]`/`["build"]` defaults" — `git grep 'AllowedParentScopes\|AllowsParentScope\|allowed_parent_scopes'` across `internal/adapters/storage/sqlite/repo_test.go`, `internal/app/kind_capability_test.go`, and `internal/domain/kind_capability_test.go` returned only test references that pass an explicit non-empty `AllowedParentScopes: []KindAppliesTo{KindAppliesToPlan}` to `NewKindDefinition` for a custom kind — they assert behavior of an explicit list, not behavior of the seed defaults, and are independent of this droplet's change.
+- 1 new test added (the universal-allow assertion described above) to satisfy acceptance #3.
+
+**Mage results:**
+
+- `mage test-pkg ./internal/adapters/storage/sqlite`: PASS, 70 tests, 1.02s.
+- `mage test-pkg ./internal/app`: PASS, 206 tests, 1.26s.
+- `mage test-pkg ./internal/domain`: PASS, 109 tests, 0.00s.
+- `mage ci`: PASS, 1392 tests across 19 packages. Min coverage 70.0% threshold met. Build of `till` from `./cmd/till` succeeded.
+
+**Design notes:**
+
+- **Universal-allow assertion pattern.** Rather than asserting `AllowedParentScopes` literal-equality against `[]` for each kind individually, the new test exercises the actual semantic contract of acceptance #3: that `AllowsParentScope` returns `true` for every `KindAppliesTo` value. This catches both representational regressions (non-empty list re-seeded) AND any future refactor of `AllowsParentScope`'s empty-list short-circuit.
+- **`applies_to_json` carefully preserved.** On 2 rows (`plan` and `build`), `applies_to_json` and the (former) `allowed_parent_scopes_json` shared the same JSON literal (e.g. `'["plan"]'` for the `plan` row). On the other 10 rows the two columns were always distinct (e.g. `'["closeout"]'` vs `'["plan"]'`). Edited each VALUES tuple by full-line context (kind id + display name + …) so the second occurrence of the shared literal — the parent-scopes column — was the one replaced, not the first (`applies_to`). Verified via `git grep '"plan"\]' internal/adapters/storage/sqlite/repo.go` returning only the `applies_to_json` slot on the `plan` row, and `git grep '"build"\]'` returning only the `applies_to_json` slot on the `build` row.
+- **Doc-comment at `repo.go:299-304` left untouched.** That comment describes the now-obsolete "build-qa-* nest under build, others under plan" rule via `domain.AllowedParentKinds`. Droplet 2.9 owns the comment cleanup (per PLAN.md `:258`), so I deliberately did not edit the comment in 2.8 — out of scope.
+- **`AllowsParentScope` body untouched.** Acceptance #3 + #4 both required the function's existing empty-list early-return be the source of universal-allow. Verified the body at `internal/domain/kind.go:225-236` is unchanged; the kind_capability.go enforcement path at `internal/app/kind_capability.go:566` calls `kind.AllowsParentScope(parent.Scope)` and the empty-list early-return now makes this a no-op for every seeded kind.
+- **Pre-MVP no-migration rule honored.** No `ALTER TABLE`, no SQL backfill, no Go migration code. Dev's already-deleted `~/.tillsyn/` will fresh-seed with `'[]'` on next boot.
+
+**PLAN.md state confirmation:** Droplet 2.8 flipped `todo` → `in_progress` at start of work, then `in_progress` → `done` after `mage ci` green.
+
+## Hylla Feedback
+
+N/A — task touched only Go production + test code in 3 packages, with paths fully scoped by the spawn prompt and PLAN.md acceptance criteria. The investigation pattern was a literal-pattern sweep across SQL `INSERT OR IGNORE INTO kind_catalog` strings + a `git grep` for `AllowedParentScopes`/`AllowsParentScope` across `*_test.go` to confirm no existing tests asserted on the old defaults — this is naturally fast via `git grep` and Hylla symbol-search would not have improved the workflow. No stale-ingest concerns, no symbol-search ambiguity, no ergonomic gripes for this round.
