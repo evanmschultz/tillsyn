@@ -3,14 +3,18 @@ package mcpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -426,10 +430,25 @@ func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID stri
 // domain.ErrInvalidRole joined under common.ErrInvalidCaptureStateRequest)
 // so the MCP boundary's error mapping (invalid → invalid_request:) can be
 // exercised without a full app-service stack.
+//
+// StructuralType handling diverges from production: production rejects
+// empty StructuralType with ErrInvalidStructuralType, but the stub
+// defaults empty input to StructuralTypeDroplet so existing fixture rows
+// (which predate droplet 3.4) keep round-tripping. Production-side empty
+// rejection is exercised through the real adapter chain in
+// TestActionItemMCPRejectsEmptyOrInvalidStructuralType. Non-empty
+// non-member values are still rejected here so the MCP boundary's error
+// mapping can be exercised without a full app-service stack.
 func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.CreateActionItemRequest) (domain.ActionItem, error) {
 	s.lastCreateActionItemReq = in
 	if trimmed := strings.TrimSpace(in.Role); trimmed != "" && !domain.IsValidRole(domain.Role(trimmed)) {
 		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
+	}
+	structuralType := domain.StructuralType(strings.TrimSpace(in.StructuralType))
+	if structuralType == "" {
+		structuralType = domain.StructuralTypeDroplet
+	} else if !domain.IsValidStructuralType(structuralType) {
+		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidStructuralType)
 	}
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -441,6 +460,7 @@ func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.Crea
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
 		Role:           domain.Role(strings.TrimSpace(in.Role)),
+		StructuralType: structuralType,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -452,10 +472,20 @@ func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.Crea
 // the request carries a non-empty role that is not a member of the closed
 // Role enum, the stub returns the same wrapped error shape as the real
 // adapter (see CreateActionItem above).
+//
+// StructuralType update semantics mirror production: empty preserves the
+// existing value (no-op — the stub leaves the returned row's
+// StructuralType empty in that case, since there is no persisted prior to
+// echo); non-empty non-member values are rejected with the same wrapped
+// error shape so the MCP boundary's invalid_request: mapping is exercised.
 func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.UpdateActionItemRequest) (domain.ActionItem, error) {
 	s.lastUpdateActionItemReq = in
 	if trimmed := strings.TrimSpace(in.Role); trimmed != "" && !domain.IsValidRole(domain.Role(trimmed)) {
 		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
+	}
+	structuralType := domain.StructuralType(strings.TrimSpace(in.StructuralType))
+	if structuralType != "" && !domain.IsValidStructuralType(structuralType) {
+		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidStructuralType)
 	}
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -467,6 +497,7 @@ func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.Upda
 		Kind:           domain.KindPlan,
 		Scope:          domain.KindAppliesToPlan,
 		Role:           domain.Role(strings.TrimSpace(in.Role)),
+		StructuralType: structuralType,
 		LifecycleState: domain.StateTodo,
 		Priority:       domain.PriorityMedium,
 		CreatedAt:      now,
@@ -3523,6 +3554,135 @@ func TestHandlerExpandedActionItemRoleRoundTrip(t *testing.T) {
 		}
 		if got := toolResultText(t, createResp.Result); !strings.HasPrefix(got, "invalid_request:") {
 			t.Fatalf("invalid-role error text = %q, want prefix invalid_request:", got)
+		}
+	})
+}
+
+// TestActionItemMCPRejectsEmptyOrInvalidStructuralType verifies the
+// structural_type field is plumbed through the MCP→common→app→domain stack
+// per droplet 3.4 acceptance:
+//
+//   - Empty structural_type is rejected on create AT THE PRODUCTION BOUNDARY —
+//     the real common.AppServiceAdapter chain (sqlite + app.Service +
+//     domain.NewActionItem) rejects with ErrInvalidStructuralType. The MCP-
+//     layer stub used elsewhere in this file is intentionally permissive to
+//     keep legacy fixtures round-tripping; production is the canonical gate.
+//   - Unknown structural_type values are rejected at the MCP boundary on both
+//     create and update operations. The stub's Role-rejection precedent (see
+//     stubExpandedService.CreateActionItem) is mirrored for StructuralType so
+//     the boundary's invalid_request: error mapping is exercised without a
+//     full app-service stack.
+func TestActionItemMCPRejectsEmptyOrInvalidStructuralType(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty structural_type rejected on create through real adapter chain", func(t *testing.T) {
+		t.Parallel()
+
+		repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+		if err != nil {
+			t.Fatalf("sqlite.Open() error = %v", err)
+		}
+		t.Cleanup(func() {
+			_ = repo.Close()
+		})
+		nextID := 0
+		svc := app.NewService(repo, func() string {
+			nextID++
+			return fmt.Sprintf("real-id-%03d", nextID)
+		}, nil, app.ServiceConfig{AutoCreateProjectColumns: true})
+		project, err := svc.CreateProject(context.Background(), "Real Adapter Demo", "")
+		if err != nil {
+			t.Fatalf("CreateProject() error = %v", err)
+		}
+		columns, err := svc.ListColumns(context.Background(), project.ID, false)
+		if err != nil {
+			t.Fatalf("ListColumns() error = %v", err)
+		}
+		if len(columns) == 0 {
+			t.Fatal("expected auto-created project columns, got none")
+		}
+		adapter := common.NewAppServiceAdapter(svc, nil)
+		actor := common.ActorLeaseTuple{
+			ActorID:   "user-1",
+			ActorName: "User One",
+			ActorType: string(domain.ActorTypeUser),
+		}
+		_, err = adapter.CreateActionItem(context.Background(), common.CreateActionItemRequest{
+			ProjectID: project.ID,
+			ColumnID:  columns[0].ID,
+			Title:     "Empty structural type",
+			Priority:  "medium",
+			Actor:     actor,
+			// StructuralType deliberately omitted — production must reject.
+		})
+		if err == nil {
+			t.Fatal("CreateActionItem(empty structural_type) error = nil, want ErrInvalidStructuralType")
+		}
+		if !errors.Is(err, domain.ErrInvalidStructuralType) {
+			t.Fatalf("CreateActionItem(empty structural_type) error = %v, want wrap of ErrInvalidStructuralType", err)
+		}
+	})
+
+	t.Run("unknown structural_type rejected on create at MCP boundary", func(t *testing.T) {
+		t.Parallel()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7100, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"structural_type":   "not-a-structural-type",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); !isError {
+			t.Fatalf("action_item create with invalid structural_type isError = %v, want true", createResp.Result["isError"])
+		}
+		if got := toolResultText(t, createResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+			t.Fatalf("invalid-structural-type error text = %q, want prefix invalid_request:", got)
+		}
+	})
+
+	t.Run("unknown structural_type rejected on update at MCP boundary", func(t *testing.T) {
+		t.Parallel()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7101, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "ActionItem One Updated",
+			"structural_type":   "not-a-structural-type",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); !isError {
+			t.Fatalf("action_item update with invalid structural_type isError = %v, want true", updateResp.Result["isError"])
+		}
+		if got := toolResultText(t, updateResp.Result); !strings.HasPrefix(got, "invalid_request:") {
+			t.Fatalf("invalid-structural-type error text = %q, want prefix invalid_request:", got)
 		}
 	})
 }

@@ -60,9 +60,10 @@ func TestServiceCreateActionItemDoesNotEnqueueEmbeddingsWhenDisabled(t *testing.
 		},
 	})
 	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "Disabled queue should stay empty",
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Disabled queue should stay empty",
+		StructuralType: domain.StructuralTypeDroplet,
 	}); err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
 	}

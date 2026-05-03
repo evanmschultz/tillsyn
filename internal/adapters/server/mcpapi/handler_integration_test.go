@@ -224,6 +224,7 @@ func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, p
 		UpdatedByActor: "user-1",
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(branch) error = %v", err)
@@ -240,6 +241,7 @@ func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, p
 		UpdatedByActor: "user-1",
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(phase) error = %v", err)
@@ -256,6 +258,7 @@ func createMCPScopedActionItemChainForTest(t *testing.T, service *app.Service, p
 		UpdatedByActor: "user-1",
 		UpdatedByName:  "User One",
 		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(actionItem) error = %v", err)

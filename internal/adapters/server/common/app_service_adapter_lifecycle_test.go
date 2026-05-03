@@ -145,14 +145,15 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	}
 
 	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID:   project.ID,
-		ColumnID:    todo.ID,
-		Title:       "Parent actionItem",
-		Description: "Start here",
-		Priority:    "high",
-		Labels:      []string{"docs"},
-		DueAt:       fixture.now.Add(2 * time.Hour).Format(time.RFC3339),
-		Actor:       actor,
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "Parent actionItem",
+		Description:    "Start here",
+		Priority:       "high",
+		Labels:         []string{"docs"},
+		DueAt:          fixture.now.Add(2 * time.Hour).Format(time.RFC3339),
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(parent) error = %v", err)
@@ -191,13 +192,14 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	}
 
 	child, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID: project.ID,
-		ParentID:  actionItem.ID,
-		Kind:      string(domain.KindBuild),
-		ColumnID:  done.ID,
-		Title:     "Child actionItem",
-		Priority:  "medium",
-		Actor:     actor,
+		ProjectID:      project.ID,
+		ParentID:       actionItem.ID,
+		Kind:           string(domain.KindBuild),
+		ColumnID:       done.ID,
+		Title:          "Child actionItem",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(child) error = %v", err)
@@ -477,11 +479,12 @@ func TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies(t 
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID:   project.ID,
-		ColumnID:    column.ID,
-		Title:       "Searchable actionItem",
-		Description: "work item embeddings content",
-		Actor:       actor,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Searchable actionItem",
+		Description:    "work item embeddings content",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -775,12 +778,13 @@ func TestAppServiceAdapterAttentionAndCaptureLifecycle(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID:   project.ID,
-		ColumnID:    column.ID,
-		Title:       "Blocked actionItem",
-		Description: "Needs review",
-		Priority:    "medium",
-		Actor:       actor,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Blocked actionItem",
+		Description:    "Needs review",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -979,11 +983,12 @@ func TestMoveActionItemStateToFailed(t *testing.T) {
 	}
 
 	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID: project.ID,
-		ColumnID:  todo.ID,
-		Title:     "ActionItem to fail",
-		Priority:  "medium",
-		Actor:     actor,
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem to fail",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)

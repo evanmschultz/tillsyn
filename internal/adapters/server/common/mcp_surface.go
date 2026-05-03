@@ -63,15 +63,21 @@ type CreateActionItemRequest struct {
 	// value. Empty string is permitted; non-empty values must match the
 	// closed Role enum (see domain.IsValidRole) or domain.NewActionItem
 	// returns ErrInvalidRole.
-	Role        string
-	ColumnID    string
-	Title       string
-	Description string
-	Priority    string
-	DueAt       string
-	Labels      []string
-	Metadata    domain.ActionItemMetadata
-	Actor       ActorLeaseTuple
+	Role string
+	// StructuralType MUST carry a member of the closed StructuralType
+	// enum (drop|segment|confluence|droplet — see
+	// domain.IsValidStructuralType). Empty string is REJECTED on create —
+	// domain.NewActionItem returns ErrInvalidStructuralType. Diverges from
+	// Role's permissive empty.
+	StructuralType string
+	ColumnID       string
+	Title          string
+	Description    string
+	Priority       string
+	DueAt          string
+	Labels         []string
+	Metadata       domain.ActionItemMetadata
+	Actor          ActorLeaseTuple
 }
 
 // UpdateActionItemRequest stores transport input for actionItem updates.
@@ -85,9 +91,15 @@ type UpdateActionItemRequest struct {
 	// Role optionally updates the closed-enum role value. Empty string
 	// preserves the existing value (no-op); a non-empty value must match
 	// the closed Role enum or the service returns ErrInvalidRole.
-	Role     string
-	Metadata *domain.ActionItemMetadata
-	Actor    ActorLeaseTuple
+	Role string
+	// StructuralType optionally updates the closed-enum structural type.
+	// Empty string preserves the existing value (no-op) — mirrors Role's
+	// optional-on-update semantics. A non-empty value must match the
+	// closed StructuralType enum or the service returns
+	// ErrInvalidStructuralType.
+	StructuralType string
+	Metadata       *domain.ActionItemMetadata
+	Actor          ActorLeaseTuple
 }
 
 // MoveActionItemRequest stores transport input for actionItem move operations.

@@ -235,9 +235,10 @@ func newEmbeddingsCLIServiceForTest(t *testing.T) (*app.Service, string, *sqlite
 		},
 	})
 	created, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "Ship operational embeddings",
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Ship operational embeddings",
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
