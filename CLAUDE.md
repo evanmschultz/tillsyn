@@ -84,7 +84,7 @@ project                                                    (table: projects)
 
 ### Commit Cadence (Drop 2 Discussion Seed)
 
-`commit` is a real kind but current commit-every-build-task rate is too high. Proposed default heuristic for Drop 2 discussion:
+`commit` is a real kind but current commit-every-`build` rate is too high. Proposed default heuristic for Drop 2 discussion:
 
 - **Auto-generate a `commit` child under any `plan` at level ≥ 2 whose subtree contains at least one `build` child in `complete` state.** Generation fires at plan close-time (not creation), so no-build plans (pure research / discussion / refinement) don't accrue orphan commit items.
 - **Template override** — templates can set `auto_commit = false` on a `plan` kind for local-only outputs (SQL migration scripts that never touch tracked code, scratch/throwaway work).
@@ -122,7 +122,7 @@ Only after all gates pass do the `build`'s QA children fire.
 
 - **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on parent-blocks-on-failed-child arrives in Drop 1.
 - **`blocked_by`** — the only sibling and cross-drop ordering primitive. Planner sets these at creation time; dispatcher adds runtime blockers when file/package locks conflict (Drop 4+).
-- **File- and package-level blocking** — sibling build-tasks sharing a file in `paths` OR a package in `packages` MUST have an explicit `blocked_by` between them. Plan QA falsification attacks missing blockers. Package-level locking exists because a single Go package (e.g. `internal/domain` with ~25 files) shares one compile — editing different files in the same package still breaks the other agent's test run.
+- **File- and package-level blocking** — sibling `build` action items sharing a file in `paths` OR a package in `packages` MUST have an explicit `blocked_by` between them. Plan QA falsification attacks missing blockers. Package-level locking exists because a single Go package (e.g. `internal/domain` with ~25 files) shares one compile — editing different files in the same package still breaks the other agent's test run.
 
 ### State-Trigger Dispatch
 
