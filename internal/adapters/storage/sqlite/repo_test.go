@@ -2436,6 +2436,262 @@ func TestRepository_PersistsActionItemStructuralTypeAndIrreducible(t *testing.T)
 	}
 }
 
+// TestRepository_PersistsActionItemOwnerAndDropNumber verifies the owner,
+// drop_number, persistent, and dev_gated columns round-trip across create +
+// get + list + list-by-parent + update on an action item. Cases mix
+// Owner=""/"STEWARD" with DropNumber=0/5 and exercise both true/false states
+// of Persistent and DevGated so the SQLite INTEGER 0/1 conversion path is
+// covered for both bool columns. The test mirrors
+// TestRepository_PersistsActionItemStructuralTypeAndIrreducible so the
+// SELECT/INSERT/UPDATE column-ordinal alignment for the four new columns is
+// asserted on every storage path.
+func TestRepository_PersistsActionItemOwnerAndDropNumber(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-own", "Owner", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-own", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	// Cover Owner=""/"STEWARD" × DropNumber=0/5 with both bools toggling so
+	// every column writes/reads a non-default value at least once.
+	cases := []struct {
+		id         string
+		owner      string
+		dropNumber int
+		persistent bool
+		devGated   bool
+	}{
+		{id: "t-own-empty-zero", owner: "", dropNumber: 0, persistent: false, devGated: false},
+		{id: "t-own-steward-five", owner: "STEWARD", dropNumber: 5, persistent: true, devGated: true},
+		{id: "t-own-empty-five", owner: "", dropNumber: 5, persistent: true, devGated: false},
+		{id: "t-own-steward-zero", owner: "STEWARD", dropNumber: 0, persistent: false, devGated: true},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			Owner:          tc.owner,
+			DropNumber:     tc.dropNumber,
+			Persistent:     tc.persistent,
+			DevGated:       tc.devGated,
+			Position:       i,
+			Title:          "owner " + tc.owner + " drop " + tc.id,
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.id, err)
+		}
+		loaded, err := repo.GetActionItem(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.id, err)
+		}
+		if loaded.Owner != tc.owner {
+			t.Fatalf("expected persisted owner %q, got %q", tc.owner, loaded.Owner)
+		}
+		if loaded.DropNumber != tc.dropNumber {
+			t.Fatalf("expected persisted drop_number %d, got %d", tc.dropNumber, loaded.DropNumber)
+		}
+		if loaded.Persistent != tc.persistent {
+			t.Fatalf("expected persisted persistent %v, got %v", tc.persistent, loaded.Persistent)
+		}
+		if loaded.DevGated != tc.devGated {
+			t.Fatalf("expected persisted dev_gated %v, got %v", tc.devGated, loaded.DevGated)
+		}
+	}
+
+	// ListActionItems exercises the second SELECT path.
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	if len(listed) != len(cases) {
+		t.Fatalf("ListActionItems() length = %d, want %d", len(listed), len(cases))
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		if got.Owner != tc.owner {
+			t.Fatalf("ListActionItems()[%q].Owner = %q, want %q", tc.id, got.Owner, tc.owner)
+		}
+		if got.DropNumber != tc.dropNumber {
+			t.Fatalf("ListActionItems()[%q].DropNumber = %d, want %d", tc.id, got.DropNumber, tc.dropNumber)
+		}
+		if got.Persistent != tc.persistent {
+			t.Fatalf("ListActionItems()[%q].Persistent = %v, want %v", tc.id, got.Persistent, tc.persistent)
+		}
+		if got.DevGated != tc.devGated {
+			t.Fatalf("ListActionItems()[%q].DevGated = %v, want %v", tc.id, got.DevGated, tc.devGated)
+		}
+	}
+
+	// ListActionItemsByParent exercises the third SELECT path.
+	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent() error = %v", err)
+	}
+	if len(parentListed) != len(cases) {
+		t.Fatalf("ListActionItemsByParent() length = %d, want %d", len(parentListed), len(cases))
+	}
+	byIDParent := map[string]domain.ActionItem{}
+	for _, item := range parentListed {
+		byIDParent[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byIDParent[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItemsByParent() missing %q", tc.id)
+		}
+		if got.Owner != tc.owner || got.DropNumber != tc.dropNumber || got.Persistent != tc.persistent || got.DevGated != tc.devGated {
+			t.Fatalf("ListActionItemsByParent()[%q] = {Owner:%q DropNumber:%d Persistent:%v DevGated:%v}, want {Owner:%q DropNumber:%d Persistent:%v DevGated:%v}",
+				tc.id, got.Owner, got.DropNumber, got.Persistent, got.DevGated,
+				tc.owner, tc.dropNumber, tc.persistent, tc.devGated)
+		}
+	}
+
+	// Reassign on update: flip every new column to confirm the UPDATE SET
+	// clause writes all four through.
+	target, err := repo.GetActionItem(ctx, "t-own-empty-zero")
+	if err != nil {
+		t.Fatalf("GetActionItem(reassign source) error = %v", err)
+	}
+	target.Owner = "STEWARD"
+	target.DropNumber = 7
+	target.Persistent = true
+	target.DevGated = true
+	target.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(owner+drop_number+persistent+dev_gated) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after update) error = %v", err)
+	}
+	if reloaded.Owner != "STEWARD" {
+		t.Fatalf("expected reassigned owner %q, got %q", "STEWARD", reloaded.Owner)
+	}
+	if reloaded.DropNumber != 7 {
+		t.Fatalf("expected reassigned drop_number 7, got %d", reloaded.DropNumber)
+	}
+	if !reloaded.Persistent {
+		t.Fatalf("expected reassigned persistent true, got false")
+	}
+	if !reloaded.DevGated {
+		t.Fatalf("expected reassigned dev_gated true, got false")
+	}
+}
+
+// TestRepository_IndexCoversDropNumberQuery sanity-checks that querying by
+// (project_id, drop_number) returns the expected rows after the 3.18 schema
+// change. The query shape mirrors what the 3.20 auto-generator will issue;
+// the assertion is correctness rather than EXPLAIN-plan validation, since
+// SQLite EXPLAIN output is brittle across versions.
+func TestRepository_IndexCoversDropNumberQuery(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-idx", "Index", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-idx", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	// Three rows in drop 3, two rows in drop 4, one row in drop 0.
+	rows := []struct {
+		id         string
+		dropNumber int
+	}{
+		{id: "t-d3-a", dropNumber: 3},
+		{id: "t-d3-b", dropNumber: 3},
+		{id: "t-d3-c", dropNumber: 3},
+		{id: "t-d4-a", dropNumber: 4},
+		{id: "t-d4-b", dropNumber: 4},
+		{id: "t-d0-a", dropNumber: 0},
+	}
+	for i, row := range rows {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             row.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			DropNumber:     row.dropNumber,
+			Position:       i,
+			Title:          row.id,
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", row.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", row.id, err)
+		}
+	}
+
+	// Query: WHERE project_id = ? AND drop_number = ? — index prefix scan
+	// covered by idx_action_items_drop_number(project_id, drop_number, owner).
+	queryRows, err := repo.db.QueryContext(ctx, `SELECT id FROM action_items WHERE project_id = ? AND drop_number = ? ORDER BY id ASC`, project.ID, 3)
+	if err != nil {
+		t.Fatalf("query drop_number error = %v", err)
+	}
+	defer queryRows.Close()
+	var ids []string
+	for queryRows.Next() {
+		var id string
+		if err := queryRows.Scan(&id); err != nil {
+			t.Fatalf("scan id error = %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := queryRows.Err(); err != nil {
+		t.Fatalf("rows.Err() = %v", err)
+	}
+	want := []string{"t-d3-a", "t-d3-b", "t-d3-c"}
+	if len(ids) != len(want) {
+		t.Fatalf("query returned %d rows, want %d (got %v)", len(ids), len(want), ids)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("row %d = %q, want %q", i, ids[i], want[i])
+		}
+	}
+}
+
 // TestRepositoryAuthRequestCRUD verifies auth-request persistence, listing, and update behavior.
 func TestRepositoryAuthRequestCRUD(t *testing.T) {
 	ctx := context.Background()

@@ -301,6 +301,8 @@ func TestRepositoryEmbeddingLifecycleSchemaMigratesLegacyDatabase(t *testing.T) 
 			due_at TEXT,
 			labels_json TEXT NOT NULL DEFAULT '[]',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
+			owner TEXT NOT NULL DEFAULT '',
+			drop_number INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			archived_at TEXT,
