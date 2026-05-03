@@ -17,7 +17,7 @@ Cross-cutting decisions still park on a Tillsyn action item (description = conve
 
 ## Cascade Plan
 
-The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory). That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
+The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory). Cascade vocabulary canonical: `WIKI.md` § `Cascade Vocabulary` — never redefine here. That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
 
 ## Cascade Tree Structure (Template Architecture)
 

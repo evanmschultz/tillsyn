@@ -24,6 +24,7 @@ This project does **not** use any coordination runtime. Three documents own the 
 Per-drop work artifacts live under `drops/DROP_N_<NAME>/`. The directory is stamped from `drops/_TEMPLATE/` at Phase 1 start and persists through closeout.
 
 - **Read `WIKI.md` + `PLAN.md` + `drops/WORKFLOW.md` at session start and after every compaction.** CLAUDE.md auto-loads; the other three do not — read them deliberately on the first turn after cold-start or compaction before substantive orchestration.
+- **Cascade vocabulary canonical: project `WIKI.md` § `Cascade Vocabulary` — every adopter project's CLAUDE.md MUST include this pointer and MUST NOT redefine the structural_type vocabulary locally.**
 - **Use any in-session TodoWrite-style tracker for nothing.** Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Decompose finer procedural granularity into atomic units inside the active drop's `PLAN.md` instead.
 - **No markdown files outside `drops/` for work tracking.** Per-drop dirs are the worklog substrate.
 
