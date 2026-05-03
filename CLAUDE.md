@@ -155,7 +155,7 @@ The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf
 
 ## Build-QA-Commit Discipline
 
-**CRITICAL: No droplet is `done` without per-droplet QA passing. Push + `gh run watch` + Hylla reingest are drop-end only — full sequence in `workflow/example/drops/WORKFLOW.md` Phases 4–7.**
+**CRITICAL: No droplet is `complete` without per-droplet QA passing. Push + `gh run watch` + Hylla reingest are drop-end only — full sequence in `workflow/example/drops/WORKFLOW.md` Phases 4–7.**
 
 Per-droplet (Phases 4–5):
 
@@ -189,7 +189,7 @@ Explicit "no miss" is still useful signal. Ergonomic-only gripes (awkward parame
 
 ## Drop Closeout
 
-Drop-orch closes the drop per `workflow/example/drops/WORKFLOW.md` Phase 7 — aggregate Hylla feedback + refinements, write `CLOSEOUT.md`, flip drop state to `done`, merge PR.
+Drop-orch closes the drop per `workflow/example/drops/WORKFLOW.md` Phase 7 — aggregate Hylla feedback + refinements, write `CLOSEOUT.md`, flip drop state to `complete`, merge PR.
 
 **Hylla ingest invariants (inviolable):**
 
@@ -228,7 +228,7 @@ The parent Claude Code session launched by the dev from this directory is always
 
 1. Orchestrator plans, routes, delegates, and cleans up. Reads code + Hylla for research. Creates Tillsyn action items. Spawns subagents. Coordinates results.
 2. Subagents are ephemeral — they spawn, read their action item, do work, update the action item, die.
-3. Action-item state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `done` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
+3. Action-item state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `complete` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
 4. Subagents do not poll or watch anything. Read the action item at spawn, execute, update, return.
 5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
 
@@ -242,9 +242,9 @@ Full contract — exact spawn-prompt fields, exact description fields, spawn-gat
 
 ## Action-Item Lifecycle (Current HEAD)
 
-Three terminal-reachable states today: `todo`, `in_progress`, `done`. A fourth state `failed` lands in Drop 1 of the cascade plan. Until then:
+Three terminal-reachable states today: `todo`, `in_progress`, `complete`. A fourth state `failed` lands in Drop 1 of the cascade plan. Until then:
 
-- **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `done`.
+- **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `complete`.
 - **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the action item stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
 - **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
 - **Supersede** (post-Drop-1): human-only CLI `till action_item supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
